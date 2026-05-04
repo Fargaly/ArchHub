@@ -1,62 +1,26 @@
 @echo off
-setlocal enabledelayedexpansion
-
-set "SCRIPT_DIR=%~dp0"
-set "INSTALL_DIR=%LOCALAPPDATA%\ArchHub"
+setlocal
 
 :: ----------------------------------------------------------------------
-:: Read version from the VERSION file
+:: Resolve our own folder, stripping the trailing backslash so it survives
+:: PowerShell argument parsing. (Trailing \ before " is the classic Windows
+:: quoting trap — \" gets read as an escape, eating the next argument.)
 :: ----------------------------------------------------------------------
-if not exist "%SCRIPT_DIR%VERSION" (
-    echo Error: VERSION file missing. This Install.bat must run from
-    echo the ArchHub repo root, next to the VERSION, app, and payload folders.
-    pause
-    exit /b 1
-)
-set /p NEW_VERSION=<"%SCRIPT_DIR%VERSION"
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-:: ----------------------------------------------------------------------
-:: Run the upgrade-aware installer (PowerShell)
-:: ----------------------------------------------------------------------
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%installer\upgrade.ps1" -SourceDir "%SCRIPT_DIR%" -InstallDir "%INSTALL_DIR%" -NewVersion "%NEW_VERSION%"
-if errorlevel 1 (
-    echo.
-    echo Setup failed. See messages above.
-    pause
+if not exist "%ROOT%\VERSION" (
+    mshta "javascript:alert('ArchHub installer cannot find its files. Please extract the entire archive before running.');close()"
     exit /b 1
 )
 
-:: ----------------------------------------------------------------------
-:: Resolve the Python launcher (prefer 'python' on PATH, fall back to 'py')
-:: ----------------------------------------------------------------------
-where python >nul 2>nul
-if errorlevel 1 (
-    set "PY=py"
-) else (
-    set "PY=python"
-)
+set /p NEW_VERSION=<"%ROOT%\VERSION"
 
 :: ----------------------------------------------------------------------
-:: Write the launcher .cmd files
+:: Hand off to the GUI installer with the PowerShell window hidden.
+:: User sees a brief cmd flash, then the GUI window only.
 :: ----------------------------------------------------------------------
-> "%INSTALL_DIR%\ArchHub.cmd"        echo @echo off
->>"%INSTALL_DIR%\ArchHub.cmd"        echo cd /d "%INSTALL_DIR%"
->>"%INSTALL_DIR%\ArchHub.cmd"        echo "%PY%" "%INSTALL_DIR%\app\main.py" %%*
-
-> "%INSTALL_DIR%\ArchHub-silent.cmd" echo @echo off
->>"%INSTALL_DIR%\ArchHub-silent.cmd" echo cd /d "%INSTALL_DIR%"
->>"%INSTALL_DIR%\ArchHub-silent.cmd" echo start /min "" "%PY%" "%INSTALL_DIR%\app\main.py" --silent
-
-:: ----------------------------------------------------------------------
-:: Recreate Start Menu and Startup shortcuts
-:: ----------------------------------------------------------------------
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%installer\make_shortcuts.ps1" "%INSTALL_DIR%" "%INSTALL_DIR%\ArchHub.cmd"
-
-echo.
-echo Launching ArchHub...
-echo The window should appear in a few seconds.
-echo First time? Open Settings (gear icon, top-right) to add an LLM API key.
-echo.
-start "" "%INSTALL_DIR%\ArchHub.cmd"
+start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%ROOT%\installer\install_gui.ps1" -SourceDir "%ROOT%" -NewVersion "%NEW_VERSION%"
 
 endlocal
+exit /b 0

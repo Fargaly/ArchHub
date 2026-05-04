@@ -5,6 +5,50 @@ Newest entries at top.
 
 ---
 
+## v0.5.1 — 2026-05-04 — GUI installer, no terminal output
+
+**The point user kept making, that I kept missing:** end users don't see
+cmd windows, don't see PowerShell prompts, don't see step-by-step text logs.
+They click one file and watch a window. v0.5.0's `upgrade.ps1` failed exactly
+because the end user saw a "Supply values for the following parameters:
+InstallDir:" prompt — the trailing-backslash quoting bug ate the parameter,
+and PowerShell fell back to interactive input.
+
+**What ships now:**
+- `Install.vbs` — the file the user double-clicks. Zero visible cmd or
+  PowerShell. Reads VERSION, fires PowerShell with `-WindowStyle Hidden` via
+  `WScript.Shell.Run(..., 0, False)` (invisible, fire-and-forget).
+- `installer/install_gui.ps1` — replaces `upgrade.ps1`. Runs all install
+  logic but presents it through a `System.Windows.Forms` dialog: dark-themed
+  header, Claude-orange progress bar, single status line, single button.
+  No console output, ever.
+- `Install.bat` — kept as a fallback for users who prefer the cmd route.
+  Now strips the trailing backslash from `%~dp0` before passing arguments
+  (the original v0.5.0 bug fix).
+
+**Visual states the user sees:**
+
+| Phase           | Title                  | Subtitle                              | Button   |
+|-----------------|------------------------|---------------------------------------|----------|
+| First install   | Installing ArchHub     | Installing version 0.5.1...           | Cancel   |
+| Upgrade in flight| Updating ArchHub      | Updating from 0.5.0 to 0.5.1.         | Cancel   |
+| Repair          | Repairing ArchHub      | Reinstalling version 0.5.1.           | Cancel   |
+| Success         | ArchHub installed      | Click Launch to open it.              | Launch   |
+| Failure         | Installation failed    | <plain-English error message>         | Close    |
+
+**Architectural choice: WinForms over a real .exe.** The proper end-state
+is a single signed `ArchHub-Setup.exe` produced by Inno Setup, requiring a
+Windows build machine + iscc.exe + a code-signing certificate. The `.iss`
+script is in the repo (`installer/setup.iss`) but compilation needs CI infra
+that doesn't exist yet. WinForms-via-PowerShell ships on every Windows
+machine and gets us 90% of the polish today. The `.exe` upgrade is a future
+step, not a blocker.
+
+**Bonus fix.** `upgrade.ps1` got removed; its logic moved inline into
+`install_gui.ps1`. One source of truth.
+
+---
+
 ## v0.5.0 — 2026-05-04 — Upgrade-aware installer
 
 **Direction:** A real product installer detects the previous version, stops

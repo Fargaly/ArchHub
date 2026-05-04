@@ -13,7 +13,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt6.QtGui import QAction, QFont, QTextCursor, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
@@ -23,6 +23,8 @@ from llm_router import LLMRouter, LLMResponse, ROUTE_AUTO, KNOWN_MODELS
 from manager import ConnectorManager
 from settings_dialog import SettingsDialog
 from tool_engine import ToolEngine, ToolInvocation
+from workflows import chat_to_workflow, save_workflow, load_workflow, get_workflow, WorkflowExecutor
+from workflows_panel import WorkflowsPanel
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +259,17 @@ class ChatWindow(QMainWindow):
         connectors_btn.setObjectName("ghostButton")
         connectors_btn.clicked.connect(self._open_connectors)
         h.addWidget(connectors_btn)
+
+        workflows_btn = QPushButton("Workflows")
+        workflows_btn.setObjectName("ghostButton")
+        workflows_btn.clicked.connect(self._open_workflows)
+        h.addWidget(workflows_btn)
+
+        save_wf_btn = QPushButton("⇣ Save chat")
+        save_wf_btn.setObjectName("ghostButton")
+        save_wf_btn.setToolTip("Save the current conversation as a reusable workflow")
+        save_wf_btn.clicked.connect(self._save_chat_as_workflow)
+        h.addWidget(save_wf_btn)
 
         settings_btn = QPushButton("⚙")
         settings_btn.setObjectName("ghostButton")
@@ -502,6 +515,61 @@ class ChatWindow(QMainWindow):
         dlg = SettingsDialog(self.router, self)
         dlg.exec()
         self._refresh_status()
+
+    def _open_workflows(self) -> None:
+        dlg = WorkflowsPanel(self.router, self.tools, self.manager, self)
+        dlg.workflow_run_requested.connect(self._run_workflow_by_id)
+        dlg.exec()
+
+    def _save_chat_as_workflow(self) -> None:
+        if not self.history:
+            QMessageBox.information(self, "Nothing to save",
+                                    "Have a conversation first, then save it as a workflow.")
+            return
+        # Use the first user message as the default name
+        first_user = next((m.content for m in self.history if m.role == "user"), "")
+        default_name = (first_user[:60] or f"Workflow {len(self.history)} turns").strip()
+        name, ok = QInputDialog.getText(self, "Save as workflow",
+                                        "Workflow name:", text=default_name)
+        if not ok or not name.strip():
+            return
+        wf = chat_to_workflow(self.history, name=name.strip(),
+                              model=self.model_picker.currentData())
+        path = save_workflow(wf)
+        QMessageBox.information(
+            self, "Workflow saved",
+            f"Saved as '{wf.name}'.\n\nLocation:\n{path}\n\n"
+            f"Open Workflows to run it again or set a trigger.",
+        )
+
+    def _run_workflow_by_id(self, workflow_id: str, inputs: dict) -> None:
+        wf = get_workflow(workflow_id)
+        if wf is None:
+            QMessageBox.warning(self, "Workflow not found",
+                                f"Could not load workflow {workflow_id}.")
+            return
+        executor = WorkflowExecutor(self.router, self.tools, self.manager)
+
+        # Render a synthetic assistant turn announcing the run
+        announce = f"Running workflow: **{wf.name}**"
+        msg = ChatMessage(role="assistant", content=announce, model="workflow")
+        self.history.append(msg)
+        self._render_message(msg)
+
+        events: list = []
+        result = executor.run(wf, inputs=inputs,
+                              on_event=lambda ev: events.append(ev))
+
+        # Summarise the run inline
+        summary_lines = [f"\n\n— workflow finished in {result.elapsed_ms} ms —"]
+        if result.errors:
+            summary_lines.append("Errors: " + "; ".join(result.errors))
+        for k, v in (result.outputs or {}).items():
+            summary_lines.append(f"\n**{k}:** {v}")
+        out_msg = ChatMessage(role="assistant",
+                              content="\n".join(summary_lines), model="workflow")
+        self.history.append(out_msg)
+        self._render_message(out_msg)
 
     def show_centered(self) -> None:
         self.show()

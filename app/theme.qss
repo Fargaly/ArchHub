@@ -1,0 +1,138 @@
+/* ArchHub theme — Claude-inspired dark aesthetic with chat UI. */
+
+QWidget {
+    background-color: #1a1a1c;
+    color: #f4efe8;
+    font-family: "Inter", "Segoe UI", -apple-system, sans-serif;
+}
+
+/* Header */
+QFrame#header { background-color: #1a1a1c; border-bottom: 1px solid #2a2a2c; }
+QLabel#brand { font-size: 16px; font-weight: 600; letter-spacing: 0.3px; }
+QComboBox#modelPicker {
+    background-color: #232326; color: #f4efe8;
+    border: 1px solid #353538; border-radius: 8px;
+    padding: 6px 12px; min-width: 220px;
+}
+QComboBox#modelPicker::drop-down { border: none; width: 18px; }
+QComboBox QAbstractItemView {
+    background-color: #232326; border: 1px solid #353538;
+    selection-background-color: #2f2f32;
+}
+
+/* Conversation */
+QScrollArea#conversationScroll, QScrollArea#conversationScroll > QWidget > QWidget {
+    background-color: #1a1a1c; border: none;
+}
+
+QFrame#welcomeCard {
+    background-color: #232326; border: 1px solid #2a2a2c; border-radius: 14px;
+}
+QLabel#welcomeTitle { font-size: 22px; font-weight: 600; }
+QLabel#welcomeSubtitle { font-size: 13px; color: #8a8a8c; }
+
+/* Bubbles */
+QFrame#userBubble {
+    background-color: #2f2a26; border: 1px solid #3d342d; border-radius: 14px;
+}
+QFrame#assistantBubble {
+    background-color: #232326; border: 1px solid #2a2a2c; border-radius: 14px;
+}
+QTextEdit#messageText {
+    background-color: transparent; color: #f4efe8;
+    border: none; font-size: 14px;
+}
+
+/* Tool cards */
+QFrame#toolCard {
+    background-color: #1f1f22; border: 1px solid #303034; border-radius: 8px;
+}
+QLabel#toolCardTitle { color: #cfcfd1; font-size: 12px; }
+QLabel#toolCardStatus { color: #8a8a8c; font-size: 11px; }
+QToolButton#toolCardChevron {
+    background-color: transparent; color: #8a8a8c;
+    border: none; font-size: 12px;
+}
+QTextEdit#toolCardDetail {
+    background-color: #18181a; color: #cfcfd1;
+    border: 1px solid #2a2a2c; border-radius: 6px;
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 11px;
+}
+
+/* Input bar */
+QFrame#inputBar { background-color: #1a1a1c; border-top: 1px solid #2a2a2c; }
+QLineEdit#inputField {
+    background-color: #232326; color: #f4efe8;
+    border: 1px solid #353538; border-radius: 10px;
+    padding: 10px 14px; font-size: 14px;
+}
+QLineEdit#inputField:focus { border-color: #cc785c; }
+
+/* Status bar */
+QFrame#statusBar { background-color: #18181a; border-top: 1px solid #2a2a2c; }
+QLabel#statusText { color: #8a8a8c; font-size: 11px; }
+
+/* Buttons */
+QPushButton#primaryButton {
+    background-color: #cc785c; color: #1a1a1c;
+    border: none; border-radius: 8px;
+    padding: 8px 18px; font-weight: 600; font-size: 13px;
+}
+QPushButton#primaryButton:hover { background-color: #d68a72; }
+QPushButton#primaryButton:pressed { background-color: #b86d52; }
+
+QPushButton#dangerButton {
+    background-color: #4a2520; color: #f4efe8;
+    border: 1px solid #6a3530; border-radius: 8px;
+    padding: 8px 18px; font-size: 13px;
+}
+QPushButton#dangerButton:hover { background-color: #5a302a; }
+
+QPushButton#ghostButton {
+    background-color: transparent; color: #cfcfd1;
+    border: 1px solid #353538; border-radius: 8px;
+    padding: 6px 14px; font-size: 13px;
+}
+QPushButton#ghostButton:hover {
+    background-color: #28282b; color: #f4efe8; border-color: #4c4c4f;
+}
+
+/* Settings */
+QDialog#settingsDialog { background-color: #1a1a1c; }
+QLabel#settingsTitle { font-size: 18px; font-weight: 600; }
+QLabel#settingsSubtitle { color: #8a8a8c; font-size: 12px; }
+
+/* Connector panel */
+QFrame#panelHeader { background-color: #1a1a1c; border-bottom: 1px solid #2a2a2c; }
+QLabel#panelTitle { font-size: 18px; font-weight: 600; }
+QLabel#panelSubtitle { font-size: 13px; color: #8a8a8c; }
+QFrame#panelFooter { background-color: #18181a; border-top: 1px solid #2a2a2c; }
+QFrame#connectorRow {
+    background-color: #232326; border: 1px solid #2a2a2c; border-radius: 12px;
+}
+QFrame#connectorRow:hover {
+    background-color: #28282b; border-color: #353538;
+}
+QLabel#connectorIcon {
+    background-color: #353538; color: #f4efe8;
+    font-size: 16px; font-weight: 600;
+    border-radius: 20px; border: 1px solid #444446;
+}
+QLabel#connectorName { font-size: 14px; font-weight: 500; }
+QLabel#connectorStatus { font-size: 12px; color: #8a8a8c; }
+
+/* Scrollbars */
+QScrollBar:vertical { background-color: #1a1a1c; width: 10px; }
+QScrollBar::handle:vertical {
+    background-color: #353538; border-radius: 5px; min-height: 30px;
+}
+QScrollBar::handle:vertical:hover { background-color: #444446; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+/* Menus */
+QMenu {
+    background-color: #232326; color: #f4efe8;
+    border: 1px solid #353538; border-radius: 8px; padding: 4px;
+}
+QMenu::item { padding: 6px 14px; border-radius: 4px; }
+QMenu::item:selected { background-color: #2f2f32; }

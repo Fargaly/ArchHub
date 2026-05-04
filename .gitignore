@@ -1,0 +1,56 @@
+# ==== Build artifacts ====
+build/
+dist/
+dist-staging/
+*.egg-info/
+*.spec
+
+# ==== Bundled runtime (downloaded by installer\build.bat) ====
+python/
+
+# ==== Python ====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==== Virtual environments ====
+.venv/
+venv/
+env/
+ENV/
+
+# ==== IDE / Editor ====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==== Secrets ====
+*.env
+.env.local
+secrets.dat
+settings.json
+state.json
+*.log
+
+# ==== Compiled C# binaries (built per-machine via dev kit) ====
+**/bin/
+**/obj/
+*.dll
+*.pdb
+
+# ==== Inno Setup output ====
+*.iss.bak
+ArchHub-Setup*.exe
+
+# ==== Test / temporary outputs ====
+/tmp/
+*.tmp

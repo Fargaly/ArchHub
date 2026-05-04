@@ -100,6 +100,13 @@ class _Row(QFrame):
 
     def _on(self, on: bool) -> None:
         self.on_toggle(self.entry, on)
+        # After the manager has run activate/deactivate, the entry's state
+        # reflects what really happened — which may differ from what the user
+        # clicked (e.g. activation failed because a payload is missing). Sync
+        # the toggle widget back to the actual state so the UI doesn't lie.
+        actual_on = self.entry.state == ConnectorState.ACTIVE
+        if actual_on != on:
+            self.toggle.setChecked(actual_on, animate=True)
         self.status.setText(self._status_text())
 
 

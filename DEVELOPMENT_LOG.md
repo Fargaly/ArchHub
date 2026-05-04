@@ -5,6 +5,61 @@ Newest entries at top.
 
 ---
 
+## v0.3 — 2026-05-04 — Workflow layer (phase 1 of node-based paradigm)
+
+**Direction:** Treat the application like ComfyUI / Grasshopper — AI models
+and tools as nodes, wired into workflows that execute as DAGs. Architects
+already speak this language fluently (Grasshopper, Dynamo), so the
+onboarding cost is near zero.
+
+**Phase 1 ships now:** graph data model + headless executor + chat-to-
+workflow capture. No canvas UI yet (that's phase 3) — workflows are authored
+either by capturing a chat conversation or by editing JSON.
+
+**Components added:**
+- `workflows/graph.py` — Workflow / Node / Edge / Port / Trigger dataclasses,
+  JSON serialization, validate() + topological sort with cycle detection.
+- `workflows/registry.py` — NodeSpec + executor registration.
+- `workflows/executor.py` — WorkflowExecutor with per-node lifecycle events
+  (started, finished, failed, log) for streaming UI updates.
+- `workflows/nodes/io_data.py` — input.parameter, output.parameter,
+  data.constant, data.template (with {var} substitution).
+- `workflows/nodes/llm.py` — llm.complete, llm.complete_with_tools (with
+  tool whitelist), llm.classify.
+- `workflows/nodes/control.py` — control.if, control.merge, control.foreach
+  (foreach is single-pass v0; sub-graph fan-out is phase 2).
+- `workflows/nodes/tools.py` — `register_tool_nodes()` auto-creates a
+  `tool.<name>` node type for every entry in `tool_engine.TOOLS`. Single
+  source of truth, zero duplication.
+- `workflows/library.py` — save / load / list / delete in
+  `%LOCALAPPDATA%/ArchHub/workflows/`.
+- `workflows/triggers/scheduler.py` — TriggerScheduler with manual / cron /
+  file_watch / speckle_webhook (last one is a stub for phase 2).
+- `workflows/chat_to_workflow.py` — converts ChatMessage history into a
+  runnable Workflow. **The killer feature**: every chat is a reusable asset.
+- `workflows_panel.py` — modal dialog listing saved workflows + JSON editor.
+- `run_workflow.py` — CLI runner for headless execution (cron, CI, scripts).
+- Chat window integration — "Save chat" + "Workflows" buttons.
+- main.py — register tool nodes + start/stop trigger scheduler at app lifecycle.
+
+**Strategic rationale documented in the previous turn's research:**
+ComfyUI-style paradigm has matured (n8n 40K+ stars, Flowise just acquired by
+Workday, ComfyGPT/ComfyUI-Copilot academic literature). None of them speak
+AEC. Architects already live in node-based thinking via Grasshopper/Dynamo,
+so this pattern is native to the audience. The wedge: be Grasshopper for AI
+agents, native to Speckle, fluent in every AEC tool.
+
+**Roadmap:**
+- Phase 2 — sub-graph fan-out for foreach, real Speckle webhook receiver,
+  retry/error-tolerant branches, parallel execution where the graph permits.
+- Phase 3 — node canvas UI (Qt Graphics or web view), drag-and-drop wiring,
+  live execution highlighting, node palette populated from the registry.
+- Phase 4 — agents become workflow templates: DimensionsAgent / AnnotationsAgent /
+  ParametersAgent / DataMappingAgent are saved workflows callable as single
+  nodes from higher-level graphs.
+
+---
+
 ## v0.2 — 2026-05-04 — Standalone product with multi-LLM brain
 
 **Pivot:** ArchHub is no longer a Claude Desktop helper. It's its own

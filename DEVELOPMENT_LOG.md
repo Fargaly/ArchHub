@@ -5,6 +5,77 @@ Newest entries at top.
 
 ---
 
+## v0.5.0 — 2026-05-04 — Upgrade-aware installer
+
+**Direction:** A real product installer detects the previous version, stops
+the running app, preserves user data, and replaces only what changed. v0.4.0's
+`xcopy /e` did none of that.
+
+**What ships:**
+
+- `VERSION` at repo root — single source of truth for the installer.
+- `requirements.txt` — pinned dependencies; the upgrader hashes this to
+  decide whether `pip install` needs to run.
+- `installer/upgrade.ps1` — the new heart of the installer. Detects existing
+  installation via `version.json`, stops any running ArchHub instance by
+  matching the command line, ensures user-data dirs exist without touching
+  their contents, mirrors code dirs with `robocopy /MIR` (so files removed
+  in the new version are cleaned up), and writes a fresh version stamp
+  including the previous version for upgrade history.
+- `Install.bat` — now a thin wrapper that reads `VERSION`, calls
+  `upgrade.ps1`, writes the launcher .cmd files, calls `make_shortcuts.ps1`,
+  and launches the app. About 50 lines, all of them honest.
+- `version.json` — written into the install dir on every install. Contains
+  current version, previous version, install timestamp, install dir.
+
+**User-data preservation rules.** The upgrader knows the difference between
+*code* (replace cleanly) and *user data* (never touch). User data:
+`workflows/`, `state.json`, `secrets.dat`, `logs/`, and crucially
+`payload/revit/<year>/`, `payload/autocad/<year>/`, `payload/max/<year>/`
+which is where auto_build writes user-built connector binaries. Code:
+`app/`, `payload/sources/`, `payload/bridge/`, `payload/blender/`,
+`installer/`. Mirrored, not merged — orphan files from older versions
+get cleaned up.
+
+**Bug fix found en route.** `manager.PAYLOAD_DIR` and `auto_build.PAYLOAD_DIR`
+pointed to different directories in v0.4.0 (`%LOCALAPPDATA%\ArchHub\payload\`
+vs `%LOCALAPPDATA%\ArchHub\app\payload\`). Auto-build would have succeeded
+but activation would still have failed because the manager looked elsewhere.
+Consolidated to the top-level `payload/` and moved the bundled C# sources
+from `app/payload/sources/` to `payload/sources/`.
+
+**Upgrade flow user sees:**
+```
+====================================================
+  ArchHub - Updating v0.4.0 -> v0.5.0
+====================================================
+
+[1/5] Stopping any running ArchHub...
+       Stopping PID 18432
+[2/5] Checking Python dependencies...
+       Unchanged. Skipping pip install.
+[3/5] Preserving user data...
+       Workflows, state, and built binaries kept as-is.
+[4/5] Syncing app to C:\Users\fargaly\AppData\Local\ArchHub...
+       Done.
+[5/5] Recording version...
+       Done.
+
+====================================================
+  Updated: 0.4.0 -> 0.5.0
+====================================================
+```
+
+**Future hooks.** The upgrade.ps1 has clear extension points for: schema
+migrations between versions (when `state.json` or `workflows/*.json` shape
+changes), rollback to previous version (would require a backup step before
+mirror), and silent updater that runs in the background and notifies the
+chat window when a new version is available.
+
+---
+
+## v0.4.0 — 2026-05-04 — In-app connector setup, no terminal
+
 ## v0.3 — 2026-05-04 — Workflow layer (phase 1 of node-based paradigm)
 
 **Direction:** Treat the application like ComfyUI / Grasshopper — AI models

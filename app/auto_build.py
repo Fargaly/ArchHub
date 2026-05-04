@@ -28,12 +28,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-# Where the bundled C# sources live (deployed by Install.bat into the install dir)
+# Where the bundled C# sources live, and where built binaries land. Both
+# match manager.py's PAYLOAD_DIR — sibling of app/, not nested under it.
 APP_ROOT = Path(__file__).resolve().parent
-SOURCES_DIR = APP_ROOT / "payload" / "sources"
-
-# Where final DLLs go (and are looked up by the connector manager)
-PAYLOAD_DIR = APP_ROOT / "payload"
+PAYLOAD_DIR = APP_ROOT.parent / "payload"
+SOURCES_DIR = PAYLOAD_DIR / "sources"
 
 
 # Type for the progress callback: (stage_name, percent_0_to_100, optional_log_line)

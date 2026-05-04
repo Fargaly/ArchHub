@@ -37,7 +37,7 @@ class _RevitSpec:
         year = entry.version or ""
         src_dir = payload_dir / "revit" / year
         if not src_dir.exists():
-            raise RuntimeError(f"No Revit payload for {year}. Build the DLL via the dev kit first.")
+            raise RuntimeError(f"payload missing for Revit {year}")
         dst_dir = self._staged_dir(year)
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
@@ -82,7 +82,7 @@ class _AutoCADSpec:
         year = entry.version or ""
         src_dir = payload_dir / "autocad" / year
         if not src_dir.exists():
-            raise RuntimeError(f"No AutoCAD payload for {year}.")
+            raise RuntimeError(f"payload missing for AutoCAD {year}")
         dst_dir = self._staged_dir(year)
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
@@ -195,7 +195,7 @@ class _MaxSpec:
     def activate(self, entry: ConnectorEntry, payload_dir: Path) -> None:
         src = payload_dir / "max" / "max_mcp_startup.py"
         if not src.exists():
-            raise RuntimeError("3ds Max payload missing.")
+            raise RuntimeError("payload missing for 3ds Max")
         shutil.copy2(src, self._target(entry))
 
     def deactivate(self, entry: ConnectorEntry) -> None:
@@ -218,7 +218,7 @@ class _BlenderSpec:
     def activate(self, entry: ConnectorEntry, payload_dir: Path) -> None:
         src = payload_dir / "blender" / "archhub_mcp"
         if not src.exists():
-            raise RuntimeError("Blender payload missing.")
+            raise RuntimeError("payload missing for Blender")
         target = self._target(entry)
         if target.exists():
             shutil.rmtree(target)

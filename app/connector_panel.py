@@ -4,11 +4,13 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QRectF, pyqtProperty
 from PyQt6.QtGui import QPainter, QColor, QBrush
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from manager import ConnectorManager, ConnectorState, ConnectorEntry
+from build_progress_dialog import BuildProgressDialog
+import auto_build
 
 
 class ToggleSwitch(QWidget):
@@ -100,14 +102,79 @@ class _Row(QFrame):
 
     def _on(self, on: bool) -> None:
         self.on_toggle(self.entry, on)
-        # After the manager has run activate/deactivate, the entry's state
-        # reflects what really happened — which may differ from what the user
-        # clicked (e.g. activation failed because a payload is missing). Sync
-        # the toggle widget back to the actual state so the UI doesn't lie.
+
+        # If activation failed because the binary isn't there, offer to build it
+        # automatically — no terminal, no copy-paste. The connector panel calls
+        # us back through on_toggle to retry after a successful build.
+        if (on and self.entry.state == ConnectorState.ERROR
+                and self._is_missing_payload_error(self.entry.detail)):
+            if self._offer_auto_setup():
+                return  # user accepted; setup dialog will retry the toggle
+
+        # Sync the toggle's visual state to the actual state — never lie.
         actual_on = self.entry.state == ConnectorState.ACTIVE
         if actual_on != on:
             self.toggle.setChecked(actual_on, animate=True)
         self.status.setText(self._status_text())
+
+    def _is_missing_payload_error(self, detail: str | None) -> bool:
+        if not detail:
+            return False
+        d = detail.lower()
+        return ("no " in d and "payload" in d) or "payload" in d and "missing" in d
+
+    def _offer_auto_setup(self) -> bool:
+        """Ask the user whether to auto-build the connector. Returns True if accepted."""
+        family = (self.entry.family or "").lower()
+        # Try to extract the year from the connector id (e.g. "revit-2025")
+        year_match = next((tok for tok in (self.entry.id or "").split("-")
+                           if tok.isdigit() and len(tok) == 4), None)
+        if not year_match:
+            return False
+        year = int(year_match)
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Set up this connector?")
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setText(f"<b>{self.entry.label}</b> needs a one-time setup.")
+        msg.setInformativeText(
+            "ArchHub will configure it for you automatically — no terminal, "
+            "no copy-paste. This usually takes under a minute.\n\n"
+            "Set it up now?"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes |
+                               QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return False
+
+        # Pick the right build function for the family
+        build_fn = None
+        title = f"Setting up {self.entry.label}"
+        if family == "revit":
+            build_fn = lambda cb: auto_build.build_revit_connector(year, cb)
+        elif family in ("autocad", "acad"):
+            build_fn = lambda cb: auto_build.build_acad_connector(year, cb)
+        elif family in ("max", "3dsmax"):
+            build_fn = lambda cb: auto_build.install_max_connector(year, cb)
+        else:
+            return False
+
+        dlg = BuildProgressDialog(self, title, build_fn=build_fn)
+        dlg.exec()
+
+        # If the build succeeded, retry activation
+        if dlg.result_ok:
+            self.on_toggle(self.entry, True)
+            actual_on = self.entry.state == ConnectorState.ACTIVE
+            self.toggle.setChecked(actual_on, animate=True)
+            self.status.setText(self._status_text())
+            return True
+
+        # Build failed or cancelled — snap toggle back to off
+        self.toggle.setChecked(False, animate=True)
+        self.status.setText(self._status_text())
+        return True   # we handled the UI sync ourselves
 
 
 class ConnectorPanel(QDialog):

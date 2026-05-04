@@ -23,8 +23,8 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Callable, Optional
 
-from .graph import Workflow, Trigger
-from .library import list_workflows, load_workflow
+from ..graph import Workflow, Trigger
+from ..library import list_workflows, load_workflow
 
 
 @dataclass

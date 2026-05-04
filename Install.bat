@@ -60,22 +60,7 @@ for /f "delims=" %%I in ('where py 2^>nul') do set "PY_EXE=%%I"
 )
 
 echo [4/4] Adding shortcuts...
-set "STARTMENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs"
-set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
-
-powershell -NoProfile -Command ^
-    "$ws = New-Object -ComObject WScript.Shell; ^
-     $s = $ws.CreateShortcut('%STARTMENU%\ArchHub.lnk'); ^
-     $s.TargetPath = '%INSTALL_DIR%\ArchHub.cmd'; ^
-     $s.WorkingDirectory = '%INSTALL_DIR%'; ^
-     $s.Save()"
-
-powershell -NoProfile -Command ^
-    "$ws = New-Object -ComObject WScript.Shell; ^
-     $s = $ws.CreateShortcut('%STARTUP%\ArchHub.lnk'); ^
-     $s.TargetPath = '%INSTALL_DIR%\ArchHub-silent.cmd'; ^
-     $s.WorkingDirectory = '%INSTALL_DIR%'; ^
-     $s.Save()"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%installer\make_shortcuts.ps1" "%INSTALL_DIR%" "%INSTALL_DIR%\ArchHub.cmd"
 
 echo.
 echo ====================================================

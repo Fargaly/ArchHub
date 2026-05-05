@@ -136,3 +136,40 @@ QMenu {
 }
 QMenu::item { padding: 6px 14px; border-radius: 4px; }
 QMenu::item:selected { background-color: #2f2f32; }
+
+/* Parameters sidebar */
+QWidget#paramsPanel { background-color: #18181a; border-left: 1px solid #2a2a2c; }
+QFrame#paramsPanelHeader { background-color: #18181a; border-bottom: 1px solid #2a2a2c; }
+QLabel#paramsPanelTitle { font-size: 15px; font-weight: 600; color: #f4efe8; }
+QLabel#paramsPanelSubtitle { font-size: 11px; color: #6e7079; }
+QLabel#paramsPanelEmpty { color: #6e7079; font-size: 12px; padding: 32px 24px; }
+
+QFrame#paramRow {
+    background-color: #232326; border: 1px solid #2a2a2c; border-radius: 8px;
+}
+QFrame#paramRow:hover { border-color: #353538; }
+QLabel#paramLabel { font-size: 12px; font-weight: 500; color: #d8d8da; }
+QLabel#paramMeta { font-size: 10px; color: #6e7079; }
+QLabel#paramReadonly { font-size: 11px; color: #8a8a8c; font-family: "Consolas", monospace; }
+
+QSlider::groove:horizontal { height: 3px; background: #353538; border-radius: 1px; }
+QSlider::handle:horizontal {
+    background: #cc785c; width: 14px; height: 14px;
+    margin: -6px 0; border-radius: 7px;
+}
+QSlider::handle:horizontal:hover { background: #d68872; }
+QSlider::sub-page:horizontal { background: #cc785c; border-radius: 1px; }
+
+QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox {
+    background-color: #1a1a1c; color: #f4efe8;
+    border: 1px solid #353538; border-radius: 4px; padding: 3px 6px;
+    font-size: 12px;
+}
+QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus, QComboBox:focus {
+    border-color: #cc785c;
+}
+QComboBox::drop-down { border: 0; width: 18px; }
+QComboBox QAbstractItemView {
+    background-color: #232326; color: #f4efe8;
+    border: 1px solid #353538; selection-background-color: #cc785c;
+}

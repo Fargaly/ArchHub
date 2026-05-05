@@ -5,6 +5,86 @@ Newest entries at top.
 
 ---
 
+## v0.6.0 — 2026-05-04 — Parametric session core, meta-connector, Blender runner
+
+**The pivot.** ArchHub stops being "a chat that calls tools" and becomes
+a parametric design environment with chat as the input surface. Two
+foundational principles, captured in `VISION.md` at repo root:
+
+1. **Connectors build themselves.** ArchHub asks the LLM to generate the
+   adapter code per host/version. Static `payload/sources/` is now the
+   cached fallback, not the primary path.
+2. **Every step is a parametric node.** Parameters never die — they
+   appear in a sidebar the moment they're introduced and stay live.
+   Editing one marks downstream steps DIRTY and re-runs them.
+
+**What ships in v0.6.0:**
+
+- `VISION.md` — the north-star document for everything that follows.
+- `app/session.py` — Session, ChainStep, Parameter, ParamType, StepKind,
+  StepStatus, StepOutput. Pure data + state machinery, no UI or tool
+  coupling. Dirty propagation (changing a parameter marks all steps
+  that use it AND everything downstream as DIRTY) is verified by tests.
+  Stable input hashing via SHA-256 over (parameters_used + config).
+- `app/parameters_panel.py` — Qt sidebar that mirrors the session's
+  parameter pool live. Renders Length/Angle/Number as slider+spinbox,
+  Integer as spinbox, Boolean as checkbox, Enum as dropdown, Color as
+  swatch, String as line-edit, Image/Geometry as readonly path. Edits
+  emit `parameter_edited(name, value)` which the chat window debounces
+  and routes to `Session.update_parameter`.
+- `app/meta_connector.py` — the LLM-as-codegen pattern. Two contracts
+  (Blender Python addon, Revit C# add-in) and one entry point per host:
+  `generate_blender_addon(version, router)`,
+  `generate_revit_addin(version, router)`. Output is content-hashed and
+  cached in `payload/_generated/`. Validation rejects obviously broken
+  output (Blender addon must have bl_info, register, unregister, the
+  contract port). Multi-file parser handles `### FILE: <path>` headers
+  for languages that need multiple files.
+- `app/connectors/blender_runner.py` — concrete Blender adapter:
+  `find_blender_executable()`, `detect_blender_version()`,
+  `find_addons_folder(version)`, `install_addon(generated, ...)`,
+  `launch_blender(...)`, `ping_until_ready()`, `info()`, `execute(code)`,
+  `render(output_path)`. Talks HTTP to the addon on port 9876.
+- Chat window — now has a horizontal splitter: chat on the left,
+  parameters panel on the right (default 840 / 320 px). Window sized up
+  to 1200×760 to accommodate. The session is created in `__init__`,
+  bound to the panel via `set_session`, and parameter edits debounced
+  via a 300 ms QTimer before being acknowledged in the chat.
+- Theme — extended `theme.qss` with paramsPanel / paramRow / slider /
+  spinbox / combobox styles in the Claude-orange palette.
+
+**Verified by tests run today:**
+- Adding parameters, adding chain steps, status transitions, dirty
+  propagation all behave correctly.
+- A camera-height change marks only Render and Post-process DIRTY,
+  leaves the Geometry step alone.
+- Input hashing is stable for unchanged values, changes when values do.
+- Multi-file parser handles realistic LLM output.
+- Python validation rejects non-addon code, accepts contract-compliant
+  stubs.
+
+**Files added:** 4 (session, parameters_panel, meta_connector, blender_runner).
+**Files changed:** 2 (chat_window, theme).
+**Total Python files in app:** 41 (was 37).
+
+**What's NOT in this commit (deliberately):**
+- StepKind runners — geometry.build / render / image.process don't yet
+  have concrete executors that drive Blender end-to-end. The data model
+  is ready; the runner is ready; the bridge is what comes next.
+- The chat-side flow that introduces parameters from a user prompt.
+  v0.7 wires LLM_PLAN: take the user prompt, decide which parameters
+  to introduce, which steps to chain, then dispatch the runners.
+- Image input (paste a sketch). The model is in place — Parameter type
+  IMAGE exists — but the chat input bar doesn't accept images yet.
+
+**Next concrete milestone (v0.7):**
+The minimum demo from VISION.md:
+> Toggle Blender on. ArchHub generates the addon if missing. Paste a
+> sketch. Type "build this in 3D". Sidebar populates. Render shows.
+> Drag roof_pitch slider. Re-render in 3 seconds.
+
+---
+
 ## v0.5.1 — 2026-05-04 — GUI installer, no terminal output
 
 **The point user kept making, that I kept missing:** end users don't see

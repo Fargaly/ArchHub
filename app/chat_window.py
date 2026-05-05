@@ -14,13 +14,15 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt6.QtGui import QAction, QFont, QTextCursor, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from connector_panel import ConnectorPanel
 from llm_router import LLMRouter, LLMResponse, ROUTE_AUTO, KNOWN_MODELS
 from manager import ConnectorManager
+from parameters_panel import ParametersPanel
+from session import Session
 from settings_dialog import SettingsDialog
 from tool_engine import ToolEngine, ToolInvocation
 from workflows import chat_to_workflow, save_workflow, load_workflow, get_workflow, WorkflowExecutor
@@ -206,12 +208,15 @@ class ChatWindow(QMainWindow):
         self._current_bubble: Optional[MessageBubble] = None
         self._current_invocations: dict[str, tuple[ToolInvocation, ToolCard]] = {}
 
+        # Live parametric session — drives the sidebar and persists across turns.
+        self.session: Session = Session()
+
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[_LLMWorker] = None
 
         self.setWindowTitle("ArchHub")
-        self.resize(960, 720)
-        self.setMinimumSize(720, 520)
+        self.resize(1200, 760)
+        self.setMinimumSize(880, 560)
 
         self._build_ui()
         self._refresh_status()
@@ -232,8 +237,30 @@ class ChatWindow(QMainWindow):
         outer.setSpacing(0)
 
         outer.addWidget(self._build_header())
-        outer.addWidget(self._build_conversation_area(), 1)
-        outer.addWidget(self._build_input_bar())
+
+        # Body splits horizontally: chat on the left, parameters sidebar on the right.
+        body_split = QSplitter(Qt.Orientation.Horizontal)
+        body_split.setHandleWidth(1)
+        body_split.setChildrenCollapsible(False)
+
+        # Left: conversation + input bar stacked vertically
+        left = QWidget()
+        left_v = QVBoxLayout(left); left_v.setContentsMargins(0, 0, 0, 0); left_v.setSpacing(0)
+        left_v.addWidget(self._build_conversation_area(), 1)
+        left_v.addWidget(self._build_input_bar())
+
+        # Right: parameters panel, bound to the live session
+        self.parameters_panel = ParametersPanel()
+        self.parameters_panel.set_session(self.session)
+        self.parameters_panel.parameter_edited.connect(self._on_parameter_edited)
+
+        body_split.addWidget(left)
+        body_split.addWidget(self.parameters_panel)
+        body_split.setStretchFactor(0, 3)
+        body_split.setStretchFactor(1, 1)
+        body_split.setSizes([840, 320])
+
+        outer.addWidget(body_split, 1)
         outer.addWidget(self._build_status_bar())
 
     def _build_header(self) -> QWidget:
@@ -570,6 +597,43 @@ class ChatWindow(QMainWindow):
                               content="\n".join(summary_lines), model="workflow")
         self.history.append(out_msg)
         self._render_message(out_msg)
+
+    def _on_parameter_edited(self, name: str, value) -> None:
+        """User changed a parameter via the sidebar.
+
+        The Session marks downstream chain steps DIRTY. v0 surfaces the change
+        in the chat as a system note; the actual re-run dispatch for affected
+        steps lands when the per-StepKind runners are wired up. For now the
+        principle holds: edits to parameters never get lost.
+        """
+        affected = self.session.update_parameter(name, value)
+        if not affected:
+            return
+        # Coalesce rapid slider drags via a debounce timer
+        if not hasattr(self, "_param_edit_timer"):
+            self._param_edit_timer = QTimer(self)
+            self._param_edit_timer.setSingleShot(True)
+            self._param_edit_timer.timeout.connect(self._flush_parameter_edits)
+            self._pending_param_edits: set[str] = set()
+        self._pending_param_edits.add(name)
+        self._param_edit_timer.start(300)
+
+    def _flush_parameter_edits(self) -> None:
+        """Called 300ms after the last parameter edit. v0 just acknowledges
+        in the chat; phase-2 dispatches the runner for each dirty step."""
+        names = sorted(getattr(self, "_pending_param_edits", set()))
+        if not names:
+            return
+        self._pending_param_edits.clear()
+        # Surface the change so the user sees their edit was registered
+        ack = ChatMessage(
+            role="assistant",
+            content=(f"Parameter{'s' if len(names) > 1 else ''} changed: "
+                     f"{', '.join(names)}. Marked downstream steps for re-run."),
+            model="session",
+        )
+        self.history.append(ack)
+        self._render_message(ack)
 
     def show_centered(self) -> None:
         self.show()

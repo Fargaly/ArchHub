@@ -20,6 +20,7 @@ from tray import ArchHubTray
 from workflows.nodes import register_tool_nodes
 from workflows import WorkflowExecutor
 from workflows.triggers import TriggerScheduler
+from skills import ensure_starter_skills
 
 APP_ROOT = Path(__file__).resolve().parent
 ASSETS = APP_ROOT / "assets"
@@ -41,6 +42,13 @@ def main() -> int:
 
     # Register tool.* node types now that the tool engine is alive
     register_tool_nodes()
+
+    # Materialise the starter Skills library if it's empty (idempotent).
+    try:
+        ensure_starter_skills()
+    except Exception:
+        # Non-fatal: chat works without seeds, just no auto-suggestions.
+        pass
 
     # Main window
     window = ChatWindow(router=router, manager=manager, tools=tools)

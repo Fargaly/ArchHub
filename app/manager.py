@@ -82,16 +82,22 @@ class ConnectorManager:
     def refresh(self) -> None:
         """Re-detect host applications and rebuild the entry list."""
         from detection import discover_all
+        from connectors.registry import resolve
         self.entries = discover_all()
 
-        # Re-apply persisted active state where the host is now available
         for e in self.entries:
+            spec = resolve(e.family)
             if e.id in self._persisted_active and e.state == ConnectorState.READY:
                 # Verify activation files are still in place
-                from connectors.registry import resolve
-                spec = resolve(e.family)
                 if spec and spec.is_active(e):
                     e.state = ConnectorState.ACTIVE
+                else:
+                    # Files missing — clean up persisted state so user can re-activate
+                    self._persisted_active.discard(e.id)
+            elif spec:
+                # Always run is_active() to auto-clean stale files (e.g. stale .addin
+                # manifests that point to a DLL that was never built)
+                spec.is_active(e)
 
     def activate(self, connector_id: str) -> Tuple[bool, str]:
         entry = self._find(connector_id)

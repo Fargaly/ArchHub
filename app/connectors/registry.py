@@ -36,8 +36,8 @@ class _RevitSpec:
     def activate(self, entry: ConnectorEntry, payload_dir: Path) -> None:
         year = entry.version or ""
         src_dir = payload_dir / "revit" / year
-        if not src_dir.exists():
-            raise RuntimeError(f"payload missing for Revit {year}")
+        if not src_dir.exists() or not (src_dir / "RevitMCP.dll").exists():
+            raise RuntimeError(f"payload missing for Revit {year}: DLL not built yet.")
         dst_dir = self._staged_dir(year)
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
@@ -66,7 +66,19 @@ class _RevitSpec:
             addin.unlink()
 
     def is_active(self, entry: ConnectorEntry) -> bool:
-        return self._addin_path(entry.version or "").exists()
+        year = entry.version or ""
+        addin = self._addin_path(year)
+        if not addin.exists():
+            return False
+        # DLL must also exist — if missing, clean up the stale manifest
+        dll = self._staged_dir(year) / "RevitMCP.dll"
+        if not dll.exists():
+            try:
+                addin.unlink()
+            except OSError:
+                pass
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +105,6 @@ class _AutoCADSpec:
             import winreg
             dll = str(dst_dir / "AcadMCP.dll")
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.REG_ROOT, 0, winreg.KEY_READ) as root:
-                # Iterate releases (R24.0, R25.0, etc.)
                 i = 0
                 while True:
                     try:
@@ -151,7 +162,6 @@ class _AutoCADSpec:
             pass
 
     def is_active(self, entry: ConnectorEntry) -> bool:
-        # Cheap probe: registry key present somewhere
         try:
             import winreg
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.REG_ROOT, 0, winreg.KEY_READ) as root:
@@ -212,7 +222,6 @@ class _BlenderSpec:
     family = "blender"
 
     def _target(self, entry: ConnectorEntry) -> Path:
-        # User's per-version Blender scripts/addons folder
         return entry.detected_path / "scripts" / "addons" / "archhub_mcp"  # type: ignore[union-attr]
 
     def activate(self, entry: ConnectorEntry, payload_dir: Path) -> None:

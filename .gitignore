@@ -54,3 +54,14 @@ ArchHub-Setup*.exe
 # ==== Test / temporary outputs ====
 /tmp/
 *.tmp
+build_output.txt
+diagnose_output.txt
+startup_error.log
+
+# ==== Per-machine build outputs (compiled DLLs ship via dotnet build, not git) ====
+payload/revit/
+payload/autocad/
+payload/max/
+
+# ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
+**/skill_usage.json

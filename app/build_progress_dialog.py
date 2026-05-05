@@ -131,14 +131,20 @@ class BuildProgressDialog(QDialog):
             self.progress_bar.setValue(100)
         else:
             self.title_label.setText("Setup failed")
-            # Friendly messaging for the most common failures
             if result.detail == "no_dotnet_sdk":
                 self.subtitle_label.setText(
                     "ArchHub needs the .NET 8 SDK from Microsoft to set up this connector. "
-                    "It's a free, one-time install. Click 'Install .NET' below."
+                    "It’s a free, one-time install. Click ‘Install .NET’ below."
                 )
                 self.stage_label.setText("Missing prerequisite: .NET 8 SDK")
                 self._add_install_dotnet_button()
+            elif "net48_install_failed" in result.detail:
+                self.subtitle_label.setText(
+                    "The .NET Framework 4.8 Developer Pack installed but may need a <b>system reboot</b> "
+                    "to take effect. Restart Windows, then toggle this connector on again — "
+                    "ArchHub will pick up where it left off."
+                )
+                self.stage_label.setText("Reboot required to complete installation")
             elif "not found" in result.detail.lower():
                 self.subtitle_label.setText(
                     f"{result.detail} — make sure the application is installed in its default location, "
@@ -147,10 +153,9 @@ class BuildProgressDialog(QDialog):
                 self.stage_label.setText("Application not found")
             else:
                 self.subtitle_label.setText(
-                    "The build didn't complete. Click 'Show details' to see the error log."
+                    "The build didn’t complete. Click ‘Show details’ to see the error log."
                 )
                 self.stage_label.setText("Build error")
-                # Auto-open the log on failure
                 if not self.show_log_btn.isChecked():
                     self.show_log_btn.setChecked(True)
 
@@ -163,7 +168,7 @@ class BuildProgressDialog(QDialog):
         self.adjustSize()
 
     def _add_install_dotnet_button(self) -> None:
-        """Show an 'Install .NET' button when SDK is missing."""
+        """Show an 'Install .NET' button when .NET 8 SDK is missing."""
         from auto_build import download_dotnet_installer, install_dotnet_sdk
         from pathlib import Path
 
@@ -197,7 +202,7 @@ class BuildProgressDialog(QDialog):
             self._worker.start()
 
         btn.clicked.connect(on_click)
-        # Insert into footer next to Close
         footer = self.findChildren(QFrame, "panelFooter")
         if footer:
-            footer[0].layout().insertWidget(footer[0].layout().count() - 1, btn)
+            layout = footer[0].layout()
+            layout.insertWidget(layout.count() - 1, btn)

@@ -64,14 +64,17 @@ def chat_to_workflow(
     last_user_source: tuple[str, str] | None = None
     is_first_user = True
 
+    def _field(m, name, default=None):
+        if hasattr(m, name):
+            return getattr(m, name)
+        if isinstance(m, dict):
+            return m.get(name, default)
+        return default
+
     for msg in history:
-        role = getattr(msg, "role", None) or msg.get("role")
-        content = getattr(msg, "content", None) or msg.get("content", "")
-        tool_invocations = (
-            getattr(msg, "tool_invocations", None)
-            or msg.get("tool_invocations")
-            or []
-        )
+        role = _field(msg, "role")
+        content = _field(msg, "content", "") or ""
+        tool_invocations = _field(msg, "tool_invocations", []) or []
 
         if role == "user":
             if is_first_user:

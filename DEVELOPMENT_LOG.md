@@ -5,6 +5,187 @@ Newest entries at top.
 
 ---
 
+## v0.10.0 — 2026-05-05 — Skills system
+
+**The frame shift.** Annotation, materials, sketch-to-mass, render, push-to-Speckle
+— none of these are *features*. Each is a **Skill**: a saved workflow with intent
+metadata that the chat can find, run, edit, share, and learn from. Hardcoded
+agent classes (DimensionsAgent, AnnotationsAgent) are dead. Skills are JSON
+files anyone can edit, and a new Skill ships to all 50 architects in the firm
+without a code change.
+
+The mental model is ComfyUI under the hood, chat on top: behind every Skill
+is a node graph, but the architect rarely sees it. They type. The chat finds
+the right Skill (or composes a new one), runs it, shows the answer.
+
+**What ships in v0.10.0:**
+
+- `app/skills/` — new package on top of `app/workflows/`:
+  - `metadata.py` — `SkillMeta` dataclass (`intent`, `keywords`, `when_to_use`,
+    `examples`, `tags`, `requires`, `author`, `scope`, `version`). Stored as
+    `Workflow.metadata['skill']` so the on-disk schema is one file per Skill.
+  - `library.py` — `list_skills`, `load_skill`, `save_skill`, `delete_skill`
+    across two roots: per-user (`%LOCALAPPDATA%/ArchHub/workflows/`) and
+    machine-wide (`%PROGRAMDATA%/ArchHub/skills/`) for team/firm scope.
+    User overrides shared on id collision.
+  - `matcher.py` — `match_skills(prompt, ...)` ranks Skills against a user
+    prompt using a weighted keyword score (keyword ×3, tag ×2, name ×1.5,
+    intent ×1.0), filtered by active connectors. Optional LLM rerank via
+    Haiku for tied candidates (off by default in v0.10).
+  - `capture.py` — `capture_chat_as_skill(history, ...)` summarises the last
+    12 chat turns, asks Haiku to author strict-JSON metadata, then wraps the
+    conversation in a Workflow via the existing `chat_to_workflow` helper.
+  - `usage.py` — sidecar JSON (`skill_usage.json`) tracking `runs`,
+    `successes`, `failures`, `last_used`, `total_elapsed_ms` per Skill.
+    Per-user only — never synced.
+  - `seeds.py` — three starter Skills materialised on first launch:
+    `dimension-walls`, `room-tags`, `push-to-speckle`. Each is a four-node
+    chain (input → template → llm.complete_with_tools → output) with an
+    `allowed_tools` whitelist that scopes the LLM to the right connectors.
+
+- `app/skills_panel.py` — new dialog with two tabs:
+  - **Skills** — cards with intent, tags, examples, run count, success
+    rate, last-used. Run / Edit / Delete on each card.
+  - **Workflows** — preserved JSON list/editor for power users.
+  - The header chat button is renamed *Skills*; the legacy *Workflows*
+    entry point routes here too.
+
+- `app/chat_window.py` — chat surface for Skills:
+  - Slash commands: `/skill save [name]`, `/skill list`, `/skill run <id|name>`,
+    `/skills`, `/help`.
+  - Auto-suggestion: before the LLM tool loop runs, the matcher checks the
+    user's prompt against the library. A strong match (score ≥ 0.55, or
+    ≥ 0.10 ahead of the runner-up) shows an inline “💡 Skill match” bubble
+    with **Run / Skip** buttons. Skip falls through to the normal LLM path.
+  - Skill execution wraps `WorkflowExecutor.run` and records usage stats
+    via `skills.record_run(...)`.
+
+- `app/workflows/graph.py` — `Workflow` gains a `metadata: dict` field
+  (default empty). Backward-compatible: workflows saved before this
+  release deserialise unchanged.
+
+- `app/main.py` — calls `skills.ensure_starter_skills()` once at boot.
+  Idempotent; never overwrites a user-edited Skill (id-keyed).
+
+- `app/theme.qss` — styles for the Skills panel, skill cards, tabs, and
+  the inline skill-suggestion bubble.
+
+- `docs/SKILLS.md` — architecture doc covering the mental model, file
+  layout, JSON schema, matcher tiers, capture flow, sharing strategy,
+  telemetry, extension points, and roadmap.
+
+**End-to-end smoke test (no Revit required):**
+
+```
+$ python -c "import skills; skills.ensure_starter_skills(); print(skills.list_skills())"
+[
+  {'id': 'seed-dimension-walls-v1', 'name': 'Dimension walls in active view', ...},
+  {'id': 'seed-room-tags-v1',       'name': 'Tag every room in active view',  ...},
+  {'id': 'seed-push-to-speckle-v1', 'name': 'Push current model to Speckle',  ...}
+]
+
+$ python -c "import skills; print(skills.match_skills('Dimension all walls'))"
+[MatchResult(name='Dimension walls in active view', score=0.55, ...)]
+```
+
+**What this kills:**
+
+- DimensionsAgent / AnnotationsAgent code classes → dead. Replaced by
+  user-editable Skill JSON.
+- Per-feature slash commands (`/dimensions`, `/annotations`) → dead.
+  Replaced by one `/skill <verb>` plus the matcher.
+- The "drop a Python file in `app/agents/`" extension model → dead.
+  Skills are JSON; no Python deploy needed to add a capability.
+
+**What this preserves:**
+
+- The workflow engine, JSON format, executor, and node registry — Skills
+  are a metadata layer over them.
+- The legacy `app/agents/` package — still loads, no migrations forced.
+- The Workflows tab in the panel — power users can still edit raw JSON.
+
+**Sharing strategy (v0.10):** local-only. Drop a `.archhub-workflow.json`
+into `%PROGRAMDATA%\ArchHub\skills\` on each machine, or symlink that path
+to a network share / OneDrive / Git repo. A first-class sync mechanism
+(Git-backed registry, Speckle stream, or HTTP relay) lands once one of
+those shapes proves itself in real use across the 50-architect pilot.
+
+---
+
+## v0.9.0 — 2026-05-05 — Speckle spine
+
+**The data spine.** Speckle is now the interoperability layer between
+ArchHub sessions and every CAD host. Parameters flow both ways: push
+serialises the live session into a versioned Speckle object and creates
+a commit; pull fetches the latest commit and injects its properties back
+into the session, marking downstream steps DIRTY so the chain re-runs.
+
+**What ships in v0.9.0:**
+
+- `app/speckle_client.py` — extended with full push/pull transport:
+  - `push_parameters(project_id, branch, parameters, geometry_ref, message)`
+    serialises the session's parameter pool into a typed Speckle object
+    (`Objects.BuiltElements.ArchHub.ParameterSet@1.0.0`), computes its
+    SHA-256 id (`_hash_object`), uploads it to the object store
+    (`POST /objects/{projectId}`), then creates a commit via the GraphQL
+    `commitCreate` mutation. Returns `{"status": "ok", "commit_id": "...",
+    "object_id": "..."}`.
+  - `pull_parameters(project_id, branch)` queries the latest commit on
+    the branch via `stream > branch > commits`, downloads the root object
+    (`GET /objects/{projectId}/{objectId}/single`), and returns the raw
+    `parameters` dict for the runner to inject.
+  - `_create_commit` / `_get_latest_commit` — thin wrappers around the
+    existing `_query` helper. Uses the v2-compatible `commitCreate` /
+    `stream > branch > commits` API which works on all Speckle server
+    versions including the latest `app.speckle.systems`.
+  - `_hash_object` — canonical SHA-256 of the object payload (sorted
+    keys, no whitespace, `id` field excluded from hash input) following
+    the Speckle object model convention.
+
+- `app/runners/speckle_push.py` — `StepKind.SPECKLE_PUSH` runner:
+  - Reads `project_id` from `step.config` or session parameter
+    `speckle_project_id` (allows the LLM to set it via a plan step).
+  - Snapshots all `session.parameters` values into a plain dict.
+  - Grabs `geometry_ref` from the most recent `GEOMETRY_BUILD` step output
+    (if any) so geometry and parameters travel together.
+  - Calls `SpeckleClient.push_parameters()`.
+  - Upserts `speckle_version_id` and `speckle_object_id` back into the
+    session so subsequent steps can reference them.
+  - Returns a `StepOutput(kind="text")` with a human-readable summary.
+
+- `app/runners/speckle_pull.py` — `StepKind.SPECKLE_PULL` runner:
+  - Calls `SpeckleClient.pull_parameters()`.
+  - Injects each key from the pulled `parameters` dict: updates existing
+    session parameters (triggering dirty propagation downstream) and
+    creates new ones for unknown keys (type inferred from Python type).
+  - Injects `speckle_geometry_ref` (GEOMETRY) if present.
+  - Upserts `speckle_version_id` and `speckle_object_id` from the pulled
+    commit metadata.
+  - Returns a `StepOutput(kind="text")` listing new vs. updated counts.
+
+- `app/runners/__init__.py` — registered `speckle.push` and `speckle.pull`.
+
+**Bidirectional parameter sync in practice:**
+
+```
+User: "push to Speckle"
+  → LLM_PLAN adds SPECKLE_PUSH step with project_id from user context
+  → SPECKLE_PUSH snapshots {building_height: 12, roof_pitch: 35, …}
+  → Speckle object hash = abc123
+  → Commit "ArchHub push" on archhub/main
+  → session: speckle_version_id = "commit_xyz"
+
+[Revit user edits roof_pitch to 40 in their session, pushes their own commit]
+
+User: "pull from Speckle"
+  → SPECKLE_PULL fetches latest commit → {building_height: 12, roof_pitch: 40}
+  → session.update_parameter("roof_pitch", 40) → GEOMETRY_BUILD marked DIRTY
+  → RENDER + IMAGE_PROCESS also marked DIRTY
+  → rerun_dirty() fires → geometry rebuilt with new pitch → re-rendered automatically
+```
+
+---
+
 ## v0.6.0 — 2026-05-04 — Parametric session core, meta-connector, Blender runner
 
 **The pivot.** ArchHub stops being "a chat that calls tools" and becomes
@@ -372,3 +553,37 @@ Claude Desktop being installed and running.
    into Revit; toggling off removes it cleanly. No vendor lock-in.
 
 ---
+
+---
+
+## v0.7.0 — 2026-05-05 — End-to-end parametric demo
+
+**The minimum demo ships.** v0.7 closes the loop described in VISION.md:
+type a prompt → parameters appear → Blender builds geometry → renders →
+drag a slider → re-renders in seconds.
+
+**What ships in v0.7.0:**
+
+- `app/runners/` module — step-kind runners dispatched from a registry:
+  - `llm_plan.py` — extracts parameters + pipeline steps from user prompt via LLM
+  - `geometry_build.py` — generates and executes Blender Python via LLM + blender_runner
+  - `render_runner.py` — triggers Blender render, saves PNG to ArchHub/renders/
+  - `image_process.py` — PIL post-processing (brightness, contrast, saturation, warmth)
+- `app/session_runner.py` — orchestrates step chains:
+  - `run_from_prompt()` — full pipeline from user message
+  - `rerun_dirty()` — re-runs from first DIRTY step after parameter edit
+- `app/chat_window.py` — extended:
+  - `_SessionWorker` QThread drives session_runner on background thread
+  - `_on_session_event` streams progress + images into the conversation
+  - `_on_parameter_edited` debounces slider edits → triggers rerun_dirty
+  - `_run_workflow_by_id` completed (was cut off in v0.6)
+- `payload/blender/archhub_mcp/__init__.py` — full HTTP server:
+  - /ping, /info, /execute, /render endpoints
+  - bpy main-thread marshaling via bpy.app.timers.register
+  - Background server thread, clean lifecycle (register/unregister)
+
+**What's next (v0.8):**
+- Image paste input (sketch → parameters)
+- Meta-connector: auto-generate the Blender addon via LLM if missing
+- Connector panel "generate addon" button
+- Session serialization (save/load parametric sessions as files)

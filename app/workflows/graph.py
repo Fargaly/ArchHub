@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -137,8 +137,14 @@ class Workflow:
     triggers: list[Trigger] = field(default_factory=list)
     inputs: list[Port] = field(default_factory=list)     # workflow-level inputs
     outputs: list[Port] = field(default_factory=list)    # workflow-level outputs
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # Skill metadata. When `intent` is non-empty, the workflow is discoverable
+    # as a Skill: the matcher can pick it for a user prompt, the chat can
+    # propose it, and the library shows it under the Skills tab.
+    # Empty intent = plain workflow (manual run only).
+    metadata: dict = field(default_factory=dict)
 
     # ---- factory helpers ----
     @staticmethod
@@ -149,12 +155,12 @@ class Workflow:
     # ---- mutation -----------
     def add_node(self, node: Node) -> Node:
         self.nodes.append(node)
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
         return node
 
     def add_edge(self, edge: Edge) -> Edge:
         self.edges.append(edge)
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
         return edge
 
     def get_node(self, node_id: str) -> Optional[Node]:
@@ -176,6 +182,7 @@ class Workflow:
             "triggers": [t.to_dict() for t in self.triggers],
             "inputs":   [p.to_dict() for p in self.inputs],
             "outputs":  [p.to_dict() for p in self.outputs],
+            "metadata": self.metadata,
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
@@ -193,8 +200,9 @@ class Workflow:
             triggers=[Trigger.from_dict(t) for t in d.get("triggers", [])],
             inputs=[Port.from_dict(p) for p in d.get("inputs", [])],
             outputs=[Port.from_dict(p) for p in d.get("outputs", [])],
-            created_at=d.get("created_at", datetime.utcnow().isoformat()),
-            updated_at=d.get("updated_at", datetime.utcnow().isoformat()),
+            metadata=d.get("metadata", {}) or {},
+            created_at=d.get("created_at", datetime.now(timezone.utc).isoformat()),
+            updated_at=d.get("updated_at", datetime.now(timezone.utc).isoformat()),
         )
 
     @staticmethod

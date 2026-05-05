@@ -258,6 +258,16 @@ class ToolEngine:
                         "parameters": t["input_schema"],
                     },
                 })
+            elif provider == "ollama":
+                # Ollama uses OpenAI-compatible function-calling format
+                out.append({
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t["description"],
+                        "parameters": t["input_schema"],
+                    },
+                })
             elif provider == "google":
                 # Gemini has its own format — not used by stub
                 out.append({"name": t["name"], "description": t["description"]})

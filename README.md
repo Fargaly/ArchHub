@@ -14,6 +14,11 @@ routes the work to whatever combination of tools is needed.
 - **Chat with an LLM that can drive your tools.** Type "list all walls in the
   active Revit project" — ArchHub generates the C# code, executes it live in
   Revit, returns the result.
+- **Skills — reusable shortcuts captured from chat.** When a conversation
+  produces a useful result, type `/skill save` to turn it into a Skill that
+  the chat can find next time. ArchHub ships with starter Skills for
+  dimensioning walls, tagging rooms, and pushing to Speckle. See
+  [docs/SKILLS.md](docs/SKILLS.md).
 - **Multi-LLM council with auto-routing.** Modeling tasks → Claude. Quick
   greetings → Haiku. Complex reasoning → Opus. Multimodal → GPT-4o. The user
   can override manually in the dropdown.
@@ -23,9 +28,6 @@ routes the work to whatever combination of tools is needed.
 - **Speckle as the data spine.** Browse projects, fetch model versions,
   push/pull geometry. Use it to move a model from Revit to Blender to 3ds Max
   with no manual exports.
-- **Agents (extensible).** DimensionsAgent, AnnotationsAgent, ParametersAgent,
-  DataMappingAgent. Drop a Python file in `app/agents/` and it appears as a
-  slash command.
 
 ## What's bundled in the installer
 
@@ -112,7 +114,8 @@ ArchHub/
 │   └── build.bat               End-to-end .exe build
 ├── app/                        ArchHub Python source
 │   ├── main.py                 Entry point
-│   ├── chat_window.py          Main chat UI
+│   ├── chat_window.py          Main chat UI + slash commands
+│   ├── skills_panel.py         Skills library UI (cards + workflow editor)
 │   ├── connector_panel.py      Connector toggle dialog
 │   ├── settings_dialog.py      API keys management
 │   ├── llm_router.py           Multi-LLM routing brain
@@ -128,10 +131,19 @@ ArchHub/
 │   ├── connectors/             Per-family activate/deactivate
 │   │   ├── __init__.py
 │   │   └── registry.py
-│   ├── agents/                 Pluggable agents
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   └── dimensions_agent.py
+│   ├── workflows/              Graph engine — nodes, executor, library
+│   │   ├── graph.py
+│   │   ├── executor.py
+│   │   ├── library.py
+│   │   └── nodes/              io_data, llm, control, tools
+│   ├── skills/                 Skill metadata + matcher + capture
+│   │   ├── metadata.py
+│   │   ├── library.py
+│   │   ├── matcher.py
+│   │   ├── capture.py
+│   │   ├── usage.py
+│   │   └── seeds.py            Starter Skills shipped with ArchHub
+│   ├── agents/                 Legacy (pre-Skills); kept for back-compat
 │   ├── tray.py                 System tray
 │   ├── theme.qss               Dark Qt stylesheet
 │   ├── requirements.txt

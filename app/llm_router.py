@@ -29,14 +29,27 @@ ROUTE_AUTO = "auto"
 
 # (model_id, label-shown-in-dropdown). model_id is "<provider>:<api_model_name>".
 KNOWN_MODELS: list[tuple[str, str]] = [
-    ("anthropic:claude-opus-4-7",       "Claude Opus 4.7 — best reasoning"),
-    ("anthropic:claude-opus-4-6",       "Claude Opus 4.6 — strong & balanced"),
-    ("anthropic:claude-sonnet-4-6",     "Claude Sonnet 4.6 — balanced"),
+    ("anthropic:claude-opus-4-7",           "Claude Opus 4.7 — best reasoning"),
+    ("anthropic:claude-opus-4-6",           "Claude Opus 4.6 — strong & balanced"),
+    ("anthropic:claude-sonnet-4-6",         "Claude Sonnet 4.6 — balanced"),
     ("anthropic:claude-haiku-4-5-20251001", "Claude Haiku 4.5 — fast"),
-    ("openai:gpt-4o",                   "GPT-4o — multimodal"),
-    ("openai:gpt-4o-mini",              "GPT-4o mini — fast"),
-    ("google:gemini-1.5-pro",           "Gemini 1.5 Pro"),
+    ("openai:gpt-4o",                       "GPT-4o — multimodal"),
+    ("openai:gpt-4o-mini",                  "GPT-4o mini — fast"),
+    ("google:gemini-1.5-pro",               "Gemini 1.5 Pro"),
+    ("google:gemini-2.0-flash",             "Gemini 2.0 Flash — fast"),
 ]
+
+
+def ollama_models() -> list[tuple[str, str]]:
+    """Return (model_id, label) pairs for every model pulled in Ollama."""
+    try:
+        from llm_providers.ollama_client import list_local_models
+        return [
+            (f"ollama:{name}", f"{name} — local (Ollama)")
+            for name in list_local_models()
+        ]
+    except Exception:
+        return []
 
 
 @dataclass
@@ -56,14 +69,42 @@ class LLMRouter:
     # ---- credentials ------------------------------------------------------
 
     def has_credentials(self) -> bool:
-        return bool(list_keys())
+        if list_keys():
+            return True
+        # Ollama needs no key
+        try:
+            from llm_providers.ollama_client import list_local_models
+            if list_local_models():
+                return True
+        except Exception:
+            pass
+        return False
 
     def configured_providers(self) -> list[str]:
-        names = list_keys()
-        return sorted({n for n in names})
+        providers = set(list_keys())
+        # Add env-var detected providers
+        import os
+        env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
+                   "google": "GOOGLE_API_KEY"}
+        for p, env in env_map.items():
+            if os.environ.get(env):
+                providers.add(p)
+        # Ollama if running
+        try:
+            from llm_providers.ollama_client import list_local_models
+            if list_local_models():
+                providers.add("ollama")
+        except Exception:
+            pass
+        return sorted(providers)
 
     def _get_client(self, provider: str):
         if provider in self._clients:
+            return self._clients[provider]
+        # Ollama runs locally — no API key needed
+        if provider == "ollama":
+            from llm_providers.ollama_client import OllamaClient
+            self._clients[provider] = OllamaClient()
             return self._clients[provider]
         api_key = load_api_key(provider)
         if not api_key:
@@ -78,6 +119,9 @@ class LLMRouter:
         elif provider == "google":
             from llm_providers.google_client import GoogleClient
             self._clients[provider] = GoogleClient(api_key)
+        elif provider == "ollama":
+            from llm_providers.ollama_client import OllamaClient
+            self._clients[provider] = OllamaClient()
         else:
             raise RuntimeError(f"Unknown provider: {provider}")
         return self._clients[provider]
@@ -133,8 +177,16 @@ class LLMRouter:
             return "openai", "gpt-4o", "auto: default → GPT-4o"
         if "google" in configured:
             return "google", "gemini-1.5-pro", "auto: default → Gemini 1.5 Pro"
+        if "ollama" in configured:
+            try:
+                from llm_providers.ollama_client import list_local_models
+                models = list_local_models()
+                if models:
+                    return "ollama", models[0], f"auto: local Ollama → {models[0]}"
+            except Exception:
+                pass
 
-        raise RuntimeError("No LLM API keys configured. Open Settings to add one.")
+        raise RuntimeError("No LLM configured. Add an API key in Settings or start Ollama.")
 
     # ---- complete (tool-use loop) -----------------------------------------
 
@@ -142,9 +194,11 @@ class LLMRouter:
         self,
         history: list[dict],
         model: str,
-        on_chunk: Callable[[str], None],
-        on_tool_invocation: Callable[[ToolInvocation], None],
+        on_chunk: Optional[Callable[[str], None]] = None,
+        on_tool_invocation: Optional[Callable[[ToolInvocation], None]] = None,
     ) -> LLMResponse:
+        on_chunk = on_chunk or (lambda _: None)
+        on_tool_invocation = on_tool_invocation or (lambda _: None)
         provider, model_name, note = self._route(history, model)
         client = self._get_client(provider)
 
@@ -164,30 +218,36 @@ class LLMRouter:
                 text_buf.append(piece)
                 on_chunk(piece)
 
-            stream = client.stream_completion(
-                model=model_name,
-                system=system_prompt,
-                messages=messages,
-                tools=tool_schemas,
-                on_chunk=chunk_handler,
-            )
+            # Ollama uses a different client interface
+            if provider == "ollama":
+                assistant_text, raw_tool_calls = client.complete(
+                    system=system_prompt,
+                    history=messages,
+                    model=model_name,
+                    tools=tool_schemas,
+                    on_chunk=chunk_handler,
+                )
+                full_text += assistant_text
+                tool_calls = raw_tool_calls  # already [{id, name, input}]
+                if not tool_calls:
+                    break
+            else:
+                stream = client.stream_completion(
+                    model=model_name,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tool_schemas,
+                    on_chunk=chunk_handler,
+                )
+                assistant_text = stream.get("text", "")
+                full_text += assistant_text
 
-            # `stream` returns either:
-            #   {"type": "final", "text": "..."}
-            #   {"type": "tool_use", "id": "...", "name": "...", "input": {...}, "text": "..."}
-            #
-            # If tool_use, execute and append both the assistant tool_use and tool_result
-            # to messages, then loop again.
+                if stream["type"] == "final":
+                    break
 
-            assistant_text = stream.get("text", "")
-            full_text += assistant_text
-
-            if stream["type"] == "final":
-                break
-
-            tool_calls = stream.get("tool_calls") or []
-            if not tool_calls:
-                break
+                tool_calls = stream.get("tool_calls") or []
+                if not tool_calls:
+                    break
 
             # Append assistant message with tool calls (provider-shape preserved)
             messages.append({

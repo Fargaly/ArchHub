@@ -1,7 +1,7 @@
 """Connector panel — modal dialog showing toggles for each AEC tool."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QRectF, pyqtProperty
+from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QTimer
 from PyQt6.QtGui import QPainter, QColor, QBrush
 from PyQt6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
@@ -16,33 +16,49 @@ import auto_build
 class ToggleSwitch(QWidget):
     toggled = pyqtSignal(bool)
 
+    _ANIM_DURATION_MS = 140
+    _ANIM_INTERVAL_MS = 10
+
     def __init__(self, checked: bool = False, parent=None):
         super().__init__(parent)
         self._checked = checked
         self.setFixedSize(48, 26)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._knob_x = 24 if checked else 4
-        self._anim = QPropertyAnimation(self, b"_knob_x_property")
-        self._anim.setDuration(140)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-    def get_knob_x(self): return self._knob_x
-    def set_knob_x(self, v): self._knob_x = v; self.update()
-    _knob_x_property = pyqtProperty(float, fget=get_knob_x, fset=set_knob_x)
+        self._knob_x = 24.0 if checked else 4.0
+        self._anim_target = self._knob_x
+        self._anim_steps_left = 0
+        self._anim_step_size = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._ANIM_INTERVAL_MS)
+        self._timer.timeout.connect(self._anim_tick)
 
     def isChecked(self): return self._checked
 
     def setChecked(self, checked: bool, animate=True) -> None:
-        if checked == self._checked: return
+        if checked == self._checked:
+            return
         self._checked = checked
-        target = 24 if checked else 4
+        target = 24.0 if checked else 4.0
         if animate:
-            self._anim.stop()
-            self._anim.setStartValue(self._knob_x)
-            self._anim.setEndValue(target)
-            self._anim.start()
+            steps = max(1, self._ANIM_DURATION_MS // self._ANIM_INTERVAL_MS)
+            self._anim_target = target
+            self._anim_steps_left = steps
+            self._anim_step_size = (target - self._knob_x) / steps
+            self._timer.start()
         else:
-            self._knob_x = target; self.update()
+            self._timer.stop()
+            self._knob_x = target
+            self.update()
+
+    def _anim_tick(self) -> None:
+        if self._anim_steps_left <= 0:
+            self._timer.stop()
+            self._knob_x = self._anim_target
+            self.update()
+            return
+        self._knob_x += self._anim_step_size
+        self._anim_steps_left -= 1
+        self.update()
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton and self.isEnabled():
@@ -101,13 +117,16 @@ class _Row(QFrame):
         return ""
 
     def _on(self, on: bool) -> None:
+        print(f"[connector] toggle {self.entry.id} -> {on}", flush=True)
         self.on_toggle(self.entry, on)
+        print(f"[connector] post-toggle state={self.entry.state}", flush=True)
 
         # If activation failed because the binary isn't there, offer to build it
         # automatically — no terminal, no copy-paste. The connector panel calls
         # us back through on_toggle to retry after a successful build.
         if (on and self.entry.state == ConnectorState.ERROR
                 and self._is_missing_payload_error(self.entry.detail)):
+            print(f"[connector] offering auto-setup for {self.entry.id}", flush=True)
             if self._offer_auto_setup():
                 return  # user accepted; setup dialog will retry the toggle
 
@@ -136,7 +155,7 @@ class _Row(QFrame):
         msg = QMessageBox(self)
         msg.setWindowTitle("Set up this connector?")
         msg.setIcon(QMessageBox.Icon.Question)
-        msg.setText(f"<b>{self.entry.label}</b> needs a one-time setup.")
+        msg.setText(f"<b>{self.entry.display_name}</b> needs a one-time setup.")
         msg.setInformativeText(
             "ArchHub will configure it for you automatically — no terminal, "
             "no copy-paste. This usually takes under a minute.\n\n"
@@ -150,7 +169,7 @@ class _Row(QFrame):
 
         # Pick the right build function for the family
         build_fn = None
-        title = f"Setting up {self.entry.label}"
+        title = f"Setting up {self.entry.display_name}"
         if family == "revit":
             build_fn = lambda cb: auto_build.build_revit_connector(year, cb)
         elif family in ("autocad", "acad"):
@@ -178,9 +197,10 @@ class _Row(QFrame):
 
 
 class ConnectorPanel(QDialog):
-    def __init__(self, manager: ConnectorManager, parent=None):
+    def __init__(self, manager: ConnectorManager, parent=None, router=None):
         super().__init__(parent)
         self.manager = manager
+        self._router = router
         self.setWindowTitle("ArchHub — Connectors")
         self.setObjectName("panel")
         self.resize(520, 640)
@@ -235,5 +255,32 @@ class ConnectorPanel(QDialog):
     def _on_toggle(self, entry, on: bool) -> None:
         if on:
             self.manager.activate(entry.id)
+            # Post-activation: for Blender, kick off meta-connector generation
+            if entry.family == "blender" and entry.state.name == "ACTIVE":
+                self._trigger_blender_meta_gen(entry)
         else:
             self.manager.deactivate(entry.id)
+
+    def _trigger_blender_meta_gen(self, entry) -> None:
+        """Background: generate improved Blender addon via meta-connector if router available."""
+        # Only if we have a router (passed from ChatWindow). Skip silently if not.
+        router = getattr(self, "_router", None)
+        if router is None:
+            return
+        import threading
+        from connectors import blender_runner
+        version = blender_runner.detect_blender_version(
+            blender_runner.find_blender_executable() or __import__("pathlib").Path("/")
+        ) or "4.0"
+
+        def generate():
+            try:
+                from meta_connector import generate_blender_addon
+                result = generate_blender_addon(version, router)
+                if result and result.files:
+                    blender_runner.install_addon(result, blender_version=version)
+            except Exception:
+                pass   # silent — fallback addon still works
+
+        t = threading.Thread(target=generate, daemon=True)
+        t.start()

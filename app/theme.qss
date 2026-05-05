@@ -173,3 +173,38 @@ QComboBox QAbstractItemView {
     background-color: #232326; color: #f4efe8;
     border: 1px solid #353538; selection-background-color: #cc785c;
 }
+
+/* Skills panel — tabs */
+QTabWidget#skillsTabs::pane {
+    border: 1px solid #2a2a2c; border-radius: 10px;
+    margin-top: -1px; background-color: #1a1a1c;
+}
+QTabWidget#skillsTabs QTabBar::tab {
+    background-color: #1a1a1c; color: #8a8a8c;
+    padding: 8px 18px; margin-right: 2px;
+    border: 1px solid #2a2a2c; border-bottom: none;
+    border-top-left-radius: 8px; border-top-right-radius: 8px;
+}
+QTabWidget#skillsTabs QTabBar::tab:selected {
+    background-color: #232326; color: #f4efe8;
+}
+
+/* Skills panel — cards */
+QFrame#skillCard {
+    background-color: #232326; border: 1px solid #2a2a2c; border-radius: 12px;
+}
+QFrame#skillCard:hover { border-color: #3a3a3d; }
+QLabel#skillCardTitle    { font-size: 15px; font-weight: 600; color: #f4efe8; }
+QLabel#skillCardIntent   { color: #c9c4bc; font-size: 13px; }
+QLabel#skillCardTags     { color: #cc785c; font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; }
+QLabel#skillCardSection  { color: #8a8a8c; font-size: 11px; margin-top: 4px; }
+QLabel#skillCardExample  { color: #b9b3a9; font-size: 12px; font-style: italic; }
+QLabel#skillCardStats    { color: #8a8a8c; font-size: 11px; }
+QLabel#skillCardBadge    {
+    color: #8a8a8c; font-size: 10px; padding: 2px 8px;
+    border: 1px solid #353538; border-radius: 8px; background-color: #1a1a1c;
+}
+QLabel#panelEmptyState   { color: #8a8a8c; font-size: 13px; padding: 28px; text-align: center; }
+
+/* Skill suggestion in chat */
+QFrame#skillSuggestionRow { background: transparent; }

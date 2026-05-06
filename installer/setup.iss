@@ -148,26 +148,39 @@ end;
 
 procedure WriteLauncherFiles;
 var
-  AppDir, PyExe, LauncherPath, SilentPath, Contents: string;
+  AppDir, PyExe, PyWExe, LauncherPath, SilentPath, Contents: string;
 begin
   AppDir := ExpandConstant('{app}');
 
-  // Prefer 'python', fall back to 'py'
+  // Two binaries:
+  //   PyExe  — has a console attached; used only for `--diagnose` /
+  //            stderr-on-crash situations from the .cmd fallback.
+  //   PyWExe — windowed launcher, no console window. Default UX.
   if PythonOnPath then
-    PyExe := 'python'
+  begin
+    PyExe  := 'python';
+    PyWExe := 'pythonw';
+  end
   else
-    PyExe := 'py';
+  begin
+    // `py -3w` is the windowed equivalent of `py`.
+    PyExe  := 'py';
+    PyWExe := 'py -3w';
+  end;
 
+  // Main launcher: pythonw, no console window. `start "" /b` keeps
+  // .cmd from inheriting any console focus when double-clicked.
   LauncherPath := AppDir + '\ArchHub.cmd';
   Contents := '@echo off' + #13#10 +
               'cd /d "' + AppDir + '"' + #13#10 +
-              PyExe + ' "' + AppDir + '\app\main.py" %*' + #13#10;
+              'start "" /b ' + PyWExe + ' "' + AppDir + '\app\main.py" %*' + #13#10;
   SaveStringToFile(LauncherPath, Contents, False);
 
+  // Silent / startup launcher — same windowed binary, --silent flag.
   SilentPath := AppDir + '\ArchHub-silent.cmd';
   Contents := '@echo off' + #13#10 +
               'cd /d "' + AppDir + '"' + #13#10 +
-              'start /min "" ' + PyExe + ' "' + AppDir + '\app\main.py" --silent' + #13#10;
+              'start "" /b ' + PyWExe + ' "' + AppDir + '\app\main.py" --silent' + #13#10;
   SaveStringToFile(SilentPath, Contents, False);
 end;
 

@@ -293,6 +293,9 @@ class SettingsDialog(QDialog):
         self._speckle_toggle.toggled.connect(self._speckle_widget.setVisible)
         outer.addWidget(self._speckle_widget)
 
+        # ── Privacy / telemetry ────────────────────────────────────────────
+        outer.addWidget(self._build_privacy_row())
+
         outer.addStretch(1)
 
         # ── Buttons ────────────────────────────────────────────────────────
@@ -302,6 +305,141 @@ class SettingsDialog(QDialog):
         close_btn.clicked.connect(self._save_and_close)
         btn_row.addWidget(close_btn)
         outer.addLayout(btn_row)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def _build_privacy_row(self):
+        """Privacy + telemetry config: opt-in toggle + PostHog/Sentry keys.
+
+        All three knobs are independent — a user can opt IN to telemetry
+        while leaving Sentry off, or vice-versa. Empty key fields = that
+        provider stays silent (no events shipped) regardless of consent."""
+        import telemetry as _tel
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        row = QFrame(); row.setObjectName("providerRow")
+        v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(6)
+
+        title_row = QHBoxLayout(); title_row.setSpacing(8)
+        icon = QLabel("🛡"); icon.setObjectName("providerIcon")
+        title_row.addWidget(icon)
+        title = QLabel("Privacy & crash reports"); title.setObjectName("providerName")
+        title_row.addWidget(title); title_row.addStretch(1)
+        v.addLayout(title_row)
+
+        help_lbl = QLabel(
+            "Anonymous usage analytics + crash reports help us see what "
+            "breaks in real projects so we can fix it. <b>Off by default.</b> "
+            "Every event is PII-redacted at the source — paths, prompts, "
+            "API keys, project names never leave your machine."
+        )
+        help_lbl.setObjectName("settingsSubtitle"); help_lbl.setWordWrap(True)
+        v.addWidget(help_lbl)
+
+        self._telemetry_toggle = QCheckBox(
+            "Send anonymous usage events & crashes  (one toggle, both providers)"
+        )
+        self._telemetry_toggle.setObjectName("settingsSubtitle")
+        self._telemetry_toggle.setChecked(_tel.consent_state() is True)
+        v.addWidget(self._telemetry_toggle)
+
+        # PostHog row
+        ph_form = QFormLayout(); ph_form.setSpacing(6)
+        self._posthog_key = QLineEdit()
+        self._posthog_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._posthog_key.setPlaceholderText("phc_…")
+        self._posthog_key.setText(load_setting("telemetry_posthog_key") or "")
+        ph_form.addRow("PostHog project key", self._posthog_key)
+
+        self._posthog_host = QLineEdit()
+        self._posthog_host.setPlaceholderText("https://eu.posthog.com")
+        self._posthog_host.setText(load_setting("telemetry_posthog_host") or "")
+        ph_form.addRow("PostHog host", self._posthog_host)
+        v.addLayout(ph_form)
+
+        ph_btn_row = QHBoxLayout(); ph_btn_row.setSpacing(6)
+        ph_signup = QPushButton("Open PostHog signup")
+        ph_signup.setObjectName("ghostButton")
+        ph_signup.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://eu.posthog.com/signup"))
+        )
+        ph_btn_row.addWidget(ph_signup); ph_btn_row.addStretch(1)
+        v.addLayout(ph_btn_row)
+
+        # Sentry row
+        sn_form = QFormLayout(); sn_form.setSpacing(6)
+        self._sentry_dsn = QLineEdit()
+        self._sentry_dsn.setEchoMode(QLineEdit.EchoMode.Password)
+        self._sentry_dsn.setPlaceholderText("https://…@o…ingest.sentry.io/…")
+        self._sentry_dsn.setText(load_setting("sentry_dsn") or "")
+        sn_form.addRow("Sentry DSN", self._sentry_dsn)
+        v.addLayout(sn_form)
+
+        sn_btn_row = QHBoxLayout(); sn_btn_row.setSpacing(6)
+        sn_signup = QPushButton("Open Sentry signup")
+        sn_signup.setObjectName("ghostButton")
+        sn_signup.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://sentry.io/signup/"))
+        )
+        sn_btn_row.addWidget(sn_signup)
+
+        test_btn = QPushButton("Send test event")
+        test_btn.setObjectName("ghostButton")
+        test_btn.clicked.connect(self._on_test_telemetry)
+        sn_btn_row.addWidget(test_btn)
+        sn_btn_row.addStretch(1)
+        v.addLayout(sn_btn_row)
+
+        return row
+
+    def _on_test_telemetry(self) -> None:
+        """Save current Privacy fields, fire a marker event + a benign
+        captured exception, show one-line confirmation."""
+        from PyQt6.QtWidgets import QMessageBox
+        # Persist whatever the user typed.
+        save_setting("telemetry_consent", self._telemetry_toggle.isChecked())
+        save_setting("telemetry_posthog_key", (self._posthog_key.text() or "").strip())
+        save_setting("telemetry_posthog_host", (self._posthog_host.text() or "").strip())
+        save_setting("sentry_dsn", (self._sentry_dsn.text() or "").strip())
+
+        # Re-init Sentry now (was a no-op at app start if user was opted out).
+        try:
+            import sentry_init as _si
+            _si.init()
+        except Exception:
+            pass
+
+        # Drop the cached PostHog client so it picks up the new key.
+        try:
+            import telemetry as _tel
+            _tel._client = None
+            _tel.track_event("test_event_from_settings")
+            _tel.shutdown()
+        except Exception as ex:
+            QMessageBox.warning(self, "Test failed", f"Telemetry error: {ex}")
+            return
+        # Trigger a captured-but-handled Sentry exception.
+        sent_to_sentry = False
+        try:
+            import sentry_sdk
+            try:
+                raise RuntimeError("ArchHub Settings test event — please ignore")
+            except RuntimeError as ex:
+                sentry_sdk.capture_exception(ex)
+                sent_to_sentry = True
+        except Exception:
+            pass
+
+        msg = "Test event fired."
+        if not (self._posthog_key.text() or "").strip():
+            msg += "\n\n(PostHog key empty — event was a no-op. Paste a phc_… key first.)"
+        elif not self._telemetry_toggle.isChecked():
+            msg += "\n\n(Telemetry toggle is OFF — event was a no-op. Tick it first.)"
+        if not (self._sentry_dsn.text() or "").strip():
+            msg += "\nSentry DSN empty — no crash sent."
+        elif sent_to_sentry:
+            msg += "\nSentry capture sent."
+        QMessageBox.information(self, "Test event", msg)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -488,6 +626,25 @@ class SettingsDialog(QDialog):
         # "Show local Ollama models" toggle persisted so the next launch
         # respects the choice without nagging.
         save_setting("show_local_models", self._show_local.isChecked())
+
+        # Privacy block — opt-in toggle + 3 string fields. Empty fields
+        # are persisted as "" so the user can blank a key on uninstall.
+        save_setting("telemetry_consent", self._telemetry_toggle.isChecked())
+        save_setting("telemetry_posthog_key", (self._posthog_key.text() or "").strip())
+        save_setting("telemetry_posthog_host", (self._posthog_host.text() or "").strip())
+        save_setting("sentry_dsn", (self._sentry_dsn.text() or "").strip())
+        # Re-init Sentry + drop cached PostHog client so the changes
+        # take effect without an app restart.
+        try:
+            import sentry_init as _si
+            _si.init()
+        except Exception:
+            pass
+        try:
+            import telemetry as _tel
+            _tel._client = None
+        except Exception:
+            pass
 
         if hasattr(self.router, "_clients"):
             self.router._clients.clear()

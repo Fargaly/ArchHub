@@ -493,6 +493,26 @@ class MessageBubble(QFrame):
         self.tool_cards_container.setSpacing(6)
         v.addLayout(self.tool_cards_container)
 
+        # Feedback row (👍 👎) lives on every assistant bubble. User
+        # bubbles skip it. Set message_id / skill_id later via
+        # `attach_feedback_meta` when the run completes.
+        self._feedback_row = None
+        if role == "assistant":
+            try:
+                from feedback_widget import FeedbackRow
+                self._feedback_row = FeedbackRow(parent=self)
+                v.addWidget(self._feedback_row)
+            except Exception:
+                self._feedback_row = None
+
+    def attach_feedback_meta(self, *, message_id: str | None = None,
+                             skill_id: str | None = None) -> None:
+        """Backfill the feedback row's metadata after the run finishes."""
+        if self._feedback_row is None:
+            return
+        self._feedback_row._message_id = message_id
+        self._feedback_row._skill_id = skill_id
+
     def _stop_typing(self) -> None:
         if self._typing is not None:
             self._typing.stop()

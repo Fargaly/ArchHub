@@ -78,7 +78,19 @@ class Scheduler:
         return added
 
     def tick(self) -> dict:
-        """One scheduler cycle. Returns a small summary dict."""
+        """One scheduler cycle. Returns a small summary dict.
+
+        Also regenerates the Skill index used by Telemetry / Backlog
+        depts. Cheap (filesystem walk + 1 JSON write) so it's safe
+        to run every cycle.
+        """
+        try:
+            from skills.exporter import export_skills_index
+            export_skills_index()
+        except Exception:
+            # Index is best-effort; depts will fall back to whatever's
+            # on disk from the previous successful export.
+            pass
         added = self._enqueue_recurring()
         results = self.dispatcher.run_round()
         return {

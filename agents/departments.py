@@ -126,12 +126,118 @@ class OpsAgent(Agent):
 
 
 # ---------------------------------------------------------------------------
+class TelemetryAgent(Agent):
+    """Reads local usage + token-meter signals, emits a 'what hurts'
+    friction report.
+
+    Source data:
+      * `%LOCALAPPDATA%/ArchHub/skill_usage.json` — per-Skill runs,
+        successes, failures, retries, last_error.
+      * `agents/logs/token_meter.json` — per-dept run cost.
+      * `agents/logs/<dept>-<date>.log` — raw run history.
+
+    Output: Markdown report with
+      * top 5 failing Skills (highest failure-rate × runs)
+      * top 5 retried prompts (strong UX-pain signal)
+      * dept time burn vs weekly budget
+      * 3-bullet recommended sprint focus
+    """
+    name = "telemetry"
+    model = "llama3.1:latest"
+    timeout_seconds = 600
+    system_prompt = (
+        "You are the Telemetry department of ArchHub. You read raw usage "
+        "data and produce a short 'where it hurts' Markdown brief for the "
+        "Engineering department. Structure: '# Friction report — <date>' "
+        "→ '## Top failing Skills' (table) → '## Top retried prompts' "
+        "→ '## Department burn' → '## Sprint focus (3 bullets)'. Be "
+        "specific: include skill IDs, failure rates, last error excerpts. "
+        "Never invent numbers — if a section is empty, say 'no signal yet'."
+    )
+    readable_globs = [
+        "agents/logs/*.json", "agents/logs/*.log",
+        "agents/outputs/**/*.md",
+        "*.md",
+    ]
+
+
+class BacklogAgent(Agent):
+    """Consumer of TelemetryAgent's friction report. Drafts new YAML
+    task files for the Engineering / R&D / QA depts so the next
+    scheduler cycle picks them up automatically.
+
+    The dispatcher does NOT auto-apply BacklogAgent's output as new
+    task files — they land in `agents/outputs/backlog/<run-id>/` for
+    a human (founder) to review and `mv` into `agents/tasks/<dept>/`
+    if approved. Treat this as the inbox, not the queue.
+    """
+    name = "backlog"
+    model = "qwen2.5-coder:7b"
+    timeout_seconds = 900
+    system_prompt = (
+        "You are the Backlog department of ArchHub. You read the latest "
+        "friction report from agents/outputs/telemetry/ and produce ONE "
+        "or more task YAML files that the dispatcher could later run. "
+        "Each task block follows this exact JSON-in-YAML schema:\n"
+        "{\n"
+        "  \"id\": \"<dept-slug>-<short-title>-<random-8>\",\n"
+        "  \"department\": \"eng | qa | rnd | docs | ops\",\n"
+        "  \"title\": \"...\",\n"
+        "  \"instructions\": \"...\",\n"
+        "  \"priority\": 50,\n"
+        "  \"inputs\": { \"context_files\": [\"app/...py\", ...] }\n"
+        "}\n\n"
+        "Only emit tasks where the friction signal is concrete (failing "
+        "Skill ID, retry count, error text). Never invent. If no signal "
+        "is actionable, output 'NO_BACKLOG_THIS_CYCLE' and nothing else."
+    )
+    readable_globs = [
+        "agents/outputs/telemetry/**/*.md",
+        "app/**/*.py",
+        "*.md",
+    ]
+
+
+class WatcherAgent(Agent):
+    """Scans peer GitHub issues + Reddit threads for AEC pain points
+    that overlap with ArchHub's roadmap. Output: weekly Markdown
+    digest of the top 5 unmet user needs in the niche, with citation.
+
+    Uses no LLM API tokens — everything runs through local Ollama.
+    The agent is given pre-fetched peer-issue text via context_files
+    populated by an upstream fetcher script (added in a follow-up
+    PR; for now it works on whatever Markdown is in the repo).
+    """
+    name = "watcher"
+    model = "qwen2.5-coder:7b"
+    timeout_seconds = 1200
+    system_prompt = (
+        "You are the Market-Watcher department of ArchHub. You read pre-"
+        "fetched peer-repo issue text and Reddit thread snippets. "
+        "Produce a weekly digest titled '# Peer pain — <week>' with "
+        "EXACTLY this structure:\n"
+        "  ## Top unmet needs (max 5)\n"
+        "  ## What ArchHub already addresses\n"
+        "  ## What ArchHub should consider next\n"
+        "Never invent quotes. Cite the source line in brackets, e.g. "
+        "'[blender-mcp#123]'. If a peer is silent this week, say so."
+    )
+    readable_globs = [
+        "agents/outputs/watcher/**/*.md",
+        "STRATEGY.md", "VISION.md", "*.md",
+    ]
+
+
+# ---------------------------------------------------------------------------
 DEPARTMENTS: dict[str, type[Agent]] = {
     "docs": DocsAgent,
     "qa": QAAgent,
     "rnd": RnDAgent,
     "eng": EngAgent,
     "ops": OpsAgent,
+    "telemetry": TelemetryAgent,
+    "backlog": BacklogAgent,
+    "watcher": WatcherAgent,
 }
 
 

@@ -16,12 +16,19 @@
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <!-- Revit API references -->
+  <!-- Revit API references —
+       Two paths so the build works both in CI (no Revit installed)
+       and on a developer's box (HintPath wins when DLL exists).
+  -->
   <PropertyGroup>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
+    <RevitYear Condition="'$(RevitYear)' == ''">2025</RevitYear>
+    <UseLocalRevitApi Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</UseLocalRevitApi>
+    <UseLocalRevitApi Condition="'$(UseLocalRevitApi)' == ''">false</UseLocalRevitApi>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- Local install detected: reference DLLs from the host directly. -->
+  <ItemGroup Condition="'$(UseLocalRevitApi)' == 'true'">
     <Reference Include="RevitAPI">
       <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
       <Private>false</Private>
@@ -30,6 +37,16 @@
       <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- CI / clean machine: pull RevitAPI from NuGet. The community
+       Revit_All_Main_Versions_API_x64 package ships every year's
+       reference assemblies. Versioning matches RevitYear. -->
+  <ItemGroup Condition="'$(UseLocalRevitApi)' == 'false'">
+    <PackageReference Include="Revit_All_Main_Versions_API_x64"
+                      Version="$(RevitYear).0.0"
+                      ExcludeAssets="runtime"
+                      PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Reference assemblies for net48 — always present so NuGet restores them regardless of

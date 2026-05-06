@@ -15,9 +15,13 @@
 
   <PropertyGroup>
     <AcadInstallDir Condition="'$(AcadInstallDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</AcadInstallDir>
+    <AcadYear Condition="'$(AcadYear)' == ''">2025</AcadYear>
+    <UseLocalAcadApi Condition="Exists('$(AcadInstallDir)\acmgd.dll')">true</UseLocalAcadApi>
+    <UseLocalAcadApi Condition="'$(UseLocalAcadApi)' == ''">false</UseLocalAcadApi>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- Local AutoCAD install: reference its DLLs directly. -->
+  <ItemGroup Condition="'$(UseLocalAcadApi)' == 'true'">
     <Reference Include="acmgd">
       <HintPath>$(AcadInstallDir)\acmgd.dll</HintPath>
       <Private>false</Private>
@@ -30,6 +34,15 @@
       <HintPath>$(AcadInstallDir)\accoremgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- CI / clean machine: NuGet AutoCAD.NET package — Autodesk's
+       official redistribution of the managed AutoCAD API. -->
+  <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false'">
+    <PackageReference Include="AutoCAD.NET.Core"
+                      Version="$(AcadYear).0.0"
+                      ExcludeAssets="runtime"
+                      PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

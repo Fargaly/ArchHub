@@ -167,14 +167,35 @@ class _Row(QFrame):
         if msg.exec() != QMessageBox.StandardButton.Yes:
             return False
 
-        # Pick the right build function for the family
+        # Pick the right setup function for the family.
+        # Cloud-first: try to fetch a prebuilt MCP DLL bundle from the
+        # latest GitHub Release; only fall back to a local `dotnet
+        # build` if the fetch fails (no internet, private repo, etc.).
+        # The local-build path needs the .NET SDK and is the slow,
+        # error-prone path we used to lead with — it's now the safety
+        # net, not the default.
+        from mcp_fetcher import fetch_connector
+
+        def _cloud_then_local(builder):
+            def runner(cb):
+                fr = fetch_connector(family, year, on_progress=cb)
+                if fr.success:
+                    from auto_build import BuildResult
+                    return BuildResult(True, fr.detail, fr.files_written)
+                cb("Cloud fetch failed, falling back to local build", 10, fr.detail)
+                return builder(cb)
+            return runner
+
         build_fn = None
         title = f"Setting up {self.entry.display_name}"
         if family == "revit":
-            build_fn = lambda cb: auto_build.build_revit_connector(year, cb)
+            build_fn = _cloud_then_local(
+                lambda cb: auto_build.build_revit_connector(year, cb))
         elif family in ("autocad", "acad"):
-            build_fn = lambda cb: auto_build.build_acad_connector(year, cb)
+            build_fn = _cloud_then_local(
+                lambda cb: auto_build.build_acad_connector(year, cb))
         elif family in ("max", "3dsmax"):
+            # 3ds Max connector is a Python script, no compile needed.
             build_fn = lambda cb: auto_build.install_max_connector(year, cb)
         else:
             return False

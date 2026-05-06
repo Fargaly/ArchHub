@@ -50,6 +50,68 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow pyinstaller
 
+      # ── Build MCP connector DLLs in the cloud ─────────────────────
+      # CI builds Revit/AutoCAD MCP binaries against NuGet-supplied
+      # API references — no Autodesk install on the runner. Output
+      # goes into payload/<family>/<year>/ which the installer then
+      # bundles, AND is uploaded as a separate release asset so the
+      # already-installed app can fetch a fresh build without re-
+      # running the full Setup.
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build MCP connectors (cloud)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repoRoot = $PWD.Path
+          $payloadRoot = Join-Path $repoRoot 'payload'
+
+          $matrix = @(
+            @{ family='revit';   year='2023'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj' },
+            @{ family='revit';   year='2024'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj' },
+            @{ family='revit';   year='2025'; tf='net8.0-windows'; src='payload/sources/revit_mcp/RevitMCP.csproj' },
+            @{ family='autocad'; year='2025'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj' },
+            @{ family='autocad'; year='2026'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj' }
+          )
+
+          foreach ($m in $matrix) {
+            $out = Join-Path $payloadRoot "$($m.family)/$($m.year)"
+            New-Item -ItemType Directory -Force -Path $out | Out-Null
+            $yearProp = if ($m.family -eq 'revit') { "RevitYear=$($m.year)" } else { "AcadYear=$($m.year)" }
+            Write-Host "::group::Build $($m.family) $($m.year) ($($m.tf))"
+            dotnet restore $m.src "-p:TargetFramework=$($m.tf)" "-p:$yearProp"
+            if ($LASTEXITCODE -ne 0) { throw "Restore failed for $($m.family) $($m.year)" }
+            dotnet build $m.src -c Release --no-restore "-p:TargetFramework=$($m.tf)" "-p:$yearProp" -o $out
+            if ($LASTEXITCODE -ne 0) { throw "Build failed for $($m.family) $($m.year)" }
+            # Copy .addin manifest if it exists alongside the source.
+            $addin = Join-Path $repoRoot "payload/sources/revit_mcp/RevitMCP.addin"
+            if ($m.family -eq 'revit' -and (Test-Path $addin)) {
+              Copy-Item $addin $out
+            }
+            # Strip Roslyn locale resources we never use to slim the zip.
+            Get-ChildItem -Directory -Path $out |
+              Where-Object { $_.Name -in 'cs','de','es','fr','it','ja','ko','pl','pt-BR','ru','tr','zh-Hans','zh-Hant' } |
+              Remove-Item -Recurse -Force
+            # Drop debug symbols from the artifact too — saves ~3 MB each.
+            Get-ChildItem -Path $out -Filter '*.pdb' | Remove-Item -Force
+            Write-Host "::endgroup::"
+          }
+          Write-Host "Built MCP DLLs:"
+          Get-ChildItem -Recurse -Path $payloadRoot -Filter '*MCP.dll'
+
+      - name: Pack MCP binaries (release asset)
+        shell: pwsh
+        run: |
+          $zip = Join-Path 'dist' "ArchHub-MCP-Binaries.zip"
+          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
+          # Zip just the built DLLs, not the source tree.
+          Compress-Archive -Path 'payload/revit','payload/autocad' `
+                           -DestinationPath $zip -Force
+          Get-Item $zip | Select-Object FullName, Length
+
       - name: Regenerate ICO from PNG (in case it's stale)
         shell: pwsh
         run: |
@@ -119,11 +181,20 @@ jobs:
           path: ${{ steps.find.outputs.path }}
           if-no-files-found: error
 
+      - name: Upload MCP zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchHub-MCP-Binaries
+          path: dist/ArchHub-MCP-Binaries.zip
+          if-no-files-found: error
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.find.outputs.path }}
+          files: |
+            ${{ steps.find.outputs.path }}
+            dist/ArchHub-MCP-Binaries.zip
           name: ArchHub ${{ github.ref_name }}
           draft: false
           prerelease: false

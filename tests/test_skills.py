@@ -189,18 +189,15 @@ class TestSeeds:
         assert len(list_skills()) == 3
 
     def test_production_seeds_validate(self):
-        from skills.production_seeds import (
-            _seed_extract_mass, _seed_setup_revit_project, _seed_mass_to_walls,
-            _seed_place_openings, _seed_generate_sheets, _seed_sketch_to_production,
-        )
-        for factory in (_seed_extract_mass, _seed_setup_revit_project,
-                        _seed_mass_to_walls, _seed_place_openings,
-                        _seed_generate_sheets, _seed_sketch_to_production):
+        from skills.production_seeds import SEED_FACTORIES
+        # Walk every registered factory — adding a new seed automatically
+        # extends the validation surface, no need to edit this test.
+        for factory in SEED_FACTORIES:
             wf, meta = factory()
-            assert wf.validate() == []
-            assert meta.intent
-            assert meta.keywords
-            assert meta.tags
+            assert wf.validate() == [], f"{factory.__name__}: {wf.validate()}"
+            assert meta.intent, f"{factory.__name__}: missing intent"
+            assert meta.keywords, f"{factory.__name__}: missing keywords"
+            assert meta.tags, f"{factory.__name__}: missing tags"
 
     def test_sketch_to_production_chains_six_stages(self):
         from skills.production_seeds import _seed_sketch_to_production

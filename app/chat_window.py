@@ -1450,16 +1450,35 @@ class ChatWindow(QMainWindow):
         (r"(google\.[a-z.]+/maps|maps\.app\.goo\.gl|maps\.google\.com|@[\-\d.]+,[\-\d.]+,\d+\.?\d*z)",
          "seed-osm-context-mass-v1",
          "Looks like a map link — pulling OpenStreetMap buildings around it as Blender massing."),
+        # Plain "lat, lng" coordinates anywhere in the prompt (whitespace-anchored
+        # so we don't trip on "size 24.5, 54.3 mm"-style numbers).
+        (r"(?:^|\s)(-?\d{1,3}\.\d{3,7})\s*,\s*(-?\d{1,3}\.\d{3,7})(?=$|\s|[,.;])",
+         "seed-osm-context-mass-v1",
+         "Coordinates detected — pulling OpenStreetMap buildings around them as Blender massing."),
         (r"\.dwg\b",
          "seed-export-revit-to-dwg-v1",
          "AutoCAD .dwg detected — exporting from Revit."),
     ]
 
+    # Verbs that flip a .dwg-mention from "export FROM Revit"
+    # (default) to "audit / inventory the open AutoCAD drawing".
+    _DWG_AUDIT_VERBS = (
+        "audit", "inventory", "what's in", "whats in", "what is in",
+        "inside", "read", "scan", "check", "list layers", "list blocks",
+        "summary of", "summarise", "summarize", "hygiene", "issues in",
+    )
+
     def _detect_url_intent(self, prompt: str) -> Optional[str]:
         """Return the skill_id whose URL pattern matches this prompt, or None."""
         import re
+        lowered = prompt.lower()
         for pat, skill_id, _hint in self._URL_INTENT_HINTS:
             if re.search(pat, prompt, re.IGNORECASE):
+                # Disambiguate .dwg: audit verbs → inventory skill;
+                # everything else → export-from-Revit skill (default).
+                if skill_id == "seed-export-revit-to-dwg-v1":
+                    if any(v in lowered for v in self._DWG_AUDIT_VERBS):
+                        return "seed-acad-dwg-inventory-v1"
                 return skill_id
         return None
 

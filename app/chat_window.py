@@ -31,6 +31,7 @@ from tool_engine import ToolEngine, ToolInvocation
 from workflows import chat_to_workflow, save_workflow, load_workflow, get_workflow, WorkflowExecutor
 from workflows_panel import WorkflowsPanel
 from skills_panel import SkillsPanel
+from update_dialog import UpdateDialog
 import skills
 
 
@@ -360,6 +361,12 @@ class ChatWindow(QMainWindow):
         skills_btn.setToolTip("Browse and run saved Skills (and edit raw Workflows)")
         skills_btn.clicked.connect(self._open_skills_panel)
         h.addWidget(skills_btn)
+
+        update_btn = QPushButton("↻ Update")
+        update_btn.setObjectName("ghostButton")
+        update_btn.setToolTip("Check for the latest ArchHub version and apply it.")
+        update_btn.clicked.connect(self._open_update_dialog)
+        h.addWidget(update_btn)
 
         sessions_btn = QPushButton("📂 Sessions")
         sessions_btn.setObjectName("ghostButton")
@@ -1222,6 +1229,10 @@ class ChatWindow(QMainWindow):
         dlg = SkillsPanel(self.router, self.tools, self.manager, self)
         dlg.skill_run_requested.connect(self._run_skill_by_id)
         dlg.workflow_run_requested.connect(self._run_workflow_by_id)
+        dlg.exec()
+
+    def _open_update_dialog(self) -> None:
+        dlg = UpdateDialog(self)
         dlg.exec()
 
     def _share_skill_to_clipboard(self, query: str) -> None:

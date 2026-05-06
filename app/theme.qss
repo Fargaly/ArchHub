@@ -208,3 +208,7 @@ QLabel#panelEmptyState   { color: #8a8a8c; font-size: 13px; padding: 28px; text-
 
 /* Skill suggestion in chat */
 QFrame#skillSuggestionRow { background: transparent; }
+
+/* Update dialog */
+QLabel#updateStatus { font-size: 14px; font-weight: 600; color: #f4efe8; }
+QLabel#updateDetail { font-size: 12px; color: #b9b3a9; }

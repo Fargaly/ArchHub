@@ -1,0 +1,29 @@
+{
+  "name": "archhub-cloud-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Closed-source paid-tier proxy for ArchHub Studio firms. Routes OpenAI-shape chat completions to Anthropic / OpenAI / Google / OpenRouter using firm-managed keys.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy --prod",
+    "seed": "tsx scripts/seed-test-firm.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@vercel/node": "^3.2.0",
+    "openai": "^4.67.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vercel": "^37.0.0"
+  }
+}

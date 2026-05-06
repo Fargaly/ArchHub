@@ -72,8 +72,34 @@ def _path_for(workflow: Workflow, root: Path) -> Path:
     return _ensure(root) / f"{_slug(workflow.name)}__{workflow.id}{_FILE_SUFFIX}"
 
 
+# Lightweight in-memory cache. The chat hits list_skills() on every
+# matcher pass (every keystroke that triggers autocomplete) and on
+# every welcome-card render, so a fresh filesystem scan + JSON parse
+# per call adds 200-500 ms of UI lag with even a modest library.
+# The cache is invalidated explicitly by save_skill / delete_skill
+# below so changes propagate immediately, and on a 30-second
+# wall-clock TTL so any out-of-band edits (cloud-sync pull, manual
+# JSON edit) are picked up without a restart.
+import time as _time
+
+_LIST_CACHE: tuple[float, list[dict]] | None = None
+_LIST_TTL_SECONDS = 30.0
+
+
+def _invalidate_list_cache() -> None:
+    global _LIST_CACHE
+    _LIST_CACHE = None
+
+
 def list_skills() -> list[dict]:
     """Index every Skill across libraries. Lightweight: name + meta + path."""
+    global _LIST_CACHE
+    now = _time.time()
+    if _LIST_CACHE is not None:
+        ts, cached = _LIST_CACHE
+        if (now - ts) < _LIST_TTL_SECONDS:
+            return cached
+
     seen_ids: set[str] = set()
     out: list[dict] = []
     cloud = _cloud_skills_dir()
@@ -114,6 +140,7 @@ def list_skills() -> list[dict]:
                 "node_count": len(wf.nodes),
                 "updated_at": wf.updated_at,
             })
+    _LIST_CACHE = (now, out)
     return out
 
 
@@ -155,6 +182,7 @@ def save_skill(workflow: Workflow, meta: Optional[SkillMeta] = None) -> Path:
             args=(f"Save Skill: {workflow.name}",),
             daemon=True,
         ).start()
+    _invalidate_list_cache()
     return path
 
 
@@ -170,6 +198,7 @@ def delete_skill(skill_id: str) -> bool:
                     args=(f"Delete Skill: {item['name']}",),
                     daemon=True,
                 ).start()
+            _invalidate_list_cache()
             return True
     return False
 

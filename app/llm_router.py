@@ -327,12 +327,19 @@ class LLMRouter:
         system_prompt = self._build_system_prompt()
         tool_schemas = self.tools.tool_schemas_for(provider)
 
-        # Tool-use loop, max 12 iterations to prevent runaway
+        # Tool-use loop. The cap prevents runaway loops when a model
+        # gets stuck calling itself, but it also has to be high enough
+        # for legitimate multi-stage Skills like sketch-to-production
+        # (six stages, ~2 iterations each). Tier the cap by model
+        # quality — bigger models get more rope because they're less
+        # prone to runaway and more likely to need extra rounds for
+        # complex tool chains.
         all_invocations: list[ToolInvocation] = []
         full_text = ""
         messages = [m for m in history]    # working copy for tool round-tripping
 
-        for _iteration in range(12):
+        max_iters = self._max_iterations(model_name)
+        for _iteration in range(max_iters):
             text_buf = []
 
             def chunk_handler(piece: str) -> None:
@@ -409,6 +416,16 @@ class LLMRouter:
             tool_invocations=all_invocations,
             routing_note=note,
         )
+
+    @staticmethod
+    def _max_iterations(model_name: str) -> int:
+        """Per-model tool-use loop cap. Bigger models get more rope."""
+        m = (model_name or "").lower()
+        if "opus" in m:
+            return 32
+        if "sonnet" in m or "gpt-4o" in m or "claude-4" in m:
+            return 24
+        return 16
 
     def _build_system_prompt(self) -> str:
         active = [e for e in self.tools.manager.entries if e.state.name == "ACTIVE"]

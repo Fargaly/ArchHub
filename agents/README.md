@@ -83,11 +83,27 @@ If you decide later to auto-commit department outputs, build that as a
 **separate** tool that takes outputs and proposes a `auto/<dept>/<id>`
 branch + opens a draft PR. Never let an agent push to `main`.
 
-## Run on Windows startup
+## Running it 24/7
+
+Three options, in order of "I just want it on":
+
+**Easiest — hidden background process (no console window):**
+Double-click `Run-Departments-Hidden.vbs` at the repo root. Nothing
+visibly happens but the daemon is now running. Check `agents\logs\`
+to verify. Stop it with `Stop-Departments.bat` (only kills the
+`agents.run` python process, leaves your other python tools alone).
+
+**Always-on at login** — drop a shortcut to the .vbs into your
+Startup folder:
+```cmd
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+```
+
+**Most robust — Windows Task Scheduler:**
 
 ```cmd
 schtasks /create /tn "ArchHub Departments" ^
-  /tr "C:\Users\fargaly\00.ARCHUB\ArchHub\Run-Departments.bat" ^
+  /tr "wscript.exe \"C:\Users\fargaly\00.ARCHUB\ArchHub\Run-Departments-Hidden.vbs\"" ^
   /sc onlogon /rl HIGHEST /f
 ```
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>archhub</id>
+    <version>0.16.0</version>
+    <packageSourceUrl>https://github.com/Fargaly/ArchHub/tree/main/installer/chocolatey</packageSourceUrl>
+    <owners>Fargaly</owners>
+    <title>ArchHub</title>
+    <authors>Ahmed Fargaly</authors>
+    <projectUrl>https://github.com/Fargaly/ArchHub</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/Fargaly/ArchHub/main/app/assets/archhub.png</iconUrl>
+    <copyright>2026 Ahmed Fargaly</copyright>
+    <licenseUrl>https://github.com/Fargaly/ArchHub/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/Fargaly/ArchHub</projectSourceUrl>
+    <docsUrl>https://github.com/Fargaly/ArchHub#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/Fargaly/ArchHub/issues</bugTrackerUrl>
+    <tags>archhub aec architecture bim revit blender autocad speckle ai llm chat copilot parametric design</tags>
+    <summary>AI cockpit for architects — drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat.</summary>
+    <description><![CDATA[
+ArchHub is a free, open-source desktop app that lets architects drive
+Revit, Blender, AutoCAD, 3ds Max and Speckle from a single chat
+interface. Useful conversations save as Skills — copy-paste shareable
+JSON workflow graphs that run again on demand.
+
+## Features
+
+- Chat drives every tool natively (no copying code, no manual exports)
+- Vision input — paste a sketch, get a 3D mass
+- Skills you save and share (ComfyUI-style JSON)
+- Sketch → production pipeline (six chained LLM stages)
+- Multi-LLM, BYO key (OpenRouter OAuth, Anthropic, OpenAI, Google, local Ollama)
+- Cloud-synced Skills via your private GitHub
+- First-run wizard, in-app auto-update, click-only setup
+
+## License
+
+MIT. Source: https://github.com/Fargaly/ArchHub
+    ]]></description>
+    <releaseNotes>https://github.com/Fargaly/ArchHub/releases/tag/v0.16.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

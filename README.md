@@ -40,12 +40,38 @@ JSON your firm owns.**
 
 ### Install (Windows)
 
+**Easiest** — via package manager (no SmartScreen warning, signed by
+the package transport):
+
+```cmd
+winget install Fargaly.ArchHub
+```
+
+or
+
+```cmd
+scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json
+```
+
+or
+
+```cmd
+choco install archhub
+```
+
+**Direct download** — installer .exe, double-click to install:
+
 1. Download the latest `ArchHub-Setup-x.y.z.exe` from
    [Releases](https://github.com/Fargaly/ArchHub/releases/latest).
 2. Double-click the installer. Desktop icon, Start menu shortcut, and
    optional sign-in-on-startup are added.
 3. Launch ArchHub. The first-run wizard signs you in to a cloud LLM
    and shows what AEC tools are detected.
+
+The direct-download path will show a Windows SmartScreen warning until
+the SignPath OSS Authenticode application clears (in progress). The
+package-manager paths sidestep this entirely because the package
+manager itself is signed.
 
 ### Install (from source, any OS)
 

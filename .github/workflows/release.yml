@@ -128,3 +128,82 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+
+      # ── Package-manager manifests ───────────────────────────────────
+      # Compute SHA256 of the produced installer once and re-stamp every
+      # manifest that needs it. Each manager has a different injection
+      # path; the pattern below substitutes a known sentinel so we don't
+      # accidentally rewrite other zeros in the file.
+      - name: Stamp manifests with installer SHA256 + version
+        if: startsWith(github.ref, 'refs/tags/')
+        id: stamp
+        shell: pwsh
+        run: |
+          $exe = '${{ steps.find.outputs.path }}'
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLower()
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          Write-Host "SHA256: $hash"
+          Write-Host "Version: $version"
+          "sha256=$hash"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          # winget — substitute the placeholder hash + version
+          (Get-Content installer/winget/Fargaly.ArchHub.installer.yaml) `
+            -replace '0{64}', $hash `
+            -replace 'PackageVersion: 0\.16\.0', "PackageVersion: $version" `
+            -replace '/v0\.16\.0/ArchHub-Setup-0\.16\.0\.exe', "/v$version/ArchHub-Setup-$version.exe" `
+            | Set-Content installer/winget/Fargaly.ArchHub.installer.yaml
+
+          (Get-Content installer/winget/Fargaly.ArchHub.locale.en-US.yaml) `
+            -replace 'PackageVersion: 0\.16\.0', "PackageVersion: $version" `
+            -replace '/tag/v0\.16\.0', "/tag/v$version" `
+            | Set-Content installer/winget/Fargaly.ArchHub.locale.en-US.yaml
+
+          (Get-Content installer/winget/Fargaly.ArchHub.yaml) `
+            -replace 'PackageVersion: 0\.16\.0', "PackageVersion: $version" `
+            | Set-Content installer/winget/Fargaly.ArchHub.yaml
+
+          # scoop — version + URL
+          (Get-Content installer/scoop/archhub.json) `
+            -replace '"version": "0\.16\.0"', "`"version`": `"$version`"" `
+            -replace '/v0\.16\.0/ArchHub-Setup-0\.16\.0\.exe', "/v$version/ArchHub-Setup-$version.exe" `
+            | Set-Content installer/scoop/archhub.json
+
+          # chocolatey — version, URL, sha256
+          (Get-Content installer/chocolatey/archhub.nuspec) `
+            -replace '<version>0\.16\.0</version>', "<version>$version</version>" `
+            -replace 'tag/v0\.16\.0', "tag/v$version" `
+            | Set-Content installer/chocolatey/archhub.nuspec
+
+          (Get-Content installer/chocolatey/tools/chocolateyinstall.ps1) `
+            -replace "version     = '0\.16\.0'", "version     = '$version'" `
+            -replace '0{64}', $hash `
+            | Set-Content installer/chocolatey/tools/chocolateyinstall.ps1
+
+      - name: Upload manifests as release artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests
+          path: |
+            installer/winget/
+            installer/scoop/
+            installer/chocolatey/
+          if-no-files-found: warn
+
+      # winget submission — opens a PR to microsoft/winget-pkgs
+      # automatically if WINGET_TOKEN is configured. If not, the
+      # uploaded artifact above lets us submit manually post-release.
+      - name: Submit to winget-pkgs
+        if: startsWith(github.ref, 'refs/tags/') && env.WINGET_TOKEN != ''
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        shell: pwsh
+        run: |
+          # wingetcreate handles the PR-open dance: clone winget-pkgs,
+          # validate the manifest, push to a fork, open a PR upstream.
+          $url = "https://aka.ms/wingetcreate/latest"
+          Invoke-WebRequest $url -OutFile wingetcreate.exe
+          .\wingetcreate.exe submit installer/winget/ `
+            --token $env:WINGET_TOKEN `
+            --version ${{ steps.stamp.outputs.version }}

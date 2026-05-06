@@ -41,6 +41,11 @@ class DocsAgent(Agent):
 class QAAgent(Agent):
     name = "qa"
     model = "deepseek-r1:8b"
+    # Reasoning models do a long internal chain-of-thought before
+    # emitting the final answer. 600s is too tight for deepseek-r1
+    # on a typical workstation; 30 minutes is a safe ceiling for
+    # unattended runs and well under the 1-hour cycle lower bound.
+    timeout_seconds = 1800
     system_prompt = (
         "You are the QA department of ArchHub. You produce test plans, "
         "edge cases, and pytest-style test specs (NOT implementations) "

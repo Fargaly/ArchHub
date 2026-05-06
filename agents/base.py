@@ -42,6 +42,11 @@ class Agent:
     model: str = "llama3.1:latest"
     system_prompt: str = ""
 
+    # Per-agent generation timeout. Reasoning models (deepseek-r1) can
+    # blow past the 600s default; subclasses bump this to avoid
+    # spurious .failed marks from the daemon.
+    timeout_seconds: int = 600
+
     # Subclasses can override to seed self-recurring tasks at boot.
     seed_tasks: list[dict] = []
 
@@ -69,9 +74,10 @@ class Agent:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         prompt = self._build_prompt(task)
-        self._log(f"[{task.id}] {task.title} → starting model={self.model}")
+        self._log(f"[{task.id}] {task.title} → starting model={self.model} timeout={self.timeout_seconds}s")
         t0 = time.time()
-        completion = complete(self.model, self.system_prompt, prompt)
+        completion = complete(self.model, self.system_prompt, prompt,
+                              timeout=self.timeout_seconds)
         elapsed = int((time.time() - t0) * 1000)
 
         if completion.error:

@@ -20,11 +20,14 @@ from sign_in import DISPLAY_NAMES
 from sign_in_dialog import SignInDialog
 
 
-# LLM providers — env var is checked as a fallback when no saved key exists
+# LLM providers — env var is checked as a fallback when no saved key exists.
+# OpenRouter is at the top because it's the lowest-friction option:
+# real OAuth, one sign-in covers Claude / GPT / Gemini / Llama / Qwen.
 LLM_PROVIDERS = [
-    ("anthropic", "Anthropic", "ANTHROPIC_API_KEY"),
-    ("openai",    "OpenAI",    "OPENAI_API_KEY"),
-    ("google",    "Google",    "GOOGLE_API_KEY"),
+    ("openrouter", "OpenRouter (one OAuth, ~300 models)", ""),
+    ("anthropic",  "Anthropic",                            "ANTHROPIC_API_KEY"),
+    ("openai",     "OpenAI",                               "OPENAI_API_KEY"),
+    ("google",     "Google",                               "GOOGLE_API_KEY"),
 ]
 
 
@@ -134,6 +137,46 @@ class SettingsDialog(QDialog):
             self._rows.append(row)
             outer.addWidget(row)
 
+        # ── Firm relay (path B — OpenAI-compatible self-hosted endpoint) ───
+        relay_box = QFrame()
+        relay_box.setObjectName("providerRow")
+        rb = QVBoxLayout(relay_box)
+        rb.setContentsMargins(12, 10, 12, 10)
+        rb.setSpacing(6)
+
+        relay_title = QLabel("Firm relay  <i>(optional, OpenAI-compatible)</i>")
+        relay_title.setObjectName("providerName")
+        rb.addWidget(relay_title)
+
+        relay_help = QLabel(
+            "If your firm runs its own OpenAI-compatible gateway "
+            "(LiteLLM, AnyScale, vLLM, a custom proxy, etc.), point ArchHub "
+            "at it here. Architects use one shared firm token; provider keys "
+            "stay on the relay."
+        )
+        relay_help.setObjectName("settingsSubtitle")
+        relay_help.setWordWrap(True)
+        rb.addWidget(relay_help)
+
+        relay_form = QHBoxLayout()
+        relay_form.setSpacing(6)
+
+        self._relay_url = QLineEdit()
+        self._relay_url.setPlaceholderText("https://relay.yourfirm.com/v1")
+        self._relay_url.setText(load_setting("relay_base_url") or "")
+        relay_form.addWidget(self._relay_url, 2)
+
+        self._relay_token = QLineEdit()
+        self._relay_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self._relay_token.setPlaceholderText("Relay token")
+        existing_relay = load_api_key("relay")
+        if existing_relay:
+            self._relay_token.setText(existing_relay)
+        relay_form.addWidget(self._relay_token, 1)
+
+        rb.addLayout(relay_form)
+        outer.addWidget(relay_box)
+
         # ── Speckle (optional, collapsed by default) ───────────────────────
         self._speckle_toggle = QCheckBox("Use Speckle for cross-tool data sync  (optional)")
         self._speckle_toggle.setObjectName("settingsSubtitle")
@@ -229,6 +272,14 @@ class SettingsDialog(QDialog):
             srv = self._speckle_server.text().strip()
             if srv:
                 save_setting("speckle_server", srv)
+
+        # Firm relay (path B): URL + token are persisted on close.
+        relay_url = self._relay_url.text().strip()
+        relay_tok = self._relay_token.text().strip()
+        if relay_url:
+            save_setting("relay_base_url", relay_url)
+        if relay_tok:
+            save_api_key("relay", relay_tok)
 
         if hasattr(self.router, "_clients"):
             self.router._clients.clear()

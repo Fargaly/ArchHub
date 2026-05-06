@@ -48,23 +48,35 @@ _KEY_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
         re.compile(r"^AIza[A-Za-z0-9_\-]{30,60}$"),
         "AIza…",
     ),
+    "openrouter": (
+        # OpenRouter keys begin with "sk-or-" (followed by version + body).
+        re.compile(r"^sk-or-[A-Za-z0-9_\-]{20,}$"),
+        "sk-or-…",
+    ),
 }
 
 
-# Where to send the user to mint a key.
+# Where to send the user to mint a key (clipboard-watch fallback path).
 KEY_URLS: dict[str, str] = {
-    "anthropic": "https://console.anthropic.com/settings/keys",
-    "openai":    "https://platform.openai.com/api-keys",
-    "google":    "https://aistudio.google.com/app/apikey",
+    "anthropic":  "https://console.anthropic.com/settings/keys",
+    "openai":     "https://platform.openai.com/api-keys",
+    "google":     "https://aistudio.google.com/app/apikey",
+    "openrouter": "https://openrouter.ai/keys",
 }
 
 
 # Friendly display names per provider.
 DISPLAY_NAMES: dict[str, str] = {
-    "anthropic": "Anthropic",
-    "openai":    "OpenAI",
-    "google":    "Google",
+    "anthropic":  "Anthropic",
+    "openai":     "OpenAI",
+    "google":     "Google",
+    "openrouter": "OpenRouter",
 }
+
+
+# Providers that support real OAuth (PKCE) — handled by sign_in_dialog
+# differently from the clipboard-watch flow.
+OAUTH_PROVIDERS: set[str] = {"openrouter"}
 
 
 @dataclass

@@ -28,15 +28,25 @@ from tool_engine import ToolEngine, ToolInvocation
 ROUTE_AUTO = "auto"
 
 # (model_id, label-shown-in-dropdown). model_id is "<provider>:<api_model_name>".
+# OpenRouter rows let the user reach Anthropic / OpenAI / Google without
+# minting per-provider keys — one OAuth sign-in covers everything below
+# the openrouter prefix.
 KNOWN_MODELS: list[tuple[str, str]] = [
-    ("anthropic:claude-opus-4-7",           "Claude Opus 4.7 — best reasoning"),
-    ("anthropic:claude-opus-4-6",           "Claude Opus 4.6 — strong & balanced"),
-    ("anthropic:claude-sonnet-4-6",         "Claude Sonnet 4.6 — balanced"),
-    ("anthropic:claude-haiku-4-5-20251001", "Claude Haiku 4.5 — fast"),
-    ("openai:gpt-4o",                       "GPT-4o — multimodal"),
-    ("openai:gpt-4o-mini",                  "GPT-4o mini — fast"),
-    ("google:gemini-1.5-pro",               "Gemini 1.5 Pro"),
-    ("google:gemini-2.0-flash",             "Gemini 2.0 Flash — fast"),
+    ("anthropic:claude-opus-4-7",                       "Claude Opus 4.7 — best reasoning"),
+    ("anthropic:claude-opus-4-6",                       "Claude Opus 4.6 — strong & balanced"),
+    ("anthropic:claude-sonnet-4-6",                     "Claude Sonnet 4.6 — balanced"),
+    ("anthropic:claude-haiku-4-5-20251001",             "Claude Haiku 4.5 — fast"),
+    ("openai:gpt-4o",                                   "GPT-4o — multimodal"),
+    ("openai:gpt-4o-mini",                              "GPT-4o mini — fast"),
+    ("google:gemini-1.5-pro",                           "Gemini 1.5 Pro"),
+    ("google:gemini-2.0-flash",                         "Gemini 2.0 Flash — fast"),
+    ("openrouter:anthropic/claude-opus-4",              "OpenRouter · Claude Opus 4"),
+    ("openrouter:anthropic/claude-sonnet-4",            "OpenRouter · Claude Sonnet 4"),
+    ("openrouter:openai/gpt-4o",                        "OpenRouter · GPT-4o"),
+    ("openrouter:google/gemini-2.0-flash-exp",          "OpenRouter · Gemini 2.0 Flash"),
+    ("openrouter:meta-llama/llama-3.3-70b-instruct",    "OpenRouter · Llama 3.3 70B"),
+    ("openrouter:qwen/qwen-2.5-coder-32b-instruct",     "OpenRouter · Qwen 2.5 Coder 32B"),
+    ("relay:auto",                                      "Firm relay · auto"),
 ]
 
 
@@ -85,10 +95,18 @@ class LLMRouter:
         # Add env-var detected providers
         import os
         env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
-                   "google": "GOOGLE_API_KEY"}
+                   "google": "GOOGLE_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
         for p, env in env_map.items():
             if os.environ.get(env):
                 providers.add(p)
+        # Custom OpenAI-compatible relay (firm path) is "configured" when both
+        # the URL setting and the relay key are present.
+        try:
+            from secrets_store import load_setting, load_api_key
+            if load_setting("relay_base_url") and load_api_key("relay"):
+                providers.add("relay")
+        except Exception:
+            pass
         # Ollama if running
         try:
             from llm_providers.ollama_client import list_local_models
@@ -119,6 +137,22 @@ class LLMRouter:
         elif provider == "google":
             from llm_providers.google_client import GoogleClient
             self._clients[provider] = GoogleClient(api_key)
+        elif provider == "openrouter":
+            from llm_providers.openrouter_client import OpenRouterClient
+            self._clients[provider] = OpenRouterClient(api_key)
+        elif provider == "relay":
+            from llm_providers.openrouter_client import CustomOpenAICompatibleClient
+            from secrets_store import load_setting, load_api_key
+            base_url = load_setting("relay_base_url") or ""
+            relay_key = load_api_key("relay") or ""
+            if not base_url or not relay_key:
+                raise RuntimeError(
+                    "Custom relay is selected but base URL or token is missing. "
+                    "Open Settings to configure it."
+                )
+            self._clients[provider] = CustomOpenAICompatibleClient(
+                api_key=relay_key, base_url=base_url
+            )
         elif provider == "ollama":
             from llm_providers.ollama_client import OllamaClient
             self._clients[provider] = OllamaClient()
@@ -197,8 +231,12 @@ class LLMRouter:
         if any(s in text for s in modeling_signals):
             if "anthropic" in configured:
                 return "anthropic", "claude-opus-4-7", "auto: modeling task → Claude Opus 4.7"
+            if "openrouter" in configured:
+                return "openrouter", "anthropic/claude-opus-4", "auto: modeling task → OpenRouter · Claude Opus 4"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: modeling task → GPT-4o (Anthropic unavailable)"
+            if "relay" in configured:
+                return "relay", "auto", "auto: modeling task → firm relay"
             if "ollama" in configured:
                 m = self._pick_ollama_model("modeling")
                 if m:
@@ -207,8 +245,12 @@ class LLMRouter:
         if any(s in text for s in analysis_signals):
             if "anthropic" in configured:
                 return "anthropic", "claude-sonnet-4-6", "auto: analysis → Claude Sonnet 4.6"
+            if "openrouter" in configured:
+                return "openrouter", "anthropic/claude-sonnet-4", "auto: analysis → OpenRouter · Claude Sonnet 4"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: analysis → GPT-4o"
+            if "relay" in configured:
+                return "relay", "auto", "auto: analysis → firm relay"
             if "ollama" in configured:
                 m = self._pick_ollama_model("analysis")
                 if m:
@@ -217,6 +259,8 @@ class LLMRouter:
         if any(s in text for s in quick_signals) or len(text) < 24:
             if "anthropic" in configured:
                 return "anthropic", "claude-haiku-4-5-20251001", "auto: short → Claude Haiku"
+            if "openrouter" in configured:
+                return "openrouter", "google/gemini-2.0-flash-exp", "auto: short → OpenRouter · Gemini Flash"
             if "openai" in configured:
                 return "openai", "gpt-4o-mini", "auto: short → GPT-4o mini"
             if "ollama" in configured:
@@ -227,10 +271,14 @@ class LLMRouter:
         # Default
         if "anthropic" in configured:
             return "anthropic", "claude-sonnet-4-6", "auto: default → Claude Sonnet 4.6"
+        if "openrouter" in configured:
+            return "openrouter", "anthropic/claude-sonnet-4", "auto: default → OpenRouter · Claude Sonnet 4"
         if "openai" in configured:
             return "openai", "gpt-4o", "auto: default → GPT-4o"
         if "google" in configured:
             return "google", "gemini-1.5-pro", "auto: default → Gemini 1.5 Pro"
+        if "relay" in configured:
+            return "relay", "auto", "auto: default → firm relay"
         if "ollama" in configured:
             m = self._pick_ollama_model("default")
             if m:

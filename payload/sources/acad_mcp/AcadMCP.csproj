@@ -37,10 +37,16 @@
   </ItemGroup>
 
   <!-- CI / clean machine: NuGet AutoCAD.NET package — Autodesk's
-       official redistribution of the managed AutoCAD API. -->
+       official redistribution of the managed AutoCAD API.
+       Version numbering: ObjectARX major = AcadYear - 2000
+       (AutoCAD 2025 → 25.0.0, 2026 → 26.0.0). -->
+  <PropertyGroup Condition="'$(UseLocalAcadApi)' == 'false'">
+    <AcadObjectArxMajor>$([MSBuild]::Subtract($(AcadYear), 2000))</AcadObjectArxMajor>
+    <AcadPackageVersion Condition="'$(AcadPackageVersion)' == ''">$(AcadObjectArxMajor).0.0</AcadPackageVersion>
+  </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false'">
     <PackageReference Include="AutoCAD.NET.Core"
-                      Version="$(AcadYear).0.0"
+                      Version="$(AcadPackageVersion)"
                       ExcludeAssets="runtime"
                       PrivateAssets="all" />
   </ItemGroup>

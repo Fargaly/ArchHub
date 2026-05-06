@@ -210,7 +210,14 @@ class UpdateDialog(QDialog):
     def _on_apply_done(self, ok: bool, message: str) -> None:
         if not ok:
             self.status_line.setText("⚠️ Update failed.")
-            self.detail_line.setText(message)
+            # Wrap multiline git output in a fixed-width style for readability.
+            safe_msg = (message or "")
+            self.detail_line.setText(
+                f"<pre style='white-space:pre-wrap;font-size:11px;color:#c9c4bc;'>"
+                f"{safe_msg}</pre>"
+                f"<br><i>Tip: double-click <b>Update.bat</b> in the repo folder "
+                f"for a verbose log if this keeps happening.</i>"
+            )
             self.recheck_btn.setEnabled(True)
             self.action_btn.setEnabled(False)
             return

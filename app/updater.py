@@ -145,6 +145,8 @@ def apply_update() -> tuple[bool, str]:
     """Fast-forward the local branch to the remote tip.
 
     Returns (success, message). The caller should then call restart().
+    The message contains git's actual stderr/stdout on failure so the
+    user can see exactly why an update was refused.
     """
     status = check_for_updates()
     if status.error:
@@ -154,38 +156,95 @@ def apply_update() -> tuple[bool, str]:
     if status.ahead > 0:
         return False, (
             f"Cannot fast-forward: this checkout has {status.ahead} local "
-            f"commit(s) the remote doesn't. Push or stash them first."
+            f"commit(s) the remote doesn't.\n"
+            f"Open a terminal and run `git push` or `git reset --hard origin/{status.branch}` "
+            f"if you want to discard them."
         )
     if status.has_uncommitted:
         return False, (
             "Cannot update: the working tree has uncommitted changes. "
-            "Commit or stash them, then try again."
+            "Commit or discard them first.\n\n"
+            "If those changes are just line-ending warnings, run:\n"
+            "    git checkout -- .\n"
+            "Then try Update again."
         )
 
-    rc, out, err = _git("pull", "--ff-only", "--quiet")
+    # Use a verbose pull so any git error message reaches the user.
+    rc, out, err = _git("pull", "--ff-only", "origin", status.branch or "HEAD")
     if rc != 0:
-        return False, f"git pull failed: {err or out or 'unknown error'}"
+        return False, (
+            f"git pull failed (exit {rc}).\n\n"
+            f"git output:\n{out or '(empty)'}\n\n"
+            f"git error:\n{err or '(empty)'}"
+        )
 
-    # Re-read to confirm.
+    # Re-read to confirm we actually moved forward.
     after = check_for_updates()
+    if after.local_commit == status.local_commit:
+        return False, (
+            "git pull reported success but the local commit didn't change. "
+            "Run Update.bat from the repo folder to diagnose."
+        )
     return True, (
-        f"Updated to {after.local_commit} — {after.local_subject}"
+        f"Updated {status.local_commit} → {after.local_commit}\n"
+        f"{after.local_subject}"
     )
 
 
 def restart() -> None:
     """Relaunch ArchHub with the same Python interpreter and exit current
-    process. Caller is responsible for closing windows / saving state first."""
-    python = sys.executable
-    # Re-launch from the app entry point. We use Popen + os._exit so the
-    # parent terminates cleanly after the child has been spawned.
+    process. Caller is responsible for closing windows / saving state first.
+
+    On Windows we use pythonw.exe (no console window) when available so the
+    relaunched app behaves like a normal desktop app, with DETACHED_PROCESS
+    + CREATE_NEW_PROCESS_GROUP flags so the new instance survives this
+    process exiting and isn't tied to its console (if any).
+    """
+    python = _preferred_python_for_relaunch()
     main_py = REPO_ROOT / "app" / "main.py"
+
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+
     subprocess.Popen(
-        [python, str(main_py), *sys.argv[1:]],
+        [str(python), str(main_py), *sys.argv[1:]],
         cwd=str(REPO_ROOT),
-        # Detach from the parent so closing this process doesn't kill the new one.
-        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+        creationflags=creationflags,
         close_fds=True,
     )
     # Give the OS a beat to schedule the child before we vanish.
     os._exit(0)
+
+
+def _preferred_python_for_relaunch() -> Path:
+    """Prefer pythonw.exe on Windows so the relaunched app has no console
+    window. Falls back to whatever started the current process."""
+    current = Path(sys.executable)
+    if sys.platform != "win32":
+        return current
+    # python.exe → pythonw.exe lives next to it.
+    if current.name.lower() == "python.exe":
+        candidate = current.with_name("pythonw.exe")
+        if candidate.exists():
+            return candidate
+    return current
+
+
+def explain_state() -> str:
+    """Human-readable diagnostic for support requests. Safe to display."""
+    s = check_for_updates()
+    lines = [
+        f"Repo:    {s.repo_root}",
+        f"Branch:  {s.branch or '(none)'}",
+        f"Commit:  {s.local_commit or '(unknown)'}  {s.local_subject}",
+        f"Remote:  {s.remote_url or '(none)'}",
+        f"Ahead:   {s.ahead}",
+        f"Behind:  {s.behind}",
+        f"Dirty:   {s.has_uncommitted}",
+        f"Error:   {s.error or '(none)'}",
+    ]
+    return "\n".join(lines)

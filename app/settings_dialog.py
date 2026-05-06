@@ -178,19 +178,71 @@ class SettingsDialog(QDialog):
         outer.addWidget(relay_box)
 
         # ── Speckle (optional, collapsed by default) ───────────────────────
-        self._speckle_toggle = QCheckBox("Use Speckle for cross-tool data sync  (optional)")
+        from PyQt6.QtWidgets import QRadioButton, QButtonGroup
+
+        self._speckle_toggle = QCheckBox(
+            "Use Speckle for cross-tool data sync  (optional — keep off if you don't need it)"
+        )
         self._speckle_toggle.setObjectName("settingsSubtitle")
         speckle_enabled = bool(load_setting("speckle_enabled"))
         self._speckle_toggle.setChecked(speckle_enabled)
         outer.addWidget(self._speckle_toggle)
 
         self._speckle_widget = QWidget()
-        speckle_form = QFormLayout(self._speckle_widget)
-        speckle_form.setSpacing(8)
-        speckle_form.setContentsMargins(0, 4, 0, 0)
+        speckle_box = QVBoxLayout(self._speckle_widget)
+        speckle_box.setContentsMargins(0, 4, 0, 0)
+        speckle_box.setSpacing(6)
 
-        speckle_row = QHBoxLayout()
-        speckle_row.setSpacing(6)
+        # Server-ownership choice (Cloud vs Self-host) — click only.
+        owner_label = QLabel("<b>Where does your Speckle data live?</b>")
+        owner_label.setObjectName("settingsSubtitle")
+        speckle_box.addWidget(owner_label)
+
+        self._speckle_owner_group = QButtonGroup(self._speckle_widget)
+        self._sp_cloud = QRadioButton(
+            "Free Speckle cloud (app.speckle.systems) — no setup, you sign in"
+        )
+        self._sp_self = QRadioButton(
+            "Your firm's self-hosted Speckle (you own it; runs on your infra)"
+        )
+        self._speckle_owner_group.addButton(self._sp_cloud, 0)
+        self._speckle_owner_group.addButton(self._sp_self, 1)
+        speckle_box.addWidget(self._sp_cloud)
+        speckle_box.addWidget(self._sp_self)
+
+        # Pre-select based on current server setting.
+        current_server = (load_setting("speckle_server") or "").strip()
+        if current_server and "speckle.systems" not in current_server:
+            self._sp_self.setChecked(True)
+        else:
+            self._sp_cloud.setChecked(True)
+
+        self_host_box = QFrame(); self_host_box.setObjectName("providerRow")
+        sh = QFormLayout(self_host_box); sh.setContentsMargins(10, 8, 10, 8); sh.setSpacing(6)
+        self._speckle_server = QLineEdit()
+        self._speckle_server.setPlaceholderText("https://speckle.yourfirm.com")
+        if current_server and "speckle.systems" not in current_server:
+            self._speckle_server.setText(current_server)
+        sh.addRow("Self-hosted URL", self._speckle_server)
+        own_help = QLabel(
+            "Speckle is open-source (Apache-2.0). To run your own:<br>"
+            "<code>git clone https://github.com/specklesystems/speckle-server &amp;&amp; "
+            "docker compose up -d</code><br>"
+            "Then point ArchHub at <code>https://speckle.yourfirm.com</code>. "
+            "Architects sign in to your instance instead of the public cloud."
+        )
+        own_help.setObjectName("settingsSubtitle"); own_help.setWordWrap(True)
+        sh.addRow("", own_help)
+        speckle_box.addWidget(self_host_box)
+        self_host_box.setVisible(self._sp_self.isChecked())
+        self._sp_self.toggled.connect(self_host_box.setVisible)
+
+        # Token (still required — Speckle has no desktop-app OAuth).
+        token_label = QLabel("<b>Personal Access Token</b>")
+        token_label.setObjectName("settingsSubtitle")
+        speckle_box.addWidget(token_label)
+
+        token_row = QHBoxLayout(); token_row.setSpacing(6)
         self._speckle_field = QLineEdit()
         self._speckle_field.setEchoMode(QLineEdit.EchoMode.Password)
         existing_tok = load_api_key("speckle")
@@ -198,10 +250,9 @@ class SettingsDialog(QDialog):
             self._speckle_field.setText(existing_tok)
         else:
             self._speckle_field.setPlaceholderText(
-                "Speckle PAT (no OAuth available — paste from your Speckle profile)"
+                "Paste a Speckle PAT (Speckle has no OAuth for desktop apps)"
             )
-        speckle_row.addWidget(self._speckle_field, 1)
-
+        token_row.addWidget(self._speckle_field, 1)
         sp_show = QPushButton("👁"); sp_show.setFixedWidth(34); sp_show.setObjectName("ghostButton")
         sp_show.setCheckable(True)
         sp_show.toggled.connect(
@@ -209,25 +260,12 @@ class SettingsDialog(QDialog):
                 QLineEdit.EchoMode.Normal if c else QLineEdit.EchoMode.Password
             )
         )
-        speckle_row.addWidget(sp_show)
+        token_row.addWidget(sp_show)
         sp_clear = QPushButton("Clear"); sp_clear.setObjectName("ghostButton")
         sp_clear.clicked.connect(self._clear_speckle)
-        speckle_row.addWidget(sp_clear)
-        sp_tok_wrap = QWidget(); sp_tok_wrap.setLayout(speckle_row)
-        speckle_form.addRow("Personal Access Token", sp_tok_wrap)
-
-        self._speckle_server = QLineEdit()
-        self._speckle_server.setPlaceholderText("https://app.speckle.systems")
-        self._speckle_server.setText(load_setting("speckle_server") or "")
-        speckle_form.addRow("Speckle server", self._speckle_server)
-
-        note = QLabel(
-            "Speckle is open-source — you can self-host it or use the free cloud. "
-            "It does not currently offer OAuth for desktop apps, so a Personal "
-            "Access Token from your Speckle profile is required."
-        )
-        note.setObjectName("settingsSubtitle"); note.setWordWrap(True)
-        speckle_form.addRow("", note)
+        token_row.addWidget(sp_clear)
+        token_wrap = QWidget(); token_wrap.setLayout(token_row)
+        speckle_box.addWidget(token_wrap)
 
         self._speckle_widget.setVisible(speckle_enabled)
         self._speckle_toggle.toggled.connect(self._speckle_widget.setVisible)
@@ -272,6 +310,15 @@ class SettingsDialog(QDialog):
             srv = self._speckle_server.text().strip()
             if srv:
                 save_setting("speckle_server", srv)
+
+        # Speckle server based on cloud/self-host radio choice
+        if speckle_on:
+            if self._sp_self.isChecked():
+                srv = self._speckle_server.text().strip()
+                if srv:
+                    save_setting("speckle_server", srv)
+            else:
+                save_setting("speckle_server", "https://app.speckle.systems")
 
         # Firm relay (path B): URL + token are persisted on close.
         relay_url = self._relay_url.text().strip()

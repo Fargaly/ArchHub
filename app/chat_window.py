@@ -357,11 +357,11 @@ class ChatWindow(QMainWindow):
         skills_btn.clicked.connect(self._open_skills_panel)
         h.addWidget(skills_btn)
 
-        update_btn = QPushButton("↻ Update")
-        update_btn.setObjectName("ghostButton")
-        update_btn.setToolTip("Check for the latest ArchHub version and apply it.")
-        update_btn.clicked.connect(self._open_update_dialog)
-        h.addWidget(update_btn)
+        self.update_btn = QPushButton(self._update_button_label())
+        self.update_btn.setObjectName("ghostButton")
+        self.update_btn.setToolTip(self._update_button_tooltip())
+        self.update_btn.clicked.connect(self._open_update_dialog)
+        h.addWidget(self.update_btn)
 
         sessions_btn = QPushButton("📂 Sessions")
         sessions_btn.setObjectName("ghostButton")
@@ -1314,7 +1314,13 @@ class ChatWindow(QMainWindow):
         thread.start()
 
     def _on_silent_update_check_done(self, status) -> None:
-        if status is None or status.error or not status.has_updates:
+        if status is None or status.error:
+            return
+        # Refresh the visible version badge regardless.
+        if hasattr(self, "update_btn"):
+            self.update_btn.setText(self._update_button_label(status))
+            self.update_btn.setToolTip(self._update_button_tooltip(status))
+        if not status.has_updates:
             return
         # Show a quiet line in the status bar.
         msg = (f"✨ {status.behind} update"
@@ -1324,6 +1330,37 @@ class ChatWindow(QMainWindow):
             self.status_left.setText(msg)
         except Exception:
             pass
+
+    def _update_button_label(self, status=None) -> str:
+        """Header button label with current commit suffix so the user can
+        always see at a glance which version they're running."""
+        if status is None:
+            try:
+                import updater
+                status = updater.check_for_updates()
+            except Exception:
+                return "↻ Update"
+        commit = (status.local_commit or "")[:7]
+        if not commit:
+            return "↻ Update"
+        if status.has_updates:
+            return f"↻ Update  ·  {commit} → new"
+        return f"↻ Update  ·  {commit}"
+
+    def _update_button_tooltip(self, status=None) -> str:
+        if status is None:
+            try:
+                import updater
+                status = updater.check_for_updates()
+            except Exception:
+                return "Check for and apply the latest ArchHub version."
+        if status.error:
+            return f"Update check failed: {status.error}"
+        if status.has_updates:
+            return (f"You're on {status.local_commit} ({status.branch}). "
+                    f"{status.behind} update(s) available on {status.remote_url}.")
+        return (f"You're on the latest {status.local_commit} ({status.branch}) "
+                f"from {status.remote_url}.")
 
     def _share_skill_to_clipboard(self, query: str) -> None:
         """`/skill share <id|name>` — copy that Skill's JSON to clipboard."""

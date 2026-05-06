@@ -1,6 +1,6 @@
 # ArchHub Quickstart — what to try first
 
-Five things that exercise the whole product. Each takes under a minute
+Six things that exercise the whole product. Each takes under a minute
 once your tools are open.
 
 ## Before you start
@@ -87,6 +87,31 @@ massing.
 
 You can also just paste lat/lng like `24.4539, 54.3773` and ArchHub
 parses it directly.
+
+## 6. Audit an AutoCAD drawing
+
+Open a .dwg in AutoCAD, then in chat:
+
+```
+Audit this drawing
+```
+
+Matcher proposes **Inventory the open AutoCAD drawing**. Click **Run**.
+ArchHub reads the drawing (read-only, no Transaction) and returns a
+Markdown audit:
+
+- every layer with entity count, freeze / lock / colour state,
+- every block with how many ModelSpace inserts it has,
+- every text style with font + height,
+- drawing units, extents, and total entity count,
+- a hygiene-issue list: blocks on layer 0, zero-width polylines,
+  frozen-but-used layers, etc.,
+- a 3-5 bullet "suggested clean-up" list you can paste straight
+  into a hand-over note.
+
+Verbs that trigger this Skill instead of the export one: *audit,
+inventory, what's in, inside, read, scan, hygiene, clean-up,
+list layers, list blocks*.
 
 ---
 

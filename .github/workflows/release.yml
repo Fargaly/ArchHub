@@ -65,7 +65,12 @@ jobs:
       - name: Build MCP connectors (cloud)
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
+          # Native-command stderr is fine here — dotnet writes NU1102
+          # messages to stderr but we drive control via $LASTEXITCODE,
+          # so don't let pwsh promote stderr lines into terminating
+          # errors.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
           $repoRoot = $PWD.Path
           $payloadRoot = Join-Path $repoRoot 'payload'
 
@@ -89,20 +94,24 @@ jobs:
             $yearProp = if ($m.family -eq 'revit') { "RevitYear=$($m.year)" } else { "AcadYear=$($m.year)" }
             Write-Host "::group::Build $($m.family) $($m.year) ($($m.tf))"
             dotnet restore $m.src "-p:TargetFramework=$($m.tf)" "-p:$yearProp"
-            if ($LASTEXITCODE -ne 0) {
+            $restoreExit = $LASTEXITCODE
+            if ($restoreExit -ne 0) {
               if ($m.optional) {
-                Write-Warning "Restore failed for $($m.family) $($m.year) — optional, skipping."
+                Write-Warning "Restore failed (exit $restoreExit) for $($m.family) $($m.year) — optional, skipping."
                 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+                $global:LASTEXITCODE = 0
                 Write-Host "::endgroup::"
                 continue
               }
               throw "Restore failed for $($m.family) $($m.year)"
             }
             dotnet build $m.src -c Release --no-restore "-p:TargetFramework=$($m.tf)" "-p:$yearProp" -o $out
-            if ($LASTEXITCODE -ne 0) {
+            $buildExit = $LASTEXITCODE
+            if ($buildExit -ne 0) {
               if ($m.optional) {
-                Write-Warning "Build failed for $($m.family) $($m.year) — optional, skipping."
+                Write-Warning "Build failed (exit $buildExit) for $($m.family) $($m.year) — optional, skipping."
                 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+                $global:LASTEXITCODE = 0
                 Write-Host "::endgroup::"
                 continue
               }

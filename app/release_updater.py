@@ -1,29 +1,41 @@
 """Release-based auto-update.
 
 For users who installed via Setup-ArchHub-x.y.z.exe (Inno Setup), updates
-arrive as new GitHub Releases attached to the public-or-private repo at
-github.com/Fargaly/ArchHub. This module:
+arrive as new GitHub Releases attached to a private repo at
+github.com/Fargaly/ArchHub.
 
-  - Reads the local version stamp (installer/version.json or VERSION)
-  - Asks GitHub Releases API for the latest release
-  - Compares versions
-  - When newer, downloads the .exe asset
-  - Runs it with `/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS` so it
-    upgrades in place without UI interruption
-  - Tells the launcher to relaunch ArchHub after the installer exits
+Why this is harder than it looks: the repo is **private**, so an
+unauthenticated GET against api.github.com/.../releases/latest returns
+404 (GitHub's anti-leaking behaviour). We cannot ship a long-lived
+token in the app. So this module talks to the GitHub CLI (`gh`) when it
+is installed, because the user already authenticated `gh` once during
+onboarding and `gh` keeps the token in their Windows Credential Manager
+for us.
 
-For development users (running from a git clone), `updater.py` (git pull
-based) remains the right path. The two coexist: in_git_checkout() picks
-which one applies.
+Fallback chain for fetching the latest release:
+
+  1. `gh release view --repo Fargaly/ArchHub --json ...`
+     Authenticated automatically through the user's stored `gh` token.
+  2. `gh api repos/Fargaly/ArchHub/releases/latest`
+     Same token; raw API. Used if `gh release view` shape changes.
+  3. urllib.request to api.github.com with an explicit Bearer token
+     pulled from `gh auth token`. Last-ditch path; works even if `gh`
+     isn't on PATH but the env has GH_TOKEN/GITHUB_TOKEN.
+
+For development users running from a git clone (`updater.in_git_checkout()`
+is True) the existing git-pull updater remains the right path. The two
+coexist; UpdateDialog picks the correct one.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,8 +44,10 @@ from typing import Optional
 
 REPO_OWNER = "Fargaly"
 REPO_NAME = "ArchHub"
+REPO_SLUG = f"{REPO_OWNER}/{REPO_NAME}"
 ASSET_PATTERN = re.compile(r"^ArchHub-Setup.*\.exe$", re.IGNORECASE)
 DOWNLOAD_TIMEOUT_SECONDS = 600
+GH_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -109,41 +123,122 @@ def _gh_token() -> str:
     return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
 
 
-def fetch_latest_release() -> ReleaseInfo:
-    """Hit the GitHub Releases API for the most recent published release."""
-    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "User-Agent": f"ArchHub/{installed_version() or 'dev'}",
-    })
+def _gh_on_path() -> bool:
+    return shutil.which("gh") is not None
+
+
+def _run_gh(*args: str) -> tuple[int, str, str]:
+    """Invoke gh with a forced GH_TOKEN derived from `gh auth token`.
+
+    On Windows, gh's keyring lookup can fail when launched from a non-
+    interactive subprocess due to Credential Manager scoping (see
+    cloud_sync for the same workaround). Fetching the token explicitly
+    once and re-injecting it via env makes downstream gh calls reliable
+    regardless of how ArchHub itself was launched.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     token = _gh_token()
     if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    info = ReleaseInfo()
+        env["GH_TOKEN"] = token
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as ex:
-        info.error = f"Could not reach GitHub Releases: {ex}"
-        return info
+        result = subprocess.run(
+            ["gh", *args], capture_output=True, text=True,
+            timeout=GH_TIMEOUT_SECONDS, env=env,
+        )
+        return result.returncode, (result.stdout or "").strip(), (result.stderr or "").strip()
+    except FileNotFoundError:
+        return 127, "", "gh is not installed or not on PATH"
+    except subprocess.TimeoutExpired:
+        return 124, "", f"gh timed out after {GH_TIMEOUT_SECONDS}s"
 
-    info.tag = data.get("tag_name", "") or ""
-    info.name = data.get("name", "") or info.tag
-    info.body = data.get("body", "") or ""
-    info.published_at = data.get("published_at", "") or ""
 
-    for asset in data.get("assets", []) or []:
-        name = asset.get("name", "") or ""
+def _populate_release_info(data: dict) -> ReleaseInfo:
+    """Map a GitHub release JSON object to a ReleaseInfo."""
+    info = ReleaseInfo()
+    info.tag = data.get("tagName") or data.get("tag_name") or ""
+    info.name = data.get("name") or info.tag
+    info.body = data.get("body") or ""
+    info.published_at = data.get("publishedAt") or data.get("published_at") or ""
+
+    for asset in (data.get("assets") or []):
+        name = asset.get("name") or ""
         if ASSET_PATTERN.match(name):
-            info.asset_url = asset.get("browser_download_url", "") or ""
-            info.asset_size = asset.get("size", 0) or 0
+            # Newer gh versions expose "url" for the API asset URL and
+            # "browser_download_url" / "browserDownloadUrl" for direct
+            # download. We accept any of them.
+            info.asset_url = (
+                asset.get("browser_download_url")
+                or asset.get("browserDownloadUrl")
+                or asset.get("url")
+                or ""
+            )
+            info.asset_size = asset.get("size") or 0
             break
-    if not info.asset_url:
+    if not info.asset_url and not info.error:
         info.error = (
             f"Latest release {info.tag} is missing a Setup-ArchHub-*.exe "
             f"asset. The CI build may have failed."
         )
     return info
+
+
+def fetch_latest_release() -> ReleaseInfo:
+    """Get the most-recent release. Tries gh first (handles private repos
+    cleanly), falls back to the raw API with a Bearer token."""
+
+    # ── Path 1: gh release view ────────────────────────────────────────
+    if _gh_on_path():
+        rc, out, err = _run_gh(
+            "release", "view", "--repo", REPO_SLUG,
+            "--json", "tagName,name,body,publishedAt,assets",
+        )
+        if rc == 0 and out:
+            try:
+                return _populate_release_info(json.loads(out))
+            except json.JSONDecodeError:
+                pass     # fall through
+
+        # ── Path 2: gh api raw ─────────────────────────────────────────
+        rc, out, err = _run_gh(
+            "api", f"repos/{REPO_SLUG}/releases/latest",
+        )
+        if rc == 0 and out:
+            try:
+                return _populate_release_info(json.loads(out))
+            except json.JSONDecodeError:
+                pass
+
+    # ── Path 3: urllib + Bearer token ──────────────────────────────────
+    info = ReleaseInfo()
+    url = f"https://api.github.com/repos/{REPO_SLUG}/releases/latest"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": f"ArchHub/{installed_version() or 'dev'}",
+    })
+    token = _gh_token()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as ex:
+        # Most common cause for 404: private repo + missing/expired token.
+        if ex.code == 404:
+            info.error = (
+                "Could not find releases. ArchHub's repo is private; "
+                "ensure the GitHub CLI is signed in (`gh auth login`) "
+                "and that this account has access."
+            )
+        elif ex.code == 401:
+            info.error = "Authentication failed against GitHub. Re-run `gh auth login`."
+        else:
+            info.error = f"GitHub API error {ex.code}: {ex.reason}"
+        return info
+    except Exception as ex:
+        info.error = f"Could not reach GitHub Releases: {ex}"
+        return info
+    return _populate_release_info(data)
 
 
 def has_update_available() -> tuple[bool, ReleaseInfo, str]:
@@ -158,13 +253,45 @@ def has_update_available() -> tuple[bool, ReleaseInfo, str]:
 # ---------------------------------------------------------------------------
 def download_asset(release: ReleaseInfo, dest_dir: Optional[Path] = None,
                    on_progress: Optional[callable] = None) -> Path:
-    """Download the release's installer to a temp path. Returns the path."""
-    if not release.asset_url:
-        raise RuntimeError("Release has no installer asset to download.")
+    """Download the release's installer to a temp path. Returns the path.
+
+    Uses `gh release download` when gh is on PATH because that path
+    works for private repos out of the box. Falls back to a streaming
+    urllib GET with a Bearer token (which also works, but only when the
+    token is reachable from this process)."""
     target_dir = Path(dest_dir or tempfile.gettempdir())
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"ArchHub-Setup-{release.tag.lstrip('vV') or 'latest'}.exe"
+    target = target_dir / f"ArchHub-Setup-{(release.tag or 'latest').lstrip('vV')}.exe"
+    if target.exists():
+        try:
+            target.unlink()
+        except Exception:
+            pass
 
+    # ── Path 1: gh release download ────────────────────────────────────
+    if _gh_on_path() and release.tag:
+        rc, out, err = _run_gh(
+            "release", "download", release.tag,
+            "--repo", REPO_SLUG,
+            "--pattern", "ArchHub-Setup-*.exe",
+            "--output", str(target),
+            "--clobber",
+        )
+        if rc == 0 and target.exists():
+            if on_progress is not None and target.stat().st_size:
+                try:
+                    on_progress(target.stat().st_size, target.stat().st_size)
+                except Exception:
+                    pass
+            return target
+        # else: fall through to direct download
+
+    # ── Path 2: direct urllib stream w/ token ──────────────────────────
+    if not release.asset_url:
+        raise RuntimeError(
+            "Release has no installer URL and gh download didn't produce "
+            "the file. Check `gh auth status` and try again."
+        )
     req = urllib.request.Request(release.asset_url, headers={
         "Accept": "application/octet-stream",
         "User-Agent": f"ArchHub/{installed_version() or 'dev'}",

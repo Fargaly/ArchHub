@@ -592,9 +592,12 @@ class ChatWindow(QMainWindow):
 
         menu.addSeparator()
 
-        # Updates + about
+        # Updates + about + pricing
         self._update_menu_action = menu.addAction(self._update_menu_label())
         self._update_menu_action.triggered.connect(self._open_update_dialog)
+
+        pricing_action = menu.addAction("◆   Plans & pricing…")
+        pricing_action.triggered.connect(self._open_pricing_dialog)
 
         about_action = menu.addAction("ⓘ   About ArchHub")
         about_action.triggered.connect(self._show_about)
@@ -1540,6 +1543,11 @@ class ChatWindow(QMainWindow):
 
     def _open_update_dialog(self) -> None:
         dlg = UpdateDialog(self)
+        dlg.exec()
+
+    def _open_pricing_dialog(self) -> None:
+        from pricing_dialog import PricingDialog
+        dlg = PricingDialog(self)
         dlg.exec()
 
     # ---- model picker -----------------------------------------------------

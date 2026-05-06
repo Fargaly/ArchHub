@@ -330,11 +330,14 @@ class ChatWindow(QMainWindow):
         outer.addWidget(self._build_status_bar())
 
     def _build_header(self) -> QWidget:
+        """Slim header: brand + model picker + single menu button.
+        All secondary actions live in the menu so the eye is drawn to chat,
+        not the chrome."""
         bar = QFrame()
         bar.setObjectName("header")
         h = QHBoxLayout(bar)
-        h.setContentsMargins(18, 10, 14, 10)
-        h.setSpacing(10)
+        h.setContentsMargins(20, 12, 16, 12)
+        h.setSpacing(12)
 
         title = QLabel("ArchHub")
         title.setObjectName("brand")
@@ -346,42 +349,88 @@ class ChatWindow(QMainWindow):
         self._populate_model_picker()
         h.addWidget(self.model_picker)
 
-        connectors_btn = QPushButton("Connectors")
-        connectors_btn.setObjectName("ghostButton")
-        connectors_btn.clicked.connect(self._open_connectors)
-        h.addWidget(connectors_btn)
-
-        skills_btn = QPushButton("Skills")
-        skills_btn.setObjectName("ghostButton")
-        skills_btn.setToolTip("Browse and run saved Skills (and edit raw Workflows)")
-        skills_btn.clicked.connect(self._open_skills_panel)
-        h.addWidget(skills_btn)
-
-        self.update_btn = QPushButton(self._update_button_label())
-        self.update_btn.setObjectName("ghostButton")
-        self.update_btn.setToolTip(self._update_button_tooltip())
-        self.update_btn.clicked.connect(self._open_update_dialog)
-        h.addWidget(self.update_btn)
-
-        sessions_btn = QPushButton("📂 Sessions")
-        sessions_btn.setObjectName("ghostButton")
-        sessions_btn.setToolTip("Save or open a parametric session")
-        sessions_btn.clicked.connect(self._open_sessions)
-        h.addWidget(sessions_btn)
-
-        save_wf_btn = QPushButton("⇣ Save chat")
-        save_wf_btn.setObjectName("ghostButton")
-        save_wf_btn.setToolTip("Save the current conversation as a reusable workflow")
-        save_wf_btn.clicked.connect(self._save_chat_as_workflow)
-        h.addWidget(save_wf_btn)
-
-        settings_btn = QPushButton("⚙")
-        settings_btn.setObjectName("ghostButton")
-        settings_btn.setFixedWidth(38)
-        settings_btn.clicked.connect(self._open_settings)
-        h.addWidget(settings_btn)
+        # Single menu button — everything that used to be a header button
+        # is now a labelled item in this menu, with the running version
+        # surfaced inline so the user can see it at a glance.
+        self.menu_btn = QToolButton()
+        self.menu_btn.setObjectName("menuButton")
+        self.menu_btn.setText("⚙")
+        self.menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_btn.setFixedSize(40, 36)
+        self.menu_btn.setToolTip("Settings, connectors, skills, updates")
+        self.menu_btn.setMenu(self._build_app_menu())
+        h.addWidget(self.menu_btn)
 
         return bar
+
+    def _build_app_menu(self) -> QMenu:
+        """The single dropdown that holds every secondary action."""
+        menu = QMenu(self)
+        menu.setObjectName("appMenu")
+
+        # Connections + sign-ins
+        sign_in_action = menu.addAction("🔑   Sign-ins…")
+        sign_in_action.triggered.connect(self._open_settings)
+        connectors_action = menu.addAction("🔌   Connectors…")
+        connectors_action.triggered.connect(self._open_connectors)
+
+        menu.addSeparator()
+
+        # Skills + sessions
+        skills_action = menu.addAction("✦   Skills…")
+        skills_action.triggered.connect(self._open_skills_panel)
+        sessions_action = menu.addAction("📂  Sessions…")
+        sessions_action.triggered.connect(self._open_sessions)
+        save_chat_action = menu.addAction("⇣   Save chat as Skill…")
+        save_chat_action.triggered.connect(self._save_chat_as_skill)
+
+        menu.addSeparator()
+
+        # Updates + about
+        self._update_menu_action = menu.addAction(self._update_menu_label())
+        self._update_menu_action.triggered.connect(self._open_update_dialog)
+
+        about_action = menu.addAction("ⓘ   About ArchHub")
+        about_action.triggered.connect(self._show_about)
+
+        menu.addSeparator()
+        quit_action = menu.addAction("⏻   Quit")
+        quit_action.triggered.connect(QApplication.instance().quit)
+
+        return menu
+
+    def _update_menu_label(self) -> str:
+        try:
+            import updater
+            status = updater.check_for_updates()
+            commit = (status.local_commit or "")[:7]
+            if status.has_updates:
+                return f"↻   Update available  ·  {commit} → new"
+            if commit:
+                return f"↻   Up to date  ·  {commit}"
+        except Exception:
+            pass
+        return "↻   Check for updates…"
+
+    def _show_about(self) -> None:
+        try:
+            import updater
+            status = updater.check_for_updates()
+            commit = status.local_commit or "unknown"
+            branch = status.branch or "unknown"
+            remote = status.remote_url or "(no remote)"
+        except Exception:
+            commit = branch = remote = "unknown"
+        QMessageBox.information(
+            self, "About ArchHub",
+            f"<h3>ArchHub</h3>"
+            f"<p>Parametric design environment for architects with chat as "
+            f"the input surface and AI as the construction agent.</p>"
+            f"<p style='color:#8a8a8c;font-size:11px;'>"
+            f"Commit:  <code>{commit}</code><br>"
+            f"Branch:  <code>{branch}</code><br>"
+            f"Remote:  <code>{remote}</code></p>",
+        )
 
     def _build_conversation_area(self) -> QWidget:
         scroll = QScrollArea()
@@ -404,21 +453,49 @@ class ChatWindow(QMainWindow):
         welcome = QFrame()
         welcome.setObjectName("welcomeCard")
         w = QVBoxLayout(welcome)
-        w.setContentsMargins(28, 26, 28, 26)
-        w.setSpacing(8)
+        w.setContentsMargins(32, 28, 32, 28)
+        w.setSpacing(12)
 
         title = QLabel("What do you want to build?")
         title.setObjectName("welcomeTitle")
         w.addWidget(title)
 
         sub = QLabel(
-            "ArchHub connects you to your AEC tools. Toggle the ones you have, then tell me what to do.\n"
-            "Examples: \"Add a 6m wall in the Revit project\", \"Pull the latest model from Speckle\","
-            " \"Render the active 3ds Max scene\"."
+            "Type what you want; ArchHub drives the tools.  "
+            "Connectors, sign-ins, and skills live behind the menu in the top right."
         )
         sub.setObjectName("welcomeSubtitle")
         sub.setWordWrap(True)
         w.addWidget(sub)
+
+        # Quick-start chips: top 3 saved Skills, surfaced as one-click buttons.
+        try:
+            top_skills = skills.list_skills()[:3]
+        except Exception:
+            top_skills = []
+
+        if top_skills:
+            chip_label = QLabel("Try a saved Skill:")
+            chip_label.setObjectName("welcomeSubtitle")
+            w.addSpacing(6)
+            w.addWidget(chip_label)
+
+            chip_row = QHBoxLayout()
+            chip_row.setSpacing(8)
+            chip_row.setContentsMargins(0, 0, 0, 0)
+            for s in top_skills:
+                chip = QPushButton(f"  ✦  {s['name']}")
+                chip.setObjectName("welcomeChip")
+                chip.setToolTip(s.get("intent", ""))
+                chip.clicked.connect(
+                    lambda _checked=False, sid=s["id"]:
+                    self._run_skill_by_id(sid, {"prompt": ""})
+                )
+                chip_row.addWidget(chip)
+            chip_row.addStretch(1)
+            chip_wrap = QFrame()
+            chip_wrap.setLayout(chip_row)
+            w.addWidget(chip_wrap)
 
         self.conv_layout.insertWidget(self.conv_layout.count() - 1, welcome)
         self._welcome_widget = welcome

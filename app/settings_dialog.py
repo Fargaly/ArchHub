@@ -220,19 +220,29 @@ class SettingsDialog(QDialog):
         self_host_box = QFrame(); self_host_box.setObjectName("providerRow")
         sh = QFormLayout(self_host_box); sh.setContentsMargins(10, 8, 10, 8); sh.setSpacing(6)
         self._speckle_server = QLineEdit()
-        self._speckle_server.setPlaceholderText("https://speckle.yourfirm.com")
+        self._speckle_server.setPlaceholderText("http://localhost:3000")
         if current_server and "speckle.systems" not in current_server:
             self._speckle_server.setText(current_server)
         sh.addRow("Self-hosted URL", self._speckle_server)
+
         own_help = QLabel(
-            "Speckle is open-source (Apache-2.0). To run your own:<br>"
-            "<code>git clone https://github.com/specklesystems/speckle-server &amp;&amp; "
-            "docker compose up -d</code><br>"
-            "Then point ArchHub at <code>https://speckle.yourfirm.com</code>. "
-            "Architects sign in to your instance instead of the public cloud."
+            "Speckle is open-source (Apache-2.0). The button below installs "
+            "Docker Desktop if needed, clones the speckle-server repo, and "
+            "runs the full stack on this machine. URL becomes "
+            "<code>http://localhost:3000</code>."
         )
         own_help.setObjectName("settingsSubtitle"); own_help.setWordWrap(True)
         sh.addRow("", own_help)
+
+        setup_btn = QPushButton("⚡  Set up local Speckle for me")
+        setup_btn.setObjectName("primaryButton")
+        setup_btn.setToolTip(
+            "Runs Setup-Speckle.bat in a console window. Installs Docker "
+            "Desktop if needed, clones speckle-server, brings the stack up."
+        )
+        setup_btn.clicked.connect(self._run_speckle_setup)
+        sh.addRow("", setup_btn)
+
         speckle_box.addWidget(self_host_box)
         self_host_box.setVisible(self._sp_self.isChecked())
         self._sp_self.toggled.connect(self_host_box.setVisible)
@@ -286,6 +296,39 @@ class SettingsDialog(QDialog):
     def _clear_speckle(self) -> None:
         delete_api_key("speckle")
         self._speckle_field.clear()
+
+    def _run_speckle_setup(self) -> None:
+        """Launch Setup-Speckle.bat with a visible console so the user can
+        watch progress. Pre-fills the self-hosted URL field optimistically."""
+        import subprocess
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parent.parent
+        script = repo_root / "Setup-Speckle.bat"
+        if not script.exists():
+            QMessageBox.warning(
+                self, "Speckle setup script missing",
+                f"Could not find {script}. Pull the latest ArchHub via "
+                f"Update.bat and try again.",
+            )
+            return
+        try:
+            subprocess.Popen(
+                ["cmd.exe", "/k", str(script)],
+                cwd=str(repo_root),
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+        except Exception as ex:
+            QMessageBox.warning(self, "Could not start setup", str(ex))
+            return
+        self._speckle_server.setText("http://localhost:3000")
+        QMessageBox.information(
+            self, "Setting up Speckle",
+            "A console window is running the setup. First run takes ~10 "
+            "minutes (Docker pulls images). When it finishes, open "
+            "http://localhost:3000, create your local admin account, then "
+            "paste a Personal Access Token from your Speckle profile into "
+            "the field above.",
+        )
 
     def notify_changed(self) -> None:
         """Called by provider rows after a sign-in / sign-out so the parent

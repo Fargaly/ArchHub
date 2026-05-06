@@ -72,13 +72,21 @@ Source: "..\LICENSE";          DestDir: "{app}"; Flags: skipifsourcedoesntexist
 ; Launcher .cmd files written at runtime by [Code] section below.
 
 [Icons]
-Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\ArchHub.cmd"; \
+; Shortcuts launch via wscript.exe + ArchHub.vbs so there is NO
+; console window. .cmd-based shortcuts inherit a CMD host window
+; even when they call pythonw, which is why we route through a
+; .vbs. The .cmd launchers stay around for power users / `--diagnose`
+; from a manually-opened terminal.
+Name: "{userprograms}\{#MyAppName}"; Filename: "wscript.exe"; \
+    Parameters: """{app}\ArchHub.vbs"""; \
     WorkingDir: "{app}"; Comment: "Open ArchHub"; \
     IconFilename: "{app}\app\assets\archhub.ico"
-Name: "{userdesktop}\{#MyAppName}";  Filename: "{app}\ArchHub.cmd"; \
+Name: "{userdesktop}\{#MyAppName}";  Filename: "wscript.exe"; \
+    Parameters: """{app}\ArchHub.vbs"""; \
     WorkingDir: "{app}"; Tasks: desktopicon; \
     IconFilename: "{app}\app\assets\archhub.ico"
-Name: "{userstartup}\{#MyAppName}";  Filename: "{app}\ArchHub-silent.cmd"; \
+Name: "{userstartup}\{#MyAppName}";  Filename: "wscript.exe"; \
+    Parameters: """{app}\ArchHub.vbs"" --silent"; \
     WorkingDir: "{app}"; Tasks: startupshortcut; \
     IconFilename: "{app}\app\assets\archhub.ico"
 
@@ -146,6 +154,35 @@ begin
   Sleep(1500);
 end;
 
+procedure WriteVbsLauncher;
+var
+  AppDir, VbsPath, Contents: string;
+begin
+  AppDir := ExpandConstant('{app}');
+  VbsPath := AppDir + '\ArchHub.vbs';
+  Contents :=
+    '''' + ' ArchHub launcher — wscript.exe runs this with no console.' + #13#10 +
+    '''' + ' pythonw.exe inherits the no-console state, so the GUI starts clean.' + #13#10 +
+    'Option Explicit' + #13#10 +
+    'Dim sh, fso, here, py, args, i, cmd' + #13#10 +
+    'Set sh  = CreateObject("WScript.Shell")' + #13#10 +
+    'Set fso = CreateObject("Scripting.FileSystemObject")' + #13#10 +
+    'here = fso.GetParentFolderName(WScript.ScriptFullName)' + #13#10 +
+    'sh.CurrentDirectory = here' + #13#10 +
+    'args = ""' + #13#10 +
+    'For i = 0 To WScript.Arguments.Count - 1' + #13#10 +
+    '    args = args & " """ & WScript.Arguments(i) & """"' + #13#10 +
+    'Next' + #13#10 +
+    'py = "pythonw"' + #13#10 +
+    'On Error Resume Next' + #13#10 +
+    'sh.Run "cmd /c where pythonw >nul 2>&1", 0, True' + #13#10 +
+    'If Err.Number <> 0 Then py = "py -3w"' + #13#10 +
+    'On Error GoTo 0' + #13#10 +
+    'cmd = py & " """ & here & "\app\main.py""" & args' + #13#10 +
+    'sh.Run cmd, 0, False' + #13#10;
+  SaveStringToFile(VbsPath, Contents, False);
+end;
+
 procedure WriteLauncherFiles;
 var
   AppDir, PyExe, PyWExe, LauncherPath, SilentPath, Contents: string;
@@ -211,6 +248,7 @@ begin
   else if CurStep = ssPostInstall then
   begin
     WriteLauncherFiles;
+    WriteVbsLauncher;
     WriteVersionStamp;
   end;
 end;

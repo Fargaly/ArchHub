@@ -129,6 +129,54 @@ class _SessionWorker(QObject):
 class _PasteInput(QLineEdit):
     image_pasted = pyqtSignal(str)   # emits temp file path
 
+    # Image extensions we accept on drag-drop. PNG/JPG cover hand sketches
+    # exported from any tablet; WEBP for screenshots; BMP/GIF for legacy.
+    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Accept files dropped from File Explorer / Finder / browser.
+        self.setAcceptDrops(True)
+
+    # ---- drag and drop ---------------------------------------------------
+
+    def dragEnterEvent(self, event) -> None:
+        mime = event.mimeData()
+        if mime.hasUrls() or mime.hasImage():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        mime = event.mimeData()
+        # 1. Image already on the mime payload (e.g. drag from a browser).
+        if mime.hasImage():
+            from PyQt6.QtGui import QImage
+            img = mime.imageData()
+            if isinstance(img, QImage) and not img.isNull():
+                self._save_and_emit(img)
+                event.acceptProposedAction()
+                return
+        # 2. Files dropped — pick image files only.
+        if mime.hasUrls():
+            from os.path import splitext
+            n = 0
+            for url in mime.urls():
+                if not url.isLocalFile():
+                    continue
+                path = url.toLocalFile()
+                ext = splitext(path)[1].lower()
+                if ext in self._IMAGE_EXTS:
+                    self.image_pasted.emit(path)
+                    n += 1
+            if n:
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    # ---- clipboard paste (existing) --------------------------------------
+
     def keyPressEvent(self, event) -> None:
         if (event.key() == Qt.Key.Key_V and
                 event.modifiers() == Qt.KeyboardModifier.ControlModifier):
@@ -137,18 +185,23 @@ class _PasteInput(QLineEdit):
             if mime.hasImage():
                 img = clipboard.image()
                 if not img.isNull():
-                    import tempfile, os
-                    renders_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "renders"
-                    renders_dir.mkdir(parents=True, exist_ok=True)
-                    tmp = tempfile.NamedTemporaryFile(
-                        suffix=".png", delete=False,
-                        dir=str(renders_dir)
-                    )
-                    tmp.close()
-                    img.save(tmp.name)
-                    self.image_pasted.emit(tmp.name)
+                    self._save_and_emit(img)
                     return
         super().keyPressEvent(event)
+
+    # ---- shared helper ---------------------------------------------------
+
+    def _save_and_emit(self, img) -> None:
+        """Write a QImage to a temp PNG and emit the path."""
+        import tempfile, os
+        renders_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "renders"
+        renders_dir.mkdir(parents=True, exist_ok=True)
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".png", delete=False, dir=str(renders_dir),
+        )
+        tmp.close()
+        img.save(tmp.name)
+        self.image_pasted.emit(tmp.name)
 
 
 # ---------------------------------------------------------------------------

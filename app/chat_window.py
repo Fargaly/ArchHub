@@ -1310,13 +1310,15 @@ class ChatWindow(QMainWindow):
     # ---- model picker -----------------------------------------------------
 
     def _populate_model_picker(self) -> None:
-        """Fill the model dropdown. Models whose provider has no API key
-        configured (and is not local Ollama) are appended in a disabled
-        state so the user can see they exist but cannot accidentally pick
-        one and silently fall back to Ollama."""
+        """Fill the model dropdown. Cloud-first: local Ollama models are
+        hidden by default — they're slow to launch, heavy on disk, and
+        the user said plainly that local is too heavy. The Settings
+        toggle 'Show local Ollama models' brings them back when wanted."""
         from PyQt6.QtGui import QStandardItemModel, QStandardItem
+        from secrets_store import load_setting
 
         configured = set(self.router.configured_providers())
+        show_local = bool(load_setting("show_local_models"))
 
         self.model_picker.clear()
         # Replace the underlying model so we can disable individual items.
@@ -1341,14 +1343,15 @@ class ChatWindow(QMainWindow):
             provider = model_id.partition(":")[0]
             ok = provider in configured
             tooltip = ("" if ok
-                       else f"{provider.title()} API key not configured. "
-                            f"Add one in Settings (⚙) to enable this model.")
+                       else f"{provider.title()} not configured. "
+                            f"Sign in via Settings (⚙) to enable.")
             _add(label if ok else f"{label}  (no key)", model_id,
                  enabled=ok, tooltip=tooltip)
 
-        for model_id, label in ollama_models():
-            _add(label, model_id, enabled=True,
-                 tooltip="Local model running in Ollama.")
+        if show_local:
+            for model_id, label in ollama_models():
+                _add(label, model_id, enabled=True,
+                     tooltip="Local model running in Ollama.")
 
     def _refresh_model_picker(self) -> None:
         """Public hook so SettingsDialog can re-enable models after the user

@@ -25,7 +25,9 @@ sys.path.insert(0, str(APP_ROOT))
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def tmp_library(tmp_path, monkeypatch):
-    """Redirect both library roots to a temp directory for the test."""
+    """Redirect every library root to a temp directory for the test, and
+    disable cloud sync so a real GitHub clone in %LOCALAPPDATA% never
+    leaks into the test's view of `list_skills`."""
     user_root = tmp_path / "user"
     shared_root = tmp_path / "shared"
     user_root.mkdir()
@@ -39,6 +41,10 @@ def tmp_library(tmp_path, monkeypatch):
     monkeypatch.setattr(wf_library, "WORKFLOWS_DIR", user_root)
     monkeypatch.setattr(sk_library, "USER_LIBRARY", user_root)
     monkeypatch.setattr(sk_library, "SHARED_LIBRARY", shared_root)
+
+    # Force cloud sync off for tests — they should run hermetic, never
+    # touching the user's real GitHub-backed cache.
+    monkeypatch.setattr(sk_library, "_cloud_skills_dir", lambda: None)
 
     # Also redirect usage telemetry so tests don't write to the user's home.
     from skills import usage as sk_usage

@@ -21,6 +21,8 @@ from workflows.nodes import register_tool_nodes
 from workflows import WorkflowExecutor
 from workflows.triggers import TriggerScheduler
 from skills import ensure_starter_skills
+import cloud_sync
+import threading
 
 APP_ROOT = Path(__file__).resolve().parent
 ASSETS = APP_ROOT / "assets"
@@ -42,6 +44,17 @@ def main() -> int:
 
     # Register tool.* node types now that the tool engine is alive
     register_tool_nodes()
+
+    # Cloud sync — silent bootstrap + pull on launch. Runs on a worker
+    # thread so a slow network never delays the chat window appearing.
+    def _bootstrap_cloud() -> None:
+        try:
+            if cloud_sync.is_signed_in():
+                cloud_sync.bootstrap()
+                cloud_sync.pull()
+        except Exception:
+            pass
+    threading.Thread(target=_bootstrap_cloud, daemon=True).start()
 
     # Materialise the starter Skills library if it's empty (idempotent).
     try:

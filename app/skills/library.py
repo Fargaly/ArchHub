@@ -1,19 +1,27 @@
-"""Skill library — discover, save, delete skills across local + shared paths.
+"""Skill library — cloud-first, with local cache as the on-disk surface.
 
-Two paths searched, in order:
-  - User library:   %LOCALAPPDATA%/ArchHub/workflows/      (per user)
-  - Shared library: %PROGRAMDATA%/ArchHub/skills/          (firm-wide, optional)
+Source of truth, in priority order:
 
-Shared path is opt-in: created on first save with scope='team' or 'firm'.
-Sync mechanism (Git, Speckle, network drive) is delegated to whatever owns
-%PROGRAMDATA%/ArchHub/skills/. v0.7 = local-only; pick mechanism in v0.8.
+  1. Cloud cache (a private GitHub repo cloned to
+     %LOCALAPPDATA%/ArchHub/data_repo/skills/) — managed by cloud_sync.
+  2. Legacy user library (%LOCALAPPDATA%/ArchHub/workflows/) — kept readable
+     so Skills saved before cloud sync was wired up still appear.
+  3. Shared library (%PROGRAMDATA%/ArchHub/skills/) — for the
+     pre-cloud-sync OneDrive-symlink path; same fallback rationale.
 
-Returns Workflow objects but only those whose metadata makes them a Skill
-(intent non-empty). Use workflows.library for raw workflow listing.
+When cloud sync is available + initialised, save_skill writes into the
+cloud cache and immediately pushes to GitHub in the background. Save
+on device A → device B sees the change after its next pull (which we
+trigger silently on launch).
+
+When cloud sync is unavailable (no gh, not signed in, or offline), saves
+fall back to the legacy user library. Existing Skills keep working;
+they just don't sync until the user signs in.
 """
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -29,9 +37,30 @@ SHARED_LIBRARY = Path(
 ) / "ArchHub" / "skills"
 
 
+def _cloud_skills_dir() -> Optional[Path]:
+    """Return the cloud-cache skills directory if cloud sync is initialised,
+    otherwise None. Imported lazily so the cloud_sync module is optional."""
+    try:
+        import cloud_sync
+        if cloud_sync.is_initialised():
+            d = cloud_sync.skills_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+    except Exception:
+        pass
+    return None
+
+
 def library_paths() -> list[Path]:
-    """Library roots in priority order. User overrides shared on collision."""
-    return [USER_LIBRARY, SHARED_LIBRARY]
+    """All library roots searched for Skills, in priority order. Cloud
+    cache wins on id collision so a synced Skill overrides a stale local
+    copy with the same id."""
+    paths: list[Path] = []
+    cloud = _cloud_skills_dir()
+    if cloud is not None:
+        paths.append(cloud)
+    paths.extend([USER_LIBRARY, SHARED_LIBRARY])
+    return paths
 
 
 def _ensure(path: Path) -> Path:
@@ -47,6 +76,7 @@ def list_skills() -> list[dict]:
     """Index every Skill across libraries. Lightweight: name + meta + path."""
     seen_ids: set[str] = set()
     out: list[dict] = []
+    cloud = _cloud_skills_dir()
     for root in library_paths():
         if not root.exists():
             continue
@@ -62,6 +92,12 @@ def list_skills() -> list[dict]:
                 continue
             seen_ids.add(wf.id)
             meta = get_meta(wf)
+            if cloud is not None and root == cloud:
+                source = "cloud"
+            elif root == SHARED_LIBRARY:
+                source = "shared"
+            else:
+                source = "user"
             out.append({
                 "id": wf.id,
                 "name": wf.name,
@@ -74,7 +110,7 @@ def list_skills() -> list[dict]:
                 "scope": meta.scope if meta else SCOPE_USER,
                 "author": meta.author if meta else "",
                 "path": str(f),
-                "library": "shared" if root == SHARED_LIBRARY else "user",
+                "library": source,
                 "node_count": len(wf.nodes),
                 "updated_at": wf.updated_at,
             })
@@ -89,21 +125,59 @@ def load_skill(skill_id: str) -> Optional[Workflow]:
 
 
 def save_skill(workflow: Workflow, meta: Optional[SkillMeta] = None) -> Path:
-    """Save a workflow as a Skill. Routes by scope to user or shared library."""
+    """Save a workflow as a Skill. Cloud cache wins when available; falls
+    back to the legacy user library when cloud sync is offline so the
+    save never silently disappears."""
     if meta is not None:
         attach_meta(workflow, meta)
     workflow.updated_at = datetime.now(timezone.utc).isoformat()
+
+    cloud = _cloud_skills_dir()
     cur_meta = get_meta(workflow)
     scope = cur_meta.scope if cur_meta else SCOPE_USER
-    root = SHARED_LIBRARY if scope in (SCOPE_TEAM, SCOPE_FIRM) else USER_LIBRARY
+
+    if cloud is not None:
+        root = cloud
+    elif scope in (SCOPE_TEAM, SCOPE_FIRM):
+        root = SHARED_LIBRARY
+    else:
+        root = USER_LIBRARY
+
     path = _path_for(workflow, root)
     path.write_text(workflow.to_json(), encoding="utf-8")
+
+    # If we wrote into the cloud cache, push in the background so the UI
+    # doesn't block on the network. Failures are silent here; the user
+    # can see the sync status in Settings.
+    if cloud is not None and root == cloud:
+        threading.Thread(
+            target=_background_push,
+            args=(f"Save Skill: {workflow.name}",),
+            daemon=True,
+        ).start()
     return path
 
 
 def delete_skill(skill_id: str) -> bool:
     for item in list_skills():
         if item["id"] == skill_id:
-            Path(item["path"]).unlink(missing_ok=True)
+            target = Path(item["path"])
+            target.unlink(missing_ok=True)
+            cloud = _cloud_skills_dir()
+            if cloud is not None and cloud in target.parents:
+                threading.Thread(
+                    target=_background_push,
+                    args=(f"Delete Skill: {item['name']}",),
+                    daemon=True,
+                ).start()
             return True
     return False
+
+
+def _background_push(message: str) -> None:
+    """Push the cloud cache without blocking the caller."""
+    try:
+        import cloud_sync
+        cloud_sync.push(message)
+    except Exception:
+        pass

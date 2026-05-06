@@ -130,12 +130,23 @@ class SettingsDialog(QDialog):
         sub.setWordWrap(True)
         outer.addWidget(sub)
 
+        # ── Cloud sync ─────────────────────────────────────────────────────
+        outer.addWidget(self._build_cloud_sync_row())
+
         # ── Provider rows ──────────────────────────────────────────────────
         self._rows: list[_ProviderRow] = []
         for prov, _label, env_var in LLM_PROVIDERS:
             row = _ProviderRow(prov, env_var, self)
             self._rows.append(row)
             outer.addWidget(row)
+
+        # ── "Show local Ollama models" toggle ──────────────────────────────
+        self._show_local = QCheckBox(
+            "Show local Ollama models in the picker  (advanced; local is slower than cloud)"
+        )
+        self._show_local.setObjectName("settingsSubtitle")
+        self._show_local.setChecked(bool(load_setting("show_local_models")))
+        outer.addWidget(self._show_local)
 
         # ── Firm relay (path B — OpenAI-compatible self-hosted endpoint) ───
         relay_box = QFrame()
@@ -193,22 +204,23 @@ class SettingsDialog(QDialog):
         speckle_box.setContentsMargins(0, 4, 0, 0)
         speckle_box.setSpacing(6)
 
-        # Server-ownership choice (Cloud vs Self-host) — click only.
-        owner_label = QLabel("<b>Where does your Speckle data live?</b>")
+        # Cloud is the default and only first-class path. Self-host is
+        # collapsed under an "Advanced" toggle to keep the UI light.
+        owner_label = QLabel("Defaults to <b>app.speckle.systems</b> — no setup.")
         owner_label.setObjectName("settingsSubtitle")
+        owner_label.setWordWrap(True)
         speckle_box.addWidget(owner_label)
 
         self._speckle_owner_group = QButtonGroup(self._speckle_widget)
-        self._sp_cloud = QRadioButton(
-            "Free Speckle cloud (app.speckle.systems) — no setup, you sign in"
-        )
-        self._sp_self = QRadioButton(
-            "Your firm's self-hosted Speckle (you own it; runs on your infra)"
-        )
+        self._sp_cloud = QRadioButton("Speckle cloud  (recommended)")
+        self._sp_self = QRadioButton("Self-host  (advanced)")
         self._speckle_owner_group.addButton(self._sp_cloud, 0)
         self._speckle_owner_group.addButton(self._sp_self, 1)
-        speckle_box.addWidget(self._sp_cloud)
-        speckle_box.addWidget(self._sp_self)
+        radio_row = QHBoxLayout(); radio_row.setSpacing(16)
+        radio_row.addWidget(self._sp_cloud); radio_row.addWidget(self._sp_self)
+        radio_row.addStretch(1)
+        radio_wrap = QFrame(); radio_wrap.setLayout(radio_row)
+        speckle_box.addWidget(radio_wrap)
 
         # Pre-select based on current server setting.
         current_server = (load_setting("speckle_server") or "").strip()
@@ -293,6 +305,108 @@ class SettingsDialog(QDialog):
 
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _build_cloud_sync_row(self):
+        """Header row for cloud sync — shows status, lets the user kick a
+        manual sync, surfaces the GitHub repo link."""
+        import cloud_sync
+        from PyQt6.QtCore import Qt
+
+        row = QFrame(); row.setObjectName("providerRow")
+        v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(6)
+
+        status = cloud_sync.status()
+
+        title_row = QHBoxLayout(); title_row.setSpacing(8)
+        icon = QLabel("☁"); icon.setObjectName("providerIcon")
+        title_row.addWidget(icon)
+        title = QLabel("Cloud sync — Skills, Sessions"); title.setObjectName("providerName")
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+
+        if status.signed_in and status.initialised:
+            badge_text = f"<i>{status.repo_slug}</i>"
+        elif status.signed_in and not status.initialised:
+            badge_text = "<i>signed in — not initialised</i>"
+        elif status.available:
+            badge_text = "<i>not signed in</i>"
+        else:
+            badge_text = "<i>install GitHub CLI</i>"
+        title_row.addWidget(QLabel(badge_text))
+
+        self._sync_btn = QPushButton(
+            "Sync now" if status.initialised else "Set up cloud sync"
+        )
+        self._sync_btn.setObjectName("ghostButton")
+        self._sync_btn.clicked.connect(self._on_sync_now)
+        title_row.addWidget(self._sync_btn)
+        v.addLayout(title_row)
+
+        help_lines = []
+        if not status.available:
+            help_lines.append(
+                "Install <code>gh</code> CLI (winget install GitHub.cli) "
+                "and run <code>gh auth login</code> to enable sync."
+            )
+        elif not status.signed_in:
+            help_lines.append(
+                "You're not signed in to GitHub. Open a terminal and run "
+                "<code>gh auth login</code>, then come back."
+            )
+        elif not status.initialised:
+            help_lines.append(
+                "Click <b>Set up cloud sync</b> to create a private "
+                "<code>ArchHub-data</code> repo on your GitHub account "
+                "and start syncing Skills."
+            )
+        else:
+            last_pull = status.last_pull[:19].replace("T", " ") if status.last_pull else "—"
+            last_push = status.last_push[:19].replace("T", " ") if status.last_push else "—"
+            help_lines.append(
+                f"Last pull: <code>{last_pull}</code>"
+                f"&nbsp;&nbsp;·&nbsp;&nbsp;Last push: <code>{last_push}</code>"
+            )
+            if status.behind > 0:
+                help_lines.append(
+                    f"⚠ {status.behind} update(s) on the remote "
+                    f"haven't been pulled yet."
+                )
+            if status.ahead > 0:
+                help_lines.append(
+                    f"⚠ {status.ahead} local commit(s) "
+                    f"haven't been pushed yet."
+                )
+
+        help_label = QLabel("<br>".join(help_lines))
+        help_label.setObjectName("settingsSubtitle")
+        help_label.setWordWrap(True)
+        help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        v.addWidget(help_label)
+        return row
+
+    def _on_sync_now(self) -> None:
+        import cloud_sync
+        self._sync_btn.setText("Syncing…")
+        self._sync_btn.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            if not cloud_sync.is_initialised():
+                result = cloud_sync.bootstrap()
+                if not result.success:
+                    QMessageBox.warning(self, "Cloud sync", f"{result.message}\n{result.detail}")
+                    self._sync_btn.setText("Set up cloud sync")
+                    self._sync_btn.setEnabled(True)
+                    return
+            push = cloud_sync.push("Manual sync from Settings")
+            pull = cloud_sync.pull()
+            msg = f"{pull.message}\n{push.message}"
+            QMessageBox.information(self, "Cloud sync", msg)
+        except Exception as ex:
+            QMessageBox.warning(self, "Cloud sync", f"Sync failed: {ex}")
+        finally:
+            self._sync_btn.setText("Sync now")
+            self._sync_btn.setEnabled(True)
+            self.notify_changed()
+
     def _clear_speckle(self) -> None:
         delete_api_key("speckle")
         self._speckle_field.clear()
@@ -370,6 +484,10 @@ class SettingsDialog(QDialog):
             save_setting("relay_base_url", relay_url)
         if relay_tok:
             save_api_key("relay", relay_tok)
+
+        # "Show local Ollama models" toggle persisted so the next launch
+        # respects the choice without nagging.
+        save_setting("show_local_models", self._show_local.isChecked())
 
         if hasattr(self.router, "_clients"):
             self.router._clients.clear()

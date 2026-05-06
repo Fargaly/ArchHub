@@ -70,14 +70,32 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
+          # Inno Setup direct download. The /download.php/is.exe redirector
+          # serves the latest stable build.
           $url = "https://jrsoftware.org/download.php/is.exe"
-          $installer = Join-Path $env:TEMP "innosetup.exe"
-          Invoke-WebRequest -Uri $url -OutFile $installer
-          Start-Process -FilePath $installer -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "Inno Setup install failed" }
-          "$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Write-Host "Downloading Inno Setup from $url..."
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Write-Host "Installing silently..."
+          $proc = Start-Process -FilePath $installer `
+            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-","/NOICONS" `
+            -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            throw "Inno Setup installer exited with code $($proc.ExitCode)"
+          }
+          # Discover ISCC.exe — Inno Setup 6 lands in Program Files (x86) on
+          # x64 Windows, but we look on both paths for safety.
+          $candidates = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            throw "ISCC.exe not found in any expected location"
+          }
+          Write-Host "Inno Setup compiler at: $iscc"
+          # GITHUB_ENV requires KEY=VALUE lines; the value can contain spaces.
+          Add-Content -Path $env:GITHUB_ENV -Value "ISCC=$iscc"
 
       - name: Compile installer
         shell: pwsh

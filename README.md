@@ -97,15 +97,21 @@ proposes it, and runs it through Revit. ~5 seconds end-to-end.
 
 ## Pricing
 
-| Tier | $/seat/mo | What's in it |
-|---|---:|---|
-| **Free** | $0 | Up to 3 saved Skills · local Ollama only · single device |
-| **Pro** | $39 | Unlimited Skills · cloud sync · BYO API keys · 5 devices |
-| **Studio** | $79 | Pro + cloud LLM relay · firm Skill library · cost dashboard · phone support |
-| **Enterprise** | custom | Studio + self-hosted relay · custom Skills · dedicated support |
+ArchHub is free in full while we're in beta. We will not charge for
+anything we haven't shipped.
 
-Pro tier ships with v1.0 (target Q3 2026). Until then, **everything is
-free** — install, use, give feedback.
+- **Free (today)** — everything that works: unlimited Skills, local
+  Ollama or BYO cloud key, cloud sync via your own private GitHub repo,
+  vision input, sketch → production pipeline, auto-update. MIT-licensed.
+- **Studio (coming soon)** — managed cloud relay for firms. Provider
+  keys live on the relay, not on architect laptops; per-architect rate
+  limits, audit logs, firm-shared Skill library, centralised billing.
+  No price set until the relay is deployed and verified.
+  [Join the waitlist](https://github.com/Fargaly/ArchHub/issues/new?labels=studio-waitlist&title=Studio+waitlist).
+- **Enterprise (coming soon)** — self-hosted relay so traffic never
+  leaves your infrastructure, plus custom Skill development against
+  firm standards.
+  [Open an enquiry](https://github.com/Fargaly/ArchHub/issues/new?labels=enterprise&title=Enterprise+enquiry).
 
 ---
 

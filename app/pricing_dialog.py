@@ -1,16 +1,14 @@
 """In-app Plans & pricing dialog.
 
-Surfaces the four-tier pricing structure (Free / Pro / Studio / Enterprise)
-so users discovering ArchHub via the cog menu see what's coming and can
-mark interest. CTA buttons currently route to the landing page; once
-Stripe is live they'll deep-link to a checkout session.
+Honest freemium policy: ArchHub is free in full while we're in beta.
+A managed cloud-relay tier ("Studio") for firms is in active development
+but not yet generally available — we don't show a dollar figure or take
+payment for something that isn't deployed. Users who want to be
+notified when Studio ships file a GitHub Issue from the dialog and we
+let them know.
 
-Why an in-app dialog and not just the landing page:
-  - Most users never visit the landing page after installing.
-  - The cog menu is where the existing trust lives — adding "Plans &
-    pricing" there makes upgrade discoverable without nagging.
-  - Once Stripe is wired, the dialog can manage the active subscription
-    in the same surface.
+The full pricing model + tier rationale live in STRATEGY.md (internal).
+This dialog only displays what is real today.
 """
 from __future__ import annotations
 
@@ -32,74 +30,60 @@ LANDING_URL = "https://github.com/Fargaly/ArchHub#pricing"
 CONTACT_URL = "https://github.com/Fargaly/ArchHub/issues/new?labels=enterprise&title=Enterprise+enquiry"
 
 
+_WAITLIST_URL = "https://github.com/Fargaly/ArchHub/issues/new?labels=studio-waitlist&title=Studio+waitlist"
+
+# Only one tier is real today. The two "coming soon" entries are
+# placeholders that route to a GitHub Issue waitlist; nothing about
+# them collects payment, displays a price, or implies imminent ship.
 _TIERS = [
     {
         "name": "Free",
         "price": "$0",
-        "cadence": "/ month",
-        "blurb": "Solo, evaluation, students.",
+        "cadence": "",
+        "blurb": "Everything that works today.",
         "features": [
-            "Up to 3 saved Skills",
-            "Local Ollama only",
-            "Single device",
-            "Community support",
+            "Unlimited Skills",
+            "Local LLM via Ollama, or bring your own cloud API key",
+            "Cloud sync via your private GitHub repo",
+            "Sketch → production pipeline",
+            "Vision input (paste sketches)",
+            "Auto-update from GitHub Releases",
+            "Open source, MIT-licensed",
         ],
         "cta": "Download",
         "cta_url": "https://github.com/Fargaly/ArchHub/releases/latest",
-        "primary": False,
-        "recommended": False,
-        "current": True,         # the user is on Free until Stripe is wired
-    },
-    {
-        "name": "Pro",
-        "price": "$39",
-        "cadence": "/ seat / month",
-        "blurb": "Solo architects + small studios.",
-        "features": [
-            "Unlimited Skills",
-            "Cloud sync via GitHub",
-            "BYO API keys",
-            "5-device sync",
-            "Email support",
-        ],
-        "cta": "Start Pro (waitlist)",
-        "cta_url": LANDING_URL,
         "primary": True,
         "recommended": True,
-        "current": False,
+        "current": True,
     },
     {
         "name": "Studio",
-        "price": "$79",
-        "cadence": "/ seat / month",
-        "blurb": "Firms, 5-100 seats.",
+        "price": "Coming soon",
+        "cadence": "",
+        "blurb": "Managed cloud relay for firms.",
         "features": [
-            "Pro features",
-            "Cloud LLM relay (we hold keys)",
+            "Provider keys live on the relay, not on architect laptops",
+            "Per-architect rate limits + audit logs",
             "Firm-shared Skill library",
-            "Cost dashboard",
-            "Phone + email support",
-            "Firm SSO",
+            "Centralised billing + cost dashboard",
         ],
-        "cta": "Start Studio (waitlist)",
-        "cta_url": LANDING_URL,
+        "cta": "Join the waitlist",
+        "cta_url": _WAITLIST_URL,
         "primary": False,
         "recommended": False,
         "current": False,
     },
     {
         "name": "Enterprise",
-        "price": "Custom",
+        "price": "Coming soon",
         "cadence": "",
-        "blurb": "100+ seats, IP-isolated.",
+        "blurb": "Self-hosted relay + IP isolation.",
         "features": [
-            "Studio features",
-            "Self-hosted relay",
-            "Custom Skill development",
-            "Dedicated support",
+            "Self-hosted relay so traffic never leaves your infra",
+            "Custom Skill development against firm standards",
             "Annual billing",
         ],
-        "cta": "Contact us",
+        "cta": "Open an enquiry",
         "cta_url": CONTACT_URL,
         "primary": False,
         "recommended": False,
@@ -207,8 +191,10 @@ class PricingDialog(QDialog):
         t = QLabel("Plans & pricing")
         t.setObjectName("panelTitle"); v.addWidget(t)
         s = QLabel(
-            "Use ArchHub free for as long as you like. Pro and Studio "
-            "ship with v1.0 — join the waitlist to get a launch discount."
+            "ArchHub is free in full while we're in beta. We will not "
+            "charge for anything we haven't shipped. The Studio tier "
+            "(managed cloud relay for firms) is in development — join "
+            "the waitlist to be told when it's real, with a price."
         )
         s.setObjectName("panelSubtitle"); s.setWordWrap(True)
         v.addWidget(s)

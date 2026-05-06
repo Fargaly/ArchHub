@@ -25,6 +25,7 @@ from .library import list_skills, load_skill, save_skill, delete_skill, library_
 from .usage import record_run, get_usage
 from .capture import capture_chat_as_skill
 from .seeds import ensure_starter_skills
+from .production_seeds import ensure_production_skills
 from .share import (
     export_skill_to_string, export_skill_to_file,
     import_skill_from_string, import_skill_from_file,
@@ -39,6 +40,7 @@ __all__ = [
     "record_run", "get_usage",
     "capture_chat_as_skill",
     "ensure_starter_skills",
+    "ensure_production_skills",
     "export_skill_to_string", "export_skill_to_file",
     "import_skill_from_string", "import_skill_from_file",
     "looks_like_skill_json", "SkillImportError",

@@ -151,6 +151,41 @@ class TestSeeds:
         assert second == []
         assert len(list_skills()) == 3
 
+    def test_production_seeds_validate(self):
+        from skills.production_seeds import (
+            _seed_extract_mass, _seed_setup_revit_project, _seed_mass_to_walls,
+            _seed_place_openings, _seed_generate_sheets, _seed_sketch_to_production,
+        )
+        for factory in (_seed_extract_mass, _seed_setup_revit_project,
+                        _seed_mass_to_walls, _seed_place_openings,
+                        _seed_generate_sheets, _seed_sketch_to_production):
+            wf, meta = factory()
+            assert wf.validate() == []
+            assert meta.intent
+            assert meta.keywords
+            assert meta.tags
+
+    def test_sketch_to_production_chains_six_stages(self):
+        from skills.production_seeds import _seed_sketch_to_production
+        wf, meta = _seed_sketch_to_production()
+        # 1 input + 6 (template, llm) pairs + 1 output = 14 nodes
+        assert len(wf.nodes) == 14
+        # 1 input→tmpl + 6 tmpl→llm + 5 llm→tmpl + 1 llm→output = 13 edges
+        assert len(wf.edges) == 13
+        # Six stages = six llm nodes
+        llm_nodes = [n for n in wf.nodes if n.type == "llm.complete_with_tools"]
+        assert len(llm_nodes) == 6
+
+    def test_ensure_production_skills_idempotent(self, tmp_library):
+        from skills.production_seeds import ensure_production_skills
+        from skills.library import list_skills
+
+        first = ensure_production_skills()
+        assert len(first) == 6
+        second = ensure_production_skills()
+        assert second == []
+        assert len(list_skills()) == 6
+
 
 # ---------------------------------------------------------------------------
 class TestShare:

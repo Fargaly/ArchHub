@@ -5,6 +5,104 @@ Newest entries at top.
 
 ---
 
+## v0.11.0 — 2026-05-06 — Sketch → Production + threat moats
+
+**The pivot.** ArchHub is no longer "sketch → mass". It is **sketch →
+production drawings**, end-to-end, in a single Skill. The user's
+brief: *I'm going with sketch to production... not just sketch to mass.
+It interacts with Revit and other tools and creates families... setup
+projects... annotate.* The whole pipeline now exists as Skills the
+matcher can pick from chat, plus one master Skill that chains every
+stage in one prompt.
+
+**Six new production-pipeline Skills (`app/skills/production_seeds.py`):**
+
+| ID | Name | Stage |
+|----|------|-------|
+| `seed-extract-mass-from-sketch-v1` | Extract mass from sketch | Vision → parameters → Blender mass |
+| `seed-setup-revit-project-v1` | Set up Revit project | Levels, grids, units, default types, cover sheet |
+| `seed-mass-to-walls-v1` | Convert mass to Revit walls | Mass faces → stacked walls per level |
+| `seed-place-openings-v1` | Place doors and windows | Default fenestration on every wall |
+| `seed-generate-production-sheets-v1` | Generate production sheets | Plans / elevations / sections / room schedule on sheets |
+| `seed-sketch-to-production-v1` | **Sketch to production** | All six above chained in one workflow |
+
+The master `sketch-to-production` Skill is a six-stage workflow graph:
+each stage is its own `llm.complete_with_tools` node with a focused
+framing prompt + an `allowed_tools` whitelist. The previous stage's
+output flows into the next stage's prompt template, so each stage
+sees what the model just did. One "Run" click triggers the whole
+pipeline.
+
+Skill JSON carries the *intent and constraints*, not the
+implementation. The actual Revit C# is generated fresh per project by
+whichever LLM the router picks (Claude for cloud, qwen2.5-coder for
+local). When foundation models get smarter at Revit, the Skills layer
+captures the firm's accumulated practice; better models make Skills
+*more* valuable, not less.
+
+`main.py` now calls `ensure_production_skills()` on launch alongside
+the existing `ensure_starter_skills()`. Both are idempotent — they
+only seed Skills missing from the current library.
+
+### Threat defenses (from the competitive brief)
+
+The brief listed five threats. Defenses now baked into the product:
+
+1. **"Anthropic / OpenAI ship native AEC MCP servers."**
+   Defense: ArchHub is a *Skill execution layer*, not a tool catalogue.
+   When generic AEC MCP arrives, ArchHub still owns:
+   - the user's saved Skills (cloud-synced, shareable JSON)
+   - the parametric DAG memory across stages
+   - the multi-LLM router (any model can drive any Skill)
+   - the user's domain practice expressed as Skills the firm has tuned
+   Generic MCP gives ArchHub a *richer toolbox*, not a replacement.
+
+2. **"Autodesk acquires/builds Forma equivalent."**
+   Defense:
+   - Open source, no Autodesk tax
+   - Multi-tool roundtrip (Revit ↔ Blender ↔ Speckle ↔ Max) — Forma is
+     Autodesk-only
+   - Local LLM path via Ollama for IP-sensitive firms — never possible
+     for Forma
+   - Skills are JSON the user owns, exports, and forks. Forma will
+     never let users do that.
+
+3. **"Hypar adds a chat layer."**
+   Defense:
+   - Already shipped — speed advantage in current market
+   - Native Revit C# generation (Hypar is web-only)
+   - Cloud-synced personal Skill library — Hypar's functions are
+     central, not personal
+
+4. **"Grasshopper community plugin ships chat-over-graph."**
+   Defense:
+   - Coexist via Speckle: ArchHub + Grasshopper users share data
+   - ArchHub spans hosts (Revit, AutoCAD, Max, Blender), Grasshopper
+     is Rhino-only
+   - Skills are the asset; let the visual canvas catch up later
+
+5. **"Foundation models become 10× better at Revit C#."**
+   Defense:
+   - Skills layer captures *intent + constraints + safety wrappers*
+   - Smarter models execute Skills better, not around them
+   - Skills are the moat: portable, copy-paste-shareable JSON the
+     user can edit, version, and learn from
+
+### What this kills
+- "Sketch → mass" framing — too thin, table stakes by 2027
+- Single-step Skills as the only Skill kind — chained workflows are
+  first-class now
+- Treating the LLM as the product — the **Skills + LLM** combo is
+
+### What this preserves
+- The four-node `_build_chain` pattern (input → template → llm → output)
+  is still how single-stage Skills are built
+- Users can still pick an individual stage Skill from the panel
+- Cloud sync, OAuth sign-ins, vision input, glass theme all from the
+  prior 0.11.0 commit
+
+---
+
 ## v0.10.0 — 2026-05-05 — Skills system
 
 **The frame shift.** Annotation, materials, sketch-to-mass, render, push-to-Speckle

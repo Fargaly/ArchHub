@@ -15,10 +15,11 @@ QMainWindow, QWidget#centralWidget, QWidget {
 
 QMainWindow {
     background: qlineargradient(
-        x1:0, y1:0, x2:0, y2:1,
-        stop:0   #1a1a22,
-        stop:0.4 #16161c,
-        stop:1   #121218
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0    #221c2a,
+        stop:0.35 #18161e,
+        stop:0.7  #14121a,
+        stop:1    #100e16
     );
 }
 
@@ -142,16 +143,24 @@ QPushButton#welcomeChip:hover {
 
 /* ── Chat bubbles — frosted glass with asymmetric corners ─────────────── */
 QFrame#userBubble {
-    background-color: rgba(204, 120, 92, 0.12);
-    border: 1px solid rgba(204, 120, 92, 0.18);
-    border-radius: 18px;
+    background-color: rgba(204, 120, 92, 0.16);
+    border: 1px solid rgba(204, 120, 92, 0.32);
+    border-radius: 20px;
     border-bottom-right-radius: 6px;
 }
 QFrame#assistantBubble {
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
     border-bottom-left-radius: 6px;
+}
+
+/* Typing indicator inside an assistant bubble while LLM is thinking */
+QLabel#typingIndicator {
+    color: rgba(244, 239, 232, 0.45);
+    font-size: 18px;
+    letter-spacing: 4px;
+    padding: 2px 4px;
 }
 QTextEdit#messageText {
     background-color: transparent;

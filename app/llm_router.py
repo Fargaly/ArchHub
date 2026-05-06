@@ -225,7 +225,7 @@ class LLMRouter:
         # accept image_url / image content blocks.
         if has_images:
             if "anthropic" in configured_for_vision:
-                return "anthropic", "claude-opus-4-7", "auto: vision → Claude Opus 4.7"
+                return "anthropic", "claude-sonnet-4-6", "vision · Claude Sonnet 4.6"
             if "openrouter" in configured_for_vision:
                 return ("openrouter", "anthropic/claude-opus-4",
                         "auto: vision → OpenRouter · Claude Opus 4")
@@ -253,9 +253,9 @@ class LLMRouter:
         # (Future: detect QImage attachments. For now, look for "look at this" etc.)
         if any(s in text for s in modeling_signals):
             if "anthropic" in configured:
-                return "anthropic", "claude-opus-4-7", "auto: modeling task → Claude Opus 4.7"
+                return "anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6 (fast)"
             if "openrouter" in configured:
-                return "openrouter", "anthropic/claude-opus-4", "auto: modeling task → OpenRouter · Claude Opus 4"
+                return "openrouter", "anthropic/claude-sonnet-4", "OpenRouter · Claude Sonnet 4"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: modeling task → GPT-4o (Anthropic unavailable)"
             if "relay" in configured:

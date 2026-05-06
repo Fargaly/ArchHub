@@ -212,6 +212,45 @@ class ToolCard(QFrame):
 # ---------------------------------------------------------------------------
 #  Message bubble.
 # ---------------------------------------------------------------------------
+class _TypingIndicator(QLabel):
+    """Animated three-dot indicator. Shown inside an assistant bubble while
+    the LLM is thinking, hidden as soon as the first text chunk arrives."""
+
+    _FRAMES = ("●  ●  ●", "●  ●  ●", "●  ●  ●", "●  ●  ●")
+    # Use opacity dance via stylesheet instead of unicode swapping to avoid
+    # font-fallback width jitter; each frame highlights a different dot.
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("typingIndicator")
+        self.setText("●  ●  ●")
+        self._frame = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(380)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+
+    def _tick(self) -> None:
+        self._frame = (self._frame + 1) % 4
+        # Each tick shifts which dot is "lit" via different weights; we change
+        # only the stylesheet to keep layout perfectly stable.
+        weights = [0.3, 0.3, 0.3]
+        if self._frame < 3:
+            weights[self._frame] = 1.0
+        # Build a colour-tinted mark via three labels would be lighter, but a
+        # plain text indicator with a marquee-style colour change works too.
+        # Cheapest: rotate the colour intensity globally.
+        alpha = 0.35 + 0.25 * (self._frame % 4 == 3)
+        self.setStyleSheet(
+            f"color: rgba(244, 239, 232, {alpha:.2f}); "
+            f"font-size: 18px; letter-spacing: 4px; padding: 2px 4px;"
+        )
+
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+
+
 class MessageBubble(QFrame):
     def __init__(self, role: str, parent=None):
         super().__init__(parent)
@@ -219,8 +258,20 @@ class MessageBubble(QFrame):
         self.setObjectName("userBubble" if role == "user" else "assistantBubble")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+        # Real depth — Qt's drop-shadow effect renders below the bubble's
+        # painted background. Combined with the QSS translucent fill this
+        # gives a believable "frosted floating panel" feel that flat QSS
+        # alone cannot produce.
+        from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+        from PyQt6.QtGui import QColor
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 130))
+        self.setGraphicsEffect(shadow)
+
         v = QVBoxLayout(self)
-        v.setContentsMargins(14, 10, 14, 10)
+        v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(6)
 
         self.text_view = QTextEdit()
@@ -233,12 +284,28 @@ class MessageBubble(QFrame):
         self.text_view.textChanged.connect(self._adjust_height)
         v.addWidget(self.text_view)
 
+        # Typing indicator — only used by assistant bubbles. Constructed
+        # lazily on first append/set so user bubbles stay lightweight.
+        self._typing: Optional[_TypingIndicator] = None
+        if role == "assistant":
+            self._typing = _TypingIndicator(self)
+            v.addWidget(self._typing)
+
         self.tool_cards_container = QVBoxLayout()
         self.tool_cards_container.setContentsMargins(0, 0, 0, 0)
         self.tool_cards_container.setSpacing(6)
         v.addLayout(self.tool_cards_container)
 
+    def _stop_typing(self) -> None:
+        if self._typing is not None:
+            self._typing.stop()
+            self._typing.hide()
+            self._typing.deleteLater()
+            self._typing = None
+
     def append_text(self, fragment: str) -> None:
+        if fragment:
+            self._stop_typing()
         cur = self.text_view.textCursor()
         cur.movePosition(QTextCursor.MoveOperation.End)
         cur.insertText(fragment)
@@ -246,6 +313,8 @@ class MessageBubble(QFrame):
         self._adjust_height()
 
     def set_text(self, text: str) -> None:
+        if text:
+            self._stop_typing()
         self.text_view.setPlainText(text)
         self._adjust_height()
 
@@ -256,6 +325,8 @@ class MessageBubble(QFrame):
         self.text_view.setFixedHeight(max(20, h))
 
     def add_tool_card(self, invocation: ToolInvocation) -> ToolCard:
+        # Tool calls count as activity → kill the dots.
+        self._stop_typing()
         card = ToolCard(invocation)
         self.tool_cards_container.addWidget(card)
         return card
@@ -309,7 +380,8 @@ class ChatWindow(QMainWindow):
         # Body splits horizontally: chat on the left, parameters sidebar on the right.
         body_split = QSplitter(Qt.Orientation.Horizontal)
         body_split.setHandleWidth(1)
-        body_split.setChildrenCollapsible(False)
+        body_split.setChildrenCollapsible(True)
+        self._body_split = body_split
 
         # Left: conversation + input bar stacked vertically
         left = QWidget()
@@ -317,19 +389,38 @@ class ChatWindow(QMainWindow):
         left_v.addWidget(self._build_conversation_area(), 1)
         left_v.addWidget(self._build_input_bar())
 
-        # Right: parameters panel, bound to the live session
+        # Right: parameters panel, bound to the live session. Hidden when
+        # there are no parameters yet — the empty sidebar wasted real estate
+        # and made the UI feel cluttered. We restore it the moment a session
+        # parameter is added (see _on_session_event / _on_parameter_edited).
         self.parameters_panel = ParametersPanel()
         self.parameters_panel.set_session(self.session)
         self.parameters_panel.parameter_edited.connect(self._on_parameter_edited)
 
         body_split.addWidget(left)
         body_split.addWidget(self.parameters_panel)
-        body_split.setStretchFactor(0, 3)
-        body_split.setStretchFactor(1, 1)
-        body_split.setSizes([840, 320])
+        body_split.setStretchFactor(0, 1)
+        body_split.setStretchFactor(1, 0)
+        # Start with the sidebar collapsed; show it only when the session
+        # actually has parameters.
+        if not self.session.parameters:
+            self.parameters_panel.hide()
+            body_split.setSizes([1200, 0])
+        else:
+            body_split.setSizes([900, 300])
 
         outer.addWidget(body_split, 1)
         outer.addWidget(self._build_status_bar())
+
+    def _show_parameters_sidebar(self) -> None:
+        """Reveal the parameters sidebar — called when the session gains its
+        first parameter so the user sees it appear naturally."""
+        if not hasattr(self, "_body_split") or not hasattr(self, "parameters_panel"):
+            return
+        if self.parameters_panel.isVisible():
+            return
+        self.parameters_panel.show()
+        self._body_split.setSizes([900, 300])
 
     def _build_header(self) -> QWidget:
         """Slim header: brand + model picker + single menu button.
@@ -891,6 +982,7 @@ class ChatWindow(QMainWindow):
     def _on_parameter_edited(self, name: str, value) -> None:
         """Called when user drags a slider. Debounce → rerun dirty steps."""
         self.session.update_parameter(name, value)
+        self._show_parameters_sidebar()
         # Restart the 300ms debounce timer
         if not hasattr(self, "_rerun_timer"):
             self._rerun_timer = QTimer(self)

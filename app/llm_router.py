@@ -102,7 +102,9 @@ class LLMRouter:
         # Custom OpenAI-compatible relay (firm path) is "configured" when both
         # the URL setting and the relay key are present.
         try:
-            from secrets_store import load_setting, load_api_key
+            # load_api_key already imported at module scope; only
+            # load_setting needs to come in locally.
+            from secrets_store import load_setting
             if load_setting("relay_base_url") and load_api_key("relay"):
                 providers.add("relay")
         except Exception:
@@ -142,7 +144,13 @@ class LLMRouter:
             self._clients[provider] = OpenRouterClient(api_key)
         elif provider == "relay":
             from llm_providers.openrouter_client import CustomOpenAICompatibleClient
-            from secrets_store import load_setting, load_api_key
+            # Don't re-import load_api_key here — it's already at
+            # module scope. Re-importing inside this branch made the
+            # whole function treat load_api_key as a local, which
+            # made line 127 (the very first use of the module-level
+            # name) raise UnboundLocalError. load_setting only is
+            # safe to import locally.
+            from secrets_store import load_setting
             base_url = load_setting("relay_base_url") or ""
             relay_key = load_api_key("relay") or ""
             if not base_url or not relay_key:

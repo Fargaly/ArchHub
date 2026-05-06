@@ -53,7 +53,7 @@ jobs:
       - name: Regenerate ICO from PNG (in case it's stale)
         shell: pwsh
         run: |
-          python - <<'PY'
+          @'
           from PIL import Image
           from pathlib import Path
           src = Path("app/assets/archhub.png")
@@ -64,7 +64,8 @@ jobs:
           sizes = [(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]
           img.save(dst, format="ICO", sizes=sizes)
           print("Wrote", dst)
-          PY
+          '@ | Out-File -FilePath "$env:RUNNER_TEMP\make_ico.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\make_ico.py"
 
       - name: Install Inno Setup
         shell: pwsh

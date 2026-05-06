@@ -352,7 +352,8 @@ class SettingsDialog(QDialog):
         ph_form.addRow("PostHog project key", self._posthog_key)
 
         self._posthog_host = QLineEdit()
-        self._posthog_host.setPlaceholderText("https://eu.posthog.com")
+        # NB: ingest endpoint is eu.i.posthog.com — see telemetry._host().
+        self._posthog_host.setPlaceholderText("https://eu.i.posthog.com")
         self._posthog_host.setText(load_setting("telemetry_posthog_host") or "")
         ph_form.addRow("PostHog host", self._posthog_host)
         v.addLayout(ph_form)

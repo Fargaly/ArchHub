@@ -48,10 +48,14 @@ def _project_key() -> Optional[str]:
 
 
 def _host() -> str:
+    # PostHog Cloud has TWO subdomains per region:
+    #   eu.posthog.com       — dashboard / admin UI
+    #   eu.i.posthog.com     — ingestion endpoint (where /capture lives)
+    # The SDK needs the .i. ingest host or events 404 silently.
     return (
         load_setting(_HOST_KEY)
         or os.environ.get("ARCHHUB_POSTHOG_HOST")
-        or "https://eu.posthog.com"
+        or "https://eu.i.posthog.com"
     )
 
 

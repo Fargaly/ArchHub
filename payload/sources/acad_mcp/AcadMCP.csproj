@@ -45,7 +45,10 @@
     <AcadPackageVersion Condition="'$(AcadPackageVersion)' == ''">$(AcadObjectArxMajor).0.0</AcadPackageVersion>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false'">
-    <PackageReference Include="AutoCAD.NET.Core"
+    <!-- AutoCAD.NET (umbrella) brings acmgd + acdbmgd + accoremgd —
+         Application, Document, Database, Editor all resolve. The
+         .Core sub-package alone is missing acmgd.Application. -->
+    <PackageReference Include="AutoCAD.NET"
                       Version="$(AcadPackageVersion)"
                       ExcludeAssets="runtime"
                       PrivateAssets="all" />

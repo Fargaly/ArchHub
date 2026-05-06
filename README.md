@@ -140,9 +140,14 @@ Skills more valuable, not less.
 
 ## Documentation
 
+**Browseable docs site:** https://www.notion.so/358f57b4e72f81f99f50ffaa2cdea4be (publishing as `archhub.notion.site` shortly)
+
+Source of truth in this repo:
+
 - **[STRATEGY.md](STRATEGY.md)** — pricing, GTM, moats, financial model.
 - **[docs/SKILLS.md](docs/SKILLS.md)** — Skill architecture: metadata, matcher, capture, sharing.
 - **[docs/MULTI_DEVICE.md](docs/MULTI_DEVICE.md)** — running ArchHub on multiple machines.
+- **[SECURITY.md](SECURITY.md)** — threat model + responsible disclosure.
 - **[DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md)** — running record of decisions and pivots.
 - **[VISION.md](VISION.md)** — north-star product principles.
 

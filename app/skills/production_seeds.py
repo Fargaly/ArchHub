@@ -46,6 +46,9 @@ SEED_MASS_TO_WALLS_ID        = "seed-mass-to-walls-v1"
 SEED_PLACE_OPENINGS_ID       = "seed-place-openings-v1"
 SEED_GENERATE_SHEETS_ID      = "seed-generate-production-sheets-v1"
 SEED_SKETCH_TO_PRODUCTION_ID = "seed-sketch-to-production-v1"
+SEED_EXPORT_REVIT_TO_DWG_ID  = "seed-export-revit-to-dwg-v1"
+SEED_OSM_CONTEXT_MASS_ID     = "seed-osm-context-mass-v1"
+SEED_DETAIL_PASS_ID          = "seed-revit-detail-pass-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +481,192 @@ def _seed_sketch_to_production() -> tuple[Workflow, SkillMeta]:
 
 
 # ---------------------------------------------------------------------------
+def _seed_export_revit_to_dwg() -> tuple[Workflow, SkillMeta]:
+    wf = _build_chain(
+        workflow_id=SEED_EXPORT_REVIT_TO_DWG_ID,
+        name="Export Revit drawings to AutoCAD",
+        description=(
+            "Export the active view, the active sheet, or all sheets in the "
+            "current sheet set to AutoCAD .dwg files in a folder of the "
+            "user's choice (defaults to the project folder)."
+        ),
+        framing_template=(
+            "You are running the ArchHub skill 'Export Revit drawings to "
+            "AutoCAD'. GOAL: produce one or more .dwg files matching what "
+            "the architect described.\n"
+            "Procedure:\n"
+            "  1. Call revit_info; capture document title, path, and active view.\n"
+            "  2. Decide the export set from the user request:\n"
+            "       - 'this view' / no scope → just the active view\n"
+            "       - 'this sheet' / 'current sheet' → active view IF it's a Sheet, else fail clearly\n"
+            "       - 'all sheets' / 'every sheet' / 'sheet set' → all ViewSheet elements\n"
+            "       - explicit sheet-name list → those ViewSheets only\n"
+            "  3. Call revit_execute_csharp INSIDE a single transaction-free C# block (DWG export does not require Transactions but does require a fresh DWGExportOptions):\n"
+            "       - Create DWGExportOptions(); set FileVersion = ACA2018, MergedViews = false, HideUnreferenceViewTags = true.\n"
+            "       - Determine outDir: if the document has a save path, write next to it under '<filename>_DWG/'. Otherwise %USERPROFILE%/Documents/ArchHub-DWG/.\n"
+            "       - Build a ViewSet of the chosen views.\n"
+            "       - Call doc.Export(outDir, '<base>', viewSet, dwgOptions). Use the document title as <base>; Revit appends view names per file.\n"
+            "       - Capture the list of files Revit reports as written.\n"
+            "  4. Return: total files written, full output folder path, sheet/view names exported, any sheets skipped + why.\n\n"
+            "User request: {var1}"
+        ),
+        allowed_tools=["revit_info", "revit_execute_csharp"],
+    )
+    meta = SkillMeta(
+        intent="Export the active view, current sheet, or all sheets in Revit to AutoCAD .dwg files.",
+        keywords=[
+            "export", "dwg", "autocad", "drawings", "extract",
+            "to-cad", "from-revit", "convert", "save-as",
+        ],
+        when_to_use=(
+            "User asks to extract / export / convert Revit views or sheets "
+            "to AutoCAD or .dwg format."
+        ),
+        examples=[
+            {"prompt": "Export all sheets to DWG",
+             "expected_outcome": "One .dwg per ViewSheet in <project>_DWG/."},
+            {"prompt": "Save the current sheet as AutoCAD",
+             "expected_outcome": "Single .dwg of the active sheet."},
+            {"prompt": "Convert this view to dwg",
+             "expected_outcome": "Single .dwg of the active view."},
+        ],
+        tags=["revit", "autocad", "export", "production"],
+        requires=["revit"],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
+def _seed_osm_context_mass() -> tuple[Workflow, SkillMeta]:
+    wf = _build_chain(
+        workflow_id=SEED_OSM_CONTEXT_MASS_ID,
+        name="Build site context from a map link",
+        description=(
+            "Take a Google Maps URL (or lat/long coordinates), fetch the "
+            "surrounding building footprints from OpenStreetMap, and extrude "
+            "them as context masses in Blender so the architect can model "
+            "their proposal inside the real urban context."
+        ),
+        framing_template=(
+            "You are running the ArchHub skill 'Build site context from a map link'. "
+            "GOAL: read the location from the user's request (Google Maps URL "
+            "or explicit coordinates), fetch surrounding buildings from "
+            "OpenStreetMap (no API key required), and build them as massing "
+            "geometry in Blender so the architect's site fits in real context.\n"
+            "Procedure:\n"
+            "  1. Parse the user's request:\n"
+            "       - Google Maps URL: extract the @lat,lng,zoom triple from the path. Pattern: /@<lat>,<lng>,<zoom>z\n"
+            "       - 'maps.app.goo.gl' / 'maps.google.com/?q=<lat>,<lng>': extract from query.\n"
+            "       - Plain '<lat>, <lng>' string: parse directly.\n"
+            "       - Default radius: 250 m unless the user says otherwise.\n"
+            "  2. Call blender_execute_python with a SINGLE script that:\n"
+            "       - imports urllib.request, json, bpy, math\n"
+            "       - builds the Overpass query for buildings within the radius:\n"
+            "           [out:json][timeout:30];\n"
+            "           way[\"building\"](around:<r>,<lat>,<lng>);\n"
+            "           out geom;\n"
+            "       - POSTs to https://overpass-api.de/api/interpreter\n"
+            "       - For each returned way:\n"
+            "           - Convert each lat/lng node to local meters using a simple equirectangular projection centred on the input (delta_lat * 111000, delta_lng * 111000 * cos(lat)).\n"
+            "           - Read 'height' tag in metres if present; else 'building:levels' * 3.0; else default 9.0.\n"
+            "           - Create a Mesh from the polygon, extrude to the height, name 'OSM_<id>'.\n"
+            "       - Group every created object under a new collection 'Site_Context'.\n"
+            "       - Add a Plane sized 2*radius below to represent the ground.\n"
+            "       - Add a small Empty at world origin labelled with the lat/lng so the architect knows where the site centre is.\n"
+            "       - Print a one-line summary: how many buildings imported, total footprint area, time taken.\n"
+            "  3. After execution, return: number of buildings, centre lat/lng, radius used, and a 'Site_Context' collection name. Tell the user they can now model their proposal inside this context.\n\n"
+            "User request: {var1}"
+        ),
+        allowed_tools=["blender_ping", "blender_execute_python"],
+    )
+    meta = SkillMeta(
+        intent="Pull surrounding buildings from OpenStreetMap and build a Blender context massing from a map link.",
+        keywords=[
+            "google", "maps", "map", "osm", "openstreetmap",
+            "context", "site", "surroundings", "neighbourhood",
+            "neighborhood", "urban", "lat", "long", "coordinates",
+            "from-map", "build-context",
+        ],
+        when_to_use=(
+            "User pastes a Google Maps URL or coordinates and asks for the "
+            "surrounding buildings as a Blender massing."
+        ),
+        examples=[
+            {"prompt": "Build the site context from this map link <url>",
+             "expected_outcome": "Buildings within ~250 m extruded to their real heights as a Blender Site_Context collection."},
+            {"prompt": "Mass the surroundings at 24.4539, 54.3773",
+             "expected_outcome": "Same as above; coordinates parsed directly."},
+        ],
+        tags=["blender", "context", "massing", "site", "maps"],
+        requires=["blender"],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
+def _seed_revit_detail_pass() -> tuple[Workflow, SkillMeta]:
+    wf = _build_chain(
+        workflow_id=SEED_DETAIL_PASS_ID,
+        name="Annotate active view (dimensions + tags + room labels)",
+        description=(
+            "Run a one-pass annotation: dimension every wall, tag every "
+            "door / window / room visible in the active view. Each pass "
+            "wrapped in its own Revit Transaction so the architect can "
+            "Undo selectively if a category mis-fires."
+        ),
+        framing_template=(
+            "You are running the ArchHub skill 'Annotate active view'. "
+            "GOAL: produce a clean construction-document-ready annotation "
+            "pass on whatever view is active.\n"
+            "Procedure:\n"
+            "  1. Call revit_info to confirm a document and active view.\n"
+            "  2. Call revit_execute_csharp ONCE with a C# block that "
+            "performs THREE separate Revit Transactions in sequence "
+            "(named 'ArchHub: Dimension walls', 'ArchHub: Tag openings', "
+            "'ArchHub: Tag rooms'):\n"
+            "     a. Dimension every Wall whose LocationCurve is in the "
+            "active view, using the project's default LinearDimensionType.\n"
+            "     b. Place a DoorTag and WindowTag on every Door / Window "
+            "FamilyInstance whose Host is a wall in the active view. "
+            "Activate the default tag symbols if not already active.\n"
+            "     c. Place a RoomTag at the centre of every Room whose Level "
+            "matches the active view's GenLevel and whose Area > 0.\n"
+            "  3. Be defensive: skip elements without a stable reference "
+            "(e.g. doors with no host curve), count + report skipped.\n"
+            "  4. Return per-pass counts: walls dimensioned, openings "
+            "tagged, rooms tagged, total skipped, view name.\n\n"
+            "User request: {var1}"
+        ),
+        allowed_tools=["revit_info", "revit_execute_csharp"],
+    )
+    meta = SkillMeta(
+        intent="Run a one-pass annotation: dimension walls + tag openings + tag rooms in the active Revit view.",
+        keywords=[
+            "annotate", "annotation", "dimension", "tag", "tags",
+            "label", "labels", "detail", "construction-doc",
+            "annotate-view", "doc-up", "drawing-set",
+        ],
+        when_to_use=(
+            "User wants the active view fully annotated for construction "
+            "documents in one click."
+        ),
+        examples=[
+            {"prompt": "Annotate this view",
+             "expected_outcome": "Wall dimensions + door/window tags + room labels appear."},
+            {"prompt": "Doc this floor plan up",
+             "expected_outcome": "Same as above."},
+        ],
+        tags=["revit", "annotation", "production"],
+        requires=["revit"],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
+# ---------------------------------------------------------------------------
 SEED_FACTORIES = (
     _seed_extract_mass,
     _seed_setup_revit_project,
@@ -485,6 +674,9 @@ SEED_FACTORIES = (
     _seed_place_openings,
     _seed_generate_sheets,
     _seed_sketch_to_production,
+    _seed_export_revit_to_dwg,
+    _seed_osm_context_mass,
+    _seed_revit_detail_pass,
 )
 
 

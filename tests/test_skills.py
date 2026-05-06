@@ -214,14 +214,15 @@ class TestSeeds:
         assert len(llm_nodes) == 6
 
     def test_ensure_production_skills_idempotent(self, tmp_library):
-        from skills.production_seeds import ensure_production_skills
+        from skills.production_seeds import ensure_production_skills, SEED_FACTORIES
         from skills.library import list_skills
 
+        expected = len(SEED_FACTORIES)
         first = ensure_production_skills()
-        assert len(first) == 6
+        assert len(first) == expected
         second = ensure_production_skills()
         assert second == []
-        assert len(list_skills()) == 6
+        assert len(list_skills()) == expected
 
 
 # ---------------------------------------------------------------------------

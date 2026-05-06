@@ -159,7 +159,9 @@ class ToolCard(QFrame):
         super().__init__(parent)
         self.setObjectName("toolCard")
         self.invocation = invocation
-        self._expanded = False
+        # On error, default to expanded so the user sees the failure cause
+        # without having to click. Successful calls collapse for cleanliness.
+        self._expanded = (invocation.status == "error")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 8, 12, 8)
@@ -168,7 +170,7 @@ class ToolCard(QFrame):
         header = QHBoxLayout()
         header.setSpacing(8)
         self.toggle_btn = QToolButton()
-        self.toggle_btn.setText("▸")
+        self.toggle_btn.setText("▾" if self._expanded else "▸")
         self.toggle_btn.setObjectName("toolCardChevron")
         self.toggle_btn.clicked.connect(self._toggle)
         header.addWidget(self.toggle_btn)
@@ -177,6 +179,12 @@ class ToolCard(QFrame):
         title.setObjectName("toolCardTitle")
         header.addWidget(title)
         header.addStretch(1)
+
+        # Inline error preview to the right of the title — saves a click.
+        self.error_preview = QLabel("")
+        self.error_preview.setObjectName("toolCardStatus")
+        self.error_preview.setStyleSheet("color: #d97757;")
+        header.addWidget(self.error_preview)
 
         self.status_label = QLabel(invocation.status)
         self.status_label.setObjectName("toolCardStatus")
@@ -187,18 +195,41 @@ class ToolCard(QFrame):
         self.detail.setReadOnly(True)
         self.detail.setObjectName("toolCardDetail")
         self.detail.setMinimumHeight(0)
-        self.detail.setMaximumHeight(0)
-        self.detail.setVisible(False)
+        self.detail.setMaximumHeight(280 if self._expanded else 0)
+        self.detail.setVisible(self._expanded)
         outer.addWidget(self.detail)
 
         self.refresh()
 
     def refresh(self) -> None:
         self.status_label.setText(self.invocation.status)
+
+        # Pull a short error preview from the result so the user sees the
+        # actual cause inline (instead of a useless "error" badge).
+        result = self.invocation.result or {}
+        err_msg = ""
+        if isinstance(result, dict):
+            err_msg = str(result.get("error") or "").strip()
+        if self.invocation.status == "error" and err_msg:
+            short = err_msg.replace("\n", " ").strip()
+            if len(short) > 70:
+                short = short[:67] + "…"
+            self.error_preview.setText(short)
+            # Ensure the detail panel is open on first error.
+            if not self._expanded:
+                self._expanded = True
+                self.toggle_btn.setText("▾")
+                self.detail.setVisible(True)
+                self.detail.setMaximumHeight(280)
+        else:
+            self.error_preview.setText("")
+
         if self._expanded:
             args = self.invocation.arguments or {}
-            result = self.invocation.result or {}
-            text = "ARGS\n" + str(args)[:2000] + "\n\nRESULT\n" + str(result)[:2000]
+            text = ""
+            if self.invocation.status == "error" and err_msg:
+                text += f"ERROR\n{err_msg}\n\n"
+            text += "ARGS\n" + str(args)[:2000] + "\n\nRESULT\n" + str(result)[:2000]
             self.detail.setPlainText(text)
 
     def _toggle(self) -> None:
@@ -598,6 +629,10 @@ class ChatWindow(QMainWindow):
 
         pricing_action = menu.addAction("◆   Plans & pricing…")
         pricing_action.triggered.connect(self._open_pricing_dialog)
+
+        reality_action = menu.addAction("⚡   Reality Check")
+        reality_action.setToolTip("Smoke-test every connector + LLM end-to-end.")
+        reality_action.triggered.connect(self._open_reality_check)
 
         about_action = menu.addAction("ⓘ   About ArchHub")
         about_action.triggered.connect(self._show_about)
@@ -1355,10 +1390,56 @@ class ChatWindow(QMainWindow):
         self._render_message(msg)
         QTimer.singleShot(0, self._scroll_to_bottom)
 
+    # ---- URL detection in chat -------------------------------------------
+
+    _URL_INTENT_HINTS: list[tuple[str, str, str]] = [
+        # (regex pattern, skill_id_prefix, contextual hint to add)
+        (r"(google\.[a-z.]+/maps|maps\.app\.goo\.gl|maps\.google\.com|@[\-\d.]+,[\-\d.]+,\d+\.?\d*z)",
+         "seed-osm-context-mass-v1",
+         "Looks like a map link — pulling OpenStreetMap buildings around it as Blender massing."),
+        (r"\.dwg\b",
+         "seed-export-revit-to-dwg-v1",
+         "AutoCAD .dwg detected — exporting from Revit."),
+    ]
+
+    def _detect_url_intent(self, prompt: str) -> Optional[str]:
+        """Return the skill_id whose URL pattern matches this prompt, or None."""
+        import re
+        for pat, skill_id, _hint in self._URL_INTENT_HINTS:
+            if re.search(pat, prompt, re.IGNORECASE):
+                return skill_id
+        return None
+
     def _propose_skill_match(self, prompt: str) -> bool:
         """If a Skill matches strongly, propose it as an inline suggestion.
         Returns True if user is being prompted (caller should NOT continue
         to the LLM); False = no strong match, continue normal flow."""
+        # URL intent fast-path: paste a Maps URL or .dwg path → propose
+        # the matching Skill directly without going through the keyword
+        # matcher, which would never match against URLs anyway.
+        url_skill_id = self._detect_url_intent(prompt)
+        if url_skill_id is not None:
+            try:
+                wf = skills.load_skill(url_skill_id)
+                if wf is not None:
+                    from skills.matcher import MatchResult
+                    meta = skills.get_meta(wf)
+                    self._render_skill_suggestion(
+                        MatchResult(
+                            skill_id=url_skill_id,
+                            name=wf.name,
+                            intent=meta.intent if meta else "",
+                            score=1.0,
+                            why="URL pattern match",
+                            requires=meta.requires if meta else [],
+                            examples=meta.examples if meta else [],
+                        ),
+                        prompt,
+                    )
+                    return True
+            except Exception:
+                pass     # fall through to keyword matcher
+
         try:
             active = self._active_connector_families()
             matches = skills.match_skills(
@@ -1548,6 +1629,11 @@ class ChatWindow(QMainWindow):
     def _open_pricing_dialog(self) -> None:
         from pricing_dialog import PricingDialog
         dlg = PricingDialog(self)
+        dlg.exec()
+
+    def _open_reality_check(self) -> None:
+        from reality_check_panel import RealityCheckDialog
+        dlg = RealityCheckDialog(self.router, self)
         dlg.exec()
 
     # ---- model picker -----------------------------------------------------

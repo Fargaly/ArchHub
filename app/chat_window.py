@@ -542,6 +542,11 @@ class ChatWindow(QMainWindow):
         self.history: list[ChatMessage] = []
         self._current_bubble: Optional[MessageBubble] = None
         self._current_invocations: dict[str, tuple[ToolInvocation, ToolCard]] = {}
+        # Per-skill last-run window for retry detection. Key = skill_id,
+        # value = {"at": float, "success": bool}. Pruned implicitly — we
+        # only ever read the entry for the skill we're about to record,
+        # so stale keys are harmless.
+        self._last_skill_runs: dict[str, dict] = {}
 
         # Live parametric session — drives the sidebar and persists across turns.
         self.session: Session = Session()
@@ -1664,6 +1669,24 @@ class ChatWindow(QMainWindow):
         self._skill_t0 = __import__("time").time()
         thread.start()
 
+    def _retry_marker_for(self, skill_id: str, window_seconds: float = 60.0) -> Optional[str]:
+        """Return a stable marker string if this run looks like a retry of a
+        recent failure of the same Skill, else None.
+
+        We treat re-running the same skill within `window_seconds` after a
+        failure as a retry signal — strong proxy for "user re-asked because
+        last answer was wrong." Used by `record_run` to bump the per-skill
+        retry counter that the friction report consumes.
+        """
+        import time as _t
+        prev = (self._last_skill_runs or {}).get(skill_id)
+        if not prev or prev.get("success", True):
+            return None
+        age = _t.time() - prev.get("at", 0.0)
+        if age > window_seconds:
+            return None
+        return f"{skill_id}@{int(prev['at'])}"
+
     def _on_skill_run_done(self, skill_id, wf, result, bubble, stepper, msg) -> None:
         import time as _time
         elapsed = int((_time.time() - getattr(self, "_skill_t0", _time.time())) * 1000)
@@ -1682,11 +1705,23 @@ class ChatWindow(QMainWindow):
         bubble.set_text(f"{announce}\n\n{summary}")
         msg.content = bubble.text_view.toPlainText()
         stepper.finalise(success=success)
+
+        # Retry detection: same skill_id failing twice inside 60s ≈ user
+        # re-asking the same thing. Strong signal for the friction
+        # report. We pass `retry_of` only if the last run was a failure
+        # and within the window.
+        retry_of = self._retry_marker_for(skill_id)
         try:
             skills.record_run(skill_id, success=success,
-                              elapsed_ms=elapsed, error=error)
+                              elapsed_ms=elapsed, error=error,
+                              retry_of=retry_of)
         except Exception:
             pass
+        # Update the per-skill last-run window for next call.
+        self._last_skill_runs[skill_id] = {
+            "at": _time.time(),
+            "success": success,
+        }
 
     def _open_skills_panel(self) -> None:
         dlg = SkillsPanel(self.router, self.tools, self.manager, self)

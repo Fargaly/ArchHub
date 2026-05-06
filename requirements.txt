@@ -4,3 +4,7 @@ openai>=1.50,<2
 google-generativeai>=0.8,<1
 keyring>=25,<27
 requests>=2.31,<3
+# Telemetry + crash reporting (opt-in; clients are no-op until the
+# user grants consent in the first-run dialog).
+posthog>=3.7,<4
+sentry-sdk>=2.18,<3

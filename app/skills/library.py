@@ -140,7 +140,36 @@ def list_skills() -> list[dict]:
                 "node_count": len(wf.nodes),
                 "updated_at": wf.updated_at,
             })
+    out = _filter_by_feature_flags(out)
     _LIST_CACHE = (now, out)
+    return out
+
+
+def _filter_by_feature_flags(skills: list[dict]) -> list[dict]:
+    """Drop any Skill whose `kill_switch_flag` is OFF in PostHog.
+
+    Convention: a Skill that wants to be killable in production sets
+    `meta.tags = [..., "flag:skill_<id>_enabled"]`. The flag defaults
+    to TRUE if telemetry is off / unreachable, so killing happens
+    only on an explicit OFF in PostHog. Lets us disable a
+    misbehaving Skill across all users in 30s without a release.
+    """
+    try:
+        from telemetry import is_feature_enabled, is_enabled
+    except Exception:
+        return skills
+    if not is_enabled():
+        return skills
+    out: list[dict] = []
+    for s in skills:
+        tags = s.get("tags") or []
+        flag = next(
+            (t.split(":", 1)[1] for t in tags if isinstance(t, str) and t.startswith("flag:")),
+            None,
+        )
+        if flag and not is_feature_enabled(flag, default=True):
+            continue
+        out.append(s)
     return out
 
 

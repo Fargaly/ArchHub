@@ -30,11 +30,28 @@ THEME = APP_ROOT / "theme.qss"
 
 
 def main() -> int:
+    # Sentry init must happen BEFORE QApplication so import-time crashes
+    # in Qt code get captured. No-op if user opted out / no DSN.
+    try:
+        import sentry_init
+        version_path = APP_ROOT.parent / "VERSION"
+        version = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else None
+        sentry_init.init(release=f"archhub@{version}" if version else None)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     app.setApplicationName("ArchHub")
     app.setQuitOnLastWindowClosed(False)
     if THEME.exists():
         app.setStyleSheet(THEME.read_text(encoding="utf-8"))
+
+    # Hook PyQt's silent-exception-swallowing behaviour.
+    try:
+        import sentry_init as _si
+        _si.install_qt_excepthook()
+    except Exception:
+        pass
 
     # Core services
     manager = ConnectorManager()
@@ -89,6 +106,14 @@ def main() -> int:
 
     if "--silent" not in sys.argv:
         window.show_centered()
+        # First-run telemetry consent — single question, before the
+        # heavier 3-step onboarding. Returns immediately if already
+        # answered.
+        try:
+            from telemetry_consent_dialog import maybe_prompt as _maybe_telemetry
+            _maybe_telemetry(window)
+        except Exception:
+            pass
         # First-run onboarding wizard. Shows once per device; the user can
         # re-run from the menu via Show onboarding again. Done after the
         # main window is on screen so the wizard floats above it.
@@ -99,9 +124,35 @@ def main() -> int:
                                  parent=window).exec()
         except Exception:
             pass
+        # Re-init Sentry if the user just opted in — first init was
+        # before the dialog so it'll have been a no-op then.
+        try:
+            import sentry_init as _si
+            _si.init()
+            _si.install_qt_excepthook()
+        except Exception:
+            pass
+        # Fire one app_started event for cohort tracking.
+        try:
+            import telemetry as _t
+            _t.track_event("app_started", silent=False)
+        except Exception:
+            pass
+    else:
+        try:
+            import telemetry as _t
+            _t.track_event("app_started", silent=True)
+        except Exception:
+            pass
 
     rc = app.exec()
     scheduler.stop()
+    # Flush in-flight telemetry events on clean exit.
+    try:
+        import telemetry as _t
+        _t.shutdown()
+    except Exception:
+        pass
     return rc
 
 

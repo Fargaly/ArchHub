@@ -82,6 +82,17 @@ class Agent:
 
         if completion.error:
             self._log(f"[{task.id}] FAILED: {completion.error}")
+            try:
+                from .token_meter import record as _meter_record
+                _meter_record(
+                    self.name, success=False,
+                    prompt_tokens=completion.prompt_tokens,
+                    completion_tokens=completion.completion_tokens,
+                    elapsed_ms=elapsed,
+                    kind="local",
+                )
+            except Exception:
+                pass
             return AgentResult(
                 False, f"Model error: {completion.error}",
                 output_dir=out_dir, elapsed_ms=elapsed, error=completion.error,
@@ -108,6 +119,20 @@ class Agent:
             f"completion_tokens={completion.completion_tokens} "
             f"artifacts={len(artifacts) + 1}"
         )
+
+        # Push run into the per-dept token meter — feeds dashboard +
+        # TelemetryAgent's weekly friction report.
+        try:
+            from .token_meter import record as _meter_record
+            _meter_record(
+                self.name, success=True,
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                elapsed_ms=elapsed,
+                kind="local",
+            )
+        except Exception:
+            pass
 
         summary = self._summarise(task, completion, [raw_path, *artifacts])
         return AgentResult(

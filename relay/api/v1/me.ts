@@ -5,7 +5,7 @@
  * and show "X / Y tokens used this month" before the architect makes a
  * real request. Cheap call: one auth check + one view read.
  */
-export const config = { runtime: "nodejs" };
+// Runtime is configured in vercel.json (functions block).
 
 import { getUserFromToken, getFirmKey, getMonthlyUsage } from "../../lib/supabase.js";
 

@@ -11,7 +11,8 @@
  * reason about with full Node primitives. Streaming still works fine —
  * Vercel pipes the Web ReadableStream we return.
  */
-export const config = { runtime: "nodejs" };
+// Runtime is configured in vercel.json (functions block). Per-file
+// `config.runtime` was deprecated by Vercel and rejects deploys.
 
 import {
   getUserFromToken,

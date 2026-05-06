@@ -128,6 +128,47 @@ class LLMRouter:
 
     # ---- routing ----------------------------------------------------------
 
+    # Preference order per task class. The first model present in the local
+    # Ollama install wins. Tuned for tool-use reliability and code quality:
+    # qwen2.5-coder is the most reliable open model for Revit C# generation;
+    # llama3.1 has the best tool-calling adherence among general models.
+    _OLLAMA_MODEL_PREFERENCES = {
+        "modeling": (
+            "qwen2.5-coder:7b", "qwen2.5-coder", "deepseek-r1:8b",
+            "qwen3:8b", "llama3.1:latest", "llama3.1",
+        ),
+        "analysis": (
+            "deepseek-r1:8b", "qwen3:8b", "llama3.1:latest",
+            "qwen2.5-coder:7b",
+        ),
+        "vision": (
+            "qwen3-vl:8b", "llama3.2:latest", "llama3.1:latest",
+        ),
+        "quick": (
+            "llama3.2:3b", "llama3.2:latest", "gemma4:latest",
+            "llama3.1:latest",
+        ),
+        "default": (
+            "llama3.1:latest", "llama3.1", "qwen3:8b",
+            "qwen2.5-coder:7b", "mistral:7b",
+        ),
+    }
+
+    def _pick_ollama_model(self, task: str) -> Optional[str]:
+        try:
+            from llm_providers.ollama_client import list_local_models
+            local = list_local_models()
+        except Exception:
+            return None
+        if not local:
+            return None
+        local_set = set(local)
+        for candidate in self._OLLAMA_MODEL_PREFERENCES.get(task, ()):
+            if candidate in local_set:
+                return candidate
+        # No preferred model available — fall back to whatever was first.
+        return local[0]
+
     def _route(self, history: list[dict], requested_model: str) -> tuple[str, str, str]:
         """Return (provider, model_name, note)."""
         if requested_model and requested_model != ROUTE_AUTO:
@@ -141,6 +182,7 @@ class LLMRouter:
         modeling_signals = (
             "revit", "autocad", "3ds max", "blender", "model", "wall", "door",
             "window", "geometry", "extrude", "render", "ifc", "rvt", "dwg",
+            "create", "make", "build", "add", "draw", "place", "dimension",
         )
         analysis_signals = (
             "schedule", "quantity", "takeoff", "compare", "audit", "report",
@@ -157,18 +199,30 @@ class LLMRouter:
                 return "anthropic", "claude-opus-4-7", "auto: modeling task → Claude Opus 4.7"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: modeling task → GPT-4o (Anthropic unavailable)"
+            if "ollama" in configured:
+                m = self._pick_ollama_model("modeling")
+                if m:
+                    return "ollama", m, f"auto: modeling task → local Ollama {m}"
 
         if any(s in text for s in analysis_signals):
             if "anthropic" in configured:
                 return "anthropic", "claude-sonnet-4-6", "auto: analysis → Claude Sonnet 4.6"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: analysis → GPT-4o"
+            if "ollama" in configured:
+                m = self._pick_ollama_model("analysis")
+                if m:
+                    return "ollama", m, f"auto: analysis → local Ollama {m}"
 
         if any(s in text for s in quick_signals) or len(text) < 24:
             if "anthropic" in configured:
                 return "anthropic", "claude-haiku-4-5-20251001", "auto: short → Claude Haiku"
             if "openai" in configured:
                 return "openai", "gpt-4o-mini", "auto: short → GPT-4o mini"
+            if "ollama" in configured:
+                m = self._pick_ollama_model("quick")
+                if m:
+                    return "ollama", m, f"auto: short → local Ollama {m}"
 
         # Default
         if "anthropic" in configured:
@@ -178,13 +232,9 @@ class LLMRouter:
         if "google" in configured:
             return "google", "gemini-1.5-pro", "auto: default → Gemini 1.5 Pro"
         if "ollama" in configured:
-            try:
-                from llm_providers.ollama_client import list_local_models
-                models = list_local_models()
-                if models:
-                    return "ollama", models[0], f"auto: local Ollama → {models[0]}"
-            except Exception:
-                pass
+            m = self._pick_ollama_model("default")
+            if m:
+                return "ollama", m, f"auto: default → local Ollama {m}"
 
         raise RuntimeError("No LLM configured. Add an API key in Settings or start Ollama.")
 
@@ -294,12 +344,28 @@ class LLMRouter:
         active_list = ", ".join(e.display_name for e in active) if active else "(none)"
         return (
             "You are ArchHub, an AI assistant embedded in an architect's desktop. "
-            "You have live access to the user's AEC tools through tool calls. "
-            f"Currently active connectors: {active_list}. "
-            "When the user asks to do something in a tool, prefer using the matching "
-            "tool call rather than describing it. Be concise and confident; the user is "
-            "an experienced architect (BIM specialist) who values accurate, deep responses "
-            "without filler. If a connector isn't active, suggest opening Connectors to "
-            "enable it. For modeling, write idiomatic API code (Revit C# via Roslyn, "
-            "AutoCAD C# via Roslyn, 3ds Max via pymxs, Blender via bpy)."
+            "You drive the user's AEC tools directly through tool calls. The user "
+            "is an architect who never wants to write or copy code — that is your "
+            "job entirely.\n\n"
+            f"Active connectors right now: {active_list}.\n\n"
+            "RULES:\n"
+            "1. When the user asks for a modelling, drafting, annotation, render, or "
+            "data action, immediately invoke the matching tool. Do NOT describe what "
+            "the tool would do; call it.\n"
+            "2. NEVER paste code into the chat for the user to copy. Never say "
+            "'paste this into the script editor', 'use this as reference', or "
+            "anything similar. The user does not have a script editor open and "
+            "should not need one.\n"
+            "3. If a tool call fails or returns an error, do not retry by giving "
+            "the user code. Report the failure plainly in one short sentence and "
+            "ask whether to retry, or suggest enabling the matching connector. "
+            "Example: 'Revit isn't reachable on localhost:48884 — open Revit and "
+            "make sure the ArchHub connector is enabled, then I'll retry.'\n"
+            "4. If the connector for the requested tool is not in the active list "
+            "above, do not invent code. Say one short sentence: which connector is "
+            "needed and where to enable it (Connectors panel in the header).\n"
+            "5. For modelling code, write idiomatic API calls (Revit C# via "
+            "Roslyn, AutoCAD C# via Roslyn, 3ds Max via pymxs, Blender via bpy) "
+            "INSIDE tool calls only — never inline in chat text.\n"
+            "6. Be terse. The architect values action, not explanation."
         )

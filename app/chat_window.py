@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from pathlib import Path
 
@@ -520,6 +520,12 @@ class ChatWindow(QMainWindow):
             if text.startswith("/") and self._handle_slash_command(text):
                 return
 
+            # Pre-flight: if the prompt clearly targets a host whose connector
+            # isn't active, stop here and tell the user. Avoids the LLM
+            # falling back to "here's some code, paste it yourself".
+            if self._block_if_required_connector_inactive(text):
+                return
+
             # Skill matcher: if a saved Skill clearly fits this prompt,
             # propose running it before the LLM regenerates from scratch.
             if self._propose_skill_match(text):
@@ -528,6 +534,111 @@ class ChatWindow(QMainWindow):
         if images:
             self._show_user_images(images)
         self._start_assistant_response()
+
+    # ---- pre-flight intent guard ------------------------------------------
+
+    # Vocabulary that strongly signals "this needs <host>". Keep tight to
+    # avoid false positives on conversational text.
+    _HOST_INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+        "revit": ("revit", "wall", "walls", "door", "doors", "window", "windows",
+                  "level", "levels", "room", "rooms", "family", "families",
+                  "sheet", "sheets", "schedule", "rvt", "ifc",
+                  "dimension", "annotate", "annotation", "tag", "tags"),
+        "autocad": ("autocad", "acad", "dwg", "polyline", "block", "xref"),
+        "max": ("3ds max", "3dsmax", "max script", "maxscript", "pymxs"),
+        "blender": ("blender", "bpy", "extrude", "modifier", "render"),
+        "speckle": ("speckle", "stream", "commit"),
+    }
+    # Generic verbs that, on their own, indicate the user wants ACTION (not chat).
+    # Combined with no host hint and no active modelling connector → still warn.
+    _ACTION_VERBS: tuple[str, ...] = (
+        "create", "make", "build", "add", "place", "draw", "model",
+        "generate", "delete", "remove", "move", "rotate", "scale",
+    )
+
+    def _block_if_required_connector_inactive(self, text: str) -> bool:
+        """Return True if the prompt obviously needs a connector that is OFF
+        or unreachable, and we already wrote a guard message. Caller should
+        NOT continue.
+
+        Two-level check:
+          (a) connector enabled in ConnectorManager (state == ACTIVE)
+          (b) host application actually reachable (ping its HTTP endpoint)
+
+        Both must be true before the LLM is allowed to drive the host. Without
+        (b) the LLM hits a tool error and falls back to dumping code into chat,
+        which is exactly the experience ArchHub exists to prevent.
+        """
+        lower = text.lower()
+        active = self._active_connector_families()
+
+        for host, kws in self._HOST_INTENT_KEYWORDS.items():
+            if not any(kw in lower for kw in kws):
+                continue
+            if host not in active:
+                self._add_assistant_note(
+                    f"⚠️ This looks like a **{host.title()}** action, but "
+                    f"the {host.title()} connector isn't active.\n\n"
+                    f"Open **Connectors** (header), enable {host.title()}, "
+                    f"then make sure {host.title()} is running on this "
+                    f"machine. I'll never paste code for you to copy — "
+                    f"once the connector is live I'll execute the action "
+                    f"directly."
+                )
+                return True
+            if not self._host_reachable(host):
+                self._add_assistant_note(
+                    f"⚠️ The {host.title()} connector is enabled, but "
+                    f"{host.title()} isn't running (or its ArchHub addin "
+                    f"hasn't loaded).\n\n"
+                    f"Open {host.title()}, wait until the project is loaded, "
+                    f"then ask me again. I'll execute the action directly — "
+                    f"never by pasting code for you to copy."
+                )
+                return True
+            return False
+
+        # No host keyword. If it's an action verb and NO modelling connector
+        # is active at all, we still warn so the LLM doesn't hallucinate code.
+        modelling_hosts = {"revit", "autocad", "max", "blender"}
+        if (active.isdisjoint(modelling_hosts)
+                and any(v in lower for v in self._ACTION_VERBS)):
+            self._add_assistant_note(
+                "⚠️ No modelling connector is active. To execute actions in "
+                "Revit / AutoCAD / 3ds Max / Blender, enable the matching "
+                "connector first via the **Connectors** button in the header, "
+                "and have that application open.\n\n"
+                "I won't paste code for you to copy — that's the whole point "
+                "of ArchHub. Once the connector is live, ask again and I'll "
+                "do it directly."
+            )
+            return True
+        return False
+
+    # Per-host ping URL. None = no probe (treat as always reachable).
+    _HOST_PING_URL: dict[str, Optional[str]] = {
+        "revit":   "http://localhost:48884/ping",
+        "autocad": "http://localhost:48885/ping",
+        "max":     "http://localhost:48886/max-mcp/ping",
+        "blender": "http://localhost:9876/ping",
+        # Speckle is cloud-only; treat it as always reachable.
+        "speckle": None,
+    }
+
+    def _host_reachable(self, host: str) -> bool:
+        """Cheap reachability probe. Direct HTTP with a 1-second timeout so
+        the chat input never blocks waiting for a host that's not running."""
+        url = self._HOST_PING_URL.get(host)
+        if url is None:
+            return True
+        import urllib.request, urllib.error
+        try:
+            with urllib.request.urlopen(url, timeout=1.0) as resp:
+                return 200 <= resp.status < 300
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            return False
+        except Exception:
+            return False
 
     def _on_attach_image(self) -> None:
         """Open a file dialog to attach image files."""

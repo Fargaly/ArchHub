@@ -39,9 +39,25 @@ class _RevitSpec:
         if not src_dir.exists() or not (src_dir / "RevitMCP.dll").exists():
             raise RuntimeError(f"payload missing for Revit {year}: DLL not built yet.")
         dst_dir = self._staged_dir(year)
-        if dst_dir.exists():
-            shutil.rmtree(dst_dir)
-        shutil.copytree(src_dir, dst_dir)
+
+        # If the staged directory already has the same RevitMCP.dll
+        # we'd be copying, skip the overwrite entirely. Revit holds
+        # the DLL open while it's running, so a blind rmtree here
+        # raises WinError 5. Idempotent stage = re-toggling Revit ON
+        # while it's open just re-writes the addin manifest.
+        src_dll = src_dir / "RevitMCP.dll"
+        dst_dll = dst_dir / "RevitMCP.dll"
+        if not (dst_dll.exists() and self._same_file(src_dll, dst_dll)):
+            try:
+                if dst_dir.exists():
+                    shutil.rmtree(dst_dir)
+                shutil.copytree(src_dir, dst_dir)
+            except PermissionError as ex:
+                raise RuntimeError(
+                    f"Close Revit {year} and try again — its RevitMCP.dll "
+                    f"is currently loaded so we can't replace it. "
+                    f"({ex.filename or ex})"
+                ) from ex
 
         addin = self._addin_path(year)
         addin.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +74,18 @@ class _RevitSpec:
   </AddIn>
 </RevitAddIns>
 """, encoding="utf-8")
+
+    @staticmethod
+    def _same_file(a: Path, b: Path) -> bool:
+        """Cheap fingerprint compare — size + first 4 KB. Avoids
+        reading the whole DLL just to decide if a copy is needed."""
+        try:
+            if a.stat().st_size != b.stat().st_size:
+                return False
+            with a.open("rb") as fa, b.open("rb") as fb:
+                return fa.read(4096) == fb.read(4096)
+        except OSError:
+            return False
 
     def deactivate(self, entry: ConnectorEntry) -> None:
         year = entry.version or ""
@@ -96,9 +124,24 @@ class _AutoCADSpec:
         if not src_dir.exists():
             raise RuntimeError(f"payload missing for AutoCAD {year}")
         dst_dir = self._staged_dir(year)
-        if dst_dir.exists():
-            shutil.rmtree(dst_dir)
-        shutil.copytree(src_dir, dst_dir)
+
+        # Same locked-DLL guard as Revit: if AutoCAD is open and our
+        # AcadMCP.dll already matches, skip the copy. Re-toggling
+        # while AutoCAD is running just re-asserts the registry
+        # auto-load entry.
+        src_dll = src_dir / "AcadMCP.dll"
+        dst_dll = dst_dir / "AcadMCP.dll"
+        if not (dst_dll.exists() and _RevitSpec._same_file(src_dll, dst_dll)):
+            try:
+                if dst_dir.exists():
+                    shutil.rmtree(dst_dir)
+                shutil.copytree(src_dir, dst_dir)
+            except PermissionError as ex:
+                raise RuntimeError(
+                    f"Close AutoCAD {year} and try again — its AcadMCP.dll "
+                    f"is currently loaded so we can't replace it. "
+                    f"({ex.filename or ex})"
+                ) from ex
 
         # Register HKCU auto-load entry
         try:

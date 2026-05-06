@@ -1,0 +1,10 @@
+# Tell GitHub Pages not to run Jekyll on this folder. We ship the
+# landing page as a single self-contained index.html; the .md files
+# next to it are documentation Pages can render directly without
+# theming.
+theme: null
+plugins: []
+include:
+  - index.html
+  - SKILLS.md
+  - MULTI_DEVICE.md

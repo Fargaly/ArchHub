@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ArchHub — Talk to your AEC stack</title>
+  <meta name="description" content="ArchHub drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat. Save what works as a Skill — copy-paste shareable JSON your firm owns." />
+  <meta property="og:title" content="ArchHub — Talk to your AEC stack" />
+  <meta property="og:description" content="One chat drives Revit, Blender, AutoCAD, 3ds Max, Speckle. Skills you save and share." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" type="image/png" href="../app/assets/archhub.png" />
+  <style>
+    /* Glass morphism on a warm dark canvas — same palette as the app. */
+    :root {
+      --bg-1: #221c2a;
+      --bg-2: #18161e;
+      --bg-3: #14121a;
+      --bg-4: #100e16;
+      --text-1: #f4efe8;
+      --text-2: #b9b3a9;
+      --text-3: #7a7782;
+      --accent: #cc785c;
+      --accent-hi: #d68872;
+      --glass-fill: rgba(255, 255, 255, 0.04);
+      --glass-stroke: rgba(255, 255, 255, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      font-family: "Inter", "Segoe UI", -apple-system, sans-serif;
+      color: var(--text-1);
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(204,120,92,0.10), transparent 50%),
+        linear-gradient(135deg, var(--bg-1), var(--bg-2) 35%, var(--bg-3) 70%, var(--bg-4));
+      min-height: 100vh;
+      line-height: 1.55;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hi); }
+
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 36px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(20, 18, 26, 0.55);
+      border-bottom: 1px solid var(--glass-stroke);
+      position: sticky; top: 0; z-index: 10;
+    }
+    nav .brand { font-weight: 600; font-size: 18px; letter-spacing: 0.5px; }
+    nav .nav-links { display: flex; gap: 24px; font-size: 14px; color: var(--text-2); }
+    nav .nav-links a { color: var(--text-2); }
+    nav .nav-links a:hover { color: var(--text-1); }
+
+    .container { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+    .hero { padding: 110px 0 80px; text-align: center; }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 600; letter-spacing: -0.02em;
+      margin: 0 0 24px;
+    }
+    .hero h1 .accent { color: var(--accent); }
+    .hero p {
+      font-size: clamp(15px, 2vw, 19px);
+      color: var(--text-2);
+      max-width: 640px; margin: 0 auto 36px;
+    }
+    .cta-row {
+      display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block; padding: 14px 26px; font-size: 14px; font-weight: 600;
+      border-radius: 12px; cursor: pointer; transition: all 0.15s;
+      border: 1px solid var(--glass-stroke);
+    }
+    .btn-primary {
+      background: var(--accent); color: #1a1a1c; border: 1px solid rgba(255,255,255,0.18);
+    }
+    .btn-primary:hover { background: var(--accent-hi); }
+    .btn-ghost {
+      background: var(--glass-fill); color: var(--text-1); backdrop-filter: blur(8px);
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.20); }
+
+    .demo-frame {
+      max-width: 920px; margin: 60px auto 0;
+      padding: 18px;
+      background: var(--glass-fill);
+      border: 1px solid var(--glass-stroke);
+      border-radius: 24px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+    }
+    .demo-frame img, .demo-frame .demo-placeholder {
+      width: 100%; border-radius: 14px; display: block;
+    }
+    .demo-placeholder {
+      aspect-ratio: 16 / 9;
+      background: linear-gradient(135deg, #1c1c22, #100e16);
+      border: 1px solid var(--glass-stroke);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-3); font-size: 14px; font-style: italic;
+    }
+
+    section { padding: 80px 0; }
+    section h2 {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 600; letter-spacing: -0.01em; margin: 0 0 16px;
+      text-align: center;
+    }
+    section h2 + p.lede {
+      color: var(--text-2); text-align: center; max-width: 640px;
+      margin: 0 auto 48px; font-size: 16px;
+    }
+
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .feature {
+      background: var(--glass-fill);
+      border: 1px solid var(--glass-stroke);
+      border-radius: 16px;
+      padding: 26px;
+      backdrop-filter: blur(12px);
+    }
+    .feature h3 { margin: 0 0 8px; font-size: 17px; }
+    .feature p { margin: 0; color: var(--text-2); font-size: 14px; }
+    .feature .ico { font-size: 22px; color: var(--accent); margin-bottom: 14px; }
+
+    .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+    .tier {
+      background: var(--glass-fill);
+      border: 1px solid var(--glass-stroke);
+      border-radius: 18px;
+      padding: 28px 24px;
+      backdrop-filter: blur(12px);
+      display: flex; flex-direction: column;
+    }
+    .tier.recommended { border-color: rgba(204,120,92,0.45); }
+    .tier .badge {
+      display: inline-block; align-self: flex-start; font-size: 10px;
+      letter-spacing: 0.6px; text-transform: uppercase; color: var(--accent);
+      padding: 3px 9px; border: 1px solid rgba(204,120,92,0.40); border-radius: 9px;
+      margin-bottom: 10px;
+    }
+    .tier h3 { margin: 0 0 6px; font-size: 18px; }
+    .tier .price { font-size: 32px; font-weight: 600; margin-bottom: 4px; }
+    .tier .price small { font-size: 13px; color: var(--text-3); font-weight: 400; }
+    .tier .desc { color: var(--text-2); font-size: 13px; margin-bottom: 16px; }
+    .tier ul { list-style: none; padding: 0; margin: 0 0 22px; flex: 1; }
+    .tier li { font-size: 13px; padding: 5px 0; color: var(--text-2); }
+    .tier li::before { content: "✓  "; color: var(--accent); font-weight: 600; }
+    .tier .btn { width: 100%; text-align: center; }
+
+    .compare {
+      width: 100%; border-collapse: collapse; margin-top: 20px;
+      background: var(--glass-fill); border: 1px solid var(--glass-stroke);
+      border-radius: 16px; overflow: hidden;
+    }
+    .compare th, .compare td {
+      padding: 13px 16px; font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      text-align: center;
+    }
+    .compare th:first-child, .compare td:first-child { text-align: left; color: var(--text-2); }
+    .compare thead th { background: rgba(0,0,0,0.18); font-weight: 600; }
+    .compare .yes { color: var(--accent); font-weight: 600; }
+    .compare .no { color: var(--text-3); }
+
+    footer {
+      padding: 60px 32px 40px;
+      border-top: 1px solid var(--glass-stroke);
+      color: var(--text-3); font-size: 13px; text-align: center;
+    }
+    footer a { color: var(--text-2); margin: 0 10px; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">ArchHub</div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
+    <a href="https://github.com/Fargaly/ArchHub">GitHub</a>
+    <a href="https://github.com/Fargaly/ArchHub/releases/latest">Download</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <h1>Talk to your <span class="accent">AEC stack.</span></h1>
+    <p>
+      ArchHub drives Revit, Blender, AutoCAD, 3ds Max and Speckle from a
+      single chat. Save what works as a Skill — copy-paste shareable JSON
+      your firm owns, runs, and improves.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/Fargaly/ArchHub/releases/latest">
+        Download for Windows
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/Fargaly/ArchHub">
+        View source on GitHub
+      </a>
+    </div>
+
+    <div class="demo-frame">
+      <div class="demo-placeholder">Demo screenshot placeholder — replace with app/assets shot</div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="container">
+    <h2>What ArchHub does</h2>
+    <p class="lede">
+      Six things no other AEC tool does in one chat.
+    </p>
+    <div class="features">
+      <div class="feature">
+        <div class="ico">✦</div>
+        <h3>Chat drives every tool</h3>
+        <p>"Dimension all walls" runs in Revit. "Build this sketch" runs in Blender. Code generated, executed, returned — never pasted.</p>
+      </div>
+      <div class="feature">
+        <div class="ico">⌘</div>
+        <h3>Skills you save and share</h3>
+        <p>Useful chat → /skill save → JSON. ComfyUI-style copy-paste. Cloud-synced via your private GitHub.</p>
+      </div>
+      <div class="feature">
+        <div class="ico">◇</div>
+        <h3>Vision input</h3>
+        <p>Paste a sketch. Claude / GPT-4o / Gemini reads it, infers parameters, builds the mass.</p>
+      </div>
+      <div class="feature">
+        <div class="ico">⤳</div>
+        <h3>Sketch → production</h3>
+        <p>Six-stage chained Skill: extract mass → push to Speckle → set up Revit → build walls → place openings → generate sheets. One click.</p>
+      </div>
+      <div class="feature">
+        <div class="ico">◐</div>
+        <h3>Multi-LLM, BYO key</h3>
+        <p>OpenRouter (real OAuth) or Anthropic, OpenAI, Google direct. Local Ollama for IP-sensitive work. Your choice.</p>
+      </div>
+      <div class="feature">
+        <div class="ico">⏵</div>
+        <h3>Click-only setup</h3>
+        <p>Installer with desktop icon, in-app auto-update, first-run wizard. No terminal, ever.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="vs">
+  <div class="container">
+    <h2>Why ArchHub vs the alternatives</h2>
+    <p class="lede">
+      We don't compete with Grasshopper or Forma — we sit where they
+      don't.
+    </p>
+    <table class="compare">
+      <thead>
+        <tr>
+          <th></th>
+          <th>ArchHub</th>
+          <th>Hypar</th>
+          <th>Forma</th>
+          <th>TestFit</th>
+          <th>ChatGPT Desktop</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Chat-driven UX</td><td class="yes">✓</td><td class="no">partial</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td></tr>
+        <tr><td>Drives Revit natively</td><td class="yes">✓</td><td class="no">partial</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td>Drives Blender natively</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td>Saved Skills (shareable JSON)</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">partial</td></tr>
+        <tr><td>Local LLM option</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td>Open source</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td>Free tier</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">chat only</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="container">
+    <h2>Pricing</h2>
+    <p class="lede">
+      Use it free. Upgrade when you depend on it.
+    </p>
+    <div class="pricing">
+      <div class="tier">
+        <h3>Free</h3>
+        <div class="price">$0<small> / month</small></div>
+        <div class="desc">Solo, evaluation, students.</div>
+        <ul>
+          <li>Up to 3 saved Skills</li>
+          <li>Local Ollama only</li>
+          <li>Single device</li>
+          <li>Community support</li>
+        </ul>
+        <a class="btn btn-ghost" href="https://github.com/Fargaly/ArchHub/releases/latest">Download</a>
+      </div>
+      <div class="tier recommended">
+        <span class="badge">Recommended</span>
+        <h3>Pro</h3>
+        <div class="price">$39<small> / seat / month</small></div>
+        <div class="desc">Solo arch + small studios.</div>
+        <ul>
+          <li>Unlimited Skills</li>
+          <li>Cloud sync via GitHub</li>
+          <li>BYO API keys</li>
+          <li>5-device sync</li>
+          <li>Email support</li>
+        </ul>
+        <a class="btn btn-primary" href="#">Start Pro (coming soon)</a>
+      </div>
+      <div class="tier">
+        <h3>Studio</h3>
+        <div class="price">$79<small> / seat / month</small></div>
+        <div class="desc">Firms, 5-100 seats.</div>
+        <ul>
+          <li>Pro features</li>
+          <li>Cloud LLM relay (we hold keys)</li>
+          <li>Firm-shared Skill library</li>
+          <li>Cost dashboard</li>
+          <li>Phone + email support</li>
+          <li>Firm SSO</li>
+        </ul>
+        <a class="btn btn-ghost" href="#">Start Studio (coming soon)</a>
+      </div>
+      <div class="tier">
+        <h3>Enterprise</h3>
+        <div class="price">Custom</div>
+        <div class="desc">100+ seats, IP-isolated.</div>
+        <ul>
+          <li>Studio features</li>
+          <li>Self-hosted relay</li>
+          <li>Custom Skill development</li>
+          <li>Dedicated support</li>
+          <li>Annual billing</li>
+        </ul>
+        <a class="btn btn-ghost" href="mailto:hello@archhub.app">Contact us</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>
+    <a href="https://github.com/Fargaly/ArchHub">GitHub</a> ·
+    <a href="https://github.com/Fargaly/ArchHub/blob/main/STRATEGY.md">Strategy</a> ·
+    <a href="https://github.com/Fargaly/ArchHub/blob/main/docs/SKILLS.md">Skills doc</a> ·
+    <a href="https://github.com/Fargaly/ArchHub/releases">Releases</a>
+  </div>
+  <div style="margin-top:14px;">© ArchHub 2026 · MIT licensed open source</div>
+</footer>
+
+</body>
+</html>

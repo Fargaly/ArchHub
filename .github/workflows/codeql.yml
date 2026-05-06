@@ -1,0 +1,56 @@
+name: CodeQL
+
+# CodeQL static analysis — finds taint flows, injection, deserialisation
+# bugs, and similar across our Python source. Runs on every push to main,
+# every PR that targets main, and weekly so newly-published query suites
+# catch regressions in already-merged code.
+#
+# Free for public repos via GitHub Advanced Security. Reports surface in
+# the repo's Security tab; high-severity alerts also gate the branch
+# protection check on main.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ python, javascript ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Use the security-extended query suite — slower but catches
+          # significantly more taint and crypto-misuse patterns than the
+          # default suite, which matters for an app that runs LLM-
+          # generated code against the user's local AEC tools.
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

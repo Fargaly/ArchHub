@@ -16,30 +16,61 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-    QMessageBox,
+    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QProgressBar,
+    QVBoxLayout, QWidget, QMessageBox,
 )
 
 import updater
+import release_updater
 
 
 # ---------------------------------------------------------------------------
 class _CheckWorker(QObject):
-    """Runs updater.check_for_updates() off the UI thread."""
-    finished = pyqtSignal(object)        # UpdateStatus
+    """Runs the right update check off the UI thread.
+
+    Two modes coexist:
+      - Git-checkout users (developers, source clones): updater.check_for_updates()
+        does a `git fetch` and reports ahead/behind counts.
+      - Installer users (.exe via Inno Setup): release_updater.has_update_available()
+        hits the GitHub Releases API and compares semver tags.
+    """
+    finished = pyqtSignal(object)        # an UpdateState we render below
 
     def run(self) -> None:
-        status = updater.check_for_updates()
-        self.finished.emit(status)
+        if release_updater.in_git_checkout():
+            status = updater.check_for_updates()
+            self.finished.emit(("git", status))
+        else:
+            available, info, local = release_updater.has_update_available()
+            self.finished.emit(("release", available, info, local))
 
 
 class _ApplyWorker(QObject):
-    """Runs updater.apply_update() off the UI thread."""
+    """Runs the matching apply path off the UI thread."""
     finished = pyqtSignal(bool, str)     # (success, message)
+    progress = pyqtSignal(int, int)      # (downloaded, total) bytes
+
+    def __init__(self, mode: str, release_info=None):
+        super().__init__()
+        self._mode = mode
+        self._release_info = release_info
 
     def run(self) -> None:
-        ok, msg = updater.apply_update()
-        self.finished.emit(ok, msg)
+        if self._mode == "git":
+            ok, msg = updater.apply_update()
+            self.finished.emit(ok, msg)
+            return
+        # release mode
+        try:
+            installer_path = release_updater.download_asset(
+                self._release_info,
+                on_progress=lambda d, t: self.progress.emit(d, t),
+            )
+            self.finished.emit(True, f"Downloaded {installer_path.name}. Launching installer…")
+            # The installer takes over from here; this Python process exits.
+            release_updater.run_installer(installer_path, silent=True, relaunch=True)
+        except Exception as ex:
+            self.finished.emit(False, f"Update failed: {type(ex).__name__}: {ex}")
 
 
 # ---------------------------------------------------------------------------
@@ -132,11 +163,21 @@ class UpdateDialog(QDialog):
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
         self._worker_thread.start()
 
-    def _on_check_done(self, status) -> None:
+    def _on_check_done(self, payload) -> None:
         self.recheck_btn.setEnabled(True)
-        self._render_status(status)
+        if not payload:
+            return
+        kind = payload[0]
+        if kind == "git":
+            self._mode = "git"
+            self._render_git_status(payload[1])
+        elif kind == "release":
+            _, available, info, local = payload
+            self._mode = "release"
+            self._release_info = info if available else None
+            self._render_release_status(available, info, local)
 
-    def _render_status(self, status) -> None:
+    def _render_git_status(self, status) -> None:
         if status.error:
             self.status_line.setText(f"⚠️ {status.error}")
             self.detail_line.setText("")
@@ -153,7 +194,7 @@ class UpdateDialog(QDialog):
         if status.has_updates:
             head = (
                 f"✨ {status.behind} update"
-                f"{'s' if status.behind != 1 else ''} available."
+                f"{'s' if status.behind != 1 else ''} available (source build)."
             )
             self.status_line.setText(head)
             extra = ""
@@ -182,12 +223,45 @@ class UpdateDialog(QDialog):
             self.action_btn.setEnabled(False)
             self.action_btn.setText("Update")
 
+    def _render_release_status(self, available: bool, info, local: str) -> None:
+        if info.error and not info.tag:
+            self.status_line.setText(f"⚠️ {info.error}")
+            self.detail_line.setText("")
+            self.action_btn.setEnabled(False)
+            return
+
+        local_v = local or "unknown"
+        version_line = (
+            f"Installed: <b>{local_v}</b><br>"
+            f"Latest release: <b>{info.tag or '—'}</b>"
+        )
+        if info.published_at:
+            version_line += (
+                f"<br><span style='color:#a09a90;'>"
+                f"Published {info.published_at[:10]}</span>"
+            )
+
+        if available:
+            self.status_line.setText(
+                f"✨ Update available — {info.tag} ({info.asset_size // 1024 // 1024} MB)."
+            )
+            notes = (info.body or "")[:600].strip()
+            if notes:
+                version_line += f"<br><br><b>What's new</b><br><pre style='white-space:pre-wrap;font-size:11px;color:#c9c4bc;'>{notes}</pre>"
+            self.action_btn.setEnabled(True)
+            self.action_btn.setText("Update + Restart")
+        else:
+            self.status_line.setText("✓ ArchHub is up to date.")
+            self.action_btn.setEnabled(False)
+            self.action_btn.setText("Update")
+        self.detail_line.setText(version_line)
+
     # ---- apply ------------------------------------------------------------
 
     def _start_apply(self) -> None:
         if QMessageBox.question(
             self, "Apply update?",
-            "ArchHub will pull the latest changes and restart itself. "
+            "ArchHub will download the latest version and restart itself. "
             "Any unsaved chat will be lost. Continue?",
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -197,15 +271,26 @@ class UpdateDialog(QDialog):
         self.status_line.setText("Applying update…")
         self.detail_line.setText("")
 
-        self._worker = _ApplyWorker()
+        mode = getattr(self, "_mode", "git")
+        info = getattr(self, "_release_info", None) if mode == "release" else None
+        self._worker = _ApplyWorker(mode=mode, release_info=info)
         self._worker_thread = QThread(self)
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_apply_done)
+        self._worker.progress.connect(self._on_apply_progress)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker_thread.finished.connect(self._worker.deleteLater)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
         self._worker_thread.start()
+
+    def _on_apply_progress(self, downloaded: int, total: int) -> None:
+        if total <= 0:
+            return
+        pct = int(100 * downloaded / total)
+        mb_d = downloaded / 1024 / 1024
+        mb_t = total / 1024 / 1024
+        self.status_line.setText(f"Downloading update… {pct}% ({mb_d:.1f} / {mb_t:.1f} MB)")
 
     def _on_apply_done(self, ok: bool, message: str) -> None:
         if not ok:

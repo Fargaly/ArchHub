@@ -41,6 +41,7 @@ class ChatMessage:
     role: str                          # "user" | "assistant" | "system"
     content: str
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
+    images: list[str] = field(default_factory=list)   # absolute file paths
     model: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -73,7 +74,8 @@ class _LLMWorker(QObject):
 
             history_dicts = [
                 {"role": m.role, "content": m.content,
-                 "tool_invocations": [inv.to_dict() for inv in m.tool_invocations]}
+                 "tool_invocations": [inv.to_dict() for inv in m.tool_invocations],
+                 "images": list(m.images)}
                 for m in self.history
             ]
             response = self.router.complete(
@@ -592,9 +594,13 @@ class ChatWindow(QMainWindow):
             self._welcome_widget.deleteLater()
             self._welcome_widget = None
 
-        if text:
-            self._add_user_message(text)
+        if text or images:
+            # The user message owns its attached images so the LLM call
+            # carries them in the corresponding history entry, and so the
+            # bubble can render thumbnails next to the prompt.
+            self._add_user_message(text or "(image attached)", images=images)
 
+        if text:
             # Slash commands intercept before the LLM path.
             if text.startswith("/") and self._handle_slash_command(text):
                 return
@@ -611,6 +617,7 @@ class ChatWindow(QMainWindow):
                 return
 
         if images:
+            # Render the thumbnails inside the just-added user bubble.
             self._show_user_images(images)
         self._start_assistant_response()
 
@@ -923,8 +930,8 @@ class ChatWindow(QMainWindow):
         self.worker_thread = thread
         thread.start()
 
-    def _add_user_message(self, text: str) -> None:
-        msg = ChatMessage(role="user", content=text)
+    def _add_user_message(self, text: str, *, images: Optional[list[str]] = None) -> None:
+        msg = ChatMessage(role="user", content=text, images=list(images or []))
         self.history.append(msg)
         self._render_message(msg)
 

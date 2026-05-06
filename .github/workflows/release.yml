@@ -1,0 +1,111 @@
+name: Release
+
+# Builds the ArchHub Windows installer and publishes it as a GitHub
+# Release whenever a `v*.*.*` tag is pushed. End users with the
+# release-based auto-updater inside ArchHub will then be offered the
+# new build automatically.
+#
+# To cut a release locally:
+#     git tag v0.11.0
+#     git push origin v0.11.0
+#
+# The workflow:
+#   1. Checks out the repo on a Windows runner.
+#   2. Installs Python 3.11.
+#   3. Installs Pillow (for PNG → ICO regeneration in case the icon was
+#      missing) and PyInstaller (currently unused; the install bundles
+#      Python source, but we keep PyInstaller available for a future
+#      single-exe build).
+#   4. Downloads + installs Inno Setup 6.
+#   5. Compiles installer/setup.iss, which reads the version string out
+#      of the VERSION file at compile time.
+#   6. Uploads dist/ArchHub-Setup-*.exe as a Release asset.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:        # manual trigger from the Actions tab
+
+permissions:
+  contents: write           # needed for softprops/action-gh-release to publish
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install Pillow pyinstaller
+
+      - name: Regenerate ICO from PNG (in case it's stale)
+        shell: pwsh
+        run: |
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          src = Path("app/assets/archhub.png")
+          dst = Path("app/assets/archhub.ico")
+          if not src.exists():
+              raise SystemExit(f"Missing {src}")
+          img = Image.open(src)
+          sizes = [(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]
+          img.save(dst, format="ICO", sizes=sizes)
+          print("Wrote", dst)
+          PY
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $url = "https://jrsoftware.org/download.php/is.exe"
+          $installer = Join-Path $env:TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup install failed" }
+          "$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "$env:ISCC" "installer\setup.iss"
+
+      - name: Find installer artifact
+        id: find
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "dist" -Filter "ArchHub-Setup-*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "No ArchHub-Setup-*.exe produced" }
+          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "name=$($exe.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Built $($exe.FullName) ($([math]::Round($exe.Length/1MB,1)) MB)"
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchHub-Setup
+          path: ${{ steps.find.outputs.path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.find.outputs.path }}
+          name: ArchHub ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

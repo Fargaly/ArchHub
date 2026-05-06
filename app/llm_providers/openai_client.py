@@ -2,11 +2,34 @@
 
 Same interface as AnthropicClient: stream_completion(...) → dict.
 Translates between OpenAI's tool-use format and ArchHub's internal shape.
+Supports multimodal input via OpenAI's image_url content blocks: any
+message with a non-empty `images` list is sent as a content array so
+GPT-4o (and any OpenRouter route to Claude / Gemini) can see attached
+sketches and screenshots.
 """
 from __future__ import annotations
 
+import base64
 import json
-from typing import Any, Callable
+import mimetypes
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+
+def _encode_image_url(path: str) -> Optional[dict]:
+    """Read an image file and return an OpenAI-shape image_url block."""
+    try:
+        data = Path(path).read_bytes()
+    except Exception:
+        return None
+    media_type, _ = mimetypes.guess_type(path)
+    if not media_type or not media_type.startswith("image/"):
+        media_type = "image/png"
+    b64 = base64.b64encode(data).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{media_type};base64,{b64}"},
+    }
 
 
 class OpenAIClient:
@@ -54,7 +77,26 @@ class OpenAIClient:
                     ],
                 })
                 continue
-            oa_messages.append({"role": role, "content": m.get("content", "")})
+
+            content = m.get("content", "")
+            images = m.get("images") or []
+            if images:
+                # Multimodal content array: text first, then any images.
+                # OpenAI accepts either order but text-first matches what
+                # the model is trained to expect for "given this prompt,
+                # look at these images" framing.
+                parts: list[dict] = []
+                if isinstance(content, str) and content:
+                    parts.append({"type": "text", "text": content})
+                for path in images:
+                    block = _encode_image_url(path)
+                    if block is not None:
+                        parts.append(block)
+                if parts:
+                    oa_messages.append({"role": role, "content": parts})
+                    continue
+
+            oa_messages.append({"role": role, "content": content})
 
         kwargs: dict[str, Any] = dict(model=model, messages=oa_messages, stream=True)
         if tools:

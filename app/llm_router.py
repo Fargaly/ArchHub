@@ -210,8 +210,31 @@ class LLMRouter:
             return provider, model, ""
 
         # Auto-routing heuristics
-        last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+        last_user_msg = next(
+            (m for m in reversed(history) if m.get("role") == "user"), {}
+        )
+        last_user = last_user_msg.get("content", "") if last_user_msg else ""
+        has_images = bool(last_user_msg.get("images") if last_user_msg else False)
         text = (last_user or "").lower()
+
+        configured_for_vision = set(self.configured_providers())
+
+        # Vision: if an image was attached, force a multimodal-capable model
+        # before falling through to the keyword heuristics. Claude (Sonnet/Opus
+        # 4.x), GPT-4o, Gemini 1.5+ and OpenRouter routes to any of those all
+        # accept image_url / image content blocks.
+        if has_images:
+            if "anthropic" in configured_for_vision:
+                return "anthropic", "claude-opus-4-7", "auto: vision → Claude Opus 4.7"
+            if "openrouter" in configured_for_vision:
+                return ("openrouter", "anthropic/claude-opus-4",
+                        "auto: vision → OpenRouter · Claude Opus 4")
+            if "openai" in configured_for_vision:
+                return "openai", "gpt-4o", "auto: vision → GPT-4o"
+            if "google" in configured_for_vision:
+                return "google", "gemini-1.5-pro", "auto: vision → Gemini 1.5 Pro"
+            # Fall through to text-only routing if no vision provider available;
+            # the provider client will simply ignore the image blocks.
 
         modeling_signals = (
             "revit", "autocad", "3ds max", "blender", "model", "wall", "door",

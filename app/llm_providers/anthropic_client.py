@@ -1,12 +1,38 @@
 """Anthropic provider client.
 
 Uses the official `anthropic` SDK. Streams text deltas and surfaces tool-use
-blocks in the format LLMRouter expects.
+blocks in the format LLMRouter expects. Supports multimodal input: any
+message with a non-empty `images` list (file paths) is sent as a content
+array containing image blocks plus the text, so Claude can see sketches
+and screenshots the architect attaches in chat.
 """
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any, Callable, Optional
+
+
+def _encode_image_block(path: str) -> Optional[dict]:
+    """Read an image file and return an Anthropic content block, or None
+    if the file is unreadable. Falls back to image/png for unknown types."""
+    try:
+        data = Path(path).read_bytes()
+    except Exception:
+        return None
+    media_type, _ = mimetypes.guess_type(path)
+    if not media_type or not media_type.startswith("image/"):
+        media_type = "image/png"
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": base64.b64encode(data).decode("ascii"),
+        },
+    }
 
 
 class AnthropicClient:
@@ -132,6 +158,23 @@ class AnthropicClient:
                 continue
 
             content = m.get("content", "")
+            images = m.get("images") or []
+
+            if images:
+                # Multimodal: blocks of image(s) followed by the text. Image
+                # blocks come first by Anthropic convention so Claude
+                # acknowledges them before answering the prompt.
+                blocks: list[dict] = []
+                for path in images:
+                    block = _encode_image_block(path)
+                    if block is not None:
+                        blocks.append(block)
+                if isinstance(content, str) and content:
+                    blocks.append({"type": "text", "text": content})
+                if blocks:
+                    out.append({"role": role, "content": blocks})
+                    continue
+
             if isinstance(content, str):
                 out.append({"role": role, "content": content})
             else:

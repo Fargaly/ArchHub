@@ -46,12 +46,14 @@ UninstallFilesDir={app}\uninstall
 CloseApplications=force
 RestartApplications=no
 
-; Optional: SetupIconFile=..\app\assets\archhub.ico  (when icon is designed)
+SetupIconFile=..\app\assets\archhub.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "Place a desktop icon"; \
+    GroupDescription: "Shortcuts:"; Flags: checkedonce
 Name: "startupshortcut"; Description: "Launch ArchHub when I sign in to Windows"; \
     GroupDescription: "Startup options:"; Flags: checkedonce
 
@@ -71,9 +73,14 @@ Source: "..\LICENSE";          DestDir: "{app}"; Flags: skipifsourcedoesntexist
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\ArchHub.cmd"; \
-    WorkingDir: "{app}"; Comment: "Open ArchHub"
+    WorkingDir: "{app}"; Comment: "Open ArchHub"; \
+    IconFilename: "{app}\app\assets\archhub.ico"
+Name: "{userdesktop}\{#MyAppName}";  Filename: "{app}\ArchHub.cmd"; \
+    WorkingDir: "{app}"; Tasks: desktopicon; \
+    IconFilename: "{app}\app\assets\archhub.ico"
 Name: "{userstartup}\{#MyAppName}";  Filename: "{app}\ArchHub-silent.cmd"; \
-    WorkingDir: "{app}"; Tasks: startupshortcut
+    WorkingDir: "{app}"; Tasks: startupshortcut; \
+    IconFilename: "{app}\app\assets\archhub.ico"
 
 [Run]
 ; Install Python dependencies. Quiet, user-scoped, won't fail the install.

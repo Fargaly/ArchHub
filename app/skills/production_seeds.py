@@ -49,6 +49,7 @@ SEED_SKETCH_TO_PRODUCTION_ID = "seed-sketch-to-production-v1"
 SEED_EXPORT_REVIT_TO_DWG_ID  = "seed-export-revit-to-dwg-v1"
 SEED_OSM_CONTEXT_MASS_ID     = "seed-osm-context-mass-v1"
 SEED_DETAIL_PASS_ID          = "seed-revit-detail-pass-v1"
+SEED_ACAD_DWG_INVENTORY_ID   = "seed-acad-dwg-inventory-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +667,76 @@ def _seed_revit_detail_pass() -> tuple[Workflow, SkillMeta]:
     return wf, meta
 
 
+def _seed_acad_dwg_inventory() -> tuple[Workflow, SkillMeta]:
+    wf = _build_chain(
+        workflow_id=SEED_ACAD_DWG_INVENTORY_ID,
+        name="Inventory the open AutoCAD drawing",
+        description=(
+            "Walk the active AutoCAD drawing and produce a normalised "
+            "inventory: every layer with entity counts, every block with "
+            "insertion count, every text style, plus drawing units, "
+            "extents, and any obvious issues (zero-width polylines, "
+            "frozen-but-used layers, blocks on layer 0, etc.). The "
+            "architect gets a Markdown audit they can paste into a "
+            "drawing-set hand-over note."
+        ),
+        framing_template=(
+            "You are running the ArchHub skill 'Inventory the open AutoCAD drawing'. "
+            "GOAL: read the active DWG and return a clean Markdown audit. "
+            "DO NOT mutate the drawing.\n"
+            "Procedure:\n"
+            "  1. Call acad_ping then acad_info to confirm a document is open. If none, fail with a clear instruction to open the .dwg first.\n"
+            "  2. Call acad_execute_csharp ONCE with a read-only block (no Transaction needed for reads, but use OpenMode.ForRead). Globals: Doc, Db, Ed.\n"
+            "       - Iterate the LayerTable: capture name, IsFrozen, IsLocked, IsOff, Color.\n"
+            "       - Iterate ModelSpace: count entities per layer; track BlockReference inserts grouped by BlockTableRecord name.\n"
+            "       - Iterate the TextStyleTable: capture name, font, height.\n"
+            "       - Iterate the BlockTable for non-anonymous, non-layout blocks: capture name + how many ModelSpace inserts each has.\n"
+            "       - Capture: drawing units (Db.Insunits), extents (Db.Extmin/Extmax), total entity count.\n"
+            "       - Build issues list:\n"
+            "           * blocks inserted but only on layer '0' (= no layer hygiene)\n"
+            "           * polylines with ConstantWidth == 0 AND Width zero on every vertex (= invisible if printed by lineweight)\n"
+            "           * frozen layers that still have geometry\n"
+            "           * layers named like 'Layer1', 'Defpoints' with content, layers with no entities\n"
+            "  3. Return ONE single Markdown document with:\n"
+            "       - '# Drawing inventory — <filename>'\n"
+            "       - bullet line for units / extents / total entities\n"
+            "       - '## Layers' table (name | entities | frozen | locked | colour)\n"
+            "       - '## Blocks' table (name | inserts)\n"
+            "       - '## Text styles' table\n"
+            "       - '## Issues found' list (bulleted, severity)\n"
+            "       - '## Suggested clean-up' (3-5 imperative bullets the user can act on).\n\n"
+            "User request: {var1}"
+        ),
+        allowed_tools=["acad_ping", "acad_info", "acad_execute_csharp"],
+    )
+    meta = SkillMeta(
+        intent="Audit the open AutoCAD drawing — list layers, blocks, text styles, plus drawing-hygiene issues.",
+        keywords=[
+            "acad", "autocad", "dwg", "inventory", "audit", "layers",
+            "blocks", "text-styles", "extract", "summary", "clean-up",
+            "hand-over", "drawing-set",
+        ],
+        when_to_use=(
+            "User wants to know what's inside an AutoCAD drawing — layers, "
+            "blocks, hygiene issues — before integrating it into a Revit "
+            "project or handing it to a client."
+        ),
+        examples=[
+            {"prompt": "Inventory this drawing",
+             "expected_outcome": "Markdown audit with layer / block / text-style tables and a hygiene issue list."},
+            {"prompt": "What's inside this DWG?",
+             "expected_outcome": "Same Markdown audit."},
+            {"prompt": "Audit the layers in this AutoCAD file",
+             "expected_outcome": "Same Markdown audit, focused on layer hygiene."},
+        ],
+        tags=["autocad", "audit", "extract", "production"],
+        requires=["autocad"],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
 # ---------------------------------------------------------------------------
 SEED_FACTORIES = (
     _seed_extract_mass,
@@ -677,6 +748,7 @@ SEED_FACTORIES = (
     _seed_export_revit_to_dwg,
     _seed_osm_context_mass,
     _seed_revit_detail_pass,
+    _seed_acad_dwg_inventory,
 )
 
 

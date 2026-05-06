@@ -69,12 +69,18 @@ jobs:
           $repoRoot = $PWD.Path
           $payloadRoot = Join-Path $repoRoot 'payload'
 
+          # `optional=$true` means a failure in this slot just gets
+          # logged + skipped; the CI run still succeeds. We mark the
+          # AutoCAD slots optional because Autodesk's NuGet feed is
+          # less stable than the community Revit one — losing a CI
+          # build is better than failing every release while we
+          # iterate on the right package combo.
           $matrix = @(
-            @{ family='revit';   year='2023'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj' },
-            @{ family='revit';   year='2024'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj' },
-            @{ family='revit';   year='2025'; tf='net8.0-windows'; src='payload/sources/revit_mcp/RevitMCP.csproj' },
-            @{ family='autocad'; year='2025'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj' },
-            @{ family='autocad'; year='2026'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj' }
+            @{ family='revit';   year='2023'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj'; optional=$false },
+            @{ family='revit';   year='2024'; tf='net48';          src='payload/sources/revit_mcp/RevitMCP.csproj'; optional=$false },
+            @{ family='revit';   year='2025'; tf='net8.0-windows'; src='payload/sources/revit_mcp/RevitMCP.csproj'; optional=$false },
+            @{ family='autocad'; year='2025'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj';   optional=$true },
+            @{ family='autocad'; year='2026'; tf='net8.0-windows'; src='payload/sources/acad_mcp/AcadMCP.csproj';   optional=$true }
           )
 
           foreach ($m in $matrix) {
@@ -83,9 +89,25 @@ jobs:
             $yearProp = if ($m.family -eq 'revit') { "RevitYear=$($m.year)" } else { "AcadYear=$($m.year)" }
             Write-Host "::group::Build $($m.family) $($m.year) ($($m.tf))"
             dotnet restore $m.src "-p:TargetFramework=$($m.tf)" "-p:$yearProp"
-            if ($LASTEXITCODE -ne 0) { throw "Restore failed for $($m.family) $($m.year)" }
+            if ($LASTEXITCODE -ne 0) {
+              if ($m.optional) {
+                Write-Warning "Restore failed for $($m.family) $($m.year) — optional, skipping."
+                Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+                Write-Host "::endgroup::"
+                continue
+              }
+              throw "Restore failed for $($m.family) $($m.year)"
+            }
             dotnet build $m.src -c Release --no-restore "-p:TargetFramework=$($m.tf)" "-p:$yearProp" -o $out
-            if ($LASTEXITCODE -ne 0) { throw "Build failed for $($m.family) $($m.year)" }
+            if ($LASTEXITCODE -ne 0) {
+              if ($m.optional) {
+                Write-Warning "Build failed for $($m.family) $($m.year) — optional, skipping."
+                Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+                Write-Host "::endgroup::"
+                continue
+              }
+              throw "Build failed for $($m.family) $($m.year)"
+            }
             # Copy .addin manifest if it exists alongside the source.
             $addin = Join-Path $repoRoot "payload/sources/revit_mcp/RevitMCP.addin"
             if ($m.family -eq 'revit' -and (Test-Path $addin)) {
@@ -107,9 +129,13 @@ jobs:
         run: |
           $zip = Join-Path 'dist' "ArchHub-MCP-Binaries.zip"
           New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-          # Zip just the built DLLs, not the source tree.
-          Compress-Archive -Path 'payload/revit','payload/autocad' `
-                           -DestinationPath $zip -Force
+          # Zip whichever family directories actually got built —
+          # AutoCAD is optional and may be absent on a failed run.
+          $paths = @()
+          if (Test-Path 'payload/revit')   { $paths += 'payload/revit' }
+          if (Test-Path 'payload/autocad') { $paths += 'payload/autocad' }
+          if ($paths.Count -eq 0) { throw "No MCP binaries to pack." }
+          Compress-Archive -Path $paths -DestinationPath $zip -Force
           Get-Item $zip | Select-Object FullName, Length
 
       - name: Regenerate ICO from PNG (in case it's stale)

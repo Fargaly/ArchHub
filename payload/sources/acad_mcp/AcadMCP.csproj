@@ -45,11 +45,13 @@
     <AcadPackageVersion Condition="'$(AcadPackageVersion)' == ''">$(AcadObjectArxMajor).0.0</AcadPackageVersion>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false'">
-    <!-- AutoCAD.NET (umbrella) brings acmgd + acdbmgd + accoremgd —
-         Application, Document, Database, Editor all resolve. The
-         .Core sub-package alone is missing acmgd.Application. -->
+    <!-- AutoCAD.NET umbrella allows pre-release transitive deps
+         (Autodesk publishes AutoCAD.NET.Core stable as `25.0.0-V058`
+         pre-release, not vanilla `25.0.0`). The `*-*` suffix tells
+         NuGet to accept the latest pre-release that satisfies the
+         major.minor.patch base, which is what Autodesk ships. -->
     <PackageReference Include="AutoCAD.NET"
-                      Version="$(AcadPackageVersion)"
+                      Version="$(AcadPackageVersion)-*"
                       ExcludeAssets="runtime"
                       PrivateAssets="all" />
   </ItemGroup>

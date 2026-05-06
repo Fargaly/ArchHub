@@ -231,33 +231,51 @@ def _run_dotnet_build(project_path: Path,
                       msbuild_props: dict,
                       output_dir: Path,
                       on_progress: ProgressFn) -> tuple[bool, str]:
-    """Invoke dotnet build, stream stdout to on_progress."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    args = [
-        "dotnet", "build", str(project_path),
-        "-c", "Release",
-        "-p:TargetFramework=" + target_framework,
-        "-o", str(output_dir),
-    ]
-    for k, v in msbuild_props.items():
-        args.append(f'-p:{k}={v}')
+    """Invoke dotnet restore + build, stream stdout to on_progress.
 
-    on_progress("Compiling", 30, " ".join(args))
-    try:
-        proc = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace",
-        )
-        last = ""
-        for line in proc.stdout or []:
-            line = line.rstrip()
-            if line:
-                last = line
-                on_progress("Compiling", 60, line)
-        rc = proc.wait()
-        return (rc == 0, last)
-    except FileNotFoundError:
-        return (False, "dotnet not found on PATH")
+    The explicit restore step matters for net48 builds: the
+    Microsoft.NETFramework.ReferenceAssemblies NuGet package only
+    works once it's been restored, but `dotnet build` evaluates the
+    framework reference assemblies BEFORE the restore step in some
+    SDK versions. Doing restore-then-build splits the work in two
+    so the build phase has the package available.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    common_props = [f'-p:TargetFramework={target_framework}']
+    for k, v in msbuild_props.items():
+        common_props.append(f'-p:{k}={v}')
+
+    def _stream(args: list[str], stage: str, base_pct: int) -> tuple[bool, str]:
+        on_progress(stage, base_pct, " ".join(args))
+        try:
+            proc = subprocess.Popen(
+                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            last = ""
+            for line in proc.stdout or []:
+                line = line.rstrip()
+                if line:
+                    last = line
+                    on_progress(stage, base_pct + 10, line)
+            rc = proc.wait()
+            return (rc == 0, last)
+        except FileNotFoundError:
+            return (False, "dotnet not found on PATH")
+
+    # 1. Restore — pulls Microsoft.NETFramework.ReferenceAssemblies
+    #    so net48 builds find their reference assemblies without
+    #    requiring the .NET Framework 4.8 Developer Pack.
+    restore_args = ["dotnet", "restore", str(project_path)] + common_props
+    ok, last = _stream(restore_args, "Restoring NuGet packages", 20)
+    if not ok:
+        return (False, last or "restore failed")
+
+    # 2. Build — uses --no-restore so we don't redo the work.
+    build_args = (["dotnet", "build", str(project_path),
+                   "-c", "Release", "--no-restore", "-o", str(output_dir)]
+                  + common_props)
+    return _stream(build_args, "Compiling", 50)
 
 
 # ---------------------------------------------------------------------------

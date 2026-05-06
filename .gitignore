@@ -58,10 +58,22 @@ build_output.txt
 diagnose_output.txt
 startup_error.log
 
-# ==== Per-machine build outputs (compiled DLLs ship via dotnet build, not git) ====
-payload/revit/
-payload/autocad/
-payload/max/
+# ==== Per-machine build outputs ====
+# Source build folders stay ignored (they're per-machine).
+payload/sources/*/bin/
+payload/sources/*/obj/
+# But shipped, prebuilt DLLs in payload/<family>/<year>/ ARE
+# checked in so the installer can bundle them — users don't need
+# .NET SDK or Developer Pack at setup time.
+!payload/revit/
+!payload/revit/**
+!payload/autocad/
+!payload/autocad/**
+!payload/max/
+!payload/max/**
+# Still ignore the per-user .pdb in those dirs (debug-only, big).
+payload/revit/**/*.pdb
+payload/autocad/**/*.pdb
 
 # ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
 **/skill_usage.json

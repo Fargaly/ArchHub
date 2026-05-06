@@ -26,7 +26,10 @@ from PyQt6.QtWidgets import (
 
 
 LANDING_URL = "https://github.com/Fargaly/ArchHub#pricing"
-CONTACT_URL = "mailto:hello@archhub.app"
+# Until a real domain + mailbox exist, route Enterprise contact through
+# GitHub Issues — the Discussion / Issue thread is real, monitored, and
+# encrypted in transit. No fake mailbox, no bounced emails.
+CONTACT_URL = "https://github.com/Fargaly/ArchHub/issues/new?labels=enterprise&title=Enterprise+enquiry"
 
 
 _TIERS = [

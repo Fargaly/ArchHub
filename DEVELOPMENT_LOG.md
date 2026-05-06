@@ -1,3 +1,7 @@
+> ⚠️ **INTERNAL DOCUMENT.** Engineering decisions and rationale,
+> intended for maintainers. Some entries reference comparable tools
+> for context — those are technical notes, not marketing copy.
+
 # ArchHub — Development Log
 
 A running record of architectural decisions, pivots, and rationale.

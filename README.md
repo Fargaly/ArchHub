@@ -148,19 +148,26 @@ Skills more valuable, not less.
 
 ---
 
-## Why ArchHub vs the alternatives
+## What makes ArchHub different
 
-| | **ArchHub** | Hypar | Autodesk Forma | TestFit | ChatGPT Desktop |
-|---|---|---|---|---|---|
-| Chat-driven UX | ✓ | partial | – | – | ✓ |
-| Drives Revit natively | ✓ | partial | ✓ | – | – |
-| Drives Blender natively | ✓ | – | – | – | – |
-| Skills (saved, shareable) | ✓ | – | – | – | partial |
-| Local LLM option (IP) | ✓ | – | – | – | – |
-| Multi-LLM router | ✓ | – | – | – | – |
-| Open source | ✓ | – | – | – | – |
-| Self-hostable | ✓ | – | – | – | – |
-| Free tier | ✓ | – | – | – | (chat only) |
+Six commitments built into the product — none of them optional.
+
+- **Open source you can audit.** MIT-licensed, every line on GitHub.
+  Read it, fork it, run it offline. Your firm's IT team verifies what
+  the binary does before it touches a project file.
+- **Local LLM option for IP-sensitive work.** Plug in Ollama and the
+  entire chat runs on your machine — no model traffic leaves the
+  laptop. Switch to a cloud provider only when you choose.
+- **Skills you own and edit.** Every saved Skill is a JSON file.
+  Copy, paste, version, fork, delete. No marketplace lock-in.
+- **Multi-tool, multi-LLM, multi-host.** Revit, Blender, AutoCAD,
+  3ds Max, Speckle — driven from one chat. Anthropic, OpenAI, Google,
+  OpenRouter, local — your choice of model.
+- **BYO key, BYO firm relay.** Bring your own API keys, or point
+  ArchHub at a self-hosted firm relay so provider keys never sit on
+  architects' laptops. Both paths are first-class.
+- **Free tier with no credit card.** Download, install, use. No trial
+  countdown, no upsell modal, no payment method required.
 
 ---
 

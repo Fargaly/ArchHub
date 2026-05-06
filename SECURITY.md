@@ -10,11 +10,12 @@ report a problem.
 
 **Do not** open a public GitHub issue for security problems.
 
-- Use **Private vulnerability reporting** on this repository:
-  https://github.com/Fargaly/ArchHub/security/advisories/new
-- Or email: `security@archhub.app` _(active once domain is registered;
-  in the interim, fall back to the Private Vulnerability Reporting flow
-  above)_.
+Use **Private vulnerability reporting** on this repository:
+https://github.com/Fargaly/ArchHub/security/advisories/new
+
+GitHub authenticates you, encrypts the report, and routes it directly
+to the maintainers. No mailbox to compromise, no DNS / SMTP setup
+needed on our side, and the disclosure thread has the full audit log.
 
 Include:
 - ArchHub version (`⚙ → About` shows the commit hash).

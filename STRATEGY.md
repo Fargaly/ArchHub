@@ -1,3 +1,9 @@
+> ⚠️ **INTERNAL DOCUMENT.** Pricing rationale, competitive positioning,
+> and financial model. Useful as institutional memory for maintainers
+> and contributors. **Not customer-facing copy** — for that, see the
+> public landing page or the Notion site. Direct comparisons to other
+> tools live here intentionally; do not copy them into marketing.
+
 # ArchHub — Strategy
 
 _Internal company doc. Living document. Last update: 2026-05-06._

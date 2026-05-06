@@ -103,6 +103,43 @@ class TestMatcher:
         score, matched = _keyword_score(set(), skill)
         assert score == 0.0 and matched == []
 
+    def test_usage_boost_promotes_reliable_skills(self, tmp_library):
+        from workflows.graph import Workflow
+        from skills.metadata import SkillMeta
+        from skills.library import save_skill
+        from skills.matcher import match_skills
+        from skills.usage import record_run
+
+        # Two Skills with identical keyword overlap; usage history differs.
+        for name in ("reliable", "shaky"):
+            wf = Workflow.new(name=name)
+            save_skill(wf, SkillMeta(
+                intent=f"do something with walls",
+                keywords=["wall", "walls"],
+            ))
+
+        # Pull ids back so we can record usage against them.
+        from skills.library import list_skills as _list
+        skills_idx = {s["name"]: s["id"] for s in _list()}
+
+        # "reliable" → 20 runs, 19 successes
+        for _ in range(19):
+            record_run(skills_idx["reliable"], success=True)
+        record_run(skills_idx["reliable"], success=False)
+
+        # "shaky" → 20 runs, 4 successes (very low success rate)
+        for _ in range(4):
+            record_run(skills_idx["shaky"], success=True)
+        for _ in range(16):
+            record_run(skills_idx["shaky"], success=False)
+
+        matches = match_skills("walls", min_score=0.0)
+        names = [m.name for m in matches]
+        assert "reliable" in names and "shaky" in names
+        assert names.index("reliable") < names.index("shaky"), (
+            f"Reliable Skill should outrank shaky one; got order: {names}"
+        )
+
     def test_match_filters_by_active_connectors(self, tmp_library):
         from workflows.graph import Workflow
         from skills.metadata import SkillMeta

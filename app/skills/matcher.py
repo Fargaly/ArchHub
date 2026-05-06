@@ -86,6 +86,45 @@ def _keyword_score(prompt_toks: set[str], skill: dict) -> tuple[float, list[str]
     return norm, sorted(matched)
 
 
+def _usage_boost(skill_id: str) -> float:
+    """Multiplicative score boost based on how often this Skill has been
+    used and how reliably. Range roughly [0.85, 1.30].
+
+    Rationale: a Skill that the firm runs daily and succeeds 95% of the
+    time should outrank a brand-new one with the same keyword score. A
+    Skill that fails most of the time should be demoted, not silently
+    surfaced. The boost is multiplicative so it shifts ordering when
+    keyword scores are close, but never overrides a clearly-better
+    keyword match.
+    """
+    try:
+        from .usage import get_usage
+        u = get_usage(skill_id) or {}
+    except Exception:
+        return 1.0
+    runs = int(u.get("runs") or 0)
+    if runs == 0:
+        return 1.0
+    successes = int(u.get("successes") or 0)
+    success_rate = successes / runs
+
+    # Frequency: log-scaled so a Skill with 3 runs gets a small boost,
+    # 30 runs gets a bigger one, 300 runs hits the cap.
+    import math
+    freq_boost = min(0.20, 0.06 * math.log1p(runs))
+
+    # Reliability: > 80% success → small positive contribution; < 50% →
+    # noticeable demotion. Linear inside that band.
+    if success_rate >= 0.80:
+        rel_boost = 0.10 * (success_rate - 0.80) / 0.20    # 0..0.10
+    elif success_rate >= 0.50:
+        rel_boost = 0.0
+    else:
+        rel_boost = -0.15 * (0.50 - success_rate) / 0.50    # -0.15..0
+
+    return 1.0 + freq_boost + rel_boost
+
+
 def match_skills(
     prompt: str,
     *,
@@ -96,7 +135,10 @@ def match_skills(
     router=None,
 ) -> list[MatchResult]:
     """Return top_k Skills ranked for the prompt. Filters out skills whose
-    `requires` connectors are not currently active (if active_connectors given).
+    `requires` connectors are not currently active (if active_connectors
+    given). Final ranking blends keyword score with usage history: Skills
+    that the user runs successfully get a multiplicative boost; Skills
+    that fail more than 50% of the time are demoted.
     """
     prompt_toks = _tokens(prompt)
     skills = list_skills()
@@ -108,9 +150,10 @@ def match_skills(
 
     scored: list[MatchResult] = []
     for s in skills:
-        score, matched = _keyword_score(prompt_toks, s)
-        if score < min_score:
+        keyword, matched = _keyword_score(prompt_toks, s)
+        if keyword < min_score:
             continue
+        score = keyword * _usage_boost(s["id"])
         why = f"matched: {', '.join(matched)}" if matched else "weak match"
         scored.append(MatchResult(
             skill_id=s["id"], name=s["name"], intent=s["intent"],

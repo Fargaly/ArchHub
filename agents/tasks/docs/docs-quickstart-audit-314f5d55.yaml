@@ -1,0 +1,17 @@
+{
+  "id": "docs-quickstart-audit-314f5d55",
+  "department": "docs",
+  "title": "Audit QUICKSTART.md against current Skills",
+  "instructions": "Read QUICKSTART.md and the production seed Skills under app/skills/production_seeds.py (via the listed context files). For every Skill in production_seeds.py, confirm QUICKSTART has a recipe. Where it's missing, write the missing recipe in the QUICKSTART voice (terse, one prompt + expected outcome). Output: a fresh full QUICKSTART.md (Markdown) that incorporates any missing recipes. Do not invent skills not in the source.",
+  "created_at": "2026-05-06T10:40:48.380901+00:00",
+  "priority": 30,
+  "recurring_cron": null,
+  "inputs": {
+    "context_files": [
+      "QUICKSTART.md",
+      "app/skills/production_seeds.py",
+      "app/skills/seeds.py"
+    ]
+  },
+  "status": "pending"
+}

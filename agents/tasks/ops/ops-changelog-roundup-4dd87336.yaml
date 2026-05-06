@@ -1,0 +1,16 @@
+{
+  "id": "ops-changelog-roundup-4dd87336",
+  "department": "ops",
+  "title": "Daily standup summary",
+  "instructions": "Read DEVELOPMENT_LOG.md. Output a 5-bullet 'this week' summary: what shipped, what's at risk, what's next. Include version numbers. No marketing voice.",
+  "created_at": "2026-05-06T10:40:48.382777+00:00",
+  "priority": 60,
+  "recurring_cron": null,
+  "inputs": {
+    "context_files": [
+      "DEVELOPMENT_LOG.md",
+      "VERSION"
+    ]
+  },
+  "status": "pending"
+}

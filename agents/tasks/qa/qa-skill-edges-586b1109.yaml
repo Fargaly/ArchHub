@@ -1,0 +1,17 @@
+{
+  "id": "qa-skill-edges-586b1109",
+  "department": "qa",
+  "title": "Generate edge-case test plan for production Skills",
+  "instructions": "Read app/skills/production_seeds.py. For each Skill defined there, list 5 boundary cases and 3 failure modes, then suggest pytest test names (intent only, no implementations). Group by Skill. Total report under 800 words. Skip test bodies entirely.",
+  "created_at": "2026-05-06T10:40:48.381570+00:00",
+  "priority": 50,
+  "recurring_cron": null,
+  "inputs": {
+    "context_files": [
+      "app/skills/production_seeds.py",
+      "app/skills/seeds.py",
+      "app/skills/matcher.py"
+    ]
+  },
+  "status": "pending"
+}

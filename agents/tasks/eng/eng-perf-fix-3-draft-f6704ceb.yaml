@@ -1,0 +1,16 @@
+{
+  "id": "eng-perf-fix-3-draft-f6704ceb",
+  "department": "eng",
+  "title": "Draft a patch for perf fix #3 (background reachability ping)",
+  "instructions": "Per docs/PERF_AUDIT.md item #4, the connector reachability ping at app/chat_window.py _host_reachable runs synchronously on the UI thread with a 1s timeout. Draft a unified diff patch that: (a) caches the reachability result for 30 seconds keyed by host, (b) keeps the first call fast and lets cache hits return in <1ms. Include a brief rationale in a top comment. Output one patch only. If the file has changed since the audit was written, output 'NEEDS CLARIFICATION:' followed by the conflict.",
+  "created_at": "2026-05-06T10:40:48.383257+00:00",
+  "priority": 40,
+  "recurring_cron": null,
+  "inputs": {
+    "context_files": [
+      "app/chat_window.py",
+      "docs/PERF_AUDIT.md"
+    ]
+  },
+  "status": "pending"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "rnd-canvas-libs-watch-429851ca",
+  "department": "rnd",
+  "title": "Re-evaluate canvas libraries vs NodeGraphQt",
+  "instructions": "We currently plan to vendor NodeGraphQt for the visual canvas (per docs/CANVAS_PLAN.md). Look at the candidates listed there + suggest one alternative that wasn't considered. Output a short memo: 1. What the proposed alternative is, 2. Why it might beat NodeGraphQt, 3. What it gives up. Stay under 500 words.",
+  "created_at": "2026-05-06T10:40:48.382147+00:00",
+  "priority": 70,
+  "recurring_cron": null,
+  "inputs": {
+    "context_files": [
+      "docs/CANVAS_PLAN.md",
+      "STRATEGY.md"
+    ]
+  },
+  "status": "pending"
+}

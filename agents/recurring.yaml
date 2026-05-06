@@ -1,0 +1,76 @@
+{
+  "jobs": [
+    {
+      "id": "docs-quickstart-audit",
+      "department": "docs",
+      "title": "Audit QUICKSTART.md against current Skills",
+      "instructions": "Read QUICKSTART.md and the production seed Skills under app/skills/production_seeds.py (via the listed context files). For every Skill in production_seeds.py, confirm QUICKSTART has a recipe. Where it's missing, write the missing recipe in the QUICKSTART voice (terse, one prompt + expected outcome). Output: a fresh full QUICKSTART.md (Markdown) that incorporates any missing recipes. Do not invent skills not in the source.",
+      "interval_minutes": 1440,
+      "priority": 30,
+      "inputs": {
+        "context_files": [
+          "QUICKSTART.md",
+          "app/skills/production_seeds.py",
+          "app/skills/seeds.py"
+        ]
+      }
+    },
+    {
+      "id": "qa-skill-edges",
+      "department": "qa",
+      "title": "Generate edge-case test plan for production Skills",
+      "instructions": "Read app/skills/production_seeds.py. For each Skill defined there, list 5 boundary cases and 3 failure modes, then suggest pytest test names (intent only, no implementations). Group by Skill. Total report under 800 words. Skip test bodies entirely.",
+      "interval_minutes": 1440,
+      "priority": 50,
+      "inputs": {
+        "context_files": [
+          "app/skills/production_seeds.py",
+          "app/skills/seeds.py",
+          "app/skills/matcher.py"
+        ]
+      }
+    },
+    {
+      "id": "rnd-canvas-libs-watch",
+      "department": "rnd",
+      "title": "Re-evaluate canvas libraries vs NodeGraphQt",
+      "instructions": "We currently plan to vendor NodeGraphQt for the visual canvas (per docs/CANVAS_PLAN.md). Look at the candidates listed there + suggest one alternative that wasn't considered. Output a short memo: 1. What the proposed alternative is, 2. Why it might beat NodeGraphQt, 3. What it gives up. Stay under 500 words.",
+      "interval_minutes": 10080,
+      "priority": 70,
+      "inputs": {
+        "context_files": [
+          "docs/CANVAS_PLAN.md",
+          "STRATEGY.md"
+        ]
+      }
+    },
+    {
+      "id": "ops-changelog-roundup",
+      "department": "ops",
+      "title": "Daily standup summary",
+      "instructions": "Read DEVELOPMENT_LOG.md. Output a 5-bullet 'this week' summary: what shipped, what's at risk, what's next. Include version numbers. No marketing voice.",
+      "interval_minutes": 1440,
+      "priority": 60,
+      "inputs": {
+        "context_files": [
+          "DEVELOPMENT_LOG.md",
+          "VERSION"
+        ]
+      }
+    },
+    {
+      "id": "eng-perf-fix-3-draft",
+      "department": "eng",
+      "title": "Draft a patch for perf fix #3 (background reachability ping)",
+      "instructions": "Per docs/PERF_AUDIT.md item #4, the connector reachability ping at app/chat_window.py _host_reachable runs synchronously on the UI thread with a 1s timeout. Draft a unified diff patch that: (a) caches the reachability result for 30 seconds keyed by host, (b) keeps the first call fast and lets cache hits return in <1ms. Include a brief rationale in a top comment. Output one patch only. If the file has changed since the audit was written, output 'NEEDS CLARIFICATION:' followed by the conflict.",
+      "interval_minutes": 10080,
+      "priority": 40,
+      "inputs": {
+        "context_files": [
+          "app/chat_window.py",
+          "docs/PERF_AUDIT.md"
+        ]
+      }
+    }
+  ]
+}

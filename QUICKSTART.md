@@ -1,7 +1,8 @@
 # ArchHub Quickstart — what to try first
 
-Six things that exercise the whole product. Each takes under a minute
-once your tools are open.
+Seven things that exercise the whole product. Each takes under a minute
+once your tools are open. Step 7 is the flagship — read it first if
+you have a real project open and want to feel the value.
 
 ## Before you start
 
@@ -112,6 +113,43 @@ Markdown audit:
 Verbs that trigger this Skill instead of the export one: *audit,
 inventory, what's in, inside, read, scan, hygiene, clean-up,
 list layers, list blocks*.
+
+## 7. Construction doc sprint pack (flagship)
+
+**This is the headline product.** Open the Revit project you actually
+need to ship, then in chat:
+
+```
+Run the construction doc sprint pack
+```
+
+Matcher proposes **Construction doc sprint pack**. Click **Run**.
+Expect 60–90 minutes (varies with project size). Six chained passes,
+each its own Revit Transaction so you can Undo any one independently:
+
+1. **Audit** — read levels, grids, types, sheets, schedules, rooms.
+   Flag gaps.
+2. **Sheet set** — one floor plan per Level + N/S/E/W elevations + 2
+   sections, each placed on its own sheet with the project's title
+   block. Skips duplicates.
+3. **Schedules** — Room / Door / Window schedules created if missing,
+   then auto-numbered Marks (D-001, W-001, R-001…) without overwriting
+   anything you already set.
+4. **Keynotes** — KeynoteTags placed on every Door, Window, Furniture
+   element in the new plan views.
+5. **Annotations** — wall dimensions + door/window tags + room labels
+   on every plan view, in three separate Transactions.
+6. **QC report** — final Markdown audit: snapshot, what was created,
+   what was skipped + why, every TODO inserted, suggested next moves.
+   Paste into your project hand-over note.
+
+Triggers: *construction docs, doc sprint, doc this up, build a CD set,
+production-ready, full doc pass.*
+
+This is the foot-in-the-door for the paid tier. Replaces 1–2 days of
+junior-staff work per project. Run on a real model, save the resulting
+audit, send it to me — that's the testimonial that books the next 50
+seats.
 
 ---
 

@@ -50,6 +50,7 @@ SEED_EXPORT_REVIT_TO_DWG_ID  = "seed-export-revit-to-dwg-v1"
 SEED_OSM_CONTEXT_MASS_ID     = "seed-osm-context-mass-v1"
 SEED_DETAIL_PASS_ID          = "seed-revit-detail-pass-v1"
 SEED_ACAD_DWG_INVENTORY_ID   = "seed-acad-dwg-inventory-v1"
+SEED_CONSTRUCTION_DOC_SPRINT_ID = "seed-construction-doc-sprint-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -737,6 +738,230 @@ def _seed_acad_dwg_inventory() -> tuple[Workflow, SkillMeta]:
     return wf, meta
 
 
+def _seed_construction_doc_sprint() -> tuple[Workflow, SkillMeta]:
+    """**The flagship paid product** — Construction Doc Sprint Pack.
+
+    Drop a Revit model in any pre-CD state, click run, and 60-90
+    minutes later you have a production-ready sheet set: floor plans,
+    elevations, sections, schedules (filled, not empty), keynotes
+    placed, dimensions + tags + room labels applied. The architect's
+    junior-staff cost replacement, packaged as one Skill.
+
+    Six chained stages, each its own Revit Transaction so any pass
+    can be Undone independently if it misfires. Stage 6 emits a
+    Markdown audit summarising what was created vs skipped — the
+    BIM lead pastes that into the project's hand-over note.
+    """
+    wf = Workflow(
+        id=SEED_CONSTRUCTION_DOC_SPRINT_ID,
+        name="Construction doc sprint pack",
+        description=(
+            "Drop a Revit model → sheets, schedules, keynotes, "
+            "dimensions, room labels in one click. Six chained passes "
+            "each in its own Revit Transaction so the architect can "
+            "Undo any one independently. Final stage emits a Markdown "
+            "audit of what was created vs skipped."
+        ),
+        triggers=[Trigger(id=_id("trigger"), type="manual")],
+    )
+
+    input_node = Node(
+        id=_id("input"), type="input.parameter", label="Prompt",
+        config={"name": "prompt", "type": "string",
+                "description": "Optional refinements (e.g. 'A1 sheets, metric, no schedules').",
+                "default": ""},
+        outputs=[Port(name="value", type=PortType.STRING)],
+    )
+    wf.add_node(input_node)
+    wf.inputs.append(Port(name="prompt", type=PortType.STRING,
+                          description="Optional user refinements", required=False))
+
+    stages: list[tuple[str, str, list[str]]] = [
+        ("stage_audit", (
+            "STAGE 1 OF 6 — Audit the active document.\n"
+            "Call revit_info to confirm a project is open. Then call "
+            "revit_execute_csharp (read-only, no Transaction) that returns "
+            "JSON with: levels (count + names), grids (count), "
+            "WallTypes (count), DoorTypes (count), WindowTypes (count), "
+            "existing ViewSheets (count + names), existing Schedules "
+            "(count + names), TitleBlockSymbols (count + first name), "
+            "Rooms (count + how many have nonzero Area), and a 'gaps' "
+            "list flagging anything missing that downstream stages will "
+            "need (no TitleBlockSymbol, no Rooms, no WallTypes).\n"
+            "Output: that JSON pretty-printed, plus a one-line summary.\n\n"
+            "User refinements: {var1}"
+        ), ["revit_info", "revit_execute_csharp"]),
+
+        ("stage_sheets", (
+            "STAGE 2 OF 6 — Build the sheet set.\n"
+            "Use revit_execute_csharp INSIDE ONE Revit Transaction named "
+            "'ArchHub: Sheet set' to:\n"
+            "  - Create one floor plan view per Level (skip if a "
+            "    duplicate exists). Names: 'L<n> - Plan'.\n"
+            "  - Create four elevations (N/S/E/W) at the project's "
+            "    centre point if none exist.\n"
+            "  - Create two sections through the centre (longitudinal + "
+            "    transverse) if none exist.\n"
+            "  - Create a ViewSheet for each new view using the first "
+            "    available TitleBlockSymbol; if the symbol isn't active, "
+            "    activate it first. Sheet names match the view name.\n"
+            "  - Place each view on its corresponding sheet centred.\n"
+            "Be defensive: skip duplicates, count + report skipped.\n"
+            "Return: counts (plans, elevations, sections, sheets) plus "
+            "any sheets skipped + reason.\n\n"
+            "Audit context: {var1}"
+        ), ["revit_info", "revit_execute_csharp"]),
+
+        ("stage_schedules", (
+            "STAGE 3 OF 6 — Fill the standard schedules.\n"
+            "Use revit_execute_csharp INSIDE ONE Transaction named "
+            "'ArchHub: Schedule fixer' to:\n"
+            "  - If a 'Room schedule' doesn't exist, create one with "
+            "    fields: Number, Name, Level, Area.\n"
+            "  - If a 'Door schedule' doesn't exist, create one with "
+            "    fields: Mark, Type, Width, Height, Level.\n"
+            "  - If a 'Window schedule' doesn't exist, create one with "
+            "    fields: Mark, Type, Width, Height, Sill Height, Level.\n"
+            "  - For every existing element of each category whose Mark "
+            "    is empty, auto-number sequentially: D-001, W-001, "
+            "    R-001 etc. NEVER overwrite a non-empty Mark.\n"
+            "  - For every element of each category whose Type Name "
+            "    contains 'Default' or is empty, set a project-prefixed "
+            "    Comments value 'TODO: pick a real type'.\n"
+            "Return: counts of schedules created vs already-present, "
+            "Mark assignments made, TODO Comments inserted.\n\n"
+            "Sheets context: {var1}"
+        ), ["revit_info", "revit_execute_csharp"]),
+
+        ("stage_keynotes", (
+            "STAGE 4 OF 6 — Place keynote tags on visible elements.\n"
+            "Use revit_execute_csharp INSIDE ONE Transaction named "
+            "'ArchHub: Keynote pass' to: in every Plan view that was "
+            "just created (or all Plan views if none new), iterate "
+            "FamilyInstances of category Doors, Windows, Furniture, "
+            "and place a KeynoteTag at the element's centroid using the "
+            "default keynote tag symbol (activate it if needed). Skip "
+            "elements whose Type Name is 'Default'. Use the User Keynote "
+            "table — the value comes from the element's Type-level "
+            "'Keynote' parameter, set to '<category-prefix>-<typename>' "
+            "if currently empty.\n"
+            "Return: tags placed per category + skipped count.\n\n"
+            "Schedule context: {var1}"
+        ), ["revit_info", "revit_execute_csharp"]),
+
+        ("stage_annotations", (
+            "STAGE 5 OF 6 — Annotation pass: dimensions + tags + rooms.\n"
+            "This stage is the same logic as the standalone 'Annotate "
+            "active view' Skill, but applied to EACH Plan view that "
+            "was just created (or all Plan views if none new). Use "
+            "revit_execute_csharp INSIDE THREE separate Transactions, "
+            "one per pass, named 'ArchHub: Dim walls', 'ArchHub: Tag "
+            "openings', 'ArchHub: Tag rooms'. For each Plan view: "
+            "dimension every Wall whose LocationCurve is in view, place "
+            "DoorTags + WindowTags on every Door/Window FamilyInstance "
+            "hosted by an in-view wall, place a RoomTag at the centre "
+            "of every Room whose Level matches the view's GenLevel and "
+            "whose Area > 0. Activate default tag symbols if needed.\n"
+            "Return: per-view counts (walls dimensioned, openings "
+            "tagged, rooms tagged, total skipped).\n\n"
+            "Keynote context: {var1}"
+        ), ["revit_info", "revit_execute_csharp"]),
+
+        ("stage_qc", (
+            "STAGE 6 OF 6 — Final QC report.\n"
+            "DO NOT run any more Transactions. Read the cumulative "
+            "stage outputs (stages 1-5) and produce ONE Markdown audit "
+            "titled '# Construction Doc Sprint — <project name>'.\n"
+            "Sections, in order:\n"
+            "  ## Snapshot — total elements / levels / grids / sheets "
+            "now in document.\n"
+            "  ## What this run created — bullet list with counts of "
+            "  sheets, schedules, keynotes, dimensions, tags, room labels.\n"
+            "  ## Skipped (and why) — table of skipped items + reason "
+            "  (already existed, no host, default type, etc.).\n"
+            "  ## TODOs left for a human — bullet list of every element "
+            "  whose Comments now contains 'TODO:' (from stage 3) and "
+            "  every Type whose Keynote was set to a placeholder "
+            "  (from stage 4).\n"
+            "  ## Suggested next moves — 3 bullets the BIM lead can "
+            "  paste into the project hand-over note.\n"
+            "No invented numbers — if a section is empty, write "
+            "'(none this run)'.\n\n"
+            "Annotation context: {var1}"
+        ), []),
+    ]
+
+    prev_source = (input_node.id, "value")
+    for label, framing, tools in stages:
+        tmpl_node = Node(
+            id=_id("tmpl"), type="data.template", label=f"Frame {label}",
+            config={"template": framing},
+            inputs=[Port(name="var1", type=PortType.STRING)],
+            outputs=[Port(name="text", type=PortType.STRING)],
+        )
+        wf.add_node(tmpl_node)
+        wf.add_edge(Edge(id=_id("edge"), src_node=prev_source[0],
+                         src_port=prev_source[1],
+                         dst_node=tmpl_node.id, dst_port="var1"))
+        llm_node = Node(
+            id=_id("llm"), type="llm.complete_with_tools", label=label,
+            config={"model": "auto", "allowed_tools": tools},
+            inputs=[Port(name="prompt", type=PortType.STRING, required=True)],
+            outputs=[
+                Port(name="text",             type=PortType.STRING),
+                Port(name="tool_invocations", type=PortType.LIST),
+                Port(name="model",            type=PortType.STRING),
+            ],
+        )
+        wf.add_node(llm_node)
+        wf.add_edge(Edge(id=_id("edge"), src_node=tmpl_node.id, src_port="text",
+                         dst_node=llm_node.id, dst_port="prompt"))
+        prev_source = (llm_node.id, "text")
+
+    output_node = Node(
+        id=_id("output"), type="output.parameter", label="Audit",
+        config={"name": "answer"},
+        inputs=[Port(name="value", type=PortType.STRING, required=True)],
+        outputs=[Port(name="value", type=PortType.STRING)],
+    )
+    wf.add_node(output_node)
+    wf.add_edge(Edge(id=_id("edge"), src_node=prev_source[0],
+                     src_port=prev_source[1],
+                     dst_node=output_node.id, dst_port="value"))
+    wf.outputs.append(Port(name="answer", type=PortType.STRING,
+                           description="Final Markdown audit"))
+
+    meta = SkillMeta(
+        intent=(
+            "Take a Revit model from any pre-CD state to a production-ready "
+            "sheet set + schedules + keynotes + dimensions in one run."
+        ),
+        keywords=[
+            "construction", "doc", "documentation", "sprint", "sheets",
+            "production-ready", "cd-set", "construction-documents",
+            "doc-up", "production", "deliverables", "drawing-set",
+            "schedule", "keynotes", "dimensions", "annotate", "all",
+        ],
+        when_to_use=(
+            "User has a Revit model that needs to ship as a CD set "
+            "fast — typical at the SD→DD or DD→CD handoff."
+        ),
+        examples=[
+            {"prompt": "Run the construction doc sprint pack on this project",
+             "expected_outcome": "Sheets, schedules, keynotes, dimensions, room labels — all created in 60-90 min, plus an audit Markdown."},
+            {"prompt": "Doc this whole project up",
+             "expected_outcome": "Same as above."},
+            {"prompt": "Build a CD set",
+             "expected_outcome": "Same as above."},
+        ],
+        tags=["revit", "production", "pipeline", "flagship", "paid", "construction-docs"],
+        requires=["revit"],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
 # ---------------------------------------------------------------------------
 SEED_FACTORIES = (
     _seed_extract_mass,
@@ -749,6 +974,7 @@ SEED_FACTORIES = (
     _seed_osm_context_mass,
     _seed_revit_detail_pass,
     _seed_acad_dwg_inventory,
+    _seed_construction_doc_sprint,
 )
 
 

@@ -89,6 +89,16 @@ def main() -> int:
 
     if "--silent" not in sys.argv:
         window.show_centered()
+        # First-run onboarding wizard. Shows once per device; the user can
+        # re-run from the menu via Show onboarding again. Done after the
+        # main window is on screen so the wizard floats above it.
+        try:
+            from onboarding import needs_onboarding, OnboardingWizard
+            if needs_onboarding():
+                OnboardingWizard(router=router, manager=manager,
+                                 parent=window).exec()
+        except Exception:
+            pass
 
     rc = app.exec()
     scheduler.stop()

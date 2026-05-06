@@ -212,6 +212,119 @@ class ToolCard(QFrame):
 # ---------------------------------------------------------------------------
 #  Message bubble.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#  Skill execution UI — progress stepper for chained skills, worker thread.
+# ---------------------------------------------------------------------------
+class _SkillRunWorker(QObject):
+    """Runs WorkflowExecutor.run on a background thread, forwarding the
+    executor's ExecutionEvent stream as Qt signals so the UI can render
+    a stepper without blocking the main loop."""
+    event_received = pyqtSignal(object)        # ExecutionEvent
+    finished = pyqtSignal(object)              # ExecutionResult or None
+
+    def __init__(self, workflow, inputs, router, tool_engine, manager):
+        super().__init__()
+        self._workflow = workflow
+        self._inputs = inputs
+        self._router = router
+        self._tool_engine = tool_engine
+        self._manager = manager
+
+    def run(self) -> None:
+        try:
+            executor = WorkflowExecutor(self._router, self._tool_engine, self._manager)
+            result = executor.run(
+                self._workflow, inputs=self._inputs,
+                on_event=self.event_received.emit,
+            )
+            self.finished.emit(result)
+        except Exception as ex:
+            self.event_received.emit(_make_failed_event(str(ex)))
+            self.finished.emit(None)
+
+
+def _make_failed_event(msg: str):
+    """Build a minimal failure event the stepper can render when the worker
+    itself crashes before WorkflowExecutor produces one."""
+    from workflows.executor import ExecutionEvent
+    return ExecutionEvent(type="failed", detail=msg)
+
+
+class SkillStepperCard(QFrame):
+    """Live progress card with one row per node in the running skill. Each
+    row gets a tick / spinner / cross icon as the executor runs through.
+
+    For single-stage skills (4-node chain) the card collapses to one
+    visible step ("LLM reasoning"). For multi-stage skills like
+    sketch-to-production it shows six rows the user can watch tick off."""
+
+    def __init__(self, workflow, parent=None):
+        super().__init__(parent)
+        self.setObjectName("toolCard")
+        self._workflow = workflow
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 12, 14, 12)
+        v.setSpacing(6)
+
+        title = QLabel(f"<b>{workflow.name}</b>")
+        title.setObjectName("toolCardTitle")
+        v.addWidget(title)
+
+        self._rows: dict[str, QLabel] = {}
+        # Show a row per "interesting" node — skip wiring nodes
+        # (input.parameter, output.parameter, data.template, data.constant).
+        wiring = {"input.parameter", "output.parameter", "data.template", "data.constant"}
+        for node in workflow.nodes:
+            if node.type in wiring:
+                continue
+            row = QLabel(self._format_row("○", node.label or node.type, "queued"))
+            row.setObjectName("toolCardStatus")
+            v.addWidget(row)
+            self._rows[node.id] = row
+
+        # Fallback for skills that have no non-wiring nodes
+        if not self._rows:
+            row = QLabel(self._format_row("○", workflow.name, "queued"))
+            row.setObjectName("toolCardStatus")
+            v.addWidget(row)
+            self._rows["__only__"] = row
+
+    def _format_row(self, icon: str, label: str, status: str) -> str:
+        return f"<span style='color:#cc785c;font-size:14px;'>{icon}</span>  {label}  <i style='color:#8a8580;'>{status}</i>"
+
+    def handle_event(self, ev) -> None:
+        nid = getattr(ev, "node_id", None)
+        et = getattr(ev, "type", "")
+        label_node = None
+        for node in self._workflow.nodes:
+            if node.id == nid:
+                label_node = node
+                break
+        label = (label_node.label or label_node.type) if label_node else "Step"
+
+        if et == "node_started" and nid in self._rows:
+            self._rows[nid].setText(self._format_row("◐", label, "running…"))
+        elif et == "node_finished" and nid in self._rows:
+            elapsed = getattr(ev, "elapsed_ms", 0) or 0
+            self._rows[nid].setText(self._format_row("✓", label, f"{elapsed/1000:.1f}s"))
+        elif et == "node_failed" and nid in self._rows:
+            detail = getattr(ev, "detail", "") or "failed"
+            self._rows[nid].setText(self._format_row("✗", label, str(detail)[:80]))
+        elif et == "log":
+            # Optional: surface log lines as tooltips on the most recent row.
+            pass
+
+    def finalise(self, *, success: bool) -> None:
+        # Mark any still-queued rows as skipped on overall failure.
+        if not success:
+            for nid, row in self._rows.items():
+                txt = row.text()
+                if "queued" in txt:
+                    label = txt.split(">", 2)[2].split("<", 1)[0].strip() if ">" in txt else "Step"
+                    row.setText(self._format_row("·", label, "skipped"))
+
+
 class _TypingIndicator(QLabel):
     """Animated three-dot indicator. Shown inside an assistant bubble while
     the LLM is thinking, hidden as soon as the first text chunk arrives."""
@@ -1361,40 +1474,63 @@ class ChatWindow(QMainWindow):
         if wf is None:
             self._add_assistant_note(f"Skill `{skill_id}` not found.")
             return
+
+        # Render an announce bubble + a live stepper card showing progress
+        # through the skill's nodes. For single-stage skills this is a 1-row
+        # check-as-you-go list; for multi-stage skills like
+        # sketch-to-production it becomes a meaningful progress UI.
         announce = f"▶ Running Skill **{wf.name}**"
         msg = ChatMessage(role="assistant", content=announce,
                           model=self.model_picker.currentData())
         self.history.append(msg)
         bubble = self._render_message(msg)
+        stepper = SkillStepperCard(wf)
+        bubble.tool_cards_container.addWidget(stepper)
 
+        # Run the workflow on a background thread so the UI keeps responding
+        # while LLM stages execute (multi-stage pipelines can take minutes).
+        worker = _SkillRunWorker(wf, inputs or {}, self.router, self.tools, self.manager)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.event_received.connect(stepper.handle_event)
+        worker.finished.connect(
+            lambda result: self._on_skill_run_done(
+                skill_id, wf, result, bubble, stepper, msg
+            )
+        )
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # Keep refs so they survive the local scope.
+        self._skill_thread = thread
+        self._skill_worker = worker
+        self._skill_t0 = __import__("time").time()
+        thread.start()
+
+    def _on_skill_run_done(self, skill_id, wf, result, bubble, stepper, msg) -> None:
         import time as _time
-        t0 = _time.time()
-        success = False
+        elapsed = int((_time.time() - getattr(self, "_skill_t0", _time.time())) * 1000)
+        success = bool(result and result.success)
         error: str | None = None
+        if not success and result is not None and result.errors:
+            error = result.errors[0]
+        summary = "✓ Skill complete." if success else "✗ Skill failed."
+        if result and result.errors:
+            summary += "\n" + "\n".join(result.errors[:5])
+        if result and result.outputs:
+            ans = result.outputs.get("answer")
+            if isinstance(ans, str) and ans:
+                summary += "\n\n" + ans
+        announce = f"▶ Skill **{wf.name}**"
+        bubble.set_text(f"{announce}\n\n{summary}")
+        msg.content = bubble.text_view.toPlainText()
+        stepper.finalise(success=success)
         try:
-            executor = WorkflowExecutor(self.router, self.tools, self.manager)
-            result = executor.run(wf, inputs=inputs or {})
-            success = result.success
-            summary = "✓ Skill complete." if success else "✗ Skill failed."
-            if result.errors:
-                summary += "\n" + "\n".join(result.errors[:5])
-            if result.outputs:
-                ans = result.outputs.get("answer")
-                if isinstance(ans, str) and ans:
-                    summary += "\n\n" + ans
-            bubble.set_text(f"{announce}\n\n{summary}")
-            msg.content = bubble.text_view.toPlainText()
-        except Exception as ex:
-            error = f"{type(ex).__name__}: {ex}"
-            bubble.set_text(f"{announce}\n\n[Error] {error}")
-            msg.content = bubble.text_view.toPlainText()
-        finally:
-            elapsed = int((_time.time() - t0) * 1000)
-            try:
-                skills.record_run(skill_id, success=success,
-                                  elapsed_ms=elapsed, error=error)
-            except Exception:
-                pass
+            skills.record_run(skill_id, success=success,
+                              elapsed_ms=elapsed, error=error)
+        except Exception:
+            pass
 
     def _open_skills_panel(self) -> None:
         dlg = SkillsPanel(self.router, self.tools, self.manager, self)

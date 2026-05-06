@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
@@ -44,7 +45,7 @@ namespace AcadMCP
                 Task.Run(() => RunListenerAsync(_cts.Token));
                 Log("AcadMCP started. Listening on " + ListenPrefix);
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 Log("Init failed: " + ex);
             }
@@ -67,7 +68,7 @@ namespace AcadMCP
                 _listener.Prefixes.Add(ListenPrefix);
                 _listener.Start();
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 Log("Listener.Start failed: " + ex);
                 return;
@@ -97,7 +98,7 @@ namespace AcadMCP
                 }
                 responseJson = await RouteAsync(path, body).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 responseJson = JsonError("Server error: " + ex.Message);
             }
@@ -111,7 +112,7 @@ namespace AcadMCP
                 await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
                 context.Response.OutputStream.Close();
             }
-            catch (Exception ex) { Log("Response write failed: " + ex); }
+            catch (System.Exception ex) { Log("Response write failed: " + ex); }
         }
 
         private Task<string> RouteAsync(string path, string body)
@@ -134,7 +135,7 @@ namespace AcadMCP
                             code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
                             txName = doc.RootElement.TryGetProperty("transaction_name", out var t) ? t.GetString() : "MCP exec";
                         }
-                        catch (Exception ex)
+                        catch (System.Exception ex)
                         {
                             return Task.FromResult(JsonError("Bad JSON: " + ex.Message));
                         }
@@ -170,7 +171,7 @@ namespace AcadMCP
                     };
                     item.Tcs.SetResult(result);
                 }
-                catch (Exception ex)
+                catch (System.Exception ex)
                 {
                     item.Tcs.SetResult(JsonError(ex.GetType().Name + ": " + ex.Message));
                 }
@@ -226,7 +227,7 @@ namespace AcadMCP
                     var resultJson = SerializeResult(ctx.result);
                     return "{\"status\":\"ok\",\"result\":" + resultJson + "}";
                 }
-                catch (Exception ex)
+                catch (System.Exception ex)
                 {
                     try { tr.Abort(); } catch { }
                     var inner = ex.InnerException?.Message ?? ex.Message;

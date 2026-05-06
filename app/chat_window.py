@@ -343,12 +343,7 @@ class ChatWindow(QMainWindow):
 
         self.model_picker = QComboBox()
         self.model_picker.setObjectName("modelPicker")
-        self.model_picker.addItem("Auto · best model per task", ROUTE_AUTO)
-        for model_id, label in KNOWN_MODELS:
-            self.model_picker.addItem(label, model_id)
-        # Add any locally-running Ollama models
-        for model_id, label in ollama_models():
-            self.model_picker.addItem(label, model_id)
+        self._populate_model_picker()
         h.addWidget(self.model_picker)
 
         connectors_btn = QPushButton("Connectors")
@@ -1235,6 +1230,101 @@ class ChatWindow(QMainWindow):
         dlg = UpdateDialog(self)
         dlg.exec()
 
+    # ---- model picker -----------------------------------------------------
+
+    def _populate_model_picker(self) -> None:
+        """Fill the model dropdown. Models whose provider has no API key
+        configured (and is not local Ollama) are appended in a disabled
+        state so the user can see they exist but cannot accidentally pick
+        one and silently fall back to Ollama."""
+        from PyQt6.QtGui import QStandardItemModel, QStandardItem
+
+        configured = set(self.router.configured_providers())
+
+        self.model_picker.clear()
+        # Replace the underlying model so we can disable individual items.
+        item_model = QStandardItemModel(self.model_picker)
+        self.model_picker.setModel(item_model)
+
+        def _add(label: str, data: str, *, enabled: bool, tooltip: str = "") -> None:
+            item = QStandardItem(label)
+            item.setData(data)
+            item.setEnabled(enabled)
+            if tooltip:
+                item.setToolTip(tooltip)
+            if not enabled:
+                from PyQt6.QtGui import QBrush, QColor
+                item.setForeground(QBrush(QColor("#6a6a6c")))
+            item_model.appendRow(item)
+
+        _add("Auto · best model per task", ROUTE_AUTO, enabled=True,
+             tooltip="ArchHub picks the best available model for each prompt.")
+
+        for model_id, label in KNOWN_MODELS:
+            provider = model_id.partition(":")[0]
+            ok = provider in configured
+            tooltip = ("" if ok
+                       else f"{provider.title()} API key not configured. "
+                            f"Add one in Settings (⚙) to enable this model.")
+            _add(label if ok else f"{label}  (no key)", model_id,
+                 enabled=ok, tooltip=tooltip)
+
+        for model_id, label in ollama_models():
+            _add(label, model_id, enabled=True,
+                 tooltip="Local model running in Ollama.")
+
+    def _refresh_model_picker(self) -> None:
+        """Public hook so SettingsDialog can re-enable models after the user
+        adds a key. Preserves the current selection if still valid."""
+        current = self.model_picker.currentData()
+        self._populate_model_picker()
+        if current:
+            for i in range(self.model_picker.count()):
+                if self.model_picker.itemData(i) == current:
+                    self.model_picker.setCurrentIndex(i)
+                    break
+
+    # ---- background update check -----------------------------------------
+
+    def _silent_update_check(self) -> None:
+        """Fire on launch in a background thread. If updates are available,
+        flash a non-modal banner in the status bar and pulse the Update
+        button. Never blocks; never pops a dialog without user action."""
+        import updater
+        from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+        class _Worker(QObject):
+            done = pyqtSignal(object)
+
+            def run(self) -> None:
+                try:
+                    self.done.emit(updater.check_for_updates())
+                except Exception:
+                    self.done.emit(None)
+
+        worker = _Worker()
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_silent_update_check_done)
+        worker.done.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._update_check_thread = thread
+        thread.start()
+
+    def _on_silent_update_check_done(self, status) -> None:
+        if status is None or status.error or not status.has_updates:
+            return
+        # Show a quiet line in the status bar.
+        msg = (f"✨ {status.behind} update"
+               f"{'s' if status.behind != 1 else ''} available — "
+               f"click the ↻ Update button.")
+        try:
+            self.status_left.setText(msg)
+        except Exception:
+            pass
+
     def _share_skill_to_clipboard(self, query: str) -> None:
         """`/skill share <id|name>` — copy that Skill's JSON to clipboard."""
         items = skills.list_skills()
@@ -1400,3 +1490,8 @@ class ChatWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        # Silently check for updates on first show. Non-blocking; surfaces a
+        # status-bar line if newer commits exist on the remote.
+        if not getattr(self, "_update_check_started", False):
+            self._update_check_started = True
+            QTimer.singleShot(800, self._silent_update_check)

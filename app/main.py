@@ -89,6 +89,18 @@ def main() -> int:
     tools = ToolEngine(manager)
     router = LLMRouter(tools)
 
+    # Connector health daemon — single source of truth for 'is the
+    # listener actually responding'. Polls every 5s on a background
+    # thread, surfaces 'live' / 'loaded_dead' / 'host_offline' /
+    # 'inactive' / 'unknown'. Self-heals AutoCAD with NETLOAD via
+    # COM with 5s/30s/5min backoff. Status bar + connector panel
+    # + Reality Check + chat all consult this same instance.
+    try:
+        from connector_health import instance as _health_instance
+        _health_instance()       # spawn the polling thread
+    except Exception:
+        pass
+
     # Register tool.* node types now that the tool engine is alive
     register_tool_nodes()
 

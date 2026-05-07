@@ -119,15 +119,16 @@ class _Row(QFrame):
     }
 
     def _listener_alive(self) -> bool:
-        url = self._PROBE_URL.get((self.entry.family or "").lower())
-        if not url:
+        family = (self.entry.family or "").lower()
+        if family not in self._PROBE_URL:
             # Connectors without a listener (Speckle / Outlook) — treat
             # ACTIVE registry state as truth.
             return True
-        import urllib.request, urllib.error
+        # Read from the central health daemon — never probes inline,
+        # never blocks the UI thread.
         try:
-            with urllib.request.urlopen(url, timeout=0.6) as r:
-                return 200 <= r.status < 300
+            from connector_health import instance as _health
+            return _health().state(family) == "live"
         except Exception:
             return False
 

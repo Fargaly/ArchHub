@@ -1050,17 +1050,14 @@ class ChatWindow(QMainWindow):
     }
 
     def _host_reachable(self, host: str) -> bool:
-        """Cheap reachability probe. Direct HTTP with a 1-second timeout so
-        the chat input never blocks waiting for a host that's not running."""
-        url = self._HOST_PING_URL.get(host)
-        if url is None:
+        """Read from the central connector_health daemon — never probes
+        inline. The daemon polls every 5s on a worker thread + caches the
+        last result, so this call is O(1) and never blocks."""
+        if host not in self._HOST_PING_URL:
             return True
-        import urllib.request, urllib.error
         try:
-            with urllib.request.urlopen(url, timeout=1.0) as resp:
-                return 200 <= resp.status < 300
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
-            return False
+            from connector_health import instance as _health
+            return _health().state(host) == "live"
         except Exception:
             return False
 

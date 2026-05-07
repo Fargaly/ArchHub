@@ -104,14 +104,52 @@ def main() -> int:
     scheduler = TriggerScheduler(on_fire=_on_trigger_fire, tick_seconds=30.0)
     scheduler.start()
 
+    # HUD overlay chrome — frameless, translucent, always-on-top.
+    # Toggled by setting 'hud_overlay_mode' (default ON for new
+    # installs). Old fullscreen behaviour stays available by
+    # un-ticking the setting in Settings → Appearance.
+    overlay_controller = None
+    try:
+        from secrets_store import load_setting
+        hud_on = load_setting("hud_overlay_mode")
+        if hud_on is None:
+            hud_on = True            # default ON
+        if hud_on and "--silent" not in sys.argv:
+            from overlay_chrome import apply_overlay_chrome, install_global_hotkey
+            overlay_controller = apply_overlay_chrome(window)
+            install_global_hotkey(overlay_controller, combo="ctrl+space")
+            # Keep a ref on the window so GC doesn't drop it.
+            window._overlay_controller = overlay_controller
+    except Exception:
+        overlay_controller = None
+
     if "--silent" not in sys.argv:
-        window.show_centered()
+        if overlay_controller is not None:
+            overlay_controller.expand()
+        else:
+            window.show_centered()
         # First-run telemetry consent — single question, before the
         # heavier 3-step onboarding. Returns immediately if already
         # answered.
         try:
             from telemetry_consent_dialog import maybe_prompt as _maybe_telemetry
             _maybe_telemetry(window)
+        except Exception:
+            pass
+
+        # Auto-launch pet strip alongside the chat panel — pets are a
+        # subprocess so the chat process can crash without taking the
+        # status indicator with it.
+        try:
+            import subprocess as _sp
+            from pathlib import Path as _P
+            _pets = _P(__file__).resolve().parent / "company_pets.py"
+            if _pets.exists():
+                _sp.Popen(
+                    [sys.executable.replace("python.exe", "pythonw.exe"), str(_pets)],
+                    cwd=str(APP_ROOT.parent),
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+                )
         except Exception:
             pass
         # First-run onboarding wizard. Shows once per device; the user can

@@ -293,6 +293,28 @@ class SettingsDialog(QDialog):
         self._speckle_toggle.toggled.connect(self._speckle_widget.setVisible)
         outer.addWidget(self._speckle_widget)
 
+        # ── Appearance — HUD overlay toggle ────────────────────────────────
+        from PyQt6.QtCore import Qt as _Qt
+        appearance_box = QFrame(); appearance_box.setObjectName("providerRow")
+        ab = QVBoxLayout(appearance_box); ab.setContentsMargins(12, 10, 12, 10); ab.setSpacing(6)
+        ab_title = QLabel("Appearance"); ab_title.setObjectName("providerName")
+        ab.addWidget(ab_title)
+        ab_help = QLabel(
+            "<b>HUD overlay mode</b> (default) — frameless, always-on-top, translucent. "
+            "Floats over Revit / AutoCAD / Blender. <kbd>Ctrl + Space</kbd> toggles. "
+            "<kbd>Esc</kbd> collapses to the pet strip.<br>"
+            "Off = old fullscreen window behaviour."
+        )
+        ab_help.setObjectName("settingsSubtitle"); ab_help.setWordWrap(True)
+        ab.addWidget(ab_help)
+        self._hud_overlay = QCheckBox("Use HUD overlay chrome")
+        self._hud_overlay.setObjectName("settingsSubtitle")
+        # Default ON for new installs, persist the setting on first save.
+        _hud_setting = load_setting("hud_overlay_mode")
+        self._hud_overlay.setChecked(True if _hud_setting is None else bool(_hud_setting))
+        ab.addWidget(self._hud_overlay)
+        outer.addWidget(appearance_box)
+
         # ── Privacy / telemetry ────────────────────────────────────────────
         outer.addWidget(self._build_privacy_row())
 
@@ -690,6 +712,7 @@ class SettingsDialog(QDialog):
         save_setting("telemetry_posthog_host", (self._posthog_host.text() or "").strip())
         save_setting("sentry_dsn", (self._sentry_dsn.text() or "").strip())
         save_setting("discord_webhook_url", (self._discord_webhook.text() or "").strip())
+        save_setting("hud_overlay_mode", bool(self._hud_overlay.isChecked()))
         # Re-init Sentry + drop cached PostHog client so the changes
         # take effect without an app restart.
         try:

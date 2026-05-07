@@ -226,3 +226,30 @@ private pilot. v1.0 ship target: Q3 2026.
 [![GitHub stars](https://img.shields.io/github/stars/Fargaly/ArchHub?style=social)](https://github.com/Fargaly/ArchHub)
 
 If you build something with ArchHub, post a screenshot — we love it.
+
+
+<!-- archhub-auto:changelog:start -->
+### Last 24 hours
+
+<!-- auto-updated daily by agents/publish.py -->
+
+- `ebccff7` feat(autonomy): CEO routine â€” hourly diagnose+plan+act + daily brief
+- `3d73285` feat(autonomy): auto-update + kill remaining CMD-flash sources â€” v0.27.0
+- `8001f43` feat(ui): apply Anthropic brand-guidelines palette + Poppins/Lora typography
+- `fc06dbf` feat(connector): Outlook (classic) â€” read inbox, search, draft replies â€” v0.26.0
+- `c84176f` fix(chat): differentiate 'host not running' vs 'host running, addin not loaded'
+- `480aaf5` fix(skill): tighten Construction Doc Sprint Stage 2 prompt with C# scaffold + smoke tests
+- `6d5a707` fix(ux): kill pet auto-spawn + trim recurring jobs to ones that produce daily new signal â€” v0.25.2
+- `4333851` fix(ux): HUD overlay default OFF â€” pets stay the only ambient layer â€” v0.25.1
+- `b414348` feat(hud): configurable toggle hotkey â€” Settings â†’ Appearance
+- `2c94972` feat(ux): HUD overlay chrome â€” frameless, translucent, always-on-top â€” v0.25.0
+- `abbe6c3` feat(notify): no-auth status channels â€” desktop file + Win toast + Discord webhook â€” v0.24.1
+- `15f2747` feat(autonomy): pet overlay + hourly cron + meta-skills â€” v0.24.0
+- `6a4c6f2` fix(llm): wire Gemini provider + auto-fallback when Anthropic/OpenAI dead â€” v0.23.2
+- `b03cf54` fix(connectors): tolerate locked DLL â€” keep loaded version, write addin anyway
+- `1a601ce` feat(skills): Construction Doc Sprint Pack â€” flagship paid Skill â€” v0.23.0
+- `c43d911` feat(agents): Sprint 2 â€” TelemetryAgent + BacklogAgent + WatcherAgent + feedback widget â€” v0.22.0
+- `fba885a` fix(telemetry): use eu.i.posthog.com ingest host (events were 404'ing silently)
+- `bb0be53` feat(settings): Privacy panel â€” paste PostHog/Sentry keys + test send
+- `dc80787` feat(telemetry): Sprint 1 â€” opt-in PostHog + Sentry + retry signal â€” v0.21.0
+<!-- archhub-auto:changelog:end -->

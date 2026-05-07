@@ -16,6 +16,11 @@ you have a real project open and want to feel the value.
 
 If Reality Check is all-green, the rest of this guide will work.
 
+## Pricing status
+
+ArchHub is currently in **open beta** and all shipped features are free.
+For canonical pricing language, see `docs/PRICING_STATUS.md`.
+
 ## 1. Talk to your Revit project
 
 In ArchHub chat, type:

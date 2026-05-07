@@ -115,6 +115,21 @@ def _friction_top(n: int = 5) -> list[dict]:
     return rows[:n]
 
 
+def _latest_dept_output(dept: str) -> str:
+    """Read the most-recent completion.md for a dept (truncated to 1500 chars)."""
+    root = OUTPUTS_DIR / dept
+    if not root.exists():
+        return ""
+    files = list(root.rglob("completion.md"))
+    if not files:
+        return ""
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    try:
+        return latest.read_text(encoding="utf-8")[:1500]
+    except Exception:
+        return ""
+
+
 def _build_html() -> tuple[str, str]:
     now = datetime.now(timezone.utc)
     title = f"ArchHub — hourly progress · {now.strftime('%Y-%m-%d %H:%M UTC')}"
@@ -123,6 +138,8 @@ def _build_html() -> tuple[str, str]:
     release = _latest_release()
     depts = _scan_depts()
     friction = _friction_top()
+    standup = _latest_dept_output("ops")
+    friction_md = _latest_dept_output("telemetry")
 
     head_kpis = (
         f"<b>Latest release:</b> {release} &nbsp;·&nbsp; "
@@ -150,11 +167,27 @@ def _build_html() -> tuple[str, str]:
         for c in commits[:20]
     ) or "<li style='color:#888'>(no commits last hour)</li>"
 
+    standup_block = (
+        f"<pre style='white-space:pre-wrap;background:#fff;padding:12px 14px;"
+        f"border-left:3px solid #788c5d;border-radius:6px;font-family:inherit;"
+        f"font-size:13px'>{(standup or '(no daily brief yet — depts will run on next 5-min tick)').strip()}</pre>"
+    )
+    friction_block = (
+        f"<pre style='white-space:pre-wrap;background:#fff;padding:12px 14px;"
+        f"border-left:3px solid #6a9bcc;border-radius:6px;font-family:inherit;"
+        f"font-size:13px'>{(friction_md or '(no friction signal — needs >=2 skill runs)').strip()}</pre>"
+    )
     html = f"""
-    <html><body style="font-family:Inter,Arial,sans-serif;color:#141413;background:#faf9f5;padding:20px;max-width:780px;margin:0 auto">
-      <h1 style="margin:0 0 8px;color:#141413">ArchHub progress</h1>
+    <html><body style="font-family:Inter,Arial,sans-serif;color:#141413;background:#faf9f5;padding:20px;max-width:820px;margin:0 auto">
+      <h1 style="margin:0 0 8px;color:#141413">ArchHub status</h1>
       <div style="color:#6f6d65;font-size:13px;margin-bottom:18px">{now.strftime('%Y-%m-%d %H:%M UTC')}</div>
       <p style="background:#fff;padding:12px 14px;border-left:3px solid #d97757;border-radius:6px">{head_kpis}</p>
+
+      <h3 style="margin-top:24px;color:#141413">Today (Ops dept)</h3>
+      {standup_block}
+
+      <h3 style="margin-top:24px;color:#141413">Friction (Telemetry dept)</h3>
+      {friction_block}
 
       <h3 style="margin-top:24px;color:#141413">Commits last 1 hour</h3>
       <ul>{commit_li}</ul>

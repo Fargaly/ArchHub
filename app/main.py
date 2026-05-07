@@ -135,21 +135,9 @@ def main() -> int:
         except Exception:
             pass
 
-        # Auto-launch pet strip alongside the chat panel — pets are a
-        # subprocess so the chat process can crash without taking the
-        # status indicator with it.
-        try:
-            import subprocess as _sp
-            from pathlib import Path as _P
-            _pets = _P(__file__).resolve().parent / "company_pets.py"
-            if _pets.exists():
-                _sp.Popen(
-                    [sys.executable.replace("python.exe", "pythonw.exe"), str(_pets)],
-                    cwd=str(APP_ROOT.parent),
-                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
-                )
-        except Exception:
-            pass
+        # Pet strip is opt-in — runnable via `pythonw -m app.company_pets`
+        # for users who want a glanceable dept indicator. Auto-spawn was
+        # decoration, not value. Removed.
         # First-run onboarding wizard. Shows once per device; the user can
         # re-run from the menu via Show onboarding again. Done after the
         # main window is on screen so the wizard floats above it.

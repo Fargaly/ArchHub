@@ -218,6 +218,87 @@ TOOLS: list[dict] = [
         "endpoint": ("speckle", "get_project"),
     },
 
+    # Outlook (classic) — drives via COM, no listener
+    {
+        "name": "outlook_info",
+        "family": "outlook",
+        "description": "Snapshot of Outlook inbox: total count, unread count, drafts count, default account email.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("outlook", "info"),
+    },
+    {
+        "name": "outlook_list_inbox",
+        "family": "outlook",
+        "description": "Return the most recent inbox messages newest-first. Use unread_only=true to skip already-read mail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20},
+                "unread_only": {"type": "boolean", "default": False},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "list_inbox"),
+    },
+    {
+        "name": "outlook_search",
+        "family": "outlook",
+        "description": "Search the inbox. All filters optional and combine with AND. `query` matches subject and body, `sender` matches From-name OR email, `subject_contains` matches subject only, `days` restricts to the last N days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "sender": {"type": "string"},
+                "subject_contains": {"type": "string"},
+                "days": {"type": "integer", "default": 0},
+                "limit": {"type": "integer", "default": 30},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "search"),
+    },
+    {
+        "name": "outlook_read_thread",
+        "family": "outlook",
+        "description": "Return the full thread + body for a single message (identified by entry_id). Includes parent + reply chain when Conversation API exposes it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"entry_id": {"type": "string"}},
+            "required": ["entry_id"],
+        },
+        "endpoint": ("outlook", "read_thread"),
+    },
+    {
+        "name": "outlook_draft_reply",
+        "family": "outlook",
+        "description": "Create a Reply or Reply-All draft for the given message. By default the draft pops up in Outlook for the user to review + Send. Sets `send=true` only if the user has explicitly enabled 'allow ArchHub to send' in Settings.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "body":     {"type": "string"},
+                "reply_all": {"type": "boolean", "default": False},
+                "send":      {"type": "boolean", "default": False},
+            },
+            "required": ["entry_id"],
+        },
+        "endpoint": ("outlook", "draft_reply"),
+    },
+    {
+        "name": "outlook_save_attachments",
+        "family": "outlook",
+        "description": "Save every attachment from the message identified by entry_id into dest_dir. Returns the list of saved paths.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "dest_dir": {"type": "string"},
+            },
+            "required": ["entry_id", "dest_dir"],
+        },
+        "endpoint": ("outlook", "save_attachments"),
+    },
+
     # ArchHub local helpers (always available)
     {
         "name": "archhub_list_connectors",
@@ -291,6 +372,15 @@ class ToolEngine:
                 active.add("acad")
             else:
                 active.add(fam)
+        # Outlook auto-activates when classic Outlook is reachable via
+        # COM — no toggle needed. Cheap probe (sub-second when Outlook
+        # is open, fails fast otherwise).
+        try:
+            from connectors.outlook_runner import is_reachable as _ol_reachable
+            if _ol_reachable():
+                active.add("outlook")
+        except Exception:
+            pass
         return active
 
     # ---- invocation -------------------------------------------------------
@@ -319,6 +409,32 @@ class ToolEngine:
                 return self.speckle.dispatch(handler, args)
             except Exception as ex:
                 return {"status": "error", "error": str(ex)}
+
+        # outlook family — drives classic Outlook in-process via COM.
+        # No localhost listener; we route directly to outlook_runner.
+        if tool["family"] == "outlook":
+            handler = ep[1]
+            try:
+                from connectors import outlook_runner as _ol
+                fn = getattr(_ol, handler, None)
+                if fn is None:
+                    return {"status": "error",
+                            "error": f"Unknown outlook handler: {handler}"}
+                # Pass kwargs the handler accepts (skip unknown keys).
+                import inspect
+                sig = inspect.signature(fn)
+                kwargs = {k: v for k, v in (args or {}).items() if k in sig.parameters}
+                result = fn(**kwargs)
+                # Normalise list/dict results into the {status: ok, ...} envelope.
+                if isinstance(result, dict):
+                    if "status" not in result:
+                        result = {"status": "ok", **result}
+                    return result
+                if isinstance(result, list):
+                    return {"status": "ok", "items": result}
+                return {"status": "ok", "result": result}
+            except Exception as ex:
+                return {"status": "error", "error": str(ex)[:300]}
 
         # HTTP families: revit/acad/max/blender
         family, method, path, arg_keys = ep

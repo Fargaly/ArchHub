@@ -27,6 +27,35 @@ from tool_engine import ToolEngine, ToolInvocation
 
 ROUTE_AUTO = "auto"
 
+
+def _looks_like_auth_or_quota(ex: Exception) -> bool:
+    """True if the exception message smells like 'no credits / bad key /
+    quota exceeded' — a hard provider failure that re-trying will not fix.
+    Covers Anthropic, OpenAI, Google, OpenRouter SDK error strings.
+    """
+    s = (str(ex) or "").lower()
+    needles = (
+        "credit balance is too low",
+        "insufficient_quota",
+        "quota exceeded",
+        "exceeded your current quota",
+        "exceeded your monthly",
+        "rate limit",
+        "rate_limit_exceeded",
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "unauthorized",
+        "401",
+        "403",
+        "billing",
+        "payment required",
+        "402",
+        "permission_denied",
+        "api key expired",
+    )
+    return any(n in s for n in needles)
+
 # (model_id, label-shown-in-dropdown). model_id is "<provider>:<api_model_name>".
 # OpenRouter rows let the user reach Anthropic / OpenAI / Google without
 # minting per-provider keys — one OAuth sign-in covers everything below
@@ -75,6 +104,16 @@ class LLMRouter:
     def __init__(self, tools: ToolEngine):
         self.tools = tools
         self._clients: dict[str, object] = {}
+        # Provider → unix-ts when they're allowed back. Set when a 4xx
+        # comes back (auth / quota / credits). Auto-router skips
+        # blocked providers so the user doesn't keep watching a
+        # spinner caused by a dead key.
+        self._blocklist: dict[str, float] = {}
+        # How long to keep a provider blocked after a hard failure.
+        # Long enough that the user notices via Reality Check; short
+        # enough that adding credits + waiting fixes it without a
+        # restart.
+        self._BLOCK_SECONDS = 600         # 10 minutes
 
     # ---- credentials ------------------------------------------------------
 
@@ -89,6 +128,28 @@ class LLMRouter:
         except Exception:
             pass
         return False
+
+    def block_provider(self, provider: str, reason: str = "") -> None:
+        """Mark a provider as unavailable for ~10 min. Called by client
+        wrappers when they get a 4xx (auth / quota / credits / bad key)."""
+        import time as _t
+        self._blocklist[provider] = _t.time() + self._BLOCK_SECONDS
+        print(f"[llm-router] {provider} BLOCKED for {self._BLOCK_SECONDS}s: {reason}", flush=True)
+        try:
+            from telemetry import track_event
+            track_event("provider_blocked", provider=provider, reason=reason[:120])
+        except Exception:
+            pass
+
+    def is_provider_blocked(self, provider: str) -> bool:
+        import time as _t
+        until = self._blocklist.get(provider)
+        if until is None:
+            return False
+        if _t.time() >= until:
+            self._blocklist.pop(provider, None)
+            return False
+        return True
 
     def configured_providers(self) -> list[str]:
         providers = set(list_keys())
@@ -116,7 +177,10 @@ class LLMRouter:
                 providers.add("ollama")
         except Exception:
             pass
-        return sorted(providers)
+        # Drop providers we've blocked due to recent 4xx (no credits,
+        # bad key, quota exceeded). They re-enter the set automatically
+        # when the blocklist entry expires (~10 min).
+        return sorted(p for p in providers if not self.is_provider_blocked(p))
 
     def _get_client(self, provider: str):
         if provider in self._clients:
@@ -266,6 +330,8 @@ class LLMRouter:
                 return "openrouter", "anthropic/claude-sonnet-4", "OpenRouter · Claude Sonnet 4"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: modeling task → GPT-4o (Anthropic unavailable)"
+            if "google" in configured:
+                return "google", "gemini-2.5-flash", "auto: modeling → Gemini 2.5 Flash (free tier)"
             if "relay" in configured:
                 return "relay", "auto", "auto: modeling task → firm relay"
             if "ollama" in configured:
@@ -280,6 +346,8 @@ class LLMRouter:
                 return "openrouter", "anthropic/claude-sonnet-4", "auto: analysis → OpenRouter · Claude Sonnet 4"
             if "openai" in configured:
                 return "openai", "gpt-4o", "auto: analysis → GPT-4o"
+            if "google" in configured:
+                return "google", "gemini-2.5-flash", "auto: analysis → Gemini 2.5 Flash"
             if "relay" in configured:
                 return "relay", "auto", "auto: analysis → firm relay"
             if "ollama" in configured:
@@ -294,6 +362,8 @@ class LLMRouter:
                 return "openrouter", "google/gemini-2.0-flash-exp", "auto: short → OpenRouter · Gemini Flash"
             if "openai" in configured:
                 return "openai", "gpt-4o-mini", "auto: short → GPT-4o mini"
+            if "google" in configured:
+                return "google", "gemini-2.5-flash", "auto: short → Gemini 2.5 Flash"
             if "ollama" in configured:
                 m = self._pick_ollama_model("quick")
                 if m:
@@ -328,8 +398,46 @@ class LLMRouter:
     ) -> LLMResponse:
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
-        provider, model_name, note = self._route(history, model)
-        client = self._get_client(provider)
+
+        # Auto-fallback chain: try the routed provider; on auth/quota
+        # failure (4xx) block it for 10 min and pick the next available.
+        # Stops the user from staring at a spinner because Anthropic
+        # ran out of credits / OpenAI quota exceeded — switches to
+        # Google Gemini or local Ollama transparently.
+        attempts = []
+        last_error: Exception | None = None
+        for fallback_round in range(4):
+            provider, model_name, note = self._route(history, model)
+            if provider in attempts:
+                # Same provider re-picked because nothing else available.
+                break
+            attempts.append(provider)
+            try:
+                client = self._get_client(provider)
+                return self._complete_once(
+                    history=history, provider=provider, model_name=model_name,
+                    note=note, client=client,
+                    on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
+                )
+            except Exception as ex:
+                last_error = ex
+                if not _looks_like_auth_or_quota(ex):
+                    raise
+                self.block_provider(provider, reason=str(ex)[:200])
+                # Force auto re-route on the next loop.
+                model = ROUTE_AUTO
+                continue
+        raise RuntimeError(
+            f"All configured LLM providers exhausted (tried {attempts}). "
+            f"Last error: {last_error}"
+        )
+
+    def _complete_once(
+        self, *, history, provider, model_name, note, client,
+        on_chunk, on_tool_invocation,
+    ):
+        # Original body inlined below — extracted so the auto-fallback
+        # loop can wrap it cleanly.
 
         # Compose system prompt
         system_prompt = self._build_system_prompt()

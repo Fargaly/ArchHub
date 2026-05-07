@@ -269,8 +269,15 @@ class ToolEngine:
                     },
                 })
             elif provider == "google":
-                # Gemini has its own format — not used by stub
-                out.append({"name": t["name"], "description": t["description"]})
+                # Gemini wants name + description + JSONSchema params,
+                # later wrapped in {"function_declarations": [...]} by
+                # the GoogleClient. Pass the full input_schema here so
+                # the client doesn't have to re-fetch.
+                out.append({
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"],
+                })
         return out
 
     def _active_families(self) -> set[str]:

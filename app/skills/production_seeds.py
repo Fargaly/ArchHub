@@ -51,6 +51,8 @@ SEED_OSM_CONTEXT_MASS_ID     = "seed-osm-context-mass-v1"
 SEED_DETAIL_PASS_ID          = "seed-revit-detail-pass-v1"
 SEED_ACAD_DWG_INVENTORY_ID   = "seed-acad-dwg-inventory-v1"
 SEED_CONSTRUCTION_DOC_SPRINT_ID = "seed-construction-doc-sprint-v1"
+SEED_SKILL_BUILDER_ID           = "seed-skill-builder-v1"
+SEED_SKILL_FINDER_ID            = "seed-skill-finder-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -962,6 +964,119 @@ def _seed_construction_doc_sprint() -> tuple[Workflow, SkillMeta]:
     return wf, meta
 
 
+def _seed_skill_builder() -> tuple[Workflow, SkillMeta]:
+    """Meta-skill: 'Build me a Skill that does X' → drafts a new
+    .archhub-workflow.json into the user's library."""
+    wf = _build_chain(
+        workflow_id=SEED_SKILL_BUILDER_ID,
+        name="Build a new Skill from a description",
+        description=(
+            "One-line description in, ready-to-edit Skill out. The "
+            "model proposes a workflow graph (input → template → "
+            "llm.complete_with_tools → output), names it, sets keywords + "
+            "intent + tags, and lists allowed_tools. The architect "
+            "reviews + saves from the Skills panel."
+        ),
+        framing_template=(
+            "You are the ArchHub Skill builder. The user describes one "
+            "thing they want a re-runnable Skill to do. You output a "
+            "single ArchHub workflow JSON that, when saved into the "
+            "library, becomes a new Skill the matcher can find.\n\n"
+            "Required keys at the top level: id, name, description, "
+            "nodes (an input.parameter, a data.template, an "
+            "llm.complete_with_tools, and an output.parameter), edges "
+            "wiring them in order, and a SkillMeta block under "
+            "'metadata' with intent / keywords / when_to_use / examples / "
+            "tags / requires.\n\n"
+            "Available connector tool name prefixes: revit_, acad_, "
+            "max_, blender_, speckle_. Keep the framing template "
+            "concrete: name the exact Revit/Blender APIs to use, the "
+            "Transactions to wrap, the safety checks to make.\n\n"
+            "Output ONLY the JSON. No prose. No code fences.\n\n"
+            "User description: {var1}"
+        ),
+        allowed_tools=[],          # pure generation; no live tools
+    )
+    meta = SkillMeta(
+        intent="Generate a new ArchHub Skill JSON from a one-line description.",
+        keywords=[
+            "build", "create", "new-skill", "meta", "make-skill",
+            "skill-builder", "draft-skill",
+        ],
+        when_to_use=(
+            "User wants ArchHub to draft a brand-new Skill they can save "
+            "and share."
+        ),
+        examples=[
+            {"prompt": "Build me a Skill that exports every Revit sheet as PDF",
+             "expected_outcome": "A workflow JSON the user can save."},
+            {"prompt": "Make a new skill: rename every wall whose Mark starts with TEMP",
+             "expected_outcome": "JSON ready to drop into the library."},
+        ],
+        tags=["meta", "skill-builder", "platform"],
+        requires=[],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
+def _seed_skill_finder() -> tuple[Workflow, SkillMeta]:
+    """Meta-skill: scan online repos (pyRevit / Dynamo / Grasshopper /
+    blender-mcp etc.) for workflows worth porting into ArchHub Skills.
+
+    Doesn't actually crawl the web (the agent has no browser); it reads
+    a curated list of source URLs from docs/PEER_LIBRARIES.md and
+    emits a Markdown 'discovery report' with the top candidates."""
+    wf = _build_chain(
+        workflow_id=SEED_SKILL_FINDER_ID,
+        name="Find Skills worth porting from peer ecosystems",
+        description=(
+            "Walks the curated peer-library list (pyRevit extensions, "
+            "Dynamo packages, Grasshopper components, blender-mcp "
+            "tools, Hypar functions) and produces a discovery report "
+            "of the top 10 workflows the architect should consider "
+            "porting into ArchHub as Skills."
+        ),
+        framing_template=(
+            "You are the ArchHub Market-Watcher. Read the peer-library "
+            "context provided, then produce a Markdown report titled "
+            "'# Skills to port — <date>' with these sections:\n"
+            "  ## Top 10 candidates  (table: source repo | workflow | "
+            "what it does | port effort | architect demand signal)\n"
+            "  ## Quick wins (next 7 days)  — 3 bullets, exact Skill "
+            "names + a 1-line implementation plan each.\n"
+            "  ## Skip list — workflows we should NOT port and why.\n\n"
+            "Cite repo + file path on every row. Never invent. If the "
+            "context is empty, say 'peer-library list pending'.\n\n"
+            "User refinements: {var1}"
+        ),
+        allowed_tools=[],
+    )
+    meta = SkillMeta(
+        intent="Discover peer-ecosystem workflows worth porting into ArchHub as new Skills.",
+        keywords=[
+            "discover", "find", "port", "import", "peer", "watch",
+            "scan", "library", "candidates", "workflows-to-port",
+        ],
+        when_to_use=(
+            "User wants to expand the Skill library with proven "
+            "workflows from the AEC open-source ecosystem."
+        ),
+        examples=[
+            {"prompt": "Find Skills worth porting",
+             "expected_outcome": "Markdown report ranking top 10 + 3 quick wins."},
+            {"prompt": "What pyRevit / Dynamo workflows should we add?",
+             "expected_outcome": "Same report scoped to those ecosystems."},
+        ],
+        tags=["meta", "discovery", "platform", "growth"],
+        requires=[],
+        author="ArchHub",
+        scope=SCOPE_USER,
+    )
+    return wf, meta
+
+
 # ---------------------------------------------------------------------------
 SEED_FACTORIES = (
     _seed_extract_mass,
@@ -975,6 +1090,8 @@ SEED_FACTORIES = (
     _seed_revit_detail_pass,
     _seed_acad_dwg_inventory,
     _seed_construction_doc_sprint,
+    _seed_skill_builder,
+    _seed_skill_finder,
 )
 
 

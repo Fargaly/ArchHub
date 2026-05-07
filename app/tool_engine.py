@@ -373,15 +373,40 @@ class ToolEngine:
             else:
                 active.add(fam)
         # Outlook auto-activates when classic Outlook is reachable via
-        # COM — no toggle needed. Cheap probe (sub-second when Outlook
-        # is open, fails fast otherwise).
+        # COM — but COM dispatch on the Qt main thread crashes Qt6Core
+        # if called repeatedly (status bar ticks every few seconds).
+        # Cache the answer with a 30s TTL so the probe runs at most
+        # twice per minute, on a worker thread.
         try:
-            from connectors.outlook_runner import is_reachable as _ol_reachable
-            if _ol_reachable():
+            if self._outlook_active_cached():
                 active.add("outlook")
         except Exception:
             pass
         return active
+
+    # Outlook reachability cache state. Populated by the worker thread
+    # `_refresh_outlook_async`. Initial state is False so the connector
+    # doesn't auto-add until the first probe lands.
+    _OL_TTL_SECONDS = 30.0
+
+    def _outlook_active_cached(self) -> bool:
+        import time as _t
+        now = _t.time()
+        last = getattr(self, "_outlook_last_check", 0.0)
+        if now - last >= self._OL_TTL_SECONDS:
+            # Refresh asynchronously so this caller never blocks on COM.
+            self._outlook_last_check = now
+            import threading
+            threading.Thread(target=self._refresh_outlook_async,
+                              daemon=True).start()
+        return bool(getattr(self, "_outlook_reachable", False))
+
+    def _refresh_outlook_async(self) -> None:
+        try:
+            from connectors.outlook_runner import is_reachable
+            self._outlook_reachable = bool(is_reachable())
+        except Exception:
+            self._outlook_reachable = False
 
     # ---- invocation -------------------------------------------------------
 

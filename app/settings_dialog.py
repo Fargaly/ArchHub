@@ -391,7 +391,62 @@ class SettingsDialog(QDialog):
         sn_btn_row.addStretch(1)
         v.addLayout(sn_btn_row)
 
+        # Notifications row — Discord webhook URL for autonomous status
+        # pings. No OAuth, no app password; user creates a Server →
+        # channel webhook in Discord, pastes URL once.
+        notif_form = QFormLayout(); notif_form.setSpacing(6)
+        self._discord_webhook = QLineEdit()
+        self._discord_webhook.setEchoMode(QLineEdit.EchoMode.Password)
+        self._discord_webhook.setPlaceholderText(
+            "https://discord.com/api/webhooks/…/…"
+        )
+        self._discord_webhook.setText(load_setting("discord_webhook_url") or "")
+        notif_form.addRow("Discord webhook (status pings)", self._discord_webhook)
+        v.addLayout(notif_form)
+
+        notif_btn_row = QHBoxLayout(); notif_btn_row.setSpacing(6)
+        discord_help = QPushButton("How to create a Discord webhook")
+        discord_help.setObjectName("ghostButton")
+        discord_help.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(
+                "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks"
+            ))
+        )
+        notif_btn_row.addWidget(discord_help)
+        ping_btn = QPushButton("Send test ping")
+        ping_btn.setObjectName("ghostButton")
+        ping_btn.clicked.connect(self._on_test_notify)
+        notif_btn_row.addWidget(ping_btn)
+        notif_btn_row.addStretch(1)
+        v.addLayout(notif_btn_row)
+
         return row
+
+    def _on_test_notify(self) -> None:
+        """Save the webhook + fire desktop file + toast + Discord ping."""
+        from PyQt6.QtWidgets import QMessageBox
+        url = (self._discord_webhook.text() or "").strip()
+        save_setting("discord_webhook_url", url)
+        try:
+            import sys, os
+            from pathlib import Path
+            agents_dir = Path(__file__).resolve().parent.parent / "agents"
+            sys.path.insert(0, str(agents_dir))
+            from notify import notify
+            fired = notify(
+                "ArchHub test ping",
+                "Wired notify channels — desktop / toast / discord. If you see this in Discord and a desktop file appeared, channel is live.",
+                html="<html><body style='font-family:Arial'><h2>ArchHub test ping</h2><p>If this file is on your desktop the channel works.</p></body></html>",
+            )
+            QMessageBox.information(
+                self, "Test ping",
+                "Channels fired:\n"
+                f"  desktop file: {'OK' if fired['desktop'] else 'FAIL'}\n"
+                f"  Windows toast: {'OK' if fired['toast'] else 'install BurntToast or upgrade Win10'}\n"
+                f"  Discord webhook: {'OK' if fired['discord'] else 'no URL configured'}",
+            )
+        except Exception as ex:
+            QMessageBox.warning(self, "Test ping failed", str(ex))
 
     def _on_test_telemetry(self) -> None:
         """Save current Privacy fields, fire a marker event + a benign
@@ -634,6 +689,7 @@ class SettingsDialog(QDialog):
         save_setting("telemetry_posthog_key", (self._posthog_key.text() or "").strip())
         save_setting("telemetry_posthog_host", (self._posthog_host.text() or "").strip())
         save_setting("sentry_dsn", (self._sentry_dsn.text() or "").strip())
+        save_setting("discord_webhook_url", (self._discord_webhook.text() or "").strip())
         # Re-init Sentry + drop cached PostHog client so the changes
         # take effect without an app restart.
         try:

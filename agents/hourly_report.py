@@ -188,6 +188,27 @@ def main() -> int:
     # Always write a copy to disk first (cron-runnable, no extra deps).
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
     (REPORTS_DIR / f"{stamp}.html").write_text(html, encoding="utf-8")
+
+    # Fan out to every configured no-auth channel: desktop file
+    # (always), Windows toast (BurntToast/winrt), Discord webhook
+    # (if URL configured in Settings → Notifications).
+    try:
+        from .notify import notify
+    except ImportError:
+        # Direct script invocation — try without the package prefix.
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from notify import notify
+    commits = _git_log_since_hours(1)
+    headline = (
+        f"ArchHub: {len(commits)} commit"
+        f"{'s' if len(commits) != 1 else ''} last hour"
+    )
+    summary = (
+        f"Latest release: {_latest_release()}. "
+        f"Open the report on your desktop or click below for the full HTML."
+    )
+    notify(headline, summary, html=html)
     # Drop a TXT version for plain readers.
     txt_lines = [
         title,

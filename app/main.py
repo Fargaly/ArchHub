@@ -126,6 +126,14 @@ def main() -> int:
             overlay_controller.expand()
         else:
             window.show_centered()
+        # Auto-update — fires 6s after launch on a daemon thread, so
+        # the UI is responsive first. 24h cooldown by default. Mode
+        # toggle in Settings → Updates: off / notify / auto.
+        try:
+            from release_updater import schedule_auto_check
+            schedule_auto_check(delay_seconds=6.0)
+        except Exception:
+            pass
         # First-run telemetry consent — single question, before the
         # heavier 3-step onboarding. Returns immediately if already
         # answered.

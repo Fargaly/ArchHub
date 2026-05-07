@@ -82,14 +82,22 @@ def windows_toast(title: str, message: str) -> bool:
         return False
     # PowerShell BurntToast — most reliable, no pip dep.
     try:
-        import subprocess
+        import subprocess, sys
         ps = (
             "Import-Module BurntToast -ErrorAction Stop; "
             f'New-BurntToastNotification -Text "{_escape_ps(title)}", "{_escape_ps(message)}" -AppLogo $null'
         )
+        creationflags = 0
+        startupinfo = None
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
         r = subprocess.run(
             ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
             capture_output=True, timeout=8, text=True,
+            creationflags=creationflags, startupinfo=startupinfo,
         )
         if r.returncode == 0:
             return True

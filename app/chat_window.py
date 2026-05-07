@@ -1080,10 +1080,10 @@ class ChatWindow(QMainWindow):
         if not names:
             return False
         try:
-            import subprocess
-            r = subprocess.run(
+            from proc_utils import run_hidden
+            r = run_hidden(
                 ["tasklist", "/FI", f"IMAGENAME eq {names[0]}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True, timeout=2,
             )
             return names[0].lower() in (r.stdout or "").lower()
         except Exception:

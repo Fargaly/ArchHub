@@ -349,3 +349,96 @@ def run_installer(installer_path: Path, *, silent: bool = True,
     import time
     time.sleep(1.0)
     os._exit(0)
+
+
+# ---------------------------------------------------------------------------
+def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
+    """Background-thread entry point. Called from main.py shortly after
+    launch. Behaviour gated by the 'auto_update_mode' setting:
+
+      'off'    — never check
+      'notify' — check only; never install. Shows a Windows toast +
+                 a status note in the chat that an update is available.
+      'auto'   — check + silent install if the previous check is more
+                 than 24h ago. Default for new installs.
+
+    `force=True` overrides the 24h cooldown — used by the Settings
+    'Check for updates now' button.
+    """
+    on_status = on_status or (lambda *_a, **_k: None)
+    try:
+        from secrets_store import load_setting, save_setting
+    except Exception:
+        return {"status": "skip", "reason": "secrets_store unavailable"}
+
+    mode = (load_setting("auto_update_mode") or "auto").lower()
+    if mode == "off":
+        return {"status": "skip", "reason": "mode=off"}
+
+    # 24h cooldown so we don't slam GitHub on every launch.
+    if not force:
+        import time as _t
+        last = float(load_setting("auto_update_last_check") or 0)
+        if _t.time() - last < 24 * 3600:
+            return {"status": "skip", "reason": "24h cooldown"}
+        save_setting("auto_update_last_check", _t.time())
+
+    on_status("Checking for ArchHub updates…", 10, "")
+    try:
+        ok, release, current = has_update_available()
+    except Exception as ex:
+        return {"status": "error", "error": str(ex)[:300]}
+    if not ok:
+        on_status(f"ArchHub up to date (v{current})", 100, "")
+        return {"status": "ok", "up_to_date": True, "current": current}
+
+    on_status(f"Update available: {release.tag_name}", 30,
+              f"installed {current} → {release.tag_name}")
+
+    # Surface a Windows toast either way (notify + auto both ping).
+    try:
+        import sys
+        from pathlib import Path as _P
+        sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "agents"))
+        from notify import notify as _toast
+        _toast(
+            f"ArchHub {release.tag_name} available",
+            f"{'Installing silently…' if mode == 'auto' else 'Open Settings to install.'}",
+            html=None, toast=True,
+        )
+    except Exception:
+        pass
+
+    if mode == "notify":
+        return {"status": "ok", "up_to_date": False,
+                "current": current, "latest": release.tag_name}
+
+    # mode == 'auto' → download + silent install
+    try:
+        on_status(f"Downloading {release.tag_name}", 50, "")
+        installer = download_asset(release)
+    except Exception as ex:
+        return {"status": "error", "error": f"download failed: {ex}"}
+
+    on_status(f"Installing {release.tag_name} silently", 90, "")
+    try:
+        run_installer(installer, silent=True, relaunch=True)
+    except Exception as ex:
+        return {"status": "error", "error": f"install failed: {ex}"}
+    # run_installer calls os._exit(0); we never get here.
+    return {"status": "ok", "installing": True}
+
+
+def schedule_auto_check(delay_seconds: float = 6.0) -> None:
+    """Spawn a daemon thread that runs auto_check_and_apply after a
+    short delay. Call once from main.py post-window-shown. Failures
+    are swallowed — never blocks the UI thread."""
+    import threading
+    def _runner():
+        import time
+        time.sleep(delay_seconds)
+        try:
+            auto_check_and_apply()
+        except Exception:
+            pass
+    threading.Thread(target=_runner, daemon=True).start()

@@ -117,7 +117,10 @@ def main() -> int:
         if hud_on and "--silent" not in sys.argv:
             from overlay_chrome import apply_overlay_chrome, install_global_hotkey
             overlay_controller = apply_overlay_chrome(window)
-            install_global_hotkey(overlay_controller, combo="ctrl+space")
+            # Hotkey configurable via Settings → Appearance.
+            # Default Ctrl+Space; common conflict-free fallback F8.
+            combo = (load_setting("hud_hotkey") or "ctrl+space").lower()
+            install_global_hotkey(overlay_controller, combo=combo)
             # Keep a ref on the window so GC doesn't drop it.
             window._overlay_controller = overlay_controller
     except Exception:

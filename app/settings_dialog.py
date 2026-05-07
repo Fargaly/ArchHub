@@ -313,6 +313,23 @@ class SettingsDialog(QDialog):
         _hud_setting = load_setting("hud_overlay_mode")
         self._hud_overlay.setChecked(True if _hud_setting is None else bool(_hud_setting))
         ab.addWidget(self._hud_overlay)
+
+        # HUD toggle hotkey — global, registered against Win32 RegisterHotKey.
+        hk_form = QFormLayout(); hk_form.setSpacing(6)
+        self._hud_hotkey = QLineEdit()
+        self._hud_hotkey.setPlaceholderText("ctrl+space")
+        self._hud_hotkey.setText(load_setting("hud_hotkey") or "ctrl+space")
+        hk_form.addRow("Toggle hotkey", self._hud_hotkey)
+        hk_help = QLabel(
+            "Examples: <code>ctrl+space</code>, <code>ctrl+shift+a</code>, "
+            "<code>f8</code>, <code>alt+f9</code>. Restart ArchHub after "
+            "changing. Press once → HUD appears; press again or "
+            "<kbd>Esc</kbd> → collapses to pet strip."
+        )
+        hk_help.setObjectName("settingsSubtitle"); hk_help.setWordWrap(True)
+        ab.addLayout(hk_form)
+        ab.addWidget(hk_help)
+
         outer.addWidget(appearance_box)
 
         # ── Privacy / telemetry ────────────────────────────────────────────
@@ -713,6 +730,7 @@ class SettingsDialog(QDialog):
         save_setting("sentry_dsn", (self._sentry_dsn.text() or "").strip())
         save_setting("discord_webhook_url", (self._discord_webhook.text() or "").strip())
         save_setting("hud_overlay_mode", bool(self._hud_overlay.isChecked()))
+        save_setting("hud_hotkey", (self._hud_hotkey.text() or "ctrl+space").strip().lower())
         # Re-init Sentry + drop cached PostHog client so the changes
         # take effect without an app restart.
         try:

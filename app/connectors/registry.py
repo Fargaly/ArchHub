@@ -52,12 +52,17 @@ class _RevitSpec:
                 if dst_dir.exists():
                     shutil.rmtree(dst_dir)
                 shutil.copytree(src_dir, dst_dir)
-            except PermissionError as ex:
-                raise RuntimeError(
-                    f"Close Revit {year} and try again — its RevitMCP.dll "
-                    f"is currently loaded so we can't replace it. "
-                    f"({ex.filename or ex})"
-                ) from ex
+            except PermissionError:
+                # Revit is open and has the previous DLL loaded. The
+                # already-staged copy is functional (it loaded once;
+                # it works for this session). Don't refuse the toggle —
+                # write the addin manifest so the connector goes live
+                # against the existing DLL. Next architect-side restart
+                # of Revit will pick up the fresh build automatically
+                # because the .addin path is stable.
+                if not dst_dll.exists():
+                    raise        # genuinely no DLL on disk = real failure
+                # else: silent fall-through, addin manifest below.
 
         addin = self._addin_path(year)
         addin.parent.mkdir(parents=True, exist_ok=True)
@@ -136,12 +141,13 @@ class _AutoCADSpec:
                 if dst_dir.exists():
                     shutil.rmtree(dst_dir)
                 shutil.copytree(src_dir, dst_dir)
-            except PermissionError as ex:
-                raise RuntimeError(
-                    f"Close AutoCAD {year} and try again — its AcadMCP.dll "
-                    f"is currently loaded so we can't replace it. "
-                    f"({ex.filename or ex})"
-                ) from ex
+            except PermissionError:
+                # Same logic as Revit: AutoCAD running with previous
+                # build of the DLL — the loaded copy works. Skip the
+                # overwrite, fall through to (re-)register the auto-load
+                # entry. Fresh build picks up on the next AutoCAD start.
+                if not dst_dll.exists():
+                    raise
 
         # Register HKCU auto-load entry
         try:

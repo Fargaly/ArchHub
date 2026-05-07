@@ -34,7 +34,12 @@ _OL_REPLY = 0
 
 def _client():
     """Lazy-import + dispatch. Raises a clean RuntimeError if pywin32
-    isn't available so callers can surface a single message."""
+    isn't available so callers can surface a single message.
+
+    CRITICAL: every caller thread MUST have called
+    pythoncom.CoInitialize() before this. The com_thread() context
+    manager below handles that — always use it from worker threads.
+    """
     try:
         import win32com.client as w
     except ImportError as ex:
@@ -47,6 +52,32 @@ def _client():
         raise RuntimeError(
             f"Could not connect to Outlook (classic). Open Outlook and try again. ({ex})"
         ) from ex
+
+
+import contextlib
+
+@contextlib.contextmanager
+def com_thread():
+    """Context manager that inits + uninits COM apartment for the
+    current thread. Wrapping every public-API call in this prevents
+    Qt6Core 0xc0000409 fast-fails when these run on background
+    threads pumped by Qt."""
+    inited = False
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        inited = True
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        if inited:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 
 def _ns():
@@ -89,17 +120,23 @@ def _serialize_item(m, *, include_body: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 def is_reachable() -> bool:
     """Cheap True/False — used by Reality Check + status bar."""
-    try:
-        ns = _ns()
-        inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
-        _ = inbox.Items.Count       # touches the connection
-        return True
-    except Exception:
-        return False
+    with com_thread():
+        try:
+            ns = _ns()
+            inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+            _ = inbox.Items.Count
+            return True
+        except Exception:
+            return False
 
 
 def info() -> dict:
     """Lightweight snapshot for Reality Check."""
+    with com_thread():
+        return _info_inner()
+
+
+def _info_inner() -> dict:
     try:
         ns = _ns()
         inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
@@ -118,6 +155,11 @@ def info() -> dict:
 
 def list_inbox(*, limit: int = 20, unread_only: bool = False) -> list[dict]:
     """Return the most recent N inbox items, newest first."""
+    with com_thread():
+        return _list_inbox_inner(limit=limit, unread_only=unread_only)
+
+
+def _list_inbox_inner(*, limit: int, unread_only: bool) -> list[dict]:
     ns = _ns()
     items = ns.GetDefaultFolder(_OL_FOLDER_INBOX).Items
     items.Sort("[ReceivedTime]", True)         # descending
@@ -141,6 +183,14 @@ def search(query: str = "", *, sender: str = "",
     `query` is matched against subject + body. `sender` against From
     name OR email. `days` restricts to last N days (0 = no limit).
     """
+    with com_thread():
+        return _search_inner(query=query, sender=sender,
+                              subject_contains=subject_contains,
+                              days=days, limit=limit)
+
+
+def _search_inner(*, query: str, sender: str, subject_contains: str,
+                  days: int, limit: int) -> list[dict]:
     ns = _ns()
     items = ns.GetDefaultFolder(_OL_FOLDER_INBOX).Items
     items.Sort("[ReceivedTime]", True)
@@ -183,6 +233,11 @@ def search(query: str = "", *, sender: str = "",
 def read_thread(entry_id: str) -> dict:
     """Return the full thread containing the message identified by
     entry_id. Includes body + ConversationIndex chain when available."""
+    with com_thread():
+        return _read_thread_inner(entry_id)
+
+
+def _read_thread_inner(entry_id: str) -> dict:
     ns = _ns()
     target = ns.GetItemFromID(entry_id)
     target_dict = _serialize_item(target, include_body=True)
@@ -214,6 +269,12 @@ def draft_reply(entry_id: str, body: str = "", *,
 
     Default behaviour: opens the draft in Outlook so the user can
     review + click Send themselves. Returns the draft's EntryID."""
+    with com_thread():
+        return _draft_reply_inner(entry_id, body, reply_all=reply_all, send=send)
+
+
+def _draft_reply_inner(entry_id: str, body: str, *,
+                        reply_all: bool, send: bool) -> dict:
     ns = _ns()
     target = ns.GetItemFromID(entry_id)
     if reply_all:
@@ -251,6 +312,11 @@ def draft_reply(entry_id: str, body: str = "", *,
 def save_attachments(entry_id: str, *, dest_dir: str) -> dict:
     """Extract every attachment from the message into dest_dir.
     Returns the list of saved paths."""
+    with com_thread():
+        return _save_attachments_inner(entry_id, dest_dir=dest_dir)
+
+
+def _save_attachments_inner(entry_id: str, *, dest_dir: str) -> dict:
     import os
     ns = _ns()
     m = ns.GetItemFromID(entry_id)

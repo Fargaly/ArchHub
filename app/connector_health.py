@@ -225,10 +225,15 @@ class ConnectorHealth:
         ).start()
 
     def _try_acad_netload(self, attempt: int) -> None:
-        """Single COM NETLOAD attempt. Logs result, never raises."""
+        """Single COM NETLOAD attempt. Logs result, never raises.
+
+        CRITICAL: every thread that dispatches COM MUST call
+        pythoncom.CoInitialize() first and CoUninitialize at the end.
+        Skipping either side crashes Qt6Core (0xc0000409) the next
+        time the main thread services its event loop. Learned the
+        hard way."""
         dll = (Path(__file__).resolve().parent.parent
                / "AutoCAD" / "2026" / "AcadMCP.dll")
-        # Resolve from install dir if running under the installed tree.
         import os as _os
         local_app = Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
         installed_dll = local_app / "ArchHub" / "AutoCAD" / "2026" / "AcadMCP.dll"
@@ -237,21 +242,20 @@ class ConnectorHealth:
         if not dll.exists():
             return
         try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            return
+        try:
             import win32com.client as w
             acad = w.GetActiveObject("AutoCAD.Application")
             doc = acad.ActiveDocument
-            # Use forward slashes for AutoCAD LISP path. Trailing space
-            # acts like Enter in the command line.
             lisp_path = str(dll).replace("\\", "/")
             cmd = '(command "_NETLOAD" "' + lisp_path + '") '
-            # SendCommand hangs if AutoCAD is mid-command; SendStringToExecute
-            # is the safer 'queue when ready' variant on newer versions.
             sender = getattr(doc, "SendCommand", None)
             if sender is None:
                 return
             sender(cmd)
-            # Probe shortly after to see if it took; the main loop will
-            # also notice on next 5s tick.
             time.sleep(2.0)
             ok, _ = _probe_listener("autocad")
             if ok:
@@ -266,6 +270,12 @@ class ConnectorHealth:
                 self._state["autocad"].last_error = (
                     f"netload attempt {attempt}: {type(ex).__name__}"
                 )
+        finally:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 
 # Module-level singleton — built lazily so import-time stays cheap.

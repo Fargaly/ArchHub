@@ -300,18 +300,19 @@ class SettingsDialog(QDialog):
         ab_title = QLabel("Appearance"); ab_title.setObjectName("providerName")
         ab.addWidget(ab_title)
         ab_help = QLabel(
-            "<b>HUD overlay mode</b> (default) — frameless, always-on-top, translucent. "
-            "Floats over Revit / AutoCAD / Blender. <kbd>Ctrl + Space</kbd> toggles. "
-            "<kbd>Esc</kbd> collapses to the pet strip.<br>"
-            "Off = old fullscreen window behaviour."
+            "<b>HUD overlay mode</b> (off by default) — frameless, always-on-top, "
+            "translucent. Floats over Revit / AutoCAD / Blender. "
+            "<kbd>Ctrl + Space</kbd> toggles, <kbd>Esc</kbd> collapses.<br>"
+            "Off = normal window — opens only when you summon ArchHub. "
+            "The ambient layer stays the pet strip either way."
         )
         ab_help.setObjectName("settingsSubtitle"); ab_help.setWordWrap(True)
         ab.addWidget(ab_help)
         self._hud_overlay = QCheckBox("Use HUD overlay chrome")
         self._hud_overlay.setObjectName("settingsSubtitle")
-        # Default ON for new installs, persist the setting on first save.
-        _hud_setting = load_setting("hud_overlay_mode")
-        self._hud_overlay.setChecked(True if _hud_setting is None else bool(_hud_setting))
+        # Default OFF — opt-in only. The pet strip is the ambient layer;
+        # turning HUD on makes the entire chat panel always-on-top too.
+        self._hud_overlay.setChecked(bool(load_setting("hud_overlay_mode")))
         ab.addWidget(self._hud_overlay)
 
         # HUD toggle hotkey — global, registered against Win32 RegisterHotKey.

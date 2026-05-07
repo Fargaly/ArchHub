@@ -104,24 +104,19 @@ def main() -> int:
     scheduler = TriggerScheduler(on_fire=_on_trigger_fire, tick_seconds=30.0)
     scheduler.start()
 
-    # HUD overlay chrome — frameless, translucent, always-on-top.
-    # Toggled by setting 'hud_overlay_mode' (default ON for new
-    # installs). Old fullscreen behaviour stays available by
-    # un-ticking the setting in Settings → Appearance.
+    # HUD overlay chrome — opt-in via Settings → Appearance. Default
+    # is OFF: chat opens as a normal window so it doesn't obstruct
+    # Revit / AutoCAD work. The ambient layer is the pet strip
+    # (small, bottom-right) — it stays out of the way.
     overlay_controller = None
     try:
         from secrets_store import load_setting
-        hud_on = load_setting("hud_overlay_mode")
-        if hud_on is None:
-            hud_on = True            # default ON
+        hud_on = bool(load_setting("hud_overlay_mode"))
         if hud_on and "--silent" not in sys.argv:
             from overlay_chrome import apply_overlay_chrome, install_global_hotkey
             overlay_controller = apply_overlay_chrome(window)
-            # Hotkey configurable via Settings → Appearance.
-            # Default Ctrl+Space; common conflict-free fallback F8.
             combo = (load_setting("hud_hotkey") or "ctrl+space").lower()
             install_global_hotkey(overlay_controller, combo=combo)
-            # Keep a ref on the window so GC doesn't drop it.
             window._overlay_controller = overlay_controller
     except Exception:
         overlay_controller = None

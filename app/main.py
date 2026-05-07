@@ -41,6 +41,36 @@ def main() -> int:
         pass
 
     app = QApplication(sys.argv)
+
+    # Single-instance lock + summon. If another ArchHub is already
+    # running, send 'SHOW' to it and exit 0 — fixes the 'click icon
+    # does nothing' bug where the existing window stayed hidden.
+    # Wired AFTER QApplication so we can post a Qt event back to the
+    # main thread when we receive a SHOW request from a second
+    # launcher.
+    try:
+        from single_instance import acquire_or_summon, release as _si_release
+        from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+
+        class _Summoner(QObject):
+            requested = pyqtSignal()
+        summoner = _Summoner()
+        # Bound on the main thread: when the worker fires .requested,
+        # Qt queues the slot back to main thread automatically.
+        def _on_summon():
+            summoner.requested.emit()
+        first_instance = acquire_or_summon(_on_summon)
+        if not first_instance:
+            return 0
+        # The slot itself wires up after `window` is created below — we
+        # stash a deferred connection here.
+        app._archhub_summoner = summoner   # keep ref alive
+        import atexit
+        atexit.register(_si_release)
+    except Exception:
+        pass
+
+
     app.setApplicationName("ArchHub")
     app.setQuitOnLastWindowClosed(False)
     if THEME.exists():
@@ -83,6 +113,15 @@ def main() -> int:
 
     # Main window
     window = ChatWindow(router=router, manager=manager, tools=tools)
+
+    # Wire the single-instance summon signal: when a second launch
+    # asks us to come forward, surface the window.
+    try:
+        sm = getattr(app, "_archhub_summoner", None)
+        if sm is not None:
+            sm.requested.connect(lambda: window.show_centered())
+    except Exception:
+        pass
 
     # Tray
     icon = QIcon(str(ASSETS / "archhub.png")) if (ASSETS / "archhub.png").exists() else QIcon()

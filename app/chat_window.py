@@ -993,14 +993,32 @@ class ChatWindow(QMainWindow):
                 )
                 return True
             if not self._host_reachable(host):
-                self._add_assistant_note(
-                    f"⚠️ The {host.title()} connector is enabled, but "
-                    f"{host.title()} isn't running (or its ArchHub addin "
-                    f"hasn't loaded).\n\n"
-                    f"Open {host.title()}, wait until the project is loaded, "
-                    f"then ask me again. I'll execute the action directly — "
-                    f"never by pasting code for you to copy."
-                )
+                # Differentiate "host process not running at all" vs
+                # "host running but addin not loaded". The second case
+                # is the common one after an ArchHub install while the
+                # host was already open — the autoload registry entry
+                # only fires on next host startup.
+                process_running = self._host_process_running(host)
+                if process_running:
+                    self._add_assistant_note(
+                        f"⚠️ {host.title()} is running but the ArchHub "
+                        f"addin hasn't loaded into the process yet.\n\n"
+                        f"Two ways to fix:\n"
+                        f"  • In {host.title()}'s command line type "
+                        f"<code>NETLOAD</code> and pick "
+                        f"<code>%LOCALAPPDATA%\\ArchHub\\AutoCAD\\&lt;year&gt;\\AcadMCP.dll</code> "
+                        f"(or the equivalent for Revit / 3ds Max).\n"
+                        f"  • OR close + reopen {host.title()}; the registry "
+                        f"autoload will fire on next start.\n\n"
+                        f"After either, ask me again."
+                    )
+                else:
+                    self._add_assistant_note(
+                        f"⚠️ The {host.title()} connector is enabled, but "
+                        f"{host.title()} isn't running.\n\n"
+                        f"Open {host.title()}, wait until the project is "
+                        f"loaded, then ask me again."
+                    )
                 return True
             return False
 
@@ -1043,6 +1061,31 @@ class ChatWindow(QMainWindow):
                 return 200 <= resp.status < 300
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
             return False
+        except Exception:
+            return False
+
+    # Process names by host family. Used to distinguish 'host crashed
+    # / not opened yet' from 'host is open but addin didn't load'.
+    _HOST_PROCESS_NAMES = {
+        "revit":   ("Revit.exe",),
+        "autocad": ("acad.exe",),
+        "max":     ("3dsmax.exe",),
+        "blender": ("blender.exe",),
+    }
+
+    def _host_process_running(self, host: str) -> bool:
+        """Cheap process-list scan. True iff the host application's exe
+        is in the process table — even if its MCP listener isn't up."""
+        names = self._HOST_PROCESS_NAMES.get(host)
+        if not names:
+            return False
+        try:
+            import subprocess
+            r = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {names[0]}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=2,
+            )
+            return names[0].lower() in (r.stdout or "").lower()
         except Exception:
             return False
 

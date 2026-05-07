@@ -99,16 +99,40 @@ BACKLOG: list[dict] = [
     },
     {
         "dept": "ops",
-        "title": "Cold-outreach draft pack — Reddit + email",
+        "title": "GitHub Discussion launch post (auto-publishes)",
+        "instructions": (
+            "Write ONE GitHub Discussion announcement for ArchHub aimed "
+            "at architects browsing the repo. 220-320 words, structure:\n"
+            "  Title (under 80 chars)\n"
+            "  Body markdown:\n"
+            "    1. The 30-second pitch (3 sentences max)\n"
+            "    2. What works today (bullet list of 5-7 features —\n"
+            "       read app/skills/production_seeds.py to ground the\n"
+            "       claims)\n"
+            "    3. What's coming next 30 days (3 bullets)\n"
+            "    4. How to try it (one-line install command from\n"
+            "       installer/winget/Fargaly.ArchHub.installer.yaml)\n"
+            "    5. 'I'd love feedback on:' (3 specific asks)\n"
+            "Output as JSON: {\"title\": \"...\", \"body\": \"...\"}.\n"
+            "After this dept finishes, the CEO routine auto-publishes\n"
+            "the result via agents/publish.publish_github_discussion —\n"
+            "no founder approval required."
+        ),
+        "max_per_week": 1,
+    },
+    {
+        "dept": "ops",
+        "title": "Cold-outreach drafts — Reddit + email (founder posts manually)",
         "instructions": (
             "Draft 3 short Reddit posts (r/Revit, r/architecture, r/BIM) "
             "introducing ArchHub. Different angle each: (1) free Skill "
             "library replacing pyRevit add-ins, (2) Construction Doc "
             "Sprint Pack story, (3) Outlook + Revit chat integration. "
-            "Each post 80-150 words, NO SALES VOICE, lead with a real "
-            "user pain point. Plus 1 cold email template (180 words "
-            "max) for AEC technology leads at 50-architect firms. "
-            "Subject + body. Mark 'DRAFT — founder approval required'."
+            "Each 80-150 words, NO SALES VOICE, lead with a real user "
+            "pain point. Plus 1 cold email template (180 words max) "
+            "for AEC tech leads at 50-architect firms. These channels "
+            "still need the founder's burner Reddit account + outreach "
+            "Gmail, so output is 'DRAFT — paste-ready'."
         ),
         "max_per_week": 1,
     },
@@ -309,6 +333,39 @@ def main(argv: list[str]) -> int:
         md = daily_brief()
         out_path = CEO_OUT / f"daily-{datetime.now().strftime('%Y%m%d')}.md"
         out_path.write_text(md, encoding="utf-8")
+        # Auto-publish changelog to README (no approval needed — content
+        # comes from public git log, written to public repo).
+        try:
+            from publish import autopublish_round, publish_github_discussion
+            for ch, res in autopublish_round():
+                print(f"[ceo] published {ch}: {res}")
+        except Exception:
+            pass
+        # If the Ops dept produced a GitHub-Discussion-shaped JSON output,
+        # publish it directly. We look for the latest completion.md under
+        # agents/outputs/ops/ and try to JSON-parse a {title, body} block.
+        try:
+            ops_dir = REPO / "agents" / "outputs" / "ops"
+            md_files = sorted(ops_dir.rglob("completion.md"),
+                              key=lambda p: p.stat().st_mtime, reverse=True)
+            if md_files:
+                txt = md_files[0].read_text(encoding="utf-8", errors="replace")
+                start = txt.find("{")
+                end = txt.rfind("}")
+                if start != -1 and end > start:
+                    try:
+                        payload = json.loads(txt[start:end + 1])
+                        if (isinstance(payload, dict)
+                                and payload.get("title") and payload.get("body")):
+                            r = publish_github_discussion(
+                                title=str(payload["title"])[:80],
+                                body=str(payload["body"])[:9000],
+                            )
+                            print(f"[ceo] github_discussion: {r}")
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass
         # Push to desktop status file via notify pipeline.
         try:
             from notify import write_desktop_status, windows_toast, discord_webhook

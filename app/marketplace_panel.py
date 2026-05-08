@@ -166,6 +166,54 @@ def _ensure_catalog() -> list[dict]:
     return list(_SEED_CATALOG)
 
 
+def fetch_remote_catalog() -> tuple[bool, str, list[dict]]:
+    """Pull the official catalog from the cloud_sync registry repo.
+
+    The remote manifest lives at `marketplace/catalog.json` inside the
+    user's signed-in Skills git remote (same repo `cloud_sync` already
+    uses for Skill share). When found, the local catalog is rewritten
+    with the merged item list (remote items first, then any local-only
+    items not present in the remote).
+
+    Returns (ok, message, catalog).
+    """
+    try:
+        import cloud_sync
+        if not cloud_sync.is_signed_in():
+            return False, "Not signed in — local seed only.", _ensure_catalog()
+    except Exception as ex:
+        return False, f"cloud_sync unavailable — {type(ex).__name__}", _ensure_catalog()
+    try:
+        # cloud_sync exposes read_remote_file via its bootstrap path.
+        repo = getattr(cloud_sync, "_LOCAL_REPO_PATH", None) or getattr(
+            cloud_sync, "LOCAL_REPO_PATH", None)
+        if repo is None:
+            return False, "cloud_sync repo path missing.", _ensure_catalog()
+        remote_path = Path(repo) / "marketplace" / "catalog.json"
+        try:
+            cloud_sync.pull()  # refresh local mirror
+        except Exception:
+            pass
+        if not remote_path.exists():
+            return False, "No remote catalog yet — pushed at next release.", _ensure_catalog()
+        remote = json.loads(remote_path.read_text(encoding="utf-8"))
+        # Merge: remote items win, local-only items appended.
+        local = _ensure_catalog()
+        seen = {it.get("id") for it in remote if isinstance(it, dict)}
+        merged = list(remote)
+        for it in local:
+            if isinstance(it, dict) and it.get("id") not in seen:
+                merged.append(it)
+        try:
+            CATALOG_PATH.write_text(
+                json.dumps(merged, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return True, f"Synced {len(remote)} items from cloud.", merged
+    except Exception as ex:
+        return False, f"Sync failed — {type(ex).__name__}", _ensure_catalog()
+
+
 # ---------------------------------------------------------------------------
 class MarketplaceCard(QFrame):
     """One catalog item — title · description · install button."""
@@ -304,6 +352,12 @@ class MarketplacePanel(QWidget):
         self.btn_flows.clicked.connect(lambda: self._switch_tab("workflow"))
         tabs.addWidget(self.btn_flows)
         tabs.addStretch(1)
+        self.btn_sync = QPushButton("↻ Sync")
+        self.btn_sync.setObjectName("studioChip")
+        self.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sync.setToolTip("Pull the latest catalog from the cloud")
+        self.btn_sync.clicked.connect(self._sync_remote)
+        tabs.addWidget(self.btn_sync)
         self.search = QLineEdit()
         self.search.setObjectName("marketSearch")
         self.search.setPlaceholderText("Filter by name · tag · host…")
@@ -329,6 +383,16 @@ class MarketplacePanel(QWidget):
         outer.addWidget(self.scroll, 1)
 
         self.setStyleSheet(self.styleSheet() + _panel_qss())
+        self._refresh()
+
+    def _sync_remote(self) -> None:
+        ok, msg, catalog = fetch_remote_catalog()
+        self._catalog = catalog
+        try:
+            from toast import show_toast
+            show_toast(self.window(), msg, kind=("ok" if ok else "warn"))
+        except Exception:
+            pass
         self._refresh()
 
     def _switch_tab(self, kind: str) -> None:

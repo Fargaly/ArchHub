@@ -515,7 +515,7 @@ class StudioShell(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Header row.
+        # Header row + sub-line.
         header = QWidget()
         hh = QVBoxLayout(header)
         hh.setContentsMargins(40, 32, 40, 0)
@@ -526,6 +526,13 @@ class StudioShell(QMainWindow):
         h1 = QLabel("Settings")
         h1.setObjectName("studioH1")
         hh.addWidget(h1)
+        sub = QLabel(
+            "API keys, providers, telemetry, and the cloud-sync hookup. "
+            "Changes take effect on save — no restart needed."
+        )
+        sub.setObjectName("studioH1Sub")
+        sub.setWordWrap(True)
+        hh.addWidget(sub)
         outer.addWidget(header)
 
         # Scroll wrapper — content lives in a 720px-wide rail centred.
@@ -583,25 +590,71 @@ class StudioShell(QMainWindow):
             return self._error_card("Add Host", str(ex))
 
     def _build_telemetry_page(self) -> QWidget:
-        """Telemetry — show connector_health snapshot + recent events."""
+        """Telemetry — KPI card grid + connector health table.
+
+        Three KPI cards across the top (live hosts · self-healing ·
+        spend) with mono numerals, then a list-card with one row per
+        host family for state / attempts / last-error.
+        """
         page = QWidget()
         page.setObjectName("studioPage")
-        l = QVBoxLayout(page)
-        l.setContentsMargins(40, 40, 40, 40)
-        l.setSpacing(8)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header.
+        head = QWidget()
+        hh = QVBoxLayout(head)
+        hh.setContentsMargins(40, 32, 40, 12)
+        hh.setSpacing(4)
         cap = QLabel("TELEMETRY")
         cap.setObjectName("studioMonoCap")
-        l.addWidget(cap)
-        h = QLabel("Live connector health")
-        h.setObjectName("studioH1")
-        l.addWidget(h)
+        hh.addWidget(cap)
+        h1 = QLabel("Live system telemetry")
+        h1.setObjectName("studioH1")
+        hh.addWidget(h1)
+        outer.addWidget(head)
+
+        # Scroll wrap.
+        scroll = QScrollArea(page)
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("studioScroll")
+        scroll.setStyleSheet(
+            "QScrollArea#studioScroll { background:transparent; border:none; }")
+        body = QWidget()
+        body.setObjectName("studioPage")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(40, 0, 40, 40)
+        bl.setSpacing(SPACE["lg"])
+
+        # KPI grid (3 cards).
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(SPACE["md"])
+        self._tel_kpi_hosts = _kpi_card("HOSTS LIVE", "0 / 0",
+                                         T["ok"])
+        self._tel_kpi_heal  = _kpi_card("SELF-HEALING", "0",
+                                         T["warn"])
+        self._tel_kpi_spend = _kpi_card("MONTH SPEND", "$0.00",
+                                         T["accent"])
+        for c in (self._tel_kpi_hosts, self._tel_kpi_heal,
+                  self._tel_kpi_spend):
+            kpi_row.addWidget(c, 1)
+        kpi_w = QWidget(); kpi_w.setLayout(kpi_row)
+        bl.addWidget(kpi_w)
+
+        # Section header.
+        bl.addWidget(_section_h2("Connector health", "live snapshot"))
+        # Existing list-card holds per-family rows.
         self._tel_table = QFrame()
         self._tel_table.setObjectName("studioListCard")
         self._tel_table.setLayout(QVBoxLayout())
         self._tel_table.layout().setContentsMargins(0, 0, 0, 0)
         self._tel_table.layout().setSpacing(0)
-        l.addWidget(self._tel_table)
-        l.addStretch(1)
+        bl.addWidget(self._tel_table)
+
+        bl.addStretch(1)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
         return page
 
     def _build_placeholder(self, title: str, sub: str) -> QWidget:
@@ -882,11 +935,46 @@ class StudioShell(QMainWindow):
             ]
         # Default: shell-wide actions.
         return [
-            ("Open ⌘K palette", self._open_palette),
-            ("Add host…",       lambda: self._set_page("addhost")),
-            ("Browse Marketplace", lambda: self._set_page("market")),
-            ("Switch theme",    self._toggle_theme),
+            ("Open ⌘K palette",     self._open_palette),
+            ("Add host…",           lambda: self._set_page("addhost")),
+            ("Browse Marketplace",  lambda: self._set_page("market")),
+            ("Spawn pet strip",     self._spawn_pet_strip),
+            ("Switch theme",        self._toggle_theme),
         ]
+
+    def _spawn_pet_strip(self) -> None:
+        """Launch the company pet strip — small floating dept indicator
+        bottom-right of the screen. Opt-in by user action; auto-spawn
+        was removed in v0.27 (decoration without value)."""
+        import subprocess as _sp
+        import sys as _sys
+        from pathlib import Path as _P
+        try:
+            py = _sys.executable.replace("python.exe", "pythonw.exe")
+            mod_path = _P(__file__).resolve().parent / "company_pets.py"
+            if not _P(py).exists() or not mod_path.exists():
+                from toast import show_toast
+                show_toast(self,
+                           "Pet strip script unavailable on this install.",
+                           kind="warn")
+                return
+            kw = {}
+            if _sys.platform == "win32":
+                kw["creationflags"] = getattr(_sp, "CREATE_NO_WINDOW",
+                                              0x08000000)
+            _sp.Popen([py, str(mod_path)], **kw)
+            from toast import show_toast
+            show_toast(self,
+                       "Pet strip spawned — bottom-right of your primary screen.",
+                       kind="ok")
+        except Exception as ex:
+            try:
+                from toast import show_toast
+                show_toast(self,
+                           f"Pet strip launch failed — {type(ex).__name__}",
+                           kind="err")
+            except Exception:
+                pass
 
     def _ensure_params_panel(self):
         """Instantiate (once) the live ParametersPanel bound to the
@@ -1549,6 +1637,22 @@ class StudioShell(QMainWindow):
             layout.addWidget(_task_row(state, label, pct))
 
     def _refresh_telemetry_page(self) -> None:
+        # KPI cards first.
+        try:
+            live, heal, total = self._connector_counts()
+            self._tel_kpi_hosts.setProperty("value", f"{live} / {total}")
+            # Re-set value via property update path used by _kpi_card.
+            v_lbl = self._tel_kpi_hosts.findChild(QLabel, "kpiValue")
+            if v_lbl is not None:
+                v_lbl.setText(f"{live} / {total}")
+            v_lbl2 = self._tel_kpi_heal.findChild(QLabel, "kpiValue")
+            if v_lbl2 is not None:
+                v_lbl2.setText(str(heal))
+            v_lbl3 = self._tel_kpi_spend.findChild(QLabel, "kpiValue")
+            if v_lbl3 is not None:
+                v_lbl3.setText(self._spend_label())
+        except Exception:
+            pass
         layout = self._tel_table.layout()
         while layout.count():
             item = layout.takeAt(0)
@@ -1742,14 +1846,87 @@ class StudioShell(QMainWindow):
             pass
 
     def _home_voice(self) -> None:
-        """Voice input — placeholder. Real STT integration ships v0.34."""
+        """Voice input — hand off to Windows Speech Recognition (Win+H).
+
+        Pragmatic v0.34 implementation: focus the composer input, then
+        synthesise Win+H so Windows' native dictation panel opens and
+        types into the focused field. Works offline (uses the OS-level
+        STT model), no Python audio deps, no microphone lock.
+
+        Falls back to a toast hint on non-Windows or if the keypress
+        synthesiser isn't available.
+        """
         try:
-            from toast import show_toast
-            show_toast(self,
-                       "Voice input ships v0.34 — type your prompt for now.",
-                       kind="warn")
+            self._home_input.setFocus()
         except Exception:
             pass
+        import sys as _sys
+        if _sys.platform != "win32":
+            try:
+                from toast import show_toast
+                show_toast(self,
+                           "Voice dictation needs Windows 10+ — type your prompt instead.",
+                           kind="warn")
+            except Exception:
+                pass
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            # Synthesise Win+H using SendInput (more reliable than
+            # keybd_event on modern Windows).
+            INPUT_KEYBOARD = 1
+            KEYEVENTF_KEYUP = 0x0002
+            VK_LWIN = 0x5B
+            VK_H = 0x48
+
+            class KEYBDINPUT(ctypes.Structure):
+                _fields_ = [
+                    ("wVk",         wintypes.WORD),
+                    ("wScan",       wintypes.WORD),
+                    ("dwFlags",     wintypes.DWORD),
+                    ("time",        wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
+                ]
+
+            class _INPUT_UNION(ctypes.Union):
+                _fields_ = [("ki", KEYBDINPUT)]
+
+            class INPUT(ctypes.Structure):
+                _anonymous_ = ("u",)
+                _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+
+            def _press(vk: int, up: bool = False) -> None:
+                ev = INPUT(
+                    type=INPUT_KEYBOARD,
+                    u=_INPUT_UNION(ki=KEYBDINPUT(
+                        wVk=vk, wScan=0,
+                        dwFlags=KEYEVENTF_KEYUP if up else 0,
+                        time=0, dwExtraInfo=None,
+                    )),
+                )
+                user32.SendInput(1, ctypes.byref(ev), ctypes.sizeof(INPUT))
+
+            _press(VK_LWIN)
+            _press(VK_H)
+            _press(VK_H, up=True)
+            _press(VK_LWIN, up=True)
+            try:
+                from toast import show_toast
+                show_toast(self,
+                           "Speak now — Windows dictation typing into composer.",
+                           kind="ok")
+            except Exception:
+                pass
+        except Exception as ex:
+            try:
+                from toast import show_toast
+                show_toast(self,
+                           f"Voice dictation failed — {type(ex).__name__}",
+                           kind="err")
+            except Exception:
+                pass
 
     def _open_palette(self) -> None:
         """Open the ⌘K command palette overlay (v0.31)."""
@@ -2431,6 +2608,28 @@ def _revit_sessions_tooltip() -> str:
     return "\n".join(lines)
 
 
+def _kpi_card(label: str, value: str, accent_hex: str) -> QFrame:
+    """KPI card — caption + big mono numerals on a raised card."""
+    card = QFrame()
+    card.setObjectName("studioKpiCard")
+    v = QVBoxLayout(card)
+    v.setContentsMargins(SPACE["lg"], SPACE["md"]+2,
+                         SPACE["lg"], SPACE["md"]+2)
+    v.setSpacing(SPACE["xs"])
+    cap = QLabel(label)
+    cap.setObjectName("studioMonoCap")
+    v.addWidget(cap)
+    val = QLabel(value)
+    val.setObjectName("kpiValue")
+    val.setStyleSheet(
+        f"font-family:{TYPE['fontMono']}; font-size:32px; "
+        f"font-weight:500; color:{accent_hex}; "
+        f"letter-spacing:-0.02em;"
+    )
+    v.addWidget(val)
+    return card
+
+
 def _guess_host(text: str) -> str:
     """Best-effort host detection from a session name. Returns "" when
     nothing matches — caller hides the host pill in that case."""
@@ -2679,6 +2878,12 @@ def _inline_qss() -> str:
         f"QLabel#skillCardTitle {{ font-family:{TYPE['fontSerif']}; "
         f"  font-style:italic; font-size:18px; color:{T['ink']}; "
         f"  letter-spacing:-0.01em; }}"
+
+        # ── KPI cards ──────────────────────────────────────────────
+        f"QFrame#studioKpiCard {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; "
+        f"  border-radius:{r['lg']}px; }}"
+        f"QFrame#studioKpiCard:hover {{ border-color:{T['accent']}; }}"
 
         # ── List cards (activity, tasks, telemetry) ────────────────
         f"QFrame#studioListCard {{ background:{T['bgRaised']}; "

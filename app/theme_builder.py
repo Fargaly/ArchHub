@@ -76,8 +76,15 @@ import re
 # bgRaised, which painted the white "Send" / "Open chat" button text
 # dark grey on top of a dark-grey button — invisible. The fix is to
 # only swap `background…: #fff` patterns, leaving `color: #fff` alone.
+# 6-digit alternative MUST come first — Python regex alternation is
+# left-greedy, so `[0-9a-fA-F]{3}|[0-9a-fA-F]{6}` would match the first
+# 3 chars of `#ffffff` and leave the trailing `fff` behind, producing
+# invalid CSS like `#1d1d22fff;` after substitution. Qt then falls back
+# to its system accent palette (bright Windows blue/cyan) for any
+# selector with that broken color — exactly the "WHAT IS THIS FUCKING
+# COLOR" the user reported. Swap the order so the 6-digit form wins.
 _BG_PROP_RE = re.compile(
-    r"(?P<prop>background(?:-color)?\s*:\s*)(?P<hex>#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}))",
+    r"(?P<prop>background(?:-color)?\s*:\s*)(?P<hex>#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3}))(?![0-9a-fA-F])",
     re.IGNORECASE,
 )
 

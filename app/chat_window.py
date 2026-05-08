@@ -430,6 +430,76 @@ class SkillStepperCard(QFrame):
                     row.setText(self._format_row("·", label, "skipped"))
 
 
+class _StatusDot(QLabel):
+    """Single 8-px terra dot that fades 1.0 → 0.35 → 1.0 every 1.2s.
+
+    Replaces the loud `● ● ●` typing dots the user complained about.
+    Quiet motion per brand principle 07: one element, one rhythm,
+    no jitter. Uses QPropertyAnimation on a custom intensity property
+    so the alpha animates smoothly without redrawing layout.
+    """
+    from PyQt6.QtCore import (
+        QPropertyAnimation, QEasingCurve, pyqtProperty,
+        QSequentialAnimationGroup,
+    )
+
+    def __init__(self, parent=None):
+        super().__init__("●", parent)
+        self._intensity = 1.0
+        self.setFixedSize(10, 14)
+        self._anim_group = None
+        self._update_style()
+
+    def _update_style(self) -> None:
+        from PyQt6.QtGui import QColor
+        c = QColor("#c96442")
+        c.setAlphaF(max(0.0, min(1.0, 0.35 + 0.65 * self._intensity)))
+        self.setStyleSheet(
+            f"color:{c.name(QColor.NameFormat.HexArgb)}; "
+            f"font-size:11px; padding:0; margin:0;"
+        )
+
+    def start(self) -> None:
+        from PyQt6.QtCore import (
+            QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup,
+        )
+        if self._anim_group is not None and self._anim_group.state() == QPropertyAnimation.State.Running:
+            return
+        a1 = QPropertyAnimation(self, b"intensity")
+        a1.setDuration(600)
+        a1.setStartValue(1.0)
+        a1.setEndValue(0.0)
+        a1.setEasingCurve(QEasingCurve.Type.InOutSine)
+        a2 = QPropertyAnimation(self, b"intensity")
+        a2.setDuration(600)
+        a2.setStartValue(0.0)
+        a2.setEndValue(1.0)
+        a2.setEasingCurve(QEasingCurve.Type.InOutSine)
+        group = QSequentialAnimationGroup(self)
+        group.addAnimation(a1)
+        group.addAnimation(a2)
+        group.setLoopCount(-1)
+        group.start()
+        self._anim_group = group
+
+    def stop(self) -> None:
+        if self._anim_group is not None:
+            self._anim_group.stop()
+            self._anim_group = None
+        self._intensity = 1.0
+        self._update_style()
+
+    def _get_intensity(self) -> float:
+        return self._intensity
+
+    def _set_intensity(self, v: float) -> None:
+        self._intensity = float(v)
+        self._update_style()
+
+    from PyQt6.QtCore import pyqtProperty as _pyqtProperty
+    intensity = _pyqtProperty(float, _get_intensity, _set_intensity)
+
+
 class _TypingIndicator(QLabel):
     """Animated three-dot indicator. Shown inside an assistant bubble while
     the LLM is thinking, hidden as soon as the first text chunk arrives."""
@@ -492,20 +562,30 @@ class MessageBubble(QFrame):
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(6)
 
-        # Status line — surfaces what the LLM is doing right now
-        # ("Thinking…", "Calling Revit info…", "Answering…"). Replaces
-        # the silent typing-dots-only state. Hidden on user bubbles +
-        # cleared once the answer is fully streamed.
+        # Status row — pulsing terra dot + italic dim text. Replaces
+        # the loud "● ● ●" three-dot indicator the user complained about.
+        # Quiet motion (brand principle 07): a single dot fades 1.0 →
+        # 0.35 → 1.0 every 1.2s. No bouncing, no jitter. Whole row
+        # hides when the turn is done.
         self.status_line: Optional[QLabel] = None
+        self._status_dot: Optional[_StatusDot] = None
+        self._status_row: Optional[QWidget] = None
         if role == "assistant":
+            self._status_row = QWidget()
+            sr = QHBoxLayout(self._status_row)
+            sr.setContentsMargins(0, 2, 0, 2)
+            sr.setSpacing(8)
+            self._status_dot = _StatusDot()
+            sr.addWidget(self._status_dot)
             self.status_line = QLabel("")
             self.status_line.setObjectName("bubbleStatus")
             self.status_line.setStyleSheet(
-                "color: #9a9183; font-style: italic; font-size: 11.5px; "
+                "color: #9a9183; font-style: italic; font-size: 12px; "
                 "padding: 0; margin: 0;"
             )
-            self.status_line.setVisible(False)
-            v.addWidget(self.status_line)
+            sr.addWidget(self.status_line, 1)
+            self._status_row.setVisible(False)
+            v.addWidget(self._status_row)
 
         # Reasoning view — italic dim block ABOVE the answer. Populated
         # by `append_reasoning`. Hidden until the model emits its first
@@ -560,12 +640,10 @@ class MessageBubble(QFrame):
         self.text_view.textChanged.connect(self._adjust_height)
         v.addWidget(self.text_view)
 
-        # Typing indicator — only used by assistant bubbles. Constructed
-        # lazily on first append/set so user bubbles stay lightweight.
+        # Typing indicator removed — replaced by the pulsing-dot status
+        # row above. Kept the attribute so legacy callers of
+        # `_stop_typing()` don't AttributeError.
         self._typing: Optional[_TypingIndicator] = None
-        if role == "assistant":
-            self._typing = _TypingIndicator(self)
-            v.addWidget(self._typing)
 
         self.tool_cards_container = QVBoxLayout()
         self.tool_cards_container.setContentsMargins(0, 0, 0, 0)
@@ -600,15 +678,19 @@ class MessageBubble(QFrame):
             self._typing = None
 
     def set_status(self, text: str) -> None:
-        """Update the bubble's status line — what the LLM is doing now.
-        Empty text hides the line. No-op on non-assistant bubbles."""
-        if self.status_line is None:
+        """Update the bubble's status row — pulsing dot + italic text.
+        Empty text hides the row. No-op on non-assistant bubbles."""
+        if self.status_line is None or self._status_row is None:
             return
         if text:
             self.status_line.setText(text)
-            self.status_line.setVisible(True)
+            self._status_row.setVisible(True)
+            if self._status_dot is not None:
+                self._status_dot.start()
         else:
-            self.status_line.setVisible(False)
+            self._status_row.setVisible(False)
+            if self._status_dot is not None:
+                self._status_dot.stop()
 
     def append_reasoning(self, fragment: str) -> None:
         """Append a chunk of model reasoning ("thinking" content) to

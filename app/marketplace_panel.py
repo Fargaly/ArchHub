@@ -228,21 +228,31 @@ class MarketplaceCard(QFrame):
             if kind == "skill":
                 from skills.library import add_skill
                 add_skill(payload)
-                detail = f"Skill '{self.item['name']}' added to your library."
+                detail = f"Installed Skill — {self.item['name']}."
             elif kind == "workflow":
                 from workflows.graph import Workflow
                 from workflows import save_workflow
                 wf = Workflow.from_dict(payload)
-                p = save_workflow(wf)
-                detail = f"Workflow saved to:\n{p}"
+                save_workflow(wf)
+                detail = f"Installed Workflow — {self.item['name']}."
             else:
-                detail = f"Unknown item kind: {kind}"
-            QMessageBox.information(self, "Installed", detail)
+                raise ValueError(f"Unknown kind: {kind}")
             self.btn_install.setText("Installed")
             self.btn_install.setEnabled(False)
+            try:
+                from toast import show_toast
+                show_toast(self.window(), detail, kind="ok")
+            except Exception:
+                pass
         except Exception as ex:
-            QMessageBox.warning(
-                self, "Install failed", f"{type(ex).__name__}: {ex}")
+            try:
+                from toast import show_toast
+                show_toast(self.window(),
+                           f"Install failed — {type(ex).__name__}",
+                           kind="err")
+            except Exception:
+                QMessageBox.warning(self, "Install failed",
+                                    f"{type(ex).__name__}: {ex}")
 
 
 # ---------------------------------------------------------------------------

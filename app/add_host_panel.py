@@ -377,16 +377,48 @@ class AddHostPanel(QWidget):
         refresh.clicked.connect(self._refresh_all)
         tb.addWidget(refresh)
         tb.addStretch(1)
-        sdk = QLabel("")
-        sdk.setObjectName("studioMonoMuted")
+        sdk_label = QLabel("")
+        sdk_label.setObjectName("studioMonoMuted")
+        sdk_version = None
         try:
-            v = auto_build.detect_dotnet_sdk()
-            sdk.setText(f".NET SDK · {v}" if v else ".NET SDK · not detected")
+            sdk_version = auto_build.detect_dotnet_sdk()
         except Exception:
-            sdk.setText(".NET SDK · unknown")
-        tb.addWidget(sdk)
+            sdk_version = None
+        if sdk_version:
+            sdk_label.setText(f".NET SDK · {sdk_version}")
+            sdk_label.setStyleSheet(f"color:{T['ok']};")
+        else:
+            sdk_label.setText(".NET SDK · not detected")
+            sdk_label.setStyleSheet(f"color:{T['warn']};")
+        tb.addWidget(sdk_label)
         tb_w = QWidget(); tb_w.setLayout(tb)
         outer.addWidget(tb_w)
+
+        # Warning banner — only shown if .NET SDK is missing. Build
+        # buttons would fail fast otherwise, so explain up front.
+        if not sdk_version:
+            banner = QFrame()
+            banner.setObjectName("addHostBanner")
+            bh = QHBoxLayout(banner)
+            bh.setContentsMargins(SPACE["lg"]-2, SPACE["sm"]+1,
+                                  SPACE["lg"]-2, SPACE["sm"]+1)
+            bh.setSpacing(SPACE["sm"])
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color:{T['warn']}; font-size:11px;")
+            bh.addWidget(dot)
+            msg = QLabel(
+                ".NET SDK not found. Install it before building "
+                "Revit / AutoCAD connectors. Get .NET 8 from "
+                "dotnet.microsoft.com — Build buttons will work after."
+            )
+            msg.setObjectName("studioMonoMuted")
+            msg.setWordWrap(True)
+            bh.addWidget(msg, 1)
+            banner_wrap = QWidget()
+            bw = QVBoxLayout(banner_wrap)
+            bw.setContentsMargins(40, 0, 40, SPACE["sm"])
+            bw.addWidget(banner)
+            outer.addWidget(banner_wrap)
 
         # Scrollable rail of host cards.
         scroll = QScrollArea(self)
@@ -454,6 +486,10 @@ def _action_style(*, primary: bool, enabled: bool) -> str:
 
 def _panel_qss() -> str:
     return (
+        f"QFrame#addHostBanner {{ "
+        f"  background:rgba(229, 178, 90, 0.08); "
+        f"  border:1px solid {T['warn']}; "
+        f"  border-radius:{RADIUS['md']}px; }}"
         f"QFrame#addHostRow {{ "
         f"  background:{T['bgRaised']}; border:1px solid {T['line']}; "
         f"  border-radius:{RADIUS['lg']}px; }}"

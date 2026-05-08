@@ -537,6 +537,63 @@ class CanvasScene(QGraphicsScene):
 
 
 # ---------------------------------------------------------------------------
+class _CanvasView(QGraphicsView):
+    """QGraphicsView subclass with Ctrl+Wheel zoom + middle-mouse pan.
+
+    Zoom range clamped to 0.25x..3x so the canvas can't be lost. Middle
+    mouse drag pans the viewport; release returns to the rubber-band
+    selection drag mode the toolbar configures.
+    """
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self._zoom = 1.0
+        self._zoom_min = 0.25
+        self._zoom_max = 3.0
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(
+            QGraphicsView.ViewportAnchor.AnchorViewCenter)
+
+    def wheelEvent(self, ev):
+        if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = ev.angleDelta().y()
+            factor = 1.15 if delta > 0 else (1 / 1.15)
+            new_zoom = self._zoom * factor
+            new_zoom = max(self._zoom_min, min(self._zoom_max, new_zoom))
+            if abs(new_zoom - self._zoom) > 1e-3:
+                applied = new_zoom / self._zoom
+                self.scale(applied, applied)
+                self._zoom = new_zoom
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.MiddleButton:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            # Synthesize a left-press so ScrollHandDrag actually starts.
+            from PyQt6.QtGui import QMouseEvent
+            fake = QMouseEvent(
+                ev.type(), ev.position(), Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton, ev.modifiers(),
+            )
+            super().mousePressEvent(fake)
+            return
+        super().mousePressEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.MouseButton.MiddleButton:
+            self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+            from PyQt6.QtGui import QMouseEvent
+            fake = QMouseEvent(
+                ev.type(), ev.position(), Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton, ev.modifiers(),
+            )
+            super().mouseReleaseEvent(fake)
+            return
+        super().mouseReleaseEvent(ev)
+
+
 class WorkflowCanvas(QWidget):
     """Top-level page widget — toolbar + QGraphicsView + scene."""
 
@@ -591,12 +648,30 @@ class WorkflowCanvas(QWidget):
         self.btn_run.setObjectName("primaryButton")
         self.btn_run.clicked.connect(self._run)
         tb.addWidget(self.btn_run)
+        # Zoom controls.
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setObjectName("studioChip")
+        self.btn_zoom_out.setFixedWidth(28)
+        self.btn_zoom_out.setToolTip("Zoom out · Ctrl-wheel")
+        self.btn_zoom_out.clicked.connect(lambda: self._zoom_step(1 / 1.15))
+        tb.addWidget(self.btn_zoom_out)
+        self.btn_zoom_fit = QPushButton("Fit")
+        self.btn_zoom_fit.setObjectName("studioChip")
+        self.btn_zoom_fit.setToolTip("Zoom to fit (1×)")
+        self.btn_zoom_fit.clicked.connect(self._zoom_fit)
+        tb.addWidget(self.btn_zoom_fit)
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setObjectName("studioChip")
+        self.btn_zoom_in.setFixedWidth(28)
+        self.btn_zoom_in.setToolTip("Zoom in · Ctrl-wheel")
+        self.btn_zoom_in.clicked.connect(lambda: self._zoom_step(1.15))
+        tb.addWidget(self.btn_zoom_in)
         tb_w = QWidget(); tb_w.setLayout(tb)
         v.addWidget(tb_w)
 
         # The canvas.
         self.scene = CanvasScene()
-        self.view = QGraphicsView(self.scene)
+        self.view = _CanvasView(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -616,6 +691,20 @@ class WorkflowCanvas(QWidget):
         v.addWidget(self._hint)
 
     # ------------------------------------------------------------------
+    def _zoom_step(self, factor: float) -> None:
+        new_zoom = self.view._zoom * factor
+        new_zoom = max(self.view._zoom_min, min(self.view._zoom_max, new_zoom))
+        if abs(new_zoom - self.view._zoom) < 1e-3:
+            return
+        applied = new_zoom / self.view._zoom
+        self.view.scale(applied, applied)
+        self.view._zoom = new_zoom
+
+    def _zoom_fit(self) -> None:
+        applied = 1.0 / self.view._zoom
+        self.view.scale(applied, applied)
+        self.view._zoom = 1.0
+
     def _rename(self) -> None:
         name, ok = QInputDialog.getText(
             self, "Rename workflow", "Workflow name:",

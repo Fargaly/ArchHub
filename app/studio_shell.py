@@ -208,7 +208,8 @@ class StudioShell(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Brand row — ArchMark (arch + node keystone) + 'Arch' + italic 'Hub'.
+        # Brand row — ArchMark (arch + node keystone) + 'Arch' + italic 'Hub'
+        # + theme-toggle sun/moon button on the right (matches studio.jsx).
         brand_wrap = QWidget()
         brand_row = QHBoxLayout(brand_wrap)
         brand_row.setContentsMargins(14, 14, 14, 10)
@@ -225,6 +226,15 @@ class StudioShell(QMainWindow):
         self._brand_sub.setObjectName("studioBrandSub")
         brand_col.addWidget(self._brand_sub)
         brand_row.addWidget(brand_col_w, 1)
+        # Theme toggle — sun glyph in light, moon glyph in dark.
+        self._theme_btn = QToolButton()
+        self._theme_btn.setObjectName("studioThemeToggle")
+        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._theme_btn.setFixedSize(24, 24)
+        self._theme_btn.setText("☾" if active_theme() == "dark" else "☀")
+        self._theme_btn.setToolTip("Switch theme (graphite, never black)")
+        self._theme_btn.clicked.connect(self._toggle_theme)
+        brand_row.addWidget(self._theme_btn)
         v.addWidget(brand_wrap)
 
         # ⌘K command box (placeholder — palette overlay deferred)
@@ -665,26 +675,31 @@ class StudioShell(QMainWindow):
     # Status rule
     # ──────────────────────────────────────────────────────────────────
     def _build_status_rule(self) -> QFrame:
+        """Bottom status rule — matches studio.jsx reference layout:
+
+        ●  N/M hosts    tokens 2.4M    spend $47.82    ↻ 1 self-healing
+                                        ⌘K palette  ⌘↩ run skill  ⌘/ docs  v0.27.6
+        """
         rule = QFrame()
         rule.setObjectName("studioStatusRule")
         rule.setFixedHeight(26)
         h = QHBoxLayout(rule)
         h.setContentsMargins(14, 0, 14, 0)
-        h.setSpacing(14)
-        self._sr_health = QLabel("● 0 LIVE  ↻ 0 HEAL")
-        self._sr_health.setObjectName("studioStatusItem")
-        h.addWidget(self._sr_health)
-        self._sr_model = QLabel("MODEL  …")
-        self._sr_model.setObjectName("studioStatusItem")
-        h.addWidget(self._sr_model)
-        self._sr_lat = QLabel("LAT  —")
-        self._sr_lat.setObjectName("studioStatusItem")
-        h.addWidget(self._sr_lat)
-        self._sr_spend = QLabel("SPEND  —")
+        h.setSpacing(18)
+        self._sr_hosts = QLabel("● 0/0 hosts")
+        self._sr_hosts.setObjectName("studioStatusItem")
+        h.addWidget(self._sr_hosts)
+        self._sr_tokens = QLabel("tokens —")
+        self._sr_tokens.setObjectName("studioStatusItem")
+        h.addWidget(self._sr_tokens)
+        self._sr_spend = QLabel("spend $0.00")
         self._sr_spend.setObjectName("studioStatusItem")
         h.addWidget(self._sr_spend)
+        self._sr_heal = QLabel("")
+        self._sr_heal.setObjectName("studioStatusItem")
+        h.addWidget(self._sr_heal)
         h.addStretch(1)
-        right = QLabel("⌘K  PALETTE     ⌘,  SETTINGS")
+        right = QLabel("⌘K palette     ⌘↩ run skill     ⌘/ docs     v0.27.6")
         right.setObjectName("studioStatusItem")
         h.addWidget(right)
         return rule
@@ -914,29 +929,10 @@ class StudioShell(QMainWindow):
             p.setToolTip(_revit_sessions_tooltip())
         h.addWidget(p)
 
-        # Toggle — visual 24×14 pill, hit area enlarged via padding.
-        # Wrap the visual pill in a QToolButton with padding so click
-        # targets meet the relaxed-desktop 36×24 floor.
-        tog = QToolButton()
-        tog.setCheckable(True)
-        tog.setChecked(active)
-        tog.setEnabled(not unavailable)
-        tog.setObjectName("studioToggle")
-        tog.setFixedSize(36, 24)        # hit area
-        # Internal padding on the QToolButton creates the visual 24×14
-        # pill while the full 36×24 stays clickable.
-        tog.setStyleSheet(
-            _toggle_style(active) +
-            f" QToolButton#studioToggle {{ padding:5px 6px; }}"
-        )
+        # Toggle — iOS-style sliding-knob switch (matches studio.jsx).
+        tog = _ToggleSwitch(on=active)
+        tog.setEnabledState(not unavailable)
         # Use a closure that captures the entry.id.
-        def _restyle(btn, checked):
-            # Re-apply both the toggle pill style + hit-area padding.
-            btn.setStyleSheet(
-                _toggle_style(checked) +
-                " QToolButton#studioToggle { padding:5px 6px; }"
-            )
-
         def on_toggled(checked, entry_id=entry.id, btn=tog):
             try:
                 if checked:
@@ -944,16 +940,13 @@ class StudioShell(QMainWindow):
                 else:
                     ok, msg = self.manager.deactivate(entry_id)
                 if not ok:
-                    # Revert visual state and surface the failure in the row.
                     btn.blockSignals(True)
                     btn.setChecked(not checked)
-                    _restyle(btn, btn.isChecked())
                     btn.blockSignals(False)
                     p.setText("err")
                     p.setToolTip(msg)
-                else:
-                    _restyle(btn, checked)
-                # Force a fresh refresh so the row reflects the new state.
+                # Invalidate the diff signature so the next tick rebuilds.
+                self._last_hosts_sig = ()
                 QTimer.singleShot(200, self._refresh_hosts)
             except Exception as ex:
                 p.setText("err")
@@ -1038,9 +1031,11 @@ class StudioShell(QMainWindow):
     def _refresh_status_rule(self) -> None:
         live = 0
         heal = 0
+        total = 0
         try:
             from connector_health import instance as _hi
             snap = _hi().snapshot()
+            total = len(snap)
             for fam, info in snap.items():
                 st = info.get("state", "unknown")
                 if st == "live":
@@ -1049,19 +1044,27 @@ class StudioShell(QMainWindow):
                     heal += 1
         except Exception:
             pass
-        self._sr_health.setText(f"● {live} LIVE  ↻ {heal} HEAL")
+        self._sr_hosts.setText(f"● {live}/{total} hosts")
+        self._sr_tokens.setText(f"tokens {self._tokens_label()}")
+        self._sr_spend.setText(f"spend {self._spend_label()}")
+        self._sr_heal.setText(
+            f"↻ {heal} self-healing" if heal > 0 else ""
+        )
 
-        # Model — try chat widget's combo box or default model setting.
-        model = self._current_model() or "—"
-        self._sr_model.setText(f"MODEL  {model}")
-
-        # Latency — read last_response_ms off chat_widget if exposed.
-        lat = self._last_latency_ms()
-        self._sr_lat.setText(f"LAT  {lat}" if lat else "LAT  —")
-
-        # Spend — read settings counter if telemetry tracks it.
-        spend = self._spend_label()
-        self._sr_spend.setText(f"SPEND  {spend}")
+    def _tokens_label(self) -> str:
+        # Best-effort: read telemetry total tokens; fall back to dash.
+        try:
+            from secrets_store import load_setting
+            n = load_setting("month_tokens_total")
+            if isinstance(n, (int, float)) and n > 0:
+                if n > 1_000_000:
+                    return f"{n / 1_000_000:.1f}M"
+                if n > 1000:
+                    return f"{n / 1000:.1f}K"
+                return str(int(n))
+        except Exception:
+            pass
+        return "—"
 
     def _refresh_inspector(self) -> None:
         active_count = 0
@@ -1478,8 +1481,14 @@ class StudioShell(QMainWindow):
         self.setStyleSheet(_inline_qss())
         for nid, btn in self._nav_buttons.items():
             btn.setStyleSheet(_nav_style(nid == self._active_page))
+        # Force a rebuild of host rows so the toggle/dot colors swap.
+        self._last_hosts_sig = ()
         self._refresh_live()
         self._brand_mark.update()
+        try:
+            self._theme_btn.setText("☾" if active_theme() == "dark" else "☀")
+        except Exception:
+            pass
 
         # Rebuild user card so the cog menu's "Switch to ..." label flips.
         try:
@@ -1822,6 +1831,64 @@ def _inspector_kv(key: str, value: str) -> tuple[QFrame, QLabel]:
     return row, val
 
 
+class _ToggleSwitch(QWidget):
+    """iOS-style switch — 28×16 pill with a 12×12 white knob that
+    slides between the off (left) and on (right) positions.
+
+    Was: QToolButton with a flat colored rectangle (no knob). The
+    handoff design (studio.jsx::HostToggle) shows a proper sliding-knob
+    switch — that's what this widget renders. paintEvent draws the
+    track + knob; mousePressEvent flips state and emits `toggled`.
+    """
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, on: bool = False, parent=None):
+        super().__init__(parent)
+        self._on = bool(on)
+        self._enabled = True
+        self.setFixedSize(28, 16)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def isChecked(self) -> bool:
+        return self._on
+
+    def setChecked(self, v: bool) -> None:
+        if self._on == v:
+            return
+        self._on = bool(v)
+        self.update()
+
+    def setEnabledState(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled
+                       else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def mousePressEvent(self, ev) -> None:
+        if not self._enabled:
+            return
+        self._on = not self._on
+        self.update()
+        self.toggled.emit(self._on)
+
+    def paintEvent(self, ev) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        track = QColor(T["accent"] if self._on else T["lineSoft"])
+        if not self._enabled:
+            c = QColor(track)
+            c.setAlphaF(0.4)
+            track = c
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(track))
+        p.drawRoundedRect(0, 0, 28, 16, 8, 8)
+        # Knob.
+        knob_x = 14 if self._on else 2
+        p.setBrush(QBrush(QColor("#ffffff")))
+        p.drawEllipse(knob_x, 2, 12, 12)
+
+
 class _PulseDot(QLabel):
     """Status dot with quiet-motion pulse animation (brand principle 07).
 
@@ -2097,6 +2164,13 @@ def _inline_qss() -> str:
         f"  border-top:1px solid {T['line']}; }}"
         f"QLabel#studioStatusItem {{ font-family:{TYPE['fontMono']}; "
         f"  {_type('monoStat')} color:{T['inkSoft']}; }}"
+
+        # ── Theme toggle (sun/moon) ─────────────────────────────────
+        f"QToolButton#studioThemeToggle {{ background:transparent; "
+        f"  border:1px solid {T['line']}; border-radius:{r['md']+1}px; "
+        f"  color:{T['inkSoft']}; font-size:14px; }}"
+        f"QToolButton#studioThemeToggle:hover {{ "
+        f"  border-color:{T['accent']}; color:{T['accent']}; }}"
     )
 
     # ── Focus rings — keyboard a11y ─────────────────────────────────

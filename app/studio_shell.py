@@ -380,23 +380,35 @@ class StudioShell(QMainWindow):
         self._home_sub.setWordWrap(True)
         wl.addWidget(self._home_sub)
 
-        # Composer card — soft raised card, italic prompt, terra Send.
+        # Composer card — soft raised card, real text input, terra Send.
+        # Send routes text to the chat widget's input + triggers send so
+        # the user can fire a prompt from Home without a context switch.
         composer = QFrame()
         composer.setObjectName("studioComposer")
         cl = QVBoxLayout(composer)
         cl.setContentsMargins(SPACE["lg"], SPACE["md"]+2,
                               SPACE["lg"], SPACE["md"]+2)
         cl.setSpacing(SPACE["md"]-2)
-        prompt = QLabel("Dimension all walls in the active view…")
-        prompt.setObjectName("studioComposerPrompt")
-        cl.addWidget(prompt)
+        from PyQt6.QtWidgets import QLineEdit
+        self._home_input = QLineEdit()
+        self._home_input.setObjectName("studioComposerInput")
+        self._home_input.setPlaceholderText(
+            "Dimension all walls in the active view…")
+        self._home_input.returnPressed.connect(self._send_from_home)
+        cl.addWidget(self._home_input)
         chip_row = QHBoxLayout()
         chip_row.setSpacing(SPACE["xs"]+2)
-        for label in ("✦ Sketch", "● Voice", "@ Skill", "+ Host"):
+        chip_actions = [
+            ("✦ Sketch", self._home_attach_sketch),
+            ("● Voice",  self._home_voice),
+            ("@ Skill",  self._open_palette),
+            ("+ Host",   lambda: self._set_page("addhost")),
+        ]
+        for label, fn in chip_actions:
             b = QPushButton(label)
             b.setObjectName("studioChip")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False: self._set_page("chat"))
+            b.clicked.connect(lambda _=False, _fn=fn: _fn())
             chip_row.addWidget(b)
         chip_row.addStretch(1)
         self._home_meta = QLabel("…")
@@ -405,7 +417,7 @@ class StudioShell(QMainWindow):
         send = QPushButton("Send  ↗")
         send.setObjectName("primaryButton")
         send.setCursor(Qt.CursorShape.PointingHandCursor)
-        send.clicked.connect(lambda: self._set_page("chat"))
+        send.clicked.connect(self._send_from_home)
         chip_row.addWidget(send)
         cl.addLayout(chip_row)
         wl.addWidget(composer)
@@ -1667,6 +1679,78 @@ class StudioShell(QMainWindow):
             return 0
 
     # ──────────────────────────────────────────────────────────────────
+    def _send_from_home(self) -> None:
+        """Take the Home composer text + push it to the chat widget's
+        input, then trigger the chat widget's send and switch pages.
+
+        Best-effort: the chat widget exposes `.input` (QLineEdit-ish)
+        and `._on_send` (slot). If either is missing we fall back to
+        just switching pages so we never trap input.
+        """
+        text = (self._home_input.text() or "").strip()
+        if not text:
+            self._set_page("chat")
+            try:
+                cw = self.chat_widget
+                inp = getattr(cw, "input", None)
+                if inp is not None and hasattr(inp, "setFocus"):
+                    inp.setFocus()
+            except Exception:
+                pass
+            return
+        cw = self.chat_widget
+        inp = getattr(cw, "input", None)
+        try:
+            if inp is not None and hasattr(inp, "setText"):
+                inp.setText(text)
+        except Exception:
+            pass
+        # Switch to chat first so the user sees the prompt land.
+        self._set_page("chat")
+        # Clear Home composer + fire send on chat.
+        self._home_input.clear()
+        try:
+            send_slot = getattr(cw, "_on_send", None)
+            if callable(send_slot):
+                # Defer one tick so the page swap repaints first.
+                QTimer.singleShot(50, send_slot)
+        except Exception:
+            pass
+
+    def _home_attach_sketch(self) -> None:
+        """Open a file picker for an image and route it to the chat
+        widget's image-pasted handler. Switches to Chat after."""
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Attach sketch",
+            filter="Images (*.png *.jpg *.jpeg *.webp *.bmp);;All files (*.*)",
+        )
+        if not path:
+            return
+        cw = self.chat_widget
+        handler = getattr(cw, "_on_image_pasted", None)
+        if callable(handler):
+            try:
+                handler(path)
+            except Exception:
+                pass
+        self._set_page("chat")
+        try:
+            from toast import show_toast
+            show_toast(self, f"Attached {Path(path).name}", kind="ok")
+        except Exception:
+            pass
+
+    def _home_voice(self) -> None:
+        """Voice input — placeholder. Real STT integration ships v0.34."""
+        try:
+            from toast import show_toast
+            show_toast(self,
+                       "Voice input ships v0.34 — type your prompt for now.",
+                       kind="warn")
+        except Exception:
+            pass
+
     def _open_palette(self) -> None:
         """Open the ⌘K command palette overlay (v0.31)."""
         try:
@@ -2565,6 +2649,14 @@ def _inline_qss() -> str:
         f"QLabel#studioComposerPrompt {{ font-family:{TYPE['fontSerif']}; "
         f"  font-style:italic; font-size:22px; color:{T['inkCap']}; "
         f"  letter-spacing:-0.01em; }}"
+        f"QLineEdit#studioComposerInput {{ "
+        f"  background:transparent; border:none; "
+        f"  color:{T['ink']}; "
+        f"  font-family:{TYPE['fontSerif']}; "
+        f"  font-style:italic; font-size:22px; "
+        f"  letter-spacing:-0.01em; padding:2px 0; }}"
+        f"QLineEdit#studioComposerInput::placeholder {{ "
+        f"  color:{T['inkCap']}; }}"
         f"QPushButton#studioChip {{ background:transparent; "
         f"  color:{T['inkSoft']}; border:1px solid {T['line']}; "
         f"  border-radius:{r['md']}px; padding:{s['xs']}px {s['md']-2}px; "

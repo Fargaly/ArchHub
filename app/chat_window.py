@@ -1822,15 +1822,24 @@ class ChatWindow(QMainWindow):
     # ---- model picker -----------------------------------------------------
 
     def _populate_model_picker(self) -> None:
-        """Fill the model dropdown. Cloud-first: local Ollama models are
-        hidden by default — they're slow to launch, heavy on disk, and
-        the user said plainly that local is too heavy. The Settings
-        toggle 'Show local Ollama models' brings them back when wanted."""
+        """Fill the model dropdown. Cloud-first when keys exist; if
+        none do, Ollama models are surfaced automatically so the user
+        always has SOMETHING they can pick. The Settings toggle
+        'Show local Ollama models' force-shows them regardless."""
         from PyQt6.QtGui import QStandardItemModel, QStandardItem
         from secrets_store import load_setting
 
         configured = set(self.router.configured_providers())
-        show_local = bool(load_setting("show_local_models"))
+        # Ollama models are now shown by default so users always have a
+        # zero-cost local fallback in the picker. The "Show local Ollama
+        # models" Settings toggle is treated as ON unless explicitly
+        # set to False — backwards-compatible for anyone who toggled it
+        # off intentionally.
+        local_pref = load_setting("show_local_models")
+        show_local = (local_pref is None) or bool(local_pref)
+        cloud_configured = configured - {"ollama"}
+        if not cloud_configured:
+            show_local = True
 
         self.model_picker.clear()
         # Replace the underlying model so we can disable individual items.

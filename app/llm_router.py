@@ -152,13 +152,27 @@ class LLMRouter:
         return True
 
     def configured_providers(self) -> list[str]:
-        providers = set(list_keys())
+        # `list_keys()` returns providers with an entry in the secrets
+        # store — including ones whose value is empty (a placeholder
+        # row left over from a half-completed Sign-ins flow). That made
+        # the model picker show e.g. anthropic / openai / google as
+        # "live" even when the actual key string was 0 chars, which
+        # caused chats to hang on send. Filter through `load_api_key`
+        # so only providers with a NON-EMPTY key count as configured.
+        providers = set()
+        for p in list_keys():
+            try:
+                k = load_api_key(p) or ""
+                if k.strip():
+                    providers.add(p)
+            except Exception:
+                continue
         # Add env-var detected providers
         import os
         env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
                    "google": "GOOGLE_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
         for p, env in env_map.items():
-            if os.environ.get(env):
+            if (os.environ.get(env) or "").strip():
                 providers.add(p)
         # Custom OpenAI-compatible relay (firm path) is "configured" when both
         # the URL setting and the relay key are present.

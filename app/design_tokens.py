@@ -134,45 +134,58 @@ T = COLOR
 
 
 # ---------------------------------------------------------------------------
-# COLOR_DARK — graphite, not black. Per brand principle 01.
-# Surfaces feel like material, not screens. Terracotta carries the same
-# weight; everything else is functional.
+# COLOR_DARK — graphite, not black. Per brand principle 01 + studio.jsx
+# (handoff dark token block). Surfaces feel like material, not screens.
+# Terracotta carries the same weight; everything else is functional.
+#
+# Why these specific values? They come straight from
+# `archhub/project/studio.jsx`'s `dark` token block. Earlier I had bumped
+# them lighter by ~10 ticks each, which produced a "muddy three shades
+# of grey" effect — cards floated on cards on panels in distinct visible
+# rectangles, against the brand-direction "calm density" goal. The
+# handoff values are deliberately low-contrast: panels and cards differ
+# by ~5 in lightness, so cards register as borders + a tiny lift, not
+# new rectangles.
 # ---------------------------------------------------------------------------
 COLOR_DARK = {
-    "terra":      "#d97757",  # slightly lifted for dark surface contrast
+    "terra":      "#d97757",
     "terraDeep":  "#8a3a25",
     "ochre":      "#d9a445",
-    "graphite":   "#2a2a2e",
+    "graphite":   "#161618",
     "cyan":       "#5fb3b3",
-    "paper":      "#1f1f23",  # dark "paper" — graphite NOT pure black
-    "paperSoft":  "#2a2a2e",
-    "paperLine":  "#3a3a3f",
+    "paper":      "#0f0f12",   # true graphite page canvas
+    "paperSoft":  "#1d1d22",
+    "paperLine":  "#26262d",
 
-    "bg":          "#1f1f23",
-    "bgPanel":     "#2a2a2e",
-    "bgSoft":      "#33333a",
-    "bgHover":     "#3a3a3f",
-    "bgRaised":    "#33333a",
+    # Surfaces — only ~5 lightness ticks between bg/panel/raised.
+    "bg":          "#0f0f12",
+    "bgPanel":     "#161618",
+    "bgSoft":      "#1d1d22",
+    "bgHover":     "#23232a",
+    "bgRaised":    "#1d1d22",
 
-    "ink":         "#f0ece4",
-    "inkSoft":     "#c8c3b8",
-    "inkMuted":    "#8a8275",
-    "inkCap":      "#6b6356",
-    "inkDim":      "#4a4640",
+    # Ink.
+    "ink":         "#ece8e0",
+    "inkSoft":     "#9b938a",
+    "inkMuted":    "#5e5750",
+    "inkCap":      "#5e5750",
+    "inkDim":      "#3a3530",
 
-    "line":        "#3a3a3f",
-    "lineSoft":    "#4a4a50",
+    # Lines — barely-there.
+    "line":        "#26262d",
+    "lineSoft":    "#1d1d23",
 
+    # Brand-action.
     "accent":      "#d97757",
-    "accentSoft":  "#3a2620",
+    "accentSoft":  "#3a201a",
     "accentHi":    "#a04832",
-    "ok":          "#7aaa7e",
-    "warn":        "#d99543",
-    "err":         "#d8584d",
+    "ok":          "#7ec18e",
+    "warn":        "#e5b25a",
+    "err":         "#e6705f",
 
-    "chipFill":    "rgba(255,255,255,0.06)",
+    "chipFill":    "rgba(255,255,255,0.04)",
     "focusRing":   "#d97757",
-    "selBg":       "#33333a",
+    "selBg":       "#1d1d22",
 }
 
 

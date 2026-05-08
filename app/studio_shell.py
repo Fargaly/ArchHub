@@ -366,7 +366,9 @@ class StudioShell(QMainWindow):
         wl.addWidget(composer)
 
         # Suggested skills (built from real Skills library).
-        wl.addWidget(_section_h2("Suggested Skills", "from your library"))
+        self._home_skills_header = _section_h2(
+            "Suggested Skills", "from your library")
+        wl.addWidget(self._home_skills_header)
         self._home_skills_grid_wrap = QWidget()
         self._home_skills_grid_wrap.setLayout(QHBoxLayout())
         self._home_skills_grid_wrap.layout().setSpacing(10)
@@ -374,7 +376,9 @@ class StudioShell(QMainWindow):
         wl.addWidget(self._home_skills_grid_wrap)
 
         # Pick up where you left off — real recent sessions.
-        wl.addWidget(_section_h2("Pick up where you left off", None))
+        self._home_activity_header = _section_h2(
+            "Pick up where you left off", None)
+        wl.addWidget(self._home_activity_header)
         self._home_activity = QFrame()
         self._home_activity.setObjectName("studioListCard")
         self._home_activity.setLayout(QVBoxLayout())
@@ -382,8 +386,11 @@ class StudioShell(QMainWindow):
         self._home_activity.layout().setSpacing(0)
         wl.addWidget(self._home_activity)
 
-        # Live tasks
-        wl.addWidget(_section_h2("Live tasks", "self-healing in real time"))
+        # Live tasks — only shown when something's actually in progress
+        # (healing, queued). All-clear state hides the section.
+        self._home_tasks_header = _section_h2(
+            "Live tasks", "self-healing in real time")
+        wl.addWidget(self._home_tasks_header)
         self._home_tasks = QFrame()
         self._home_tasks.setObjectName("studioListCard")
         self._home_tasks.setLayout(QVBoxLayout())
@@ -1080,16 +1087,30 @@ class StudioShell(QMainWindow):
             sks = list_skills() or []
         except Exception:
             sks = []
-        for s in sks[:3]:
+        # Rank by real usage: skills that have been run before float
+        # to the top. Pure-placeholder skills (run_count == 0) get
+        # quietly demoted so the row always feels earned.
+        sks_ranked = sorted(sks,
+                             key=lambda s: -int(s.get("run_count", 0) or 0))
+        # Only feature skills with at least 1 actual run on Home; the
+        # rest live in the full Skills page.
+        ranked_used = [s for s in sks_ranked
+                       if int(s.get("run_count", 0) or 0) > 0]
+        showing = ranked_used[:3] if ranked_used else sks_ranked[:3]
+        for s in showing:
             cat = (s.get("category") or s.get("type") or "SKILL").upper()
             name = s.get("name") or s.get("id") or "Untitled"
             runs = f"{s.get('run_count', 0)} runs"
             hosts = s.get("hosts") or []
             layout.addWidget(_skill_card(cat, name, runs, hosts[:3]))
-        if not sks:
-            empty = QLabel("No Skills in your library yet — run /skills to seed.")
-            empty.setObjectName("studioMonoMuted")
-            layout.addWidget(empty)
+        # Hide the section header + grid when no skills exist at all
+        # rather than showing an empty grey box.
+        has_any = bool(showing)
+        self._home_skills_grid_wrap.setVisible(has_any)
+        try:
+            self._home_skills_header.setVisible(has_any)
+        except Exception:
+            pass
         layout.addStretch(1)
 
     def _refresh_home_activity(self) -> None:
@@ -1104,16 +1125,15 @@ class StudioShell(QMainWindow):
             sessions = list_sessions()
         except Exception:
             sessions = []
+        # Empty state: hide BOTH the section header and the card so we
+        # don't show "Pick up where you left off" with nothing under it.
+        has_any = bool(sessions)
+        self._home_activity.setVisible(has_any)
+        try:
+            self._home_activity_header.setVisible(has_any)
+        except Exception:
+            pass
         if not sessions:
-            row = QFrame()
-            row.setObjectName("studioListRow")
-            row.setProperty("first", True)
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(14, 10, 14, 10)
-            empty = QLabel("No sessions yet — open Chat and ask anything.")
-            empty.setObjectName("studioMonoMuted")
-            rl.addWidget(empty)
-            layout.addWidget(row)
             return
         for i, (path, name, saved_at) in enumerate(sessions[:6]):
             row = QFrame()
@@ -1136,6 +1156,11 @@ class StudioShell(QMainWindow):
             layout.addWidget(row)
 
     def _refresh_home_tasks(self, *, heal: int) -> None:
+        """Live tasks list. Suppress the 'every host listener live' noise
+        — only show ACTUAL work-in-progress (healing, queued, building).
+        When everything is steady, hide the card entirely; the rail's
+        host status dots already convey 'all systems live'.
+        """
         layout = self._home_tasks.layout()
         while layout.count():
             item = layout.takeAt(0)
@@ -1152,22 +1177,21 @@ class StudioShell(QMainWindow):
             st = info.get("state", "unknown")
             attempts = info.get("netload_attempts", 0)
             if st == "loaded_dead":
-                rows.append(("HEALING", f"Reconnect {fam} (retry {attempts})", min(30 + attempts*20, 95)))
-            elif st == "host_offline":
-                rows.append(("QUEUED", f"{fam} host offline — start app", 0))
-            elif st == "live":
-                rows.append(("RUNNING", f"{fam} listener live", 100))
-        if not rows:
-            row = QFrame()
-            row.setObjectName("studioListRow")
-            row.setProperty("first", True)
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(14, 10, 14, 10)
-            empty = QLabel("No active tasks. All systems idle.")
-            empty.setObjectName("studioMonoMuted")
-            rl.addWidget(empty)
-            layout.addWidget(row)
-            return
+                rows.append(("HEALING",
+                             f"Reconnect {fam} (retry {attempts})",
+                             min(30 + attempts * 20, 95)))
+            elif st == "host_offline" and attempts > 0:
+                # Only surface offline hosts the user has tried to use,
+                # not every cold connector. Less noise.
+                rows.append(("QUEUED",
+                             f"{fam} host offline — start app", 0))
+        # Collapse both header + card when nothing's in progress.
+        has_any = bool(rows)
+        self._home_tasks.setVisible(has_any)
+        try:
+            self._home_tasks_header.setVisible(has_any)
+        except Exception:
+            pass
         for state, label, pct in rows:
             layout.addWidget(_task_row(state, label, pct))
 

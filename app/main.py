@@ -123,21 +123,40 @@ def main() -> int:
         # Non-fatal: chat works without seeds, just no auto-suggestions.
         pass
 
-    # Main window
+    # Main window — ChatWindow stays as the chat backend (workers,
+    # callbacks, history). StudioShell wraps it as the visible chrome
+    # (3-pane Studio direction from the Claude Design handoff).
     window = ChatWindow(router=router, manager=manager, tools=tools)
+
+    # Studio shell — wraps `window` as the centre 'chat' page, adds
+    # Home/Skills/Workflows/Marketplace/Telemetry/Settings pages,
+    # left rail (brand · ⌘K · nav · hosts · threads · user), right
+    # inspector (304px), bottom mono status rule (26px).
+    surface = window
+    try:
+        from studio_shell import StudioShell
+        shell = StudioShell(chat_widget=window, router=router,
+                            manager=manager, tools=tools)
+        # Tray + summon address the shell. The bare ChatWindow stays
+        # alive as the backend but is never shown.
+        surface = shell
+    except Exception:
+        # If the shell fails to build for any reason, fall back to
+        # the legacy bare ChatWindow so the app still launches.
+        surface = window
 
     # Wire the single-instance summon signal: when a second launch
     # asks us to come forward, surface the window.
     try:
         sm = getattr(app, "_archhub_summoner", None)
         if sm is not None:
-            sm.requested.connect(lambda: window.show_centered())
+            sm.requested.connect(lambda: surface.show_centered())
     except Exception:
         pass
 
     # Tray
     icon = QIcon(str(ASSETS / "archhub.png")) if (ASSETS / "archhub.png").exists() else QIcon()
-    tray = ArchHubTray(icon, window, manager)
+    tray = ArchHubTray(icon, surface, manager)
     tray.show()
 
     # Workflow trigger scheduler — fires saved workflows on cron / file_watch / etc.

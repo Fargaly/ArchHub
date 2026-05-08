@@ -73,6 +73,21 @@ def main() -> int:
 
     app.setApplicationName("ArchHub")
     app.setQuitOnLastWindowClosed(False)
+
+    # Application icon — picked up by the Windows taskbar, alt-tab
+    # thumbnails, and any frameless window we spawn. Without this the
+    # title bar / taskbar shows the default pythonw.exe icon.
+    try:
+        ico_path = ASSETS / "archhub.ico"
+        if ico_path.exists():
+            app.setWindowIcon(QIcon(str(ico_path)))
+        else:
+            png_path = ASSETS / "archhub.png"
+            if png_path.exists():
+                app.setWindowIcon(QIcon(str(png_path)))
+    except Exception:
+        pass
+
     # Token-driven theme — substitutes the active palette into the
     # legacy theme.qss before applying. Picks up persisted theme_mode
     # (defaults to dark per brand principle 01).

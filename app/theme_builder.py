@@ -67,16 +67,53 @@ LIGHT_TO_TOKEN = {
 }
 
 
-def _swap(qss: str, palette: dict) -> str:
-    """Replace light hex literals in qss with palette equivalents.
+import re
 
-    Case-insensitive matching to handle `#FFF` vs `#fff` etc. We sort
-    by length descending so a longer literal never gets partially
-    substituted by a shorter one (e.g. `#fff` not eating `#fbf9f4`).
+
+# `#ffffff` shows up two ways in theme.qss: as raised-card backgrounds
+# (~20 places) AND as text color on the terra primary button (line 278:
+# `color: #ffffff;`). Earlier passes naively swapped every #ffffff to
+# bgRaised, which painted the white "Send" / "Open chat" button text
+# dark grey on top of a dark-grey button — invisible. The fix is to
+# only swap `background…: #fff` patterns, leaving `color: #fff` alone.
+_BG_PROP_RE = re.compile(
+    r"(?P<prop>background(?:-color)?\s*:\s*)(?P<hex>#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}))",
+    re.IGNORECASE,
+)
+
+
+def _swap(qss: str, palette: dict) -> str:
+    """Replace light hex literals with palette equivalents.
+
+    Two-stage:
+      1. Walk every `background:` / `background-color:` declaration and
+         swap the hex against the LIGHT_TO_TOKEN map. Preserves the
+         CSS property name + spacing.
+      2. Walk the rest of the QSS and swap the non-#ffffff entries
+         (text colors, borders, gradients) the simple way. We DON'T
+         touch #ffffff at this stage so `color: #fff` survives.
     """
-    out = qss
+    # Stage 1: targeted background swaps.
+    def _bg_repl(m: re.Match) -> str:
+        hex_lit = m.group("hex").lower()
+        # Expand 3-digit hex (#fff) to 6-digit (#ffffff) for map lookup.
+        if len(hex_lit) == 4:
+            hex_lit = "#" + "".join(c * 2 for c in hex_lit[1:])
+        token = LIGHT_TO_TOKEN.get(hex_lit)
+        if not token:
+            return m.group(0)
+        target = palette.get(token)
+        if not target:
+            return m.group(0)
+        return m.group("prop") + target
+    out = _BG_PROP_RE.sub(_bg_repl, qss)
+
+    # Stage 2: non-background swaps. Skip the "always-white" entries
+    # so `color: #ffffff;` and `border: 2px solid #ffffff;` survive.
     items = sorted(LIGHT_TO_TOKEN.items(), key=lambda kv: -len(kv[0]))
     for hex_lit, token in items:
+        if hex_lit in ("#ffffff", "#fff"):
+            continue   # Stage 1 already handled the bg case; leave text/border white.
         target = palette.get(token)
         if not target:
             continue

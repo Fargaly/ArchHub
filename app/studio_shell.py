@@ -99,6 +99,17 @@ class StudioShell(QMainWindow):
         self.setWindowTitle("ArchHub")
         self.setObjectName("studioShell")
         self.resize(1280, 820)
+        # Force the ArchHub icon onto the title bar / taskbar even when
+        # QApplication.windowIcon hasn't been set yet (e.g. shell
+        # constructed in a smoke test).
+        try:
+            from pathlib import Path as _P
+            from PyQt6.QtGui import QIcon as _QIcon
+            ico = _P(__file__).resolve().parent / "assets" / "archhub.ico"
+            if ico.exists():
+                self.setWindowIcon(_QIcon(str(ico)))
+        except Exception:
+            pass
 
         self.router = router
         self.manager = manager

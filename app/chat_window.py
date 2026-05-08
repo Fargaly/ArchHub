@@ -1976,16 +1976,14 @@ class ChatWindow(QMainWindow):
         from secrets_store import load_setting
 
         configured = set(self.router.configured_providers())
-        # Ollama models are now shown by default so users always have a
-        # zero-cost local fallback in the picker. The "Show local Ollama
-        # models" Settings toggle is treated as ON unless explicitly
-        # set to False — backwards-compatible for anyone who toggled it
-        # off intentionally.
-        local_pref = load_setting("show_local_models")
-        show_local = (local_pref is None) or bool(local_pref)
-        cloud_configured = configured - {"ollama"}
-        if not cloud_configured:
-            show_local = True
+        # Local Ollama models always surface when Ollama is reachable.
+        # The legacy `show_local_models` setting (default False) used
+        # to hide them — overriding that here because users repeatedly
+        # asked "where's qwen / llama?" when their local models were
+        # silently filtered out. To explicitly hide local models now,
+        # set `hide_local_models=True` in Settings.
+        hide_local = bool(load_setting("hide_local_models"))
+        show_local = ("ollama" in configured) and not hide_local
 
         self.model_picker.clear()
         # Replace the underlying model so we can disable individual items.

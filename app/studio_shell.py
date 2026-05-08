@@ -206,6 +206,11 @@ class StudioShell(QMainWindow):
         self._skills_cache: tuple[float, list] = (0.0, [])
         # First refresh immediately so we don't show stale fake values.
         QTimer.singleShot(50, self._refresh_live)
+        # Startup banner — if the user has no API keys configured AND
+        # no local Ollama models available, the chat will silently hang
+        # the moment they hit Send. Surface the gap up front so they
+        # know to add a key before typing.
+        QTimer.singleShot(800, self._maybe_show_no_llm_banner)
 
     # ──────────────────────────────────────────────────────────────────
     # Rail
@@ -1927,6 +1932,35 @@ class StudioShell(QMainWindow):
                            kind="err")
             except Exception:
                 pass
+
+    def _maybe_show_no_llm_banner(self) -> None:
+        """If no API keys are configured AND Ollama isn't reachable,
+        surface a single toast nudging the user toward Settings —
+        otherwise the chat hangs silently the first time they send."""
+        try:
+            from secrets_store import load_api_key
+            keys = [load_api_key(p) for p in
+                    ("anthropic", "openai", "google", "openrouter", "relay")]
+            has_cloud_key = any(bool(k) for k in keys)
+        except Exception:
+            has_cloud_key = False
+        has_local = False
+        try:
+            from llm_router import ollama_models
+            has_local = bool(ollama_models())
+        except Exception:
+            has_local = False
+        if has_cloud_key or has_local:
+            return
+        try:
+            from toast import show_toast
+            show_toast(
+                self,
+                "No LLM configured. Open Settings → Sign-ins to add a key.",
+                kind="warn", duration_ms=6000,
+            )
+        except Exception:
+            pass
 
     def _open_palette(self) -> None:
         """Open the ⌘K command palette overlay (v0.31)."""

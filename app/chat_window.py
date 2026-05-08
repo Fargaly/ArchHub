@@ -1356,6 +1356,22 @@ class ChatWindow(QMainWindow):
         if self._current_bubble is not None:
             self._current_bubble.append_text(f"\n\n[Error] {msg}")
             self.history[-1].content += f"\n\n[Error] {msg}"
+        else:
+            # No bubble was attached (e.g. failure happened in
+            # _get_client before streaming began). Surface a system
+            # message so the chat doesn't hang silently with the
+            # typing dots from the previous turn.
+            sys_msg = ChatMessage(role="system",
+                                   content=f"[Error] {msg}")
+            self.history.append(sys_msg)
+            self._render_message(sys_msg)
+        # Try a Studio toast too so the failure registers visually
+        # outside the chat scroll area.
+        try:
+            from toast import show_toast
+            show_toast(self.window(), msg, kind="err")
+        except Exception:
+            pass
 
     def _on_stop(self) -> None:
         if self.worker is not None:

@@ -23,6 +23,8 @@ Current ship: **v0.27.x** — Studio shell wired to live ArchHub data
 | v0.29 | 2026-05-08 | Workflows node canvas — Blueprint-style QGraphicsScene replaces the legacy WorkflowsPanel list view. 12-px minor / 60-px major drafting grid. Rounded-card NodeItem with kind ribbon, italic-serif title, in/out slots; right-angle elbow EdgeItem with arrow head. Drag-from-output to drop-on-input creates an edge. Right-click empty space opens a 6-type palette. Right-click a node opens edit-config / delete. Toolbar: Rename · Save · Open · Run. Same Workflow JSON format as the list view. New `app/workflow_canvas.py`. |
 | v0.30 | 2026-05-08 | Marketplace — official catalog of Skills + Workflows (5-item seed shipped at `payload/marketplace/catalog.json`). Two-tab page (Skills · Workflows), live filter by name/tag/host, 3-column card grid with terra Install button. Skill installs via `skills.library.add_skill`; Workflow installs via `workflows.save_workflow`. New `app/marketplace_panel.py`. |
 | v0.31 | 2026-05-08 | ⌘K command palette — frameless overlay reachable via Ctrl+K or the rail's command box. Live-ranked search across 5 providers: Page (nav + addhost) · Action (theme toggle, refresh, add host) · Skill (skills.library) · Session (session_io) · Market (catalog). Up/Down navigate, Enter invokes, Esc closes. New `app/command_palette.py`. |
+| v0.32 | 2026-05-08 | ConnectorBirth motion (brand principle 07: quiet motion). New `_PulseDot` QLabel subclass uses QPropertyAnimation with OutCubic easing for a 600 ms two-phase intensity pulse — no bounce, no overshoot. Triggered on host-state transitions INTO live or loaded_dead so the dot "settles" when a host wakes up or is healing. The hosts rail tracks per-family previous state in `_host_prev_state` so we only animate genuine transitions. |
+| v0.33 | 2026-05-08 | Parameters sidebar — right inspector now swaps between static CONTEXT KV rows and the live ParametersPanel bound to the chat session when the user is on the Chat page. Parameter edits route through the existing `_on_parameter_edited` handler so downstream steps re-run the same way they would from the legacy split-pane sidebar. Inspector caption flips to "PARAMETERS · LIVE" + "Session parameters" title on Chat. |
 
 ## Up next — committed dates (compressed per CEO)
 
@@ -30,14 +32,8 @@ Sprint window: 2026-05-08 → 2026-05-10. Everything below ships within
 48 hours of commit. Items that genuinely require external blockers
 (NuGet downloads, dev-pack installs on user machines) are flagged.
 
-### v0.32 — ConnectorBirth motion (target 2026-05-10)
-- Quiet motion (brand principle 07): toggle a host on, the row settles.
-- Status dot pulse-to-live · self-heal hairline pulse.
-
-### v0.33 — Parameters sidebar (target 2026-05-10)
-- Right inspector becomes the live session parameters panel on Chat.
-- Live re-run on slider drag.
-- Replaces today's static KV rows with editable controls.
+All sprint items v0.28–v0.33 shipped 2026-05-08 in a single day window
+per CEO directive. Next sprint planning starts 2026-05-09.
 
 ## Brand alignment
 

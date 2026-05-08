@@ -43,7 +43,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QSize, QPointF, pyqtSignal
+from PyQt6.QtCore import (
+    Qt, QTimer, QSize, QPointF, QPropertyAnimation, QEasingCurve,
+    QSequentialAnimationGroup, pyqtProperty, pyqtSignal,
+)
 from PyQt6.QtGui import (
     QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen,
     QPixmap, QShortcut,
@@ -102,6 +105,9 @@ class StudioShell(QMainWindow):
         self.tools = tools
         self.chat_widget = chat_widget
         self._active_page = "home"
+        # Per-family previous state — drives ConnectorBirth pulse on
+        # state transitions (v0.32, brand principle 07: quiet motion).
+        self._host_prev_state: dict[str, str] = {}
 
         # Apply persisted theme preference before building any pages.
         try:
@@ -567,6 +573,9 @@ class StudioShell(QMainWindow):
     # Inspector
     # ──────────────────────────────────────────────────────────────────
     def _build_inspector(self) -> QFrame:
+        """Right inspector — context KV rows by default, swaps to the
+        live Parameters panel when the user is on the Chat page (v0.33).
+        """
         ins = QFrame()
         ins.setObjectName("studioInspector")
         ins.setFixedWidth(304)
@@ -577,19 +586,62 @@ class StudioShell(QMainWindow):
         cap = QLabel("CONTEXT")
         cap.setObjectName("studioMonoCap")
         v.addWidget(cap)
+        self._ins_cap = cap
         self._ins_title = QLabel("ArchHub — Studio")
         self._ins_title.setObjectName("studioInspectorTitle")
         v.addWidget(self._ins_title)
 
-        # Five KV rows; values updated by _refresh_inspector.
+        # Static KV rows (default state).
+        self._ins_kv_wrap = QWidget()
+        kv_l = QVBoxLayout(self._ins_kv_wrap)
+        kv_l.setContentsMargins(0, 0, 0, 0)
+        kv_l.setSpacing(10)
         self._ins_rows: dict[str, QLabel] = {}
         for key in ("Active host", "Connectors", "Skills", "Model", "Latency"):
             row, value_lbl = _inspector_kv(key, "…")
-            v.addWidget(row)
+            kv_l.addWidget(row)
             self._ins_rows[key] = value_lbl
+        v.addWidget(self._ins_kv_wrap)
 
+        # Parameters panel slot — instantiated lazily when entering Chat.
+        self._ins_params_wrap = QWidget()
+        pl = QVBoxLayout(self._ins_params_wrap)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(0)
+        self._ins_params_wrap.setVisible(False)
+        v.addWidget(self._ins_params_wrap)
+
+        self._ins_params_panel = None     # populated by _ensure_params_panel
         v.addStretch(1)
         return ins
+
+    def _ensure_params_panel(self):
+        """Instantiate (once) the live ParametersPanel bound to the
+        chat session. Returns True if the panel is available."""
+        if self._ins_params_panel is not None:
+            return True
+        try:
+            from parameters_panel import ParametersPanel
+            session = getattr(self.chat_widget, "session", None)
+            if session is None:
+                return False
+            panel = ParametersPanel()
+            panel.set_session(session)
+            self._ins_params_panel = panel
+            self._ins_params_wrap.layout().addWidget(panel)
+            # Edits route through the existing chat-window handler so
+            # downstream steps re-run the same way they would from the
+            # legacy split-pane sidebar.
+            try:
+                handler = getattr(self.chat_widget,
+                                  "_on_parameter_edited", None)
+                if callable(handler):
+                    panel.parameter_edited.connect(handler)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
 
     # ──────────────────────────────────────────────────────────────────
     # Status rule
@@ -737,6 +789,17 @@ class StudioShell(QMainWindow):
         for e in entries:
             row = self._make_host_row(e, health)
             layout.addWidget(row)
+        # After rebuilding rows, refresh the prev-state cache so the
+        # NEXT tick can decide whether to pulse on transition.
+        if health is not None:
+            for e in entries:
+                fam = getattr(e, "family", "")
+                if not fam:
+                    continue
+                try:
+                    self._host_prev_state[fam] = health.state(fam)
+                except Exception:
+                    pass
 
     def _make_host_row(self, entry, health) -> QFrame:
         row = QFrame()
@@ -767,9 +830,17 @@ class StudioShell(QMainWindow):
             color = T["inkCap"]
         else:
             color = T["inkCap"] if active else T["inkDim"]
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color:{color}; font-size: 10px;")
+        dot = _PulseDot(color)
         h.addWidget(dot)
+        # Track previous state per family so we can pulse on transition
+        # ("ConnectorBirth" — quiet motion when a host comes alive or
+        # heals). Storage lives on the shell instance.
+        prev = self._host_prev_state.get(family) if hasattr(self, "_host_prev_state") else None
+        if prev is not None and prev != state_str:
+            # Pulse only on transitions INTO live or loaded_dead — not on
+            # outbound death (which would be loud + distracting).
+            if state_str in ("live", "loaded_dead"):
+                QTimer.singleShot(50, dot.pulse)
 
         n = QLabel(entry.display_name)
         n.setObjectName("studioHostName")
@@ -1352,6 +1423,24 @@ class StudioShell(QMainWindow):
         for nid, btn in self._nav_buttons.items():
             active = nid == page_id
             btn.setStyleSheet(_nav_style(active))
+
+        # v0.33 — inspector swaps between the static KV rows and the
+        # live Parameters panel based on which page is active.
+        try:
+            on_chat = (page_id == "chat")
+            if on_chat and self._ensure_params_panel():
+                self._ins_kv_wrap.setVisible(False)
+                self._ins_params_wrap.setVisible(True)
+                self._ins_cap.setText("PARAMETERS · LIVE")
+                self._ins_title.setText("Session parameters")
+            else:
+                self._ins_kv_wrap.setVisible(True)
+                self._ins_params_wrap.setVisible(False)
+                self._ins_cap.setText("CONTEXT")
+                self._ins_title.setText("ArchHub — Studio")
+        except Exception:
+            pass
+
         self.nav_changed.emit(page_id)
 
     # ──────────────────────────────────────────────────────────────────
@@ -1653,6 +1742,62 @@ def _inspector_kv(key: str, value: str) -> tuple[QFrame, QLabel]:
     val.setObjectName("studioInspectorValue")
     v.addWidget(val)
     return row, val
+
+
+class _PulseDot(QLabel):
+    """Status dot with quiet-motion pulse animation (brand principle 07).
+
+    Used in the HOSTS rail. Calling `.pulse()` runs a soft scale +
+    color settle that lasts ~600ms — no bounce, no overshoot. The
+    underlying paint is a Unicode bullet styled by stylesheet, but
+    we override paintEvent so we can apply a pulse alpha without
+    touching the stylesheet on every frame.
+    """
+    def __init__(self, color: str, parent=None):
+        super().__init__("●", parent)
+        self._color = QColor(color)
+        self._intensity = 1.0       # 0..1, drives alpha
+        self.setStyleSheet(f"color:{color}; font-size:10px;")
+        self._anim_group: QSequentialAnimationGroup | None = None
+
+    def setPulseColor(self, color: str) -> None:
+        self._color = QColor(color)
+        self.setStyleSheet(f"color:{color}; font-size:10px;")
+
+    @pyqtProperty(float)
+    def intensity(self) -> float:
+        return self._intensity
+
+    @intensity.setter
+    def intensity(self, v: float) -> None:
+        self._intensity = max(0.0, min(1.0, float(v)))
+        c = QColor(self._color)
+        c.setAlphaF(0.45 + 0.55 * self._intensity)
+        self.setStyleSheet(f"color:{c.name(QColor.NameFormat.HexArgb)}; font-size:10px;")
+
+    def pulse(self) -> None:
+        """Run a single quiet pulse: 1.0 → 0.5 → 1.0 over 600 ms.
+
+        Two phases, each 300 ms, OutCubic in / OutCubic out. No
+        overshoot. Settles back to full intensity at end.
+        """
+        if self._anim_group is not None and self._anim_group.state() == QPropertyAnimation.State.Running:
+            return
+        a1 = QPropertyAnimation(self, b"intensity")
+        a1.setDuration(300)
+        a1.setStartValue(1.0)
+        a1.setEndValue(0.5)
+        a1.setEasingCurve(QEasingCurve.Type.OutCubic)
+        a2 = QPropertyAnimation(self, b"intensity")
+        a2.setDuration(300)
+        a2.setStartValue(0.5)
+        a2.setEndValue(1.0)
+        a2.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group = QSequentialAnimationGroup(self)
+        group.addAnimation(a1)
+        group.addAnimation(a2)
+        self._anim_group = group
+        group.start()
 
 
 def _revit_sessions_tooltip() -> str:

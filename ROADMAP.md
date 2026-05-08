@@ -33,7 +33,106 @@ Sprint window: 2026-05-08 → 2026-05-10. Everything below ships within
 (NuGet downloads, dev-pack installs on user machines) are flagged.
 
 All sprint items v0.28–v0.33 shipped 2026-05-08 in a single day window
-per CEO directive. Next sprint planning starts 2026-05-09.
+per CEO directive.
+
+### v0.34 series — UX polish + chat reasoning + multi-host (shipped 2026-05-08)
+
+| Ver | What |
+|---|---|
+| v0.34 | Voice via Win+H system dictation hand-off |
+| v0.34.1 | Telemetry KPI cards · Marketplace cloud sync · Pet-strip relaunch · Outlook broker · Settings sub-line |
+| v0.34.2 | theme_builder regex bug — stray Win-cyan bleed killed |
+| v0.34.3 | Force Fusion + override Highlight palette + selection-color QSS |
+| v0.34.4 | Chat hang fix: visible error when bubble null + startup no-LLM banner |
+| v0.34.5 | Picker shows blocked providers ("out of credit") + fallback toast on auto-route |
+| v0.34.6 | iOS-style toggle + sun/moon theme button + status rule matches handoff |
+| v0.34.7 | Visible reasoning + status line (Anthropic extended-thinking enabled) |
+| v0.34.8 | AppUserModelID + ArchMark .ico regenerated from brand path geometry |
+| v0.34.9 | Real chat bubble bg (not transparent) + Ollama always shown by default |
+| v0.34.10 | Studio panels read live palette via _LivePalette + dotnet detect picks Program Files |
+| v0.34.11 | Outlook broker wired into HOSTS rail + marketplace cache bust + autosave session |
+| v0.34.12 | Revit 2020/2021/2022 supported (net47 build) + DLL deployed |
+| v0.34.13 | 👍👎 emoji feedback replaced with quiet "Helpful? yes/no" on hover |
+| v0.34.14 | 3ds Max install path fix (per-user LOCALAPPDATA, was admin-only Program Files) |
+| v0.34.15 | Picker dropdown contrast: enabled rows full ink, disabled inkCap |
+
+### v0.35 — Multi-instance MCP routing (target 2026-05-10)
+The biggest gap left in the multi-session story. Today the broker
+DETECTS multiple Revit / Outlook sessions, but tool calls always pick
+the most-recent healthy one. v0.35 makes routing first-class:
+
+- `revit_broker.pick_session(prefer=...)` already accepts a hint —
+  exposed in tool calls via `?session=<pid>` or `?doc=<title>`.
+- Chat layer adds an `@<host-instance>` mention syntax: typing
+  `@Tower-A` in chat scopes ALL subsequent tool calls in that turn to
+  the Revit instance with that doc title.
+- Tool engine respects the active session pin so multi-stage skills
+  (sketch → production) bind to ONE Revit session for the whole run.
+- HOSTS rail rows expand on click into a per-session sub-list (Revit
+  · 3 sess → click → Tower-A · Bridge-B · Pavilion-C, each
+  individually toggleable).
+- Same pattern lifts to AutoCAD + 3ds Max once those connectors get
+  the session-file heartbeat (v0.27.5 brought it to Revit only).
+
+### v0.36 — OpenAI / Gemini reasoning surfacing (target 2026-05-11)
+v0.34.7 added Anthropic extended-thinking. Other providers next:
+- OpenAI o1 / o3 / GPT-5 reasoning_effort + reasoning summary
+- Gemini 2.5 Pro / Flash thinking + thought summary
+- Ollama models that emit `<think>...</think>` tagged content (DeepSeek
+  R1 etc.) — already streams the tags; just needs the chat-side parser
+  to route into the reasoning view instead of the answer.
+
+### v0.37 — AutoCAD multi-session (target 2026-05-13)
+Same pattern as Revit v0.27.5:
+- AcadMCP.dll writes `%LOCALAPPDATA%\ArchHub\sessions\autocad-<pid>.json`
+- Heartbeat every 10 s; deleted on shutdown.
+- Port range [48885..48899] first-free wins.
+- New `app/acad_broker.py` mirrors revit_broker API.
+- HOSTS rail surfaces "AutoCAD · 2 sess" + tooltip.
+
+### v0.38 — 3ds Max multi-session + send queue (target 2026-05-15)
+- max_mcp_startup writes session file like Revit; binds first-free
+  port [48886..48899].
+- Tool calls into Max get queued via the existing pymxs runtime queue
+  but tagged by session_id so concurrent runs don't collide.
+- Outlook broker gets the same surface (already wired in v0.34.11).
+
+### v0.39 — Marketplace remote registry (target 2026-05-17)
+- `cloud_sync` already pulls from a per-firm git remote. Add an
+  authoritative `marketplace.archhub.io` registry source (or whatever
+  domain we land on) seeded with the ArchHub-curated catalog.
+- Sign installs with the firm's GPG key (cloud_sync setup already
+  generates one) so locally-installed Skills carry provenance.
+- Versioning: pin Skills/Workflows by semver, surface a "1 update
+  available" badge in the marketplace card.
+
+### v0.40 — Workflow canvas v2 (target 2026-05-20)
+- Right inspector pane replaces toolbar Run for selected node — live
+  parameter sliders re-run the node + downstream nodes (matches
+  studio-vision.jsx::Parameters).
+- Node mini-map + zoom slider.
+- Undo / redo on canvas edits.
+- Keyboard navigation (arrow keys move selected node, Tab cycles).
+
+### v0.41 — Settings sectioned chrome (target 2026-05-22)
+- Replace the embedded SettingsDialog with native Studio sections:
+  General · Sign-ins · Connectors · Cloud sync · Telemetry · Updates.
+- Each section is a Studio page with header / sub / KV grid.
+- Sign-ins section calls the v0.34 paste-key dialog inline.
+
+### v0.42 — Reality Check rebuild (target 2026-05-24)
+- Diagnostic panel currently uses the legacy ChatWindow popup.
+- New Telemetry-tab subroute: per-host health timeline (24-hour
+  uptime sparklines), recent tool errors, last-update timestamps.
+
+### v1.0 — Public beta cut (target 2026-06-01)
+- Sign installer (Inno Setup) so Defender stops complaining.
+- Public landing/index.html refresh with brand v0.1 art direction.
+- 30-day free trial → BYO-key tier ($0/month) → Studio firm tier
+  ($199/seat/month).
+- ProductHunt launch + a curated first-100 architect outreach list.
+
+Next sprint planning starts 2026-05-09.
 
 ## Brand alignment
 

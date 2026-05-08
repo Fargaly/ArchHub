@@ -90,6 +90,19 @@ QComboBox QAbstractItemView {
     padding: 4px;
     outline: 0;
 }
+/* Enabled items stay full-contrast ink; disabled (no-key, blocked) get
+   muted ink so the user can tell at a glance which providers will work. */
+QComboBox QAbstractItemView::item {
+    color: #251f17;
+    padding: 5px 10px;
+}
+QComboBox QAbstractItemView::item:disabled {
+    color: #9a9183;
+}
+QComboBox QAbstractItemView::item:selected {
+    background-color: #f5e3db;
+    color: #251f17;
+}
 
 /* Cog menu button — small bordered tile */
 QToolButton#menuButton {

@@ -2128,9 +2128,12 @@ class ChatWindow(QMainWindow):
             item.setEnabled(enabled)
             if tooltip:
                 item.setToolTip(tooltip)
-            if not enabled:
-                from PyQt6.QtGui import QBrush, QColor
-                item.setForeground(QBrush(QColor("#6a6a6c")))
+            # Color comes from QSS (`QComboBox QAbstractItemView::item:disabled`)
+            # so the dim shade follows the active palette in light AND dark
+            # mode. The previous hardcoded `#6a6a6c` foreground was applied
+            # to every disabled row regardless of theme — fine in light, but
+            # against a dark dropdown bg (#1d1d22) it merged with neighbouring
+            # enabled rows, making the WHOLE dropdown look greyed out.
             item_model.appendRow(item)
 
         _add("Auto · best model per task", ROUTE_AUTO, enabled=True,

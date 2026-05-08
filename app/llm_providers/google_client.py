@@ -58,7 +58,9 @@ class GoogleClient:
         messages: list[dict],
         tools: list[dict],
         on_chunk: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> dict:
+        on_reasoning = on_reasoning or (lambda _: None)
         gemini_contents = self._adapt_messages(messages)
         body: dict[str, Any] = {
             "contents": gemini_contents,

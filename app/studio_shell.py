@@ -1300,8 +1300,20 @@ class StudioShell(QMainWindow):
                 sessions_n = outlook_broker.sessions_count()
             except Exception:
                 sessions_n = 0
+        elif family == "max":
+            try:
+                import max_broker
+                sessions_n = max_broker.sessions_count()
+            except Exception:
+                sessions_n = 0
+        elif family == "autocad":
+            try:
+                import acad_broker
+                sessions_n = acad_broker.sessions_count()
+            except Exception:
+                sessions_n = 0
         if state_str == "live":
-            if family in ("revit", "outlook") and sessions_n > 1:
+            if family in ("revit", "outlook", "max", "autocad") and sessions_n > 1:
                 detail = f"{sessions_n} sess"
             else:
                 detail = port or "live"

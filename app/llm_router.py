@@ -537,6 +537,7 @@ class LLMRouter:
                     model=model_name,
                     tools=tool_schemas,
                     on_chunk=chunk_handler,
+                    on_reasoning=on_reasoning,
                 )
                 full_text += assistant_text
                 tool_calls = raw_tool_calls  # already [{id, name, input}]

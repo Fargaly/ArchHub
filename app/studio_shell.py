@@ -140,12 +140,7 @@ class StudioShell(QMainWindow):
             "chat":      self._wrap_chat(chat_widget),
             "skills":    self._build_skills_page(),
             "flows":     self._build_workflows_page(),
-            "market":    self._build_placeholder(
-                "Marketplace",
-                "Workflows + Skills · official + community.\n\n"
-                "Ships v0.30 (see ROADMAP.md). Until then, share Skills "
-                "by exporting JSON from the Skills page."
-            ),
+            "market":    self._build_marketplace_page(),
             "telemetry": self._build_telemetry_page(),
             "settings":  self._build_settings_page(),
             "addhost":   self._build_addhost_page(),
@@ -172,6 +167,9 @@ class StudioShell(QMainWindow):
         for nav_id, _, key in NAV_ITEMS:
             sc = QShortcut(QKeySequence(f"Ctrl+{key}"), self)
             sc.activated.connect(lambda _id=nav_id: self._set_page(_id))
+        # ⌘K command palette overlay.
+        self._palette_sc = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._palette_sc.activated.connect(self._open_palette)
 
         # Live refresh — 2s tick rebuilds rail + status + inspector + home.
         self._refresh_timer = QTimer(self)
@@ -219,7 +217,7 @@ class StudioShell(QMainWindow):
         ck = QPushButton("Ask, search, run skill…  ⌘K")
         ck.setObjectName("studioCommandBox")
         ck.setCursor(Qt.CursorShape.PointingHandCursor)
-        ck.clicked.connect(lambda: self._set_page("chat"))
+        ck.clicked.connect(self._open_palette)
         ck_l.addWidget(ck)
         v.addWidget(ck_wrap)
 
@@ -490,6 +488,14 @@ class StudioShell(QMainWindow):
         scroll.setWidget(rail_wrap)
         outer.addWidget(scroll, 1)
         return page
+
+    def _build_marketplace_page(self) -> QWidget:
+        """Marketplace — official catalog of Skills + Workflows. v0.30."""
+        try:
+            from marketplace_panel import MarketplacePanel
+            return MarketplacePanel(parent=None)
+        except Exception as ex:
+            return self._error_card("Marketplace", str(ex))
 
     def _build_addhost_page(self) -> QWidget:
         """Add Host — Studio-native host detection + auto-build panel.
@@ -1226,6 +1232,15 @@ class StudioShell(QMainWindow):
             return 0
 
     # ──────────────────────────────────────────────────────────────────
+    def _open_palette(self) -> None:
+        """Open the ⌘K command palette overlay (v0.31)."""
+        try:
+            from command_palette import CommandPalette
+            CommandPalette(shell=self, parent=self).exec()
+        except Exception as ex:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Palette failed", f"{type(ex).__name__}: {ex}")
+
     def _open_add_host(self) -> None:
         """'+ Add' button on the HOSTS rail header — switches the
         centre stack to the Add Host panel (v0.28). The panel itself

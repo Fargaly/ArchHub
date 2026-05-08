@@ -177,11 +177,22 @@ class StudioShell(QMainWindow):
         self._palette_sc = QShortcut(QKeySequence("Ctrl+K"), self)
         self._palette_sc.activated.connect(self._open_palette)
 
-        # Live refresh — 2s tick rebuilds rail + status + inspector + home.
+        # Live refresh — diff-driven. Tick is 5s (was 2s) and we only
+        # rebuild the rail/threads/etc. when their *signature* changes
+        # since the last tick. Status rule + inspector are cheap setText
+        # calls so they always run. Page-specific refreshes (home,
+        # telemetry) gate on whether their page is currently visible.
+        # The previous 2s, full-rebuild loop was the source of the
+        # "feels heavy / laggy" feedback.
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(2000)
+        self._refresh_timer.setInterval(5000)
         self._refresh_timer.timeout.connect(self._refresh_live)
         self._refresh_timer.start()
+        # Caches for diff comparisons + TTL'd disk reads.
+        self._last_hosts_sig: tuple = ()
+        self._last_threads_sig: tuple = ()
+        self._sessions_cache: tuple[float, list] = (0.0, [])
+        self._skills_cache: tuple[float, list] = (0.0, [])
         # First refresh immediately so we don't show stale fake values.
         QTimer.singleShot(50, self._refresh_live)
 
@@ -748,14 +759,7 @@ class StudioShell(QMainWindow):
     # Live refresh
     # ──────────────────────────────────────────────────────────────────
     def _refresh_live(self) -> None:
-        try:
-            self._refresh_hosts()
-        except Exception:
-            pass
-        try:
-            self._refresh_threads()
-        except Exception:
-            pass
+        # Cheap, always-run text updates first.
         try:
             self._refresh_status_rule()
         except Exception:
@@ -764,28 +768,33 @@ class StudioShell(QMainWindow):
             self._refresh_inspector()
         except Exception:
             pass
+        # Rail surfaces — diff-rebuild only on signature change.
         try:
-            self._refresh_home()
+            self._refresh_hosts()
         except Exception:
             pass
         try:
-            self._refresh_telemetry_page()
+            self._refresh_threads()
         except Exception:
             pass
+        # Page-specific — gate on which page the user is actually
+        # looking at. No reason to rebuild Home's three lists every
+        # 5 s when the user is on Settings.
+        if self._active_page == "home":
+            try:
+                self._refresh_home()
+            except Exception:
+                pass
+        if self._active_page == "telemetry":
+            try:
+                self._refresh_telemetry_page()
+            except Exception:
+                pass
 
     def _refresh_hosts(self) -> None:
         if self.manager is None:
             return
-        # Sample current entries.
         entries = list(self.manager.entries)
-        self._hosts_count_lbl.setText(f"HOSTS · {len(entries)}")
-        layout = self._hosts_container.layout()
-        # Clear existing rows.
-        while layout.count():
-            item = layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
         # Health snapshot once.
         try:
             from connector_health import instance as _hi
@@ -793,11 +802,32 @@ class StudioShell(QMainWindow):
         except Exception:
             health = None
 
+        # Build a cheap signature: (entry.id, entry.state, health.state(family))
+        # Skip the entire rebuild when nothing's changed since last tick.
+        from manager import ConnectorState
+        sig_items = []
+        for e in entries:
+            fam = getattr(e, "family", "")
+            try:
+                hs = health.state(fam) if (health is not None and fam) else "unknown"
+            except Exception:
+                hs = "unknown"
+            sig_items.append((e.id, e.state.name if isinstance(e.state, ConnectorState) else str(e.state), hs))
+        sig = tuple(sig_items)
+        if sig == self._last_hosts_sig:
+            return  # nothing to do — saves ~30 widget recreations per tick
+
+        self._last_hosts_sig = sig
+        self._hosts_count_lbl.setText(f"HOSTS · {len(entries)}")
+        layout = self._hosts_container.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
         for e in entries:
             row = self._make_host_row(e, health)
             layout.addWidget(row)
-        # After rebuilding rows, refresh the prev-state cache so the
-        # NEXT tick can decide whether to pulse on transition.
         if health is not None:
             for e in entries:
                 fam = getattr(e, "family", "")
@@ -933,17 +963,18 @@ class StudioShell(QMainWindow):
         return row
 
     def _refresh_threads(self) -> None:
+        sessions = self._cached_sessions()
+        # Diff signature: top-8 (path, saved_at). Rebuild only on change.
+        sig = tuple((str(p), s) for p, _n, s in sessions[:8])
+        if sig == self._last_threads_sig:
+            return
+        self._last_threads_sig = sig
         layout = self._threads_container.layout()
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
-        try:
-            from session_io import list_sessions
-            sessions = list_sessions()
-        except Exception:
-            sessions = []
         if not sessions:
             empty = QLabel("  No saved sessions yet.")
             empty.setObjectName("studioMonoMuted")
@@ -955,6 +986,38 @@ class StudioShell(QMainWindow):
             row.setCursor(Qt.CursorShape.PointingHandCursor)
             row.mousePressEvent = lambda _e, p=path: self._open_session_path(p)
             layout.addWidget(row)
+
+    # ------------------------------------------------------------------
+    # Disk-read caches — list_sessions and list_skills both walk the
+    # disk + parse JSON; doing that every tick on the Qt main thread
+    # was a big chunk of the perceived lag. 5-second TTL is plenty
+    # given the rail's 5-s refresh cadence.
+    # ------------------------------------------------------------------
+    def _cached_sessions(self) -> list:
+        import time as _t
+        ts, val = self._sessions_cache
+        if (_t.time() - ts) < 5.0:
+            return val
+        try:
+            from session_io import list_sessions
+            val = list_sessions() or []
+        except Exception:
+            val = []
+        self._sessions_cache = (_t.time(), val)
+        return val
+
+    def _cached_skills(self) -> list:
+        import time as _t
+        ts, val = self._skills_cache
+        if (_t.time() - ts) < 5.0:
+            return val
+        try:
+            from skills.library import list_skills
+            val = list_skills() or []
+        except Exception:
+            val = []
+        self._skills_cache = (_t.time(), val)
+        return val
 
     def _open_session_path(self, path: Path) -> None:
         # Switch to chat page, then ask the chat widget to load.
@@ -1082,11 +1145,7 @@ class StudioShell(QMainWindow):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
-        try:
-            from skills.library import list_skills
-            sks = list_skills() or []
-        except Exception:
-            sks = []
+        sks = self._cached_skills()
         # Rank by real usage: skills that have been run before float
         # to the top. Pure-placeholder skills (run_count == 0) get
         # quietly demoted so the row always feels earned.
@@ -1120,11 +1179,7 @@ class StudioShell(QMainWindow):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
-        try:
-            from session_io import list_sessions
-            sessions = list_sessions()
-        except Exception:
-            sessions = []
+        sessions = self._cached_sessions()
         # Empty state: hide BOTH the section header and the card so we
         # don't show "Pick up where you left off" with nothing under it.
         has_any = bool(sessions)
@@ -1321,8 +1376,7 @@ class StudioShell(QMainWindow):
 
     def _skills_count(self) -> int:
         try:
-            from skills.library import list_skills
-            return len(list_skills() or [])
+            return len(self._cached_skills())
         except Exception:
             return 0
 

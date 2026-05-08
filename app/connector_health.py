@@ -66,6 +66,9 @@ class _FamilyState:
     netload_attempts: int = 0
     next_netload_ts: float = 0.0
     last_error: str = ""
+    # Multi-session families (revit since v0.27.5): how many sessions
+    # are currently alive. 0 means none; 1+ means live.
+    sessions: int = 0
 
 
 def _hidden_run(args: list[str], **kw):
@@ -92,6 +95,7 @@ def _process_running(name: str) -> bool:
 
 
 def _probe_listener(family: str) -> tuple[bool, str]:
+    """Single-port probe (used for autocad/max/blender)."""
     url = LISTENER_URL.get(family)
     if not url:
         return False, "no listener url"
@@ -106,6 +110,29 @@ def _probe_listener(family: str) -> tuple[bool, str]:
         return False, str(e.__class__.__name__)
     except Exception as e:
         return False, str(e)[:80]
+
+
+def _probe_revit_multi() -> tuple[bool, str, int]:
+    """Multi-session probe — Revit since v0.27.5 binds one port per
+    instance and publishes a session file. We're 'live' if at least
+    one session responds. Returns (ok, error_or_count_label, count).
+    """
+    try:
+        import revit_broker
+        sessions = revit_broker.list_sessions(prune=True)
+        alive = sum(1 for s in sessions if s.healthy)
+        if alive >= 1:
+            return True, "", alive
+        if sessions:
+            return False, "all sessions stale", 0
+        # No session files — fall back to legacy single-port probe so
+        # an old DLL still surfaces correctly.
+        ok, err = _probe_listener("revit")
+        return ok, err, 1 if ok else 0
+    except Exception as e:
+        # Broker import / scan failed — fall back to single-port probe.
+        ok, err = _probe_listener("revit")
+        return ok, err, 1 if ok else 0
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +173,7 @@ class ConnectorHealth:
             "last_listener_ok_ts": s.last_listener_ok_ts,
             "netload_attempts": s.netload_attempts,
             "last_error": s.last_error[:120],
+            "sessions": s.sessions,
         }
 
     def snapshot(self) -> dict[str, dict]:
@@ -174,12 +202,17 @@ class ConnectorHealth:
     def _tick_once(self) -> None:
         now = time.time()
         for family in self._state.keys():
-            ok, err = _probe_listener(family)
+            if family == "revit":
+                ok, err, sessions = _probe_revit_multi()
+            else:
+                ok, err = _probe_listener(family)
+                sessions = 1 if ok else 0
             with self._lock:
                 s = self._state[family]
                 prev = s.last_listener_ok
                 s.last_listener_ok = ok
                 s.last_probe_ts = now
+                s.sessions = sessions
                 if ok:
                     s.last_listener_ok_ts = now
                     s.netload_attempts = 0

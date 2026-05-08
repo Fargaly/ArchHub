@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -14,29 +15,82 @@ namespace RevitMCP
     /// <summary>
     /// External application that boots an HTTP server on Revit startup.
     /// All API work is marshalled to the Revit UI thread via ExternalEvent.
+    ///
+    /// MULTI-SESSION (v0.27.5+):
+    /// Each Revit instance binds its OWN free port from the range
+    /// [48884..48899]. The instance's pid + port + Revit version + active
+    /// document title is published to:
+    ///
+    ///     %LOCALAPPDATA%\ArchHub\sessions\revit-{pid}.json
+    ///
+    /// ArchHub's revit_broker.py scans this directory and routes calls
+    /// to one or many sessions (most-recent by default; pick via
+    /// ?session=<pid> query param). Closing one Revit instance only
+    /// removes that instance's session file — the broker stays up,
+    /// other Revit instances remain reachable.
+    ///
+    /// Heartbeat: the session file is rewritten every 10 s with the
+    /// current heartbeat tick so the broker can prune crashed sessions.
     /// </summary>
     [Regeneration(RegenerationOption.Manual)]
     public class RevitMCPApp : IExternalApplication
     {
-        private const string ListenPrefix = "http://localhost:48884/";
+        // Port range — first free wins. Old single-instance port was 48884.
+        private const int PortFirst = 48884;
+        private const int PortLast  = 48899;
+
+        // Heartbeat cadence (rewrites the session file).
+        private const int HeartbeatSeconds = 10;
 
         private HttpListener _listener;
         private CancellationTokenSource _cts;
         private RevitEventHandler _handler;
         private ExternalEvent _externalEvent;
 
+        private int _boundPort;
+        private string _sessionFile;
+        private string _revitVersion = "";
+        private UIControlledApplication _app;
+        private System.Threading.Timer _heartbeatTimer;
+
         public Result OnStartup(UIControlledApplication application)
         {
             try
             {
+                _app = application;
+                _revitVersion = SafeRevitVersion(application);
+
                 _handler = new RevitEventHandler();
                 _externalEvent = ExternalEvent.Create(_handler);
                 _handler.AttachEvent(_externalEvent);
 
+                // Track the active document title so the broker can
+                // surface it in the host row tooltip without us holding
+                // a UI-thread call inside the heartbeat timer.
+                try
+                {
+                    application.ControlledApplication.DocumentOpened += (s, e) =>
+                    {
+                        try { _lastDocTitle = e.Document?.Title ?? ""; } catch { }
+                    };
+                    application.ControlledApplication.DocumentClosing += (s, e) =>
+                    {
+                        try
+                        {
+                            if (e.Document?.Title == _lastDocTitle) _lastDocTitle = "";
+                        }
+                        catch { }
+                    };
+                }
+                catch (Exception ex)
+                {
+                    Log("Doc event subscribe failed: " + ex.Message);
+                }
+
                 _cts = new CancellationTokenSource();
                 Task.Run(() => RunListenerAsync(_cts.Token));
 
-                Log("RevitMCP started. Listening on " + ListenPrefix);
+                Log("RevitMCP starting; will pick a port in [" + PortFirst + ".." + PortLast + "]");
                 return Result.Succeeded;
             }
             catch (Exception ex)
@@ -51,23 +105,68 @@ namespace RevitMCP
             try { _cts?.Cancel(); } catch { }
             try { _listener?.Stop(); } catch { }
             try { _externalEvent?.Dispose(); } catch { }
+            try { _heartbeatTimer?.Dispose(); } catch { }
+            try
+            {
+                if (!string.IsNullOrEmpty(_sessionFile) && File.Exists(_sessionFile))
+                    File.Delete(_sessionFile);
+            }
+            catch { }
+            Log("RevitMCP shutdown — released port " + _boundPort);
             return Result.Succeeded;
         }
 
         // ------------------------------------------------------------------
+        // Listener bootstrap — binds to the first free port in our range
+        // so multiple Revit instances coexist.
 
         private async Task RunListenerAsync(CancellationToken ct)
         {
+            HttpListener bound = null;
+            int port = 0;
+            for (int p = PortFirst; p <= PortLast; p++)
+            {
+                if (ct.IsCancellationRequested) return;
+                var prefix = "http://localhost:" + p + "/";
+                var listener = new HttpListener();
+                listener.Prefixes.Add(prefix);
+                try
+                {
+                    listener.Start();
+                    bound = listener;
+                    port = p;
+                    Log("RevitMCP bound to " + prefix);
+                    break;
+                }
+                catch (HttpListenerException ex)
+                {
+                    Log("Port " + p + " unavailable (" + ex.ErrorCode + "); trying next.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Port " + p + " failed: " + ex.Message + "; trying next.");
+                }
+            }
+
+            if (bound == null)
+            {
+                Log("RevitMCP could not bind any port in [" + PortFirst + ".." + PortLast + "]");
+                return;
+            }
+
+            _listener = bound;
+            _boundPort = port;
+
+            // Publish session registry + start heartbeat.
             try
             {
-                _listener = new HttpListener();
-                _listener.Prefixes.Add(ListenPrefix);
-                _listener.Start();
+                _sessionFile = WriteSessionFile(_boundPort, _revitVersion);
+                _heartbeatTimer = new System.Threading.Timer(_ => HeartbeatTick(), null,
+                    TimeSpan.FromSeconds(HeartbeatSeconds), TimeSpan.FromSeconds(HeartbeatSeconds));
             }
             catch (Exception ex)
             {
-                Log("HttpListener.Start failed: " + ex);
-                return;
+                Log("Session registry write failed: " + ex);
             }
 
             while (!ct.IsCancellationRequested)
@@ -84,6 +183,93 @@ namespace RevitMCP
                 _ = ProcessRequestAsync(context); // fire and forget
             }
         }
+
+        // ------------------------------------------------------------------
+        // Session registry — atomic write so the broker never reads a
+        // half-written file.
+
+        private string WriteSessionFile(int port, string revitVersion)
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ArchHub", "sessions");
+            Directory.CreateDirectory(dir);
+            int pid = Process.GetCurrentProcess().Id;
+            var path = Path.Combine(dir, "revit-" + pid + ".json");
+            WriteSessionJson(path, port, revitVersion, pid, isHeartbeat: false);
+            return path;
+        }
+
+        private void HeartbeatTick()
+        {
+            if (string.IsNullOrEmpty(_sessionFile)) return;
+            try
+            {
+                int pid = Process.GetCurrentProcess().Id;
+                WriteSessionJson(_sessionFile, _boundPort, _revitVersion, pid, isHeartbeat: true);
+            }
+            catch
+            {
+                // Heartbeat failures are non-fatal; broker will prune us
+                // if we go silent for >30s.
+            }
+        }
+
+        private void WriteSessionJson(string path, int port, string revitVersion, int pid, bool isHeartbeat)
+        {
+            string docTitle = "";
+            try
+            {
+                // Best-effort doc title; UI thread access only safe via
+                // event, so we just sample from the application directly.
+                docTitle = SafeActiveDocTitle();
+            }
+            catch { }
+
+            var sb = new StringBuilder(256);
+            sb.Append('{');
+            sb.Append("\"session_id\":\"revit-").Append(pid).Append("\",");
+            sb.Append("\"family\":\"revit\",");
+            sb.Append("\"pid\":").Append(pid).Append(',');
+            sb.Append("\"port\":").Append(port).Append(',');
+            sb.Append("\"version\":\"").Append(JsonEscape(revitVersion)).Append("\",");
+            sb.Append("\"doc_title\":\"").Append(JsonEscape(docTitle)).Append("\",");
+            sb.Append("\"started_at\":\"").Append(DateTime.UtcNow.ToString("o")).Append("\",");
+            sb.Append("\"last_heartbeat\":\"").Append(DateTime.UtcNow.ToString("o")).Append("\",");
+            sb.Append("\"heartbeat\":").Append(isHeartbeat ? "true" : "false");
+            sb.Append('}');
+
+            // Atomic-ish write: temp file + replace.
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            catch
+            {
+                // Replace can fail if another process has the file open.
+                // Fall back to direct overwrite — content is the same shape.
+                File.Copy(tmp, path, overwrite: true);
+                try { File.Delete(tmp); } catch { }
+            }
+        }
+
+        // Last document title we saw via DocumentOpened — refreshed by
+        // the event handler. ControlledApplication has no synchronous
+        // way to enumerate open documents, so we keep our own cache.
+        private volatile string _lastDocTitle = "";
+
+        private string SafeActiveDocTitle() => _lastDocTitle ?? "";
+
+        private string SafeRevitVersion(UIControlledApplication app)
+        {
+            try { return app.ControlledApplication.VersionNumber ?? ""; }
+            catch { return ""; }
+        }
+
+        // ------------------------------------------------------------------
 
         private async Task ProcessRequestAsync(HttpListenerContext context)
         {
@@ -131,7 +317,10 @@ namespace RevitMCP
             {
                 case "/":
                 case "/ping":
-                    return "{\"status\":\"ok\",\"service\":\"revit-mcp\",\"version\":\"0.2.0\"}";
+                    return "{\"status\":\"ok\",\"service\":\"revit-mcp\",\"version\":\"0.3.0\"," +
+                           "\"pid\":" + Process.GetCurrentProcess().Id + "," +
+                           "\"port\":" + _boundPort + "," +
+                           "\"revit_version\":\"" + JsonEscape(_revitVersion) + "\"}";
 
                 case "/info":
                     return await _handler.RunOnRevitThreadAsync(ctx =>
@@ -147,6 +336,7 @@ namespace RevitMCP
                         sb.Append(",\"active_view\":\"").Append(JsonEscape(view?.Name ?? "")).Append('\"');
                         sb.Append(",\"revit_version\":\"").Append(JsonEscape(ctx.UIApp.Application.VersionName)).Append('\"');
                         sb.Append(",\"username\":\"").Append(JsonEscape(ctx.UIApp.Application.Username ?? "")).Append('\"');
+                        sb.Append(",\"pid\":").Append(Process.GetCurrentProcess().Id);
                         sb.Append('}');
                         return sb.ToString();
                     }).ConfigureAwait(false);

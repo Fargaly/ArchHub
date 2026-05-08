@@ -17,6 +17,7 @@ Current ship: **v0.27.x** — Studio shell wired to live ArchHub data
 | v0.27.2 | 2026-05-08 | All fake data ripped — every surface live-wired (manager / sessions / skills / health) |
 | v0.27.3 | 2026-05-08 | Design tokens single source · WCAG-AA contrast · focus rings · 36×24 toggle hits |
 | v0.27.4 | 2026-05-08 | Brand v0.1 integration — ArchMark SVG · "Arch" + italic "Hub" · tagline · dark mode (graphite, not black) · theme toggle · responsive collapse · Settings page layout fix · "+ Add host" button |
+| v0.27.5 | 2026-05-08 | Revit multi-session — each instance binds its own port [48884..48899], publishes a session file with heartbeat. Closing one Revit session no longer kills others. Studio HOSTS row shows live session count + per-session tooltip. New `app/revit_broker.py`. RevitMCP.dll bumped to v0.3.0 (2025/net8 rebuilt; 2023/2024 net48 rebuild blocked on missing .NET Framework 4.8 dev pack — auto_build will rebuild at next activation when the SDK is present). |
 
 ## Up next — committed dates
 

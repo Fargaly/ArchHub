@@ -786,10 +786,20 @@ class StudioShell(QMainWindow):
         n.setObjectName("studioHostName")
         h.addWidget(n, 1)
 
-        # Detail: port if known, else short status word.
+        # Detail: for revit, surface session count when >1
+        # ("Revit · 2 sess"); for other families, port or status word.
         port = FAMILY_PORT.get(family, "")
+        sessions_n = 0
+        if health is not None and family == "revit":
+            try:
+                sessions_n = int(health.info("revit").get("sessions") or 0)
+            except Exception:
+                sessions_n = 0
         if state_str == "live":
-            detail = port or "live"
+            if family == "revit" and sessions_n > 1:
+                detail = f"{sessions_n} sess"
+            else:
+                detail = port or "live"
         elif state_str == "loaded_dead":
             detail = "↻ heal"
         elif state_str == "host_offline":
@@ -802,6 +812,9 @@ class StudioShell(QMainWindow):
             detail = "off"
         p = QLabel(detail)
         p.setObjectName("studioMonoMuted")
+        # Tooltip lists the per-session breakdown for revit.
+        if family == "revit" and sessions_n >= 1:
+            p.setToolTip(_revit_sessions_tooltip())
         h.addWidget(p)
 
         # Toggle — visual 24×14 pill, hit area enlarged via padding.
@@ -1624,6 +1637,29 @@ def _inspector_kv(key: str, value: str) -> tuple[QFrame, QLabel]:
     val.setObjectName("studioInspectorValue")
     v.addWidget(val)
     return row, val
+
+
+def _revit_sessions_tooltip() -> str:
+    """Format the live Revit session list for a tooltip."""
+    try:
+        import revit_broker
+        sessions = revit_broker.list_sessions(prune=False)
+    except Exception:
+        return "Revit sessions unavailable."
+    if not sessions:
+        return "No Revit sessions."
+    lines = ["Revit sessions:"]
+    for s in sessions:
+        marker = "●" if s.healthy else "○"
+        bits = [f"{marker} pid {s.pid}", f":{s.port}"]
+        if s.version:
+            bits.append(s.version)
+        if s.doc_title:
+            bits.append(s.doc_title[:40])
+        if s.legacy:
+            bits.append("(legacy DLL)")
+        lines.append("  " + " · ".join(bits))
+    return "\n".join(lines)
 
 
 def _short_when(saved_at: str) -> str:

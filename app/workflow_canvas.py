@@ -1,0 +1,620 @@
+"""Workflow node canvas — Blueprint direction (handoff blueprint.jsx).
+
+A real QGraphicsScene canvas that reads and writes the existing
+`workflows.graph.Workflow` data model — same JSON shape the
+WorkflowsPanel list view uses, so a workflow saved here loads in the
+list view and vice versa.
+
+Layout & feel
+-------------
+- Drafting paper: 12-px minor grid, 60-px major grid (mirrors
+  blueprint.jsx::BlueprintFlow exactly).
+- Border-in-a-border drafting frame around the visible scene.
+- Title block bottom-right (workflow name · stage · state · elapsed).
+- Nodes are rounded-rect cards: kind tag, host pill, title, sub.
+- Edges are right-angle "elbow" paths with an accent arrow head
+  (same as the JSX prototype).
+
+Interactions
+------------
+- Click + drag a node moves it; edges follow.
+- Drag from a node's right slot to another node's left slot creates
+  an edge. Drop in empty space cancels.
+- Right-click an empty area opens a node palette.
+- Right-click a node opens delete + edit-config.
+- Ctrl+S saves the current Workflow to the workflows library.
+- Ctrl+R runs the workflow via WorkflowExecutor (best-effort).
+
+Caveats / what's NOT in this PR
+-------------------------------
+- No drag-and-drop FROM an external palette dock; right-click context
+  menu is the palette for now.
+- Node-config editor surfaces a tiny dialog with raw JSON; the
+  per-node-type form editor lands in v0.33 (Parameters sidebar).
+- Save uses the workflows.library path; the executor wiring is
+  best-effort and falls back to a status line if the executor isn't
+  available in this shell.
+"""
+from __future__ import annotations
+
+import json
+import math
+import uuid
+from dataclasses import asdict
+from pathlib import Path
+from typing import Optional
+
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush, QColor, QPainter, QPainterPath, QPen, QPolygonF, QFont,
+)
+from PyQt6.QtWidgets import (
+    QGraphicsItem, QGraphicsPathItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QInputDialog,
+    QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+)
+
+from design_tokens import COLOR as T, SPACE, TYPE
+
+
+# Node visual sizing matches blueprint.jsx ratios.
+NODE_W = 200
+NODE_H = 90
+SLOT_R = 5         # connection dot radius
+
+# Type → color hue (one warm color rule still applies, so non-accent
+# differences are hue-shifted greys/cools, never new emotional colors).
+KIND_COLOR = {
+    "input":   T["accent"],     # warm — entry point
+    "llm":     T["cyan"],       # technical — model call
+    "tool":    T["inkSoft"],    # neutral — tool/host action
+    "control": T["warn"],       # decision/loop
+    "output":  T["ok"],         # terminus
+}
+
+
+# ---------------------------------------------------------------------------
+def _kind_for_type(node_type: str) -> str:
+    if not node_type:
+        return "tool"
+    t = node_type.lower()
+    if t.startswith("user.") or t.startswith("input."):
+        return "input"
+    if t.startswith("llm."):
+        return "llm"
+    if t.startswith("control."):
+        return "control"
+    if t.startswith("output."):
+        return "output"
+    return "tool"
+
+
+# ---------------------------------------------------------------------------
+class NodeItem(QGraphicsItem):
+    """One workflow node rendered as a rounded card."""
+    def __init__(self, node, parent=None):
+        super().__init__(parent)
+        self.node = node
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        x = float(node.position.get("x", 0))
+        y = float(node.position.get("y", 0))
+        self.setPos(x, y)
+
+    # Bounding box used for hit-testing + repaint.
+    def boundingRect(self) -> QRectF:
+        return QRectF(-2, -2, NODE_W + 4, NODE_H + 4)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        kind = _kind_for_type(self.node.type)
+        accent = QColor(KIND_COLOR.get(kind, T["inkSoft"]))
+
+        # Card.
+        rect = QRectF(0, 0, NODE_W, NODE_H)
+        bg = QColor(T["bgRaised"])
+        line = QColor(T["line"])
+        if self.isSelected():
+            line = QColor(T["accent"])
+        painter.setPen(QPen(line, 1.0))
+        painter.setBrush(QBrush(bg))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        # Left ribbon (kind color).
+        ribbon = QRectF(0, 0, 4, NODE_H)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(accent))
+        painter.drawRoundedRect(ribbon, 2, 2)
+
+        # Kind label (mono cap).
+        painter.setPen(QPen(QColor(T["inkCap"])))
+        f_cap = QFont("JetBrains Mono", 8)
+        f_cap.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 112)
+        painter.setFont(f_cap)
+        painter.drawText(QPointF(14, 16), kind.upper())
+
+        # Title (serif italic).
+        f_t = QFont("Instrument Serif", 13)
+        f_t.setItalic(True)
+        painter.setFont(f_t)
+        painter.setPen(QPen(QColor(T["ink"])))
+        painter.drawText(QRectF(14, 22, NODE_W - 28, 24),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         self.node.label or self.node.type)
+
+        # Sub-line: type · port summary.
+        f_sub = QFont("Inter", 9)
+        painter.setFont(f_sub)
+        painter.setPen(QPen(QColor(T["inkSoft"])))
+        sub = f"{self.node.type}  ·  {len(self.node.inputs)}↓ {len(self.node.outputs)}↑"
+        painter.drawText(QRectF(14, 50, NODE_W - 28, 18),
+                         Qt.AlignmentFlag.AlignLeft, sub)
+
+        # Slots.
+        painter.setBrush(QBrush(QColor(T["bgPanel"])))
+        painter.setPen(QPen(QColor(T["accent"]), 1.5))
+        # Left input slot.
+        if self.node.inputs:
+            painter.drawEllipse(QPointF(0, NODE_H / 2), SLOT_R, SLOT_R)
+        # Right output slot.
+        if self.node.outputs:
+            painter.drawEllipse(QPointF(NODE_W, NODE_H / 2), SLOT_R, SLOT_R)
+
+    # ------------------------------------------------------------------
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            self.node.position = {"x": float(self.pos().x()),
+                                  "y": float(self.pos().y())}
+            scene = self.scene()
+            if isinstance(scene, CanvasScene):
+                scene.refresh_edges_for(self)
+        return super().itemChange(change, value)
+
+    # Slot scene positions — used by EdgeItem to compute path endpoints.
+    def input_pos(self) -> QPointF:
+        return self.mapToScene(QPointF(0, NODE_H / 2))
+
+    def output_pos(self) -> QPointF:
+        return self.mapToScene(QPointF(NODE_W, NODE_H / 2))
+
+    def hit_kind_at(self, scene_pos: QPointF) -> Optional[str]:
+        """Return 'in' / 'out' / None depending on which slot the
+        scene position is over (with a small click-tolerance)."""
+        local = self.mapFromScene(scene_pos)
+        if (local - QPointF(0, NODE_H / 2)).manhattanLength() < 14:
+            return "in" if self.node.inputs else None
+        if (local - QPointF(NODE_W, NODE_H / 2)).manhattanLength() < 14:
+            return "out" if self.node.outputs else None
+        return None
+
+
+# ---------------------------------------------------------------------------
+class EdgeItem(QGraphicsPathItem):
+    """Right-angle elbow path with an arrow head."""
+    def __init__(self, edge, src: NodeItem, dst: NodeItem, parent=None):
+        super().__init__(parent)
+        self.edge = edge
+        self.src = src
+        self.dst = dst
+        self.setZValue(-1)
+        pen = QPen(QColor(T["accent"]), 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        self.setPen(pen)
+        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.refresh()
+
+    def refresh(self) -> None:
+        if self.src is None or self.dst is None:
+            return
+        a = self.src.output_pos()
+        b = self.dst.input_pos()
+        mx = (a.x() + b.x()) / 2.0
+        path = QPainterPath(a)
+        path.lineTo(QPointF(mx, a.y()))
+        path.lineTo(QPointF(mx, b.y()))
+        path.lineTo(b)
+        # Arrow head.
+        arrow_size = 7.0
+        ang = 0.0  # arrow always points right at b
+        ax, ay = b.x(), b.y()
+        head = QPolygonF([
+            QPointF(ax, ay),
+            QPointF(ax - arrow_size, ay - arrow_size / 2),
+            QPointF(ax - arrow_size, ay + arrow_size / 2),
+        ])
+        path.addPolygon(head)
+        self.setPath(path)
+
+
+# ---------------------------------------------------------------------------
+class DraggingEdgeItem(QGraphicsPathItem):
+    """Transient edge while user drags from a slot to another slot."""
+    def __init__(self, src: NodeItem, parent=None):
+        super().__init__(parent)
+        self.src = src
+        pen = QPen(QColor(T["accent"]), 1.2, Qt.PenStyle.DashLine)
+        self.setPen(pen)
+        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setZValue(10)
+        self._end = src.output_pos()
+
+    def update_end(self, pos: QPointF) -> None:
+        self._end = pos
+        a = self.src.output_pos()
+        path = QPainterPath(a)
+        mx = (a.x() + pos.x()) / 2.0
+        path.lineTo(QPointF(mx, a.y()))
+        path.lineTo(QPointF(mx, pos.y()))
+        path.lineTo(pos)
+        self.setPath(path)
+
+
+# ---------------------------------------------------------------------------
+class CanvasScene(QGraphicsScene):
+    """Holds Workflow data + node/edge items + drag-edge state."""
+    def __init__(self, workflow=None, parent=None):
+        super().__init__(parent)
+        from workflows.graph import Workflow
+        self.workflow = workflow if workflow is not None else Workflow(
+            id=uuid.uuid4().hex[:10], name="Untitled workflow",
+        )
+        self.setBackgroundBrush(QBrush(QColor(T["bg"])))
+        self.setSceneRect(0, 0, 2000, 1400)
+        self._node_items: dict[str, NodeItem] = {}
+        self._edge_items: list[EdgeItem] = []
+        self._dragging: Optional[DraggingEdgeItem] = None
+        self._dragging_from: Optional[NodeItem] = None
+        self._render_workflow()
+
+    # ------------------------------------------------------------------
+    def _render_workflow(self) -> None:
+        for it in list(self._node_items.values()):
+            self.removeItem(it)
+        for ed in list(self._edge_items):
+            self.removeItem(ed)
+        self._node_items.clear()
+        self._edge_items.clear()
+        for n in self.workflow.nodes:
+            it = NodeItem(n)
+            self.addItem(it)
+            self._node_items[n.id] = it
+        for e in self.workflow.edges:
+            self._add_edge_item(e)
+
+    def _add_edge_item(self, edge) -> None:
+        src = self._node_items.get(edge.src_node)
+        dst = self._node_items.get(edge.dst_node)
+        if src is None or dst is None:
+            return
+        ei = EdgeItem(edge, src, dst)
+        self.addItem(ei)
+        self._edge_items.append(ei)
+
+    def refresh_edges_for(self, node_item: NodeItem) -> None:
+        for ei in self._edge_items:
+            if ei.src is node_item or ei.dst is node_item:
+                ei.refresh()
+
+    # ------------------------------------------------------------------
+    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
+        super().drawBackground(painter, rect)
+        # Drafting grid: minor 12 px, major 60 px.
+        minor = QColor(T["lineSoft"])
+        major = QColor(T["line"])
+        painter.setPen(QPen(minor, 1))
+        x0 = int(rect.left() // 12 * 12)
+        y0 = int(rect.top() // 12 * 12)
+        x = x0
+        while x < rect.right():
+            painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
+            x += 12
+        y = y0
+        while y < rect.bottom():
+            painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
+            y += 12
+        painter.setPen(QPen(major, 1))
+        x = int(rect.left() // 60 * 60)
+        while x < rect.right():
+            painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
+            x += 60
+        y = int(rect.top() // 60 * 60)
+        while y < rect.bottom():
+            painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
+            y += 60
+
+    # ------------------------------------------------------------------
+    # Edge drag handling — start on a node's right slot, finish on
+    # another node's left slot.
+    # ------------------------------------------------------------------
+    def mousePressEvent(self, ev) -> None:
+        scene_pos = ev.scenePos()
+        # Did we hit a node slot?
+        item = self.itemAt(scene_pos, self.views()[0].transform()
+                           if self.views() else None)
+        if isinstance(item, NodeItem):
+            kind = item.hit_kind_at(scene_pos)
+            if kind == "out":
+                self._dragging_from = item
+                self._dragging = DraggingEdgeItem(item)
+                self.addItem(self._dragging)
+                self._dragging.update_end(scene_pos)
+                ev.accept()
+                return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if self._dragging is not None:
+            self._dragging.update_end(ev.scenePos())
+            ev.accept()
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev) -> None:
+        if self._dragging is not None and self._dragging_from is not None:
+            target = None
+            for it in self.items(ev.scenePos()):
+                if isinstance(it, NodeItem) and it is not self._dragging_from:
+                    if it.hit_kind_at(ev.scenePos()) == "in":
+                        target = it
+                        break
+            self.removeItem(self._dragging)
+            self._dragging = None
+            src = self._dragging_from
+            self._dragging_from = None
+            if target is not None:
+                self._make_edge(src, target)
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
+
+    def _make_edge(self, src: NodeItem, dst: NodeItem) -> None:
+        from workflows.graph import Edge
+        if not src.node.outputs or not dst.node.inputs:
+            return
+        edge = Edge(
+            id=uuid.uuid4().hex[:10],
+            src_node=src.node.id, src_port=src.node.outputs[0].name,
+            dst_node=dst.node.id, dst_port=dst.node.inputs[0].name,
+        )
+        self.workflow.edges.append(edge)
+        self._add_edge_item(edge)
+
+    # ------------------------------------------------------------------
+    # Right-click palette / node menu.
+    # ------------------------------------------------------------------
+    def contextMenuEvent(self, ev) -> None:
+        scene_pos = ev.scenePos()
+        item = self.itemAt(scene_pos, self.views()[0].transform()
+                           if self.views() else None)
+        if isinstance(item, NodeItem):
+            self._show_node_menu(item, ev.screenPos())
+            ev.accept()
+            return
+        self._show_palette(scene_pos, ev.screenPos())
+        ev.accept()
+
+    def _show_palette(self, scene_pos: QPointF, screen_pos) -> None:
+        menu = QMenu()
+        # Node-type catalog.
+        catalog = [
+            ("user.prompt",   "User prompt"),
+            ("llm.complete",  "LLM · complete"),
+            ("tool.run",      "Tool · run"),
+            ("control.if",    "Control · if"),
+            ("control.loop",  "Control · loop"),
+            ("output.value",  "Output value"),
+        ]
+        for type_name, label in catalog:
+            act = menu.addAction(f"+ {label}")
+            act.triggered.connect(
+                lambda _=False, t=type_name, p=scene_pos: self._add_node(t, p))
+        menu.addSeparator()
+        clear = menu.addAction("Clear canvas")
+        clear.triggered.connect(self._clear)
+        menu.exec(screen_pos)
+
+    def _show_node_menu(self, item: NodeItem, screen_pos) -> None:
+        menu = QMenu()
+        edit = menu.addAction("Edit config (JSON)")
+        edit.triggered.connect(lambda _=False, n=item: self._edit_node(n))
+        menu.addSeparator()
+        delete = menu.addAction("Delete node")
+        delete.triggered.connect(lambda _=False, n=item: self._delete_node(n))
+        menu.exec(screen_pos)
+
+    def _add_node(self, type_name: str, scene_pos: QPointF) -> None:
+        from workflows.graph import Node, Port
+        node = Node(
+            id=uuid.uuid4().hex[:10],
+            type=type_name,
+            label=type_name.split(".")[-1].title(),
+            inputs=[Port(name="in")],
+            outputs=[Port(name="out")],
+            position={"x": scene_pos.x(), "y": scene_pos.y()},
+        )
+        self.workflow.nodes.append(node)
+        ni = NodeItem(node)
+        self.addItem(ni)
+        self._node_items[node.id] = ni
+
+    def _delete_node(self, item: NodeItem) -> None:
+        nid = item.node.id
+        self.workflow.nodes = [n for n in self.workflow.nodes if n.id != nid]
+        self.workflow.edges = [e for e in self.workflow.edges
+                                if e.src_node != nid and e.dst_node != nid]
+        # Drop edge items for this node.
+        kept = []
+        for ei in self._edge_items:
+            if ei.src is item or ei.dst is item:
+                self.removeItem(ei)
+            else:
+                kept.append(ei)
+        self._edge_items = kept
+        self.removeItem(item)
+        self._node_items.pop(nid, None)
+
+    def _edit_node(self, item: NodeItem) -> None:
+        text, ok = QInputDialog.getMultiLineText(
+            None, "Edit config",
+            f"Config JSON for node {item.node.id} ({item.node.type}):",
+            json.dumps(item.node.config, indent=2),
+        )
+        if not ok:
+            return
+        try:
+            item.node.config = json.loads(text)
+            item.update()
+        except Exception as ex:
+            QMessageBox.warning(None, "Invalid JSON", str(ex))
+
+    def _clear(self) -> None:
+        from workflows.graph import Workflow
+        self.workflow = Workflow(id=uuid.uuid4().hex[:10],
+                                  name="Untitled workflow")
+        self._render_workflow()
+
+
+# ---------------------------------------------------------------------------
+class WorkflowCanvas(QWidget):
+    """Top-level page widget — toolbar + QGraphicsView + scene."""
+
+    workflow_saved = pyqtSignal(str)
+
+    def __init__(self, *, router=None, tool_engine=None, manager=None,
+                 parent=None):
+        super().__init__(parent)
+        self.setObjectName("studioPage")
+        self.router = router
+        self.tool_engine = tool_engine
+        self.manager = manager
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # Header.
+        head = QWidget()
+        hh = QVBoxLayout(head)
+        hh.setContentsMargins(40, 32, 40, 12)
+        hh.setSpacing(4)
+        cap = QLabel("WORKFLOWS · NODE CANVAS")
+        cap.setObjectName("studioMonoCap")
+        hh.addWidget(cap)
+        h1 = QLabel("Workflows")
+        h1.setObjectName("studioH1")
+        hh.addWidget(h1)
+        v.addWidget(head)
+
+        # Toolbar.
+        tb = QHBoxLayout()
+        tb.setContentsMargins(40, 0, 40, 8)
+        tb.setSpacing(SPACE["sm"])
+        self._name_lbl = QLabel("Untitled workflow")
+        self._name_lbl.setObjectName("studioH2")
+        tb.addWidget(self._name_lbl)
+        tb.addStretch(1)
+        self.btn_rename = QPushButton("Rename")
+        self.btn_rename.setObjectName("studioChip")
+        self.btn_rename.clicked.connect(self._rename)
+        tb.addWidget(self.btn_rename)
+        self.btn_save = QPushButton("Save")
+        self.btn_save.setObjectName("studioChip")
+        self.btn_save.clicked.connect(self._save)
+        tb.addWidget(self.btn_save)
+        self.btn_load = QPushButton("Open")
+        self.btn_load.setObjectName("studioChip")
+        self.btn_load.clicked.connect(self._open)
+        tb.addWidget(self.btn_load)
+        self.btn_run = QPushButton("Run")
+        self.btn_run.setObjectName("primaryButton")
+        self.btn_run.clicked.connect(self._run)
+        tb.addWidget(self.btn_run)
+        tb_w = QWidget(); tb_w.setLayout(tb)
+        v.addWidget(tb_w)
+
+        # The canvas.
+        self.scene = CanvasScene()
+        self.view = QGraphicsView(self.scene)
+        self.view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.view.setStyleSheet(
+            f"QGraphicsView {{ background:{T['bg']}; border:none; }}")
+        v.addWidget(self.view, 1)
+
+        # Empty-state hint — only shown if no nodes.
+        self._hint = QLabel(
+            "Right-click anywhere to add a node. "
+            "Drag from a node's right slot to another node's left slot to wire."
+        )
+        self._hint.setObjectName("studioMonoMuted")
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setStyleSheet("padding:8px;")
+        v.addWidget(self._hint)
+
+    # ------------------------------------------------------------------
+    def _rename(self) -> None:
+        name, ok = QInputDialog.getText(
+            self, "Rename workflow", "Workflow name:",
+            text=self.scene.workflow.name or "")
+        if ok and name.strip():
+            self.scene.workflow.name = name.strip()
+            self._name_lbl.setText(self.scene.workflow.name)
+
+    def _save(self) -> None:
+        try:
+            from workflows import save_workflow
+            path = save_workflow(self.scene.workflow)
+            self.workflow_saved.emit(str(path))
+            QMessageBox.information(self, "Saved",
+                f"Saved {self.scene.workflow.name} to:\n{path}")
+        except Exception as ex:
+            QMessageBox.warning(self, "Save failed",
+                f"{type(ex).__name__}: {ex}")
+
+    def _open(self) -> None:
+        try:
+            from workflows.library import list_workflows, load_workflow
+            wfs = list_workflows() or []
+        except Exception as ex:
+            QMessageBox.warning(self, "Library unavailable", str(ex))
+            return
+        if not wfs:
+            QMessageBox.information(self, "No saved workflows",
+                "Save one with Save first.")
+            return
+        names = [getattr(w, "name", "") or getattr(w, "id", "") for w in wfs]
+        choice, ok = QInputDialog.getItem(self, "Open workflow",
+            "Choose:", names, 0, False)
+        if not ok or not choice:
+            return
+        for w in wfs:
+            if (getattr(w, "name", "") == choice
+                or getattr(w, "id", "") == choice):
+                self.scene.workflow = w
+                self.scene._render_workflow()
+                self._name_lbl.setText(getattr(w, "name", "") or "Untitled")
+                return
+
+    def _run(self) -> None:
+        if self.router is None or self.tool_engine is None or self.manager is None:
+            QMessageBox.information(self, "Run unavailable",
+                "Workflow runner needs router + tools + manager. Save and "
+                "run from the legacy list view, or relaunch ArchHub.")
+            return
+        try:
+            from workflows import WorkflowExecutor
+            executor = WorkflowExecutor(self.router, self.tool_engine, self.manager)
+            inputs = {p.name: p.default for p in
+                      getattr(self.scene.workflow, "inputs", [])}
+            executor.run(self.scene.workflow, inputs=inputs)
+            QMessageBox.information(self, "Workflow running",
+                "Run started — watch the status bar for completion.")
+        except Exception as ex:
+            QMessageBox.warning(self, "Run failed",
+                f"{type(ex).__name__}: {ex}")

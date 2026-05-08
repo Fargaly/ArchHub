@@ -20,18 +20,13 @@ Current ship: **v0.27.x** — Studio shell wired to live ArchHub data
 | v0.27.5 | 2026-05-08 | Revit multi-session — each instance binds its own port [48884..48899], publishes a session file with heartbeat. Closing one Revit session no longer kills others. Studio HOSTS row shows live session count + per-session tooltip. New `app/revit_broker.py`. RevitMCP.dll v0.3.0 rebuilt for 2025 (net8). |
 | v0.27.6 | 2026-05-08 | RevitMCP.dll v0.3.0 rebuilt for 2023 + 2024 (net48) using `Microsoft.NETFramework.ReferenceAssemblies.net48` package. All three Revit versions now have multi-session DLLs. Dark theme is the new default. theme.qss made token-driven via `app/theme_builder.py` so dark mode reaches every surface (chat included). |
 | v0.28 | 2026-05-08 | Add Host wizard — Studio-native panel replaces the modal onboarding fall-through. 11-row host catalog (Revit 2023/2024/2025 · AutoCAD 2024/2025/2026 · 3ds Max 2025/2026 · Blender · Speckle · Outlook). Per-row state probe (detection · build status · active), Build/Activate buttons run `auto_build` on a worker thread and stream live progress + percent to each row's progress bar. New `app/add_host_panel.py`. Triggered by the "+ Add" button on the HOSTS rail header. |
+| v0.29 | 2026-05-08 | Workflows node canvas — Blueprint-style QGraphicsScene replaces the legacy WorkflowsPanel list view. 12-px minor / 60-px major drafting grid. Rounded-card NodeItem with kind ribbon, italic-serif title, in/out slots; right-angle elbow EdgeItem with arrow head. Drag-from-output to drop-on-input creates an edge. Right-click empty space opens a 6-type palette (user.prompt · llm.complete · tool.run · control.if · control.loop · output.value). Right-click a node opens edit-config / delete. Toolbar: Rename · Save · Open · Run. Same Workflow JSON format as the list view, so canvas-saved workflows load in the legacy library and vice versa. New `app/workflow_canvas.py`. |
 
 ## Up next — committed dates (compressed per CEO)
 
 Sprint window: 2026-05-08 → 2026-05-10. Everything below ships within
 48 hours of commit. Items that genuinely require external blockers
 (NuGet downloads, dev-pack installs on user machines) are flagged.
-
-### v0.29 — Workflows node canvas (target 2026-05-09, tomorrow)
-- Replace Workflows list view with the Blueprint-style node canvas.
-- Drag-to-connect node compose · LLM / tool / control node types.
-- Node inspector in the right pane.
-- "Save as Skill" from canvas.
 
 ### v0.30 — Marketplace (target 2026-05-09, tomorrow)
 - Skills + Workflows store page — official + community.

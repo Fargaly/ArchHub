@@ -413,48 +413,19 @@ class StudioShell(QMainWindow):
         return page
 
     def _build_workflows_page(self) -> QWidget:
-        """Workflows — node canvas (lands v0.29).
+        """Workflows — Blueprint-style node canvas (v0.29).
 
-        Embeds the existing WorkflowsPanel list view so Workflows still
-        functional, but the design intent (a Blueprint-style node
-        canvas, see blueprint.jsx in the handoff) ships in v0.29.
-        Header explains the gap so the user isn't left guessing.
+        Drop-in replacement for the legacy list view: same Workflow
+        data model, same JSON file format. Anyone still wanting the
+        list view can open Settings → Workflows or run skills via the
+        Skills page.
         """
-        page = QWidget()
-        page.setObjectName("studioPage")
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # Header with progress note.
-        header = QWidget()
-        hh = QVBoxLayout(header)
-        hh.setContentsMargins(40, 32, 40, 16)
-        hh.setSpacing(4)
-        cap = QLabel("WORKFLOWS · LIST VIEW")
-        cap.setObjectName("studioMonoCap")
-        hh.addWidget(cap)
-        h1 = QLabel("Workflows")
-        h1.setObjectName("studioH1")
-        hh.addWidget(h1)
-        sub = QLabel(
-            "List view today; node canvas lands v0.29 (see ROADMAP.md). "
-            "All saved Workflows below run from this list."
-        )
-        sub.setObjectName("studioH1Sub")
-        sub.setWordWrap(True)
-        hh.addWidget(sub)
-        outer.addWidget(header)
-
         try:
-            from workflows_panel import WorkflowsPanel
-            panel = WorkflowsPanel(self.router, self.tools,
-                                   self.manager, parent=None)
-            panel.setWindowFlags(Qt.WindowType.Widget)
-            outer.addWidget(panel, 1)
+            from workflow_canvas import WorkflowCanvas
+            return WorkflowCanvas(router=self.router, tool_engine=self.tools,
+                                  manager=self.manager, parent=None)
         except Exception as ex:
-            outer.addWidget(self._error_card("Workflows", str(ex)))
-        return page
+            return self._error_card("Workflows", str(ex))
 
     def _build_settings_page(self) -> QWidget:
         """Settings — embed SettingsDialog inside a proper scrollable

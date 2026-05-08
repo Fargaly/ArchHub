@@ -140,12 +140,64 @@ class SignInDialog(QDialog):
 
     def _build_footer(self) -> QFrame:
         f = QFrame(); f.setObjectName("panelFooter")
-        h = QHBoxLayout(f); h.setContentsMargins(20, 12, 20, 14); h.setSpacing(8)
+        v = QVBoxLayout(f); v.setContentsMargins(20, 8, 20, 14); v.setSpacing(8)
+
+        # Manual-paste fallback row — when clipboard auto-detect fails
+        # (browser quirks, key reformatted on paste, or user already had
+        # the key on clipboard before opening the dialog), this lets
+        # them just paste it directly. Always visible; auto-detect path
+        # is the fast track, this is the safety net.
+        from PyQt6.QtWidgets import QLineEdit
+        paste_row = QHBoxLayout()
+        paste_row.setSpacing(8)
+        self.paste_field = QLineEdit()
+        self.paste_field.setObjectName("inputField")
+        self.paste_field.setPlaceholderText(
+            f"Or paste your {self.plan.display_name} key here directly")
+        self.paste_field.setEchoMode(QLineEdit.EchoMode.Password)
+        self.paste_field.returnPressed.connect(self._on_paste_save)
+        paste_row.addWidget(self.paste_field, 1)
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("primaryButton")
+        save_btn.clicked.connect(self._on_paste_save)
+        paste_row.addWidget(save_btn)
+        v.addLayout(paste_row)
+
+        # Cancel row.
+        h = QHBoxLayout(); h.setSpacing(8)
         h.addStretch(1)
         cancel = QPushButton("Cancel"); cancel.setObjectName("ghostButton")
         cancel.clicked.connect(self.reject)
         h.addWidget(cancel)
+        v.addLayout(h)
         return f
+
+    def _on_paste_save(self) -> None:
+        """Save whatever the user pasted into the manual-paste field.
+        Permissive — accepts any non-empty trimmed value, then runs the
+        regex check for a non-blocking warning. Lets users with new /
+        unrecognised key formats still get past the dialog."""
+        text = (self.paste_field.text() or "").strip()
+        if not text:
+            self.status.setText("⚠️ Paste a key first.")
+            return
+        # Strip common copy artefacts (zero-width spaces, soft hyphens).
+        for ch in ("​", "‌", "‍", "﻿", "­"):
+            text = text.replace(ch, "")
+        text = text.strip()
+        self._captured_key = text
+        try:
+            from sign_in import looks_like_key
+            if not looks_like_key(self.plan.provider, text):
+                # Not a recognised format; warn but still save — OpenAI
+                # rolls new prefixes faster than we update regexes.
+                self.status.setText(
+                    f"⚠️ Key shape doesn't match {self.plan.sample_prefix}, "
+                    "saving anyway. Reload the dialog to retry."
+                )
+        except Exception:
+            pass
+        self._on_captured()
 
     # ---- entry point -----------------------------------------------------
 

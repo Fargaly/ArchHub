@@ -51,24 +51,9 @@ from PyQt6.QtWidgets import (
 )
 
 
-# Studio palette (light, matches theme.qss tokens)
-T = {
-    "bg":          "#f7f4ee",
-    "bgPanel":     "#fbf9f4",
-    "bgSoft":      "#efeae0",
-    "bgHover":     "#ebe6db",
-    "ink":         "#251f17",
-    "inkSoft":     "#6b6256",
-    "inkMuted":    "#9a9183",
-    "line":        "#e3ddd0",
-    "lineSoft":    "#ece6d8",
-    "accent":      "#c96442",
-    "accentSoft":  "#f5e3db",
-    "ok":          "#5a8a5e",
-    "warn":        "#c08533",
-    "err":         "#b8493e",
-    "selBg":       "#ffffff",
-}
+# Studio palette comes from app/design_tokens.py — single source of truth.
+# Local `T` alias kept for back-compat with existing callers.
+from design_tokens import COLOR as T, SPACE, RADIUS, TYPE, focus_ring_qss
 
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
@@ -653,16 +638,16 @@ class StudioShell(QMainWindow):
         from manager import ConnectorState
         active = entry.state == ConnectorState.ACTIVE
         unavailable = entry.state == ConnectorState.UNAVAILABLE
-        # Color rule: live=green; loaded_dead/unknown when active=warn;
-        # host_offline=muted; inactive=muted; unavailable=muted-dim.
+        # Color rule: live=ok; loaded_dead=warn; host_offline=muted;
+        # inactive when active flag set=muted; unavailable=dim.
         if state_str == "live":
-            color = "#5a8a5e"
+            color = T["ok"]
         elif state_str == "loaded_dead":
-            color = "#c08533"
+            color = T["warn"]
         elif state_str == "host_offline":
-            color = "#9a9183"
+            color = T["inkCap"]
         else:
-            color = "#9a9183" if active else "#cdc6b8"
+            color = T["inkCap"] if active else T["inkDim"]
         dot = QLabel("●")
         dot.setStyleSheet(f"color:{color}; font-size: 10px;")
         h.addWidget(dot)
@@ -689,15 +674,29 @@ class StudioShell(QMainWindow):
         p.setObjectName("studioMonoMuted")
         h.addWidget(p)
 
-        # Toggle.
+        # Toggle — visual 24×14 pill, hit area enlarged via padding.
+        # Wrap the visual pill in a QToolButton with padding so click
+        # targets meet the relaxed-desktop 36×24 floor.
         tog = QToolButton()
         tog.setCheckable(True)
         tog.setChecked(active)
         tog.setEnabled(not unavailable)
         tog.setObjectName("studioToggle")
-        tog.setFixedSize(24, 14)
-        tog.setStyleSheet(_toggle_style(active))
+        tog.setFixedSize(36, 24)        # hit area
+        # Internal padding on the QToolButton creates the visual 24×14
+        # pill while the full 36×24 stays clickable.
+        tog.setStyleSheet(
+            _toggle_style(active) +
+            f" QToolButton#studioToggle {{ padding:5px 6px; }}"
+        )
         # Use a closure that captures the entry.id.
+        def _restyle(btn, checked):
+            # Re-apply both the toggle pill style + hit-area padding.
+            btn.setStyleSheet(
+                _toggle_style(checked) +
+                " QToolButton#studioToggle { padding:5px 6px; }"
+            )
+
         def on_toggled(checked, entry_id=entry.id, btn=tog):
             try:
                 if checked:
@@ -708,12 +707,12 @@ class StudioShell(QMainWindow):
                     # Revert visual state and surface the failure in the row.
                     btn.blockSignals(True)
                     btn.setChecked(not checked)
-                    btn.setStyleSheet(_toggle_style(btn.isChecked()))
+                    _restyle(btn, btn.isChecked())
                     btn.blockSignals(False)
                     p.setText("err")
                     p.setToolTip(msg)
                 else:
-                    btn.setStyleSheet(_toggle_style(checked))
+                    _restyle(btn, checked)
                 # Force a fresh refresh so the row reflects the new state.
                 QTimer.singleShot(200, self._refresh_hosts)
             except Exception as ex:
@@ -1000,8 +999,8 @@ class StudioShell(QMainWindow):
             rl.setContentsMargins(14, 10, 14, 10)
             rl.setSpacing(12)
             st = info.get("state", "unknown")
-            color = {"live": "#5a8a5e", "loaded_dead": "#c08533",
-                     "host_offline": "#9a9183"}.get(st, "#cdc6b8")
+            color = {"live": T["ok"], "loaded_dead": T["warn"],
+                     "host_offline": T["inkCap"]}.get(st, T["inkDim"])
             dot = QLabel("●")
             dot.setStyleSheet(f"color:{color}; font-size:11px;")
             rl.addWidget(dot)
@@ -1173,7 +1172,7 @@ def _section_label_with_label(text: str) -> tuple[QFrame, QLabel]:
     h.addWidget(lbl)
     rule = QFrame()
     rule.setFrameShape(QFrame.Shape.HLine)
-    rule.setStyleSheet("background:#ece6d8; max-height:1px;")
+    rule.setStyleSheet(f"background:{T['lineSoft']}; max-height:1px;")
     h.addWidget(rule, 1)
     return w, lbl
 
@@ -1247,13 +1246,15 @@ def _skill_card(cat: str, name: str, runs: str, hosts: list[str]) -> QFrame:
 
 
 def _task_row(state: str, label: str, pct: int) -> QFrame:
+    """Live task row — see COMPONENTS doc in design_tokens.py."""
     row = QFrame()
     row.setObjectName("studioListRow")
     h = QHBoxLayout(row)
-    h.setContentsMargins(14, 10, 14, 10)
-    h.setSpacing(12)
-    color = {"RUNNING": "#c96442", "HEALING": "#c08533",
-             "QUEUED": "#9a9183"}.get(state, "#9a9183")
+    h.setContentsMargins(SPACE["lg"]-2, SPACE["md"]-2,
+                         SPACE["lg"]-2, SPACE["md"]-2)
+    h.setSpacing(SPACE["md"])
+    color = {"RUNNING": T["accent"], "HEALING": T["warn"],
+             "QUEUED": T["inkCap"]}.get(state, T["inkCap"])
     dot = QLabel("●")
     dot.setStyleSheet(f"color:{color}; font-size:11px;")
     h.addWidget(dot)
@@ -1270,15 +1271,16 @@ def _task_row(state: str, label: str, pct: int) -> QFrame:
     bar = QFrame()
     bar.setFixedSize(120, 3)
     p = max(min(pct, 100), 0) / 100.0
+    rest = T["bgSoft"]
     if p <= 0.0:
-        bar.setStyleSheet("background: #efeae0; border-radius: 1.5px;")
+        bar.setStyleSheet(f"background: {rest}; border-radius: 1.5px;")
     elif p >= 1.0:
         bar.setStyleSheet(f"background: {color}; border-radius: 1.5px;")
     else:
         bar.setStyleSheet(
             f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
             f"stop:0 {color}, stop:{p:.3f} {color}, "
-            f"stop:{p + 0.001:.3f} #efeae0, stop:1 #efeae0); "
+            f"stop:{p + 0.001:.3f} {rest}, stop:1 {rest}); "
             f"border-radius:1.5px;"
         )
     h.addWidget(bar)
@@ -1330,106 +1332,172 @@ def _short_when(saved_at: str) -> str:
 
 
 def _nav_style(active: bool) -> str:
+    """Nav item style — see COMPONENTS doc in design_tokens.py.
+
+    Default: transparent · inkSoft. Hover: bgHover · ink. Active: bgRaised
+    · ink · 1px line border · weight 500. All paddings via SPACE scale.
+    """
     if active:
         return (
-            "QPushButton#studioNavItem { "
-            "  background:#ffffff; color:#251f17; border:1px solid #e3ddd0; "
-            "  border-radius:6px; padding:7px 10px; text-align:left; "
-            "  font-family:'Inter',sans-serif; font-size:13px; font-weight:500; "
-            "}"
+            f"QPushButton#studioNavItem {{ "
+            f"  background:{T['bgRaised']}; color:{T['ink']}; "
+            f"  border:1px solid {T['line']}; "
+            f"  border-radius:{RADIUS['md']}px; "
+            f"  padding:{SPACE['xs']+3}px {SPACE['md']-2}px; "
+            f"  text-align:left; "
+            f"  font-family:{TYPE['fontSans']}; "
+            f"  font-size:{TYPE['body']['size']}px; font-weight:500; "
+            f"}}"
         )
     return (
-        "QPushButton#studioNavItem { "
-        "  background:transparent; color:#6b6256; border:1px solid transparent; "
-        "  border-radius:6px; padding:7px 10px; text-align:left; "
-        "  font-family:'Inter',sans-serif; font-size:13px; "
-        "} "
-        "QPushButton#studioNavItem:hover { background:#ebe6db; color:#251f17; }"
+        f"QPushButton#studioNavItem {{ "
+        f"  background:transparent; color:{T['inkSoft']}; "
+        f"  border:1px solid transparent; "
+        f"  border-radius:{RADIUS['md']}px; "
+        f"  padding:{SPACE['xs']+3}px {SPACE['md']-2}px; "
+        f"  text-align:left; "
+        f"  font-family:{TYPE['fontSans']}; "
+        f"  font-size:{TYPE['body']['size']}px; "
+        f"}} "
+        f"QPushButton#studioNavItem:hover {{ background:{T['bgHover']}; color:{T['ink']}; }}"
     )
 
 
 def _toggle_style(on: bool) -> str:
-    bg = "#c96442" if on else "#ece6d8"
+    """Toggle pill — accent on, lineSoft off. Visual 24×14, hit area
+    relaxed via parent ToolButton padding (handled where row is built).
+    """
+    bg = T["accent"] if on else T["lineSoft"]
     return (
-        f"QToolButton#studioToggle {{ background:{bg}; border:none; border-radius:7px; }}"
+        f"QToolButton#studioToggle {{ "
+        f"  background:{bg}; border:none; "
+        f"  border-radius:{RADIUS['xs']+4}px; "
+        f"}}"
     )
 
 
 def _inline_qss() -> str:
-    """Inline QSS specific to studio shell. Loaded after global theme.qss."""
-    return (
-        # Rail
-        "QFrame#studioRail { background:#fbf9f4; border-right:1px solid #e3ddd0; }"
-        "QLabel#studioLogo { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #c96442,stop:1 #8a3a25); "
-        "  color:#fff; font-family:'Instrument Serif','Lora',serif; font-style:italic; "
-        "  font-size:18px; border-radius:8px; }"
-        "QLabel#studioBrand { font-family:'Instrument Serif','Lora','Georgia',serif; "
-        "  font-style:italic; font-size:19px; color:#251f17; letter-spacing:-0.01em; }"
-        "QLabel#studioBrandSub { font-family:'JetBrains Mono','Cascadia Mono',monospace; "
-        "  font-size:9.5px; color:#9a9183; letter-spacing:0.12em; }"
-        "QPushButton#studioCommandBox { background:#fff; border:1px solid #e3ddd0; "
-        "  border-radius:7px; padding:7px 10px; color:#9a9183; "
-        "  font-family:'JetBrains Mono','Cascadia Mono',monospace; font-size:11.5px; "
-        "  text-align:left; letter-spacing:0.04em; }"
-        "QPushButton#studioCommandBox:hover { background:#fbf9f4; border-color:#c96442; }"
+    """Inline QSS for studio shell — generated from design tokens.
 
-        # Mono caps + monospace muted
-        "QLabel#studioMonoCap { font-family:'JetBrains Mono','Cascadia Mono',monospace; "
-        "  font-size:9.5px; color:#9a9183; letter-spacing:0.12em; }"
-        "QLabel#studioMonoMuted { font-family:'JetBrains Mono','Cascadia Mono',monospace; "
-        "  font-size:10.5px; color:#9a9183; letter-spacing:0.04em; }"
+    Loaded after global theme.qss. Token-driven so any palette change
+    in `app/design_tokens.py` propagates everywhere automatically.
+    """
+    s = SPACE
+    r = RADIUS
 
-        # Hosts / threads / user card
-        "QFrame#studioHostRow:hover, QFrame#studioThreadRow:hover { background:#ebe6db; border-radius:5px; }"
-        "QLabel#studioHostName { font-size:12.5px; color:#251f17; }"
-        "QLabel#studioThreadText { font-size:12px; color:#6b6256; }"
-        "QLabel#studioPinIcon { color:#c96442; font-size:10px; }"
+    # Type record renderer.
+    def _type(rec_key: str) -> str:
+        rec = TYPE[rec_key]
+        return (
+            f"font-size:{rec['size']}px; "
+            f"font-weight:{rec['weight']}; "
+            f"letter-spacing:{rec['tracking']};"
+        )
 
-        "QFrame#studioUserCard { background:#ffffff; border:1px solid #e3ddd0; border-radius:7px; }"
-        "QLabel#studioAvatar { background:#d8c5a8; color:#5a4a2a; font-weight:700; "
-        "  font-size:11px; border-radius:12px; }"
-        "QLabel#studioUserName { font-size:12.5px; color:#251f17; font-weight:500; }"
-        "QToolButton#studioCog { background:transparent; color:#6b6256; border:none; "
-        "  font-size:13px; padding:0 4px; }"
-        "QToolButton#studioCog:hover { color:#c96442; }"
+    qss = (
+        # ── Rail ────────────────────────────────────────────────────
+        f"QFrame#studioRail {{ background:{T['bgPanel']}; "
+        f"  border-right:1px solid {T['line']}; }}"
+        f"QLabel#studioLogo {{ "
+        f"  background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+        f"    stop:0 {T['accent']}, stop:1 {T['accentHi']}); "
+        f"  color:#fff; font-family:{TYPE['fontSerif']}; font-style:italic; "
+        f"  font-size:18px; border-radius:{r['lg']}px; }}"
+        f"QLabel#studioBrand {{ font-family:{TYPE['fontSerif']}; "
+        f"  font-style:italic; font-size:19px; color:{T['ink']}; "
+        f"  letter-spacing:-0.01em; }}"
+        f"QLabel#studioBrandSub {{ font-family:{TYPE['fontMono']}; "
+        f"  {_type('monoCap')} color:{T['inkCap']}; }}"
+        f"QPushButton#studioCommandBox {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; "
+        f"  border-radius:{r['md']+1}px; "
+        f"  padding:{s['xs']+3}px {s['md']-2}px; color:{T['inkCap']}; "
+        f"  font-family:{TYPE['fontMono']}; {_type('monoBody')} "
+        f"  text-align:left; }}"
+        f"QPushButton#studioCommandBox:hover {{ "
+        f"  background:{T['bgPanel']}; border-color:{T['accent']}; }}"
 
-        # Page typography
-        "QWidget#studioPage, QWidget#studioHomeBody { background:#f7f4ee; }"
-        "QLabel#studioH1 { font-family:'Instrument Serif','Lora','Georgia',serif; "
-        "  font-size:40px; color:#251f17; letter-spacing:-0.02em; font-weight:400; }"
-        "QLabel#studioH1Sub { color:#6b6256; font-size:14px; line-height:1.6; }"
-        "QLabel#studioH2 { font-family:'Instrument Serif','Lora','Georgia',serif; "
-        "  font-size:21px; color:#251f17; letter-spacing:-0.01em; font-weight:400; }"
+        # ── Mono captions / muted ───────────────────────────────────
+        f"QLabel#studioMonoCap {{ font-family:{TYPE['fontMono']}; "
+        f"  {_type('monoCap')} color:{T['inkCap']}; }}"
+        f"QLabel#studioMonoMuted {{ font-family:{TYPE['fontMono']}; "
+        f"  {_type('monoMuted')} color:{T['inkMuted']}; }}"
 
-        # Composer
-        "QFrame#studioComposer { background:#ffffff; border:1px solid #e3ddd0; "
-        "  border-radius:10px; }"
-        "QLabel#studioComposerPrompt { font-family:'Instrument Serif','Lora',serif; "
-        "  font-style:italic; font-size:22px; color:#9a9183; letter-spacing:-0.01em; }"
-        "QPushButton#studioChip { background:transparent; color:#6b6256; "
-        "  border:1px solid #e3ddd0; border-radius:6px; padding:4px 10px; "
-        "  font-family:'Inter',sans-serif; font-size:11.5px; }"
-        "QPushButton#studioChip:hover { border-color:#c96442; color:#c96442; }"
+        # ── Host + thread rows ──────────────────────────────────────
+        f"QFrame#studioHostRow:hover, QFrame#studioThreadRow:hover {{ "
+        f"  background:{T['bgHover']}; border-radius:{r['sm']}px; }}"
+        f"QLabel#studioHostName {{ {_type('label')} color:{T['ink']}; }}"
+        f"QLabel#studioThreadText {{ {_type('bodySm')} color:{T['inkSoft']}; }}"
+        f"QLabel#studioPinIcon {{ color:{T['accent']}; font-size:10px; }}"
 
-        # List cards (activity, tasks, telemetry)
-        "QFrame#studioListCard { background:#ffffff; border:1px solid #e3ddd0; "
-        "  border-radius:8px; }"
-        "QFrame#studioListRow { background:transparent; border-top:1px solid #ece6d8; }"
-        "QFrame#studioListRow[first='true'] { border-top:none; }"
-        "QFrame#studioListRow:hover { background:#fbf9f4; }"
-        "QLabel#studioListText { font-size:13.5px; color:#251f17; }"
+        # ── User card ───────────────────────────────────────────────
+        f"QFrame#studioUserCard {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['md']+1}px; }}"
+        f"QLabel#studioAvatar {{ background:#d8c5a8; color:#5a4a2a; "
+        f"  font-weight:700; font-size:11px; "
+        f"  border-radius:{r['md']*2}px; }}"
+        f"QLabel#studioUserName {{ {_type('label')} color:{T['ink']}; }}"
+        f"QToolButton#studioCog {{ background:transparent; "
+        f"  color:{T['inkSoft']}; border:none; "
+        f"  font-size:{TYPE['body']['size']}px; "
+        f"  padding:0 {s['xs']}px; }}"
+        f"QToolButton#studioCog:hover {{ color:{T['accent']}; }}"
 
-        # Inspector
-        "QFrame#studioInspector { background:#fbf9f4; border-left:1px solid #e3ddd0; }"
-        "QLabel#studioInspectorTitle { font-family:'Instrument Serif','Lora',serif; "
-        "  font-size:21px; color:#251f17; letter-spacing:-0.01em; }"
-        "QFrame#studioInspectorRow { background:#ffffff; border:1px solid #e3ddd0; "
-        "  border-radius:8px; }"
-        "QLabel#studioInspectorValue { font-family:'JetBrains Mono','Cascadia Mono',monospace; "
-        "  font-size:12px; color:#251f17; letter-spacing:0.02em; }"
+        # ── Page typography ─────────────────────────────────────────
+        f"QWidget#studioPage, QWidget#studioHomeBody {{ "
+        f"  background:{T['bg']}; }}"
+        f"QLabel#studioH1 {{ font-family:{TYPE['fontSerif']}; "
+        f"  {_type('h1')} color:{T['ink']}; }}"
+        f"QLabel#studioH1Sub {{ color:{T['inkSoft']}; "
+        f"  {_type('bodyLg')} line-height:1.6; }}"
+        f"QLabel#studioH2 {{ font-family:{TYPE['fontSerif']}; "
+        f"  {_type('h2')} color:{T['ink']}; }}"
 
-        # Status rule
-        "QFrame#studioStatusRule { background:#fbf9f4; border-top:1px solid #e3ddd0; }"
-        "QLabel#studioStatusItem { font-family:'JetBrains Mono','Cascadia Mono',monospace; "
-        "  font-size:10px; color:#6b6256; letter-spacing:0.10em; }"
+        # ── Composer ────────────────────────────────────────────────
+        f"QFrame#studioComposer {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['xl']}px; }}"
+        f"QLabel#studioComposerPrompt {{ font-family:{TYPE['fontSerif']}; "
+        f"  font-style:italic; font-size:22px; color:{T['inkCap']}; "
+        f"  letter-spacing:-0.01em; }}"
+        f"QPushButton#studioChip {{ background:transparent; "
+        f"  color:{T['inkSoft']}; border:1px solid {T['line']}; "
+        f"  border-radius:{r['md']}px; padding:{s['xs']}px {s['md']-2}px; "
+        f"  font-family:{TYPE['fontSans']}; {_type('monoBody')} }}"
+        f"QPushButton#studioChip:hover {{ "
+        f"  border-color:{T['accent']}; color:{T['accent']}; }}"
+
+        # ── List cards (activity, tasks, telemetry) ────────────────
+        f"QFrame#studioListCard {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['lg']}px; }}"
+        f"QFrame#studioListRow {{ background:transparent; "
+        f"  border-top:1px solid {T['lineSoft']}; }}"
+        f"QFrame#studioListRow[first='true'] {{ border-top:none; }}"
+        f"QFrame#studioListRow:hover {{ background:{T['bgPanel']}; }}"
+        f"QLabel#studioListText {{ font-size:13.5px; color:{T['ink']}; }}"
+
+        # ── Inspector ───────────────────────────────────────────────
+        f"QFrame#studioInspector {{ background:{T['bgPanel']}; "
+        f"  border-left:1px solid {T['line']}; }}"
+        f"QLabel#studioInspectorTitle {{ font-family:{TYPE['fontSerif']}; "
+        f"  {_type('h2')} color:{T['ink']}; }}"
+        f"QFrame#studioInspectorRow {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['lg']}px; }}"
+        f"QLabel#studioInspectorValue {{ font-family:{TYPE['fontMono']}; "
+        f"  {_type('monoData')} color:{T['ink']}; }}"
+
+        # ── Status rule ─────────────────────────────────────────────
+        f"QFrame#studioStatusRule {{ background:{T['bgPanel']}; "
+        f"  border-top:1px solid {T['line']}; }}"
+        f"QLabel#studioStatusItem {{ font-family:{TYPE['fontMono']}; "
+        f"  {_type('monoStat')} color:{T['inkSoft']}; }}"
     )
+
+    # ── Focus rings — keyboard a11y ─────────────────────────────────
+    qss += focus_ring_qss(
+        "QPushButton#studioNavItem",
+        "QPushButton#studioCommandBox",
+        "QPushButton#studioChip",
+        "QToolButton#studioToggle",
+        "QToolButton#studioCog",
+    )
+    return qss

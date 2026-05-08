@@ -409,9 +409,11 @@ class LLMRouter:
         model: str,
         on_chunk: Optional[Callable[[str], None]] = None,
         on_tool_invocation: Optional[Callable[[ToolInvocation], None]] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
     ) -> LLMResponse:
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
+        on_reasoning = on_reasoning or (lambda _: None)
 
         # Auto-fallback chain: try the routed provider; on auth/quota
         # failure (4xx) block it for 10 min and pick the next available.
@@ -432,6 +434,7 @@ class LLMRouter:
                     history=history, provider=provider, model_name=model_name,
                     note=note, client=client,
                     on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
+                    on_reasoning=on_reasoning,
                 )
             except Exception as ex:
                 last_error = ex
@@ -448,8 +451,9 @@ class LLMRouter:
 
     def _complete_once(
         self, *, history, provider, model_name, note, client,
-        on_chunk, on_tool_invocation,
+        on_chunk, on_tool_invocation, on_reasoning=None,
     ):
+        on_reasoning = on_reasoning or (lambda _: None)
         # Original body inlined below — extracted so the auto-fallback
         # loop can wrap it cleanly.
 
@@ -490,13 +494,24 @@ class LLMRouter:
                 if not tool_calls:
                     break
             else:
-                stream = client.stream_completion(
+                # Provider-specific kwargs: anthropic accepts on_reasoning
+                # for extended-thinking blocks. Other providers ignore the
+                # kwarg via **kwargs catch-all in their stream_completion
+                # signatures (or raise TypeError, in which case we drop
+                # the callback for that provider only).
+                stream_kwargs = dict(
                     model=model_name,
                     system=system_prompt,
                     messages=messages,
                     tools=tool_schemas,
                     on_chunk=chunk_handler,
                 )
+                try:
+                    stream = client.stream_completion(
+                        on_reasoning=on_reasoning, **stream_kwargs,
+                    )
+                except TypeError:
+                    stream = client.stream_completion(**stream_kwargs)
                 assistant_text = stream.get("text", "")
                 full_text += assistant_text
 

@@ -51,8 +51,10 @@ class ChatMessage:
 # ---------------------------------------------------------------------------
 class _LLMWorker(QObject):
     chunk = pyqtSignal(str)
-    tool_invoked = pyqtSignal(object)         # ToolInvocation
-    finished = pyqtSignal(object)             # LLMResponse
+    reasoning = pyqtSignal(str)              # extended-thinking fragments
+    status = pyqtSignal(str)                 # "Thinking…", "Calling tool: ..."
+    tool_invoked = pyqtSignal(object)        # ToolInvocation
+    finished = pyqtSignal(object)            # LLMResponse
     failed = pyqtSignal(str)
 
     def __init__(self, router: LLMRouter, history: list[ChatMessage], model: str):
@@ -64,12 +66,25 @@ class _LLMWorker(QObject):
 
     def run(self) -> None:
         try:
+            self.status.emit("Thinking…")
+
             def on_chunk(text: str) -> None:
                 if self._stop: return
                 self.chunk.emit(text)
 
+            def on_reasoning(text: str) -> None:
+                if self._stop: return
+                self.reasoning.emit(text)
+
             def on_tool(inv: ToolInvocation) -> None:
                 if self._stop: return
+                # Surface the tool name in the status line so the user
+                # sees what's actually running.
+                try:
+                    name = getattr(inv, "tool_name", "") or "tool"
+                    self.status.emit(f"Calling {name}…")
+                except Exception:
+                    pass
                 self.tool_invoked.emit(inv)
 
             history_dicts = [
@@ -83,6 +98,7 @@ class _LLMWorker(QObject):
                 model=self.model,
                 on_chunk=on_chunk,
                 on_tool_invocation=on_tool,
+                on_reasoning=on_reasoning,
             )
             self.finished.emit(response)
         except Exception as ex:
@@ -471,6 +487,64 @@ class MessageBubble(QFrame):
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(6)
 
+        # Status line — surfaces what the LLM is doing right now
+        # ("Thinking…", "Calling Revit info…", "Answering…"). Replaces
+        # the silent typing-dots-only state. Hidden on user bubbles +
+        # cleared once the answer is fully streamed.
+        self.status_line: Optional[QLabel] = None
+        if role == "assistant":
+            self.status_line = QLabel("")
+            self.status_line.setObjectName("bubbleStatus")
+            self.status_line.setStyleSheet(
+                "color: #9a9183; font-style: italic; font-size: 11.5px; "
+                "padding: 0; margin: 0;"
+            )
+            self.status_line.setVisible(False)
+            v.addWidget(self.status_line)
+
+        # Reasoning view — italic dim block ABOVE the answer. Populated
+        # by `append_reasoning`. Hidden until the model emits its first
+        # thinking block. Collapsible toggle via _reasoning_toggle.
+        self.reasoning_view: Optional[QTextEdit] = None
+        self._reasoning_toggle: Optional[QToolButton] = None
+        if role == "assistant":
+            self._reasoning_toggle = QToolButton()
+            self._reasoning_toggle.setObjectName("reasoningToggle")
+            self._reasoning_toggle.setText("▾  Reasoning")
+            self._reasoning_toggle.setCheckable(True)
+            self._reasoning_toggle.setChecked(True)
+            self._reasoning_toggle.setStyleSheet(
+                "QToolButton#reasoningToggle { "
+                "  background:transparent; border:none; "
+                "  color:#9a9183; font-size:10.5px; font-weight:500; "
+                "  letter-spacing:0.06em; padding:2px 0; text-align:left; "
+                "} "
+                "QToolButton#reasoningToggle:hover { color:#c96442; }"
+            )
+            self._reasoning_toggle.setVisible(False)
+            self._reasoning_toggle.toggled.connect(self._toggle_reasoning)
+            v.addWidget(self._reasoning_toggle)
+            self.reasoning_view = QTextEdit()
+            self.reasoning_view.setReadOnly(True)
+            self.reasoning_view.setObjectName("reasoningView")
+            self.reasoning_view.setFrameShape(QFrame.Shape.NoFrame)
+            self.reasoning_view.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.reasoning_view.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.reasoning_view.document().setDocumentMargin(0)
+            self.reasoning_view.textChanged.connect(self._adjust_reasoning_height)
+            self.reasoning_view.setStyleSheet(
+                "QTextEdit#reasoningView { "
+                "  background:transparent; border:none; "
+                "  color:#7a7064; font-style:italic; font-size:12px; "
+                "  border-left:2px solid #3a3128; padding-left:10px; "
+                "  margin-bottom:4px; "
+                "}"
+            )
+            self.reasoning_view.setVisible(False)
+            v.addWidget(self.reasoning_view)
+
         self.text_view = QTextEdit()
         self.text_view.setReadOnly(True)
         self.text_view.setObjectName("messageText")
@@ -519,6 +593,49 @@ class MessageBubble(QFrame):
             self._typing.hide()
             self._typing.deleteLater()
             self._typing = None
+
+    def set_status(self, text: str) -> None:
+        """Update the bubble's status line — what the LLM is doing now.
+        Empty text hides the line. No-op on non-assistant bubbles."""
+        if self.status_line is None:
+            return
+        if text:
+            self.status_line.setText(text)
+            self.status_line.setVisible(True)
+        else:
+            self.status_line.setVisible(False)
+
+    def append_reasoning(self, fragment: str) -> None:
+        """Append a chunk of model reasoning ("thinking" content) to
+        the reasoning view above the answer. Surfaces the toggle row +
+        view on first call. No-op on non-assistant bubbles."""
+        if self.reasoning_view is None:
+            return
+        if not fragment:
+            return
+        self._reasoning_toggle.setVisible(True)
+        self.reasoning_view.setVisible(self._reasoning_toggle.isChecked())
+        cur = self.reasoning_view.textCursor()
+        cur.movePosition(QTextCursor.MoveOperation.End)
+        cur.insertText(fragment)
+        self.reasoning_view.setTextCursor(cur)
+        self._adjust_reasoning_height()
+
+    def _toggle_reasoning(self, checked: bool) -> None:
+        if self.reasoning_view is None or self._reasoning_toggle is None:
+            return
+        self._reasoning_toggle.setText(
+            "▾  Reasoning" if checked else "▸  Reasoning")
+        self.reasoning_view.setVisible(
+            checked and bool(self.reasoning_view.toPlainText()))
+
+    def _adjust_reasoning_height(self) -> None:
+        if self.reasoning_view is None:
+            return
+        doc = self.reasoning_view.document()
+        doc.setTextWidth(self.reasoning_view.viewport().width())
+        h = int(doc.size().height()) + 4
+        self.reasoning_view.setFixedHeight(max(20, min(h, 240)))
 
     def append_text(self, fragment: str) -> None:
         if fragment:
@@ -1315,6 +1432,8 @@ class ChatWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.chunk.connect(self._on_chunk)
+        worker.reasoning.connect(self._on_reasoning)
+        worker.status.connect(self._on_status)
         worker.tool_invoked.connect(self._on_tool_invoked)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
@@ -1329,9 +1448,30 @@ class ChatWindow(QMainWindow):
 
     def _on_chunk(self, fragment: str) -> None:
         if self._current_bubble is None: return
+        # First text chunk = answering. Flip status + clear typing dots.
+        try:
+            self._current_bubble.set_status("Answering…")
+        except Exception:
+            pass
         self._current_bubble.append_text(fragment)
         self.history[-1].content += fragment
         self._scroll_to_bottom()
+
+    def _on_reasoning(self, fragment: str) -> None:
+        if self._current_bubble is None: return
+        try:
+            self._current_bubble.set_status("Thinking…")
+            self._current_bubble.append_reasoning(fragment)
+        except Exception:
+            pass
+        self._scroll_to_bottom()
+
+    def _on_status(self, text: str) -> None:
+        if self._current_bubble is None: return
+        try:
+            self._current_bubble.set_status(text)
+        except Exception:
+            pass
 
     def _on_tool_invoked(self, invocation: ToolInvocation) -> None:
         if self._current_bubble is None: return
@@ -1347,6 +1487,12 @@ class ChatWindow(QMainWindow):
         self._scroll_to_bottom()
 
     def _on_finished(self, response: LLMResponse) -> None:
+        # Clear the bubble's per-turn status — the answer is now complete.
+        if self._current_bubble is not None:
+            try:
+                self._current_bubble.set_status("")
+            except Exception:
+                pass
         self._reset_input_state()
         if response.routing_note:
             self.status_left.setText(response.routing_note)

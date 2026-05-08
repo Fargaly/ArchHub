@@ -54,6 +54,7 @@ class AnthropicClient:
         messages: list[dict],
         tools: list[dict],
         on_chunk: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> dict:
         """Run one streaming turn.
 
@@ -61,9 +62,24 @@ class AnthropicClient:
             { "type": "final", "text": "..." }
             or
             { "type": "tool_use", "text": "...", "tool_calls": [...] }
+
+        on_reasoning fires when the model emits an extended-thinking
+        block — Anthropic surfaces these as content_block_delta events
+        with delta.type == "thinking_delta". Models that don't have
+        thinking enabled never call this.
         """
+        on_reasoning = on_reasoning or (lambda _: None)
+
         # Translate ArchHub-shape messages → Anthropic shape
         anth_messages = self._adapt_messages(messages)
+
+        # Enable extended thinking on models that support it. Detection
+        # is conservative: only opus-4 / sonnet-4 lineage. The thinking
+        # budget is small so latency stays reasonable for simple turns;
+        # the SDK + server allow more when needed.
+        thinking_models = ("opus-4", "sonnet-4", "claude-4")
+        thinking_enabled = any(t in (model or "").lower()
+                                for t in thinking_models)
 
         kwargs: dict[str, Any] = dict(
             model=model,
@@ -71,6 +87,10 @@ class AnthropicClient:
             system=system,
             messages=anth_messages,
         )
+        if thinking_enabled:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+            # Server requires max_tokens > thinking budget.
+            kwargs["max_tokens"] = 8192
         if tools:
             kwargs["tools"] = tools
 
@@ -101,6 +121,15 @@ class AnthropicClient:
                         text = getattr(delta, "text", "") or ""
                         text_accum.append(text)
                         on_chunk(text)
+                    elif dtype == "thinking_delta":
+                        # Extended-thinking content. Surface separately so
+                        # the UI can render it dim-italic above the answer.
+                        thought = getattr(delta, "thinking", "") or ""
+                        if thought:
+                            try:
+                                on_reasoning(thought)
+                            except Exception:
+                                pass
                     elif dtype == "input_json_delta":
                         partial = getattr(delta, "partial_json", "") or ""
                         current_tool_json.append(partial)

@@ -792,6 +792,32 @@ class ChatWindow(QMainWindow):
         self._refresh_timer.timeout.connect(self._refresh_status)
         self._refresh_timer.start()
 
+        # Auto-save current session every 5 min so the Threads list
+        # isn't always empty for new users (and so a crash doesn't lose
+        # an in-flight chat). No-op when the chat has no real history.
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(5 * 60 * 1000)
+        self._autosave_timer.timeout.connect(self._autosave_session)
+        self._autosave_timer.start()
+        self._autosave_path: Optional[Path] = None
+
+    def _autosave_session(self) -> None:
+        """Save the running session if it has at least one user msg.
+        Reuses the same path across ticks so we overwrite, not pile up."""
+        try:
+            real_msgs = [m for m in self.history
+                         if m.role == "user" and (m.content or "").strip()]
+            if not real_msgs:
+                return
+            from session_io import save_session
+            # Pick a name from the first user message (truncated).
+            first = real_msgs[0].content.strip()
+            name = (first[:48] + "…") if len(first) > 48 else first
+            path = save_session(self.session, name)
+            self._autosave_path = path
+        except Exception:
+            pass
+
     # ---- UI construction ---------------------------------------------------
 
     def _build_ui(self) -> None:

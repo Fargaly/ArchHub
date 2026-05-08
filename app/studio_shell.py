@@ -858,19 +858,45 @@ class StudioShell(QMainWindow):
             save_setting("default_model", model_id)
         except Exception:
             pass
-        # Also push through chat widget's model picker if present.
+        # Push through chat widget's model picker. setCurrentText only
+        # works if the visible label matches; correct path is to find
+        # the item whose itemData() equals model_id and setCurrentIndex.
         for attr in ("model_combo", "model_picker", "_model_combo"):
             w = getattr(self.chat_widget, attr, None)
-            if w is not None and hasattr(w, "setCurrentText"):
-                try:
-                    w.setCurrentText(model_id)
-                except Exception:
-                    pass
-                break
+            if w is None:
+                continue
+            try:
+                target_id = model_id
+                # Inspector seeds use bare ids ("claude-sonnet-4.5");
+                # picker uses provider-prefixed ids ("anthropic:...").
+                # If exact match fails, try prefix-match against ids
+                # that end with this label.
+                idx = -1
+                for i in range(w.count()):
+                    data = w.itemData(i)
+                    if data == target_id or (data and data.endswith(":" + target_id)):
+                        idx = i
+                        break
+                if idx >= 0:
+                    w.setCurrentIndex(idx)
+                else:
+                    # Last resort: try setCurrentText (works on QComboBox
+                    # with the visible label).
+                    if hasattr(w, "setCurrentText"):
+                        w.setCurrentText(model_id)
+            except Exception:
+                pass
+            break
         # Refresh router rows so the active dot moves.
         self._refresh_router_rows()
         # Force status rule re-read.
         self._refresh_status_rule()
+        # Toast confirms the switch.
+        try:
+            from toast import show_toast
+            show_toast(self, f"Switched to {model_id}", kind="ok")
+        except Exception:
+            pass
 
     def _known_models(self) -> list[dict]:
         """Return up to 4 models surfaced in the inspector. Pulls from
@@ -1259,7 +1285,7 @@ class StudioShell(QMainWindow):
         n.setObjectName("studioHostName")
         h.addWidget(n, 1)
 
-        # Detail: for revit, surface session count when >1
+        # Detail: for revit + outlook, surface session count when >1
         # ("Revit · 2 sess"); for other families, port or status word.
         port = FAMILY_PORT.get(family, "")
         sessions_n = 0
@@ -1268,8 +1294,14 @@ class StudioShell(QMainWindow):
                 sessions_n = int(health.info("revit").get("sessions") or 0)
             except Exception:
                 sessions_n = 0
+        elif family == "outlook":
+            try:
+                import outlook_broker
+                sessions_n = outlook_broker.sessions_count()
+            except Exception:
+                sessions_n = 0
         if state_str == "live":
-            if family == "revit" and sessions_n > 1:
+            if family in ("revit", "outlook") and sessions_n > 1:
                 detail = f"{sessions_n} sess"
             else:
                 detail = port or "live"
@@ -1285,9 +1317,11 @@ class StudioShell(QMainWindow):
             detail = "off"
         p = QLabel(detail)
         p.setObjectName("studioMonoMuted")
-        # Tooltip lists the per-session breakdown for revit.
+        # Tooltip lists per-session breakdown for revit + outlook.
         if family == "revit" and sessions_n >= 1:
             p.setToolTip(_revit_sessions_tooltip())
+        elif family == "outlook" and sessions_n >= 1:
+            p.setToolTip(_outlook_sessions_tooltip())
         h.addWidget(p)
 
         # Toggle — iOS-style sliding-knob switch (matches studio.jsx).
@@ -2629,6 +2663,27 @@ class _PulseDot(QLabel):
         group.addAnimation(a2)
         self._anim_group = group
         group.start()
+
+
+def _outlook_sessions_tooltip() -> str:
+    """Format the live Outlook account list for the rail tooltip."""
+    try:
+        import outlook_broker
+        sessions = outlook_broker.list_sessions(prune=False)
+    except Exception:
+        return "Outlook accounts unavailable."
+    if not sessions:
+        return "No Outlook accounts."
+    lines = ["Outlook accounts:"]
+    for s in sessions:
+        marker = "●" if s.healthy else "○"
+        bits = [f"{marker} {s.doc_title or 'Account'}"]
+        if s.smtp_address:
+            bits.append(s.smtp_address)
+        if s.version:
+            bits.append(f"v{s.version}")
+        lines.append("  " + " · ".join(bits))
+    return "\n".join(lines)
 
 
 def _revit_sessions_tooltip() -> str:

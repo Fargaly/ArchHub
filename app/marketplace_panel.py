@@ -293,6 +293,19 @@ class MarketplaceCard(QFrame):
                 raise ValueError(f"Unknown kind: {kind}")
             self.btn_install.setText("Installed")
             self.btn_install.setEnabled(False)
+            # Force the shell's Skills + Home caches to invalidate so
+            # the new item appears immediately when the user navigates
+            # to the Skills page.
+            try:
+                shell = self.window()
+                shell._skills_cache = (0.0, [])
+                shell._sessions_cache = (0.0, [])
+                # Re-render Skills page if it's already constructed.
+                p = getattr(shell, "pages", {}).get("skills")
+                if p is not None and hasattr(p, "_refresh"):
+                    p._refresh()
+            except Exception:
+                pass
             try:
                 from toast import show_toast
                 show_toast(self.window(), detail, kind="ok")

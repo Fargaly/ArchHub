@@ -467,7 +467,15 @@ class StudioShell(QMainWindow):
 
     # ──────────────────────────────────────────────────────────────────
     def show_centered(self) -> None:
-        """Restore + centre on primary screen. Same contract as ChatWindow.show_centered."""
+        """Restore + centre on primary screen. Same contract as ChatWindow.show_centered.
+
+        Belt-and-suspenders: under pythonw on Windows we sometimes see
+        Qt report the window as visible (`isVisible()` True, internal
+        widget tree painted) while Win32 keeps WS_VISIBLE off so the
+        window never actually appears on the user's desktop. To prevent
+        the recurring 'alive but hidden — force-shown' loop, after the
+        normal Qt path we directly call Win32 ShowWindow(SW_SHOW) +
+        SetForegroundWindow on our HWND. No-op on non-Windows."""
         from PyQt6.QtWidgets import QApplication
         screen = QApplication.primaryScreen()
         if screen is not None:
@@ -479,6 +487,26 @@ class StudioShell(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+        # Win32 force-show. pythonw sometimes leaves WS_VISIBLE off
+        # despite Qt's showNormal — this guarantees the window is on
+        # screen and foregrounded.
+        try:
+            import sys as _sys
+            if _sys.platform == "win32":
+                import win32gui, win32con  # noqa
+                hwnd = int(self.winId())
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                try:
+                    win32gui.SetForegroundWindow(hwnd)
+                except Exception:
+                    # SetForegroundWindow can fail if the calling
+                    # thread isn't the foreground one — non-fatal.
+                    pass
+        except Exception:
+            # Win32 fallback failure is non-fatal; Qt's show is enough
+            # in most cases. We'd rather log + continue than crash.
+            pass
 
 
 # ---------------------------------------------------------------------------

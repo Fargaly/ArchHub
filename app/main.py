@@ -142,8 +142,17 @@ def main() -> int:
         surface = shell
     except Exception:
         # If the shell fails to build for any reason, fall back to
-        # the legacy bare ChatWindow so the app still launches.
+        # the legacy bare ChatWindow so the app still launches. Logs
+        # the traceback to APP_ROOT/../boot.log so we can debug a
+        # silent shell-build failure on a user's machine.
         surface = window
+        try:
+            import traceback as _tb
+            with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
+                _f.write("StudioShell build failed — falling back to bare ChatWindow:\n")
+                _tb.print_exc(file=_f)
+        except Exception:
+            pass
 
     # Wire the single-instance summon signal: when a second launch
     # asks us to come forward, surface the window.
@@ -178,24 +187,37 @@ def main() -> int:
     # is OFF: chat opens as a normal window so it doesn't obstruct
     # Revit / AutoCAD work. The ambient layer is the pet strip
     # (small, bottom-right) — it stays out of the way.
+    #
+    # Overlay only applies when the bare ChatWindow is the surface.
+    # When the Studio shell wraps it, the shell IS the chrome — overlay
+    # would conflict (it grabs `window` as its host). Skip overlay if
+    # `surface is not window`.
     overlay_controller = None
-    try:
-        from secrets_store import load_setting
-        hud_on = bool(load_setting("hud_overlay_mode"))
-        if hud_on and "--silent" not in sys.argv:
-            from overlay_chrome import apply_overlay_chrome, install_global_hotkey
-            overlay_controller = apply_overlay_chrome(window)
-            combo = (load_setting("hud_hotkey") or "ctrl+space").lower()
-            install_global_hotkey(overlay_controller, combo=combo)
-            window._overlay_controller = overlay_controller
-    except Exception:
-        overlay_controller = None
+    if surface is window:
+        try:
+            from secrets_store import load_setting
+            hud_on = bool(load_setting("hud_overlay_mode"))
+            if hud_on and "--silent" not in sys.argv:
+                from overlay_chrome import apply_overlay_chrome, install_global_hotkey
+                overlay_controller = apply_overlay_chrome(window)
+                combo = (load_setting("hud_hotkey") or "ctrl+space").lower()
+                install_global_hotkey(overlay_controller, combo=combo)
+                window._overlay_controller = overlay_controller
+        except Exception:
+            overlay_controller = None
 
     if "--silent" not in sys.argv:
         if overlay_controller is not None:
             overlay_controller.expand()
         else:
-            window.show_centered()
+            # ALWAYS show the chosen surface (StudioShell when wrapped,
+            # bare ChatWindow only as fallback). Previously this called
+            # `window.show_centered()` unconditionally, which surfaced
+            # an empty ChatWindow (its centralWidget had been re-parented
+            # into the shell) — making external watchdogs report "alive
+            # but hidden" and force-show the shell every time. Single
+            # source of truth: `surface`.
+            surface.show_centered()
         # Auto-update — fires 6s after launch on a daemon thread, so
         # the UI is responsive first. 24h cooldown by default. Mode
         # toggle in Settings → Updates: off / notify / auto.
@@ -209,7 +231,7 @@ def main() -> int:
         # answered.
         try:
             from telemetry_consent_dialog import maybe_prompt as _maybe_telemetry
-            _maybe_telemetry(window)
+            _maybe_telemetry(surface)
         except Exception:
             pass
 
@@ -223,7 +245,7 @@ def main() -> int:
             from onboarding import needs_onboarding, OnboardingWizard
             if needs_onboarding():
                 OnboardingWizard(router=router, manager=manager,
-                                 parent=window).exec()
+                                 parent=surface).exec()
         except Exception:
             pass
         # Re-init Sentry if the user just opted in — first init was

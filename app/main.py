@@ -73,8 +73,17 @@ def main() -> int:
 
     app.setApplicationName("ArchHub")
     app.setQuitOnLastWindowClosed(False)
+    # Token-driven theme — substitutes the active palette into the
+    # legacy theme.qss before applying. Picks up persisted theme_mode
+    # (defaults to dark per brand principle 01).
     if THEME.exists():
-        app.setStyleSheet(THEME.read_text(encoding="utf-8"))
+        try:
+            from design_tokens import load_theme_pref
+            load_theme_pref()
+            from theme_builder import build_global_qss
+            app.setStyleSheet(build_global_qss(THEME))
+        except Exception:
+            app.setStyleSheet(THEME.read_text(encoding="utf-8"))
 
     # Hook PyQt's silent-exception-swallowing behaviour.
     try:

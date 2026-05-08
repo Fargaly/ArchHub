@@ -1302,21 +1302,37 @@ class StudioShell(QMainWindow):
             pass
 
     def _toggle_theme(self) -> None:
-        """Light↔dark — graphite, never black (per brand principle 01)."""
+        """Light↔dark — graphite, never black (per brand principle 01).
+
+        Two stylesheets to re-apply: the global theme.qss (rebuilt from
+        the active palette by theme_builder) which styles ChatWindow
+        and the embedded panels, and the studio-shell-specific inline
+        QSS which styles the rail / inspector / status rule.
+        """
         next_theme = "dark" if active_theme() == "light" else "light"
         set_theme(next_theme)
-        # Re-apply inline QSS so all studio selectors swap palette.
         global T
         T = current_palette()
-        # Repaint surfaces.
+
+        # 1. Global QSS — re-build from theme.qss with new palette so
+        # the chat widget + every embedded dialog re-themes too.
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from theme_builder import build_global_qss
+            from pathlib import Path as _P
+            theme_path = _P(__file__).resolve().parent / "theme.qss"
+            QApplication.instance().setStyleSheet(build_global_qss(theme_path))
+        except Exception:
+            pass
+
+        # 2. Shell-local inline QSS for studio-only selectors.
         self.setStyleSheet(_inline_qss())
         for nid, btn in self._nav_buttons.items():
             btn.setStyleSheet(_nav_style(nid == self._active_page))
-        # Force a refresh so dynamic rows pick up the new colors.
         self._refresh_live()
-        # Rebuild brand widgets so SVG mark + wordmark recolor.
         self._brand_mark.update()
-        # Replace user card so cog menu label flips.
+
+        # Rebuild user card so the cog menu's "Switch to ..." label flips.
         try:
             old = self._user_card
             parent_layout = self._user_card_wrap.layout()

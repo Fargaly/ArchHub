@@ -50,9 +50,12 @@
   </ItemGroup>
 
   <!-- Reference assemblies for net48 — always present so NuGet restores them regardless of
-       which TargetFramework is active at restore time. The package is a no-op on net8. -->
+       which TargetFramework is active at restore time. The package is a no-op on net8.
+       The .net48-specific package is the one that actually carries the targeting pack
+       so machines without the system-installed Developer Pack still build. -->
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Roslyn scripting: version 4.x for net8, version 3.x for net48 (Revit 2023/2024) -->

@@ -179,7 +179,11 @@ COLOR_DARK = {
 # Mutable runtime palette — `theme.set('dark')` swaps the `T` reference
 # wholesale. Module-level `T` and `COLOR` always point at light;
 # call `current()` to get the active palette inside Qt code.
-_ACTIVE = "light"
+#
+# Default = dark (graphite, never black — brand principle 01). Light
+# remains opt-in via the cog menu or `set_theme('light')`. Persisted
+# preference overrides this default at startup.
+_ACTIVE = "dark"
 
 
 def set_theme(name: str) -> None:

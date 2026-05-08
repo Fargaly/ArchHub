@@ -17,44 +17,44 @@ Current ship: **v0.27.x** — Studio shell wired to live ArchHub data
 | v0.27.2 | 2026-05-08 | All fake data ripped — every surface live-wired (manager / sessions / skills / health) |
 | v0.27.3 | 2026-05-08 | Design tokens single source · WCAG-AA contrast · focus rings · 36×24 toggle hits |
 | v0.27.4 | 2026-05-08 | Brand v0.1 integration — ArchMark SVG · "Arch" + italic "Hub" · tagline · dark mode (graphite, not black) · theme toggle · responsive collapse · Settings page layout fix · "+ Add host" button |
-| v0.27.5 | 2026-05-08 | Revit multi-session — each instance binds its own port [48884..48899], publishes a session file with heartbeat. Closing one Revit session no longer kills others. Studio HOSTS row shows live session count + per-session tooltip. New `app/revit_broker.py`. RevitMCP.dll bumped to v0.3.0 (2025/net8 rebuilt; 2023/2024 net48 rebuild blocked on missing .NET Framework 4.8 dev pack — auto_build will rebuild at next activation when the SDK is present). |
+| v0.27.5 | 2026-05-08 | Revit multi-session — each instance binds its own port [48884..48899], publishes a session file with heartbeat. Closing one Revit session no longer kills others. Studio HOSTS row shows live session count + per-session tooltip. New `app/revit_broker.py`. RevitMCP.dll v0.3.0 rebuilt for 2025 (net8). |
+| v0.27.6 | 2026-05-08 | RevitMCP.dll v0.3.0 rebuilt for 2023 + 2024 (net48) using `Microsoft.NETFramework.ReferenceAssemblies.net48` package. All three Revit versions now have multi-session DLLs. Dark theme is the new default. theme.qss made token-driven via `app/theme_builder.py` so dark mode reaches every surface (chat included). |
 
-## Up next — committed dates
+## Up next — committed dates (compressed per CEO)
 
-### v0.28 — Add Host wizard (target 2026-05-15)
-- Bespoke Add Host panel — drop-in replacement for the onboarding wizard fall-through.
-- Auto-build wizard for Revit 2023/2024/2025/2026 · AutoCAD 2024-2026 · Blender · 3ds Max · Speckle.
-- Live "Detected hosts" pane on the Add Host page.
-- Per-host build progress with last-build timestamps.
-- Surface inside `Hosts` rail entry-point AND the existing onboarding flow.
+Sprint window: 2026-05-08 → 2026-05-10. Everything below ships within
+48 hours of commit. Items that genuinely require external blockers
+(NuGet downloads, dev-pack installs on user machines) are flagged.
 
-### v0.29 — Workflows node canvas (target 2026-05-22)
-- Replace Workflows list view with a Blueprint-style node canvas (matches `blueprint.jsx`).
-- Drag-to-connect node compose · LLM/tool/control node types.
-- Node inspector (right pane) for selected node parameters.
-- Live re-run when sliders move (matches `studio-vision.jsx::Parameters`).
+### v0.28 — Add Host wizard (target 2026-05-08, today)
+- Replace the onboarding fall-through with a bespoke Add Host panel
+  living inside the Studio shell — no more modal dialog.
+- Live "Detected hosts" pane reads `manager.entries` + auto_build state.
+- Per-host build progress streams from `auto_build.py` callbacks.
+
+### v0.29 — Workflows node canvas (target 2026-05-09, tomorrow)
+- Replace Workflows list view with the Blueprint-style node canvas.
+- Drag-to-connect node compose · LLM / tool / control node types.
+- Node inspector in the right pane.
 - "Save as Skill" from canvas.
 
-### v0.30 — Marketplace (target 2026-05-29)
-- Skills + Workflows store — official + community.
-- Install / share / version pinning.
-- Backed by the `Skills` registry already in production.
+### v0.30 — Marketplace (target 2026-05-09, tomorrow)
+- Skills + Workflows store page — official + community.
+- Install / share / version pinning. Local-cache backed.
 
-### v0.31 — ⌘K palette overlay (target 2026-06-05)
-- Global ⌘K shortcut opens a search palette.
-- Searches: nav · skills · sessions · settings · running tasks.
-- Recent items pinned to top.
-- Keyboard-only navigation (matches `cockpit.jsx`).
+### v0.31 — ⌘K palette overlay (target 2026-05-09, tomorrow)
+- Global ⌘K opens search palette.
+- Searches nav · skills · sessions · settings · running tasks.
+- Keyboard-only navigation.
 
-### v0.32 — ConnectorBirth motion (target 2026-06-12)
-- Quiet motion (brand principle 07): toggle a host on, the row "settles".
-- Status dot pulse-to-live · port number animates in.
-- Self-heal animation: row hairline pulses warn → ok on reconnect.
+### v0.32 — ConnectorBirth motion (target 2026-05-10)
+- Quiet motion (brand principle 07): toggle a host on, the row settles.
+- Status dot pulse-to-live · self-heal hairline pulse.
 
-### v0.33 — Parameters sidebar (target 2026-06-19)
-- Right inspector becomes session parameters panel when on Chat page.
-- Live re-run when a slider/value changes.
-- Replaces today's static KV rows with live editable controls.
+### v0.33 — Parameters sidebar (target 2026-05-10)
+- Right inspector becomes the live session parameters panel on Chat.
+- Live re-run on slider drag.
+- Replaces today's static KV rows with editable controls.
 
 ## Brand alignment
 

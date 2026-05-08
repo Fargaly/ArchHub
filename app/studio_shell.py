@@ -410,8 +410,13 @@ class StudioShell(QMainWindow):
         wl.addWidget(composer)
 
         # Suggested skills (built from real Skills library).
-        self._home_skills_header = _section_h2(
-            "Suggested Skills", "from your library")
+        # Header: "Suggested Skills" + "from your library" + right-side
+        # "BROWSE ALL →" link that jumps to the Skills page.
+        self._home_skills_header = _section_h2_with_action(
+            "Suggested Skills", "from your library",
+            action_label="BROWSE ALL →",
+            on_action=lambda: self._set_page("skills"),
+        )
         wl.addWidget(self._home_skills_header)
         self._home_skills_grid_wrap = QWidget()
         self._home_skills_grid_wrap.setLayout(QHBoxLayout())
@@ -923,9 +928,20 @@ class StudioShell(QMainWindow):
         self._sr_spend = QLabel("spend $0.00")
         self._sr_spend.setObjectName("studioStatusItem")
         h.addWidget(self._sr_spend)
+        # Healing item — small pulsing dot + label, only shown when
+        # at least one connector is actively self-healing.
+        heal_wrap = QWidget()
+        heal_h = QHBoxLayout(heal_wrap)
+        heal_h.setContentsMargins(0, 0, 0, 0)
+        heal_h.setSpacing(SPACE["xs"]+1)
+        self._sr_heal_dot = _PulseDot(T["warn"])
+        heal_h.addWidget(self._sr_heal_dot)
         self._sr_heal = QLabel("")
         self._sr_heal.setObjectName("studioStatusItem")
-        h.addWidget(self._sr_heal)
+        heal_h.addWidget(self._sr_heal)
+        self._sr_heal_wrap = heal_wrap
+        heal_wrap.setVisible(False)
+        h.addWidget(heal_wrap)
         h.addStretch(1)
         right = QLabel("⌘K palette     ⌘↩ run skill     ⌘/ docs     v0.27.6")
         right.setObjectName("studioStatusItem")
@@ -1201,10 +1217,22 @@ class StudioShell(QMainWindow):
             empty.setObjectName("studioMonoMuted")
             layout.addWidget(empty)
             return
-        for path, name, saved_at in sessions[:8]:
+        # Pinned set comes from secrets_store. The most recent session
+        # is auto-pinned when no manual pins exist so the rail always
+        # has at least one starred row.
+        try:
+            from secrets_store import load_setting
+            pinned_ids = set(load_setting("pinned_threads") or [])
+        except Exception:
+            pinned_ids = set()
+        for i, (path, name, saved_at) in enumerate(sessions[:8]):
             when = _short_when(saved_at)
-            row = _thread_row(name or path.stem, when, pinned=False)
+            display = name or path.stem
+            pinned = (str(path) in pinned_ids
+                      or (not pinned_ids and i == 0))
+            row = _thread_row(display, when, pinned=pinned)
             row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.setToolTip(display)
             row.mousePressEvent = lambda _e, p=path: self._open_session_path(p)
             layout.addWidget(row)
 
@@ -1275,9 +1303,15 @@ class StudioShell(QMainWindow):
         self._sr_hosts.setText(f"● {live}/{total} hosts")
         self._sr_tokens.setText(f"tokens {self._tokens_label()}")
         self._sr_spend.setText(f"spend {self._spend_label()}")
-        self._sr_heal.setText(
-            f"↻ {heal} self-healing" if heal > 0 else ""
-        )
+        if heal > 0:
+            self._sr_heal.setText(f"↻ {heal} self-healing")
+            self._sr_heal_wrap.setVisible(True)
+            try:
+                self._sr_heal_dot.pulse()
+            except Exception:
+                pass
+        else:
+            self._sr_heal_wrap.setVisible(False)
 
     def _tokens_label(self) -> str:
         # Best-effort: read telemetry total tokens; fall back to dash.
@@ -1787,7 +1821,21 @@ class StudioShell(QMainWindow):
         self.nav_changed.emit(page_id)
 
     def _selection_title(self) -> str:
-        # Best-effort: name the active host if any, else generic.
+        """Pull the most useful "what's open right now" string we can:
+
+        1. Most recent Revit session's doc title (via revit_broker).
+        2. The first ACTIVE connector's display name.
+        3. Nothing-selected fallback.
+        """
+        # Revit doc title from the multi-session broker.
+        try:
+            import revit_broker
+            for s in revit_broker.list_sessions(prune=False):
+                if s.healthy and s.doc_title:
+                    return s.doc_title
+        except Exception:
+            pass
+        # Active connector display name.
         try:
             if self.manager is not None:
                 from manager import ConnectorState
@@ -1974,6 +2022,15 @@ def _section_label_with_label(text: str) -> tuple[QFrame, QLabel]:
 
 
 def _section_h2(title: str, sub: Optional[str]) -> QWidget:
+    return _section_h2_with_action(title, sub, action_label=None,
+                                    on_action=None)
+
+
+def _section_h2_with_action(title: str, sub: Optional[str], *,
+                             action_label: Optional[str] = None,
+                             on_action=None) -> QWidget:
+    """H2 section header with an optional right-aligned action link
+    (matches studio.jsx 'BROWSE ALL →' affordance)."""
     w = QWidget()
     h = QHBoxLayout(w)
     h.setContentsMargins(0, 12, 0, 6)
@@ -1986,6 +2043,14 @@ def _section_h2(title: str, sub: Optional[str]) -> QWidget:
         s.setObjectName("studioMonoMuted")
         h.addWidget(s)
     h.addStretch(1)
+    if action_label:
+        link = QPushButton(action_label)
+        link.setObjectName("studioH2Link")
+        link.setCursor(Qt.CursorShape.PointingHandCursor)
+        link.setFlat(True)
+        if on_action is not None:
+            link.clicked.connect(lambda _=False: on_action())
+        h.addWidget(link)
     return w
 
 
@@ -2404,6 +2469,15 @@ def _inline_qss() -> str:
         )
 
     qss = (
+        # ── Bleed kill ──────────────────────────────────────────────
+        # Anything inside the shell (centralWidget#studioRoot) has its
+        # QLabel + QFrame backgrounds forced transparent so leftover
+        # theme.qss rules from the ChatWindow era don't paint stray
+        # rectangles behind text. Specific selectors below override
+        # with explicit backgrounds where we want them.
+        f"QWidget#studioRoot QLabel {{ background:transparent; }}"
+        f"QWidget#studioRoot QFrame {{ background:transparent; }}"
+
         # ── Rail ────────────────────────────────────────────────────
         f"QFrame#studioRail {{ background:{T['bgPanel']}; "
         f"  border-right:1px solid {T['line']}; }}"
@@ -2479,6 +2553,11 @@ def _inline_qss() -> str:
         f"  border-radius:{RADIUS['xs']}px; }}"
         f"QLabel#studioH2 {{ font-family:{TYPE['fontSerif']}; "
         f"  {_type('h2')} color:{T['ink']}; }}"
+        f"QPushButton#studioH2Link {{ background:transparent; "
+        f"  border:none; color:{T['inkMuted']}; "
+        f"  font-family:{TYPE['fontMono']}; font-size:9.5px; "
+        f"  letter-spacing:0.12em; padding:2px 4px; }}"
+        f"QPushButton#studioH2Link:hover {{ color:{T['accent']}; }}"
 
         # ── Composer ────────────────────────────────────────────────
         f"QFrame#studioComposer {{ background:{T['bgRaised']}; "

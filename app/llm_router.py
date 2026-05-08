@@ -109,6 +109,10 @@ class LLMRouter:
         # blocked providers so the user doesn't keep watching a
         # spinner caused by a dead key.
         self._blocklist: dict[str, float] = {}
+        # Provider → human-readable reason for the block. Surfaces in
+        # the model picker tooltip + the chat-side fallback toast so
+        # the user knows WHY anthropic / openai is greyed out.
+        self._block_reasons: dict[str, str] = {}
         # How long to keep a provider blocked after a hard failure.
         # Long enough that the user notices via Reality Check; short
         # enough that adding credits + waiting fixes it without a
@@ -134,6 +138,20 @@ class LLMRouter:
         wrappers when they get a 4xx (auth / quota / credits / bad key)."""
         import time as _t
         self._blocklist[provider] = _t.time() + self._BLOCK_SECONDS
+        # Distill the reason into a short human label so the picker
+        # tooltip + fallback toast read cleanly.
+        short = (reason or "").lower()
+        if "credit" in short or "balance" in short:
+            label = "out of credit"
+        elif "quota" in short:
+            label = "quota exceeded"
+        elif "rate" in short and "limit" in short:
+            label = "rate limited"
+        elif "401" in short or "auth" in short or "invalid" in short and "key" in short:
+            label = "invalid key"
+        else:
+            label = "blocked"
+        self._block_reasons[provider] = label
         print(f"[llm-router] {provider} BLOCKED for {self._BLOCK_SECONDS}s: {reason}", flush=True)
         try:
             from telemetry import track_event
@@ -148,8 +166,29 @@ class LLMRouter:
             return False
         if _t.time() >= until:
             self._blocklist.pop(provider, None)
+            self._block_reasons.pop(provider, None)
             return False
         return True
+
+    def block_reason(self, provider: str) -> str:
+        """Human-readable label for why a provider is blocked, or ''
+        if the provider isn't blocked. Read by the model picker tooltip
+        + the chat fallback toast."""
+        if not self.is_provider_blocked(provider):
+            return ""
+        return self._block_reasons.get(provider, "blocked")
+
+    def blocked_providers(self) -> dict[str, str]:
+        """Return {provider: reason_label} for every currently-blocked
+        provider. Used by chat_window's model picker to surface the
+        block in-line so users can see at a glance which keys need
+        topping up."""
+        out: dict[str, str] = {}
+        for p in list(self._blocklist.keys()):
+            r = self.block_reason(p)
+            if r:
+                out[p] = r
+        return out
 
     def configured_providers(self) -> list[str]:
         # `list_keys()` returns providers with an entry in the secrets
@@ -410,10 +449,12 @@ class LLMRouter:
         on_chunk: Optional[Callable[[str], None]] = None,
         on_tool_invocation: Optional[Callable[[ToolInvocation], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
+        on_status: Optional[Callable[[str], None]] = None,
     ) -> LLMResponse:
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
         on_reasoning = on_reasoning or (lambda _: None)
+        on_status = on_status or (lambda _: None)
 
         # Auto-fallback chain: try the routed provider; on auth/quota
         # failure (4xx) block it for 10 min and pick the next available.
@@ -441,6 +482,14 @@ class LLMRouter:
                 if not _looks_like_auth_or_quota(ex):
                     raise
                 self.block_provider(provider, reason=str(ex)[:200])
+                # Tell the chat layer so it can show a fallback toast —
+                # "Switched anthropic → google: out of credit" beats a
+                # silent re-route the user can't see.
+                try:
+                    reason = self.block_reason(provider) or "blocked"
+                    on_status(f"{provider} {reason} — switching provider…")
+                except Exception:
+                    pass
                 # Force auto re-route on the next loop.
                 model = ROUTE_AUTO
                 continue

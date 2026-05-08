@@ -93,12 +93,17 @@ class _LLMWorker(QObject):
                  "images": list(m.images)}
                 for m in self.history
             ]
+            def on_status_change(text: str) -> None:
+                if self._stop: return
+                self.status.emit(text)
+
             response = self.router.complete(
                 history_dicts,
                 model=self.model,
                 on_chunk=on_chunk,
                 on_tool_invocation=on_tool,
                 on_reasoning=on_reasoning,
+                on_status=on_status_change,
             )
             self.finished.emit(response)
         except Exception as ex:
@@ -2004,14 +2009,33 @@ class ChatWindow(QMainWindow):
         _add("Auto · best model per task", ROUTE_AUTO, enabled=True,
              tooltip="ArchHub picks the best available model for each prompt.")
 
+        # Blocked providers (out-of-credit / quota / rate-limit) get
+        # marked inline so the user can see WHY the row is greyed out.
+        try:
+            blocked = self.router.blocked_providers()
+        except Exception:
+            blocked = {}
         for model_id, label in KNOWN_MODELS:
             provider = model_id.partition(":")[0]
             ok = provider in configured
-            tooltip = ("" if ok
-                       else f"{provider.title()} not configured. "
-                            f"Sign in via Settings (⚙) to enable.")
-            _add(label if ok else f"{label}  (no key)", model_id,
-                 enabled=ok, tooltip=tooltip)
+            block_reason = blocked.get(provider, "")
+            if not ok:
+                suffix = "  (no key)"
+                tip = (f"{provider.title()} not configured. "
+                       f"Sign in via Settings (⚙) to enable.")
+                row_enabled = False
+            elif block_reason:
+                suffix = f"  ({block_reason})"
+                tip = (f"{provider.title()} temporarily unavailable: "
+                       f"{block_reason}. Auto-retry in 10 min, or top "
+                       f"up your account.")
+                row_enabled = False
+            else:
+                suffix = ""
+                tip = ""
+                row_enabled = True
+            _add(label + suffix, model_id, enabled=row_enabled,
+                 tooltip=tip)
 
         if show_local:
             for model_id, label in ollama_models():

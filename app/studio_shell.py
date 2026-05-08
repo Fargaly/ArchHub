@@ -307,7 +307,8 @@ class StudioShell(QMainWindow):
         v.addWidget(addhost_row)
 
         # THREADS section — content rebuilt by _refresh_threads.
-        v.addWidget(_section_label("THREADS"))
+        threads_header, _ = _section_label_with_label("THREADS")
+        v.addWidget(threads_header)
         self._threads_container = QWidget()
         self._threads_container.setLayout(QVBoxLayout())
         self._threads_container.layout().setContentsMargins(8, 0, 8, 0)
@@ -456,21 +457,20 @@ class StudioShell(QMainWindow):
         return page
 
     def _build_skills_page(self) -> QWidget:
-        page = QWidget()
-        page.setObjectName("studioPage")
-        l = QVBoxLayout(page)
-        l.setContentsMargins(0, 0, 0, 0)
-        l.setSpacing(0)
+        """Skills — Studio-native card grid (replaces embedded QDialog).
+
+        Same data source (skills.library) but rendered as a real Studio
+        page that matches the Marketplace visual language: card grid,
+        host-coloured pills, italic-serif titles, terra Run buttons.
+        """
         try:
-            from skills_panel import SkillsPanel
-            panel = SkillsPanel(self.router, self.tools,
-                                self.manager, parent=None)
-            # SkillsPanel is a QDialog; flatten so it renders inline.
-            panel.setWindowFlags(Qt.WindowType.Widget)
-            l.addWidget(panel)
+            from skills_grid_panel import SkillsGridPanel
+            return SkillsGridPanel(router=self.router, tools=self.tools,
+                                   manager=self.manager,
+                                   chat_widget=self.chat_widget,
+                                   parent=None)
         except Exception as ex:
-            l.addWidget(self._error_card("Skills", str(ex)))
-        return page
+            return self._error_card("Skills", str(ex))
 
     def _build_workflows_page(self) -> QWidget:
         """Workflows — Blueprint-style node canvas (v0.29).

@@ -315,6 +315,7 @@ class CanvasScene(QGraphicsScene):
         y = y0
         while y < rect.bottom():
             painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
+            y += 60 if y % 60 == 0 else 12  # walked anyway
             y += 12
         painter.setPen(QPen(major, 1))
         x = int(rect.left() // 60 * 60)
@@ -325,6 +326,63 @@ class CanvasScene(QGraphicsScene):
         while y < rect.bottom():
             painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
             y += 60
+
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+        """Drafting double-border + title block — matches blueprint.jsx
+        BlueprintFlow chrome."""
+        super().drawForeground(painter, rect)
+        scene_rect = self.sceneRect()
+        ink = QColor(T["ink"])
+        line = QColor(T["line"])
+        # Outer border (1 px ink).
+        painter.setPen(QPen(ink, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(scene_rect.adjusted(14, 14, -14, -14))
+        # Inner border (1 px line).
+        painter.setPen(QPen(line, 1))
+        painter.drawRect(scene_rect.adjusted(18, 18, -18, -18))
+
+        # Title block bottom-right.
+        tb_w = 260
+        tb_h = 80
+        tb_x = scene_rect.right() - 18 - tb_w
+        tb_y = scene_rect.bottom() - 18 - tb_h
+        painter.setBrush(QBrush(QColor(T["bgPanel"])))
+        painter.setPen(QPen(ink, 1))
+        painter.drawRect(int(tb_x), int(tb_y), tb_w, tb_h)
+        # Header strip.
+        painter.setPen(QPen(ink, 1))
+        painter.drawLine(int(tb_x), int(tb_y) + 22,
+                         int(tb_x) + tb_w, int(tb_y) + 22)
+        # Header text.
+        painter.setPen(QPen(ink))
+        f_h = QFont("JetBrains Mono", 9)
+        f_h.setBold(True)
+        f_h.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
+        painter.setFont(f_h)
+        wf_name = (getattr(self.workflow, "name", "") or "WORKFLOW").upper()
+        painter.drawText(int(tb_x) + 8, int(tb_y) + 16, wf_name[:24])
+        # Right-aligned WF id.
+        wf_id = (getattr(self.workflow, "id", "") or "WF–001").upper()
+        painter.drawText(int(tb_x) + tb_w - 60, int(tb_y) + 16, wf_id)
+        # KV rows.
+        f_kv = QFont("JetBrains Mono", 8)
+        f_kv.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 105)
+        painter.setFont(f_kv)
+        cap = QColor(T["inkMuted"])
+        body = QColor(T["ink"])
+        rows = [
+            ("STAGE",   f"{len(self.workflow.nodes)} nodes"),
+            ("STATE",   "DRAFT"),
+            ("EDGES",   f"{len(self.workflow.edges)}"),
+            ("BY",      "FARGALY"),
+        ]
+        for i, (k, v) in enumerate(rows):
+            y_row = int(tb_y) + 36 + i * 11
+            painter.setPen(QPen(cap))
+            painter.drawText(int(tb_x) + 8, y_row, k)
+            painter.setPen(QPen(body))
+            painter.drawText(int(tb_x) + 80, y_row, v)
 
     # ------------------------------------------------------------------
     # Edge drag handling — start on a node's right slot, finish on

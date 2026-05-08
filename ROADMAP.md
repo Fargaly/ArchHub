@@ -19,18 +19,13 @@ Current ship: **v0.27.x** — Studio shell wired to live ArchHub data
 | v0.27.4 | 2026-05-08 | Brand v0.1 integration — ArchMark SVG · "Arch" + italic "Hub" · tagline · dark mode (graphite, not black) · theme toggle · responsive collapse · Settings page layout fix · "+ Add host" button |
 | v0.27.5 | 2026-05-08 | Revit multi-session — each instance binds its own port [48884..48899], publishes a session file with heartbeat. Closing one Revit session no longer kills others. Studio HOSTS row shows live session count + per-session tooltip. New `app/revit_broker.py`. RevitMCP.dll v0.3.0 rebuilt for 2025 (net8). |
 | v0.27.6 | 2026-05-08 | RevitMCP.dll v0.3.0 rebuilt for 2023 + 2024 (net48) using `Microsoft.NETFramework.ReferenceAssemblies.net48` package. All three Revit versions now have multi-session DLLs. Dark theme is the new default. theme.qss made token-driven via `app/theme_builder.py` so dark mode reaches every surface (chat included). |
+| v0.28 | 2026-05-08 | Add Host wizard — Studio-native panel replaces the modal onboarding fall-through. 11-row host catalog (Revit 2023/2024/2025 · AutoCAD 2024/2025/2026 · 3ds Max 2025/2026 · Blender · Speckle · Outlook). Per-row state probe (detection · build status · active), Build/Activate buttons run `auto_build` on a worker thread and stream live progress + percent to each row's progress bar. New `app/add_host_panel.py`. Triggered by the "+ Add" button on the HOSTS rail header. |
 
 ## Up next — committed dates (compressed per CEO)
 
 Sprint window: 2026-05-08 → 2026-05-10. Everything below ships within
 48 hours of commit. Items that genuinely require external blockers
 (NuGet downloads, dev-pack installs on user machines) are flagged.
-
-### v0.28 — Add Host wizard (target 2026-05-08, today)
-- Replace the onboarding fall-through with a bespoke Add Host panel
-  living inside the Studio shell — no more modal dialog.
-- Live "Detected hosts" pane reads `manager.entries` + auto_build state.
-- Per-host build progress streams from `auto_build.py` callbacks.
 
 ### v0.29 — Workflows node canvas (target 2026-05-09, tomorrow)
 - Replace Workflows list view with the Blueprint-style node canvas.

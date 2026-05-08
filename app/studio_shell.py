@@ -148,6 +148,7 @@ class StudioShell(QMainWindow):
             ),
             "telemetry": self._build_telemetry_page(),
             "settings":  self._build_settings_page(),
+            "addhost":   self._build_addhost_page(),
         }
         for k, w in self.pages.items():
             self.stack.addWidget(w)
@@ -518,6 +519,17 @@ class StudioShell(QMainWindow):
         scroll.setWidget(rail_wrap)
         outer.addWidget(scroll, 1)
         return page
+
+    def _build_addhost_page(self) -> QWidget:
+        """Add Host — Studio-native host detection + auto-build panel.
+
+        Replaces the modal onboarding wizard fall-through. v0.28.
+        """
+        try:
+            from add_host_panel import AddHostPanel
+            return AddHostPanel(manager=self.manager, parent=None)
+        except Exception as ex:
+            return self._error_card("Add Host", str(ex))
 
     def _build_telemetry_page(self) -> QWidget:
         """Telemetry — show connector_health snapshot + recent events."""
@@ -1244,35 +1256,37 @@ class StudioShell(QMainWindow):
 
     # ──────────────────────────────────────────────────────────────────
     def _open_add_host(self) -> None:
-        """Add Host — kick off detection + auto-build flow.
-
-        Tries the existing ConnectorManager.refresh + auto_build path so
-        new installations of Revit/AutoCAD/3ds Max get detected and
-        their MCP DLLs built without manual NETLOAD steps.
-        """
+        """'+ Add' button on the HOSTS rail header — switches the
+        centre stack to the Add Host panel (v0.28). The panel itself
+        does detection + per-host build with live progress."""
+        # Refresh the manager so any newly-installed hosts surface.
         try:
             if self.manager is not None:
                 self.manager.refresh()
         except Exception:
             pass
-        # Hand off to the existing onboarding wizard for now — its
-        # Step 1 is exactly host detection + auto-build. A bespoke
-        # 'Add host' panel ships in v0.28 (see ROADMAP.md).
+        # If the addhost page exists in the stack, jump to it; otherwise
+        # fall back to the legacy onboarding wizard.
+        if "addhost" in self.pages:
+            self._set_page("addhost")
+            try:
+                # Refresh per-row state in case manager.refresh changed something.
+                p = self.pages["addhost"]
+                if hasattr(p, "_refresh_all"):
+                    p._refresh_all()
+            except Exception:
+                pass
+            return
         try:
             from onboarding import OnboardingWizard
             OnboardingWizard(router=self.router, manager=self.manager,
                              parent=self).exec()
         except Exception:
-            # If onboarding can't construct, fall back to an info card
-            # explaining the manual path.
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self, "Add Host",
-                "Add Host wizard couldn't open. To add a host manually:\n"
-                "1. Install the host (Revit/AutoCAD/3ds Max/Blender).\n"
-                "2. Click Refresh detection in the system tray menu.\n"
-                "3. Toggle the host on in the rail.\n"
-                "Auto-build wizard ships in v0.28."
+                "Add Host panel failed to open. Use Settings → Connectors "
+                "or close + reopen ArchHub."
             )
 
     def resizeEvent(self, ev) -> None:

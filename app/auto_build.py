@@ -418,7 +418,20 @@ def build_acad_connector(year: int,
 # ---------------------------------------------------------------------------
 def install_max_connector(year: int,
                           on_progress=None) -> BuildResult:
-    """3ds Max connector — no compile needed, just copy scripts into Max startup folder."""
+    """3ds Max connector — copy startup scripts into Max's PER-USER
+    startup folder (not the install dir).
+
+    3ds Max loads startup scripts from THREE locations on launch:
+      1. <install>\\scripts\\startup\\          (Program Files — admin only)
+      2. %LOCALAPPDATA%\\Autodesk\\3dsMax\\<year> - 64bit\\ENU\\scripts\\startup\\
+      3. %LOCALAPPDATA%\\Autodesk\\3dsMax\\<year> - 64bit\\ENU\\scripts\\Startup\\
+
+    The previous version wrote to (1), which on Windows requires admin
+    perms — silent failure when ArchHub runs as a normal user. (2) is
+    the right destination per Autodesk docs and per the comment at the
+    top of max_mcp_startup.py. We copy to (2) so non-admin installs
+    actually work.
+    """
     on_progress = on_progress or (lambda *_a, **_kw: None)
 
     on_progress("Locating 3ds Max", 5, "Searching for 3ds Max {}...".format(year))
@@ -430,7 +443,12 @@ def install_max_connector(year: int,
     if not src.exists():
         return BuildResult(False, "3ds Max connector source not bundled.", [])
 
-    startup_dir = max_dir / "scripts" / "startup"
+    # Per-user startup dir.
+    local_app = Path(os.environ.get("LOCALAPPDATA",
+                                     str(Path.home() / "AppData" / "Local")))
+    startup_dir = (local_app / "Autodesk" / "3dsMax"
+                   / f"{year} - 64bit" / "ENU" / "scripts" / "startup")
+    on_progress("Preparing startup dir", 20, str(startup_dir))
     startup_dir.mkdir(parents=True, exist_ok=True)
 
     copied = []
@@ -439,10 +457,25 @@ def install_max_connector(year: int,
             dst = startup_dir / f.name
             shutil.copy2(f, dst)
             copied.append(dst)
-            on_progress("Copying", 50, "{}".format(f.name))
+            on_progress("Copying", 60, f.name)
 
     if not copied:
         return BuildResult(False, "No Max scripts found in source.", [])
 
-    on_progress("Done", 100, "{} scripts installed".format(len(copied)))
-    return BuildResult(True, "Installed {} scripts.".format(len(copied)), copied)
+    # ALSO copy into the install-dir startup as a fallback (best-effort,
+    # silently skips when running as non-admin). Helps in shops where
+    # the per-user dir gets pruned by IT.
+    install_startup = max_dir / "scripts" / "startup"
+    try:
+        install_startup.mkdir(parents=True, exist_ok=True)
+        for f in src.iterdir():
+            if f.suffix in (".ms", ".py", ".mcr"):
+                shutil.copy2(f, install_startup / f.name)
+    except (PermissionError, OSError):
+        pass
+
+    on_progress("Done", 100,
+                "{} scripts at {}".format(len(copied), startup_dir))
+    return BuildResult(True,
+                       "Installed {} scripts to user startup dir.".format(len(copied)),
+                       copied)

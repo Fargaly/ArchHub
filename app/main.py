@@ -41,6 +41,41 @@ def main() -> int:
         pass
 
     app = QApplication(sys.argv)
+    # Force Fusion style + override the Windows accent palette so Qt
+    # never fills "active" / "selected" roles on QComboBox / QLineEdit
+    # with the system accent (default Windows accent is bright blue/
+    # cyan — wildly off-brand). theme.qss + studio inline QSS handle
+    # backgrounds; the palette override ensures Highlight + HighlightedText
+    # match brand even on widget states our QSS doesn't reach.
+    try:
+        from PyQt6.QtGui import QPalette, QColor
+        try:
+            app.setStyle("Fusion")
+        except Exception:
+            pass
+        try:
+            from design_tokens import current as _palette
+            from design_tokens import load_theme_pref as _load_pref
+            _load_pref()
+            p = _palette()
+            qp = QPalette()
+            qp.setColor(QPalette.ColorRole.Highlight, QColor(p["accent"]))
+            qp.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+            qp.setColor(QPalette.ColorRole.Window, QColor(p["bg"]))
+            qp.setColor(QPalette.ColorRole.WindowText, QColor(p["ink"]))
+            qp.setColor(QPalette.ColorRole.Base, QColor(p["bgRaised"]))
+            qp.setColor(QPalette.ColorRole.AlternateBase, QColor(p["bgPanel"]))
+            qp.setColor(QPalette.ColorRole.Text, QColor(p["ink"]))
+            qp.setColor(QPalette.ColorRole.Button, QColor(p["bgRaised"]))
+            qp.setColor(QPalette.ColorRole.ButtonText, QColor(p["ink"]))
+            qp.setColor(QPalette.ColorRole.PlaceholderText, QColor(p["inkCap"]))
+            qp.setColor(QPalette.ColorRole.ToolTipBase, QColor(p["bgPanel"]))
+            qp.setColor(QPalette.ColorRole.ToolTipText, QColor(p["ink"]))
+            app.setPalette(qp)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     # Single-instance lock + summon. If another ArchHub is already
     # running, send 'SHOW' to it and exit 0 — fixes the 'click icon

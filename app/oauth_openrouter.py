@@ -124,11 +124,21 @@ class OpenRouterOAuth:
         self.code_verifier, self.code_challenge = _make_pkce_pair()
         self.port = _pick_free_port()
         self.callback_url = f"http://{LOOPBACK_HOST}:{self.port}/callback"
+        # OpenRouter scopes the auto-created app entry by `name`. Without
+        # one, the server tries to upsert against an inferred default
+        # and returns 409 "Failed to create or update app while creating
+        # auth code" when the user has any prior app under the same
+        # implicit name. Pin our own + add a short uuid suffix so retries
+        # land on a fresh row instead of colliding with a stale one.
+        import uuid as _uuid
+        app_name = f"ArchHub-{_uuid.uuid4().hex[:6]}"
+        self.app_name = app_name
         self.authorize_url = (
             f"{AUTHORIZE_URL}"
             f"?callback_url={urllib.parse.quote(self.callback_url, safe='')}"
             f"&code_challenge={self.code_challenge}"
             f"&code_challenge_method=S256"
+            f"&name={urllib.parse.quote(app_name, safe='')}"
         )
 
         self._state = _OAuthState()

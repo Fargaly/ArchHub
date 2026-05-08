@@ -246,7 +246,14 @@ def find_max_install(year: int) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 def _target_framework_for_revit(year: int) -> str:
-    return "net8.0-windows" if year >= 2025 else "net48"
+    # Revit 2025+   → .NET 8 (Revit's runtime)
+    # Revit 2023/24 → .NET Framework 4.8
+    # Revit 2020/21/22 → .NET Framework 4.7 (Revit ships the 4.7 runtime)
+    if year >= 2025:
+        return "net8.0-windows"
+    if year >= 2023:
+        return "net48"
+    return "net47"
 
 
 def _target_framework_for_acad(year: int) -> str:

@@ -40,6 +40,20 @@ def main() -> int:
     except Exception:
         pass
 
+    # Tell Windows that this process is "ArchHub", not "pythonw.exe".
+    # Without an AppUserModelID, the Windows taskbar groups our window
+    # under pythonw and shows pythonw's generic Python icon. Setting an
+    # AUMID before QApplication binds our windowIcon to the taskbar
+    # entry as well — this is the only knob that actually affects the
+    # taskbar / alt-tab thumbnail / pinned-shortcut icon.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "io.archhub.studio")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     # Force Fusion style + override the Windows accent palette so Qt
     # never fills "active" / "selected" roles on QComboBox / QLineEdit

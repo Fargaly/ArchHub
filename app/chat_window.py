@@ -650,17 +650,36 @@ class MessageBubble(QFrame):
         self.tool_cards_container.setSpacing(6)
         v.addLayout(self.tool_cards_container)
 
-        # Feedback row (👍 👎) lives on every assistant bubble. User
-        # bubbles skip it. Set message_id / skill_id later via
-        # `attach_feedback_meta` when the run completes.
+        # Feedback row — quiet "Helpful? yes/no" links. Hidden until
+        # the bubble is hovered so it doesn't draw attention to itself
+        # while reading the answer.
         self._feedback_row = None
         if role == "assistant":
             try:
                 from feedback_widget import FeedbackRow
                 self._feedback_row = FeedbackRow(parent=self)
                 v.addWidget(self._feedback_row)
+                self.setMouseTracking(True)
             except Exception:
                 self._feedback_row = None
+
+    def enterEvent(self, ev) -> None:
+        if self._feedback_row is not None:
+            self._feedback_row.setVisible(True)
+        super().enterEvent(ev)
+
+    def leaveEvent(self, ev) -> None:
+        if self._feedback_row is not None:
+            # Don't hide while a thumb is checked — keeps inline
+            # comment box accessible after thumbs-down.
+            try:
+                still_open = (self._feedback_row._up.isChecked()
+                              or self._feedback_row._down.isChecked())
+            except Exception:
+                still_open = False
+            if not still_open:
+                self._feedback_row.setVisible(False)
+        super().leaveEvent(ev)
 
     def attach_feedback_meta(self, *, message_id: str | None = None,
                              skill_id: str | None = None) -> None:

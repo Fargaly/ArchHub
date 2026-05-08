@@ -80,18 +80,30 @@ class FeedbackRow(QWidget):
         row.setSpacing(4)
         row.addStretch(1)
 
-        self._up = QPushButton("👍")
-        self._down = QPushButton("👎")
+        # Quiet text-link feedback. Was: 👍/👎 emoji buttons that the
+        # user explicitly hated. Now: tiny mono "Helpful?" + "yes" /
+        # "no" links that hide unless the bubble is hovered. Brand
+        # voice + brand principle 07 (quiet motion / no decoration).
+        prompt = QLabel("Helpful?")
+        prompt.setStyleSheet(
+            "color:#7a7064; font-family:'JetBrains Mono','Cascadia Mono',"
+            "monospace; font-size:9.5px; letter-spacing:0.10em; "
+            "padding:0; margin:0;"
+        )
+        row.addWidget(prompt)
+        self._up = QPushButton("yes")
+        self._down = QPushButton("no")
         for b in (self._up, self._down):
             b.setObjectName("ghostButton")
             b.setFlat(True)
-            b.setFixedSize(28, 22)
             b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             b.setStyleSheet(
-                "QPushButton { color: #6f6d65; font-size: 14px; "
-                "background: transparent; border: none; padding: 0; }"
-                "QPushButton:hover { color: #d97757; }"
-                "QPushButton:checked { color: #788c5d; }"
+                "QPushButton { color:#7a7064; font-family:'JetBrains Mono',"
+                "'Cascadia Mono',monospace; font-size:10px; "
+                "letter-spacing:0.06em; background:transparent; "
+                "border:none; padding:1px 4px; }"
+                "QPushButton:hover { color:#d97757; }"
+                "QPushButton:checked { color:#7ec18e; }"
             )
             b.setCheckable(True)
         self._up.clicked.connect(self._on_up)
@@ -99,6 +111,10 @@ class FeedbackRow(QWidget):
         row.addWidget(self._up)
         row.addWidget(self._down)
         outer.addLayout(row)
+        # Hide whole row until the bubble is hovered. Implemented in
+        # MessageBubble via showEvent / leaveEvent.
+        self.setVisible(False)
+        self.setObjectName("feedbackRow")
 
         # Inline comment box, hidden until thumbs-down.
         self._comment_frame = QFrame()

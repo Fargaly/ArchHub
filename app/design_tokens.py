@@ -38,47 +38,183 @@ from __future__ import annotations
 
 
 # ---------------------------------------------------------------------------
-# COLOR — semantic palette (light theme).
+# BRAND — identity v0.1 (May 2026, from brand.jsx in the handoff bundle).
+# ---------------------------------------------------------------------------
+BRAND = {
+    "name":      "ArchHub",
+    "tagline":   "Talk to your AEC stack.",
+    "tagShort1": "Drafting table for AI.",
+    "tagShort2": "One chat. Every host.",
+    "tagShort3": "Skills, not prompts.",
+    "version":   "v0.1",
+    # Voice rules — keep handy for status/error strings.
+    # ✅ "Dimensioned 47 walls in active view."
+    # ❌ "Successfully completed your task! 🎉"
+    # ✅ "Revit dropped — reconnecting on :7331."
+    # ❌ "Oops! Something went wrong."
+    "voice": [
+        "Dimensional, technical, calm.",
+        "No emoji. No exclamation points.",
+        "We talk about drawings, not 'outputs'.",
+    ],
+    # Seven art-direction principles.
+    "principles": [
+        "Paper-first — even dark mode is graphite, never black.",
+        "Drafted, not designed — show the gridlines.",
+        "One warm color — terracotta is the only emotional accent.",
+        "Calm density — info-rich without noise.",
+        "Italic for soul — romance lives in the italic serif.",
+        "No stock photos — real architecture or nothing at all.",
+        "Quiet motion — things settle, dimension, heal.",
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# COLOR (light theme) — paper · clay · graphite · ochre.
+#
+# Brand v0.1 mapping (from brand.jsx):
+#   terra      = clay terracotta (primary, only emotional accent)
+#   terraDeep  = darker terracotta (gradients, hover)
+#   ochre      = dimensional ochre (secondary — sun on stone)
+#   graphite   = drafting graphite (tertiary — display ink for dark)
+#   cyan       = drafting cyan (technical accent — sparingly)
+#   paper      = warm paper canvas
+#   paperSoft  = secondary paper (cards, sub-fills)
+#   paperLine  = paper-line divider
+#
+# Older code referred to bg/bgPanel/accent etc.; those are kept as aliases
+# below so we don't have to touch every call site at once.
 # ---------------------------------------------------------------------------
 COLOR = {
-    # Surfaces.
-    "bg":          "#f7f4ee",  # page canvas
+    # Brand-named tokens (preferred, matches brand.jsx).
+    "terra":      "#c96442",
+    "terraDeep":  "#8a3a25",
+    "ochre":      "#d9a445",
+    "graphite":   "#2a2a2e",
+    "cyan":       "#3a8a8a",
+    "paper":      "#f7f4ee",
+    "paperSoft":  "#efeae0",
+    "paperLine":  "#e3ddd0",
+
+    # Legacy semantic aliases (kept so existing call sites still work).
+    "bg":          "#f7f4ee",  # page canvas == paper
     "bgPanel":     "#fbf9f4",  # rail / inspector / status rule
-    "bgSoft":      "#efeae0",  # sub-fills, divider plates, user bubble
+    "bgSoft":      "#efeae0",  # sub-fills, divider plates == paperSoft
     "bgHover":     "#ebe6db",  # row + nav hover
     "bgRaised":    "#ffffff",  # cards on top of canvas
 
     # Ink (text).
-    "ink":         "#251f17",  # primary text
-    "inkSoft":     "#5d544a",  # secondary text — bumped from #6b6256
-                                 # for 7.0:1 on bgPanel (was 5.4:1)
-    "inkMuted":    "#7d7568",  # body-muted — bumped from #9a9183
-                                 # for 4.6:1 on bgPanel (was 3.0:1)
-    "inkCap":      "#9a9183",  # mono captions — keeps the original hue,
-                                 # 3.0:1 on bgPanel which clears AA for
-                                 # non-essential text.
+    "ink":         "#1a1612",  # primary text — pulled from brand.jsx
+    "inkSoft":     "#3a3128",  # secondary text — pulled from brand.jsx
+    "inkMuted":    "#7a7064",  # body-muted (4.5:1 on bgPanel) — brand
+    "inkCap":      "#9a9183",  # mono captions (3:1 OK for non-essential)
     "inkDim":      "#cdc6b8",  # disabled / inactive
 
     # Lines.
-    "line":        "#e3ddd0",  # default divider
+    "line":        "#e3ddd0",  # default divider == paperLine
     "lineSoft":    "#ece6d8",  # row separator inside a card
 
-    # Brand / semantic.
-    "accent":      "#c96442",  # primary action, on-state, brand mark
-    "accentSoft":  "#f5e3db",  # accent fill behind selection
-    "accentHi":    "#8a3a25",  # accent gradient stop, dark variant
-    "ok":          "#5a8a5e",  # live / connected
-    "warn":        "#c08533",  # healing / loading
-    "err":         "#b8493e",  # error / fail
+    # Brand-action aliases.
+    "accent":      "#c96442",  # == terra
+    "accentSoft":  "#f5e3db",
+    "accentHi":    "#8a3a25",  # == terraDeep
+    "ok":          "#5a8a5e",
+    "warn":        "#c08533",
+    "err":         "#b8493e",
 
     # Misc.
     "chipFill":    "rgba(0,0,0,0.04)",
     "focusRing":   "#c96442",  # accent — same hue as primary action
-    "selBg":       "#ffffff",  # selected row in a list
+    "selBg":       "#ffffff",
 }
 
 # Backwards-compat alias for older code that imports `T` from here.
 T = COLOR
+
+
+# ---------------------------------------------------------------------------
+# COLOR_DARK — graphite, not black. Per brand principle 01.
+# Surfaces feel like material, not screens. Terracotta carries the same
+# weight; everything else is functional.
+# ---------------------------------------------------------------------------
+COLOR_DARK = {
+    "terra":      "#d97757",  # slightly lifted for dark surface contrast
+    "terraDeep":  "#8a3a25",
+    "ochre":      "#d9a445",
+    "graphite":   "#2a2a2e",
+    "cyan":       "#5fb3b3",
+    "paper":      "#1f1f23",  # dark "paper" — graphite NOT pure black
+    "paperSoft":  "#2a2a2e",
+    "paperLine":  "#3a3a3f",
+
+    "bg":          "#1f1f23",
+    "bgPanel":     "#2a2a2e",
+    "bgSoft":      "#33333a",
+    "bgHover":     "#3a3a3f",
+    "bgRaised":    "#33333a",
+
+    "ink":         "#f0ece4",
+    "inkSoft":     "#c8c3b8",
+    "inkMuted":    "#8a8275",
+    "inkCap":      "#6b6356",
+    "inkDim":      "#4a4640",
+
+    "line":        "#3a3a3f",
+    "lineSoft":    "#4a4a50",
+
+    "accent":      "#d97757",
+    "accentSoft":  "#3a2620",
+    "accentHi":    "#a04832",
+    "ok":          "#7aaa7e",
+    "warn":        "#d99543",
+    "err":         "#d8584d",
+
+    "chipFill":    "rgba(255,255,255,0.06)",
+    "focusRing":   "#d97757",
+    "selBg":       "#33333a",
+}
+
+
+# Mutable runtime palette — `theme.set('dark')` swaps the `T` reference
+# wholesale. Module-level `T` and `COLOR` always point at light;
+# call `current()` to get the active palette inside Qt code.
+_ACTIVE = "light"
+
+
+def set_theme(name: str) -> None:
+    """Switch active theme — 'light' or 'dark'. Persisted via secrets_store
+    on call (best effort)."""
+    global _ACTIVE
+    if name not in ("light", "dark"):
+        return
+    _ACTIVE = name
+    try:
+        from secrets_store import save_setting
+        save_setting("theme_mode", name)
+    except Exception:
+        pass
+
+
+def current() -> dict:
+    """Return the currently-active palette dict."""
+    return COLOR_DARK if _ACTIVE == "dark" else COLOR
+
+
+def active_theme() -> str:
+    return _ACTIVE
+
+
+def load_theme_pref() -> None:
+    """Read persisted preference once at app start."""
+    global _ACTIVE
+    try:
+        from secrets_store import load_setting
+        v = (load_setting("theme_mode") or "light").strip().lower()
+        if v in ("light", "dark"):
+            _ACTIVE = v
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

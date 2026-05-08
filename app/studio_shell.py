@@ -43,17 +43,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtCore import Qt, QTimer, QSize, QPointF, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen,
+    QPixmap, QShortcut,
+)
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
-    QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton,
+    QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 
-# Studio palette comes from app/design_tokens.py — single source of truth.
-# Local `T` alias kept for back-compat with existing callers.
-from design_tokens import COLOR as T, SPACE, RADIUS, TYPE, focus_ring_qss
+# Studio palette + brand from app/design_tokens.py.
+# Use `current()` at refresh time so light↔dark theme swaps propagate.
+from design_tokens import (
+    BRAND, COLOR, COLOR_DARK, SPACE, RADIUS, TYPE,
+    active_theme, current as current_palette, focus_ring_qss, set_theme,
+)
+# Initial alias points at light. Refreshes consult current() — see refresh().
+T = COLOR
 
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
@@ -92,6 +101,16 @@ class StudioShell(QMainWindow):
         self.manager = manager
         self.tools = tools
         self.chat_widget = chat_widget
+        self._active_page = "home"
+
+        # Apply persisted theme preference before building any pages.
+        try:
+            from design_tokens import load_theme_pref
+            load_theme_pref()
+            global T
+            T = current_palette()
+        except Exception:
+            pass
 
         central = QWidget()
         central.setObjectName("studioRoot")
@@ -121,7 +140,12 @@ class StudioShell(QMainWindow):
             "chat":      self._wrap_chat(chat_widget),
             "skills":    self._build_skills_page(),
             "flows":     self._build_workflows_page(),
-            "market":    self._build_placeholder("Marketplace", "Workflows + Skills · official + community."),
+            "market":    self._build_placeholder(
+                "Marketplace",
+                "Workflows + Skills · official + community.\n\n"
+                "Ships v0.30 (see ROADMAP.md). Until then, share Skills "
+                "by exporting JSON from the Skills page."
+            ),
             "telemetry": self._build_telemetry_page(),
             "settings":  self._build_settings_page(),
         }
@@ -168,25 +192,23 @@ class StudioShell(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Brand row
+        # Brand row — ArchMark (arch + node keystone) + 'Arch' + italic 'Hub'.
         brand_wrap = QWidget()
         brand_row = QHBoxLayout(brand_wrap)
         brand_row.setContentsMargins(14, 14, 14, 10)
         brand_row.setSpacing(10)
-        logo = QLabel("a")
-        logo.setObjectName("studioLogo")
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setFixedSize(30, 30)
-        brand_row.addWidget(logo)
-        brand_col = QVBoxLayout()
+        self._brand_mark = ArchMark(size=30)
+        brand_row.addWidget(self._brand_mark)
+        brand_col_w = QWidget()
+        brand_col = QVBoxLayout(brand_col_w)
+        brand_col.setContentsMargins(0, 0, 0, 0)
         brand_col.setSpacing(0)
-        title = QLabel("ArchHub")
-        title.setObjectName("studioBrand")
+        self._brand_word = Wordmark(size=19)
+        brand_col.addWidget(self._brand_word)
         self._brand_sub = QLabel("STUDIO · BOOTING")
         self._brand_sub.setObjectName("studioBrandSub")
-        brand_col.addWidget(title)
         brand_col.addWidget(self._brand_sub)
-        brand_row.addLayout(brand_col, 1)
+        brand_row.addWidget(brand_col_w, 1)
         v.addWidget(brand_wrap)
 
         # ⌘K command box (placeholder — palette overlay deferred)
@@ -216,8 +238,20 @@ class StudioShell(QMainWindow):
             nav_l.addWidget(btn)
         v.addWidget(nav_wrap)
 
-        # HOSTS section — content rebuilt by _refresh_hosts.
+        # HOSTS section — content rebuilt by _refresh_hosts. Header has a
+        # trailing '+' affordance that triggers the Add Host wizard
+        # (auto-build flow). Hidden if manager refresh isn't available.
         hosts_header, self._hosts_count_lbl = _section_label_with_label("HOSTS · …")
+        add_btn = QToolButton()
+        add_btn.setText("＋")
+        add_btn.setObjectName("studioAddHost")
+        add_btn.setToolTip("Add host — detect + auto-build connector")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self._open_add_host)
+        # Splice the button into the header's row layout (last child).
+        hl = hosts_header.layout()
+        if hl is not None:
+            hl.addWidget(add_btn)
         v.addWidget(hosts_header)
         self._hosts_container = QWidget()
         self._hosts_container.setLayout(QVBoxLayout())
@@ -287,6 +321,11 @@ class StudioShell(QMainWindow):
         self._home_h1 = QLabel("Welcome.")
         self._home_h1.setObjectName("studioH1")
         wl.addWidget(self._home_h1)
+
+        # Brand tagline — italic serif, brand voice line.
+        self._home_tagline = QLabel(BRAND["tagline"])
+        self._home_tagline.setObjectName("studioTagline")
+        wl.addWidget(self._home_tagline)
 
         self._home_sub = QLabel("")
         self._home_sub.setObjectName("studioH1Sub")
@@ -373,34 +412,111 @@ class StudioShell(QMainWindow):
         return page
 
     def _build_workflows_page(self) -> QWidget:
+        """Workflows — node canvas (lands v0.29).
+
+        Embeds the existing WorkflowsPanel list view so Workflows still
+        functional, but the design intent (a Blueprint-style node
+        canvas, see blueprint.jsx in the handoff) ships in v0.29.
+        Header explains the gap so the user isn't left guessing.
+        """
         page = QWidget()
         page.setObjectName("studioPage")
-        l = QVBoxLayout(page)
-        l.setContentsMargins(0, 0, 0, 0)
-        l.setSpacing(0)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header with progress note.
+        header = QWidget()
+        hh = QVBoxLayout(header)
+        hh.setContentsMargins(40, 32, 40, 16)
+        hh.setSpacing(4)
+        cap = QLabel("WORKFLOWS · LIST VIEW")
+        cap.setObjectName("studioMonoCap")
+        hh.addWidget(cap)
+        h1 = QLabel("Workflows")
+        h1.setObjectName("studioH1")
+        hh.addWidget(h1)
+        sub = QLabel(
+            "List view today; node canvas lands v0.29 (see ROADMAP.md). "
+            "All saved Workflows below run from this list."
+        )
+        sub.setObjectName("studioH1Sub")
+        sub.setWordWrap(True)
+        hh.addWidget(sub)
+        outer.addWidget(header)
+
         try:
             from workflows_panel import WorkflowsPanel
             panel = WorkflowsPanel(self.router, self.tools,
                                    self.manager, parent=None)
             panel.setWindowFlags(Qt.WindowType.Widget)
-            l.addWidget(panel)
+            outer.addWidget(panel, 1)
         except Exception as ex:
-            l.addWidget(self._error_card("Workflows", str(ex)))
+            outer.addWidget(self._error_card("Workflows", str(ex)))
         return page
 
     def _build_settings_page(self) -> QWidget:
+        """Settings — embed SettingsDialog inside a proper scrollable
+        page header instead of dropping it raw into the centre column.
+
+        Without this wrapper SettingsDialog's QFormLayout (designed for
+        a 520-px modal) gets stretched to the full centre-column width,
+        which makes long fields overflow over short labels and the
+        bottom OK/Cancel buttons hover next to other rows. The wrapper
+        gives it a fixed 720-px content rail + scroll so it behaves.
+        """
         page = QWidget()
         page.setObjectName("studioPage")
-        l = QVBoxLayout(page)
-        l.setContentsMargins(0, 0, 0, 0)
-        l.setSpacing(0)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header row.
+        header = QWidget()
+        hh = QVBoxLayout(header)
+        hh.setContentsMargins(40, 32, 40, 0)
+        hh.setSpacing(4)
+        cap = QLabel("SETTINGS")
+        cap.setObjectName("studioMonoCap")
+        hh.addWidget(cap)
+        h1 = QLabel("Settings")
+        h1.setObjectName("studioH1")
+        hh.addWidget(h1)
+        outer.addWidget(header)
+
+        # Scroll wrapper — content lives in a 720px-wide rail centred.
+        scroll = QScrollArea(page)
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("studioScroll")
+        scroll.setStyleSheet(
+            "QScrollArea#studioScroll { background: transparent; "
+            "border: none; }"
+        )
+        rail_wrap = QWidget()
+        rail_wrap.setObjectName("studioPage")
+        rail_l = QHBoxLayout(rail_wrap)
+        rail_l.setContentsMargins(40, 16, 40, 40)
+        rail_l.addStretch(1)
+        rail = QWidget()
+        rail.setMaximumWidth(720)
+        rail.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.MinimumExpanding)
+        rl = QVBoxLayout(rail)
+        rl.setContentsMargins(0, 0, 0, 0)
         try:
             from settings_dialog import SettingsDialog
             dlg = SettingsDialog(self.router, parent=None)
             dlg.setWindowFlags(Qt.WindowType.Widget)
-            l.addWidget(dlg)
+            # Prevent the embedded dialog from stretching beyond the rail.
+            dlg.setSizePolicy(QSizePolicy.Policy.Preferred,
+                              QSizePolicy.Policy.MinimumExpanding)
+            rl.addWidget(dlg)
         except Exception as ex:
-            l.addWidget(self._error_card("Settings", str(ex)))
+            rl.addWidget(self._error_card("Settings", str(ex)))
+        rail_l.addWidget(rail, 0)
+        rail_l.addStretch(1)
+        scroll.setWidget(rail_wrap)
+        outer.addWidget(scroll, 1)
         return page
 
     def _build_telemetry_page(self) -> QWidget:
@@ -562,7 +678,21 @@ class StudioShell(QMainWindow):
         cog.setText("⚙")
         cog.setObjectName("studioCog")
         cog.setCursor(Qt.CursorShape.PointingHandCursor)
-        cog.clicked.connect(lambda: self._set_page("settings"))
+        cog.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Cog menu: Settings · Theme toggle · Sign out.
+        menu = QMenu(cog)
+        act_settings = menu.addAction("Settings")
+        act_settings.triggered.connect(lambda: self._set_page("settings"))
+        menu.addSeparator()
+        act_theme = menu.addAction(
+            "Switch to dark theme" if active_theme() == "light"
+            else "Switch to light theme"
+        )
+        act_theme.triggered.connect(self._toggle_theme)
+        menu.addSeparator()
+        act_about = menu.addAction(f"About — {BRAND['name']} {BRAND['version']}")
+        act_about.setEnabled(False)
+        cog.setMenu(menu)
         h.addWidget(cog)
         return card
 
@@ -1100,9 +1230,95 @@ class StudioShell(QMainWindow):
             return 0
 
     # ──────────────────────────────────────────────────────────────────
+    def _open_add_host(self) -> None:
+        """Add Host — kick off detection + auto-build flow.
+
+        Tries the existing ConnectorManager.refresh + auto_build path so
+        new installations of Revit/AutoCAD/3ds Max get detected and
+        their MCP DLLs built without manual NETLOAD steps.
+        """
+        try:
+            if self.manager is not None:
+                self.manager.refresh()
+        except Exception:
+            pass
+        # Hand off to the existing onboarding wizard for now — its
+        # Step 1 is exactly host detection + auto-build. A bespoke
+        # 'Add host' panel ships in v0.28 (see ROADMAP.md).
+        try:
+            from onboarding import OnboardingWizard
+            OnboardingWizard(router=self.router, manager=self.manager,
+                             parent=self).exec()
+        except Exception:
+            # If onboarding can't construct, fall back to an info card
+            # explaining the manual path.
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Add Host",
+                "Add Host wizard couldn't open. To add a host manually:\n"
+                "1. Install the host (Revit/AutoCAD/3ds Max/Blender).\n"
+                "2. Click Refresh detection in the system tray menu.\n"
+                "3. Toggle the host on in the rail.\n"
+                "Auto-build wizard ships in v0.28."
+            )
+
+    def resizeEvent(self, ev) -> None:
+        """Responsive collapse — rail+inspector hide below narrow widths.
+
+        Above 1100 px: full 3-pane.
+        900-1100 px:    inspector hides (rail kept, centre expands).
+        Below 900 px:   rail collapses to icons-only (60 px), inspector
+                        hidden. User card hidden too.
+        """
+        super().resizeEvent(ev)
+        try:
+            w = self.width()
+            self.inspector.setVisible(w >= 1100)
+            if w < 900:
+                self.rail.setFixedWidth(60)
+                # Hide labels on rail nav buttons; show only key.
+                for nid, btn in self._nav_buttons.items():
+                    btn.setText("⌘" + dict(((k, n) for k, _, n in NAV_ITEMS))[nid])
+            else:
+                self.rail.setFixedWidth(232)
+                for nid, btn in self._nav_buttons.items():
+                    label = dict(((k, l) for k, l, _ in NAV_ITEMS))[nid]
+                    key = dict(((k, n) for k, _, n in NAV_ITEMS))[nid]
+                    btn.setText(f"{label}     ⌘{key}")
+        except Exception:
+            pass
+
+    def _toggle_theme(self) -> None:
+        """Light↔dark — graphite, never black (per brand principle 01)."""
+        next_theme = "dark" if active_theme() == "light" else "light"
+        set_theme(next_theme)
+        # Re-apply inline QSS so all studio selectors swap palette.
+        global T
+        T = current_palette()
+        # Repaint surfaces.
+        self.setStyleSheet(_inline_qss())
+        for nid, btn in self._nav_buttons.items():
+            btn.setStyleSheet(_nav_style(nid == self._active_page))
+        # Force a refresh so dynamic rows pick up the new colors.
+        self._refresh_live()
+        # Rebuild brand widgets so SVG mark + wordmark recolor.
+        self._brand_mark.update()
+        # Replace user card so cog menu label flips.
+        try:
+            old = self._user_card
+            parent_layout = self._user_card_wrap.layout()
+            parent_layout.removeWidget(old)
+            old.deleteLater()
+            self._user_card = self._build_user_card_real()
+            parent_layout.addWidget(self._user_card)
+        except Exception:
+            pass
+
+    # ──────────────────────────────────────────────────────────────────
     def _set_page(self, page_id: str) -> None:
         if page_id not in self.pages:
             return
+        self._active_page = page_id
         self.stack.setCurrentWidget(self.pages[page_id])
         for nid, btn in self._nav_buttons.items():
             active = nid == page_id
@@ -1151,6 +1367,113 @@ class StudioShell(QMainWindow):
             # Win32 fallback failure is non-fatal; Qt's show is enough
             # in most cases. We'd rather log + continue than crash.
             pass
+
+
+# ---------------------------------------------------------------------------
+# Brand widgets — ArchMark + Wordmark per brand.jsx (handoff v0.1)
+# ---------------------------------------------------------------------------
+class ArchMark(QWidget):
+    """ArchHub brand mark — arch with parametric node keystone.
+
+    Direct port of brand.jsx::ArchMark. Renders crisply at any size.
+    Reads as a doorway, an arch, an A, and a graph node — all in one mark.
+    """
+    def __init__(self, size: int = 32, color: str | None = None,
+                 mono: bool = False, parent=None):
+        super().__init__(parent)
+        self._size = size
+        self._color = color
+        self._mono = mono
+        self.setFixedSize(size, size)
+
+    def setSize(self, size: int) -> None:
+        self._size = size
+        self.setFixedSize(size, size)
+        self.update()
+
+    def paintEvent(self, ev) -> None:
+        p = current_palette()
+        c_main = QColor(p["ink"] if self._mono else (self._color or p["terra"]))
+        c_deep = QColor(p["ink"] if self._mono else p["terraDeep"])
+        c_paper = QColor(p["paper"])
+
+        s = self._size
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # Scale so the painter operates in the brand.jsx 64×64 viewbox.
+        painter.scale(s / 64.0, s / 64.0)
+
+        # Arch shoulders + jambs — path "M10 56 V32 a22 22 0 0 1 44 0 V56".
+        path = QPainterPath()
+        path.moveTo(10, 56)
+        path.lineTo(10, 32)
+        path.arcTo(10, 10, 44, 44, 180, -180)   # 22-radius semicircle
+        path.lineTo(54, 56)
+        pen = QPen(c_main)
+        pen.setWidthF(4.5)
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+        painter.setPen(pen)
+        painter.drawPath(path)
+
+        # Inner reveal — "M18 56 V34 a14 14 0 0 1 28 0 V56".
+        inner = QPainterPath()
+        inner.moveTo(18, 56)
+        inner.lineTo(18, 34)
+        inner.arcTo(18, 20, 28, 28, 180, -180)
+        inner.lineTo(46, 56)
+        pen2 = QPen(c_main)
+        pen2.setWidthF(1.3)
+        c_inner = QColor(c_main)
+        c_inner.setAlphaF(0.45)
+        pen2.setColor(c_inner)
+        painter.setPen(pen2)
+        painter.drawPath(inner)
+
+        # Keystone — node socket. Ring + dot.
+        painter.setPen(QPen(c_deep, 2.4))
+        painter.setBrush(QBrush(c_paper))
+        painter.drawEllipse(QPointF(32, 22), 5.2, 5.2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(c_deep))
+        painter.drawEllipse(QPointF(32, 22), 1.8, 1.8)
+
+        # Ground line.
+        pen3 = QPen(c_main)
+        pen3.setWidthF(1.5)
+        pen3.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen3)
+        painter.drawLine(6, 58, 58, 58)
+
+
+class Wordmark(QWidget):
+    """ArchHub wordmark — 'Arch' + italic terra 'Hub'.
+
+    Direct port of brand.jsx::Wordmark. Rendered as inline labels so
+    Qt picks up font fallbacks correctly.
+    """
+    def __init__(self, size: int = 19, dark: bool = False, parent=None):
+        super().__init__(parent)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        p = current_palette()
+        ink_color = p["paper"] if dark else p["ink"]
+        terra = p["terra"]
+        a = QLabel("Arch")
+        a.setStyleSheet(
+            f"font-family:{TYPE['fontSerif']}; "
+            f"font-size:{size}px; color:{ink_color}; "
+            f"letter-spacing:-0.02em; font-weight:400;"
+        )
+        h.addWidget(a)
+        b = QLabel("Hub")
+        b.setStyleSheet(
+            f"font-family:{TYPE['fontSerif']}; "
+            f"font-size:{size}px; color:{terra}; "
+            f"letter-spacing:-0.02em; font-style:italic;"
+        )
+        h.addWidget(b)
+        h.addStretch(1)
 
 
 # ---------------------------------------------------------------------------
@@ -1450,6 +1773,15 @@ def _inline_qss() -> str:
         f"  {_type('h1')} color:{T['ink']}; }}"
         f"QLabel#studioH1Sub {{ color:{T['inkSoft']}; "
         f"  {_type('bodyLg')} line-height:1.6; }}"
+        f"QLabel#studioTagline {{ font-family:{TYPE['fontSerif']}; "
+        f"  font-style:italic; font-size:24px; color:{T['inkSoft']}; "
+        f"  letter-spacing:-0.01em; }}"
+        f"QToolButton#studioAddHost {{ background:transparent; "
+        f"  border:1px solid {T['line']}; border-radius:{RADIUS['sm']}px; "
+        f"  color:{T['inkSoft']}; font-size:13px; padding:1px 6px; "
+        f"  margin-right:6px; }}"
+        f"QToolButton#studioAddHost:hover {{ "
+        f"  border-color:{T['accent']}; color:{T['accent']}; }}"
         f"QLabel#studioH2 {{ font-family:{TYPE['fontSerif']}; "
         f"  {_type('h2')} color:{T['ink']}; }}"
 

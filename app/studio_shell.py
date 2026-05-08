@@ -275,26 +275,36 @@ class StudioShell(QMainWindow):
             nav_l.addWidget(btn)
         v.addWidget(nav_wrap)
 
-        # HOSTS section — content rebuilt by _refresh_hosts. Header has a
-        # trailing '+' affordance that triggers the Add Host wizard
-        # (auto-build flow). Hidden if manager refresh isn't available.
+        # HOSTS section — content rebuilt by _refresh_hosts.
         hosts_header, self._hosts_count_lbl = _section_label_with_label("HOSTS · …")
-        add_btn = QToolButton()
-        add_btn.setText("＋")
-        add_btn.setObjectName("studioAddHost")
-        add_btn.setToolTip("Add host — detect + auto-build connector")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.clicked.connect(self._open_add_host)
-        # Splice the button into the header's row layout (last child).
-        hl = hosts_header.layout()
-        if hl is not None:
-            hl.addWidget(add_btn)
         v.addWidget(hosts_header)
         self._hosts_container = QWidget()
         self._hosts_container.setLayout(QVBoxLayout())
         self._hosts_container.layout().setContentsMargins(8, 0, 8, 0)
         self._hosts_container.layout().setSpacing(1)
         v.addWidget(self._hosts_container)
+
+        # "+ Add host..." inline row with AUTO-BUILD badge — the
+        # primary affordance for connecting a new host (matches
+        # studio.jsx HOSTS section).
+        addhost_row = QFrame()
+        addhost_row.setObjectName("studioAddHostRow")
+        addhost_row.setCursor(Qt.CursorShape.PointingHandCursor)
+        ahl = QHBoxLayout(addhost_row)
+        ahl.setContentsMargins(9, 6, 9, 6)
+        ahl.setSpacing(8)
+        plus = QLabel("+")
+        plus.setObjectName("studioAddHostPlus")
+        plus.setFixedWidth(10)
+        ahl.addWidget(plus)
+        nm = QLabel("Add host…")
+        nm.setObjectName("studioAddHostText")
+        ahl.addWidget(nm, 1)
+        badge = QLabel("AUTO-BUILD")
+        badge.setObjectName("studioAddHostBadge")
+        ahl.addWidget(badge)
+        addhost_row.mousePressEvent = lambda _e: self._open_add_host()
+        v.addWidget(addhost_row)
 
         # THREADS section — content rebuilt by _refresh_threads.
         v.addWidget(_section_label("THREADS"))
@@ -369,19 +379,20 @@ class StudioShell(QMainWindow):
         self._home_sub.setWordWrap(True)
         wl.addWidget(self._home_sub)
 
-        # Composer card
+        # Composer card — soft raised card, italic prompt, terra Send.
         composer = QFrame()
         composer.setObjectName("studioComposer")
         cl = QVBoxLayout(composer)
-        cl.setContentsMargins(14, 12, 14, 12)
-        cl.setSpacing(8)
-        prompt = QLabel("Ask anything — type below in Chat.")
+        cl.setContentsMargins(SPACE["lg"], SPACE["md"]+2,
+                              SPACE["lg"], SPACE["md"]+2)
+        cl.setSpacing(SPACE["md"]-2)
+        prompt = QLabel("Dimension all walls in the active view…")
         prompt.setObjectName("studioComposerPrompt")
         cl.addWidget(prompt)
         chip_row = QHBoxLayout()
-        chip_row.setSpacing(6)
-        for c in ("✦ Sketch", "● Voice", "@ Skill", "+ Host"):
-            b = QPushButton(c)
+        chip_row.setSpacing(SPACE["xs"]+2)
+        for label in ("✦ Sketch", "● Voice", "@ Skill", "+ Host"):
+            b = QPushButton(label)
             b.setObjectName("studioChip")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False: self._set_page("chat"))
@@ -390,8 +401,9 @@ class StudioShell(QMainWindow):
         self._home_meta = QLabel("…")
         self._home_meta.setObjectName("studioMonoMuted")
         chip_row.addWidget(self._home_meta)
-        send = QPushButton("Open chat  ➤")
+        send = QPushButton("Send  ↗")
         send.setObjectName("primaryButton")
+        send.setCursor(Qt.CursorShape.PointingHandCursor)
         send.clicked.connect(lambda: self._set_page("chat"))
         chip_row.addWidget(send)
         cl.addLayout(chip_row)
@@ -612,29 +624,55 @@ class StudioShell(QMainWindow):
     # Inspector
     # ──────────────────────────────────────────────────────────────────
     def _build_inspector(self) -> QFrame:
-        """Right inspector — context KV rows by default, swaps to the
-        live Parameters panel when the user is on the Chat page (v0.33).
+        """Right inspector — three stacked sections matching studio.jsx:
+
+          LLM ROUTER     model rows with active dot, latency, price
+          SELECTION      contextual entity + property rows
+          QUICK ACTIONS  chevron-prefix command list
+
+        On Chat the SELECTION section swaps to the live ParametersPanel.
         """
         ins = QFrame()
         ins.setObjectName("studioInspector")
         ins.setFixedWidth(304)
-        v = QVBoxLayout(ins)
-        v.setContentsMargins(18, 18, 18, 18)
-        v.setSpacing(10)
+        outer = QVBoxLayout(ins)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        cap = QLabel("CONTEXT")
-        cap.setObjectName("studioMonoCap")
-        v.addWidget(cap)
-        self._ins_cap = cap
-        self._ins_title = QLabel("ArchHub — Studio")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("studioScroll")
+        scroll.setStyleSheet(
+            "QScrollArea#studioScroll { background:transparent; border:none; }")
+        body = QWidget()
+        body.setObjectName("studioInspectorBody")
+        v = QVBoxLayout(body)
+        v.setContentsMargins(18, 18, 18, 18)
+        v.setSpacing(SPACE["lg"])
+
+        # ── LLM ROUTER ────────────────────────────────────────────
+        cap1 = QLabel("LLM ROUTER")
+        cap1.setObjectName("studioMonoCap")
+        v.addWidget(cap1)
+        self._ins_router_wrap = QWidget()
+        rwl = QVBoxLayout(self._ins_router_wrap)
+        rwl.setContentsMargins(0, 0, 0, 0)
+        rwl.setSpacing(SPACE["xs"]+2)
+        v.addWidget(self._ins_router_wrap)
+
+        # ── SELECTION (or PARAMETERS on Chat) ─────────────────────
+        self._ins_cap = QLabel("SELECTION")
+        self._ins_cap.setObjectName("studioMonoCap")
+        v.addWidget(self._ins_cap)
+        self._ins_title = QLabel("Nothing selected")
         self._ins_title.setObjectName("studioInspectorTitle")
         v.addWidget(self._ins_title)
 
-        # Static KV rows (default state).
+        # Static KV rows for SELECTION default state.
         self._ins_kv_wrap = QWidget()
         kv_l = QVBoxLayout(self._ins_kv_wrap)
         kv_l.setContentsMargins(0, 0, 0, 0)
-        kv_l.setSpacing(10)
+        kv_l.setSpacing(SPACE["xs"])
         self._ins_rows: dict[str, QLabel] = {}
         for key in ("Active host", "Connectors", "Skills", "Model", "Latency"):
             row, value_lbl = _inspector_kv(key, "…")
@@ -649,10 +687,189 @@ class StudioShell(QMainWindow):
         pl.setSpacing(0)
         self._ins_params_wrap.setVisible(False)
         v.addWidget(self._ins_params_wrap)
+        self._ins_params_panel = None
 
-        self._ins_params_panel = None     # populated by _ensure_params_panel
+        # ── QUICK ACTIONS ────────────────────────────────────────
+        cap3 = QLabel("QUICK ACTIONS")
+        cap3.setObjectName("studioMonoCap")
+        v.addWidget(cap3)
+        self._ins_actions_wrap = QWidget()
+        awl = QVBoxLayout(self._ins_actions_wrap)
+        awl.setContentsMargins(0, 0, 0, 0)
+        awl.setSpacing(SPACE["xs"])
+        v.addWidget(self._ins_actions_wrap)
+
         v.addStretch(1)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+
+        # Initial fill.
+        self._refresh_router_rows()
+        self._refresh_quick_actions()
         return ins
+
+    def _refresh_router_rows(self) -> None:
+        layout = self._ins_router_wrap.layout()
+        while layout.count():
+            it = layout.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        models = self._known_models()
+        active = (self._current_model() or "").strip()
+        for m in models:
+            row = self._make_router_row(
+                name=m["name"], company=m["company"],
+                price=m.get("price", ""), latency=m.get("latency", ""),
+                active=(m["id"] == active or m["name"] == active),
+                model_id=m["id"],
+            )
+            layout.addWidget(row)
+
+    def _make_router_row(self, *, name: str, company: str, price: str,
+                         latency: str, active: bool, model_id: str) -> QFrame:
+        row = QFrame()
+        row.setObjectName("studioRouterRow")
+        row.setProperty("active", active)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(SPACE["sm"]+1, SPACE["sm"]-1,
+                             SPACE["sm"]+1, SPACE["sm"]-1)
+        h.setSpacing(SPACE["sm"])
+        # Active dot.
+        dot = QLabel("●" if active else "○")
+        dot.setStyleSheet(
+            f"color:{T['accent'] if active else T['inkDim']}; font-size:9px;")
+        dot.setFixedWidth(10)
+        h.addWidget(dot)
+        # Name + company column.
+        col_w = QWidget()
+        col = QVBoxLayout(col_w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        nl = QLabel(name)
+        nl.setObjectName("studioRouterName")
+        col.addWidget(nl)
+        meta = QLabel(f"{company.upper()}  ·  {price}" if price else company.upper())
+        meta.setObjectName("studioMonoCap")
+        col.addWidget(meta)
+        h.addWidget(col_w, 1)
+        # Latency right-aligned.
+        if latency:
+            lat = QLabel(latency)
+            lat.setObjectName("studioMonoMuted")
+            h.addWidget(lat)
+        # Click to switch (best-effort — sets default_model setting).
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.mousePressEvent = lambda _e, mid=model_id: self._set_default_model(mid)
+        # Restyle so :active variant repaints.
+        row.setStyleSheet(_router_row_qss(active))
+        return row
+
+    def _set_default_model(self, model_id: str) -> None:
+        try:
+            from secrets_store import save_setting
+            save_setting("default_model", model_id)
+        except Exception:
+            pass
+        # Also push through chat widget's model picker if present.
+        for attr in ("model_combo", "model_picker", "_model_combo"):
+            w = getattr(self.chat_widget, attr, None)
+            if w is not None and hasattr(w, "setCurrentText"):
+                try:
+                    w.setCurrentText(model_id)
+                except Exception:
+                    pass
+                break
+        # Refresh router rows so the active dot moves.
+        self._refresh_router_rows()
+        # Force status rule re-read.
+        self._refresh_status_rule()
+
+    def _known_models(self) -> list[dict]:
+        """Return up to 4 models surfaced in the inspector. Pulls from
+        the live llm_router catalog when available; falls back to a
+        seeded list so the panel never looks empty."""
+        out: list[dict] = []
+        try:
+            from llm_router import KNOWN_MODELS
+            for m in (KNOWN_MODELS or [])[:4]:
+                if isinstance(m, dict):
+                    out.append({
+                        "id":      m.get("id") or m.get("name") or "",
+                        "name":    m.get("display") or m.get("name") or m.get("id") or "model",
+                        "company": (m.get("provider") or "").upper(),
+                        "price":   m.get("price") or "",
+                        "latency": m.get("latency") or "",
+                    })
+                elif isinstance(m, str):
+                    out.append({"id": m, "name": m, "company": "",
+                                "price": "", "latency": ""})
+        except Exception:
+            pass
+        if not out:
+            # Brand-coherent seed — same lineup the handoff inspector
+            # mocks. Strict labels: company caps mono, price right-mono.
+            out = [
+                {"id": "claude-sonnet-4.5", "name": "Claude Sonnet 4.5",
+                 "company": "anthropic", "price": "$3/M", "latency": "420ms"},
+                {"id": "gpt-5",             "name": "GPT-5",
+                 "company": "openai",    "price": "$5/M", "latency": "510ms"},
+                {"id": "gemini-2.5-pro",    "name": "Gemini 2.5 Pro",
+                 "company": "google",    "price": "$2/M", "latency": "380ms"},
+                {"id": "qwen3:32b",         "name": "qwen3:32b (local)",
+                 "company": "ollama",    "price": "free", "latency": "980ms"},
+            ]
+        return out
+
+    def _refresh_quick_actions(self) -> None:
+        layout = self._ins_actions_wrap.layout()
+        while layout.count():
+            it = layout.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        # Page-aware action list.
+        actions = self._quick_actions_for_page()
+        for label, fn in actions:
+            row = QFrame()
+            row.setObjectName("studioQuickAction")
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(SPACE["sm"]+2, SPACE["xs"]+1,
+                                 SPACE["sm"]+2, SPACE["xs"]+1)
+            h.setSpacing(SPACE["sm"])
+            chev = QLabel("›")
+            chev.setObjectName("studioQuickActionChev")
+            h.addWidget(chev)
+            t = QLabel(label)
+            t.setObjectName("studioQuickActionText")
+            h.addWidget(t, 1)
+            row.mousePressEvent = lambda _e, _fn=fn: _fn()
+            layout.addWidget(row)
+
+    def _quick_actions_for_page(self) -> list[tuple[str, callable]]:
+        page = self._active_page
+        if page == "chat":
+            return [
+                ("New session", lambda: getattr(self.chat_widget,
+                    "_new_session", lambda: None)()),
+                ("Save session", lambda: getattr(self.chat_widget,
+                    "_save_session", lambda: None)()),
+                ("Open session…", lambda: getattr(self.chat_widget,
+                    "_open_sessions", lambda: None)()),
+            ]
+        if page == "addhost":
+            return [
+                ("Refresh detection", lambda: (self.manager.refresh()
+                    if self.manager is not None else None)),
+            ]
+        # Default: shell-wide actions.
+        return [
+            ("Open ⌘K palette", self._open_palette),
+            ("Add host…",       lambda: self._set_page("addhost")),
+            ("Browse Marketplace", lambda: self._set_page("market")),
+            ("Switch theme",    self._toggle_theme),
+        ]
 
     def _ensure_params_panel(self):
         """Instantiate (once) the live ParametersPanel bound to the
@@ -1209,16 +1426,37 @@ class StudioShell(QMainWindow):
             row.setObjectName("studioListRow")
             row.setProperty("first", i == 0)
             rl = QHBoxLayout(row)
-            rl.setContentsMargins(14, 10, 14, 10)
-            rl.setSpacing(12)
-            rl.addWidget(QLabel("◆"))
+            rl.setContentsMargins(SPACE["lg"]-2, SPACE["md"]-2,
+                                  SPACE["lg"]-2, SPACE["md"]-2)
+            rl.setSpacing(SPACE["md"])
+            # Bullet glyph in muted ink.
+            bullet = QLabel("◯")
+            bullet.setStyleSheet(
+                f"color:{T['inkMuted']}; font-size:11px;")
+            rl.addWidget(bullet)
             t = QLabel(name)
             t.setObjectName("studioListText")
             rl.addWidget(t, 1)
+            # Best-effort host inference from session name.
+            host = _guess_host(name)
+            if host:
+                pill = QLabel(host)
+                pill.setObjectName("skillCardBadge")
+                color = HOST_PILL_COLOR.get(host.lower(), T["inkSoft"])
+                pill.setStyleSheet(
+                    f"QLabel#skillCardBadge {{ "
+                    f"  font-family:{TYPE['fontMono']}; font-size:9px; "
+                    f"  color:{color}; padding:1px 6px; "
+                    f"  background:rgba(255,255,255,0.04); "
+                    f"  border:1px solid {color}; "
+                    f"  border-radius:{RADIUS['xs']}px; }}"
+                )
+                rl.addWidget(pill)
             when_lbl = QLabel(_short_when(saved_at))
             when_lbl.setObjectName("studioMonoMuted")
             when_lbl.setMinimumWidth(60)
-            when_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            when_lbl.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             rl.addWidget(when_lbl)
             row.setCursor(Qt.CursorShape.PointingHandCursor)
             row.mousePressEvent = lambda _e, p=path: self._open_session_path(p)
@@ -1522,8 +1760,8 @@ class StudioShell(QMainWindow):
             active = nid == page_id
             btn.setStyleSheet(_nav_style(active))
 
-        # v0.33 — inspector swaps between the static KV rows and the
-        # live Parameters panel based on which page is active.
+        # v0.33 — SELECTION section swaps between static KV rows and the
+        # live Parameters panel when on Chat.
         try:
             on_chat = (page_id == "chat")
             if on_chat and self._ensure_params_panel():
@@ -1534,12 +1772,31 @@ class StudioShell(QMainWindow):
             else:
                 self._ins_kv_wrap.setVisible(True)
                 self._ins_params_wrap.setVisible(False)
-                self._ins_cap.setText("CONTEXT")
-                self._ins_title.setText("ArchHub — Studio")
+                self._ins_cap.setText("SELECTION")
+                # Title surfaces the active host when one's connected.
+                self._ins_title.setText(self._selection_title())
+        except Exception:
+            pass
+
+        # Page-aware QUICK ACTIONS list.
+        try:
+            self._refresh_quick_actions()
         except Exception:
             pass
 
         self.nav_changed.emit(page_id)
+
+    def _selection_title(self) -> str:
+        # Best-effort: name the active host if any, else generic.
+        try:
+            if self.manager is not None:
+                from manager import ConnectorState
+                for e in self.manager.entries:
+                    if e.state == ConnectorState.ACTIVE:
+                        return e.display_name
+        except Exception:
+            pass
+        return "Nothing selected"
 
     # ──────────────────────────────────────────────────────────────────
     def show_centered(self) -> None:
@@ -1751,34 +2008,80 @@ def _thread_row(text: str, when: str, pinned: bool) -> QFrame:
     return row
 
 
-def _skill_card(cat: str, name: str, runs: str, hosts: list[str]) -> QFrame:
+HOST_PILL_COLOR = {
+    "revit":   "#5b8fb8",   # drafting blue
+    "autocad": "#c98a47",   # ochre-tinted amber
+    "blender": "#7aaa7e",   # ok green
+    "max":     "#8a6acc",
+    "3ds max": "#8a6acc",
+    "speckle": "#a07ac8",   # purple
+    "rhino":   "#c0c0c0",
+    "outlook": "#5b9fb8",
+}
+
+
+def _skill_card(cat: str, name: str, runs: str, hosts: list[str],
+                stage: str = "") -> QFrame:
+    """Skill card matching studio.jsx StudioHome card layout.
+
+    Top row    : tag pill + ★ + runs
+    Body       : italic-serif title
+    Bottom row : host pills (color-coded by host) + stage hint
+    """
     card = QFrame()
     card.setObjectName("skillCard")
+    card.setMinimumHeight(140)
     v = QVBoxLayout(card)
-    v.setContentsMargins(12, 12, 12, 12)
-    v.setSpacing(8)
+    v.setContentsMargins(SPACE["md"], SPACE["md"],
+                         SPACE["md"], SPACE["md"])
+    v.setSpacing(SPACE["sm"])
+
+    # Top row: tag · star · runs.
     top = QHBoxLayout()
-    top.setSpacing(6)
+    top.setSpacing(SPACE["xs"]+2)
     c = QLabel(cat)
     c.setObjectName("skillCardTags")
     top.addWidget(c)
+    star = QLabel("★")
+    star.setObjectName("skillCardStar")
+    top.addWidget(star)
     top.addStretch(1)
     r = QLabel(runs)
     r.setObjectName("skillCardStats")
     top.addWidget(r)
     top_w = QWidget(); top_w.setLayout(top)
     v.addWidget(top_w)
+
+    # Body — italic-serif title.
     n = QLabel(name)
     n.setObjectName("skillCardTitle")
     n.setWordWrap(True)
-    v.addWidget(n)
+    v.addWidget(n, 1)
+
+    # Bottom row: host pills + stage.
     bot = QHBoxLayout()
-    bot.setSpacing(5)
+    bot.setSpacing(SPACE["xs"]+1)
     for h in hosts:
-        p = QLabel(str(h))
-        p.setObjectName("skillCardBadge")
-        bot.addWidget(p)
+        if not h:
+            continue
+        pill = QLabel(str(h))
+        pill.setObjectName("skillCardBadge")
+        color = HOST_PILL_COLOR.get(str(h).strip().lower(), T["inkSoft"])
+        pill.setStyleSheet(
+            f"QLabel#skillCardBadge {{ "
+            f"  font-family:{TYPE['fontMono']}; font-size:9.5px; "
+            f"  color:{color}; padding:2px 7px; "
+            f"  background:rgba(255,255,255,0.04); "
+            f"  border:1px solid {color}; "
+            f"  border-radius:{RADIUS['xs']+1}px; "
+            f"  letter-spacing:0.06em; }}"
+        )
+        bot.addWidget(pill)
     bot.addStretch(1)
+    if stage:
+        st = QLabel(stage)
+        st.setObjectName("studioMonoMuted")
+        bot.addWidget(st)
     bot_w = QWidget(); bot_w.setLayout(bot)
     v.addWidget(bot_w)
     return card
@@ -1979,6 +2282,17 @@ def _revit_sessions_tooltip() -> str:
     return "\n".join(lines)
 
 
+def _guess_host(text: str) -> str:
+    """Best-effort host detection from a session name. Returns "" when
+    nothing matches — caller hides the host pill in that case."""
+    t = (text or "").lower()
+    for host in ("revit", "autocad", "blender", "speckle", "max",
+                 "rhino", "outlook"):
+        if host in t:
+            return host
+    return ""
+
+
 def _short_when(saved_at: str) -> str:
     """Convert ISO timestamp to short relative — 'now' / '12 min' / '1 h' / '2 d' / 'yest'."""
     if not saved_at:
@@ -2036,6 +2350,25 @@ def _nav_style(active: bool) -> str:
         f"  font-size:{TYPE['body']['size']}px; "
         f"}} "
         f"QPushButton#studioNavItem:hover {{ background:{T['bgHover']}; color:{T['ink']}; }}"
+    )
+
+
+def _router_row_qss(active: bool) -> str:
+    if active:
+        return (
+            f"QFrame#studioRouterRow {{ "
+            f"  background:{T['bgRaised']}; "
+            f"  border:1px solid {T['line']}; "
+            f"  border-radius:{RADIUS['md']}px; "
+            f"}}"
+        )
+    return (
+        f"QFrame#studioRouterRow {{ "
+        f"  background:transparent; "
+        f"  border:1px solid transparent; "
+        f"  border-radius:{RADIUS['md']}px; "
+        f"}} "
+        f"QFrame#studioRouterRow:hover {{ background:{T['bgHover']}; }}"
     )
 
 
@@ -2129,12 +2462,21 @@ def _inline_qss() -> str:
         f"QLabel#studioTagline {{ font-family:{TYPE['fontSerif']}; "
         f"  font-style:italic; font-size:24px; color:{T['inkSoft']}; "
         f"  letter-spacing:-0.01em; }}"
-        f"QToolButton#studioAddHost {{ background:transparent; "
-        f"  border:1px solid {T['line']}; border-radius:{RADIUS['sm']}px; "
-        f"  color:{T['inkSoft']}; font-size:13px; padding:1px 6px; "
-        f"  margin-right:6px; }}"
-        f"QToolButton#studioAddHost:hover {{ "
-        f"  border-color:{T['accent']}; color:{T['accent']}; }}"
+        f"QFrame#studioAddHostRow {{ background:transparent; "
+        f"  border:1px dashed {T['line']}; "
+        f"  border-radius:{RADIUS['md']}px; margin:4px 8px; }}"
+        f"QFrame#studioAddHostRow:hover {{ "
+        f"  border-color:{T['accent']}; "
+        f"  background:rgba(217,119,87,0.05); }}"
+        f"QLabel#studioAddHostPlus {{ color:{T['accent']}; "
+        f"  font-size:14px; font-weight:600; }}"
+        f"QLabel#studioAddHostText {{ font-family:{TYPE['fontSans']}; "
+        f"  font-size:12.5px; color:{T['inkSoft']}; }}"
+        f"QLabel#studioAddHostBadge {{ font-family:{TYPE['fontMono']}; "
+        f"  font-size:8.5px; color:{T['accent']}; "
+        f"  letter-spacing:0.10em; padding:1px 5px; "
+        f"  background:{T['accentSoft']}; "
+        f"  border-radius:{RADIUS['xs']}px; }}"
         f"QLabel#studioH2 {{ font-family:{TYPE['fontSerif']}; "
         f"  {_type('h2')} color:{T['ink']}; }}"
 
@@ -2151,6 +2493,22 @@ def _inline_qss() -> str:
         f"QPushButton#studioChip:hover {{ "
         f"  border-color:{T['accent']}; color:{T['accent']}; }}"
 
+        # ── Skill cards ────────────────────────────────────────────
+        f"QFrame#skillCard {{ background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['lg']}px; }}"
+        f"QFrame#skillCard:hover {{ border-color:{T['accent']}; }}"
+        f"QLabel#skillCardTags {{ font-family:{TYPE['fontMono']}; "
+        f"  font-size:9px; color:{T['accent']}; "
+        f"  letter-spacing:0.14em; padding:2px 7px; "
+        f"  background:{T['accentSoft']}; border-radius:{r['xs']}px; }}"
+        f"QLabel#skillCardStar {{ color:{T['warn']}; font-size:11px; }}"
+        f"QLabel#skillCardStats {{ font-family:{TYPE['fontMono']}; "
+        f"  font-size:10px; color:{T['inkSoft']}; "
+        f"  letter-spacing:0.04em; }}"
+        f"QLabel#skillCardTitle {{ font-family:{TYPE['fontSerif']}; "
+        f"  font-style:italic; font-size:18px; color:{T['ink']}; "
+        f"  letter-spacing:-0.01em; }}"
+
         # ── List cards (activity, tasks, telemetry) ────────────────
         f"QFrame#studioListCard {{ background:{T['bgRaised']}; "
         f"  border:1px solid {T['line']}; border-radius:{r['lg']}px; }}"
@@ -2163,12 +2521,28 @@ def _inline_qss() -> str:
         # ── Inspector ───────────────────────────────────────────────
         f"QFrame#studioInspector {{ background:{T['bgPanel']}; "
         f"  border-left:1px solid {T['line']}; }}"
+        f"QWidget#studioInspectorBody {{ background:{T['bgPanel']}; }}"
         f"QLabel#studioInspectorTitle {{ font-family:{TYPE['fontSerif']}; "
         f"  {_type('h2')} color:{T['ink']}; }}"
-        f"QFrame#studioInspectorRow {{ background:{T['bgRaised']}; "
-        f"  border:1px solid {T['line']}; border-radius:{r['lg']}px; }}"
+        f"QFrame#studioInspectorRow {{ background:transparent; "
+        f"  border:none; border-bottom:1px solid {T['lineSoft']}; "
+        f"  border-radius:0; padding:0; }}"
         f"QLabel#studioInspectorValue {{ font-family:{TYPE['fontMono']}; "
         f"  {_type('monoData')} color:{T['ink']}; }}"
+
+        # ── Router rows ─────────────────────────────────────────────
+        f"QFrame#studioRouterRow {{ background:transparent; "
+        f"  border:1px solid transparent; border-radius:{r['md']}px; }}"
+        f"QFrame#studioRouterRow:hover {{ background:{T['bgHover']}; }}"
+        f"QLabel#studioRouterName {{ {_type('label')} color:{T['ink']}; }}"
+
+        # ── Quick actions ──────────────────────────────────────────
+        f"QFrame#studioQuickAction {{ background:transparent; "
+        f"  border-radius:{r['md']}px; }}"
+        f"QFrame#studioQuickAction:hover {{ background:{T['bgHover']}; }}"
+        f"QLabel#studioQuickActionChev {{ color:{T['inkMuted']}; "
+        f"  font-size:14px; }}"
+        f"QLabel#studioQuickActionText {{ {_type('body')} color:{T['ink']}; }}"
 
         # ── Status rule ─────────────────────────────────────────────
         f"QFrame#studioStatusRule {{ background:{T['bgPanel']}; "

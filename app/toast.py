@@ -25,7 +25,13 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
-from design_tokens import COLOR as T, RADIUS, SPACE, TYPE
+from design_tokens import RADIUS, SPACE, TYPE, current as _current_palette
+
+
+class _LivePalette:
+    def __getitem__(self, k): return _current_palette()[k]
+    def get(self, k, default=None): return _current_palette().get(k, default)
+T = _LivePalette()
 
 
 _KIND_COLOR = {

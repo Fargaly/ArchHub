@@ -58,16 +58,43 @@ _DOTNET_8_INSTALLER_URL = (
 )
 
 
+def _dotnet_exe() -> str:
+    """Resolve the dotnet executable path. PATH lookup first; common
+    install locations second. Necessary because pythonw subprocesses
+    sometimes inherit a stripped PATH that doesn't include
+    `C:\\Program Files\\dotnet\\`, which made `dotnet --list-sdks`
+    fail silently and the Add Host page show ".NET SDK · not detected"
+    on machines that DO have .NET installed."""
+    import shutil
+    found = shutil.which("dotnet")
+    if found:
+        return found
+    for guess in (
+        r"C:\Program Files\dotnet\dotnet.exe",
+        r"C:\Program Files (x86)\dotnet\dotnet.exe",
+    ):
+        if os.path.exists(guess):
+            return guess
+    return "dotnet"   # let subprocess raise FileNotFoundError
+
+
 def detect_dotnet_sdk() -> Optional[str]:
     """Return the highest installed .NET SDK version, or None."""
     try:
-        proc = subprocess.run(
-            ["dotnet", "--list-sdks"],
-            capture_output=True, text=True, timeout=10,
-        )
+        # CREATE_NO_WINDOW prevents a console flash when called from
+        # pythonw GUI contexts (e.g. the Add Host page on launch).
+        kw: dict = dict(capture_output=True, text=True, timeout=10)
+        if sys.platform == "win32":
+            kw["creationflags"] = getattr(
+                subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        proc = subprocess.run([_dotnet_exe(), "--list-sdks"], **kw)
         if proc.returncode != 0:
             return None
         # Each line looks like "8.0.405 [C:\Program Files\dotnet\sdk]"
+        # OR "10.0.100-rc.1.25451.107 [...]" for preview SDKs. Accept
+        # both — `line[0].isdigit()` already handles the prefix-digit
+        # check, and `line.split()[0]` keeps the full version string
+        # including the -rc suffix.
         versions = [line.split()[0] for line in proc.stdout.splitlines()
                     if line.strip() and line[0].isdigit()]
         return max(versions) if versions else None

@@ -54,7 +54,13 @@ from PyQt6.QtWidgets import (
     QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
-from design_tokens import COLOR as T, SPACE, TYPE
+from design_tokens import SPACE, TYPE, current as _current_palette
+
+
+class _LivePalette:
+    def __getitem__(self, k): return _current_palette()[k]
+    def get(self, k, default=None): return _current_palette().get(k, default)
+T = _LivePalette()
 
 
 # Node visual sizing matches blueprint.jsx ratios.

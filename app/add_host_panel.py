@@ -29,7 +29,19 @@ from PyQt6.QtWidgets import (
 )
 
 import auto_build
-from design_tokens import COLOR as T, RADIUS, SPACE, TYPE
+from design_tokens import RADIUS, SPACE, TYPE, current as _current_palette
+
+
+# `from design_tokens import COLOR as T` was wrong: COLOR always points
+# at the light theme, so dark mode painted host-name labels with
+# light-theme ink (#1a1612) on dark bg (#1d1d22) — invisible. Use a
+# proxy that delegates `T[key]` to whatever palette is active right now.
+class _LivePalette:
+    def __getitem__(self, k: str) -> str:
+        return _current_palette()[k]
+    def get(self, k: str, default=None):
+        return _current_palette().get(k, default)
+T = _LivePalette()
 
 
 # Catalog of hosts surfaced in the panel. Each row drives a card.

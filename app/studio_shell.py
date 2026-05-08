@@ -62,10 +62,22 @@ from PyQt6.QtWidgets import (
 # Use `current()` at refresh time so light↔dark theme swaps propagate.
 from design_tokens import (
     BRAND, COLOR, COLOR_DARK, SPACE, RADIUS, TYPE,
-    active_theme, current as current_palette, focus_ring_qss, set_theme,
+    active_theme, current as current_palette, focus_ring_qss,
+    load_theme_pref as _load_theme_pref, set_theme,
 )
-# Initial alias points at light. Refreshes consult current() — see refresh().
-T = COLOR
+# Use a live palette proxy so any code that reads T['key'] always gets
+# the active theme — avoids the bug where modules cached COLOR at
+# import time and painted dark-mode UIs in light-theme ink.
+class _LivePalette:
+    def __getitem__(self, k):
+        return current_palette()[k]
+    def get(self, k, default=None):
+        return current_palette().get(k, default)
+# Read persisted theme pref before first palette access so the first
+# QSS build uses dark when that's the user's preference.
+try: _load_theme_pref()
+except Exception: pass
+T = _LivePalette()
 
 NAV_ITEMS = [
     ("home",      "Home",        "1"),

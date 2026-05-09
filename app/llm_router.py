@@ -67,7 +67,7 @@ KNOWN_MODELS: list[tuple[str, str]] = [
     ("anthropic:claude-haiku-4-5-20251001",             "Claude Haiku 4.5 — fast"),
     ("openai:gpt-4o",                                   "GPT-4o — multimodal"),
     ("openai:gpt-4o-mini",                              "GPT-4o mini — fast"),
-    ("google:gemini-1.5-pro",                           "Gemini 1.5 Pro"),
+    ("google:gemini-2.5-pro",                           "Gemini 2.5 Pro"),
     ("google:gemini-2.0-flash",                         "Gemini 2.0 Flash — fast"),
     ("openrouter:anthropic/claude-opus-4",              "OpenRouter · Claude Opus 4"),
     ("openrouter:anthropic/claude-sonnet-4",            "OpenRouter · Claude Sonnet 4"),
@@ -357,7 +357,7 @@ class LLMRouter:
             if "openai" in configured_for_vision:
                 return "openai", "gpt-4o", "auto: vision → GPT-4o"
             if "google" in configured_for_vision:
-                return "google", "gemini-1.5-pro", "auto: vision → Gemini 1.5 Pro"
+                return "google", "gemini-2.5-pro", "auto: vision → Gemini 2.5 Pro"
             # Fall through to text-only routing if no vision provider available;
             # the provider client will simply ignore the image blocks.
 
@@ -430,7 +430,7 @@ class LLMRouter:
         if "openai" in configured:
             return "openai", "gpt-4o", "auto: default → GPT-4o"
         if "google" in configured:
-            return "google", "gemini-1.5-pro", "auto: default → Gemini 1.5 Pro"
+            return "google", "gemini-2.5-pro", "auto: default → Gemini 2.5 Pro"
         if "relay" in configured:
             return "relay", "auto", "auto: default → firm relay"
         if "ollama" in configured:

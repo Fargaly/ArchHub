@@ -185,6 +185,40 @@ TOOLS: list[dict] = [
         "endpoint": ("blender", "GET", "/ping", None),
     },
     {
+        "name": "blender_info",
+        "family": "blender",
+        "description": "Snapshot of the current Blender file: blend path, scene name, object count, render engine.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("blender", "info"),
+    },
+    {
+        "name": "blender_save",
+        "family": "blender",
+        "description": "Save the current Blender file. Pass output_path to save-as a different .blend.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"output_path": {"type": "string"}},
+            "required": [],
+        },
+        "endpoint": ("blender", "save"),
+    },
+    {
+        "name": "blender_render",
+        "family": "blender",
+        "description": "Render the current scene at frame `frame` (defaults to current frame). Saves to output_path.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_path": {"type": "string"},
+                "frame":       {"type": "integer", "default": -1},
+                "engine":      {"type": "string", "enum": ["CYCLES", "BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH"]},
+                "samples":     {"type": "integer", "default": 64},
+            },
+            "required": ["output_path"],
+        },
+        "endpoint": ("blender", "render"),
+    },
+    {
         "name": "blender_execute_python",
         "family": "blender",
         "description": (
@@ -216,6 +250,36 @@ TOOLS: list[dict] = [
             "required": ["project_id"],
         },
         "endpoint": ("speckle", "get_project"),
+    },
+    {
+        "name": "speckle_push_parameters",
+        "family": "speckle",
+        "description": "Push a JSON parameter object to a Speckle stream + branch. Creates a new commit. Returns the commit id + url. Use for syncing design parameters across the team.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "branch":     {"type": "string", "default": "main"},
+                "parameters": {"type": "object"},
+                "message":    {"type": "string", "default": "ArchHub: parameter push"},
+            },
+            "required": ["project_id", "parameters"],
+        },
+        "endpoint": ("speckle", "push_parameters"),
+    },
+    {
+        "name": "speckle_pull_parameters",
+        "family": "speckle",
+        "description": "Pull the most-recent parameter object from a Speckle stream + branch. Returns the JSON the team last pushed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "branch":     {"type": "string", "default": "main"},
+            },
+            "required": ["project_id"],
+        },
+        "endpoint": ("speckle", "pull_parameters"),
     },
 
     # Outlook (classic) — drives via COM, no listener

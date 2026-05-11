@@ -1068,7 +1068,21 @@ class StudioShell(QMainWindow):
         heal_wrap.setVisible(False)
         h.addWidget(heal_wrap)
         h.addStretch(1)
-        right = QLabel("⌘K palette     ⌘↩ run skill     ⌘/ docs     v0.27.6")
+        # Read version dynamically so the status bar reflects the
+        # actual VERSION file, not a stale hardcoded string. Falls
+        # back to "dev" if the file is unreadable.
+        ver_str = "dev"
+        try:
+            from pathlib import Path as _P
+            vpath = _P(__file__).resolve().parent.parent / "VERSION"
+            if vpath.exists():
+                ver_str = vpath.read_text(encoding="utf-8").strip() or "dev"
+        except Exception:
+            pass
+        right = QLabel(
+            f"⌘K palette     ⌘↩ run skill     "
+            f"⌘/ docs     v{ver_str}"
+        )
         right.setObjectName("studioStatusItem")
         h.addWidget(right)
         return rule

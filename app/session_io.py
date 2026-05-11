@@ -20,25 +20,88 @@ SESSIONS_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub
 SESSION_EXT = ".archhub-session.json"
 
 
-def save_session(session: Session, name: str = "", path: Optional[Path] = None) -> Path:
-    """Save session to disk. Returns the path written."""
+def save_session(session: Session, name: str = "", path: Optional[Path] = None,
+                 messages: Optional[list] = None) -> Path:
+    """Save session to disk. Returns the path written.
+
+    `messages` — optional list of ChatMessage objects (or dicts already
+    serialized via _msg_to_dict). When present, persists the entire
+    chat conversation alongside the parametric session so reloading
+    restores the full transcript, not just parameters + chain steps.
+    """
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     if path is None:
         slug = _slugify(name or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         path = SESSIONS_DIR / f"{slug}{SESSION_EXT}"
+    else:
+        slug = path.stem.replace(SESSION_EXT.replace(".", ""), "")
     data = session.to_dict()
     data["_name"] = name or slug
     data["_saved_at"] = datetime.now().isoformat()
+    if messages is not None:
+        data["_messages"] = [_msg_to_dict(m) for m in messages]
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     return path
 
 
 def load_session(path: Path) -> tuple[Session, str]:
-    """Load session from disk. Returns (session, name)."""
+    """Load session from disk. Returns (session, name).
+
+    Use `load_session_with_messages` to also recover the chat history.
+    Two entry points so callers that only want params (e.g. workflow
+    runner) don't pay the deserialization cost.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     session = _session_from_dict(data)
     name = data.get("_name", path.stem)
     return session, name
+
+
+def load_session_with_messages(path: Path) -> tuple[Session, str, list[dict]]:
+    """Load session + its chat message history. Messages come back as
+    plain dicts; the chat layer reconstructs ChatMessage objects so we
+    don't import the Qt module from this storage layer."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    session = _session_from_dict(data)
+    name = data.get("_name", path.stem)
+    messages = data.get("_messages") or []
+    return session, name, list(messages)
+
+
+def _msg_to_dict(msg) -> dict:
+    """Serialise one ChatMessage to a JSON-safe dict.
+
+    Tool invocations + image paths are preserved so a reload renders
+    the bubble exactly as the user saw it last.
+    """
+    # Accept already-serialised dicts (autosave path may pre-build them).
+    if isinstance(msg, dict):
+        return msg
+    role = getattr(msg, "role", "user")
+    content = getattr(msg, "content", "") or ""
+    model = getattr(msg, "model", "") or ""
+    images = list(getattr(msg, "images", None) or [])
+    invs_raw = getattr(msg, "tool_invocations", None) or []
+    invs = []
+    for inv in invs_raw:
+        try:
+            invs.append(inv.to_dict() if hasattr(inv, "to_dict") else dict(inv))
+        except Exception:
+            continue
+    ts = getattr(msg, "timestamp", None)
+    ts_iso = ""
+    try:
+        ts_iso = ts.isoformat() if ts is not None else ""
+    except Exception:
+        ts_iso = str(ts) if ts is not None else ""
+    return {
+        "role": role,
+        "content": content,
+        "model": model,
+        "images": images,
+        "tool_invocations": invs,
+        "timestamp": ts_iso,
+    }
 
 
 def list_sessions() -> list[tuple[Path, str, str]]:

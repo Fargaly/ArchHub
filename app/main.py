@@ -29,6 +29,52 @@ ASSETS = APP_ROOT / "assets"
 THEME = APP_ROOT / "theme.qss"
 
 
+def _register_aumid_icon(aumid: str, ico_path: Path, display_name: str) -> None:
+    """Register the AppUserModelID → icon mapping in the user's
+    Software\\Classes registry hive on Windows. Without this Explorer
+    and the taskbar can't look up which icon to draw for the AUMID we
+    set with SetCurrentProcessExplicitAppUserModelID — they fall back
+    to the launching binary's icon (pythonw.exe = Python snake).
+
+    Writes:
+      HKCU\\Software\\Classes\\AppUserModelId\\<aumid>
+        DisplayName    REG_SZ  "ArchHub"
+        IconResource   REG_SZ  "<ico_path>,0"
+
+    Idempotent — overwrites only when the path or value drifted (e.g.
+    user moved the install). HKCU = no admin needed. Best-effort: any
+    failure is swallowed because a missing icon mapping is cosmetic,
+    not a startup-blocker.
+    """
+    if sys.platform != "win32":
+        return
+    if not ico_path.exists():
+        return
+    try:
+        import winreg
+    except Exception:
+        return
+    key_path = rf"Software\Classes\AppUserModelId\{aumid}"
+    icon_value = f"{str(ico_path)},0"
+    try:
+        existing_icon = ""
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+                existing_icon, _ = winreg.QueryValueEx(k, "IconResource")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        if existing_icon == icon_value:
+            return  # already correct, no need to rewrite
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+            winreg.SetValueEx(k, "DisplayName", 0, winreg.REG_SZ, display_name)
+            winreg.SetValueEx(k, "IconResource", 0, winreg.REG_SZ, icon_value)
+    except Exception:
+        # Don't let a registry hiccup block app startup.
+        pass
+
+
 def main() -> int:
     # Sentry init must happen BEFORE QApplication so import-time crashes
     # in Qt code get captured. No-op if user opted out / no DSN.
@@ -46,11 +92,21 @@ def main() -> int:
     # AUMID before QApplication binds our windowIcon to the taskbar
     # entry as well — this is the only knob that actually affects the
     # taskbar / alt-tab thumbnail / pinned-shortcut icon.
+    AUMID = "io.archhub.studio"
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "io.archhub.studio")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(AUMID)
+        except Exception:
+            pass
+        # Register AUMID → icon mapping in HKCU so Explorer/Taskbar can
+        # resolve "io.archhub.studio" to archhub.ico instead of falling
+        # back to the launching binary's icon (pythonw.exe → snake).
+        # Idempotent — writes only if missing or stale. HKCU only, no
+        # admin needed. SetCurrentProcessExplicitAppUserModelID alone
+        # is NOT enough — Windows wants this registry entry too.
+        try:
+            _register_aumid_icon(AUMID, ASSETS / "archhub.ico", "ArchHub")
         except Exception:
             pass
 

@@ -1566,16 +1566,26 @@ class StudioShell(QMainWindow):
         return val
 
     def _open_session_path(self, path: Path) -> None:
-        # Switch to chat page, then ask the chat widget to load.
+        # Switch to chat page, then ask the chat widget to load the
+        # full conversation transcript (not just session params).
         self._set_page("chat")
         try:
-            from session_io import load_session
-            new_session, name = load_session(path)
+            from session_io import load_session_with_messages
+            new_session, name, msgs = load_session_with_messages(path)
             if hasattr(self.chat_widget, "session"):
                 self.chat_widget.session = new_session
             if hasattr(self.chat_widget, "parameters_panel"):
                 try:
                     self.chat_widget.parameters_panel.set_session(new_session)
+                except Exception:
+                    pass
+            # Re-render chat bubbles from the persisted message list.
+            if hasattr(self.chat_widget, "_restore_history"):
+                try:
+                    self.chat_widget._restore_history(msgs)
+                    # Pin the autosave path so subsequent saves overwrite
+                    # this session instead of forking a new file.
+                    self.chat_widget._autosave_path = path
                 except Exception:
                     pass
         except Exception:

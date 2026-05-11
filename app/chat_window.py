@@ -824,8 +824,9 @@ class ChatWindow(QMainWindow):
         self._autosave_path: Optional[Path] = None
 
     def _autosave_session(self) -> None:
-        """Save the running session if it has at least one user msg.
-        Reuses the same path across ticks so we overwrite, not pile up."""
+        """Save the running session + chat history if it has at least
+        one user msg. Reuses the same path across ticks so we overwrite,
+        not pile up."""
         try:
             real_msgs = [m for m in self.history
                          if m.role == "user" and (m.content or "").strip()]
@@ -835,7 +836,10 @@ class ChatWindow(QMainWindow):
             # Pick a name from the first user message (truncated).
             first = real_msgs[0].content.strip()
             name = (first[:48] + "…") if len(first) > 48 else first
-            path = save_session(self.session, name)
+            # Reuse path so successive autosaves overwrite the same file.
+            path = save_session(self.session, name,
+                                 path=self._autosave_path,
+                                 messages=self.history)
             self._autosave_path = path
         except Exception:
             pass
@@ -1739,6 +1743,66 @@ class ChatWindow(QMainWindow):
         sb = self.scroll_area.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    # ---- session restore -------------------------------------------------
+    def _clear_chat_view(self) -> None:
+        """Remove every message row from the conversation layout. Keeps
+        the trailing stretch item so new bubbles still anchor top."""
+        layout = self.conv_layout
+        # Layout has rows + a final stretch — drop every widget item but
+        # leave the stretch so insertWidget(count-1, ...) keeps working.
+        i = 0
+        while i < layout.count():
+            item = layout.itemAt(i)
+            w = item.widget() if item is not None else None
+            if w is None:
+                i += 1
+                continue
+            layout.removeWidget(w)
+            w.deleteLater()
+        # Remove the welcome card if it's still around — restored
+        # transcripts replace it.
+        if getattr(self, "_welcome_widget", None) is not None:
+            try:
+                self._welcome_widget.deleteLater()
+            except Exception:
+                pass
+            self._welcome_widget = None
+
+    def _restore_history(self, msg_dicts: list[dict]) -> None:
+        """Wipe the current chat view, rebuild ChatMessage objects from
+        the persisted dicts, and re-render every bubble. Tool cards are
+        restored from invocations[*]; images come back as paths.
+        Called on session load."""
+        self._clear_chat_view()
+        self.history = []
+        for d in msg_dicts or []:
+            try:
+                invs_raw = d.get("tool_invocations") or []
+                invs: list[ToolInvocation] = []
+                for r in invs_raw:
+                    try:
+                        invs.append(ToolInvocation(
+                            id=r.get("id", ""),
+                            tool_name=r.get("tool_name", ""),
+                            arguments=r.get("arguments") or {},
+                            status=r.get("status", "ok"),
+                            result=r.get("result"),
+                        ))
+                    except Exception:
+                        continue
+                msg = ChatMessage(
+                    role=d.get("role", "user"),
+                    content=d.get("content", "") or "",
+                    tool_invocations=invs,
+                    images=list(d.get("images") or []),
+                    model=d.get("model", "") or "",
+                )
+                self.history.append(msg)
+                self._render_message(msg)
+            except Exception:
+                continue
+        QTimer.singleShot(50, self._scroll_to_bottom)
+
     # ---- Misc --------------------------------------------------------------
 
     def _refresh_status(self) -> None:
@@ -2387,14 +2451,20 @@ class ChatWindow(QMainWindow):
 
     def _save_session(self) -> None:
         from session_io import save_session
+        # Default name from first user message — meaningful > "Session N"
+        first = next((m.content.strip() for m in self.history
+                       if m.role == "user" and (m.content or "").strip()), "")
+        default_name = (first[:48] + "…") if len(first) > 48 else (
+            first or f"Session {len(self.session.parameters)} params"
+        )
         name, ok = QInputDialog.getText(
-            self, "Save session", "Session name:",
-            text=f"Session {len(self.session.parameters)} params"
+            self, "Save session", "Session name:", text=default_name,
         )
         if not ok or not name.strip():
             return
         try:
-            path = save_session(self.session, name.strip())
+            path = save_session(self.session, name.strip(),
+                                 messages=self.history)
             QMessageBox.information(self, "Session saved",
                                     f"Saved to:\n{path}")
         except Exception as ex:
@@ -2436,12 +2506,18 @@ class ChatWindow(QMainWindow):
                 if sel is None:
                     return
                 try:
-                    new_session, name = load_session(Path(sel.data(Qt.ItemDataRole.UserRole)))
+                    from session_io import load_session_with_messages
+                    p = Path(sel.data(Qt.ItemDataRole.UserRole))
+                    new_session, name, msg_dicts = (
+                        load_session_with_messages(p))
                     self.session = new_session
                     self.parameters_panel.set_session(self.session)
+                    self._restore_history(msg_dicts)
+                    self._autosave_path = p   # reuse on next autosave
                     dlg.accept()
                     QMessageBox.information(self, "Session loaded",
-                        f"Loaded '{name}' with {len(new_session.parameters)} parameters.")
+                        f"Loaded '{name}' — {len(new_session.parameters)} "
+                        f"params · {len(msg_dicts)} messages.")
                 except Exception as ex:
                     QMessageBox.warning(dlg, "Load failed", str(ex))
             open_btn.clicked.connect(do_open)

@@ -104,8 +104,16 @@ def _msg_to_dict(msg) -> dict:
     }
 
 
-def list_sessions() -> list[tuple[Path, str, str]]:
-    """Return [(path, name, saved_at)] sorted newest first."""
+def list_sessions(*, include_empty: bool = False
+                   ) -> list[tuple[Path, str, str]]:
+    """Return [(path, name, saved_at)] sorted newest first.
+
+    Pre-v1.0 autosave bug wrote stub files containing zero messages,
+    zero parameters, zero chain steps — sessions that look saved in
+    the THREADS rail but load an empty chat. By default we filter
+    those out so the rail only surfaces sessions with actual content.
+    Pass include_empty=True to see everything (cleanup utility / test).
+    """
     if not SESSIONS_DIR.exists():
         return []
     results = []
@@ -114,10 +122,45 @@ def list_sessions() -> list[tuple[Path, str, str]]:
             data = json.loads(f.read_text(encoding="utf-8"))
             name = data.get("_name", f.stem)
             saved_at = data.get("_saved_at", "")
+            if not include_empty:
+                # Three signals that a session has real content. Any
+                # one is enough — saves a session that captured chat
+                # but no params, or vice versa, or chain-only Skill
+                # runs.
+                msgs = data.get("_messages") or []
+                params = data.get("parameters") or []
+                chain = data.get("chain") or []
+                if not msgs and not params and not chain:
+                    continue
         except Exception:
+            if not include_empty:
+                continue
             name, saved_at = f.stem, ""
         results.append((f, name, saved_at))
     return sorted(results, key=lambda x: x[2], reverse=True)
+
+
+def cleanup_empty_sessions() -> int:
+    """Delete stub files (zero messages + zero params + zero chain)
+    from the sessions directory. Returns count removed. Used by the
+    'Clean up empty sessions' settings action."""
+    if not SESSIONS_DIR.exists():
+        return 0
+    removed = 0
+    for f in SESSIONS_DIR.glob(f"*{SESSION_EXT}"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if (not (data.get("_messages") or [])
+                and not (data.get("parameters") or [])
+                and not (data.get("chain") or [])):
+            try:
+                f.unlink()
+                removed += 1
+            except Exception:
+                continue
+    return removed
 
 
 def _session_from_dict(data: dict) -> Session:

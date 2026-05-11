@@ -57,11 +57,13 @@ class _LLMWorker(QObject):
     finished = pyqtSignal(object)            # LLMResponse
     failed = pyqtSignal(str)
 
-    def __init__(self, router: LLMRouter, history: list[ChatMessage], model: str):
+    def __init__(self, router: LLMRouter, history: list[ChatMessage], model: str,
+                 session_pin: str | None = None):
         super().__init__()
         self.router = router
         self.history = history
         self.model = model
+        self.session_pin = session_pin
         self._stop = False
 
     def run(self) -> None:
@@ -104,6 +106,7 @@ class _LLMWorker(QObject):
                 on_tool_invocation=on_tool,
                 on_reasoning=on_reasoning,
                 on_status=on_status_change,
+                session_pin=self.session_pin,
             )
             self.finished.emit(response)
         except Exception as ex:
@@ -1155,6 +1158,12 @@ class ChatWindow(QMainWindow):
         images = list(self._pasted_images)
         if not text and not images:
             return
+        # Pull `@<token>` mentions out of the user's text before we save
+        # the message bubble. The pin scopes every tool call this turn
+        # to one host session (Tower-A out of Revit × 3, etc.) so multi-
+        # instance deployments don't fall back to most-recent-active.
+        text, pin = self._extract_session_pin(text)
+        self._pending_session_pin = pin
         self.input.clear()
         self._pasted_images.clear()
         self._refresh_preview_bar()
@@ -1189,6 +1198,35 @@ class ChatWindow(QMainWindow):
             # Render the thumbnails inside the just-added user bubble.
             self._show_user_images(images)
         self._start_assistant_response()
+
+    # ---- @session mention parser ------------------------------------------
+
+    # Matches @<token> at word boundaries. Token is alphanumerics, dots,
+    # hyphens, underscores — covers session_id ("revit-12345"), pid
+    # ("12345"), doc title slugs ("Tower-A", "pavilion_north"), and SMTP
+    # accounts for Outlook ("ahmed@studio.com" via the local part). The
+    # @ must be preceded by start-of-string or whitespace so we don't
+    # match emails inside prose ("send to alice@studio.com").
+    _PIN_RE = __import__("re").compile(
+        r"(?:(?<=^)|(?<=\s))@([A-Za-z0-9][A-Za-z0-9._\-]{0,63})"
+    )
+
+    def _extract_session_pin(self, text: str) -> tuple[str, str | None]:
+        """Strip the first `@<token>` mention, return (clean_text, token).
+        Subsequent mentions are left intact so the assistant still sees
+        the literal text — matching Slack/Linear behaviour where the
+        first mention drives routing and the rest are conversational.
+        Returns (text, None) when no mention is present."""
+        m = self._PIN_RE.search(text)
+        if not m:
+            return text, None
+        pin = m.group(1)
+        cleaned = (text[:m.start()] + text[m.end():]).strip()
+        # If the user typed nothing but `@token`, keep a placeholder so
+        # the chat bubble isn't empty.
+        if not cleaned:
+            cleaned = f"(scoped to @{pin})"
+        return cleaned, pin
 
     # ---- pre-flight intent guard ------------------------------------------
 
@@ -1559,7 +1597,12 @@ class ChatWindow(QMainWindow):
 
         # Pass a snapshot of history WITHOUT the empty assistant message
         snapshot = self.history[:-1]
-        worker = _LLMWorker(self.router, snapshot, self.model_picker.currentData())
+        pin = getattr(self, "_pending_session_pin", None)
+        worker = _LLMWorker(self.router, snapshot,
+                             self.model_picker.currentData(),
+                             session_pin=pin)
+        # Consume the pin — next turn re-parses from input.
+        self._pending_session_pin = None
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)

@@ -138,3 +138,27 @@ def sessions_count() -> int:
 
 def is_any_alive() -> bool:
     return bool(list_sessions(prune=False))
+
+
+# ---------------------------------------------------------------------------
+def forward(session: Session, path: str, *, body: Optional[bytes] = None,
+            method: str = "GET", timeout: float = 30.0) -> dict:
+    """Forward an HTTP call to one AutoCAD session."""
+    import urllib.error, urllib.request
+    url = session.url(path)
+    req = urllib.request.Request(url, data=body, method=method)
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+            try:
+                return json.loads(raw) if raw else {"status": "ok"}
+            except Exception:
+                return {"status": "ok", "raw": raw}
+    except urllib.error.HTTPError as e:
+        return {"status": "error", "error": f"HTTP {e.code}",
+                "session": session.session_id}
+    except Exception as e:
+        return {"status": "error", "error": f"{type(e).__name__}: {e}",
+                "session": session.session_id}

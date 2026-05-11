@@ -566,7 +566,17 @@ class ToolEngine:
 
     # ---- invocation -------------------------------------------------------
 
-    def invoke(self, tool_name: str, args: dict) -> dict:
+    def invoke(self, tool_name: str, args: dict,
+               session_pin: Optional[str] = None) -> dict:
+        """Invoke one tool.
+
+        session_pin — optional token used to disambiguate when multiple
+        instances of the same host (e.g. two Revit windows) are alive.
+        Tokens are resolved against each broker's pick_session(prefer=...)
+        which matches against session_id, pid, doc_title substring, or
+        SMTP for Outlook. Ignored for tools whose family has no broker
+        (speckle, blender today, _local).
+        """
         tool = next((t for t in TOOLS if t["name"] == tool_name), None)
         if tool is None:
             return {"status": "error", "error": f"Unknown tool: {tool_name}"}
@@ -592,7 +602,9 @@ class ToolEngine:
                 return {"status": "error", "error": str(ex)}
 
         # outlook family — drives classic Outlook in-process via COM.
-        # No localhost listener; we route directly to outlook_runner.
+        # No localhost listener; we route directly to outlook_runner. The
+        # session_pin (when present) is forwarded as `account` to handlers
+        # that accept it, so the LLM can target one mailbox out of many.
         if tool["family"] == "outlook":
             handler = ep[1]
             try:
@@ -604,7 +616,10 @@ class ToolEngine:
                 # Pass kwargs the handler accepts (skip unknown keys).
                 import inspect
                 sig = inspect.signature(fn)
-                kwargs = {k: v for k, v in (args or {}).items() if k in sig.parameters}
+                merged = dict(args or {})
+                if session_pin and "account" in sig.parameters:
+                    merged.setdefault("account", session_pin)
+                kwargs = {k: v for k, v in merged.items() if k in sig.parameters}
                 result = fn(**kwargs)
                 # Normalise list/dict results into the {status: ok, ...} envelope.
                 if isinstance(result, dict):
@@ -625,15 +640,50 @@ class ToolEngine:
         body = None
         if arg_keys:
             body = {k: args[k] for k in arg_keys if k in args}
-        return self._http(family, method, path, body)
+        return self._http(family, method, path, body, session_pin=session_pin)
+
+    # Family → (broker module, default-fallback URL). Broker is consulted
+    # first so multi-instance hosts pick the right session; URL fallback
+    # is used when the family has no broker (Blender today) or when the
+    # broker reports zero healthy sessions but the legacy single port
+    # might still answer.
+    def _broker_for(self, family: str):
+        try:
+            if family == "revit":
+                import revit_broker; return revit_broker
+            if family == "max":
+                import max_broker; return max_broker
+            if family == "acad":
+                import acad_broker; return acad_broker
+        except Exception:
+            return None
+        return None
 
     def _http(self, family: str, method: str, path: str, body: Optional[dict],
-              timeout: int = 240) -> dict:
-        url = f"{HOSTS[family]}{path}"
+              timeout: int = 240, session_pin: Optional[str] = None) -> dict:
+        # Encode body once.
         data = None
-        headers = {"Accept": "application/json"}
         if body is not None:
             data = json.dumps(body).encode("utf-8")
+
+        # Multi-session: resolve via broker first.
+        broker = self._broker_for(family)
+        if broker is not None:
+            try:
+                session = broker.pick_session(prefer=session_pin)
+            except Exception:
+                session = None
+            if session is None and session_pin:
+                return {"status": "error",
+                        "error": f"No live {family} session matches '@{session_pin}'."}
+            if session is not None:
+                return broker.forward(session, path, body=data,
+                                       method=method, timeout=timeout)
+
+        # Fallback: direct legacy URL (Blender, or pre-broker hosts).
+        url = f"{HOSTS[family]}{path}"
+        headers = {"Accept": "application/json"}
+        if data is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
@@ -648,3 +698,30 @@ class ToolEngine:
                     "error": f"Cannot reach {url}. Is the host application running? {e}"}
         except Exception as e:
             return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+    # Public helper used by chat input to resolve `@token` mentions.
+    def list_pinnable_sessions(self) -> list[dict]:
+        """Return every live session across every broker, flat list of
+        {family, session_id, pid, doc_title, version, port}. Drives the
+        @-mention popup in the chat composer."""
+        out: list[dict] = []
+        for fam, mod in (("revit", "revit_broker"),
+                         ("max", "max_broker"),
+                         ("acad", "acad_broker"),
+                         ("outlook", "outlook_broker")):
+            try:
+                m = __import__(mod)
+                for s in (m.list_sessions(prune=False) or []):
+                    if not getattr(s, "healthy", False):
+                        continue
+                    out.append({
+                        "family":     fam,
+                        "session_id": s.session_id,
+                        "pid":        getattr(s, "pid", 0),
+                        "doc_title":  getattr(s, "doc_title", ""),
+                        "version":    getattr(s, "version", ""),
+                        "port":       getattr(s, "port", 0),
+                    })
+            except Exception:
+                continue
+        return out

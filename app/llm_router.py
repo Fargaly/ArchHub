@@ -450,7 +450,13 @@ class LLMRouter:
         on_tool_invocation: Optional[Callable[[ToolInvocation], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
+        session_pin: Optional[str] = None,
     ) -> LLMResponse:
+        """session_pin — optional `@token` parsed out of the user's chat
+        message (e.g. `@Tower-A`, `@Pavilion`, `@25232`). Forwarded to
+        every tool invocation in this turn so multi-instance hosts (Revit
+        × N, Max × N, Outlook accounts) bind to the chosen session
+        instead of falling back to the most-recent."""
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
         on_reasoning = on_reasoning or (lambda _: None)
@@ -476,6 +482,7 @@ class LLMRouter:
                     note=note, client=client,
                     on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
                     on_reasoning=on_reasoning,
+                    session_pin=session_pin,
                 )
             except Exception as ex:
                 last_error = ex
@@ -501,6 +508,7 @@ class LLMRouter:
     def _complete_once(
         self, *, history, provider, model_name, note, client,
         on_chunk, on_tool_invocation, on_reasoning=None,
+        session_pin: Optional[str] = None,
     ):
         on_reasoning = on_reasoning or (lambda _: None)
         # Original body inlined below — extracted so the auto-fallback
@@ -590,7 +598,8 @@ class LLMRouter:
                 all_invocations.append(inv)
                 on_tool_invocation(inv)
                 try:
-                    result = self.tools.invoke(inv.tool_name, inv.arguments)
+                    result = self.tools.invoke(inv.tool_name, inv.arguments,
+                                                session_pin=session_pin)
                     inv.result = result
                     inv.status = "ok" if (result or {}).get("status") != "error" else "error"
                 except Exception as ex:

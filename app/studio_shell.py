@@ -131,6 +131,11 @@ class StudioShell(QMainWindow):
         # Per-family previous state — drives ConnectorBirth pulse on
         # state transitions (v0.32, brand principle 07: quiet motion).
         self._host_prev_state: dict[str, str] = {}
+        # Per-family expanded sub-list state — driven by HOSTS-row click
+        # so the architect can pick "Tower-A" out of three Revit
+        # instances. Click on the row body toggles; rebuild keys off
+        # this set so the sub-rows survive the 5-s refresh tick.
+        self._hosts_expanded: set[str] = set()
 
         # Apply persisted theme preference before building any pages.
         try:
@@ -1204,8 +1209,10 @@ class StudioShell(QMainWindow):
         except Exception:
             health = None
 
-        # Build a cheap signature: (entry.id, entry.state, health.state(family))
-        # Skip the entire rebuild when nothing's changed since last tick.
+        # Build a cheap signature: (entry.id, entry.state, health.state(family),
+        # expanded?). Skip the entire rebuild when nothing's changed.
+        # Expansion participates so sub-rows toggle without waiting for
+        # a state transition to invalidate the signature.
         from manager import ConnectorState
         sig_items = []
         for e in entries:
@@ -1214,7 +1221,10 @@ class StudioShell(QMainWindow):
                 hs = health.state(fam) if (health is not None and fam) else "unknown"
             except Exception:
                 hs = "unknown"
-            sig_items.append((e.id, e.state.name if isinstance(e.state, ConnectorState) else str(e.state), hs))
+            expanded = fam in self._hosts_expanded
+            sig_items.append((e.id,
+                              e.state.name if isinstance(e.state, ConnectorState) else str(e.state),
+                              hs, expanded))
         sig = tuple(sig_items)
         if sig == self._last_hosts_sig:
             return  # nothing to do — saves ~30 widget recreations per tick
@@ -1241,11 +1251,21 @@ class StudioShell(QMainWindow):
                     pass
 
     def _make_host_row(self, entry, health) -> QFrame:
+        # Wrapper: header row on top + optional sessions sub-list below
+        # when the user has expanded this family. We return the wrapper
+        # so the rail layout can keep treating each entry as one widget.
+        wrap = QFrame()
+        wrap.setObjectName("studioHostRowWrap")
+        wv = QVBoxLayout(wrap)
+        wv.setContentsMargins(0, 0, 0, 0)
+        wv.setSpacing(0)
+
         row = QFrame()
         row.setObjectName("studioHostRow")
         h = QHBoxLayout(row)
         h.setContentsMargins(9, 5, 9, 5)
         h.setSpacing(8)
+        wv.addWidget(row)
 
         # Health-driven dot.
         family = getattr(entry, "family", "")
@@ -1360,7 +1380,144 @@ class StudioShell(QMainWindow):
                 p.setToolTip(str(ex))
         tog.toggled.connect(on_toggled)
         h.addWidget(tog)
-        return row
+
+        # Click on the row body (anywhere except the toggle) toggles
+        # the per-session sub-list. Only meaningful for multi-instance
+        # families with at least one live session.
+        multi_capable = family in ("revit", "max", "autocad", "outlook")
+        if multi_capable and sessions_n >= 1:
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            def _toggle_expand(_e, fam=family):
+                if fam in self._hosts_expanded:
+                    self._hosts_expanded.discard(fam)
+                else:
+                    self._hosts_expanded.add(fam)
+                self._last_hosts_sig = ()
+                self._refresh_hosts()
+            row.mousePressEvent = _toggle_expand
+
+        # Sub-list — only render when expanded.
+        if family in self._hosts_expanded and multi_capable:
+            sub_rows = self._make_session_sublist(family)
+            if sub_rows is not None:
+                wv.addWidget(sub_rows)
+
+        return wrap
+
+    # --- per-session sub-list (HOSTS row expansion) -----------------------
+
+    def _make_session_sublist(self, family: str) -> QFrame | None:
+        """Build the indented sessions list shown when a HOSTS row is
+        expanded. Each child row pins to one session via @<id> when
+        clicked. Returns None when the broker yields nothing."""
+        try:
+            sessions = self._broker_sessions(family)
+        except Exception:
+            sessions = []
+        if not sessions:
+            return None
+        box = QFrame()
+        box.setObjectName("studioHostSubList")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(SPACE["xl"], 0, SPACE["sm"], SPACE["xs"])
+        v.setSpacing(2)
+        for s in sessions:
+            child = QFrame()
+            child.setObjectName("studioHostSubRow")
+            ch = QHBoxLayout(child)
+            ch.setContentsMargins(6, 3, 6, 3)
+            ch.setSpacing(8)
+            healthy = bool(getattr(s, "healthy", False))
+            dot = QLabel("●" if healthy else "○")
+            dot.setStyleSheet(
+                f"color: {T['ok'] if healthy else T['inkDim']}; "
+                f"font-size: 10px;"
+            )
+            ch.addWidget(dot)
+            label = self._fmt_session_label(family, s)
+            name = QLabel(label)
+            name.setObjectName("studioMonoMuted")
+            ch.addWidget(name, 1)
+            pin_token = self._fmt_session_pin(family, s)
+            chip = QLabel(f"@{pin_token}")
+            chip.setObjectName("studioPinChip")
+            ch.addWidget(chip)
+            child.setCursor(Qt.CursorShape.PointingHandCursor)
+            child.setToolTip(f"Pin chat to {pin_token}")
+            child.mousePressEvent = (
+                lambda _e, tok=pin_token: self._inject_pin_into_chat(tok)
+            )
+            v.addWidget(child)
+        return box
+
+    def _broker_sessions(self, family: str) -> list:
+        if family == "revit":
+            import revit_broker as b
+        elif family == "max":
+            import max_broker as b
+        elif family == "autocad":
+            import acad_broker as b
+        elif family == "outlook":
+            import outlook_broker as b
+        else:
+            return []
+        return list(b.list_sessions(prune=False) or [])
+
+    @staticmethod
+    def _fmt_session_label(family: str, s) -> str:
+        title = (getattr(s, "doc_title", "") or "").strip()
+        ver = getattr(s, "version", "") or ""
+        if family == "outlook":
+            smtp = getattr(s, "smtp_address", "") or ""
+            return title or smtp or "Account"
+        bits = []
+        if title:
+            bits.append(title[:32])
+        else:
+            bits.append(f"pid {getattr(s, 'pid', 0)}")
+        if ver:
+            bits.append(ver)
+        return " · ".join(bits)
+
+    @staticmethod
+    def _fmt_session_pin(family: str, s) -> str:
+        # Tokens that survive the chat composer's @-parser. Doc title
+        # wins when slug-friendly; falls back to PID; falls back to
+        # session_id; for Outlook the SMTP local-part is friendliest.
+        title = (getattr(s, "doc_title", "") or "").strip()
+        if family == "outlook":
+            smtp = getattr(s, "smtp_address", "") or ""
+            if smtp:
+                return smtp.split("@")[0]
+            return title.replace(" ", "_") or "outlook"
+        if title and all(c.isalnum() or c in "._-" for c in title):
+            return title
+        pid = getattr(s, "pid", 0)
+        if pid:
+            return str(pid)
+        return getattr(s, "session_id", family)
+
+    def _inject_pin_into_chat(self, token: str) -> None:
+        """Switch to chat page, prepend `@token ` to the input, focus."""
+        self._set_page("chat")
+        try:
+            inp = getattr(self.chat_widget, "input", None)
+            if inp is None:
+                return
+            existing = inp.text()
+            mention = f"@{token} "
+            if mention.strip() in existing:
+                inp.setFocus()
+                return
+            inp.setText(mention + existing)
+            inp.setFocus()
+            try:
+                # Cursor to end so the user types after the chip.
+                inp.setCursorPosition(len(inp.text()))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _refresh_threads(self) -> None:
         sessions = self._cached_sessions()
@@ -2908,6 +3065,18 @@ def _inline_qss() -> str:
         f"QLabel#studioHostName {{ {_type('label')} color:{T['ink']}; }}"
         f"QLabel#studioThreadText {{ {_type('bodySm')} color:{T['inkSoft']}; }}"
         f"QLabel#studioPinIcon {{ color:{T['accent']}; font-size:10px; }}"
+        # ── Per-session sub-list (HOSTS row expansion) ──────────────
+        f"QFrame#studioHostRowWrap {{ background:transparent; }}"
+        f"QFrame#studioHostSubList {{ background:transparent; "
+        f"  border-left:2px solid {T['line']}; "
+        f"  margin-left:{s['md']}px; }}"
+        f"QFrame#studioHostSubRow:hover {{ "
+        f"  background:{T['bgHover']}; border-radius:{r['sm']}px; }}"
+        f"QLabel#studioPinChip {{ "
+        f"  font-family:{TYPE['fontMono']}; font-size:10px; "
+        f"  color:{T['accent']}; padding:1px 6px; "
+        f"  background:{T['bgRaised']}; "
+        f"  border:1px solid {T['line']}; border-radius:{r['sm']}px; }}"
 
         # ── User card ───────────────────────────────────────────────
         f"QFrame#studioUserCard {{ background:{T['bgRaised']}; "

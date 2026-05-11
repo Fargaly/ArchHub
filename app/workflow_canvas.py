@@ -274,7 +274,85 @@ class CanvasScene(QGraphicsScene):
         self._edge_items: list[EdgeItem] = []
         self._dragging: Optional[DraggingEdgeItem] = None
         self._dragging_from: Optional[NodeItem] = None
+        # Undo / redo stacks — store JSON snapshots of the workflow.
+        # Pushed before every mutating op; redo cleared on new mutation.
+        # Bound to 100 entries each; oldest dropped when full.
+        self._undo: list[str] = []
+        self._redo: list[str] = []
+        self._UNDO_CAP = 100
         self._render_workflow()
+
+    # ---- undo / redo --------------------------------------------------
+    def _snapshot_text(self) -> str:
+        """Serialise the workflow to a JSON string. Used as the undo
+        stack entry."""
+        return json.dumps(self.workflow.to_dict(), sort_keys=True)
+
+    def _content_fingerprint(self) -> str:
+        """Like _snapshot_text but with timestamp metadata stripped, so
+        a comparison isn't fooled by `updated_at` ticking forward on
+        every Workflow construction (Workflow.from_dict refreshes it)."""
+        d = self.workflow.to_dict()
+        d.pop("created_at", None)
+        d.pop("updated_at", None)
+        return json.dumps(d, sort_keys=True)
+
+    def _push_undo(self) -> None:
+        """Capture the CURRENT workflow before mutation. Always clears
+        the redo stack (a new branch invalidates the future history).
+        Dedupe rule: if the current content fingerprint matches the
+        fingerprint we observed the LAST time push was called, skip.
+        That guards against double-push from cascading UI events
+        (e.g. click + mouseRelease both triggering a save). The cap
+        prevents unbounded growth as a backstop."""
+        fp = self._content_fingerprint()
+        if getattr(self, "_last_push_fp", None) == fp:
+            return
+        self._undo.append(self._snapshot_text())
+        self._last_push_fp = fp
+        if len(self._undo) > self._UNDO_CAP:
+            self._undo.pop(0)
+        self._redo.clear()
+
+    def _restore(self, snap_json: str) -> None:
+        from workflows.graph import Workflow
+        try:
+            d = json.loads(snap_json)
+        except Exception:
+            return
+        self.workflow = Workflow.from_dict(d)
+        self._render_workflow()
+
+    def undo(self) -> bool:
+        """Pop one snapshot. Returns True iff a state was actually
+        restored. The CURRENT state is pushed onto the redo stack
+        before the previous state is applied so redo works."""
+        if not self._undo:
+            return False
+        cur = self._snapshot_text()
+        prev = self._undo.pop()
+        self._restore(prev)
+        self._redo.append(cur)
+        if len(self._redo) > self._UNDO_CAP:
+            self._redo.pop(0)
+        # Invalidate the dedupe fingerprint so the next mutation always
+        # produces a fresh undo entry (the current state was just
+        # restored, but it is NO LONGER the same as the next future
+        # push's reference state).
+        self._last_push_fp = None
+        return True
+
+    def redo(self) -> bool:
+        if not self._redo:
+            return False
+        cur = self._snapshot_text()
+        nxt = self._redo.pop()
+        self._restore(nxt)
+        self._undo.append(cur)
+        if len(self._undo) > self._UNDO_CAP:
+            self._undo.pop(0)
+        self._last_push_fp = None
+        return True
 
     # ------------------------------------------------------------------
     def _render_workflow(self) -> None:
@@ -439,6 +517,7 @@ class CanvasScene(QGraphicsScene):
         from workflows.graph import Edge
         if not src.node.outputs or not dst.node.inputs:
             return
+        self._push_undo()
         edge = Edge(
             id=uuid.uuid4().hex[:10],
             src_node=src.node.id, src_port=src.node.outputs[0].name,
@@ -446,6 +525,77 @@ class CanvasScene(QGraphicsScene):
         )
         self.workflow.edges.append(edge)
         self._add_edge_item(edge)
+
+    def duplicate_node(self, item: NodeItem) -> Optional["NodeItem"]:
+        """Clone the given node + offset 24px down-right. Returns the
+        new NodeItem so the caller can select it (Ctrl+D shortcut)."""
+        self._push_undo()
+        from workflows.graph import Node, Port
+        src = item.node
+        new = Node(
+            id=uuid.uuid4().hex[:10],
+            type=src.type,
+            label=src.label,
+            inputs=[Port(**p.to_dict()) for p in src.inputs],
+            outputs=[Port(**p.to_dict()) for p in src.outputs],
+            config=dict(src.config or {}),
+            position={
+                "x": (src.position or {}).get("x", 0) + 24,
+                "y": (src.position or {}).get("y", 0) + 24,
+            },
+        )
+        self.workflow.nodes.append(new)
+        ni = NodeItem(new)
+        self.addItem(ni)
+        self._node_items[new.id] = ni
+        return ni
+
+    def nudge_selected(self, dx: int, dy: int) -> None:
+        """Arrow-key handler — move every selected NodeItem by (dx,dy)
+        scene units. Pushed once per direction so a key-hold doesn't
+        flood the undo stack."""
+        moved = False
+        items = [it for it in self.selectedItems() if isinstance(it, NodeItem)]
+        if not items:
+            return
+        if not getattr(self, "_nudge_pending", False):
+            self._push_undo()
+            self._nudge_pending = True
+        for it in items:
+            p = it.pos()
+            it.setPos(p.x() + dx, p.y() + dy)
+            it.node.position = {"x": it.pos().x(), "y": it.pos().y()}
+            self.refresh_edges_for(it)
+            moved = True
+        if moved:
+            # Reset nudge flag on idle so next arrow-press starts a new
+            # undo group.
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(400,
+                lambda: setattr(self, "_nudge_pending", False))
+
+    def delete_selected(self) -> int:
+        """Delete every selected NodeItem. Returns count deleted."""
+        items = [it for it in self.selectedItems() if isinstance(it, NodeItem)]
+        if not items:
+            return 0
+        self._push_undo()
+        for it in items:
+            # Delete without pushing undo again — we already snapshotted.
+            nid = it.node.id
+            self.workflow.nodes = [n for n in self.workflow.nodes if n.id != nid]
+            self.workflow.edges = [e for e in self.workflow.edges
+                                    if e.src_node != nid and e.dst_node != nid]
+            kept = []
+            for ei in self._edge_items:
+                if ei.src is it or ei.dst is it:
+                    self.removeItem(ei)
+                else:
+                    kept.append(ei)
+            self._edge_items = kept
+            self.removeItem(it)
+            self._node_items.pop(nid, None)
+        return len(items)
 
     # ------------------------------------------------------------------
     # Right-click palette / node menu.
@@ -491,6 +641,7 @@ class CanvasScene(QGraphicsScene):
         menu.exec(screen_pos)
 
     def _add_node(self, type_name: str, scene_pos: QPointF) -> None:
+        self._push_undo()
         from workflows.graph import Node, Port
         node = Node(
             id=uuid.uuid4().hex[:10],
@@ -506,6 +657,7 @@ class CanvasScene(QGraphicsScene):
         self._node_items[node.id] = ni
 
     def _delete_node(self, item: NodeItem) -> None:
+        self._push_undo()
         nid = item.node.id
         self.workflow.nodes = [n for n in self.workflow.nodes if n.id != nid]
         self.workflow.edges = [e for e in self.workflow.edges
@@ -530,13 +682,18 @@ class CanvasScene(QGraphicsScene):
         if not ok:
             return
         try:
-            item.node.config = json.loads(text)
-            item.update()
+            new_config = json.loads(text)
         except Exception as ex:
             QMessageBox.warning(None, "Invalid JSON", str(ex))
+            return
+        if new_config != item.node.config:
+            self._push_undo()
+            item.node.config = new_config
+            item.update()
 
     def _clear(self) -> None:
         from workflows.graph import Workflow
+        self._push_undo()
         self.workflow = Workflow(id=uuid.uuid4().hex[:10],
                                   name="Untitled workflow")
         self._render_workflow()
@@ -559,6 +716,72 @@ class _CanvasView(QGraphicsView):
             QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(
             QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        # Required so keyPressEvent fires on click — QGraphicsView
+        # doesn't take focus by default.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def keyPressEvent(self, ev):
+        from PyQt6.QtCore import Qt as _Qt
+        key = ev.key()
+        mods = ev.modifiers()
+        scene = self.scene()
+        if scene is None:
+            super().keyPressEvent(ev); return
+
+        # Ctrl+Z / Ctrl+Shift+Z — undo / redo
+        if mods & _Qt.KeyboardModifier.ControlModifier and key == _Qt.Key.Key_Z:
+            if mods & _Qt.KeyboardModifier.ShiftModifier:
+                scene.redo()
+            else:
+                scene.undo()
+            ev.accept(); return
+
+        # Ctrl+Y — alternative redo (Windows convention)
+        if mods & _Qt.KeyboardModifier.ControlModifier and key == _Qt.Key.Key_Y:
+            scene.redo()
+            ev.accept(); return
+
+        # Delete / Backspace — drop selected nodes
+        if key in (_Qt.Key.Key_Delete, _Qt.Key.Key_Backspace):
+            n = scene.delete_selected()
+            if n:
+                ev.accept(); return
+
+        # Ctrl+D — duplicate selected node(s)
+        if mods & _Qt.KeyboardModifier.ControlModifier and key == _Qt.Key.Key_D:
+            from PyQt6.QtWidgets import QGraphicsItem  # noqa: F401
+            items = [it for it in scene.selectedItems()
+                     if hasattr(it, "node")]
+            if items:
+                # Deselect originals so duplicates become the selection.
+                for it in items:
+                    it.setSelected(False)
+                for it in items:
+                    new = scene.duplicate_node(it)
+                    if new is not None:
+                        new.setSelected(True)
+                ev.accept(); return
+
+        # Ctrl+A — select all nodes
+        if mods & _Qt.KeyboardModifier.ControlModifier and key == _Qt.Key.Key_A:
+            for it in scene._node_items.values():
+                it.setSelected(True)
+            ev.accept(); return
+
+        # Arrow keys — nudge selected. Shift = 5x step.
+        step = 1 if not (mods & _Qt.KeyboardModifier.ShiftModifier) else 5
+        unit = 8 * step
+        nudge = {
+            _Qt.Key.Key_Left:  (-unit, 0),
+            _Qt.Key.Key_Right: ( unit, 0),
+            _Qt.Key.Key_Up:    (0, -unit),
+            _Qt.Key.Key_Down:  (0,  unit),
+        }
+        if key in nudge:
+            scene.nudge_selected(*nudge[key])
+            ev.accept(); return
+
+        super().keyPressEvent(ev)
 
     def wheelEvent(self, ev):
         if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -598,6 +821,94 @@ class _CanvasView(QGraphicsView):
             super().mouseReleaseEvent(fake)
             return
         super().mouseReleaseEvent(ev)
+
+
+class _Minimap(QWidget):
+    """Bird's-eye overview anchored bottom-right of the canvas.
+
+    Renders every NodeItem as a tiny filled rect at its scaled position
+    plus a viewport-rect indicator that follows the main view's scroll
+    + zoom. Click in the minimap to recenter the main view on that
+    point. v0.40 keeps it visual-first; drag-to-pan is a v0.41 nice-to-
+    have.
+    """
+    def __init__(self, scene: "CanvasScene", view: "_CanvasView", parent=None):
+        super().__init__(parent)
+        self._scene = scene
+        self._view = view
+        self.setFixedSize(192, 128)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          False)
+        # Repaint when the main view scrolls or zooms — we hook the
+        # scrollbars + just trigger update on every frame the parent
+        # repaints (cheap for ~10 nodes).
+        try:
+            view.horizontalScrollBar().valueChanged.connect(self.update)
+            view.verticalScrollBar().valueChanged.connect(self.update)
+        except Exception:
+            pass
+
+    def paintEvent(self, _ev):
+        from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+        p = QPainter(self)
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            # Background card.
+            p.fillRect(self.rect(),
+                       QColor(T["bgRaised"]))
+            p.setPen(QPen(QColor(T["line"]), 1))
+            p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+            sr = self._scene.sceneRect()
+            if sr.width() <= 0 or sr.height() <= 0:
+                return
+            # Scale scene → minimap, preserving aspect.
+            sx = (self.width() - 8) / sr.width()
+            sy = (self.height() - 8) / sr.height()
+            scale = min(sx, sy)
+            ox = (self.width() - sr.width() * scale) / 2
+            oy = (self.height() - sr.height() * scale) / 2
+
+            # Nodes.
+            p.setPen(QPen(QColor(T["accent"]), 1))
+            p.setBrush(QBrush(QColor(T["accent"])))
+            for ni in self._scene._node_items.values():
+                br = ni.boundingRect()
+                pos = ni.pos()
+                x = ox + (pos.x() - sr.left()) * scale
+                y = oy + (pos.y() - sr.top()) * scale
+                w = max(2, br.width() * scale)
+                h = max(2, br.height() * scale)
+                p.drawRect(QRectF(x, y, w, h))
+
+            # Viewport rect — what the main view is currently showing.
+            view = self._view
+            view_rect_scene = view.mapToScene(view.viewport().rect()
+                                              ).boundingRect()
+            vx = ox + (view_rect_scene.x() - sr.left()) * scale
+            vy = oy + (view_rect_scene.y() - sr.top()) * scale
+            vw = view_rect_scene.width() * scale
+            vh = view_rect_scene.height() * scale
+            p.setPen(QPen(QColor(T["accent"]), 1.5))
+            p.setBrush(QBrush(QColor(0, 0, 0, 0)))
+            p.drawRect(QRectF(vx, vy, vw, vh))
+        finally:
+            p.end()
+
+    def mousePressEvent(self, ev):
+        # Click → recenter main view on that scene point.
+        sr = self._scene.sceneRect()
+        if sr.width() <= 0 or sr.height() <= 0:
+            return
+        sx = (self.width() - 8) / sr.width()
+        sy = (self.height() - 8) / sr.height()
+        scale = min(sx, sy)
+        ox = (self.width() - sr.width() * scale) / 2
+        oy = (self.height() - sr.height() * scale) / 2
+        scene_x = sr.left() + (ev.position().x() - ox) / scale
+        scene_y = sr.top() + (ev.position().y() - oy) / scale
+        self._view.centerOn(scene_x, scene_y)
+        self.update()
 
 
 class WorkflowCanvas(QWidget):
@@ -654,6 +965,19 @@ class WorkflowCanvas(QWidget):
         self.btn_run.setObjectName("primaryButton")
         self.btn_run.clicked.connect(self._run)
         tb.addWidget(self.btn_run)
+        # Undo / redo (Ctrl+Z / Ctrl+Shift+Z also wired in _CanvasView).
+        self.btn_undo = QPushButton("↶")
+        self.btn_undo.setObjectName("studioChip")
+        self.btn_undo.setFixedWidth(28)
+        self.btn_undo.setToolTip("Undo · Ctrl+Z")
+        self.btn_undo.clicked.connect(lambda: self.scene.undo())
+        tb.addWidget(self.btn_undo)
+        self.btn_redo = QPushButton("↷")
+        self.btn_redo.setObjectName("studioChip")
+        self.btn_redo.setFixedWidth(28)
+        self.btn_redo.setToolTip("Redo · Ctrl+Shift+Z")
+        self.btn_redo.clicked.connect(lambda: self.scene.redo())
+        tb.addWidget(self.btn_redo)
         # Zoom controls.
         self.btn_zoom_out = QPushButton("−")
         self.btn_zoom_out.setObjectName("studioChip")
@@ -686,6 +1010,16 @@ class WorkflowCanvas(QWidget):
             f"QGraphicsView {{ background:{T['bg']}; border:none; }}")
         v.addWidget(self.view, 1)
 
+        # Minimap — child of the view's viewport so it floats above
+        # the scene at the bottom-right corner regardless of scroll.
+        self.minimap = _Minimap(self.scene, self.view, self.view.viewport())
+        self._reposition_minimap()
+        # Repaint minimap on scene mutations (cheap; ~10 nodes).
+        try:
+            self.scene.changed.connect(lambda _r=None: self.minimap.update())
+        except Exception:
+            pass
+
         # Empty-state hint — only shown if no nodes.
         self._hint = QLabel(
             "Right-click anywhere to add a node. "
@@ -695,6 +1029,21 @@ class WorkflowCanvas(QWidget):
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setStyleSheet("padding:8px;")
         v.addWidget(self._hint)
+
+    # ------------------------------------------------------------------
+    def _reposition_minimap(self) -> None:
+        if not getattr(self, "minimap", None):
+            return
+        vp = self.view.viewport()
+        margin = 16
+        x = max(0, vp.width() - self.minimap.width() - margin)
+        y = max(0, vp.height() - self.minimap.height() - margin)
+        self.minimap.move(x, y)
+        self.minimap.raise_()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._reposition_minimap()
 
     # ------------------------------------------------------------------
     def _zoom_step(self, factor: float) -> None:

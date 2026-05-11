@@ -223,6 +223,14 @@ class ConnectorHealth:
             # Self-heal hooks (outside lock).
             if not ok:
                 self._maybe_self_heal(family, now)
+            # Persist a state tick so the Reality Check sparkline has
+            # data to draw — edge-only inside health_history.record so
+            # flat runs don't bloat the buffer.
+            try:
+                from health_history import record as _hh_record
+                _hh_record(family, self.state(family))
+            except Exception:
+                pass
             if self.on_state_change and prev != ok:
                 try:
                     self.on_state_change(family, "live" if ok else "down")

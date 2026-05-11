@@ -622,6 +622,25 @@ class StudioShell(QMainWindow):
         self._tel_table.layout().setSpacing(0)
         bl.addWidget(self._tel_table)
 
+        # Reality Check sparklines (v0.42) — per-host 24h trend.
+        bl.addWidget(_section_h2("Reality Check", "last 24 hours"))
+        try:
+            from reality_check_panel import RealityCheckPanel
+            rc = RealityCheckPanel(router=self.router, parent=None)
+            # Drop the panel's own header — telemetry already has one.
+            try:
+                rc.layout().setContentsMargins(0, 0, 0, 0)
+                # Hide the panel's H1+sub since we surface them above.
+                for i in range(min(3, rc.layout().count())):
+                    w = rc.layout().itemAt(i).widget()
+                    if isinstance(w, QLabel):
+                        w.hide()
+            except Exception:
+                pass
+            bl.addWidget(rc)
+        except Exception as ex:
+            bl.addWidget(self._error_card("Reality Check", str(ex)))
+
         bl.addStretch(1)
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)

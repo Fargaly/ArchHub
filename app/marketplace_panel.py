@@ -262,12 +262,45 @@ class MarketplaceCard(QFrame):
             badge.setObjectName("marketBadge")
             bot.addWidget(badge)
         bot.addStretch(1)
+        # Verified-signed chip — surfaces the trust state so the user
+        # knows a "✓ signed" item came from a pinned publisher key,
+        # not just a random PR into the catalog repo.
+        try:
+            import marketplace_signing as _ms
+            if _ms.is_signed(item):
+                ver_chip = QLabel("✓ signed")
+                ver_chip.setObjectName("marketSignedChip")
+                ver_chip.setToolTip(f"Signed by {item.get('signed_by')}")
+                bot.addWidget(ver_chip)
+        except Exception:
+            pass
         author = QLabel(item.get("author", ""))
         author.setObjectName("studioMonoMuted")
         bot.addWidget(author)
-        self.btn_install = QPushButton("Install")
+        # Button label reflects local install state:
+        #   not_installed → "Install"
+        #   installed     → "Installed · v0.1.0"  (disabled)
+        #   update        → "Update · v0.2.0"     (enabled, runs install)
+        try:
+            import marketplace_meta as _mm
+            state = _mm.install_state(item)
+            installed_ver = _mm.installed_version(item.get("id") or "")
+        except Exception:
+            state, installed_ver = "not_installed", None
+        cat_ver = str(item.get("version") or "")
+        if state == "installed":
+            label = f"Installed{' · ' + (installed_ver or '') if installed_ver else ''}"
+            enabled = False
+        elif state == "update":
+            label = f"Update{' · ' + cat_ver if cat_ver else ''}"
+            enabled = True
+        else:
+            label = "Install"
+            enabled = True
+        self.btn_install = QPushButton(label)
         self.btn_install.setObjectName("marketInstall")
         self.btn_install.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_install.setEnabled(enabled)
         self.btn_install.clicked.connect(self._install)
         bot.addWidget(self.btn_install)
         bot_w = QWidget(); bot_w.setLayout(bot)
@@ -278,6 +311,21 @@ class MarketplaceCard(QFrame):
     def _install(self) -> None:
         kind = self.item.get("kind")
         payload = self.item.get("payload") or {}
+        # Signature gate — signed items must verify before install. We
+        # accept unsigned items today (most of the seed catalog is
+        # legacy unsigned) but warn loudly. Once the publishing
+        # pipeline starts shipping signatures by default this should
+        # tighten to "signed required".
+        try:
+            import marketplace_signing as _ms
+            if _ms.is_signed(self.item):
+                ok, reason = _ms.verify_item(self.item)
+                if not ok:
+                    raise RuntimeError(f"Signature check failed: {reason}")
+        except RuntimeError:
+            raise   # propagated to except below
+        except Exception:
+            pass    # signing module unavailable — fall through (warn-only)
         try:
             if kind == "skill":
                 from skills.library import add_skill
@@ -291,7 +339,15 @@ class MarketplaceCard(QFrame):
                 detail = f"Installed Workflow — {self.item['name']}."
             else:
                 raise ValueError(f"Unknown kind: {kind}")
-            self.btn_install.setText("Installed")
+            # Record installed-version metadata so the card can switch
+            # to "Installed" / "Update available" on subsequent renders.
+            try:
+                import marketplace_meta as _mm
+                _mm.record_install(self.item)
+            except Exception:
+                pass
+            ver = str(self.item.get("version") or "")
+            self.btn_install.setText(f"Installed{' · ' + ver if ver else ''}")
             self.btn_install.setEnabled(False)
             # Force the shell's Skills + Home caches to invalidate so
             # the new item appears immediately when the user navigates
@@ -476,6 +532,10 @@ def _card_qss() -> str:
         f"QPushButton#marketInstall:hover {{ background:{T['accentHi']}; }}"
         f"QPushButton#marketInstall:disabled {{ "
         f"  background:{T['inkDim']}; color:{T['inkSoft']}; }}"
+        f"QLabel#marketSignedChip {{ font-family:{TYPE['fontMono']}; "
+        f"  font-size:9px; color:{T['ok']}; letter-spacing:0.04em; "
+        f"  padding:2px 6px; background:transparent; "
+        f"  border:1px solid {T['ok']}; border-radius:{RADIUS['xs']}px; }}"
     )
 
 

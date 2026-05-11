@@ -55,13 +55,19 @@ class TestSessionHistory:
 
     def test_load_session_without_messages_field(self, tmp_path):
         # Old session files (pre-fix) had no _messages key → must
-        # still load cleanly with empty msg list.
+        # still load cleanly with empty msg list. We can't use the
+        # new save_session for this — it refuses empty payloads
+        # (that's the point of the v1.0 contract). Write the legacy
+        # shape directly to simulate a file from an older install.
         import json, session_io
-        from session import Session
-        sess = Session()
         p = tmp_path / "legacy.archhub-session.json"
-        # Write a file using legacy save_session (no messages arg).
-        session_io.save_session(sess, "legacy", path=p)
+        p.write_text(json.dumps({
+            "_name": "legacy",
+            "_saved_at": "2026-04-01T00:00:00",
+            "parameters": [],
+            "chain": [],
+            # no _messages key — pre-v1.0 shape
+        }), encoding="utf-8")
         _, name, msgs = session_io.load_session_with_messages(p)
         assert name == "legacy"
         assert msgs == []
@@ -88,12 +94,17 @@ class TestSessionHistory:
 
     def test_save_reuses_path_on_autosave(self, tmp_path):
         # Saving twice with the SAME path should overwrite, not fork.
+        # Both saves must have real content — empty saves now raise
+        # EmptySessionError by contract (v1.0).
         import session_io
         from session import Session
         p = tmp_path / "auto.archhub-session.json"
         s = Session()
-        session_io.save_session(s, "v1", path=p, messages=[])
-        session_io.save_session(s, "v2", path=p, messages=self._fake_msgs())
+        msgs_v1 = [{"role": "user", "content": "first",
+                     "tool_invocations": [], "images": [], "model": ""}]
+        session_io.save_session(s, "v1", path=p, messages=msgs_v1)
+        session_io.save_session(s, "v2", path=p,
+                                  messages=self._fake_msgs())
         files = list(tmp_path.glob("*.archhub-session.json"))
         assert len(files) == 1   # not 2
         _, name, msgs = session_io.load_session_with_messages(p)

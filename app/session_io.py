@@ -20,14 +20,62 @@ SESSIONS_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub
 SESSION_EXT = ".archhub-session.json"
 
 
+class EmptySessionError(ValueError):
+    """Raised when save_session is called with a payload that would
+    produce a stub file (no messages, no parameters, no chain steps).
+
+    Pre-v1.0 autosave silently wrote stub files because save_session
+    accepted any Session object without verifying it had content. The
+    chat surface stored conversation in self.history, not
+    self.session, so the saved payload was always empty — files
+    appeared in the THREADS rail but loaded blank chats.
+
+    This error is the load-bearing piece preventing recurrence. Every
+    caller MUST pass either messages=, or a populated Session with
+    parameters/chain, or both. Empty saves are no longer silent —
+    they raise loud and the file is never written."""
+
+
+class SessionRoundtripError(RuntimeError):
+    """Raised when save_session writes a payload but the verification
+    re-read returns different counts. Means the on-disk JSON is
+    corrupted or the serializer dropped content silently. The
+    half-written file is unlinked before raising."""
+
+
+def _payload_is_empty(session: Session, messages: Optional[list]) -> bool:
+    """Return True iff this save would produce a stub file."""
+    if messages:
+        return False
+    try:
+        params = getattr(session, "parameters", None) or {}
+        chain = getattr(session, "chain", None) or []
+        if len(params) > 0 or len(chain) > 0:
+            return False
+    except Exception:
+        return False
+    return True
+
+
 def save_session(session: Session, name: str = "", path: Optional[Path] = None,
                  messages: Optional[list] = None) -> Path:
     """Save session to disk. Returns the path written.
 
-    `messages` — optional list of ChatMessage objects (or dicts already
+    `messages` — list of ChatMessage objects (or dicts already
     serialized via _msg_to_dict). When present, persists the entire
     chat conversation alongside the parametric session so reloading
     restores the full transcript, not just parameters + chain steps.
+
+    Contract (enforced at runtime):
+      1. Refuses to write if messages + parameters + chain are ALL
+         empty — raises EmptySessionError instead of silently producing
+         a stub. This is the load-bearing rule that prevents recurrence
+         of the "sessions are empty after restart" bug class.
+      2. After writing, re-reads the file and verifies the message /
+         parameter / chain counts match what was passed in. Mismatch
+         raises SessionRoundtripError and unlinks the half-written
+         file. Future serializer regressions blow up loudly instead
+         of silently corrupting saves.
     """
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     if path is None:
@@ -35,12 +83,65 @@ def save_session(session: Session, name: str = "", path: Optional[Path] = None,
         path = SESSIONS_DIR / f"{slug}{SESSION_EXT}"
     else:
         slug = path.stem.replace(SESSION_EXT.replace(".", ""), "")
+
+    # Contract gate #1 — refuse empty payloads.
+    if _payload_is_empty(session, messages):
+        raise EmptySessionError(
+            f"Refusing to save empty session '{name or slug}': no "
+            "messages, no parameters, no chain steps. Pass "
+            "messages=self.history (chat surface) or populate "
+            "session.parameters / session.chain (skills surface) "
+            "before saving."
+        )
+
     data = session.to_dict()
     data["_name"] = name or slug
     data["_saved_at"] = datetime.now().isoformat()
+    msg_list: list[dict] = []
     if messages is not None:
-        data["_messages"] = [_msg_to_dict(m) for m in messages]
+        msg_list = [_msg_to_dict(m) for m in messages]
+        data["_messages"] = msg_list
+    expected_msgs = len(msg_list)
+    expected_params = len(data.get("parameters") or [])
+    expected_chain = len(data.get("chain") or [])
+
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+
+    # Contract gate #2 — round-trip verify. If the re-read drops any
+    # of the three populations, the file is corrupt; remove it +
+    # raise so the caller can react.
+    try:
+        verify = json.loads(path.read_text(encoding="utf-8"))
+        got_msgs = len(verify.get("_messages") or [])
+        got_params = len(verify.get("parameters") or [])
+        got_chain = len(verify.get("chain") or [])
+        if (got_msgs != expected_msgs
+                or got_params != expected_params
+                or got_chain != expected_chain):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise SessionRoundtripError(
+                f"Save verification failed for '{name or slug}': "
+                f"wrote msgs={expected_msgs}/params={expected_params}/"
+                f"chain={expected_chain} but read back msgs={got_msgs}/"
+                f"params={got_params}/chain={got_chain}. File removed."
+            )
+    except SessionRoundtripError:
+        raise
+    except Exception as ex:
+        # Verification itself blew up — better to delete the file than
+        # leave a possibly-corrupt one on disk that re-loads as a stub.
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise SessionRoundtripError(
+            f"Couldn't verify saved session '{name or slug}': "
+            f"{type(ex).__name__}: {ex}"
+        )
+
     return path
 
 

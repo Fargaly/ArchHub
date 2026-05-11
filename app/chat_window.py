@@ -943,21 +943,37 @@ class ChatWindow(QMainWindow):
     def _autosave_session(self) -> None:
         """Save the running session + chat history if it has at least
         one user msg. Reuses the same path across ticks so we overwrite,
-        not pile up."""
+        not pile up.
+
+        Contract: ALWAYS pass messages=self.history. The chat surface
+        stores conversation there, not in self.session, so omitting
+        messages= produces the empty-stub bug class that hit users
+        before v1.0. session_io.save_session enforces this at the
+        write boundary by raising EmptySessionError on an empty
+        payload — we catch it here only to keep the timer alive."""
         try:
             real_msgs = [m for m in self.history
                          if m.role == "user" and (m.content or "").strip()]
             if not real_msgs:
                 return
-            from session_io import save_session
+            from session_io import save_session, EmptySessionError
             # Pick a name from the first user message (truncated).
             first = real_msgs[0].content.strip()
             name = (first[:48] + "…") if len(first) > 48 else first
-            # Reuse path so successive autosaves overwrite the same file.
-            path = save_session(self.session, name,
-                                 path=self._autosave_path,
-                                 messages=self.history)
-            self._autosave_path = path
+            try:
+                # NEVER call save_session without messages=. The
+                # guard above filters before we get here, but the
+                # keyword is mandatory by contract — leaving it
+                # off is the historic bug.
+                path = save_session(self.session, name,
+                                     path=self._autosave_path,
+                                     messages=self.history)
+                self._autosave_path = path
+            except EmptySessionError:
+                # Should never reach here given the real_msgs filter,
+                # but if it does, log + skip rather than crash the
+                # autosave timer.
+                pass
         except Exception:
             pass
 

@@ -174,6 +174,28 @@ class _PasteInput(QPlainTextEdit):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        # Force the palette text + placeholder roles to the active
+        # brand tokens. Qt's Fusion style ignores QSS `color:` for the
+        # document content in QPlainTextEdit — it reads QPalette.Text
+        # for typed characters and QPalette.PlaceholderText for the
+        # placeholder. Setting them explicitly here is the load-
+        # bearing fix for "I type and nothing shows up" in dark mode.
+        try:
+            from PyQt6.QtGui import QPalette, QColor
+            from design_tokens import current as _palette
+            p = _palette()
+            qp = self.palette()
+            qp.setColor(QPalette.ColorRole.Base, QColor(p["bgRaised"]))
+            qp.setColor(QPalette.ColorRole.Text, QColor(p["ink"]))
+            qp.setColor(QPalette.ColorRole.PlaceholderText,
+                         QColor(p.get("inkSoft") or p["ink"]))
+            qp.setColor(QPalette.ColorRole.Highlight,
+                         QColor(p.get("accent") or "#d97757"))
+            qp.setColor(QPalette.ColorRole.HighlightedText,
+                         QColor("#ffffff"))
+            self.setPalette(qp)
+        except Exception:
+            pass
         # Sensible single-line default height.
         self._adjust_height()
         self.textChanged.connect(self._adjust_height)
@@ -200,10 +222,13 @@ class _PasteInput(QPlainTextEdit):
     # ---- height auto-grow ------------------------------------------------
     def _adjust_height(self) -> None:
         # Compute required height for current content, clamped to
-        # [MIN_LINES..MAX_LINES] in line units.
+        # [MIN_LINES..MAX_LINES] in line units. The constants below
+        # account for the full chrome: QSS padding (12+12=24px),
+        # frame border (1+1=2px), document margin (4+4=8px). Without
+        # this buffer setFixedHeight clips the text and the user sees
+        # an apparently-empty input even though characters are there.
         fm = self.fontMetrics()
         line_h = fm.lineSpacing()
-        # Document line count INCLUDING wrapped soft lines.
         doc = self.document()
         doc.setTextWidth(self.viewport().width()
                          if self.viewport().width() > 0
@@ -213,8 +238,11 @@ class _PasteInput(QPlainTextEdit):
         except Exception:
             n_lines = 1
         clamped = max(self._MIN_LINES, min(self._MAX_LINES, n_lines))
-        # 12px = top+bottom QPlainTextEdit padding rounded up.
-        h = clamped * line_h + 12
+        # Chrome: 24px QSS padding + 2px frame + 8px doc margin = ~34.
+        # A few extra px buffer so the cursor isn't kissed by the
+        # bottom border.
+        chrome = 36
+        h = clamped * line_h + chrome
         self.setFixedHeight(int(h))
 
     def resizeEvent(self, ev) -> None:

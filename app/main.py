@@ -398,6 +398,29 @@ def main() -> int:
         except Exception:
             pass
 
+    # First-run onboarding for technophobe users — no provider keys
+    # set, no Ollama installed. Show the friendly setup dialog BEFORE
+    # the user lands on an empty Settings screen they don't understand.
+    # The dialog runs the silent Ollama install + model pull, or the
+    # user can dismiss to use their own keys via Settings.
+    try:
+        import first_run as _fr
+        if _fr.needs_onboarding():
+            from onboarding_dialog import OnboardingDialog
+            dlg = OnboardingDialog()
+            rc = dlg.exec()
+            # rc == 2 → user clicked "I have a Claude/OpenAI account";
+            # surface Settings so they can paste a key right away.
+            if rc == 2 and 'window' in locals():
+                try:
+                    if hasattr(window, "_set_page"):
+                        window._set_page("settings")
+                except Exception:
+                    pass
+    except Exception:
+        # Onboarding failing must NEVER block the app from starting.
+        pass
+
     rc = app.exec()
     scheduler.stop()
     # Flush in-flight telemetry events on clean exit.

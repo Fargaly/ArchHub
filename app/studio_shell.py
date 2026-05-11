@@ -86,6 +86,7 @@ NAV_ITEMS = [
     ("flows",     "Workflows",   "4"),
     ("market",    "Marketplace", "5"),
     ("telemetry", "Telemetry",   "6"),
+    ("pricing",   "Pricing",     "7"),
     ("settings",  "Settings",    ","),
 ]
 
@@ -176,6 +177,7 @@ class StudioShell(QMainWindow):
             "flows":     self._build_workflows_page(),
             "market":    self._build_marketplace_page(),
             "telemetry": self._build_telemetry_page(),
+            "pricing":   self._build_pricing_page(),
             "settings":  self._build_settings_page(),
             "addhost":   self._build_addhost_page(),
         }
@@ -539,6 +541,14 @@ class StudioShell(QMainWindow):
             v.setContentsMargins(40, 32, 40, 40)
             v.addWidget(self._error_card("Settings", str(ex)))
             return page
+
+    def _build_pricing_page(self) -> QWidget:
+        """Two-tier pricing comparison ($0 BYO vs $199 Studio)."""
+        try:
+            from pricing_page import PricingPage
+            return PricingPage(parent=None)
+        except Exception as ex:
+            return self._build_placeholder("Pricing", str(ex))
 
     def _build_marketplace_page(self) -> QWidget:
         """Marketplace — official catalog of Skills + Workflows. v0.30."""

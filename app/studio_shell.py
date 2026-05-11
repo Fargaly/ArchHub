@@ -522,75 +522,23 @@ class StudioShell(QMainWindow):
             return self._error_card("Workflows", str(ex))
 
     def _build_settings_page(self) -> QWidget:
-        """Settings — embed SettingsDialog inside a proper scrollable
-        page header instead of dropping it raw into the centre column.
+        """Settings — Studio-native sectioned chrome (v0.41).
 
-        Without this wrapper SettingsDialog's QFormLayout (designed for
-        a 520-px modal) gets stretched to the full centre-column width,
-        which makes long fields overflow over short labels and the
-        bottom OK/Cancel buttons hover next to other rows. The wrapper
-        gives it a fixed 720-px content rail + scroll so it behaves.
+        Replaces the previous embed-the-modal-dialog-into-the-page
+        approach with SettingsPage, which has a left nav of sections
+        + right content stack. Each section can be deep-linked from
+        the main shell once routing supports query strings.
         """
-        page = QWidget()
-        page.setObjectName("studioPage")
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # Header row + sub-line.
-        header = QWidget()
-        hh = QVBoxLayout(header)
-        hh.setContentsMargins(40, 32, 40, 0)
-        hh.setSpacing(4)
-        cap = QLabel("SETTINGS")
-        cap.setObjectName("studioMonoCap")
-        hh.addWidget(cap)
-        h1 = QLabel("Settings")
-        h1.setObjectName("studioH1")
-        hh.addWidget(h1)
-        sub = QLabel(
-            "API keys, providers, telemetry, and the cloud-sync hookup. "
-            "Changes take effect on save — no restart needed."
-        )
-        sub.setObjectName("studioH1Sub")
-        sub.setWordWrap(True)
-        hh.addWidget(sub)
-        outer.addWidget(header)
-
-        # Scroll wrapper — content lives in a 720px-wide rail centred.
-        scroll = QScrollArea(page)
-        scroll.setWidgetResizable(True)
-        scroll.setObjectName("studioScroll")
-        scroll.setStyleSheet(
-            "QScrollArea#studioScroll { background: transparent; "
-            "border: none; }"
-        )
-        rail_wrap = QWidget()
-        rail_wrap.setObjectName("studioPage")
-        rail_l = QHBoxLayout(rail_wrap)
-        rail_l.setContentsMargins(40, 16, 40, 40)
-        rail_l.addStretch(1)
-        rail = QWidget()
-        rail.setMaximumWidth(720)
-        rail.setSizePolicy(QSizePolicy.Policy.Preferred,
-                           QSizePolicy.Policy.MinimumExpanding)
-        rl = QVBoxLayout(rail)
-        rl.setContentsMargins(0, 0, 0, 0)
         try:
-            from settings_dialog import SettingsDialog
-            dlg = SettingsDialog(self.router, parent=None)
-            dlg.setWindowFlags(Qt.WindowType.Widget)
-            # Prevent the embedded dialog from stretching beyond the rail.
-            dlg.setSizePolicy(QSizePolicy.Policy.Preferred,
-                              QSizePolicy.Policy.MinimumExpanding)
-            rl.addWidget(dlg)
+            from settings_page import SettingsPage
+            return SettingsPage(router=self.router, parent=None)
         except Exception as ex:
-            rl.addWidget(self._error_card("Settings", str(ex)))
-        rail_l.addWidget(rail, 0)
-        rail_l.addStretch(1)
-        scroll.setWidget(rail_wrap)
-        outer.addWidget(scroll, 1)
-        return page
+            page = QWidget()
+            page.setObjectName("studioPage")
+            v = QVBoxLayout(page)
+            v.setContentsMargins(40, 32, 40, 40)
+            v.addWidget(self._error_card("Settings", str(ex)))
+            return page
 
     def _build_marketplace_page(self) -> QWidget:
         """Marketplace — official catalog of Skills + Workflows. v0.30."""

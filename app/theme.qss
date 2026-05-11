@@ -259,7 +259,7 @@ QFrame#inputBar {
     border: none;
     border-top: 1px solid #e3ddd0;
 }
-QLineEdit#inputField {
+QLineEdit#inputField, QPlainTextEdit#inputField {
     background-color: #ffffff;
     color: #251f17;
     border: 1px solid #e3ddd0;
@@ -270,10 +270,10 @@ QLineEdit#inputField {
     selection-background-color: #f5e3db;
     selection-color: #251f17;
 }
-QLineEdit#inputField:hover {
+QLineEdit#inputField:hover, QPlainTextEdit#inputField:hover {
     border-color: #c96442;
 }
-QLineEdit#inputField:focus {
+QLineEdit#inputField:focus, QPlainTextEdit#inputField:focus {
     border-color: #c96442;
     background-color: #ffffff;
 }

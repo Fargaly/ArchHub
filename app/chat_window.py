@@ -148,19 +148,79 @@ class _SessionWorker(QObject):
         self._stop = True
 
 # ---------------------------------------------------------------------------
-#  Custom QLineEdit that intercepts Ctrl+V to detect clipboard images.
+#  Multi-line chat input — QPlainTextEdit with QLineEdit-compatible API.
+#  Enter sends, Shift+Enter inserts newline. Auto-grows up to MAX_LINES.
+#  Mirrors the original _PasteInput surface (text/setText/clear/
+#  returnPressed/setCursorPosition/image_pasted) so every caller works
+#  unchanged.
 # ---------------------------------------------------------------------------
-class _PasteInput(QLineEdit):
-    image_pasted = pyqtSignal(str)   # emits temp file path
+from PyQt6.QtWidgets import QPlainTextEdit
 
-    # Image extensions we accept on drag-drop. PNG/JPG cover hand sketches
-    # exported from any tablet; WEBP for screenshots; BMP/GIF for legacy.
+
+class _PasteInput(QPlainTextEdit):
+    image_pasted = pyqtSignal(str)   # emits temp file path
+    returnPressed = pyqtSignal()     # mirrors QLineEdit's signal name
+
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+    _MIN_LINES = 1
+    _MAX_LINES = 10
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Accept files dropped from File Explorer / Finder / browser.
         self.setAcceptDrops(True)
+        # No tab characters — Tab moves focus instead of indenting.
+        self.setTabChangesFocus(True)
+        # Hide horizontal scrollbar; vertical only when over MAX_LINES.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        # Sensible single-line default height.
+        self._adjust_height()
+        self.textChanged.connect(self._adjust_height)
+
+    # ---- QLineEdit-compatible shim API -----------------------------------
+    # Existing call sites expect text()/setText()/setCursorPosition();
+    # provide those on top of the QPlainTextEdit storage so chat_window
+    # + studio_shell don't have to change.
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, s: str) -> None:
+        self.setPlainText(s or "")
+
+    def setCursorPosition(self, pos: int) -> None:
+        cur = self.textCursor()
+        try:
+            cur.setPosition(int(pos))
+            self.setTextCursor(cur)
+        except Exception:
+            pass
+
+    # ---- height auto-grow ------------------------------------------------
+    def _adjust_height(self) -> None:
+        # Compute required height for current content, clamped to
+        # [MIN_LINES..MAX_LINES] in line units.
+        fm = self.fontMetrics()
+        line_h = fm.lineSpacing()
+        # Document line count INCLUDING wrapped soft lines.
+        doc = self.document()
+        doc.setTextWidth(self.viewport().width()
+                         if self.viewport().width() > 0
+                         else self.width())
+        try:
+            n_lines = max(1, int(doc.size().height() / line_h))
+        except Exception:
+            n_lines = 1
+        clamped = max(self._MIN_LINES, min(self._MAX_LINES, n_lines))
+        # 12px = top+bottom QPlainTextEdit padding rounded up.
+        h = clamped * line_h + 12
+        self.setFixedHeight(int(h))
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        # Width changed → wrapping may have changed → re-measure height.
+        self._adjust_height()
 
     # ---- drag and drop ---------------------------------------------------
 
@@ -174,7 +234,6 @@ class _PasteInput(QLineEdit):
 
     def dropEvent(self, event) -> None:
         mime = event.mimeData()
-        # 1. Image already on the mime payload (e.g. drag from a browser).
         if mime.hasImage():
             from PyQt6.QtGui import QImage
             img = mime.imageData()
@@ -182,7 +241,6 @@ class _PasteInput(QLineEdit):
                 self._save_and_emit(img)
                 event.acceptProposedAction()
                 return
-        # 2. Files dropped — pick image files only.
         if mime.hasUrls():
             from os.path import splitext
             n = 0
@@ -199,11 +257,17 @@ class _PasteInput(QLineEdit):
                 return
         event.ignore()
 
-    # ---- clipboard paste (existing) --------------------------------------
+    # ---- key handling: Enter sends, Shift+Enter newline, Ctrl+V image ----
 
     def keyPressEvent(self, event) -> None:
-        if (event.key() == Qt.Key.Key_V and
-                event.modifiers() == Qt.KeyboardModifier.ControlModifier):
+        key = event.key()
+        mods = event.modifiers()
+
+        # Ctrl+V — clipboard image takes precedence over text paste so
+        # screenshot pastes route through image_pasted instead of pasting
+        # binary garbage as text.
+        if (key == Qt.Key.Key_V
+                and mods == Qt.KeyboardModifier.ControlModifier):
             clipboard = QApplication.clipboard()
             mime = clipboard.mimeData()
             if mime.hasImage():
@@ -211,6 +275,20 @@ class _PasteInput(QLineEdit):
                 if not img.isNull():
                     self._save_and_emit(img)
                     return
+            # else fall through to default paste
+
+        # Enter / Return — submit; Shift+Enter — insert newline; Ctrl+
+        # Enter also inserts newline (matches Slack/Discord convention).
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if mods & (Qt.KeyboardModifier.ShiftModifier
+                        | Qt.KeyboardModifier.ControlModifier):
+                # Insert real newline into the document.
+                self.insertPlainText("\n")
+                return
+            # Plain Enter → submit. Don't insert newline.
+            self.returnPressed.emit()
+            return
+
         super().keyPressEvent(event)
 
     # ---- shared helper ---------------------------------------------------
@@ -762,10 +840,49 @@ class MessageBubble(QFrame):
         self._adjust_height()
 
     def _adjust_height(self) -> None:
+        # Resolve a reliable text width. viewport().width() returns 0
+        # before the bubble is laid out for the first time; using 0
+        # collapses the document to one char per line and the height
+        # ends up clamped to 20px so the message looks truncated.
+        # Fall back to the bubble's own width minus the layout
+        # margins, then to the maximumWidth() (720px ceiling), then
+        # to a sensible 600px default. Re-measured on resizeEvent.
+        view_w = self.text_view.viewport().width()
+        if view_w <= 0:
+            view_w = self.text_view.width()
+        if view_w <= 0:
+            # Bubble width minus its content margins on both sides.
+            try:
+                m = self.layout().contentsMargins()
+                view_w = max(0, self.width() - m.left() - m.right())
+            except Exception:
+                view_w = 0
+        if view_w <= 0:
+            view_w = self.maximumWidth() if self.maximumWidth() > 0 else 600
         doc = self.text_view.document()
-        doc.setTextWidth(self.text_view.viewport().width())
+        doc.setTextWidth(view_w)
         h = int(doc.size().height()) + 4
+        # No upper clamp — message bubbles must grow to fit the full
+        # answer. Scrollbars are off; the parent scroll area handles
+        # overflow at the page level.
         self.text_view.setFixedHeight(max(20, h))
+
+    # Re-measure when the bubble's actual width settles (first paint
+    # + on layout changes from window resize).
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        try:
+            self._adjust_height()
+            self._adjust_reasoning_height()
+        except Exception:
+            pass
+
+    def showEvent(self, ev) -> None:
+        super().showEvent(ev)
+        # First show — viewport width finally non-zero. Re-measure so
+        # the very first message in a session isn't truncated.
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._adjust_height)
 
     def add_tool_card(self, invocation: ToolInvocation) -> ToolCard:
         # Tool calls count as activity → kill the dots.
@@ -1118,7 +1235,10 @@ class ChatWindow(QMainWindow):
         h.addWidget(attach_btn)
 
         self.input = _PasteInput()
-        self.input.setPlaceholderText("Message ArchHub… (Enter to send, Ctrl+V to paste image)")
+        self.input.setPlaceholderText(
+            "Message ArchHub… (Enter to send · Shift+Enter for newline · "
+            "Ctrl+V to paste image)"
+        )
         self.input.setObjectName("inputField")
         self.input.returnPressed.connect(self._on_send)
         self.input.image_pasted.connect(self._on_image_pasted)

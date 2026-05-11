@@ -57,6 +57,71 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     return any(n in s for n in needles)
 
 
+def _filter_tools_by_relevance(tool_schemas: list[dict],
+                                 history: list[dict],
+                                 *, cap: int = 12) -> list[dict]:
+    """Trim a long tool schema list down to the ones plausibly
+    relevant to the user's last message + always-keep "info" tools.
+
+    Why: Gemini Flash refuses to pick from a 30+ tool menu — returns
+    completely empty (no text, no tool call) when overwhelmed.
+    Trace from a real running session shows tool_schemas=33 →
+    type=final text_len=0 tool_calls=[]. Capping at ~12 with a
+    keyword-relevance heuristic keeps the model focused enough to
+    actually answer.
+
+    Strategy:
+      1. Extract keywords from the last user message.
+      2. Score each tool by name-keyword overlap.
+      3. Always include the lightweight "info" / "ping" tools for
+         any active host — they're cheap, common, and a good default.
+      4. Keep top N by score, padded with the info set.
+    """
+    if not tool_schemas or len(tool_schemas) <= cap:
+        return list(tool_schemas)
+    last_user = ""
+    for m in reversed(history):
+        if m.get("role") == "user":
+            c = m.get("content") or ""
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c
+                              if isinstance(p, dict))
+            last_user = str(c).lower()
+            break
+
+    def _name(t: dict) -> str:
+        return t.get("name") or (t.get("function") or {}).get("name", "") or ""
+
+    # Always-keep set — cheap status calls + the local helper.
+    always_keep = {n for n in (
+        "archhub_list_connectors",
+        "outlook_info", "revit_info", "acad_info", "max_info",
+        "blender_info", "revit_ping", "acad_ping", "max_ping",
+        "blender_ping",
+    )}
+    kept = [t for t in tool_schemas if _name(t) in always_keep]
+
+    # Score remaining tools by keyword overlap with the last user msg.
+    keywords = [w for w in last_user.split() if len(w) > 2]
+    scored: list[tuple[int, dict]] = []
+    for t in tool_schemas:
+        n = _name(t).lower()
+        if not n or n in always_keep:
+            continue
+        score = sum(1 for kw in keywords if kw in n)
+        if score > 0:
+            scored.append((score, t))
+    scored.sort(key=lambda kv: -kv[0])
+
+    # Fill: always-keep first, then scored relevant.
+    out = list(kept)
+    for _, t in scored:
+        if len(out) >= cap:
+            break
+        out.append(t)
+    return out
+
+
 def _summarise_tool_result(inv) -> str:
     """Build a one-line, human-readable summary of a tool invocation
     so the chat surface has SOMETHING to render when the LLM
@@ -684,14 +749,23 @@ class LLMRouter:
         # Original body inlined below — extracted so the auto-fallback
         # loop can wrap it cleanly.
 
-        # Reset the procrastination-nudge guard — fires at most once
-        # per chat turn so we don't loop forever on an uncooperative
-        # local model.
+        # Reset per-turn guards — both fire at most once per chat turn
+        # so we don't loop forever on an uncooperative model.
         self._nudged_this_turn = False
+        self._retried_no_tools = False
 
         # Compose system prompt
         system_prompt = self._build_system_prompt()
         tool_schemas = self.tools.tool_schemas_for(provider)
+        # Gemini Flash refuses to pick when given 30+ tool schemas
+        # at once — emits empty type=final with no text + no tool
+        # calls. Trim the list per-request to the tools plausibly
+        # relevant to the user's last message. Anthropic / OpenAI
+        # tolerate larger lists; keep full list there.
+        if provider == "google" and len(tool_schemas) > 16:
+            tool_schemas = _filter_tools_by_relevance(
+                tool_schemas, history, cap=12,
+            )
 
         # Tool-use loop. The cap prevents runaway loops when a model
         # gets stuck calling itself, but it also has to be high enough
@@ -705,6 +779,28 @@ class LLMRouter:
         messages = [m for m in history]    # working copy for tool round-tripping
 
         max_iters = self._max_iterations(model_name)
+        # Diagnostic log — captures every iteration of the tool-use
+        # loop to %LOCALAPPDATA%/ArchHub/logs/llm_trace.log so we can
+        # see what each provider actually returned. Helps diagnose
+        # "empty response" complaints without rebuilding state.
+        def _trace(msg: str) -> None:
+            try:
+                import os, time as _t
+                from pathlib import Path as _P
+                p = (_P(os.environ.get("LOCALAPPDATA",
+                                         str(_P.home())))
+                     / "ArchHub" / "logs")
+                p.mkdir(parents=True, exist_ok=True)
+                with open(p / "llm_trace.log", "a",
+                           encoding="utf-8") as fh:
+                    fh.write(f"{_t.strftime('%Y-%m-%d %H:%M:%S')} "
+                              f"[{provider}:{model_name}] {msg}\n")
+            except Exception:
+                pass
+
+        _trace(f"START history_len={len(history)} "
+                f"last_user={(history[-1].get('content','') if history else '')[:80]!r} "
+                f"tool_schemas={len(tool_schemas)}")
         for _iteration in range(max_iters):
             text_buf = []
 
@@ -767,6 +863,7 @@ class LLMRouter:
                     tools=tool_schemas,
                     on_chunk=chunk_handler,
                 )
+                _trace(f"iter{_iteration} → stream_completion (msg_count={len(messages)})")
                 try:
                     stream = client.stream_completion(
                         on_reasoning=on_reasoning, **stream_kwargs,
@@ -775,6 +872,9 @@ class LLMRouter:
                     stream = client.stream_completion(**stream_kwargs)
                 assistant_text = stream.get("text", "")
                 full_text += assistant_text
+                _trace(f"iter{_iteration} ← type={stream.get('type')} "
+                        f"text_len={len(assistant_text)} "
+                        f"tool_calls={[t.get('name') for t in stream.get('tool_calls') or []]}")
 
                 if stream["type"] == "final":
                     break
@@ -817,7 +917,7 @@ class LLMRouter:
 
             messages.append({"role": "tool", "tool_results": tool_results})
 
-        # Last-resort fallback: if the model never produced text but
+        # Last-resort fallback A: if the model never produced text but
         # successfully ran tools, synthesize a one-line summary from
         # the most recent tool result. Prevents the "empty bubble
         # after a successful tool run" failure mode seen with Gemini +
@@ -825,6 +925,50 @@ class LLMRouter:
         # IS the answer.
         if not full_text.strip() and all_invocations:
             full_text = _summarise_tool_result(all_invocations[-1])
+
+        # Last-resort fallback B: model returned NOTHING — no text AND
+        # no tool calls. Happens with Gemini Flash when overwhelmed by
+        # the tool menu, or when the input is too ambiguous to act on.
+        # Retry ONCE with tools=[] so the model just produces natural
+        # language. Guarded by an iteration flag so we never loop.
+        if (not full_text.strip()
+                and not all_invocations
+                and tool_schemas
+                and not getattr(self, "_retried_no_tools", False)):
+            self._retried_no_tools = True
+            _trace("empty response with tools — retrying with tools=[]")
+            try:
+                if provider == "ollama":
+                    txt, _ = client.complete(
+                        system=system_prompt + (
+                            "\n\nNo tools available for this turn. "
+                            "Reply in 1-2 short sentences."
+                        ),
+                        history=messages, model=model_name, tools=[],
+                        on_chunk=on_chunk, on_reasoning=on_reasoning,
+                    )
+                    full_text = txt
+                else:
+                    retry_kwargs = dict(
+                        model=model_name,
+                        system=system_prompt + (
+                            "\n\nNo tools available for this turn. "
+                            "Reply in 1-2 short sentences."
+                        ),
+                        messages=messages, tools=[], on_chunk=on_chunk,
+                    )
+                    try:
+                        s = client.stream_completion(
+                            on_reasoning=on_reasoning, **retry_kwargs,
+                        )
+                    except TypeError:
+                        s = client.stream_completion(**retry_kwargs)
+                    full_text = s.get("text", "") or full_text
+            except Exception as ex:
+                _trace(f"retry-no-tools FAILED: {type(ex).__name__}: {ex}")
+
+        _trace(f"END full_text_len={len(full_text)} "
+                f"invocations={[(i.tool_name, i.status) for i in all_invocations]}")
 
         return LLMResponse(
             text=full_text,

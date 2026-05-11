@@ -1808,6 +1808,39 @@ class ChatWindow(QMainWindow):
                 self._current_bubble.set_status("")
             except Exception:
                 pass
+        # Reconciliation: the worker streams chunks via on_chunk, and
+        # the bubble accumulates them. But some providers (Google,
+        # ArchHub Cloud) return the entire response in a SINGLE chunk
+        # — when that chunk's queued signal hasn't been processed by
+        # the main thread before `finished` fires, the bubble stays
+        # empty even though response.text has the full answer.
+        # Force-set the bubble text from response.text if the bubble
+        # is behind. This is the load-bearing fix for "I sent a
+        # message and the assistant bubble stayed blank".
+        try:
+            final_text = (response.text or "").strip()
+            if self._current_bubble is not None and final_text:
+                rendered = self._current_bubble.text_view.toPlainText()
+                if len(rendered) < len(final_text):
+                    # Authoritative re-paint from the canonical text.
+                    self._current_bubble.set_text(response.text)
+                    if self.history:
+                        self.history[-1].content = response.text
+            elif self._current_bubble is not None and not final_text:
+                # Provider returned an empty answer — surface a friendly
+                # placeholder so the user doesn't stare at a blank
+                # bubble wondering what happened.
+                self._current_bubble.set_text(
+                    "(empty response — provider returned no text. "
+                    "Check Settings → Providers for credit / quota "
+                    "issues.)"
+                )
+                if self.history:
+                    self.history[-1].content = (
+                        "(empty response — provider returned no text.)"
+                    )
+        except Exception:
+            pass
         self._reset_input_state()
         if response.routing_note:
             self.status_left.setText(response.routing_note)

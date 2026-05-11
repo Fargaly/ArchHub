@@ -41,14 +41,37 @@ def _write_stub(sd: Path, name: str) -> Path:
 
 
 def _write_real(sd: Path, name: str, msgs: int = 2) -> Path:
-    """Write a post-fix session with actual chat content."""
+    """Write a post-fix session with actual chat content.
+
+    Must include at least one ASSISTANT message with non-empty content,
+    otherwise the v1.0 tighter filter treats it as a stub (which is
+    correct — a chat with only user messages and no assistant reply
+    means the LLM call never produced anything)."""
+    p = sd / f"{name}.archhub-session.json"
+    payload_msgs = []
+    for i in range(max(1, msgs - 1)):
+        payload_msgs.append({"role": "user", "content": f"msg {i}"})
+    payload_msgs.append(
+        {"role": "assistant", "content": "the reply"}
+    )
+    p.write_text(json.dumps({
+        "_name": name, "_saved_at": "2026-05-10T00:00:00",
+        "parameters": [], "chain": [],
+        "_messages": payload_msgs,
+    }), encoding="utf-8")
+    return p
+
+
+def _write_user_only(sd: Path, name: str) -> Path:
+    """A chat that crashed mid-turn: user message saved, assistant
+    empty. Counts as a stub by the new filter."""
     p = sd / f"{name}.archhub-session.json"
     p.write_text(json.dumps({
         "_name": name, "_saved_at": "2026-05-10T00:00:00",
         "parameters": [], "chain": [],
         "_messages": [
-            {"role": "user", "content": "msg " + str(i)}
-            for i in range(msgs)
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": ""},
         ],
     }), encoding="utf-8")
     return p
@@ -94,6 +117,37 @@ class TestListSessionsFilter:
         from session_io import list_sessions
         names = {r[1] for r in list_sessions()}
         assert "params_only" in names
+
+    def test_user_only_session_hidden(self, sessions_dir):
+        # Chat that crashed mid-turn: user typed something, assistant
+        # never replied. Saved as {user:'ping', assistant:''}. The
+        # new filter treats this as a stub — without an assistant
+        # response, there's nothing to reload, so the rail shouldn't
+        # surface it. This is the bug class that hit user with
+        # "PING OUTLOOK → blank assistant" after Anthropic + OpenAI
+        # ran out of credits + the streaming race ate the chunk.
+        _write_user_only(sessions_dir, "crashed_chat")
+        from session_io import list_sessions
+        assert list_sessions() == []
+
+    def test_session_with_empty_assistant_treated_as_stub(self, sessions_dir):
+        # Same shape as above but written slightly differently —
+        # multiple user msgs, last assistant is empty string.
+        p = sessions_dir / "stuck.archhub-session.json"
+        p.write_text(json.dumps({
+            "_name": "stuck", "_saved_at": "2026-05-11",
+            "parameters": [], "chain": [],
+            "_messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": ""},
+            ],
+        }), encoding="utf-8")
+        from session_io import list_sessions
+        # At least ONE non-empty assistant → KEPT.
+        names = {r[1] for r in list_sessions()}
+        assert "stuck" in names
 
 
 # ---------------------------------------------------------------------------

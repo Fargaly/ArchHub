@@ -224,14 +224,21 @@ def list_sessions(*, include_empty: bool = False
             name = data.get("_name", f.stem)
             saved_at = data.get("_saved_at", "")
             if not include_empty:
-                # Three signals that a session has real content. Any
-                # one is enough — saves a session that captured chat
-                # but no params, or vice versa, or chain-only Skill
-                # runs.
+                # Real-content signals. Any one is enough:
+                #   • At least one assistant message with non-empty
+                #     content (a real chat — empty assistant content
+                #     means the LLM never responded, so it's a stub)
+                #   • At least one parameter (Skills-style save)
+                #   • At least one chain step
                 msgs = data.get("_messages") or []
                 params = data.get("parameters") or []
                 chain = data.get("chain") or []
-                if not msgs and not params and not chain:
+                has_real_chat = any(
+                    m.get("role") == "assistant"
+                    and (m.get("content") or "").strip()
+                    for m in msgs if isinstance(m, dict)
+                )
+                if not has_real_chat and not params and not chain:
                     continue
         except Exception:
             if not include_empty:
@@ -242,9 +249,16 @@ def list_sessions(*, include_empty: bool = False
 
 
 def cleanup_empty_sessions() -> int:
-    """Delete stub files (zero messages + zero params + zero chain)
-    from the sessions directory. Returns count removed. Used by the
-    'Clean up empty sessions' settings action."""
+    """Delete stub files from the sessions directory. Returns count
+    removed.
+
+    A file is a stub when it has no assistant message with non-empty
+    content AND no parameters AND no chain steps. Captures both the
+    original empty-stub bug (pre-fix autosave wrote Session.to_dict
+    only) AND the failure-mode stubs (LLM call returned empty text
+    so the assistant message was saved as ''). Used by the
+    'Clean up empty sessions' settings action + once at app startup
+    to keep the rail tidy across crashes."""
     if not SESSIONS_DIR.exists():
         return 0
     removed = 0
@@ -253,9 +267,15 @@ def cleanup_empty_sessions() -> int:
             data = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if (not (data.get("_messages") or [])
-                and not (data.get("parameters") or [])
-                and not (data.get("chain") or [])):
+        msgs = data.get("_messages") or []
+        params = data.get("parameters") or []
+        chain = data.get("chain") or []
+        has_real_chat = any(
+            m.get("role") == "assistant"
+            and (m.get("content") or "").strip()
+            for m in msgs if isinstance(m, dict)
+        )
+        if not has_real_chat and not params and not chain:
             try:
                 f.unlink()
                 removed += 1

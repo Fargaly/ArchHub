@@ -179,6 +179,17 @@ def main() -> int:
     app.setApplicationName("ArchHub")
     app.setQuitOnLastWindowClosed(False)
 
+    # Sweep stub session files from the rail on every launch. Catches
+    # files that the previous run wrote with an empty assistant
+    # response (provider returned nothing — out of credits / quota /
+    # streaming race). Safe to run unconditionally — only deletes
+    # files with NO real chat AND no params AND no chain.
+    try:
+        from session_io import cleanup_empty_sessions
+        cleanup_empty_sessions()
+    except Exception:
+        pass
+
     # Application icon — picked up by the Windows taskbar, alt-tab
     # thumbnails, and any frameless window we spawn. Without this the
     # title bar / taskbar shows the default pythonw.exe icon.

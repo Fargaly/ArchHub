@@ -40,50 +40,98 @@ TIERS: list[dict] = [
         "name": "BYO",
         "price": "$0",
         "cadence": "forever",
-        "tagline": "Bring your own provider keys.",
+        "tagline": "Your keys. Your Ollama. Your machine.",
         "summary": (
-            "The full ArchHub desktop app. Connectors, marketplace, "
-            "workflows, brand guidelines, multi-instance routing — "
-            "all of it. You provide API keys for Claude / GPT / Gemini "
-            "or run local Ollama."
+            "The full open-source app. Connectors, marketplace, "
+            "workflows, brand guidelines. Use your own Claude / OpenAI / "
+            "Gemini keys, or stay 100% offline with a local AI brain. "
+            "Free forever."
         ),
         "features": [
             "All host connectors (Revit, AutoCAD, Max, Blender, Outlook)",
             "Marketplace Skills + Workflows",
             "Multi-instance @session routing",
-            "Brand guidelines + voice extraction",
-            "Local Ollama support",
-            "Telemetry opt-in (off by default)",
+            "Local AI (Ollama) auto-install",
+            "Bring your own cloud AI keys",
             "Cloud sync via your own GitHub",
             "Community support (GitHub issues)",
         ],
         "cta": "Stay on BYO",
         "url": None,
         "primary": False,
+        "checkout_tier": None,
+    },
+    {
+        "id": "solo",
+        "name": "Solo",
+        "price": "$19",
+        "cadence": "/month",
+        "tagline": "Cloud AI, no install, no keys.",
+        "summary": (
+            "Everything in BYO, plus our managed AI service. Sign in "
+            "with email, start chatting. 500 messages a month across "
+            "Claude / GPT / Gemini — we pick the best model per task."
+        ),
+        "features": [
+            "Everything in BYO",
+            "500 messages / month",
+            "Managed AI (no provider keys to manage)",
+            "Auto model routing (Claude / GPT / Gemini)",
+            "Email support",
+        ],
+        "cta": "Start free 7-day trial",
+        "url": "https://archhub.app/upgrade?tier=solo",
+        "primary": False,
+        "checkout_tier": "solo",
     },
     {
         "id": "studio",
         "name": "Studio",
-        "price": "$199",
-        "cadence": "/month per seat",
-        "tagline": "Managed firm relay + priority support.",
+        "price": "$79",
+        "cadence": "/month",
+        "tagline": "For architects who chat a lot.",
         "summary": (
-            "Everything in BYO, plus a managed OpenAI-compatible relay "
-            "so you don't hand out provider keys. Signed update channel, "
-            "private team Skill marketplace, priority response."
+            "Higher quota, team Skill sharing, signed updates, priority "
+            "support. The default tier for a working architect or a "
+            "two-person practice."
         ),
         "features": [
-            "Everything in BYO",
-            "Managed firm relay (no per-user provider keys)",
-            "Signed update channel (Ed25519)",
+            "Everything in Solo",
+            "2,000 messages / month",
             "Private team Skill marketplace",
-            "Priority email support (24h SLA)",
+            "Signed update channel (Ed25519)",
+            "Priority email (24h SLA)",
             "Onboarding session (1h with founder)",
-            "Volume discounts at 5+ seats",
         ],
         "cta": "Choose Studio",
-        "url": "https://archhub.app/upgrade",
+        "url": "https://archhub.app/upgrade?tier=studio",
         "primary": True,
+        "checkout_tier": "studio",
+    },
+    {
+        "id": "firm",
+        "name": "Firm",
+        "price": "$299",
+        "cadence": "/mo + $39/seat",
+        "tagline": "For practices of 5+.",
+        "summary": (
+            "Unlimited fair-use messaging, SSO, audit log, on-prem deploy "
+            "option, named support contact. Open-source license includes "
+            "the right to self-host the relay for fully air-gapped firms."
+        ),
+        "features": [
+            "Everything in Studio",
+            "Unlimited fair-use messaging",
+            "SSO (SAML / OIDC)",
+            "Audit log + usage exports",
+            "Self-host relay (AGPL grant)",
+            "Named support contact",
+            "Volume discounts at 25+ seats",
+        ],
+        "cta": "Talk to sales",
+        "url": "https://archhub.app/firm",
+        "primary": False,
+        "checkout_tier": "firm",
     },
 ]
 
@@ -207,19 +255,48 @@ class PricingPage(QWidget):
                           else "ghostButton")
         cta.setCursor(Qt.CursorShape.PointingHandCursor)
         cta.setMinimumHeight(36)
-        url = tier.get("url")
-        if url:
+        checkout_tier = tier.get("checkout_tier")
+        fallback_url = tier.get("url")
+        if checkout_tier:
+            # Two paths:
+            #   1. Signed in → ask the backend for a Stripe Checkout URL
+            #      bound to this user's customer record. One click,
+            #      already pre-filled with their email + plan.
+            #   2. Not signed in → open the landing page upgrade flow
+            #      which collects an email first, then redirects to
+            #      Checkout. Same end state, one extra step.
             cta.clicked.connect(
-                lambda _checked=False, u=url:
+                lambda _checked=False, t=checkout_tier, u=fallback_url:
+                    self._start_checkout(t, u)
+            )
+        elif fallback_url:
+            cta.clicked.connect(
+                lambda _checked=False, u=fallback_url:
                     QDesktopServices.openUrl(QUrl(u))
             )
         else:
-            # No-op; reflect the tier is already active.
             cta.clicked.connect(lambda _checked=False, b=cta:
                                   b.setText("Already on BYO ✓"))
         v.addWidget(cta)
 
         return card
+
+    # ------------------------------------------------------------------
+    def _start_checkout(self, tier: str, fallback_url: str | None) -> None:
+        """Try the in-app Stripe Checkout URL first; if the backend
+        isn't reachable or the user isn't signed in, fall back to the
+        landing-page upgrade flow."""
+        try:
+            from cloud_client import is_signed_in, checkout
+            if is_signed_in():
+                url = checkout(tier)
+                if url:
+                    QDesktopServices.openUrl(QUrl(url))
+                    return
+        except Exception:
+            pass
+        if fallback_url:
+            QDesktopServices.openUrl(QUrl(fallback_url))
 
 
 # ---------------------------------------------------------------------------

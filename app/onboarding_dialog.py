@@ -94,12 +94,24 @@ class OnboardingDialog(QDialog):
         v.addSpacing(SPACE["sm"])
 
         # Big primary button — the whole-point CTA.
-        self.btn_setup = QPushButton("Set up my AI brain")
+        self.btn_setup = QPushButton("Set up my AI brain (free, on your computer)")
         self.btn_setup.setObjectName("onboardingPrimary")
         self.btn_setup.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_setup.setMinimumHeight(48)
         self.btn_setup.clicked.connect(self._start_install)
         v.addWidget(self.btn_setup)
+
+        # Secondary CTA — ArchHub Cloud trial. 30 free messages, no
+        # card needed, no install. Best path for users with weak
+        # hardware or unreliable internet for the 2 GB download.
+        self.btn_cloud = QPushButton(
+            "Try ArchHub Cloud · 30 free messages, no install"
+        )
+        self.btn_cloud.setObjectName("onboardingSecondary")
+        self.btn_cloud.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cloud.setMinimumHeight(40)
+        self.btn_cloud.clicked.connect(self._start_cloud_signin)
+        v.addWidget(self.btn_cloud)
 
         # Progress block — hidden until the user clicks setup.
         self.progress_frame = QFrame()
@@ -145,6 +157,69 @@ class OnboardingDialog(QDialog):
         v.addLayout(foot)
 
         self.setStyleSheet(_qss())
+
+    # ------------------------------------------------------------------
+    def _start_cloud_signin(self) -> None:
+        """Open the browser PKCE flow against cloud.archhub.app. The
+        user lands on a friendly sign-up form; once they finish, the
+        local callback receives a one-time code, exchanges it for a
+        bearer token, and the dialog closes successfully."""
+        self.btn_setup.setEnabled(False)
+        self.btn_cloud.setEnabled(False)
+        self.btn_cloud.setText("Waiting for sign-in in your browser…")
+        self.progress_frame.setVisible(True)
+        self.stage_lbl.setText("Opening browser sign-in")
+        self.bar.setValue(0)
+        self.detail_lbl.setText(
+            "Your browser just opened on archhub.app. Finish sign-up "
+            "there and come back — we'll detect it automatically."
+        )
+        try:
+            from cloud_auth import SignInWorker
+            self._cloud_worker = SignInWorker(self)
+            self._cloud_worker.succeeded.connect(self._on_cloud_signed_in)
+            self._cloud_worker.failed.connect(self._on_cloud_failed)
+            self._cloud_worker.start()
+        except Exception as ex:
+            self._on_cloud_failed(f"Couldn't start sign-in: "
+                                    f"{type(ex).__name__}: {ex}")
+
+    def _on_cloud_signed_in(self, payload: dict) -> None:
+        # Persist successful sign-in. Onboarding done.
+        try:
+            from first_run import mark_complete
+            mark_complete()
+        except Exception:
+            pass
+        plan = (payload.get("me") or {}).get("plan", "trial")
+        remaining = (payload.get("me") or {}).get("remaining_messages")
+        msg = f"Signed in. You're on the {plan} plan"
+        if remaining is not None:
+            msg += f" — {remaining} messages available."
+        self.stage_lbl.setText("All set! You're signed in to ArchHub Cloud.")
+        self.detail_lbl.setText(msg)
+        self.bar.setValue(100)
+        self.btn_cloud.setText("Done")
+        self.btn_cloud.setEnabled(True)
+        try:
+            self.btn_cloud.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_cloud.clicked.connect(self._accept_complete)
+        # Force a fresh quota fetch into the cache so the status bar
+        # meter renders the right number on first paint.
+        try:
+            from cloud_usage import refresh_async
+            refresh_async()
+        except Exception:
+            pass
+
+    def _on_cloud_failed(self, message: str) -> None:
+        self.btn_setup.setEnabled(True)
+        self.btn_cloud.setEnabled(True)
+        self.btn_cloud.setText("Try ArchHub Cloud · 30 free messages, no install")
+        self.stage_lbl.setText("Sign-in didn't finish")
+        self.detail_lbl.setText(message)
 
     # ------------------------------------------------------------------
     def _start_install(self) -> None:
@@ -266,6 +341,17 @@ def _qss() -> str:
         f"  background:{T['accentHi']}; }}"
         f"QPushButton#onboardingPrimary:disabled {{ "
         f"  background:{T['inkDim']}; color:{T['inkSoft']}; }}"
+        f"QPushButton#onboardingSecondary {{ "
+        f"  background:transparent; color:{T['ink']}; "
+        f"  border:1px solid {T['line']}; "
+        f"  border-radius:{RADIUS['md']}px; "
+        f"  padding:10px 18px; "
+        f"  font-family:{TYPE['fontSans']}; "
+        f"  font-size:13px; font-weight:500; }}"
+        f"QPushButton#onboardingSecondary:hover {{ "
+        f"  border-color:{T['accent']}; color:{T['accent']}; }}"
+        f"QPushButton#onboardingSecondary:disabled {{ "
+        f"  color:{T['inkDim']}; border-color:{T['inkDim']}; }}"
         f"QPushButton#onboardingGhost {{ "
         f"  background:transparent; color:{T['inkSoft']}; "
         f"  border:none; padding:6px 0; "

@@ -223,6 +223,15 @@ class LLMRouter:
                 providers.add("relay")
         except Exception:
             pass
+        # ArchHub Cloud (managed paid tier) — configured when the
+        # bearer token is persisted. Token storage handled by
+        # cloud_client.set_token() after a successful sign-in.
+        try:
+            from cloud_client import is_signed_in as _cloud_signed_in
+            if _cloud_signed_in():
+                providers.add("archhub_cloud")
+        except Exception:
+            pass
         # Ollama if running
         try:
             from llm_providers.ollama_client import list_local_models
@@ -242,6 +251,19 @@ class LLMRouter:
         if provider == "ollama":
             from llm_providers.ollama_client import OllamaClient
             self._clients[provider] = OllamaClient()
+            return self._clients[provider]
+        # ArchHub Cloud uses a bearer token via cloud_client, not the
+        # provider-key store. Short-circuit before the api_key gate.
+        if provider == "archhub_cloud":
+            from cloud_client import current_token
+            from llm_providers.archhub_cloud_client import ArchHubCloudClient
+            tok = current_token()
+            if not tok:
+                raise RuntimeError(
+                    "ArchHub Cloud isn't signed in. Open Settings → "
+                    "ArchHub Cloud to sign in."
+                )
+            self._clients[provider] = ArchHubCloudClient(token=tok)
             return self._clients[provider]
         api_key = load_api_key(provider)
         if not api_key:
@@ -278,6 +300,7 @@ class LLMRouter:
             self._clients[provider] = CustomOpenAICompatibleClient(
                 api_key=relay_key, base_url=base_url
             )
+        # archhub_cloud handled by short-circuit above (no api_key gate).
         elif provider == "ollama":
             from llm_providers.ollama_client import OllamaClient
             self._clients[provider] = OllamaClient()
@@ -387,6 +410,8 @@ class LLMRouter:
                 return "google", "gemini-2.5-flash", "auto: modeling → Gemini 2.5 Flash (free tier)"
             if "relay" in configured:
                 return "relay", "auto", "auto: modeling task → firm relay"
+            if "archhub_cloud" in configured:
+                return "archhub_cloud", "auto", "auto: modeling task → ArchHub Cloud"
             if "ollama" in configured:
                 m = self._pick_ollama_model("modeling")
                 if m:
@@ -403,6 +428,8 @@ class LLMRouter:
                 return "google", "gemini-2.5-flash", "auto: analysis → Gemini 2.5 Flash"
             if "relay" in configured:
                 return "relay", "auto", "auto: analysis → firm relay"
+            if "archhub_cloud" in configured:
+                return "archhub_cloud", "auto", "auto: analysis → ArchHub Cloud"
             if "ollama" in configured:
                 m = self._pick_ollama_model("analysis")
                 if m:
@@ -417,6 +444,8 @@ class LLMRouter:
                 return "openai", "gpt-4o-mini", "auto: short → GPT-4o mini"
             if "google" in configured:
                 return "google", "gemini-2.5-flash", "auto: short → Gemini 2.5 Flash"
+            if "archhub_cloud" in configured:
+                return "archhub_cloud", "auto", "auto: short → ArchHub Cloud"
             if "ollama" in configured:
                 m = self._pick_ollama_model("quick")
                 if m:
@@ -433,12 +462,14 @@ class LLMRouter:
             return "google", "gemini-2.5-pro", "auto: default → Gemini 2.5 Pro"
         if "relay" in configured:
             return "relay", "auto", "auto: default → firm relay"
+        if "archhub_cloud" in configured:
+            return "archhub_cloud", "auto", "auto: default → ArchHub Cloud"
         if "ollama" in configured:
             m = self._pick_ollama_model("default")
             if m:
                 return "ollama", m, f"auto: default → local Ollama {m}"
 
-        raise RuntimeError("No LLM configured. Add an API key in Settings or start Ollama.")
+        raise RuntimeError("No LLM configured. Add an API key in Settings, sign in to ArchHub Cloud, or start Ollama.")
 
     # ---- complete (tool-use loop) -----------------------------------------
 

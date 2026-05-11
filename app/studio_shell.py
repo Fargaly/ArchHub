@@ -1053,6 +1053,15 @@ class StudioShell(QMainWindow):
         self._sr_spend = QLabel("spend $0.00")
         self._sr_spend.setObjectName("studioStatusItem")
         h.addWidget(self._sr_spend)
+        # ArchHub Cloud usage meter — shown only when the user is
+        # signed in to the paid managed proxy. Updates every 5s when
+        # the Telemetry tick runs; click opens billing portal.
+        self._sr_cloud = QLabel("")
+        self._sr_cloud.setObjectName("studioStatusItem")
+        self._sr_cloud.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._sr_cloud.setVisible(False)
+        self._sr_cloud.mousePressEvent = lambda _e: self._open_cloud_portal()
+        h.addWidget(self._sr_cloud)
         # Healing item — small pulsing dot + label, only shown when
         # at least one connector is actively self-healing.
         heal_wrap = QWidget()
@@ -1633,6 +1642,46 @@ class StudioShell(QMainWindow):
                 pass
         else:
             self._sr_heal_wrap.setVisible(False)
+
+        # ArchHub Cloud usage chip. Only visible when signed in.
+        self._refresh_cloud_meter()
+
+    def _refresh_cloud_meter(self) -> None:
+        try:
+            from cloud_client import is_signed_in
+            if not is_signed_in():
+                self._sr_cloud.setVisible(False)
+                return
+            from cloud_usage import snapshot, refresh_async
+            snap = snapshot()
+            if snap is None:
+                # Kick a background refresh and render a placeholder
+                # until the response lands.
+                refresh_async(callback=lambda _p: None)
+                self._sr_cloud.setText("☁ Cloud · syncing…")
+            else:
+                rem = snap.get("remaining_messages")
+                plan = snap.get("plan") or "trial"
+                if rem is None:
+                    self._sr_cloud.setText(f"☁ Cloud · {plan}")
+                else:
+                    self._sr_cloud.setText(f"☁ Cloud · {rem} left")
+            self._sr_cloud.setVisible(True)
+        except Exception:
+            self._sr_cloud.setVisible(False)
+
+    def _open_cloud_portal(self) -> None:
+        """Click on the cloud meter → open Stripe Customer Portal in
+        the user's default browser so they can change plan / cancel /
+        update card without leaving the app."""
+        try:
+            from cloud_client import portal_url
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            url = portal_url() or "https://archhub.app/billing"
+            QDesktopServices.openUrl(QUrl(url))
+        except Exception:
+            pass
 
     def _tokens_label(self) -> str:
         # Best-effort: read telemetry total tokens; fall back to dash.

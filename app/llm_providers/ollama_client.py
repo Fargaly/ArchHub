@@ -142,6 +142,22 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": True,
+            # Tool-use requires low temperature. The Ollama default
+            # (0.7-0.8) makes models "explore" — they write essays
+            # instead of calling tools. 0.15 is hot enough for
+            # natural language in answers but cold enough that the
+            # next-token distribution sharpens onto the tool-call
+            # tokens when one is needed.
+            #
+            # num_predict caps the generation so a procrastinating
+            # model can't burn 8K tokens of "let me think about
+            # this..." before giving up. 4096 is plenty for any
+            # AEC reply.
+            "options": {
+                "temperature": 0.15,
+                "num_predict": 4096,
+                "top_p": 0.9,
+            },
         }
         # Ollama supports tools for some models (llama3.1+, mistral-nemo, etc.)
         if tools:

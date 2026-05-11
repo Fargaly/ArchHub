@@ -56,6 +56,43 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     )
     return any(n in s for n in needles)
 
+
+def _looks_like_action(messages: list[dict]) -> bool:
+    """Heuristic: did the most recent user message ask for a concrete
+    AEC action (vs a Q&A / chitchat)? Used by the procrastination
+    detector — we only nudge a non-tool-calling model when the user
+    clearly wanted a tool fired.
+
+    True when the last user message contains any verb from the
+    catalogue. Generous on purpose — a false positive costs one
+    extra round of inference; a false negative lets the model
+    procrastinate unchecked."""
+    if not messages:
+        return False
+    last_user = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            c = m.get("content") or ""
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c
+                              if isinstance(p, dict))
+            last_user = str(c).lower()
+            break
+    if not last_user:
+        return False
+    action_verbs = (
+        "create", "make", "build", "add", "place", "draw", "model",
+        "generate", "delete", "remove", "move", "rotate", "scale",
+        "render", "extrude", "tag", "annotate", "dimension",
+        "schedule", "push", "pull", "sync", "import", "export",
+        "save", "open", "load", "run", "execute", "list", "search",
+        "find", "show me", "give me", "fetch", "read", "write",
+        "reply", "send", "categorise", "categorize", "flag",
+        "mark", "move to",
+    )
+    return any(v in last_user for v in action_verbs)
+
+
 # (model_id, label-shown-in-dropdown). model_id is "<provider>:<api_model_name>".
 # OpenRouter rows let the user reach Anthropic / OpenAI / Google without
 # minting per-provider keys — one OAuth sign-in covers everything below
@@ -310,29 +347,62 @@ class LLMRouter:
 
     # ---- routing ----------------------------------------------------------
 
-    # Preference order per task class. The first model present in the local
-    # Ollama install wins. Tuned for tool-use reliability and code quality:
-    # qwen2.5-coder is the most reliable open model for Revit C# generation;
-    # llama3.1 has the best tool-calling adherence among general models.
+    # Preference order per task class. The first model present in the
+    # local Ollama install wins. v1.0 retuning notes:
+    #
+    # - Tool-use reliability beats code quality. A coder model that
+    #   writes beautiful Revit C# but dumps it into chat instead of
+    #   the execute_csharp tool is USELESS — violates rule #1. So
+    #   instruction-tuned models go first in every action chain.
+    # - command-r7b (Cohere) is purpose-trained for tool calling +
+    #   structured output. Underrated for AEC — wins the modeling
+    #   chain when present.
+    # - llama3.1:8b has the most reliable tool-calling among general
+    #   8B-class open models. Safe default everywhere.
+    # - deepseek-r1 / qwen3-think / any *-r1 / *-think model: REMOVED
+    #   from action chains. They emit <think>...</think> blocks for
+    #   1000+ tokens before acting. The user reads this as
+    #   "procrastinating" and gives up. Kept in `reasoning` only,
+    #   reserved for explicit /think slash commands.
+    # - qwen2.5-coder: kept as a LATE fallback for modeling because
+    #   it does write the cleanest API code, but only if no
+    #   instruction-tuned alternative is present.
+    # - gemma4:latest: REMOVED (typo; doesn't exist on Ollama Hub).
+    #   Replaced with gemma3 + gemma2 which actually do.
     _OLLAMA_MODEL_PREFERENCES = {
         "modeling": (
-            "qwen2.5-coder:7b", "qwen2.5-coder", "deepseek-r1:8b",
-            "qwen3:8b", "llama3.1:latest", "llama3.1",
+            # Tool-trained, then strong general instruct, coder as fallback.
+            "command-r7b:latest", "command-r:latest",
+            "llama3.1:8b", "llama3.1:latest", "llama3.1",
+            "qwen3.5:latest", "qwen3:8b",
+            "qwen2.5:7b-instruct", "qwen2.5-coder:7b", "qwen2.5-coder",
         ),
         "analysis": (
-            "deepseek-r1:8b", "qwen3:8b", "llama3.1:latest",
-            "qwen2.5-coder:7b",
+            # Same priority — analysis often still ends in a tool call.
+            "command-r7b:latest", "command-r:latest",
+            "llama3.1:8b", "llama3.1:latest", "llama3.1",
+            "qwen3.5:latest", "qwen3:8b",
+        ),
+        "reasoning": (
+            # Explicit reasoning path — only used when the user opts in
+            # via /think slash or a Skill that needs chain-of-thought.
+            "deepseek-r1:8b", "qwen3-think:8b",
+            "llama3.1:8b", "llama3.1:latest",
         ),
         "vision": (
-            "qwen3-vl:8b", "llama3.2:latest", "llama3.1:latest",
+            "qwen3-vl:8b", "llama3.2-vision:latest",
+            "llama3.2:latest", "llama3.1:latest",
         ),
         "quick": (
-            "llama3.2:3b", "llama3.2:latest", "gemma4:latest",
-            "llama3.1:latest",
+            "llama3.2:3b", "llama3.2:latest",
+            "gemma3:latest", "gemma2:latest",
+            "llama3.1:8b", "llama3.1:latest",
         ),
         "default": (
-            "llama3.1:latest", "llama3.1", "qwen3:8b",
-            "qwen2.5-coder:7b", "mistral:7b",
+            "command-r7b:latest",
+            "llama3.1:8b", "llama3.1:latest", "llama3.1",
+            "qwen3.5:latest", "qwen3:8b",
+            "qwen2.5-coder:7b",
         ),
     }
 
@@ -513,6 +583,7 @@ class LLMRouter:
                     note=note, client=client,
                     on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
                     on_reasoning=on_reasoning,
+                    on_status=on_status,
                     session_pin=session_pin,
                 )
             except Exception as ex:
@@ -539,11 +610,18 @@ class LLMRouter:
     def _complete_once(
         self, *, history, provider, model_name, note, client,
         on_chunk, on_tool_invocation, on_reasoning=None,
+        on_status=None,
         session_pin: Optional[str] = None,
     ):
         on_reasoning = on_reasoning or (lambda _: None)
+        on_status = on_status or (lambda _: None)
         # Original body inlined below — extracted so the auto-fallback
         # loop can wrap it cleanly.
+
+        # Reset the procrastination-nudge guard — fires at most once
+        # per chat turn so we don't loop forever on an uncooperative
+        # local model.
+        self._nudged_this_turn = False
 
         # Compose system prompt
         system_prompt = self._build_system_prompt()
@@ -581,6 +659,34 @@ class LLMRouter:
                 full_text += assistant_text
                 tool_calls = raw_tool_calls  # already [{id, name, input}]
                 if not tool_calls:
+                    # Procrastination check — local models often write
+                    # essays instead of calling a tool. If the user
+                    # clearly asked for an action AND tools were
+                    # offered AND nothing was called, give the model
+                    # ONE forced retry with an explicit "Use the tool
+                    # now" nudge. If it still refuses, give up so we
+                    # don't burn the iteration cap on an unresponsive
+                    # model.
+                    if (_looks_like_action(messages)
+                            and tool_schemas
+                            and len(assistant_text) > 80
+                            and not getattr(self, "_nudged_this_turn", False)):
+                        self._nudged_this_turn = True
+                        on_status("Local model didn't call a tool — "
+                                   "retrying with a nudge…")
+                        messages.append({
+                            "role": "assistant",
+                            "content": assistant_text,
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Don't describe — call the matching "
+                                "tool now. One tool call. No code in "
+                                "chat."
+                            ),
+                        })
+                        continue
                     break
             else:
                 # Provider-specific kwargs: anthropic accepts on_reasoning
@@ -663,32 +769,31 @@ class LLMRouter:
         return 16
 
     def _build_system_prompt(self) -> str:
-        active = [e for e in self.tools.manager.entries if e.state.name == "ACTIVE"]
-        active_list = ", ".join(e.display_name for e in active) if active else "(none)"
+        """Directive-first system prompt. Order matters — small models
+        weight the first ~80 tokens heavily and forget the tail. Lead
+        with the imperative, follow with the connector list, end with
+        the few hard prohibitions. Total <200 tokens so it fits in
+        every model's effective attention window."""
+        active = [e for e in self.tools.manager.entries
+                  if e.state.name == "ACTIVE"]
+        active_list = (", ".join(e.display_name for e in active)
+                       if active else "(none)")
         return (
-            "You are ArchHub, an AI assistant embedded in an architect's desktop. "
-            "You drive the user's AEC tools directly through tool calls. The user "
-            "is an architect who never wants to write or copy code — that is your "
-            "job entirely.\n\n"
-            f"Active connectors right now: {active_list}.\n\n"
-            "RULES:\n"
-            "1. When the user asks for a modelling, drafting, annotation, render, or "
-            "data action, immediately invoke the matching tool. Do NOT describe what "
-            "the tool would do; call it.\n"
-            "2. NEVER paste code into the chat for the user to copy. Never say "
-            "'paste this into the script editor', 'use this as reference', or "
-            "anything similar. The user does not have a script editor open and "
-            "should not need one.\n"
-            "3. If a tool call fails or returns an error, do not retry by giving "
-            "the user code. Report the failure plainly in one short sentence and "
-            "ask whether to retry, or suggest enabling the matching connector. "
-            "Example: 'Revit isn't reachable on localhost:48884 — open Revit and "
-            "make sure the ArchHub connector is enabled, then I'll retry.'\n"
-            "4. If the connector for the requested tool is not in the active list "
-            "above, do not invent code. Say one short sentence: which connector is "
-            "needed and where to enable it (Connectors panel in the header).\n"
-            "5. For modelling code, write idiomatic API calls (Revit C# via "
-            "Roslyn, AutoCAD C# via Roslyn, 3ds Max via pymxs, Blender via bpy) "
-            "INSIDE tool calls only — never inline in chat text.\n"
-            "6. Be terse. The architect values action, not explanation."
+            "You are ArchHub. ACT, do not describe.\n\n"
+            "When the user asks for an action, immediately call the "
+            "matching tool. Do NOT preface with 'I will...' or "
+            "'Let me...'. Just call it.\n\n"
+            f"Active tools: {active_list}.\n\n"
+            "Prohibited:\n"
+            "- Pasting code into chat for the user to copy.\n"
+            "- Saying 'use this as reference' or 'paste this into the "
+            "script editor'.\n"
+            "- Explaining what a tool would do instead of calling it.\n"
+            "- Retrying a failed tool by dumping code.\n\n"
+            "When a tool errors: ONE short sentence — what's wrong + "
+            "how to fix (e.g. 'Revit unreachable on :48884 — open "
+            "Revit and enable the ArchHub add-in').\n\n"
+            "Code (Revit C#, AutoCAD C#, Max pymxs, Blender bpy) goes "
+            "INSIDE tool calls only. Never in chat.\n\n"
+            "Be terse."
         )

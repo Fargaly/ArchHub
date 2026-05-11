@@ -112,6 +112,62 @@ class TestRelevanceFilter:
         assert "outlook_info" in names
         assert "revit_info" in names
 
+    def test_emails_query_promotes_outlook_family(self):
+        # Regression: 'READ ALL THE EMAILS AND CATEGORIZE THEM' used
+        # to get pruned to outlook_info + outlook_read_thread because
+        # the keyword "project" matched speckle. After v2: family
+        # promotion via "emails" + "categorize" keywords drops the
+        # unrelated info/ping tools and brings the full outlook
+        # toolbox in.
+        from llm_router import _filter_tools_by_relevance
+        tools = [_t(n) for n in THIRTY_THREE]
+        out = _filter_tools_by_relevance(
+            tools, [{"role": "user",
+                      "content": "READ ALL THE EMAILS AND CATEGORIZE THEM"}],
+            cap=12,
+        )
+        names = {t["name"] for t in out}
+        # Critical tools for the query:
+        assert "outlook_list_inbox" in names
+        assert "outlook_set_categories" in names
+        assert "outlook_read_thread" in names
+        # No-longer-relevant info/ping for OTHER families dropped:
+        assert "revit_ping" not in names
+        assert "max_ping" not in names
+
+    def test_inbox_synonym_triggers_outlook_promotion(self):
+        from llm_router import _filter_tools_by_relevance
+        tools = [_t(n) for n in THIRTY_THREE]
+        out = _filter_tools_by_relevance(
+            tools, [{"role": "user",
+                      "content": "Show me my inbox"}],
+            cap=12,
+        )
+        names = {t["name"] for t in out}
+        assert "outlook_list_inbox" in names
+
+    def test_mail_synonym_triggers_outlook_promotion(self):
+        from llm_router import _filter_tools_by_relevance
+        tools = [_t(n) for n in THIRTY_THREE]
+        out = _filter_tools_by_relevance(
+            tools, [{"role": "user",
+                      "content": "Reply to the latest mail"}],
+            cap=12,
+        )
+        names = {t["name"] for t in out}
+        assert "outlook_draft_reply" in names
+
+    def test_wall_synonym_triggers_revit_promotion(self):
+        from llm_router import _filter_tools_by_relevance
+        tools = [_t(n) for n in THIRTY_THREE]
+        out = _filter_tools_by_relevance(
+            tools, [{"role": "user",
+                      "content": "create a wall at level 2"}],
+            cap=12,
+        )
+        names = {t["name"] for t in out}
+        assert "revit_execute_csharp" in names
+
 
 class TestRouterIntegratesFilter:
     """End-to-end: when 33 tools are active + Gemini routed, the

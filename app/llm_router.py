@@ -57,6 +57,37 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     return any(n in s for n in needles)
 
 
+# Family-level keyword expansions — natural-language nouns the user
+# is likely to use that map to a host family. When any keyword on a
+# row matches the user's last message, ALL tools whose name starts
+# with that family prefix get a strong relevance boost. Solves the
+# "READ ALL THE EMAILS AND CATEGORIZE THEM" case where "emails" /
+# "categorize" don't substring-match any tool name even though the
+# user clearly wants outlook_* tools.
+_FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "outlook": ("outlook", "email", "emails", "mail", "mails",
+                 "inbox", "message", "messages", "reply", "draft",
+                 "send", "categorize", "categorise", "categories",
+                 "folder", "folders", "attachment", "attachments",
+                 "flag", "unread", "thread"),
+    "revit": ("revit", "rvt", "wall", "walls", "door", "doors",
+               "window", "windows", "level", "levels", "view",
+               "views", "sheet", "sheets", "schedule", "schedules",
+               "dimension", "dimensions", "annotate", "annotation",
+               "tag", "tags", "family", "families", "room", "rooms",
+               "ifc"),
+    "acad": ("autocad", "acad", "dwg", "polyline", "polylines",
+              "block", "blocks", "xref", "xrefs", "layer", "layers",
+              "linetype"),
+    "max": ("3ds", "3dsmax", "maxscript", "pymxs", "render",
+             "renders", "viewport", "spline"),
+    "blender": ("blender", "bpy", "mesh", "meshes", "extrude",
+                 "modifier", "modifiers", "scene", "scenes"),
+    "speckle": ("speckle", "stream", "streams", "commit", "commits",
+                 "branch", "branches"),
+}
+
+
 def _filter_tools_by_relevance(tool_schemas: list[dict],
                                  history: list[dict],
                                  *, cap: int = 12) -> list[dict]:
@@ -65,17 +96,17 @@ def _filter_tools_by_relevance(tool_schemas: list[dict],
 
     Why: Gemini Flash refuses to pick from a 30+ tool menu — returns
     completely empty (no text, no tool call) when overwhelmed.
-    Trace from a real running session shows tool_schemas=33 →
-    type=final text_len=0 tool_calls=[]. Capping at ~12 with a
-    keyword-relevance heuristic keeps the model focused enough to
-    actually answer.
 
-    Strategy:
-      1. Extract keywords from the last user message.
-      2. Score each tool by name-keyword overlap.
-      3. Always include the lightweight "info" / "ping" tools for
-         any active host — they're cheap, common, and a good default.
-      4. Keep top N by score, padded with the info set.
+    Strategy (v2 — natural-language aware):
+      1. Always-keep set: every host's *_info + *_ping + the
+         archhub_list_connectors helper. ~10 tools.
+      2. Family promotion: when ANY noun from _FAMILY_KEYWORDS hits
+         the user's message, the matching family's tools get a +10
+         boost. Solves "emails" → outlook_*, "wall" → revit_*, etc.
+      3. Per-tool substring score: small boost for direct
+         name-keyword overlap.
+      4. Sort by (family boost + per-tool score) desc, fill the
+         remaining slots up to cap.
     """
     if not tool_schemas or len(tool_schemas) <= cap:
         return list(tool_schemas)
@@ -92,28 +123,57 @@ def _filter_tools_by_relevance(tool_schemas: list[dict],
     def _name(t: dict) -> str:
         return t.get("name") or (t.get("function") or {}).get("name", "") or ""
 
-    # Always-keep set — cheap status calls + the local helper.
-    always_keep = {n for n in (
-        "archhub_list_connectors",
-        "outlook_info", "revit_info", "acad_info", "max_info",
-        "blender_info", "revit_ping", "acad_ping", "max_ping",
-        "blender_ping",
-    )}
+    # Family promotion — which host families did the user mention?
+    promoted_families: set[str] = set()
+    for fam, words in _FAMILY_KEYWORDS.items():
+        if any(w in last_user for w in words):
+            promoted_families.add(fam)
+
+    # Always-keep set is dynamic. If the user mentioned a specific
+    # family (or families), keep ONLY those families' info/ping tools
+    # + the universal helper — that frees ~8 slots for the actual
+    # actioning tools the user wants. Without this, "READ ALL THE
+    # EMAILS AND CATEGORIZE" got blocked by revit/acad/max/blender
+    # info+ping tools eating 8 of 12 slots, leaving only 2 for outlook
+    # actions (which wasn't enough to send outlook_set_categories +
+    # outlook_list_inbox).
+    if promoted_families:
+        always_keep = {"archhub_list_connectors"}
+        for fam in promoted_families:
+            for stub in ("info", "ping"):
+                always_keep.add(f"{fam}_{stub}")
+    else:
+        always_keep = {n for n in (
+            "archhub_list_connectors",
+            "outlook_info", "revit_info", "acad_info", "max_info",
+            "blender_info", "revit_ping", "acad_ping", "max_ping",
+            "blender_ping",
+        )}
     kept = [t for t in tool_schemas if _name(t) in always_keep]
 
-    # Score remaining tools by keyword overlap with the last user msg.
+    # Score remaining tools.
     keywords = [w for w in last_user.split() if len(w) > 2]
     scored: list[tuple[int, dict]] = []
     for t in tool_schemas:
         n = _name(t).lower()
         if not n or n in always_keep:
             continue
-        score = sum(1 for kw in keywords if kw in n)
+        score = 0
+        # Family promotion adds a big boost so every tool of the
+        # mentioned family beats a stray substring hit on another
+        # family's tool name.
+        for fam in promoted_families:
+            if n.startswith(fam + "_"):
+                score += 10
+                break
+        # Per-keyword substring overlap — fine-grained tiebreak.
+        for kw in keywords:
+            if kw in n:
+                score += 1
         if score > 0:
             scored.append((score, t))
     scored.sort(key=lambda kv: -kv[0])
 
-    # Fill: always-keep first, then scored relevant.
     out = list(kept)
     for _, t in scored:
         if len(out) >= cap:

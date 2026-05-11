@@ -57,6 +57,72 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     return any(n in s for n in needles)
 
 
+def _summarise_tool_result(inv) -> str:
+    """Build a one-line, human-readable summary of a tool invocation
+    so the chat surface has SOMETHING to render when the LLM
+    forgot to emit text. Friendlier than 'empty response' and
+    actually carries the information the user asked for.
+
+    Examples:
+      outlook_info ok → 'Outlook: 966 inbox, 3 unread.'
+      revit_info  ok → 'Revit: Tower-A.rvt, level 02 active.'
+      <anything>  err→ 'Tool revit_execute_csharp failed: <reason>.'
+      <generic>   ok → 'Tool <name> ran successfully.'
+    """
+    name = getattr(inv, "tool_name", "") or "tool"
+    status = getattr(inv, "status", "") or ""
+    result = getattr(inv, "result", None) or {}
+    if status == "error":
+        err = (result.get("error") if isinstance(result, dict)
+                else str(result))[:160]
+        return f"Tool {name} failed: {err}"
+    if not isinstance(result, dict):
+        return f"Tool {name} returned: {str(result)[:160]}"
+    # Hand-tuned summarisers for the highest-value tools.
+    if name == "outlook_info":
+        inb = result.get("inbox_total")
+        unr = result.get("inbox_unread")
+        dft = result.get("drafts_count")
+        acct = result.get("default_account_email") or ""
+        bits = []
+        if inb is not None:
+            bits.append(f"{inb} inbox")
+        if unr is not None:
+            bits.append(f"{unr} unread")
+        if dft:
+            bits.append(f"{dft} drafts")
+        head = f"Outlook ({acct}): " if acct else "Outlook: "
+        return head + ", ".join(bits) + "." if bits else "Outlook reachable."
+    if name == "revit_info":
+        title = result.get("title") or result.get("doc_title") or ""
+        view = result.get("active_view") or ""
+        ver = result.get("version") or ""
+        bits = [b for b in (title, view, ver) if b]
+        return f"Revit: {', '.join(bits)}." if bits else "Revit reachable."
+    if name == "blender_info":
+        path = result.get("filepath") or ""
+        scene = result.get("scene") or ""
+        objs = result.get("object_count")
+        bits = []
+        if path:
+            bits.append(path.split("\\")[-1].split("/")[-1])
+        if scene:
+            bits.append(scene)
+        if objs is not None:
+            bits.append(f"{objs} objects")
+        return f"Blender: {', '.join(bits)}." if bits else "Blender reachable."
+    if name in ("revit_ping", "acad_ping", "max_ping", "blender_ping"):
+        return f"{name.replace('_ping', '').title()} is reachable."
+    # Generic fallback — find the most informative scalar field.
+    interesting = [(k, v) for k, v in result.items()
+                   if k != "status" and not isinstance(v, (dict, list))
+                   and v not in (None, "")]
+    if interesting:
+        kv = ", ".join(f"{k}={v}" for k, v in interesting[:4])
+        return f"Tool {name}: {kv}."
+    return f"Tool {name} ran successfully."
+
+
 def _looks_like_action(messages: list[dict]) -> bool:
     """Heuristic: did the most recent user message ask for a concrete
     AEC action (vs a Q&A / chitchat)? Used by the procrastination
@@ -751,6 +817,15 @@ class LLMRouter:
 
             messages.append({"role": "tool", "tool_results": tool_results})
 
+        # Last-resort fallback: if the model never produced text but
+        # successfully ran tools, synthesize a one-line summary from
+        # the most recent tool result. Prevents the "empty bubble
+        # after a successful tool run" failure mode seen with Gemini +
+        # tight system prompts where the model thinks the tool call
+        # IS the answer.
+        if not full_text.strip() and all_invocations:
+            full_text = _summarise_tool_result(all_invocations[-1])
+
         return LLMResponse(
             text=full_text,
             model=f"{provider}:{model_name}",
@@ -772,28 +847,40 @@ class LLMRouter:
         """Directive-first system prompt. Order matters — small models
         weight the first ~80 tokens heavily and forget the tail. Lead
         with the imperative, follow with the connector list, end with
-        the few hard prohibitions. Total <200 tokens so it fits in
-        every model's effective attention window."""
+        the few hard prohibitions. Total <250 tokens so it fits in
+        every model's effective attention window.
+
+        ALWAYS end every assistant turn with text — even when only a
+        tool call fires. Prior versions said "ACT, do not describe",
+        which the model interpreted as "stay silent after a tool
+        call". Result: empty chat bubbles. The fix is a parallel
+        directive: tool first, then a one-sentence summary."""
         active = [e for e in self.tools.manager.entries
                   if e.state.name == "ACTIVE"]
         active_list = (", ".join(e.display_name for e in active)
                        if active else "(none)")
         return (
-            "You are ArchHub. ACT, do not describe.\n\n"
-            "When the user asks for an action, immediately call the "
-            "matching tool. Do NOT preface with 'I will...' or "
-            "'Let me...'. Just call it.\n\n"
-            f"Active tools: {active_list}.\n\n"
-            "Prohibited:\n"
-            "- Pasting code into chat for the user to copy.\n"
-            "- Saying 'use this as reference' or 'paste this into the "
-            "script editor'.\n"
-            "- Explaining what a tool would do instead of calling it.\n"
-            "- Retrying a failed tool by dumping code.\n\n"
-            "When a tool errors: ONE short sentence — what's wrong + "
-            "how to fix (e.g. 'Revit unreachable on :48884 — open "
-            "Revit and enable the ArchHub add-in').\n\n"
-            "Code (Revit C#, AutoCAD C#, Max pymxs, Blender bpy) goes "
-            "INSIDE tool calls only. Never in chat.\n\n"
-            "Be terse."
+            "You are ArchHub. Drive the user's AEC tools through "
+            "tool calls. The user is an architect who never copies "
+            "code — that's your job.\n\n"
+            "Workflow each turn:\n"
+            "1. If the user asks for an action, call the matching "
+            "tool immediately — no preamble.\n"
+            "2. After the tool runs (or if no tool fits), END THE "
+            "TURN WITH ONE OR TWO SHORT SENTENCES summarising what "
+            "happened. Never end a turn silently.\n"
+            "3. If the user's request is ambiguous, ask ONE short "
+            "clarifying question. Don't guess.\n\n"
+            f"Active connectors: {active_list}.\n\n"
+            "Hard rules:\n"
+            "- NEVER paste code into chat for the user to copy. "
+            "Code (Revit C#, AutoCAD C#, Max pymxs, Blender bpy) "
+            "goes INSIDE tool calls only.\n"
+            "- NEVER say 'use this as reference' or 'paste this into "
+            "the script editor'.\n"
+            "- On tool error: ONE sentence — what's wrong + how to "
+            "fix (e.g. 'Revit unreachable on :48884 — open Revit and "
+            "enable the ArchHub add-in').\n\n"
+            "Be terse. The architect values action + a clear "
+            "one-sentence confirmation, not essays."
         )

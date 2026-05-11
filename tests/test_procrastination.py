@@ -107,15 +107,19 @@ class TestModelPreferences:
 
 # ---------------------------------------------------------------------------
 class TestSystemPrompt:
-    def test_prompt_leads_with_act_directive(self):
+    def test_prompt_leads_with_directive_no_role_dump(self):
         r = _router()
         prompt = r._build_system_prompt()
-        # First non-blank line should be the imperative — small models
-        # weight the first ~80 tokens heavily.
+        # First non-blank line should set up the architect-driving
+        # context AND make clear ArchHub is the tool driver.
+        # (Previous version led with "ACT, do not describe" which
+        # caused gemini to skip the summary text after a tool call,
+        # producing empty bubbles. Softer prompt now invites a 1-line
+        # summary after tool runs.)
         first_line = next(line for line in prompt.splitlines()
                           if line.strip())
-        assert "act" in first_line.lower()
-        assert "do not describe" in first_line.lower()
+        assert "archhub" in first_line.lower()
+        assert "tool" in first_line.lower()
 
     def test_prompt_is_under_token_budget(self):
         # Effective attention window for 3-7B models is ~500 tokens

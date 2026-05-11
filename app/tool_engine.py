@@ -298,6 +298,98 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("outlook", "save_attachments"),
     },
+    {
+        "name": "outlook_set_categories",
+        "family": "outlook",
+        "description": "Tag (categorize) a message with one or more Outlook category names. Categories appear as coloured tags + are filterable in the Outlook UI. Use mode='set' to replace existing categories, 'add' to append, 'remove' to drop. Categories that don't exist yet are auto-registered the first time the user views the message.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["set", "add", "remove"],
+                    "default": "set",
+                },
+            },
+            "required": ["entry_id", "categories"],
+        },
+        "endpoint": ("outlook", "set_categories"),
+    },
+    {
+        "name": "outlook_list_folders",
+        "family": "outlook",
+        "description": "Walk every folder in the user's MAPI store. Returns flat list of {path, name, item_count, folder_id}. Use folder_id with outlook_move_to_folder. Pass an empty `root` to enumerate from the default store root.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "root": {"type": "string", "default": ""},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "list_folders"),
+    },
+    {
+        "name": "outlook_create_folder",
+        "family": "outlook",
+        "description": "Create a new mail folder under parent_id. Pass empty parent_id to create under Inbox. Returns the new folder_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "parent_id": {"type": "string", "default": ""},
+                "name": {"type": "string"},
+            },
+            "required": ["name"],
+        },
+        "endpoint": ("outlook", "create_folder"),
+    },
+    {
+        "name": "outlook_move_to_folder",
+        "family": "outlook",
+        "description": "Move a message identified by entry_id into the folder identified by folder_id. Returns the new entry_id (Outlook re-IDs on move).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "folder_id": {"type": "string"},
+            },
+            "required": ["entry_id", "folder_id"],
+        },
+        "endpoint": ("outlook", "move_to_folder"),
+    },
+    {
+        "name": "outlook_mark_read",
+        "family": "outlook",
+        "description": "Toggle a message's read/unread flag. read=true marks read, read=false marks unread.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "read": {"type": "boolean", "default": True},
+            },
+            "required": ["entry_id"],
+        },
+        "endpoint": ("outlook", "mark_read"),
+    },
+    {
+        "name": "outlook_flag_for_followup",
+        "family": "outlook",
+        "description": "Set the standard Outlook 'Follow up' flag on a message. Optional due_offset_days schedules the follow-up that many days from today; reminder=true also sets a reminder pop-up.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_id": {"type": "string"},
+                "due_offset_days": {"type": "integer", "default": 0},
+                "reminder": {"type": "boolean", "default": False},
+            },
+            "required": ["entry_id"],
+        },
+        "endpoint": ("outlook", "flag_for_followup"),
+    },
 
     # ArchHub local helpers (always available)
     {

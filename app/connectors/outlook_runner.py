@@ -316,6 +316,171 @@ def save_attachments(entry_id: str, *, dest_dir: str) -> dict:
         return _save_attachments_inner(entry_id, dest_dir=dest_dir)
 
 
+def set_categories(entry_id: str, categories: list[str], *,
+                    mode: str = "set") -> dict:
+    """Mutate the Outlook MAPI Categories property on a single message.
+
+    `mode`: "set" replaces · "add" appends new categories · "remove"
+    drops listed categories. Categories show up in Outlook's UI as
+    coloured tags + are filterable / groupable. The classic UI lets
+    the user create new categories on the fly; a raw category name we
+    hand in here that doesn't yet exist on the master list will still
+    save on the message and auto-register on next view.
+    """
+    with com_thread():
+        return _set_categories_inner(entry_id, categories, mode=mode)
+
+
+def _set_categories_inner(entry_id: str, categories: list[str], *,
+                           mode: str) -> dict:
+    ns = _ns()
+    m = ns.GetItemFromID(entry_id)
+    existing = [c.strip() for c in (getattr(m, "Categories", "") or "").split(",")
+                if c.strip()]
+    incoming = [str(c).strip() for c in (categories or []) if str(c).strip()]
+    if mode == "set":
+        new = incoming
+    elif mode == "add":
+        new = list(dict.fromkeys(existing + incoming))
+    elif mode == "remove":
+        drop = set(c.lower() for c in incoming)
+        new = [c for c in existing if c.lower() not in drop]
+    else:
+        return {"status": "error", "error": f"Unknown mode: {mode}"}
+    m.Categories = ",".join(new)
+    m.Save()
+    return {"status": "ok", "entry_id": entry_id,
+            "categories": new}
+
+
+def list_folders(*, root: str = "") -> list[dict]:
+    """Walk the user's MAPI folders. `root` empty = enumerate from the
+    default store root. Returns flat list of {path, name, item_count,
+    folder_id}. Useful for project-folder mapping ("move emails about
+    Tower-A into the Tower-A folder")."""
+    with com_thread():
+        return _list_folders_inner(root=root)
+
+
+def _list_folders_inner(*, root: str) -> list[dict]:
+    ns = _ns()
+    out: list[dict] = []
+
+    def _walk(folder, prefix: str) -> None:
+        try:
+            name = _safe(folder.Name, 120)
+        except Exception:
+            return
+        path = f"{prefix}/{name}" if prefix else name
+        try:
+            count = int(folder.Items.Count)
+        except Exception:
+            count = -1
+        try:
+            fid = _safe(folder.EntryID, 0)
+        except Exception:
+            fid = ""
+        out.append({"path": path, "name": name,
+                    "item_count": count, "folder_id": fid})
+        try:
+            for child in folder.Folders:
+                _walk(child, path)
+        except Exception:
+            return
+
+    if root:
+        try:
+            target = ns.GetFolderFromID(root)
+            _walk(target, "")
+        except Exception:
+            return out
+    else:
+        # Default store inbox parent walks the whole tree.
+        inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+        try:
+            store_root = inbox.Parent
+            _walk(store_root, "")
+        except Exception:
+            _walk(inbox, "")
+    return out
+
+
+def create_folder(parent_id: str, name: str) -> dict:
+    """Create a new mail folder under `parent_id` (a folder EntryID).
+    Returns the new folder's EntryID + path."""
+    with com_thread():
+        return _create_folder_inner(parent_id, name)
+
+
+def _create_folder_inner(parent_id: str, name: str) -> dict:
+    ns = _ns()
+    if parent_id:
+        parent = ns.GetFolderFromID(parent_id)
+    else:
+        parent = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+    try:
+        new = parent.Folders.Add(str(name).strip())
+    except Exception as ex:
+        return {"status": "error", "error": str(ex)[:200]}
+    return {"status": "ok",
+            "folder_id": _safe(getattr(new, "EntryID", "")),
+            "name": _safe(getattr(new, "Name", "")),
+            "parent_id": _safe(getattr(parent, "EntryID", ""))}
+
+
+def move_to_folder(entry_id: str, folder_id: str) -> dict:
+    """Move a message to a target folder by folder EntryID."""
+    with com_thread():
+        return _move_to_folder_inner(entry_id, folder_id)
+
+
+def _move_to_folder_inner(entry_id: str, folder_id: str) -> dict:
+    ns = _ns()
+    msg = ns.GetItemFromID(entry_id)
+    folder = ns.GetFolderFromID(folder_id)
+    try:
+        moved = msg.Move(folder)
+    except Exception as ex:
+        return {"status": "error", "error": str(ex)[:200]}
+    return {"status": "ok",
+            "new_entry_id": _safe(getattr(moved, "EntryID", "")),
+            "folder_id": folder_id}
+
+
+def mark_read(entry_id: str, *, read: bool = True) -> dict:
+    """Toggle the message's read/unread flag."""
+    with com_thread():
+        ns = _ns()
+        m = ns.GetItemFromID(entry_id)
+        m.UnRead = (not bool(read))
+        m.Save()
+        return {"status": "ok", "entry_id": entry_id, "unread": m.UnRead}
+
+
+def flag_for_followup(entry_id: str, *, due_offset_days: int = 0,
+                       reminder: bool = False) -> dict:
+    """Set the standard Outlook follow-up flag on a message."""
+    with com_thread():
+        ns = _ns()
+        m = ns.GetItemFromID(entry_id)
+        m.FlagRequest = "Follow up"
+        if due_offset_days > 0:
+            from datetime import datetime, timedelta
+            due = datetime.now() + timedelta(days=int(due_offset_days))
+            try:
+                m.TaskDueDate = due
+                m.TaskStartDate = datetime.now()
+            except Exception:
+                pass
+        if reminder:
+            try:
+                m.ReminderSet = True
+            except Exception:
+                pass
+        m.Save()
+        return {"status": "ok", "entry_id": entry_id}
+
+
 def _save_attachments_inner(entry_id: str, *, dest_dir: str) -> dict:
     import os
     ns = _ns()

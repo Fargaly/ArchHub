@@ -1,0 +1,50 @@
+# fly.toml — Fly.io deploy config for ArchHub Cloud backend.
+#
+# Setup once:
+#   flyctl launch --no-deploy --copy-config --name archhub-cloud
+#   flyctl volumes create archhub_data --size 1 --region ord
+#   flyctl secrets set STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... \
+#                       ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
+#                       GOOGLE_API_KEY=... RESEND_API_KEY=... \
+#                       STRIPE_PRICE_SOLO=... STRIPE_PRICE_STUDIO=... \
+#                       STRIPE_PRICE_FIRM=...
+#   flyctl deploy
+
+app = "archhub-cloud"
+primary_region = "ord"
+
+[build]
+
+[env]
+  PORT = "8000"
+  ENV = "production"
+  PUBLIC_URL = "https://cloud.archhub.app"
+
+[[mounts]]
+  source = "archhub_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 100
+    soft_limit = 80
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1

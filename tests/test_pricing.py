@@ -83,4 +83,4 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        assert v == "1.0.0"
+        assert v == "1.0.1"

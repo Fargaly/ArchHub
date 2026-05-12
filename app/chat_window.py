@@ -338,13 +338,23 @@ class _PasteInput(QPlainTextEdit):
 #  Tool invocation card — collapsible inline card for tool calls.
 # ---------------------------------------------------------------------------
 class ToolCard(QFrame):
+    """Inline card for a tool invocation. Renders status + collapsible
+    detail. When the invocation status is 'needs_confirmation' (set by
+    the tool engine when the user's policy is 'ask'), the card surfaces
+    inline Approve / Deny buttons that re-fire or block the call."""
+
+    # Emitted when the user clicks Approve. Chat layer listens to
+    # re-invoke the tool with user_confirmed=True.
+    approve_requested = pyqtSignal(object)   # ToolInvocation
+    deny_requested = pyqtSignal(object)       # ToolInvocation
+
     def __init__(self, invocation: ToolInvocation, parent=None):
         super().__init__(parent)
         self.setObjectName("toolCard")
         self.invocation = invocation
-        # On error, default to expanded so the user sees the failure cause
-        # without having to click. Successful calls collapse for cleanliness.
-        self._expanded = (invocation.status == "error")
+        # On error OR needs_confirmation, default to expanded so the
+        # user sees the cause / the args they're approving.
+        self._expanded = invocation.status in ("error", "needs_confirmation")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 8, 12, 8)
@@ -382,10 +392,58 @@ class ToolCard(QFrame):
         self.detail.setVisible(self._expanded)
         outer.addWidget(self.detail)
 
+        # Approve / Deny row — visible only on needs_confirmation.
+        self._approve_row = QFrame()
+        ar = QHBoxLayout(self._approve_row)
+        ar.setContentsMargins(0, 4, 0, 0)
+        ar.setSpacing(8)
+        self._approve_btn = QPushButton("Approve")
+        self._approve_btn.setObjectName("primaryButton")
+        self._approve_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._approve_btn.clicked.connect(self._on_approve)
+        self._deny_btn = QPushButton("Deny")
+        self._deny_btn.setObjectName("ghostButton")
+        self._deny_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._deny_btn.clicked.connect(self._on_deny)
+        ar.addWidget(self._approve_btn)
+        ar.addWidget(self._deny_btn)
+        ar.addStretch(1)
+        self._approve_row.setVisible(False)
+        outer.addWidget(self._approve_row)
+
         self.refresh()
+
+    # ---- approve / deny handlers -----------------------------------
+    def _on_approve(self) -> None:
+        self._approve_row.setVisible(False)
+        self.approve_requested.emit(self.invocation)
+
+    def _on_deny(self) -> None:
+        self._approve_row.setVisible(False)
+        self.deny_requested.emit(self.invocation)
 
     def refresh(self) -> None:
         self.status_label.setText(self.invocation.status)
+
+        # needs_confirmation → reveal Approve/Deny + open the detail
+        # so the user can see the args before approving.
+        if self.invocation.status == "needs_confirmation":
+            self._approve_row.setVisible(True)
+            if not self._expanded:
+                self._expanded = True
+                self.toggle_btn.setText("▾")
+                self.detail.setVisible(True)
+                self.detail.setMaximumHeight(280)
+            args = self.invocation.arguments or {}
+            self.detail.setPlainText(
+                f"This tool needs your approval (Settings → AI "
+                f"Behaviour → Tool permissions).\n\n"
+                f"ARGS\n{str(args)[:2000]}"
+            )
+            self.error_preview.setText("⏸ awaiting approval")
+            return
+        else:
+            self._approve_row.setVisible(False)
 
         # Pull a short error preview from the result so the user sees the
         # actual cause inline (instead of a useless "error" badge).
@@ -1827,7 +1885,69 @@ class ChatWindow(QMainWindow):
             card = self._current_bubble.add_tool_card(invocation)
             self._current_invocations[invocation.id] = (invocation, card)
             self.history[-1].tool_invocations.append(invocation)
+            # Wire Approve / Deny on the inline ask-permission row.
+            try:
+                card.approve_requested.connect(self._on_tool_approved)
+                card.deny_requested.connect(self._on_tool_denied)
+            except Exception:
+                pass
         self._scroll_to_bottom()
+
+    def _on_tool_approved(self, inv) -> None:
+        """User clicked Approve on a needs_confirmation tool. Re-run
+        with user_confirmed=True, update the invocation in place,
+        refresh the card."""
+        try:
+            result = self.router.tools.invoke(
+                inv.tool_name, inv.arguments, user_confirmed=True,
+            )
+        except Exception as ex:
+            result = {"status": "error",
+                      "error": f"{type(ex).__name__}: {ex}"}
+        inv.result = result
+        inv.status = ("ok" if (result or {}).get("status") != "error"
+                      else "error")
+        if inv.id in self._current_invocations:
+            _, card = self._current_invocations[inv.id]
+            try:
+                card.refresh()
+            except Exception:
+                pass
+        # Add a system note to history so the next chat turn sees the
+        # tool actually ran. Model can use the result on its next reply.
+        try:
+            note = (
+                f"[user-approved] {inv.tool_name} ran. "
+                f"Result: {str(result)[:200]}"
+            )
+            sys_msg = ChatMessage(role="system", content=note)
+            self.history.append(sys_msg)
+        except Exception:
+            pass
+
+    def _on_tool_denied(self, inv) -> None:
+        """User clicked Deny. Mark the invocation as user-denied so the
+        chat surface shows the failure without re-running anything."""
+        inv.result = {
+            "status": "error",
+            "error": "Denied by user.",
+            "policy": "denied_by_user",
+        }
+        inv.status = "error"
+        if inv.id in self._current_invocations:
+            _, card = self._current_invocations[inv.id]
+            try:
+                card.refresh()
+            except Exception:
+                pass
+        try:
+            sys_msg = ChatMessage(
+                role="system",
+                content=f"[user-denied] {inv.tool_name} blocked.",
+            )
+            self.history.append(sys_msg)
+        except Exception:
+            pass
 
     def _on_finished(self, response: LLMResponse) -> None:
         # Clear the bubble's per-turn status — the answer is now complete.

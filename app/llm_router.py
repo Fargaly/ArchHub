@@ -182,6 +182,45 @@ def _filter_tools_by_relevance(tool_schemas: list[dict],
     return out
 
 
+def _looks_like_refusal(text: str, had_tools: bool,
+                         tool_call_count: int) -> bool:
+    """True when the model emitted text that smells like a refusal
+    AND tools were available but none were called.
+
+    Trip wires (regression class from live traces):
+      - 'I cannot read'
+      - 'I'm not able to'
+      - 'I can only provide'
+      - 'My capabilities are limited'
+      - 'I do not have the ability'
+      - 'Please tell me the specific'
+    All seen in Gemini Flash + Pro responses when asked to act on
+    outlook data, despite the AUTHORITY grant in the system prompt.
+    Treat as a soft failure: block this provider for a few minutes
+    and let the fallback chain route to Ollama / Claude (which DO
+    use the tools)."""
+    if tool_call_count > 0:
+        return False
+    if not had_tools:
+        return False
+    if not text or len(text.strip()) < 30:
+        return False
+    lo = text.lower()
+    needles = (
+        "i cannot read", "i can't read",
+        "i cannot access", "i can't access",
+        "i'm not able to", "i am not able to",
+        "i can only provide", "i can only give you",
+        "my capabilities are limited",
+        "i do not have the ability", "i don't have the ability",
+        "i cannot directly",
+        "i cannot automatically",
+        "i'm not authorized", "i am not authorized",
+        "i cannot perform",
+    )
+    return any(n in lo for n in needles)
+
+
 def _summarise_tool_result(inv) -> str:
     """Build a one-line, human-readable summary of a tool invocation
     so the chat surface has SOMETHING to render when the LLM
@@ -761,7 +800,11 @@ class LLMRouter:
         # Google Gemini or local Ollama transparently.
         attempts = []
         last_error: Exception | None = None
-        for fallback_round in range(4):
+        # Fallback budget — enough rounds to fail through every
+        # cloud provider AND the refusal-detector before reaching
+        # Ollama. Six providers max: anthropic / openai / google /
+        # openrouter / archhub_cloud / relay / ollama.
+        for fallback_round in range(7):
             provider, model_name, note = self._route(history, model)
             if provider in attempts:
                 # Same provider re-picked because nothing else available.
@@ -769,7 +812,7 @@ class LLMRouter:
             attempts.append(provider)
             try:
                 client = self._get_client(provider)
-                return self._complete_once(
+                response = self._complete_once(
                     history=history, provider=provider, model_name=model_name,
                     note=note, client=client,
                     on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
@@ -777,6 +820,37 @@ class LLMRouter:
                     on_status=on_status,
                     session_pin=session_pin,
                 )
+                # Refusal detector — Gemini Flash + Pro emit refusal
+                # text ('I cannot read your emails') instead of using
+                # the tools, despite the AUTHORITY grant. We treat
+                # this as a soft failure: block the provider for the
+                # block window + re-route to the next provider in
+                # the chain. Ollama command-r7b and Claude don't
+                # refuse on data access; the fallback will reach one
+                # of them.
+                try:
+                    had_tools = bool(self.tools.tool_schemas_for(provider))
+                    invs = response.tool_invocations or []
+                    if (had_tools
+                            and _looks_like_refusal(
+                                response.text or "",
+                                had_tools=True,
+                                tool_call_count=len(invs))):
+                        on_status(
+                            f"{provider}: refused to use tools — "
+                            f"switching provider…"
+                        )
+                        self.block_provider(
+                            provider, reason="refused tool use"
+                        )
+                        model = ROUTE_AUTO
+                        last_error = RuntimeError(
+                            f"{provider} refused to use tools"
+                        )
+                        continue
+                except Exception:
+                    pass
+                return response
             except Exception as ex:
                 last_error = ex
                 if not _looks_like_auth_or_quota(ex):

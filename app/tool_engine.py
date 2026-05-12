@@ -475,6 +475,33 @@ TOOLS: list[dict] = [
         "endpoint": ("outlook", "set_categories_by_filter"),
     },
     {
+        "name": "outlook_auto_categorize_by_sender",
+        "family": "outlook",
+        "description": (
+            "ZERO-ARGUMENT one-shot categoriser. Walks recent inbox, "
+            "groups every email by sender domain, derives a category "
+            "name from each domain (e.g. 'autodesk.com' → 'Autodesk'), "
+            "and tags every message with the derived category. "
+            "Returns a summary: total touched, per-domain breakdown, "
+            "any errors.\n"
+            "\n"
+            "USE THIS FOR REQUESTS LIKE 'categorise all my emails by "
+            "project' WHEN PROJECTS AREN'T NAMED. The model does not "
+            "need to loop, read messages, or guess IDs. Call once "
+            "with no args and report the summary back to the user."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "default": 30},
+                "limit": {"type": "integer", "default": 500},
+                "min_messages": {"type": "integer", "default": 2},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "auto_categorize_by_sender"),
+    },
+    {
         "name": "outlook_list_distinct_senders",
         "family": "outlook",
         "description": (

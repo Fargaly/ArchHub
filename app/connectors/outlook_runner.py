@@ -424,6 +424,95 @@ def set_categories_by_filter(*, categories: list[str],
         }
 
 
+def auto_categorize_by_sender(*, days: int = 30,
+                                limit: int = 500,
+                                min_messages: int = 2) -> dict:
+    """One-shot bulk categorisation. ZERO model orchestration needed.
+
+    Internally:
+      1. Walks last `days` of inbox via _search_inner.
+      2. Groups by sender domain.
+      3. Derives a category name from the domain (first label,
+         title-cased). 'mail.bayatyarchitects.com' → 'Bayatyarchitects'.
+         'autodesk.com' → 'Autodesk'.
+      4. For each domain with >= min_messages msgs, applies the
+         derived category to every message from that domain via
+         _set_categories_inner.
+      5. Returns full summary.
+
+    Solves the local-model orchestration failure: command-r7b /
+    llama3.1 can't reliably loop list → read → set. With this tool
+    they just call auto_categorize_by_sender() once. Tool engine
+    does the rest.
+    """
+    def _domain_to_category(dom: str) -> str:
+        if not dom:
+            return "Uncategorised"
+        head = dom.split(".")[0]
+        # Drop common no-info prefixes.
+        if head in ("mail", "smtp", "email", "noreply", "no-reply",
+                     "info", "support"):
+            parts = dom.split(".")
+            if len(parts) >= 2:
+                head = parts[1] if parts[0] in ("mail", "smtp",
+                                                  "email") else parts[0]
+        return head.replace("-", " ").replace("_", " ").title()
+
+    with com_thread():
+        items = _search_inner(query="", sender="", subject_contains="",
+                                days=int(days or 30),
+                                limit=int(limit or 500))
+        # Group by domain.
+        by_domain: dict[str, list[dict]] = {}
+        for it in items:
+            sender = (it.get("sender_email") or
+                       it.get("sender") or "").strip().lower()
+            if not sender:
+                continue
+            dom = sender.split("@")[-1] if "@" in sender else sender
+            by_domain.setdefault(dom, []).append(it)
+
+        applied: list[dict] = []
+        skipped: list[dict] = []
+        errors: list[dict] = []
+        for dom, group in sorted(by_domain.items(),
+                                   key=lambda kv: -len(kv[1])):
+            if len(group) < min_messages:
+                skipped.append({"domain": dom, "count": len(group),
+                                 "reason": f"under min_messages "
+                                            f"({min_messages})"})
+                continue
+            cat = _domain_to_category(dom)
+            touched = 0
+            for it in group:
+                eid = it.get("entry_id")
+                if not eid:
+                    continue
+                try:
+                    r = _set_categories_inner(eid, [cat], mode="add")
+                    if r.get("status") == "ok":
+                        touched += 1
+                except Exception as ex:
+                    errors.append({"domain": dom, "entry_id": eid,
+                                    "error": f"{type(ex).__name__}: "
+                                              f"{ex}"})
+            applied.append({"domain": dom, "category": cat,
+                             "matched": len(group),
+                             "touched": touched})
+        return {
+            "status": "ok",
+            "total_messages": len(items),
+            "distinct_domains": len(by_domain),
+            "categorised": applied,
+            "skipped": skipped,
+            "errors": errors[:10],
+            "summary": (
+                f"Tagged {sum(a['touched'] for a in applied)} "
+                f"messages across {len(applied)} categories."
+            ),
+        }
+
+
 def list_distinct_senders(*, days: int = 30,
                            limit: int = 500) -> dict:
     """Walk recent inbox, return unique sender domains with counts +

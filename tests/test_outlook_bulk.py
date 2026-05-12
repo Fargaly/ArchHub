@@ -138,6 +138,73 @@ class TestDistinctSendersImpl:
         assert out["domains"][0]["count"] == 2
 
 
+class TestAutoCategoriseImpl:
+    """auto_categorize_by_sender — zero-arg one-shot."""
+
+    def test_groups_and_tags_each_domain(self):
+        from connectors import outlook_runner as r
+        fake_msgs = [
+            {"entry_id": "a1", "sender_email": "alice@bayatyarchitects.com",
+             "subject": "RFI 0142"},
+            {"entry_id": "a2", "sender_email": "bob@bayatyarchitects.com",
+             "subject": "DD Set"},
+            {"entry_id": "b1", "sender_email": "info@autodesk.com",
+             "subject": "Renewal"},
+            {"entry_id": "b2", "sender_email": "ceo@autodesk.com",
+             "subject": "Webinar"},
+            {"entry_id": "c1", "sender_email": "noreply@github.com",
+             "subject": "Build ok"},   # only 1 — should be skipped
+        ]
+        tagged = []
+        def fake_set(eid, cats, *, mode):
+            tagged.append((eid, list(cats), mode))
+            return {"status": "ok", "entry_id": eid,
+                    "categories": list(cats)}
+        with patch("connectors.outlook_runner.com_thread"), \
+             patch.object(r, "_search_inner", return_value=fake_msgs), \
+             patch.object(r, "_set_categories_inner",
+                           side_effect=fake_set):
+            out = r.auto_categorize_by_sender(days=30, min_messages=2)
+        assert out["status"] == "ok"
+        # Two domains qualified (count >= 2), one skipped.
+        cats_by_domain = {a["domain"]: a for a in out["categorised"]}
+        assert "bayatyarchitects.com" in cats_by_domain
+        assert "autodesk.com" in cats_by_domain
+        assert cats_by_domain["bayatyarchitects.com"]["category"] == "Bayatyarchitects"
+        assert cats_by_domain["autodesk.com"]["category"] == "Autodesk"
+        assert cats_by_domain["bayatyarchitects.com"]["touched"] == 2
+        # github skipped (only 1 msg).
+        assert any(s["domain"] == "github.com" for s in out["skipped"])
+        # 4 tag operations fired.
+        assert len(tagged) == 4
+        # mode='add' so we never wipe existing tags.
+        assert all(mode == "add" for _, _, mode in tagged)
+
+    def test_zero_messages_no_crash(self):
+        from connectors import outlook_runner as r
+        with patch("connectors.outlook_runner.com_thread"), \
+             patch.object(r, "_search_inner", return_value=[]):
+            out = r.auto_categorize_by_sender()
+        assert out["status"] == "ok"
+        assert out["total_messages"] == 0
+        assert out["categorised"] == []
+
+    def test_mail_prefix_stripped(self):
+        # 'mail.archhub.app' should derive 'Archhub' not 'Mail'.
+        from connectors import outlook_runner as r
+        fake_msgs = [
+            {"entry_id": f"x{i}", "sender_email": f"u{i}@mail.archhub.app",
+             "subject": "x"} for i in range(3)
+        ]
+        with patch("connectors.outlook_runner.com_thread"), \
+             patch.object(r, "_search_inner", return_value=fake_msgs), \
+             patch.object(r, "_set_categories_inner",
+                           return_value={"status": "ok"}):
+            out = r.auto_categorize_by_sender(min_messages=2)
+        names = [a["category"] for a in out["categorised"]]
+        assert "Archhub" in names
+
+
 class TestSystemPromptAdvertisesBulkTool:
     def test_prompt_mentions_set_categories_by_filter(self):
         from unittest.mock import MagicMock
@@ -150,3 +217,4 @@ class TestSystemPromptAdvertisesBulkTool:
         # requests instead of failing on per-item loops.
         assert "set_categories_by_filter" in prompt
         assert "list_distinct_senders" in prompt
+        assert "auto_categorize_by_sender" in prompt

@@ -354,7 +354,7 @@ KNOWN_MODELS: list[tuple[str, str]] = [
     ("openrouter:anthropic/claude-opus-4",              "OpenRouter · Claude Opus 4"),
     ("openrouter:anthropic/claude-sonnet-4",            "OpenRouter · Claude Sonnet 4"),
     ("openrouter:openai/gpt-4o",                        "OpenRouter · GPT-4o"),
-    ("openrouter:google/gemini-2.0-flash-exp",          "OpenRouter · Gemini 2.0 Flash"),
+    ("openrouter:google/gemini-2.5-flash",              "OpenRouter · Gemini 2.5 Flash"),
     ("openrouter:meta-llama/llama-3.3-70b-instruct",    "OpenRouter · Llama 3.3 70B"),
     ("openrouter:qwen/qwen-2.5-coder-32b-instruct",     "OpenRouter · Qwen 2.5 Coder 32B"),
     ("relay:auto",                                      "Firm relay · auto"),
@@ -754,7 +754,7 @@ class LLMRouter:
             if "anthropic" in configured:
                 return "anthropic", "claude-haiku-4-5-20251001", "auto: short → Claude Haiku"
             if "openrouter" in configured:
-                return "openrouter", "google/gemini-2.0-flash-exp", "auto: short → OpenRouter · Gemini Flash"
+                return "openrouter", "google/gemini-2.5-flash", "auto: short → OpenRouter · Gemini 2.5 Flash"
             if "openai" in configured:
                 return "openai", "gpt-4o-mini", "auto: short → GPT-4o mini"
             if "google" in configured:

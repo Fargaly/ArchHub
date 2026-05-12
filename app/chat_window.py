@@ -36,6 +36,66 @@ import skills
 
 
 # ---------------------------------------------------------------------------
+# History compression helpers — keep prompts under provider context
+# limits when a session has accumulated large tool results.
+
+# Truncate text content above this size when rebuilding history for
+# the LLM. The on-disk session keeps the full text; only the prompt
+# we re-send gets shortened.
+_HISTORY_CONTENT_MAX = 4000        # chars per assistant/user msg
+_HISTORY_INV_RESULT_MAX = 2000     # chars per tool result blob
+
+
+def _compress_content(text: str) -> str:
+    if not text:
+        return text or ""
+    if len(text) <= _HISTORY_CONTENT_MAX:
+        return text
+    keep = _HISTORY_CONTENT_MAX - 80
+    head = text[: int(keep * 0.6)]
+    tail = text[-int(keep * 0.4):]
+    return (head + "\n\n[…truncated " + str(len(text) - keep)
+             + " chars…]\n\n" + tail)
+
+
+def _compress_inv(inv: "ToolInvocation") -> dict:
+    """Cheap clone of inv.to_dict() with the result blob shortened."""
+    d = inv.to_dict()
+    result = d.get("result")
+    if isinstance(result, dict):
+        # Keep status + error verbatim; compress every other field
+        # whose stringified value exceeds the cap.
+        compressed = {}
+        for k, v in result.items():
+            if k in ("status", "error", "policy"):
+                compressed[k] = v
+                continue
+            sv = v
+            try:
+                sv_str = str(v) if not isinstance(v, (dict, list)) else repr(v)
+            except Exception:
+                sv_str = ""
+            if isinstance(sv, (dict, list)) and len(repr(sv)) > _HISTORY_INV_RESULT_MAX:
+                compressed[k] = (
+                    repr(sv)[:_HISTORY_INV_RESULT_MAX]
+                    + f" [...truncated; original {len(repr(sv))} chars]"
+                )
+            elif isinstance(sv, str) and len(sv) > _HISTORY_INV_RESULT_MAX:
+                compressed[k] = (
+                    sv[:_HISTORY_INV_RESULT_MAX]
+                    + f" [...truncated; original {len(sv)} chars]"
+                )
+            else:
+                compressed[k] = sv
+        d["result"] = compressed
+    elif isinstance(result, str) and len(result) > _HISTORY_INV_RESULT_MAX:
+        d["result"] = (
+            result[:_HISTORY_INV_RESULT_MAX]
+            + f" [...truncated; original {len(result)} chars]"
+        )
+    return d
+
+
 @dataclass
 class ChatMessage:
     role: str                          # "user" | "assistant" | "system"
@@ -89,9 +149,18 @@ class _LLMWorker(QObject):
                     pass
                 self.tool_invoked.emit(inv)
 
+            # Truncate huge tool result blobs before sending history
+            # to the LLM. A single outlook_execute_python that dumps
+            # email bodies can be 200+ KB; re-sending that on every
+            # turn blows the prompt cache + can outright exceed the
+            # provider's context window. Compress past invocation
+            # results to summaries that preserve status + key fields.
             history_dicts = [
-                {"role": m.role, "content": m.content,
-                 "tool_invocations": [inv.to_dict() for inv in m.tool_invocations],
+                {"role": m.role,
+                 "content": _compress_content(m.content),
+                 "tool_invocations": [
+                    _compress_inv(inv) for inv in m.tool_invocations
+                 ],
                  "images": list(m.images)}
                 for m in self.history
             ]
@@ -1025,6 +1094,34 @@ class ChatWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave_session)
         self._autosave_timer.start()
         self._autosave_path: Optional[Path] = None
+        # Save on every assistant turn finish (in addition to the
+        # 5-min timer) so a crash mid-session loses at most one turn.
+        # Wired in _on_finished.
+
+        # Auto-resume the most recent session. Without this every
+        # launch starts a blank chat and the user thinks the THREADS
+        # rail is decorative. With it, click → reload latest session
+        # is the default — same as Slack / iMessage / every other
+        # chat app the user has used. User can click another thread
+        # in the rail to switch.
+        try:
+            from session_io import list_sessions, load_session_with_messages
+            rows = list_sessions()
+            if rows:
+                latest_path = rows[0][0]
+                try:
+                    sess, _name, msgs = load_session_with_messages(
+                        latest_path)
+                    self.session = sess
+                    self._autosave_path = latest_path
+                    QTimer.singleShot(
+                        100,
+                        lambda: self._restore_history(msgs) if msgs else None,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _autosave_session(self) -> None:
         """Save the running session + chat history if it has at least
@@ -1992,6 +2089,13 @@ class ChatWindow(QMainWindow):
         self._reset_input_state()
         if response.routing_note:
             self.status_left.setText(response.routing_note)
+        # Persist after every assistant turn finishes. 5-min timer is
+        # still wired as a backup; this catches every successful turn
+        # so a crash loses at most one in-progress turn.
+        try:
+            self._autosave_session()
+        except Exception:
+            pass
 
     def _on_failed(self, msg: str) -> None:
         self._reset_input_state()

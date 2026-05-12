@@ -94,6 +94,21 @@ class SignInDialog(QDialog):
         self.action_btn.clicked.connect(self._on_action)
         bv.addWidget(self.action_btn)
 
+        # Manual-paste fallback. Always visible for OAuth providers
+        # (OpenRouter) so users hit by server-side 409 / rate-limit /
+        # "Failed to create or update app while creating auth code"
+        # have a clear path forward without restarting the dialog.
+        # For clipboard-only providers (Anthropic / OpenAI / Google)
+        # the primary button already does this — hide.
+        self.manual_btn: QPushButton | None = None
+        if self.use_oauth:
+            self.manual_btn = QPushButton(
+                "Or paste a key manually (skip browser auth)"
+            )
+            self.manual_btn.setObjectName("ghostButton")
+            self.manual_btn.clicked.connect(self._switch_to_manual)
+            bv.addWidget(self.manual_btn)
+
         if self.use_oauth:
             status_msg = (
                 f"You'll only do this once on this device. ArchHub will "
@@ -328,7 +343,11 @@ class SignInDialog(QDialog):
         if self.use_oauth:
             self.status.setText(
                 f"No authorization came back from {self.plan.display_name} "
-                f"in 3 minutes. Click the button to try again, or cancel."
+                f"in 3 minutes. The provider may be rate-limiting "
+                f"(error 409 'Failed to create or update app while "
+                f"creating auth code' is common — wait 30 s then "
+                f"retry). Or click <b>Or paste a key manually</b> "
+                f"below to skip the browser flow."
             )
         else:
             self.status.setText(
@@ -337,6 +356,34 @@ class SignInDialog(QDialog):
             )
         self.action_btn.setText(self._action_label)
         self.action_btn.setEnabled(True)
+
+    def _switch_to_manual(self) -> None:
+        """Bail out of OAuth, open the provider's API-keys page, and
+        flip the dialog into clipboard-watch mode. Lets the user
+        recover from OpenRouter's 409 'Failed to create or update
+        app while creating auth code' without restarting the dialog."""
+        self._stop_timers()
+        if self._oauth is not None:
+            try:
+                self._oauth.stop()
+            except Exception:
+                pass
+            self._oauth = None
+        self.use_oauth = False
+        self._action_label = (
+            f"🌐  Open {self.plan.display_name} key page"
+        )
+        self.action_btn.setText(self._action_label)
+        self.action_btn.setEnabled(True)
+        if self.manual_btn is not None:
+            self.manual_btn.setVisible(False)
+        self.status.setText(
+            f"Switched to manual paste. Click the button to open "
+            f"{self.plan.display_name}'s keys page; after you click "
+            f"<i>Copy</i> on a new key (looks like "
+            f"<code>{self.plan.sample_prefix}</code>), ArchHub will "
+            f"save it automatically."
+        )
 
     def _fail(self, message: str) -> None:
         self._stop_timers()

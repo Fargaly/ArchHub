@@ -353,6 +353,104 @@ def _set_categories_inner(entry_id: str, categories: list[str], *,
             "categories": new}
 
 
+def set_categories_by_filter(*, categories: list[str],
+                               sender_contains: str = "",
+                               subject_contains: str = "",
+                               body_contains: str = "",
+                               days: int = 0,
+                               unread_only: bool = False,
+                               limit: int = 500,
+                               mode: str = "set") -> dict:
+    """Bulk-apply Outlook categories to EVERY message matching a
+    filter — without the LLM having to loop. Solves the local-model
+    failure mode where the model calls set_categories with a
+    placeholder entry_id because it didn't realise it should
+    list+iterate first.
+
+    All filter fields are optional + combine with AND. Empty filter +
+    no limit override = applies to the whole inbox (use with care).
+
+    Returns a summary: count touched, sample subjects, any errors.
+    """
+    if not categories:
+        return {"status": "error",
+                "error": "categories list empty — pass at least one tag."}
+    body_q = (body_contains or "").strip()
+    with com_thread():
+        items = _search_inner(
+            query=body_q,                # search() matches body + subject
+            sender=sender_contains or "",
+            subject_contains=subject_contains or "",
+            days=int(days or 0),
+            limit=int(limit or 500),
+        )
+        # Post-filter for unread_only since _search_inner doesn't have
+        # the kwarg.
+        if unread_only:
+            items = [it for it in items if it.get("unread")]
+        touched: list[dict] = []
+        errors: list[dict] = []
+        for it in items:
+            eid = it.get("entry_id")
+            if not eid:
+                continue
+            try:
+                r = _set_categories_inner(eid, categories, mode=mode)
+                if r.get("status") == "ok":
+                    touched.append({
+                        "entry_id": eid,
+                        "subject": (it.get("subject") or "")[:80],
+                        "categories": r.get("categories") or [],
+                    })
+                else:
+                    errors.append({"entry_id": eid,
+                                    "error": r.get("error")})
+            except Exception as ex:
+                errors.append({"entry_id": eid,
+                                "error": f"{type(ex).__name__}: {ex}"})
+        return {
+            "status": "ok",
+            "matched": len(items),
+            "touched": len(touched),
+            "errors": errors[:10],
+            "sample": touched[:5],
+            "applied_categories": categories,
+            "filter": {
+                "sender_contains": sender_contains,
+                "subject_contains": subject_contains,
+                "body_contains": body_contains,
+                "days": days, "unread_only": unread_only,
+            },
+        }
+
+
+def list_distinct_senders(*, days: int = 30,
+                           limit: int = 500) -> dict:
+    """Walk recent inbox, return unique sender domains with counts +
+    a few sample subjects per domain. Helps the LLM derive sensible
+    project / category names without reading every message body."""
+    with com_thread():
+        items = _search_inner(query="", sender="", subject_contains="",
+                                days=int(days or 30),
+                                limit=int(limit or 500))
+        domains: dict[str, dict] = {}
+        for it in items:
+            sender = (it.get("sender_email") or
+                       it.get("sender") or "").strip().lower()
+            if not sender:
+                continue
+            dom = sender.split("@")[-1] if "@" in sender else sender
+            entry = domains.setdefault(dom, {
+                "domain": dom, "count": 0, "samples": [],
+            })
+            entry["count"] += 1
+            if len(entry["samples"]) < 3:
+                entry["samples"].append(it.get("subject", "")[:80])
+        out = sorted(domains.values(), key=lambda d: -d["count"])
+        return {"status": "ok", "total_messages": len(items),
+                 "distinct_domains": len(out), "domains": out[:50]}
+
+
 def list_folders(*, root: str = "") -> list[dict]:
     """Walk the user's MAPI folders. `root` empty = enumerate from the
     default store root. Returns flat list of {path, name, item_count,

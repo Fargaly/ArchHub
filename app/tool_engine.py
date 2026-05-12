@@ -427,6 +427,75 @@ TOOLS: list[dict] = [
         "endpoint": ("outlook", "set_categories"),
     },
     {
+        "name": "outlook_set_categories_by_filter",
+        "family": "outlook",
+        "description": (
+            "BULK categorise every email matching a filter, in ONE "
+            "call — no per-message loop needed. The tool internally "
+            "lists the inbox + applies categories to every match. "
+            "Use this instead of looping outlook_set_categories "
+            "yourself.\n"
+            "\n"
+            "Filter fields combine with AND (all optional):\n"
+            "  sender_contains: substring of sender name OR email\n"
+            "  subject_contains: substring of subject line\n"
+            "  body_contains: substring of body text\n"
+            "  days: last N days (0 = unlimited)\n"
+            "  unread_only: true → skip read messages\n"
+            "  limit: cap on messages scanned (default 500)\n"
+            "\n"
+            "Example: tag every Autodesk message 'Vendor':\n"
+            "  outlook_set_categories_by_filter(\n"
+            "    sender_contains='@autodesk.com',\n"
+            "    categories=['Vendor'])\n"
+            "Returns: {matched, touched, sample (first 5 subjects), "
+            "errors, applied_categories, filter}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "sender_contains": {"type": "string"},
+                "subject_contains": {"type": "string"},
+                "body_contains": {"type": "string"},
+                "days": {"type": "integer", "default": 0},
+                "unread_only": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "default": 500},
+                "mode": {
+                    "type": "string",
+                    "enum": ["set", "add", "remove"],
+                    "default": "set",
+                },
+            },
+            "required": ["categories"],
+        },
+        "endpoint": ("outlook", "set_categories_by_filter"),
+    },
+    {
+        "name": "outlook_list_distinct_senders",
+        "family": "outlook",
+        "description": (
+            "Walk the last N days of inbox + return unique sender "
+            "domains with counts + 3 sample subjects per domain. "
+            "Helps you propose sensible project / category names "
+            "WITHOUT reading every message body. Cheap (one COM "
+            "call). Typical use: derive a category map, then call "
+            "outlook_set_categories_by_filter once per category."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "default": 30},
+                "limit": {"type": "integer", "default": 500},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "list_distinct_senders"),
+    },
+    {
         "name": "outlook_list_folders",
         "family": "outlook",
         "description": "Walk every folder in the user's MAPI store. Returns flat list of {path, name, item_count, folder_id}. Use folder_id with outlook_move_to_folder. Pass an empty `root` to enumerate from the default store root.",

@@ -124,11 +124,13 @@ class TestSystemPrompt:
     def test_prompt_is_under_token_budget(self):
         # Effective attention window for 3-7B models is ~500 tokens
         # of system. Keep our prompt well under that so the meaningful
-        # instructions don't get truncated/diluted.
+        # instructions don't get truncated/diluted. v1.0 raised the
+        # cap to 2000 chars (~500 tokens) to accommodate the explicit
+        # AUTHORITY grant that fixes Gemini's "I can't access your
+        # data" refusal class.
         r = _router()
         prompt = r._build_system_prompt()
-        # Rough char-to-token conversion: ~4 chars/token.
-        assert len(prompt) < 1100, (
+        assert len(prompt) < 2000, (
             f"System prompt too long ({len(prompt)} chars) — small "
             "models will lose the tail."
         )
@@ -140,6 +142,29 @@ class TestSystemPrompt:
         assert ("pasting code" in prompt.lower()
                 or "paste this" in prompt.lower()
                 or "code into chat" in prompt.lower())
+
+    def test_prompt_contains_authority_grant(self):
+        # Regression: Gemini refused to read emails / set categories
+        # because the prompt didn't explicitly authorise data access.
+        # The AUTHORITY section is load-bearing — without it the
+        # model's safety alignment overrides the architect's intent.
+        r = _router()
+        prompt = r._build_system_prompt()
+        lo = prompt.lower()
+        assert "authority" in lo or "permission" in lo
+        # Mentions email, file, code as authorised actions.
+        assert "read emails" in lo or "read email" in lo
+
+    def test_prompt_forbids_can_not_excuses(self):
+        # Catches the specific refusal phrases Gemini emitted before
+        # the authority grant: "I cannot access your data",
+        # "I can only provide a summary", etc.
+        r = _router()
+        prompt = r._build_system_prompt()
+        lo = prompt.lower()
+        # Prompt must EXPLICITLY tell the model not to say these.
+        assert ("cannot access" in lo or "not authorized" in lo
+                or "only provide a summary" in lo)
 
 
 # ---------------------------------------------------------------------------

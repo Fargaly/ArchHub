@@ -67,9 +67,11 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
 _FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "outlook": ("outlook", "email", "emails", "mail", "mails",
                  "inbox", "message", "messages", "reply", "draft",
-                 "send", "categorize", "categorise", "categories",
-                 "folder", "folders", "attachment", "attachments",
-                 "flag", "unread", "thread"),
+                 "send", "sent", "categorize", "categorise",
+                 "categories", "folder", "folders", "attachment",
+                 "attachments", "flag", "unread", "thread",
+                 "forward", "newsletter", "newsletters", "archive",
+                 "sender", "senders", "subject", "from:", "to:"),
     "revit": ("revit", "rvt", "wall", "walls", "door", "doors",
                "window", "windows", "level", "levels", "view",
                "views", "sheet", "sheets", "schedule", "schedules",
@@ -130,25 +132,38 @@ def _filter_tools_by_relevance(tool_schemas: list[dict],
             promoted_families.add(fam)
 
     # Always-keep set is dynamic. If the user mentioned a specific
-    # family (or families), keep ONLY those families' info/ping tools
-    # + the universal helper — that frees ~8 slots for the actual
-    # actioning tools the user wants. Without this, "READ ALL THE
-    # EMAILS AND CATEGORIZE" got blocked by revit/acad/max/blender
-    # info+ping tools eating 8 of 12 slots, leaving only 2 for outlook
-    # actions (which wasn't enough to send outlook_set_categories +
-    # outlook_list_inbox).
+    # family, keep ONLY those families' info/ping/execute tools +
+    # the universal helper — frees ~8 slots for the actual actioning
+    # tools the user wants. execute_* is always kept because it's
+    # the escape-hatch tool: if no named tool fits the user request,
+    # the model writes code + calls execute_*.
     if promoted_families:
         always_keep = {"archhub_list_connectors"}
         for fam in promoted_families:
             for stub in ("info", "ping"):
                 always_keep.add(f"{fam}_{stub}")
+            # Escape-hatch tools — execute_python / execute_csharp /
+            # execute_maxscript. Always keep for the promoted family
+            # so the model can write code when no named tool fits.
+            for ex in ("execute_python", "execute_csharp",
+                        "execute_maxscript"):
+                always_keep.add(f"{fam}_{ex}")
     else:
-        always_keep = {n for n in (
+        # No family mentioned in the prompt — model needs escape
+        # hatches for ALL hosts plus the cheap info tools. Without
+        # this, queries like 'forward all newsletters' (no outlook
+        # keyword) leave the model without any execute tool to
+        # actually write code with.
+        always_keep = {
             "archhub_list_connectors",
             "outlook_info", "revit_info", "acad_info", "max_info",
-            "blender_info", "revit_ping", "acad_ping", "max_ping",
-            "blender_ping",
-        )}
+            "blender_info",
+            "outlook_execute_python",
+            "revit_execute_csharp",
+            "acad_execute_csharp",
+            "max_execute_python",
+            "blender_execute_python",
+        }
     kept = [t for t in tool_schemas if _name(t) in always_keep]
 
     # Score remaining tools.
@@ -1177,6 +1192,21 @@ class LLMRouter:
             "literally impossible without more info. Default: pick "
             "reasonable defaults and proceed.\n\n"
             f"Active connectors: {active_list}.\n\n"
+            "ESCAPE HATCH — every host has an execute_* tool that "
+            "runs arbitrary code with full host access. If no named "
+            "tool fits, WRITE THE CODE and call execute. Never "
+            "refuse for 'no tool' reason.\n"
+            "  • revit_execute_csharp(code='...')\n"
+            "  • acad_execute_csharp(code='...')\n"
+            "  • max_execute_python(code='...') / max_execute_maxscript\n"
+            "  • blender_execute_python(code='...')\n"
+            "  • outlook_execute_python(code='...')\n"
+            "Globals provided per host. Assign to `result` to return "
+            "data. Example for Outlook 'count emails per sender':\n"
+            "    result = {}\n"
+            "    for m in inbox.Items:\n"
+            "        s = str(getattr(m,'SenderEmailAddress','') or '')\n"
+            "        result[s] = result.get(s,0)+1\n\n"
             "Hard rules:\n"
             "- NEVER paste code into chat for the user to copy. "
             "Code goes INSIDE tool calls only.\n"

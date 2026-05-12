@@ -284,6 +284,38 @@ TOOLS: list[dict] = [
 
     # Outlook (classic) — drives via COM, no listener
     {
+        "name": "outlook_execute_python",
+        "family": "outlook",
+        "description": (
+            "ESCAPE HATCH — run arbitrary Python with full Outlook "
+            "COM access. Globals: outlook (Application), ns (MAPI "
+            "Namespace), inbox / sent / drafts (default folders), "
+            "pythoncom, datetime, json, re. Set `result` to return "
+            "data. Stdout captured.\n"
+            "\n"
+            "Use when no named outlook tool fits. Examples:\n"
+            "  - 'count messages per sender per week'\n"
+            "  - 'find emails from Q1 mentioning Tower-A and "
+            "    forward to bob@'\n"
+            "  - 'move every newsletter to a Newsletters folder'\n"
+            "  - 'export inbox to CSV'\n"
+            "\n"
+            "Prefer named tools (list_inbox / set_categories / "
+            "auto_categorize_by_sender) for common ops — they're "
+            "faster + clearer. Reach for execute_python only when "
+            "the request needs custom logic."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+                "timeout_seconds": {"type": "integer", "default": 60},
+            },
+            "required": ["code"],
+        },
+        "endpoint": ("outlook", "execute_python"),
+    },
+    {
         "name": "outlook_info",
         "family": "outlook",
         "description": "Snapshot of Outlook inbox: total count, unread count, drafts count, default account email.",

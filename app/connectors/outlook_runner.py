@@ -429,6 +429,93 @@ _OL_FOLDER_SENT = 5
 _OL_FOLDER_DRAFTS = 16
 
 
+def execute_python(*, code: str, timeout_seconds: int = 60) -> dict:
+    """Run arbitrary Python in the Outlook COM context.
+
+    Globals injected:
+      outlook    — the Outlook.Application COM object
+      ns         — MAPI Namespace (outlook.GetNamespace('MAPI'))
+      inbox      — default Inbox folder
+      sent       — default Sent Items folder
+      drafts     — default Drafts folder
+      pythoncom  — for native constants if needed
+      datetime, json, re — common stdlib imports
+
+    Return: whatever you assign to `result`. Stdout captured too.
+    Errors caught — return {status: 'error', error, traceback}.
+
+    Use this as the ESCAPE HATCH when no named tool fits. Always
+    prefer named tools for common ops (list_inbox, set_categories,
+    auto_categorize_by_sender) since they're faster + clearer. But
+    for anything custom — 'find all emails from Q1 that mention
+    Tower-A and forward to bob@', 'count messages per sender per
+    week', etc. — write Python here.
+    """
+    if not code or not str(code).strip():
+        return {"status": "error", "error": "code is empty"}
+    import io
+    import traceback as _tb
+    import contextlib
+    from datetime import datetime as _dt
+    import json as _json
+    import re as _re
+
+    with com_thread():
+        try:
+            import pythoncom
+        except Exception:
+            pythoncom = None
+        outlook = _client()
+        ns = _ns()
+        inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+        try:
+            sent = ns.GetDefaultFolder(_OL_FOLDER_SENT)
+        except Exception:
+            sent = None
+        try:
+            drafts = ns.GetDefaultFolder(_OL_FOLDER_DRAFTS)
+        except Exception:
+            drafts = None
+
+        globs = {
+            "__builtins__": __builtins__,
+            "outlook": outlook,
+            "ns": ns,
+            "inbox": inbox,
+            "sent": sent,
+            "drafts": drafts,
+            "pythoncom": pythoncom,
+            "datetime": _dt,
+            "json": _json,
+            "re": _re,
+        }
+        locs: dict = {}
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                exec(compile(code, "<outlook_execute_python>", "exec"),
+                     globs, locs)
+        except Exception as ex:
+            return {
+                "status": "error",
+                "error": f"{type(ex).__name__}: {ex}",
+                "traceback": _tb.format_exc()[-2000:],
+                "stdout": buf.getvalue()[-2000:],
+            }
+        result = locs.get("result", None)
+        # Best-effort serialise — if result isn't JSON-friendly, stringify.
+        try:
+            _json.dumps(result)
+            serialised = result
+        except Exception:
+            serialised = repr(result)[:4000]
+        return {
+            "status": "ok",
+            "result": serialised,
+            "stdout": buf.getvalue()[-4000:],
+        }
+
+
 def list_sent_items(*, limit: int = 20,
                      days: int = 0) -> list[dict]:
     """List recent messages from the Sent Items folder. Mirror of

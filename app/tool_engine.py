@@ -791,7 +791,8 @@ class ToolEngine:
     # ---- invocation -------------------------------------------------------
 
     def invoke(self, tool_name: str, args: dict,
-               session_pin: Optional[str] = None) -> dict:
+               session_pin: Optional[str] = None,
+               *, user_confirmed: bool = False) -> dict:
         """Invoke one tool.
 
         session_pin — optional token used to disambiguate when multiple
@@ -800,10 +801,45 @@ class ToolEngine:
         which matches against session_id, pid, doc_title substring, or
         SMTP for Outlook. Ignored for tools whose family has no broker
         (speckle, blender today, _local).
+
+        user_confirmed — when True, bypass the 'ask' policy gate. Used
+        by the chat layer after the user clicks Approve on a pending
+        tool invocation. 'deny' policy is NOT bypassable.
         """
         tool = next((t for t in TOOLS if t["name"] == tool_name), None)
         if tool is None:
             return {"status": "error", "error": f"Unknown tool: {tool_name}"}
+
+        # User policy gate — Settings → AI Behaviour. Three policies:
+        #   allow → fire immediately
+        #   ask   → return needs_confirmation; chat UI prompts user
+        #   deny  → hard block; returns error status
+        try:
+            from ai_behaviour import get_tool_policy
+            policy = get_tool_policy(tool_name)
+        except Exception:
+            policy = "allow"
+        if policy == "deny":
+            return {
+                "status": "error",
+                "error": (
+                    f"Tool {tool_name!r} is blocked by user policy "
+                    f"(Settings → AI Behaviour → Tool permissions)."
+                ),
+                "policy": "deny",
+            }
+        if policy == "ask" and not user_confirmed:
+            return {
+                "status": "needs_confirmation",
+                "tool_name": tool_name,
+                "arguments": args,
+                "reason": (
+                    f"{tool_name} needs your approval. "
+                    "Settings → AI Behaviour → Tool permissions "
+                    "to change."
+                ),
+                "policy": "ask",
+            }
 
         ep = tool["endpoint"]
 

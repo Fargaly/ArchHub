@@ -34,28 +34,34 @@ def page(qapp):
 
 
 class TestSettingsPage:
-    def test_three_sections_present(self, page):
+    def test_four_sections_present(self, page):
         from settings_page import _SECTIONS
-        assert len(_SECTIONS) == 3
+        assert len(_SECTIONS) == 4
         ids = {sid for sid, _ in _SECTIONS}
-        assert ids == {"providers", "about", "diagnostics"}
+        assert ids == {"providers", "ai_behaviour",
+                        "about", "diagnostics"}
 
     def test_default_selection_is_providers(self, page):
         assert page.stack.currentIndex() == 0
         assert page._buttons["providers"].isChecked()
-        for sid in ("about", "diagnostics"):
+        for sid in ("ai_behaviour", "about", "diagnostics"):
             assert not page._buttons[sid].isChecked()
 
     def test_select_about_flips_stack(self, page):
         page._select("about")
-        assert page.stack.currentIndex() == 1
+        assert page.stack.currentIndex() == 2
         assert page._buttons["about"].isChecked()
         assert not page._buttons["providers"].isChecked()
 
     def test_select_diagnostics_flips_stack(self, page):
         page._select("diagnostics")
-        assert page.stack.currentIndex() == 2
+        assert page.stack.currentIndex() == 3
         assert page._buttons["diagnostics"].isChecked()
+
+    def test_select_ai_behaviour_flips_stack(self, page):
+        page._select("ai_behaviour")
+        assert page.stack.currentIndex() == 1
+        assert page._buttons["ai_behaviour"].isChecked()
 
     def test_select_unknown_section_is_noop(self, page):
         idx_before = page.stack.currentIndex()

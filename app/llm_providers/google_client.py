@@ -62,12 +62,23 @@ class GoogleClient:
     ) -> dict:
         on_reasoning = on_reasoning or (lambda _: None)
         gemini_contents = self._adapt_messages(messages)
+        gen_cfg: dict[str, Any] = {
+            "temperature": 0.2,
+            "maxOutputTokens": 4096,
+        }
+        # Extended thinking — Gemini 2.5 series supports
+        # thinkingConfig.thinkingBudget. Budget from Settings.
+        try:
+            from ai_behaviour import thinking_budget_tokens
+            budget = thinking_budget_tokens()
+        except Exception:
+            budget = 0
+        if budget > 0 and "2.5" in (model or ""):
+            gen_cfg["thinkingConfig"] = {"thinkingBudget": int(budget)}
+            gen_cfg["maxOutputTokens"] = max(8192, budget + 2048)
         body: dict[str, Any] = {
             "contents": gemini_contents,
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 4096,
-            },
+            "generationConfig": gen_cfg,
         }
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}

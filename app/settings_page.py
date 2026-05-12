@@ -46,6 +46,7 @@ T = _LivePalette()
 # SettingsPage to keep self._router available.
 _SECTIONS: list[tuple[str, str]] = [
     ("providers", "Providers"),
+    ("ai_behaviour", "AI Behaviour"),
     ("about", "About"),
     ("diagnostics", "Diagnostics"),
 ]
@@ -125,6 +126,7 @@ class SettingsPage(QWidget):
 
         # Build each section once + add to stack in declared order.
         self.stack.addWidget(self._build_providers_section())
+        self.stack.addWidget(self._build_ai_behaviour_section())
         self.stack.addWidget(self._build_about_section())
         self.stack.addWidget(self._build_diagnostics_section())
 
@@ -167,6 +169,135 @@ class SettingsPage(QWidget):
             )
             wrap.setWidget(err)
         return wrap
+
+    # ------------------------------------------------------------------
+    def _build_ai_behaviour_section(self) -> QWidget:
+        """Extended-thinking effort + per-tool permission table."""
+        from PyQt6.QtWidgets import (
+            QButtonGroup, QComboBox, QRadioButton, QScrollArea,
+            QGridLayout,
+        )
+        import ai_behaviour as ab
+
+        scroll = QScrollArea()
+        scroll.setObjectName("studioScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(
+            "QScrollArea#studioScroll { background:transparent; "
+            "border:none; }"
+        )
+        page = QWidget()
+        page.setObjectName("studioPage")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(SPACE["md"], 0, SPACE["md"], 0)
+        v.setSpacing(SPACE["md"])
+
+        # ── Extended-thinking effort card ──────────────────────────
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(SPACE["md"], SPACE["md"],
+                               SPACE["md"], SPACE["md"])
+        cv.setSpacing(SPACE["xs"])
+        cap = QLabel("EXTENDED THINKING")
+        cap.setObjectName("studioMonoCap")
+        cv.addWidget(cap)
+        sub = QLabel(
+            "Let the model reason before responding. Higher effort "
+            "= deeper thinking + higher token cost + slower replies. "
+            "Anthropic Sonnet/Opus, Gemini 2.5 Pro, and OpenAI "
+            "o-series honour this. GPT-4o, Haiku, and Ollama ignore."
+        )
+        sub.setObjectName("settingsKvVal")
+        sub.setWordWrap(True)
+        cv.addWidget(sub)
+
+        cv.addSpacing(SPACE["xs"])
+        row = QHBoxLayout()
+        row.setSpacing(SPACE["xs"])
+        self._thinking_group = QButtonGroup(self)
+        current = ab.get_thinking_effort()
+        for level, label in (
+            ("off", "Off"),
+            ("low", "Low · 1K tokens"),
+            ("medium", "Medium · 4K"),
+            ("high", "High · 16K"),
+        ):
+            btn = QRadioButton(label)
+            btn.setObjectName("settingsKvVal")
+            btn.setChecked(level == current)
+            btn.toggled.connect(
+                lambda checked, lvl=level:
+                    ab.set_thinking_effort(lvl) if checked else None
+            )
+            self._thinking_group.addButton(btn)
+            row.addWidget(btn)
+        row.addStretch(1)
+        row_w = QWidget(); row_w.setLayout(row)
+        cv.addWidget(row_w)
+        v.addWidget(card)
+
+        # ── Per-tool permission table ──────────────────────────────
+        card2 = QFrame()
+        card2.setObjectName("settingsCard")
+        cv2 = QVBoxLayout(card2)
+        cv2.setContentsMargins(SPACE["md"], SPACE["md"],
+                                SPACE["md"], SPACE["md"])
+        cv2.setSpacing(SPACE["xs"])
+        cap2 = QLabel("TOOL PERMISSIONS")
+        cap2.setObjectName("studioMonoCap")
+        cv2.addWidget(cap2)
+        sub2 = QLabel(
+            "Per-tool policy. 'Allow' fires immediately. 'Ask' "
+            "prompts you in chat before the model can use it. "
+            "'Deny' blocks it outright. Defaults are sensible: "
+            "read-only tools allow, mutate/execute tools ask."
+        )
+        sub2.setObjectName("settingsKvVal")
+        sub2.setWordWrap(True)
+        cv2.addWidget(sub2)
+        cv2.addSpacing(SPACE["xs"])
+
+        # Build rows for every registered tool.
+        try:
+            from tool_engine import TOOLS
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(SPACE["md"])
+            grid.setVerticalSpacing(SPACE["xs"])
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 0)
+            # Header row.
+            h1 = QLabel("TOOL"); h1.setObjectName("studioMonoCap")
+            h2 = QLabel("POLICY"); h2.setObjectName("studioMonoCap")
+            grid.addWidget(h1, 0, 0)
+            grid.addWidget(h2, 0, 1)
+            self._tool_combos: dict = {}
+            for i, t in enumerate(sorted(TOOLS, key=lambda x: x["name"]),
+                                  start=1):
+                name = t["name"]
+                lbl = QLabel(name)
+                lbl.setObjectName("settingsKvVal")
+                grid.addWidget(lbl, i, 0)
+                combo = QComboBox()
+                combo.setObjectName("settingsCombo")
+                combo.addItems(["allow", "ask", "deny"])
+                combo.setCurrentText(ab.get_tool_policy(name))
+                combo.currentTextChanged.connect(
+                    lambda val, n=name: ab.set_tool_policy(n, val)
+                )
+                grid.addWidget(combo, i, 1)
+                self._tool_combos[name] = combo
+            grid_w = QWidget(); grid_w.setLayout(grid)
+            cv2.addWidget(grid_w)
+        except Exception as ex:
+            err = QLabel(f"Tool list unavailable: {type(ex).__name__}")
+            err.setObjectName("settingsKvVal")
+            cv2.addWidget(err)
+        v.addWidget(card2)
+        v.addStretch(1)
+
+        scroll.setWidget(page)
+        return scroll
 
     # ------------------------------------------------------------------
     def _build_about_section(self) -> QWidget:

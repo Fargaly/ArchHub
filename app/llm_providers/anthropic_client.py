@@ -74,12 +74,19 @@ class AnthropicClient:
         anth_messages = self._adapt_messages(messages)
 
         # Enable extended thinking on models that support it. Detection
-        # is conservative: only opus-4 / sonnet-4 lineage. The thinking
-        # budget is small so latency stays reasonable for simple turns;
-        # the SDK + server allow more when needed.
+        # is conservative: only opus-4 / sonnet-4 lineage. Budget pulled
+        # from Settings → AI Behaviour → thinking_effort. 0 = off,
+        # caller disabled it.
         thinking_models = ("opus-4", "sonnet-4", "claude-4")
-        thinking_enabled = any(t in (model or "").lower()
+        thinking_capable = any(t in (model or "").lower()
                                 for t in thinking_models)
+        thinking_budget = 0
+        if thinking_capable:
+            try:
+                from ai_behaviour import thinking_budget_tokens
+                thinking_budget = thinking_budget_tokens()
+            except Exception:
+                thinking_budget = 0
 
         kwargs: dict[str, Any] = dict(
             model=model,
@@ -87,10 +94,13 @@ class AnthropicClient:
             system=system,
             messages=anth_messages,
         )
-        if thinking_enabled:
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+        if thinking_budget > 0:
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": thinking_budget,
+            }
             # Server requires max_tokens > thinking budget.
-            kwargs["max_tokens"] = 8192
+            kwargs["max_tokens"] = max(8192, thinking_budget + 2048)
         if tools:
             kwargs["tools"] = tools
 

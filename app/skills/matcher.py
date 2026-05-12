@@ -125,6 +125,29 @@ def _usage_boost(skill_id: str) -> float:
     return 1.0 + freq_boost + rel_boost
 
 
+def _prompt_host_signal(prompt: str) -> set[str]:
+    """Detect which host family the user prompt is clearly about.
+    Returns a set of family ids ('outlook', 'revit', 'acad', 'max',
+    'blender', 'speckle') OR empty set if the prompt is host-neutral.
+
+    Used by match_skills to demote skills targeting a DIFFERENT host
+    than the one the user is asking about. Prevents the
+    'categorize all' query from suggesting a Revit construction Skill
+    just because both share weak tokens like 'all'."""
+    lo = (prompt or "").lower()
+    hits: set[str] = set()
+    # Reuse the family-keyword expansion from llm_router. Imported
+    # lazily so this module stays standalone.
+    try:
+        from llm_router import _FAMILY_KEYWORDS
+    except Exception:
+        return hits
+    for fam, words in _FAMILY_KEYWORDS.items():
+        if any(w in lo for w in words):
+            hits.add(fam)
+    return hits
+
+
 def match_skills(
     prompt: str,
     *,
@@ -147,6 +170,26 @@ def match_skills(
             s for s in skills
             if not s.get("requires") or all(r in active_connectors for r in s["requires"])
         ]
+
+    # Host context filter — if the prompt clearly mentions one host
+    # family, drop skills whose `requires` only target a DIFFERENT
+    # family. Skills with no `requires` (or that require BOTH families)
+    # are kept. Empty signal set = no filter.
+    prompt_hosts = _prompt_host_signal(prompt)
+    if prompt_hosts:
+        host_filtered: list[dict] = []
+        for s in skills:
+            reqs = set(s.get("requires") or [])
+            # Normalise: 'autocad' → 'acad' for parity with _FAMILY_KEYWORDS keys.
+            reqs = {("acad" if r == "autocad" else r) for r in reqs}
+            if not reqs:
+                host_filtered.append(s)
+                continue
+            # Keep if the skill targets ANY of the host families the
+            # user mentioned. Drop if it targets ONLY unrelated hosts.
+            if reqs & prompt_hosts:
+                host_filtered.append(s)
+        skills = host_filtered
 
     scored: list[MatchResult] = []
     for s in skills:

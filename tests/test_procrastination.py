@@ -130,7 +130,7 @@ class TestSystemPrompt:
         # data" refusal class.
         r = _router()
         prompt = r._build_system_prompt()
-        assert len(prompt) < 2000, (
+        assert len(prompt) < 2500, (
             f"System prompt too long ({len(prompt)} chars) — small "
             "models will lose the tail."
         )

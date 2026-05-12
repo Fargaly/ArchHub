@@ -324,10 +324,27 @@ TOOLS: list[dict] = [
     {
         "name": "outlook_read_thread",
         "family": "outlook",
-        "description": "Return the full thread + body for a single message (identified by entry_id). Includes parent + reply chain when Conversation API exposes it.",
+        "description": (
+            "Return the full thread + body for a single message. "
+            "REQUIRES a real entry_id obtained from outlook_list_inbox "
+            "or outlook_search FIRST — entry_id is an opaque Outlook "
+            "MAPI identifier, NOT a description or placeholder. To "
+            "process every message in a folder: call outlook_list_inbox, "
+            "then call outlook_read_thread once per item['entry_id']."
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"entry_id": {"type": "string"}},
+            "properties": {
+                "entry_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque MAPI entry id (e.g. "
+                        "'00000000A1B2C3...AC0001'). Get from "
+                        "outlook_list_inbox[i]['entry_id'] or "
+                        "outlook_search[i]['entry_id']."
+                    ),
+                },
+            },
             "required": ["entry_id"],
         },
         "endpoint": ("outlook", "read_thread"),
@@ -335,11 +352,20 @@ TOOLS: list[dict] = [
     {
         "name": "outlook_draft_reply",
         "family": "outlook",
-        "description": "Create a Reply or Reply-All draft for the given message. By default the draft pops up in Outlook for the user to review + Send. Sets `send=true` only if the user has explicitly enabled 'allow ArchHub to send' in Settings.",
+        "description": (
+            "Create a Reply or Reply-All draft for a single message. "
+            "REQUIRES a real entry_id from outlook_list_inbox / "
+            "outlook_search. By default the draft pops up in Outlook "
+            "for the user to review + Send. Set send=true only when "
+            "explicitly told."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "entry_id": {"type": "string"},
+                "entry_id": {
+                    "type": "string",
+                    "description": "Opaque MAPI entry id from list/search.",
+                },
                 "body":     {"type": "string"},
                 "reply_all": {"type": "boolean", "default": False},
                 "send":      {"type": "boolean", "default": False},
@@ -351,11 +377,18 @@ TOOLS: list[dict] = [
     {
         "name": "outlook_save_attachments",
         "family": "outlook",
-        "description": "Save every attachment from the message identified by entry_id into dest_dir. Returns the list of saved paths.",
+        "description": (
+            "Save every attachment from one message into dest_dir. "
+            "REQUIRES a real entry_id from outlook_list_inbox / "
+            "outlook_search. Returns the list of saved paths."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "entry_id": {"type": "string"},
+                "entry_id": {
+                    "type": "string",
+                    "description": "Opaque MAPI entry id from list/search.",
+                },
                 "dest_dir": {"type": "string"},
             },
             "required": ["entry_id", "dest_dir"],
@@ -365,7 +398,16 @@ TOOLS: list[dict] = [
     {
         "name": "outlook_set_categories",
         "family": "outlook",
-        "description": "Tag (categorize) a message with one or more Outlook category names. Categories appear as coloured tags + are filterable in the Outlook UI. Use mode='set' to replace existing categories, 'add' to append, 'remove' to drop. Categories that don't exist yet are auto-registered the first time the user views the message.",
+        "description": (
+            "Tag one message with category names. Categories appear "
+            "as coloured tags + are filterable in the Outlook UI. "
+            "REQUIRES a real entry_id from outlook_list_inbox / "
+            "outlook_search — entry_id is an opaque MAPI id, NOT a "
+            "description. For bulk categorisation: list_inbox first, "
+            "then loop set_categories per item['entry_id']. "
+            "mode='set' replaces, 'add' appends, 'remove' drops. "
+            "Unknown categories auto-register on first set."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

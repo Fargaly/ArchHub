@@ -424,6 +424,138 @@ def set_categories_by_filter(*, categories: list[str],
         }
 
 
+# Outlook folder constants.
+_OL_FOLDER_SENT = 5
+_OL_FOLDER_DRAFTS = 16
+
+
+def list_sent_items(*, limit: int = 20,
+                     days: int = 0) -> list[dict]:
+    """List recent messages from the Sent Items folder. Mirror of
+    list_inbox for the sent side."""
+    with com_thread():
+        ns = _ns()
+        items = ns.GetDefaultFolder(_OL_FOLDER_SENT).Items
+        items.Sort("[SentOn]", True)
+        out: list[dict] = []
+        from datetime import datetime, timedelta
+        cutoff = None
+        if days and days > 0:
+            cutoff = datetime.now() - timedelta(days=int(days))
+        for i, m in enumerate(items):
+            if i >= int(limit or 20):
+                break
+            try:
+                sent_on = getattr(m, "SentOn", None)
+                if cutoff is not None and sent_on:
+                    try:
+                        ts = datetime(sent_on.year, sent_on.month,
+                                       sent_on.day, sent_on.hour,
+                                       sent_on.minute, sent_on.second)
+                        if ts < cutoff:
+                            break
+                    except Exception:
+                        pass
+                to_emails = []
+                try:
+                    for r in (getattr(m, "Recipients", None) or []):
+                        addr = getattr(r, "Address", "") or ""
+                        if addr:
+                            to_emails.append(str(addr))
+                except Exception:
+                    pass
+                out.append({
+                    "entry_id": str(getattr(m, "EntryID", "") or ""),
+                    "subject": str(getattr(m, "Subject", "") or ""),
+                    "to": to_emails,
+                    "sent_on": str(sent_on) if sent_on else "",
+                    "body_preview": (str(getattr(m, "Body", "") or "")
+                                      [:200]),
+                    "categories": str(getattr(m, "Categories", "") or ""),
+                })
+            except Exception:
+                continue
+        return out
+
+
+def auto_categorize_by_subject_keywords(
+        *, keyword_map: dict, days: int = 30,
+        limit: int = 500, include_sent: bool = False) -> dict:
+    """Content-based bulk categoriser. Takes a {keyword: category}
+    map; for each keyword applies the category to every message
+    whose subject OR body contains the keyword (case-insensitive).
+
+    Example call:
+      keyword_map = {
+        'Tower-A': 'Tower-A',
+        'RFI': 'RFIs',
+        'invoice': 'Finance',
+      }
+    → Tags all messages with 'Tower-A' in subject/body as 'Tower-A',
+       all with 'RFI' as 'RFIs', etc. Each message can land in
+       multiple categories (mode='add').
+
+    Pairs with auto_categorize_by_sender for content-based grouping
+    when sender-domain grouping isn't right. The model picks the
+    keyword_map from context — for ambiguous bulk requests just
+    call auto_categorize_by_sender instead.
+    """
+    if not keyword_map:
+        return {"status": "error",
+                "error": "keyword_map empty — pass at least one entry."}
+    with com_thread():
+        # One full scan of inbox (+ sent if requested) up front.
+        scope: list[dict] = list(_search_inner(
+            query="", sender="", subject_contains="",
+            days=int(days or 30), limit=int(limit or 500),
+        ))
+        if include_sent:
+            scope.extend(list_sent_items(limit=int(limit or 500),
+                                           days=days))
+        applied: list[dict] = []
+        errors: list[dict] = []
+        for kw, cat in (keyword_map or {}).items():
+            if not kw or not cat:
+                continue
+            kwl = str(kw).lower()
+            hits = []
+            for it in scope:
+                subj = (it.get("subject") or "").lower()
+                body = (it.get("body_preview") or
+                         it.get("body") or "").lower()
+                if kwl in subj or kwl in body:
+                    hits.append(it)
+            touched = 0
+            for it in hits:
+                eid = it.get("entry_id")
+                if not eid:
+                    continue
+                try:
+                    r = _set_categories_inner(eid, [str(cat)],
+                                                mode="add")
+                    if r.get("status") == "ok":
+                        touched += 1
+                except Exception as ex:
+                    errors.append({
+                        "keyword": kw, "entry_id": eid,
+                        "error": f"{type(ex).__name__}: {ex}",
+                    })
+            applied.append({
+                "keyword": kw, "category": cat,
+                "matched": len(hits), "touched": touched,
+            })
+        return {
+            "status": "ok",
+            "scope": len(scope),
+            "applied": applied,
+            "errors": errors[:10],
+            "summary": (
+                f"Tagged {sum(a['touched'] for a in applied)} "
+                f"messages across {len(applied)} keywords."
+            ),
+        }
+
+
 def auto_categorize_by_sender(*, days: int = 30,
                                 limit: int = 500,
                                 min_messages: int = 2) -> dict:

@@ -475,6 +475,60 @@ TOOLS: list[dict] = [
         "endpoint": ("outlook", "set_categories_by_filter"),
     },
     {
+        "name": "outlook_list_sent_items",
+        "family": "outlook",
+        "description": (
+            "List recent messages from the Sent Items folder. "
+            "Mirror of outlook_list_inbox but for outgoing mail. "
+            "Each item has entry_id / subject / to (list of "
+            "recipients) / sent_on / body_preview / categories."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20},
+                "days": {"type": "integer", "default": 0},
+            },
+            "required": [],
+        },
+        "endpoint": ("outlook", "list_sent_items"),
+    },
+    {
+        "name": "outlook_auto_categorize_by_subject_keywords",
+        "family": "outlook",
+        "description": (
+            "Content-based bulk categoriser. Takes a "
+            "{keyword: category_name} map. For each keyword, tags "
+            "every message whose subject OR body contains the "
+            "keyword (case-insensitive) with the matching category. "
+            "Each message can land in multiple categories. "
+            "include_sent=true also scans Sent Items.\n"
+            "\n"
+            "USE THIS when user wants categorisation by PROJECT "
+            "CONTENT (e.g. 'sort by project name') AND you already "
+            "know the project keywords. If projects are unknown, "
+            "use outlook_auto_categorize_by_sender first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keyword_map": {
+                    "type": "object",
+                    "description": (
+                        "Map of keyword → category name. "
+                        "Example: {'Tower-A': 'Tower-A', "
+                        "'RFI': 'RFIs', 'invoice': 'Finance'}."
+                    ),
+                },
+                "days": {"type": "integer", "default": 30},
+                "limit": {"type": "integer", "default": 500},
+                "include_sent": {"type": "boolean", "default": False},
+            },
+            "required": ["keyword_map"],
+        },
+        "endpoint": ("outlook", "auto_categorize_by_subject_keywords"),
+    },
+    {
         "name": "outlook_auto_categorize_by_sender",
         "family": "outlook",
         "description": (

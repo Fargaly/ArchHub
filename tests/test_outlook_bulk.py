@@ -205,6 +205,45 @@ class TestAutoCategoriseImpl:
         assert "Archhub" in names
 
 
+class TestAutoCategoriseByKeywords:
+    def test_keyword_matches_subject(self):
+        from connectors import outlook_runner as r
+        fake_msgs = [
+            {"entry_id": "a", "subject": "Tower-A DD Set", "body_preview": ""},
+            {"entry_id": "b", "subject": "RFI 0142 Tower-A",
+             "body_preview": "Re: foundation"},
+            {"entry_id": "c", "subject": "Invoice 99",
+             "body_preview": "Please pay"},
+        ]
+        tagged = []
+        def fake_set(eid, cats, *, mode):
+            tagged.append((eid, list(cats), mode))
+            return {"status": "ok", "entry_id": eid,
+                    "categories": list(cats)}
+        with patch("connectors.outlook_runner.com_thread"), \
+             patch.object(r, "_search_inner", return_value=fake_msgs), \
+             patch.object(r, "_set_categories_inner",
+                           side_effect=fake_set):
+            out = r.auto_categorize_by_subject_keywords(keyword_map={
+                "Tower-A": "Tower-A",
+                "Invoice": "Finance",
+            })
+        # Tower-A keyword should hit msgs a, b (both have Tower-A).
+        # Invoice should hit c.
+        # Total tags: 3 (2 for Tower-A, 1 for Finance).
+        assert out["status"] == "ok"
+        applied = {a["keyword"]: a for a in out["applied"]}
+        assert applied["Tower-A"]["matched"] == 2
+        assert applied["Invoice"]["matched"] == 1
+        assert all(mode == "add" for _, _, mode in tagged)
+
+    def test_empty_keyword_map_errors(self):
+        from connectors import outlook_runner as r
+        with patch("connectors.outlook_runner.com_thread"):
+            out = r.auto_categorize_by_subject_keywords(keyword_map={})
+        assert out["status"] == "error"
+
+
 class TestSystemPromptAdvertisesBulkTool:
     def test_prompt_mentions_set_categories_by_filter(self):
         from unittest.mock import MagicMock

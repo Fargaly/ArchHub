@@ -769,12 +769,12 @@ class StudioShell(QMainWindow):
 
     def _memory_pill_qss(self, style: str) -> str:
         # Inline so we don't bloat the global stylesheet.
-        bg, fg, border = T["bgRaised"], T["textMuted"], T["line"]
+        bg, fg, border = T["bgRaised"], T["inkMuted"], T["line"]
         if style == "studioPillAccent":
             bg, fg = T["accentSoft"], T["accent"]
             border = T["accent"]
         elif style == "studioPillMuted":
-            bg, fg = T["bgRaised"], T["textMuted"]
+            bg, fg = T["bgRaised"], T["inkMuted"]
         return (f"padding:3px 9px; border-radius:11px; "
                 f"font-family:{TYPE['fontMono']}; font-size:11px; "
                 f"background:{bg}; color:{fg}; "

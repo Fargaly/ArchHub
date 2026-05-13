@@ -94,6 +94,22 @@ def save_session(session: Session, name: str = "", path: Optional[Path] = None,
             "before saving."
         )
 
+    # ADR-003 Phase 2: dual-write the graph projection. If the session
+    # already has a `graph` (canvas authored it), keep it but refresh
+    # its conversation node body with the latest messages. Otherwise
+    # auto-wrap the legacy session into a single-`conversation.chat`-
+    # node graph. Pure additive — legacy `_messages` continues to be
+    # written so v1.3.x loaders keep working.
+    from session_graph_migrator import (
+        wrap_legacy_as_graph, update_graph_messages,
+    )
+    if session.graph is None:
+        session.graph = wrap_legacy_as_graph(
+            session, messages, name=name or slug,
+        )
+    else:
+        update_graph_messages(session.graph, messages or [])
+
     data = session.to_dict()
     data["_name"] = name or slug
     data["_saved_at"] = datetime.now().isoformat()
@@ -104,6 +120,7 @@ def save_session(session: Session, name: str = "", path: Optional[Path] = None,
     expected_msgs = len(msg_list)
     expected_params = len(data.get("parameters") or [])
     expected_chain = len(data.get("chain") or [])
+    expected_graph_nodes = len((data.get("graph") or {}).get("nodes") or [])
 
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
@@ -115,9 +132,11 @@ def save_session(session: Session, name: str = "", path: Optional[Path] = None,
         got_msgs = len(verify.get("_messages") or [])
         got_params = len(verify.get("parameters") or [])
         got_chain = len(verify.get("chain") or [])
+        got_graph_nodes = len((verify.get("graph") or {}).get("nodes") or [])
         if (got_msgs != expected_msgs
                 or got_params != expected_params
-                or got_chain != expected_chain):
+                or got_chain != expected_chain
+                or got_graph_nodes != expected_graph_nodes):
             try:
                 path.unlink(missing_ok=True)
             except Exception:
@@ -125,8 +144,10 @@ def save_session(session: Session, name: str = "", path: Optional[Path] = None,
             raise SessionRoundtripError(
                 f"Save verification failed for '{name or slug}': "
                 f"wrote msgs={expected_msgs}/params={expected_params}/"
-                f"chain={expected_chain} but read back msgs={got_msgs}/"
-                f"params={got_params}/chain={got_chain}. File removed."
+                f"chain={expected_chain}/graph_nodes={expected_graph_nodes}"
+                f" but read back msgs={got_msgs}/params={got_params}/"
+                f"chain={got_chain}/graph_nodes={got_graph_nodes}."
+                f" File removed."
             )
     except SessionRoundtripError:
         raise
@@ -322,6 +343,13 @@ def _session_from_dict(data: dict) -> Session:
             session.chain.append(step)
         except Exception:
             pass
+
+    # ADR-003 Phase 2: restore the graph projection if present. Older
+    # session files without `graph` leave it at None — chat surface
+    # continues to read `_messages` as before.
+    graph_dict = data.get("graph")
+    if isinstance(graph_dict, dict) and graph_dict.get("nodes"):
+        session.graph = graph_dict
 
     return session
 

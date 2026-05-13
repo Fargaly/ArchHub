@@ -393,27 +393,39 @@ def main() -> int:
     # Home/Skills/Workflows/Marketplace/Telemetry/Settings pages,
     # left rail (brand · ⌘K · nav · hosts · threads · user), right
     # inspector (304px), bottom mono status rule (26px).
+    # v1.4.0-alpha (ADR-003 pivot): WorkspaceShell — graph-first canvas
+    # as the only surface. Falls through to StudioShell when the new
+    # shell can't construct (e.g. workflows.registry import error),
+    # then to bare ChatWindow as a last resort.
     surface = window
     try:
-        from studio_shell import StudioShell
-        shell = StudioShell(chat_widget=window, router=router,
-                            manager=manager, tools=tools)
-        # Tray + summon address the shell. The bare ChatWindow stays
-        # alive as the backend but is never shown.
+        from workspace_shell import WorkspaceShell
+        shell = WorkspaceShell(chat_widget=window, router=router,
+                                manager=manager, tools=tools)
         surface = shell
     except Exception:
-        # If the shell fails to build for any reason, fall back to
-        # the legacy bare ChatWindow so the app still launches. Logs
-        # the traceback to APP_ROOT/../boot.log so we can debug a
-        # silent shell-build failure on a user's machine.
-        surface = window
         try:
             import traceback as _tb
             with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                _f.write("StudioShell build failed — falling back to bare ChatWindow:\n")
+                _f.write("WorkspaceShell build failed — trying StudioShell:\n")
                 _tb.print_exc(file=_f)
         except Exception:
             pass
+        # Fallback A: legacy StudioShell.
+        try:
+            from studio_shell import StudioShell
+            shell = StudioShell(chat_widget=window, router=router,
+                                manager=manager, tools=tools)
+            surface = shell
+        except Exception:
+            surface = window
+            try:
+                import traceback as _tb
+                with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
+                    _f.write("StudioShell build failed — falling back to bare ChatWindow:\n")
+                    _tb.print_exc(file=_f)
+            except Exception:
+                pass
 
     # Wire the single-instance summon signal: when a second launch
     # asks us to come forward, surface the window.

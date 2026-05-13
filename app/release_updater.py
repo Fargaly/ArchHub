@@ -352,18 +352,19 @@ def run_installer(installer_path: Path, *, silent: bool = True,
 
 
 # ---------------------------------------------------------------------------
-def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
-    """Background-thread entry point. Called from main.py shortly after
-    launch. Behaviour gated by the 'auto_update_mode' setting:
+def check_and_download(*, on_status=None, force: bool = False) -> dict:
+    """Background-thread helper: check + download (do NOT install).
 
-      'off'    — never check
-      'notify' — check only; never install. Shows a Windows toast +
-                 a status note in the chat that an update is available.
-      'auto'   — check + silent install if the previous check is more
-                 than 24h ago. Default for new installs.
+    Pulled out of `auto_check_and_apply` in v1.0.4 so the chat window's
+    "Restart to install" banner has a clean way to download in the
+    background and only ask the user to relaunch when ready.
 
-    `force=True` overrides the 24h cooldown — used by the Settings
-    'Check for updates now' button.
+    Returns one of:
+        {"status": "ok", "up_to_date": True, "current": "1.0.4"}
+        {"status": "ok", "up_to_date": False, "current": "...",
+         "release": ReleaseInfo, "installer_path": Path}
+        {"status": "error", "error": "..."}
+        {"status": "skip", "reason": "24h cooldown" | "mode=off"}
     """
     on_status = on_status or (lambda *_a, **_k: None)
     try:
@@ -371,16 +372,18 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
     except Exception:
         return {"status": "skip", "reason": "secrets_store unavailable"}
 
-    mode = (load_setting("auto_update_mode") or "auto").lower()
+    mode = (load_setting("auto_update_mode") or "prompt").lower()
     if mode == "off":
         return {"status": "skip", "reason": "mode=off"}
 
-    # 24h cooldown so we don't slam GitHub on every launch.
     if not force:
         import time as _t
         last = float(load_setting("auto_update_last_check") or 0)
-        if _t.time() - last < 24 * 3600:
-            return {"status": "skip", "reason": "24h cooldown"}
+        # 6h cooldown — short enough that a user leaving ArchHub open
+        # all day gets the prompt within hours of a release, long
+        # enough that we don't hammer GitHub from idle desktops.
+        if _t.time() - last < 6 * 3600:
+            return {"status": "skip", "reason": "6h cooldown"}
         save_setting("auto_update_last_check", _t.time())
 
     on_status("Checking for ArchHub updates…", 10, "")
@@ -389,13 +392,72 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
     except Exception as ex:
         return {"status": "error", "error": str(ex)[:300]}
     if not ok:
-        on_status(f"ArchHub up to date (v{current})", 100, "")
         return {"status": "ok", "up_to_date": True, "current": current}
 
     on_status(f"Update available: {release.tag_name}", 30,
               f"installed {current} → {release.tag_name}")
 
-    # Surface a Windows toast either way (notify + auto both ping).
+    try:
+        on_status(f"Downloading {release.tag_name}", 50, "")
+        installer = download_asset(release)
+    except Exception as ex:
+        return {"status": "error", "error": f"download failed: {ex}"}
+
+    on_status(f"{release.tag_name} ready — restart to install", 100, "")
+    return {
+        "status": "ok",
+        "up_to_date": False,
+        "current": current,
+        "release": release,
+        "installer_path": installer,
+    }
+
+
+def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
+    """Background-thread entry point. Called from main.py shortly after
+    launch. Behaviour gated by the 'auto_update_mode' setting:
+
+      'off'    — never check
+      'notify' — toast only; legacy behaviour. No in-app prompt.
+      'prompt' — silent download; the chat window banner asks the user
+                 to restart when ready. Claude-Desktop pattern. Default
+                 for new installs.
+      'silent' — old 'auto' behaviour. Silent install + force-restart
+                 with no user prompt. Opt-in (sysadmin / kiosk).
+
+    `force=True` overrides the cooldown — used by the Settings
+    'Check for updates now' button.
+
+    Legacy callers using mode='auto' get mapped to 'silent' for
+    behavioural compatibility.
+    """
+    on_status = on_status or (lambda *_a, **_k: None)
+    try:
+        from secrets_store import load_setting
+    except Exception:
+        return {"status": "skip", "reason": "secrets_store unavailable"}
+
+    mode = (load_setting("auto_update_mode") or "prompt").lower()
+    # Legacy compatibility: 'auto' meant force-install + force-restart.
+    # Map it to the new explicit name so old configs still behave the
+    # same way.
+    if mode == "auto":
+        mode = "silent"
+    if mode == "off":
+        return {"status": "skip", "reason": "mode=off"}
+
+    # check_and_download enforces the 6h cooldown — re-using it here
+    # gives us "check + download" for free.
+    res = check_and_download(on_status=on_status, force=force)
+    if res.get("status") != "ok" or res.get("up_to_date"):
+        if res.get("status") == "ok" and res.get("up_to_date"):
+            on_status(f"ArchHub up to date (v{res.get('current')})", 100, "")
+        return res
+    release = res.get("release")
+    installer = res.get("installer_path")
+    current = res.get("current")
+
+    # Windows toast — both notify + silent fire it.
     try:
         import sys
         from pathlib import Path as _P
@@ -403,23 +465,23 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
         from notify import notify as _toast
         _toast(
             f"ArchHub {release.tag_name} available",
-            f"{'Installing silently…' if mode == 'auto' else 'Open Settings to install.'}",
+            ("Installing silently…" if mode == "silent"
+             else "Restart ArchHub to install."),
             html=None, toast=True,
         )
     except Exception:
         pass
 
-    if mode == "notify":
+    if mode in ("notify", "prompt"):
+        # Caller (chat_window's update watcher) consumes the result and
+        # surfaces the in-app banner.
         return {"status": "ok", "up_to_date": False,
-                "current": current, "latest": release.tag_name}
+                "current": current,
+                "release": release,
+                "installer_path": installer,
+                "latest": release.tag_name}
 
-    # mode == 'auto' → download + silent install
-    try:
-        on_status(f"Downloading {release.tag_name}", 50, "")
-        installer = download_asset(release)
-    except Exception as ex:
-        return {"status": "error", "error": f"download failed: {ex}"}
-
+    # mode == 'silent' → install + restart NOW
     on_status(f"Installing {release.tag_name} silently", 90, "")
     try:
         run_installer(installer, silent=True, relaunch=True)
@@ -429,16 +491,37 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
     return {"status": "ok", "installing": True}
 
 
-def schedule_auto_check(delay_seconds: float = 6.0) -> None:
-    """Spawn a daemon thread that runs auto_check_and_apply after a
-    short delay. Call once from main.py post-window-shown. Failures
-    are swallowed — never blocks the UI thread."""
+def schedule_auto_check(delay_seconds: float = 6.0,
+                          *, on_ready=None,
+                          period_seconds: float = 6 * 3600) -> None:
+    """Spawn a daemon thread that periodically checks for updates.
+
+    First check fires after `delay_seconds` so the UI is responsive at
+    launch; subsequent checks fire every `period_seconds`. Failures
+    are swallowed — never blocks the UI thread.
+
+    `on_ready(installer_path, release)` is called when a new version
+    has been downloaded and is waiting to install. The callback runs
+    on the daemon thread; consumers must marshal to the Qt main thread
+    themselves (e.g. via a pyqtSignal).
+    """
     import threading
     def _runner():
         import time
         time.sleep(delay_seconds)
-        try:
-            auto_check_and_apply()
-        except Exception:
-            pass
-    threading.Thread(target=_runner, daemon=True).start()
+        while True:
+            try:
+                res = auto_check_and_apply()
+                if (res.get("status") == "ok"
+                        and not res.get("up_to_date")
+                        and res.get("installer_path")
+                        and on_ready is not None):
+                    try:
+                        on_ready(res["installer_path"], res.get("release"))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(period_seconds)
+    threading.Thread(target=_runner, daemon=True,
+                      name="archhub-update-watcher").start()

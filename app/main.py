@@ -460,12 +460,20 @@ def main() -> int:
             # but hidden" and force-show the shell every time. Single
             # source of truth: `surface`.
             surface.show_centered()
-        # Auto-update — fires 6s after launch on a daemon thread, so
-        # the UI is responsive first. 24h cooldown by default. Mode
-        # toggle in Settings → Updates: off / notify / auto.
+        # Auto-update — fires 6s after launch + every 6h after that,
+        # on a daemon thread. UI stays responsive at launch. Modes
+        # (Settings → Updates):
+        #   off     — never check
+        #   notify  — Windows toast only (legacy)
+        #   prompt  — download silently, show in-app banner asking the
+        #             user to restart. Claude-Desktop pattern. Default.
+        #   silent  — install + force-restart with no prompt. Opt-in.
         try:
             from release_updater import schedule_auto_check
-            schedule_auto_check(delay_seconds=6.0)
+            # ChatWindow is always the real backend (even when wrapped
+            # by StudioShell). It owns the banner widget + signal.
+            on_ready = getattr(window, "_on_update_ready", None)
+            schedule_auto_check(delay_seconds=6.0, on_ready=on_ready)
         except Exception:
             pass
         # First-run telemetry consent — single question, before the

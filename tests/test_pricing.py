@@ -83,7 +83,7 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.0.3 adds AI-as-tool — primary
-        # model can delegate to ChatGPT / Gemini / LM Studio /
-        # Antigravity (stub) via ai_*_ask tools.
-        assert v == "1.0.3"
+        # Track the latest stable. v1.0.4 ships the Claude-Desktop
+        # update prompt — silent download in the background, in-app
+        # banner asking the user to Restart now / Later.
+        assert v == "1.0.4"

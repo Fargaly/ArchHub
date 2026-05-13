@@ -3,6 +3,60 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.4] — 2026-05-13
+
+The "auto-update like Claude Desktop" release. Until now the choice
+was "off / notify (toast only) / silent (force install + restart)".
+v1.0.4 adds the middle ground every user actually wants: ArchHub
+downloads the new build in the background and shows an in-app banner
+asking the user to relaunch at a convenient time.
+
+### Added
+
+- **In-app update banner** in `chat_window` — sits between the
+  header and the chat surface, painted with the brand accent. Shows
+  the release tag, a Restart now button (primary, fires the installer
+  + auto-relaunch via Inno Setup `/RESTARTAPPLICATIONS`), and a Later
+  button (dismisses; installer stays on disk for the next prompt).
+- **New `prompt` update mode** — now the default. Modes:
+    * `off` — never check
+    * `notify` — Windows toast only (legacy)
+    * `prompt` — silent download + in-app banner (new default)
+    * `silent` — install + force-restart with no prompt (opt-in)
+- **`release_updater.check_and_download()`** — splits the check + GH
+  download from the install step so the banner has a clean way to
+  download in the background. Returns `installer_path` for the UI to
+  consume.
+- **Periodic update watcher** — `schedule_auto_check(period_seconds=
+  6*3600)` keeps probing every 6 hours, not just at launch. A user
+  who leaves ArchHub running all day gets the prompt within hours of
+  a release ship.
+- **`on_ready(installer_path, release)` callback** plumbed through
+  `schedule_auto_check` → `main.py` → `chat_window._on_update_ready`.
+  Daemon-thread callback marshals to the Qt main thread via the new
+  `ChatWindow.update_ready_signal` pyqtSignal.
+- **9 new tests** in `tests/test_update_prompt_flow.py` cover: off
+  mode skips, up-to-date returns ok, new-version downloads but does
+  NOT install, prompt mode returns installer path, silent mode
+  installs, legacy `auto` maps to silent, notify never installs,
+  on_ready fires with installer path, ChatWindow banner wiring.
+
+### Changed
+
+- `release_updater.auto_check_and_apply()` now delegates to
+  `check_and_download()` internally; the only branch left in the old
+  function is "should we run the installer now or hand the installer
+  to the UI?". Legacy `mode == "auto"` is mapped to `"silent"` so
+  existing configs keep their behaviour.
+- Update cooldown shortened from **24 h → 6 h** — long-running
+  sessions now see the prompt the same day a release lands.
+- `main.py` — passes `window._on_update_ready` to
+  `schedule_auto_check(on_ready=...)`.
+
+### Tests
+
+353 passing in `tests/` (up from 344), 24 in `cloud_backend/tests/`.
+
 ## [1.0.3] — 2026-05-13
 
 The "AI-as-tool" release. Architects increasingly mix multiple AIs in

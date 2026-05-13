@@ -1162,6 +1162,132 @@ class ChatWindow(QMainWindow):
 
     # ---- UI construction ---------------------------------------------------
 
+    # ---------------------------------------------------------------------
+    # Update banner — "Update available · Restart now / Later"
+    # Wired from main.py via release_updater.schedule_auto_check(on_ready=...)
+    # which calls self._on_update_ready on a daemon thread; we marshal
+    # back to the Qt main thread via update_ready_signal.
+    # ---------------------------------------------------------------------
+    update_ready_signal = pyqtSignal(object, object)  # (installer_path, release)
+
+    def _build_update_banner(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("updateBanner")
+        bar.setStyleSheet(
+            "QFrame#updateBanner {"
+            "  background:#2a2018; border-top:1px solid #4a3a28;"
+            "  border-bottom:1px solid #4a3a28; }"
+            "QLabel#updateBannerLabel { color:#f0d49a; padding:0; }"
+            "QPushButton#updateBannerPrimary {"
+            "  background:#d97757; color:#fff; border:none;"
+            "  border-radius:6px; padding:6px 14px; font-weight:500; }"
+            "QPushButton#updateBannerPrimary:hover { background:#e58866; }"
+            "QPushButton#updateBannerGhost {"
+            "  background:transparent; color:#f0d49a;"
+            "  border:1px solid #4a3a28; border-radius:6px;"
+            "  padding:6px 14px; }"
+            "QPushButton#updateBannerGhost:hover { color:#fff;"
+            "  border-color:#d97757; }"
+        )
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(20, 10, 16, 10)
+        h.setSpacing(12)
+
+        icon = QLabel("↻")
+        icon.setStyleSheet("color:#d97757; font-size:16px; font-weight:bold;")
+        h.addWidget(icon)
+
+        self._update_banner_label = QLabel("Update downloaded · restart to install.")
+        self._update_banner_label.setObjectName("updateBannerLabel")
+        h.addWidget(self._update_banner_label, 1)
+
+        self._update_banner_later = QPushButton("Later")
+        self._update_banner_later.setObjectName("updateBannerGhost")
+        self._update_banner_later.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_banner_later.clicked.connect(self._dismiss_update_banner)
+        h.addWidget(self._update_banner_later)
+
+        self._update_banner_restart = QPushButton("Restart now")
+        self._update_banner_restart.setObjectName("updateBannerPrimary")
+        self._update_banner_restart.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_banner_restart.clicked.connect(self._restart_for_update)
+        h.addWidget(self._update_banner_restart)
+
+        self._update_banner = bar
+        self._update_banner_installer = None  # populated when signal fires
+        self._update_banner_release = None
+        bar.setVisible(False)
+        # Cross-thread marshalling: daemon-thread callback emits the
+        # signal, the slot runs on the Qt main thread.
+        self.update_ready_signal.connect(self._on_update_ready_qt)
+        return bar
+
+    def _on_update_ready(self, installer_path, release) -> None:
+        """Daemon-thread callback from release_updater.schedule_auto_check.
+        Emits a Qt signal so the banner update runs on the main thread."""
+        try:
+            self.update_ready_signal.emit(installer_path, release)
+        except Exception:
+            pass
+
+    def _on_update_ready_qt(self, installer_path, release) -> None:
+        """Main-thread handler — show the banner with the release tag."""
+        self._update_banner_installer = installer_path
+        self._update_banner_release = release
+        tag = getattr(release, "tag_name", None) or getattr(release, "tag", "")
+        msg = (f"ArchHub {tag} downloaded · restart to install."
+               if tag else "Update downloaded · restart to install.")
+        try:
+            self._update_banner_label.setText(msg)
+            self._update_banner.setVisible(True)
+        except Exception:
+            pass
+        # Also save the snooze breadcrumb so we don't re-prompt on
+        # every check while the user is choosing "Later".
+        try:
+            from secrets_store import save_setting
+            save_setting("update_pending_tag", str(tag))
+        except Exception:
+            pass
+
+    def _dismiss_update_banner(self) -> None:
+        """User clicked Later — hide the banner but keep the installer
+        on disk so the next prompt (or next launch) can use it."""
+        try:
+            self._update_banner.setVisible(False)
+        except Exception:
+            pass
+
+    def _restart_for_update(self) -> None:
+        """User clicked Restart now — fire the silent installer.
+        run_installer calls os._exit(0) after the spawn; Inno Setup's
+        /RESTARTAPPLICATIONS brings ArchHub back up automatically."""
+        if not self._update_banner_installer:
+            self._dismiss_update_banner()
+            return
+        try:
+            self._update_banner_label.setText("Installing… ArchHub will reopen shortly.")
+            self._update_banner_restart.setEnabled(False)
+            self._update_banner_later.setEnabled(False)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            import release_updater
+            release_updater.run_installer(
+                self._update_banner_installer,
+                silent=True, relaunch=True,
+            )
+        except Exception as ex:
+            try:
+                QMessageBox.warning(
+                    self, "Update", f"Could not start installer: {ex}"
+                )
+                self._update_banner_restart.setEnabled(True)
+                self._update_banner_later.setEnabled(True)
+            except Exception:
+                pass
+
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -1170,6 +1296,12 @@ class ChatWindow(QMainWindow):
         outer.setSpacing(0)
 
         outer.addWidget(self._build_header())
+
+        # Update banner — sits between header and body. Hidden until
+        # the background update watcher signals that a new release has
+        # been downloaded. Claude-Desktop pattern: download silently,
+        # then prompt the user to restart at a convenient time.
+        outer.addWidget(self._build_update_banner())
 
         # Body splits horizontally: chat on the left, parameters sidebar on the right.
         body_split = QSplitter(Qt.Orientation.Horizontal)

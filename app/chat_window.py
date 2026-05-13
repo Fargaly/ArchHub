@@ -1823,11 +1823,17 @@ class ChatWindow(QMainWindow):
         self._welcome_widget = welcome
 
     def _build_input_bar(self) -> QWidget:
+        """LM-Studio-pattern input: floating wrapper, input above tool
+        chips below. Chips: Think (reasoning), Vision (image attach),
+        Files (chat-with-files placeholder), Code (execute_python).
+        Click toggles state; tool_engine + router consume the toggles
+        next turn.
+        """
         wrapper = QFrame()
         wrapper.setObjectName("inputBar")
         v = QVBoxLayout(wrapper)
         v.setContentsMargins(20, 8, 20, 14)
-        v.setSpacing(4)
+        v.setSpacing(6)
 
         # Image preview bar (hidden by default)
         self._preview_bar = QFrame()
@@ -1850,22 +1856,19 @@ class ChatWindow(QMainWindow):
         pb_layout.addWidget(preview_scroll)
         v.addWidget(self._preview_bar)
 
-        # Input row
+        # Input row (top)
         h = QHBoxLayout()
         h.setSpacing(10)
 
-        attach_btn = QPushButton("\U0001f4ce")
+        attach_btn = QPushButton("+")
         attach_btn.setObjectName("ghostButton")
-        attach_btn.setFixedWidth(36)
+        attach_btn.setFixedWidth(32)
         attach_btn.setToolTip("Attach image file")
         attach_btn.clicked.connect(self._on_attach_image)
         h.addWidget(attach_btn)
 
         self.input = _PasteInput()
-        self.input.setPlaceholderText(
-            "Message ArchHub… (Enter to send · Shift+Enter for newline · "
-            "Ctrl+V to paste image)"
-        )
+        self.input.setPlaceholderText("Send a message to the model…")
         self.input.setObjectName("inputField")
         self.input.returnPressed.connect(self._on_send)
         self.input.image_pasted.connect(self._on_image_pasted)
@@ -1883,7 +1886,81 @@ class ChatWindow(QMainWindow):
         h.addWidget(self.stop_btn)
 
         v.addLayout(h)
+
+        # Tool-chip row (bottom) — LM-Studio pattern.
+        # Each chip is checkable; toggling sets a flag the next send
+        # consumes. Click again to disable. Default OFF.
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(6)
+        chip_row.setContentsMargins(36, 0, 0, 0)   # align with input
+
+        self._chip_state = {
+            "think":  False,
+            "vision": False,
+            "files":  False,
+            "code":   False,
+        }
+        self._chip_buttons: dict[str, QPushButton] = {}
+        chip_specs = (
+            ("think",  "Think",  "Toggle extended thinking for this turn (anthropic budget_tokens / o-series reasoning_effort)"),
+            ("vision", "Vision", "Accept pasted/attached images this turn"),
+            ("files",  "Chat with Files", "Inline files referenced in this turn"),
+            ("code",   "Code",   "Permit execute_python tools this turn (otherwise auto-deny)"),
+        )
+        # Inline-style chips so they render correctly even when
+        # theme.qss hasn't been regenerated to know about `toolChip`.
+        # Pill shape, neutral off / warm-accent on.
+        chip_qss = (
+            "QPushButton#toolChip { "
+            "  background: transparent; "
+            "  color: #8a8a8c; "
+            "  border: 1px solid #3a3a3c; "
+            "  border-radius: 12px; "
+            "  padding: 3px 12px; "
+            "  font-size: 11px; "
+            "} "
+            "QPushButton#toolChip:hover { color: #e8e6dc; "
+            "  border-color: #5a5a5c; } "
+            "QPushButton#toolChip:checked { "
+            "  background: #d97757; color: #fff; "
+            "  border-color: #d97757; "
+            "} "
+        )
+        for key, label, tip in chip_specs:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setObjectName("toolChip")
+            btn.setStyleSheet(chip_qss)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.toggled.connect(lambda checked, k=key: self._on_chip_toggled(k, checked))
+            self._chip_buttons[key] = btn
+            chip_row.addWidget(btn)
+
+        # Right side of chip row — % indicator placeholder + future
+        # streaming progress dot (mirrors LM Studio's `18%` + stop).
+        chip_row.addStretch(1)
+        self._stream_pct = QLabel("")
+        self._stream_pct.setObjectName("streamPct")
+        chip_row.addWidget(self._stream_pct)
+
+        v.addLayout(chip_row)
         return wrapper
+
+    def _on_chip_toggled(self, key: str, checked: bool) -> None:
+        """Persist chip state on self._chip_state. Router reads this
+        on the next _on_send to decide which tool family to admit
+        (vision/files/code) or which thinking budget to apply."""
+        self._chip_state[key] = bool(checked)
+        # Surface to status bar so the user sees the toggle take effect.
+        try:
+            active = [k for k, v in self._chip_state.items() if v]
+            if active:
+                self.status_left.setText(f"chips: {', '.join(active)}")
+            else:
+                self.status_left.setText("")
+        except Exception:
+            pass
 
     def _build_status_bar(self) -> QWidget:
         """Slim status bar — collapses to zero height in steady state (v1.3.2).
@@ -2706,6 +2783,10 @@ class ChatWindow(QMainWindow):
             self.status_right.setText("Add API keys in Settings to start chatting")
 
     def _open_connectors(self) -> None:
+        # TODO(shadow-audit): orphan since v1.3.2. No menu line and no
+        # palette / programmatic caller wires to this. Remove after
+        # confirming no external caller depends on it (the modal is
+        # still reachable via onboarding.py "Open connector settings").
         dlg = ConnectorPanel(self.manager, self, router=self.router)
         dlg.exec()
         self._refresh_status()
@@ -3065,6 +3146,9 @@ class ChatWindow(QMainWindow):
         dlg.exec()
 
     def _open_reality_check(self) -> None:
+        # TODO(shadow-audit): orphan since v1.3.1. Telemetry page
+        # embeds RealityCheckPanel for the live surface. Remove after
+        # confirming no external caller depends on it.
         from reality_check_panel import RealityCheckDialog
         dlg = RealityCheckDialog(self.router, self)
         dlg.exec()

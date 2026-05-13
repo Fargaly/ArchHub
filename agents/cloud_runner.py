@@ -76,6 +76,8 @@ def _select_backend() -> str:
 _BACKENDS: dict[str, tuple[str, str]] = {
     "anthropic": ("anthropic_client", "AnthropicCompletion"),
     "openai":    ("openai_client",    "OpenAICompletion"),
+    "codex":     ("codex_client",     "CodexCompletion"),
+    "codex_cli": ("codex_cli_client", "CodexCliCompletion"),
     "gemini":    ("gemini_client",    "GeminiCompletion"),
     "lmstudio":  ("lmstudio_client",  "LMStudioCompletion"),
 }

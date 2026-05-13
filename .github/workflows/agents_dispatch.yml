@@ -1,0 +1,104 @@
+name: Agents dispatch
+
+# Drains the agents/ task queue in GitHub Actions every 30 minutes,
+# using Anthropic Claude Haiku as the LLM backend. Outputs land in
+# `agents/outputs/<dept>/<task-id>/completion.md` and get committed
+# back to the repo on a dedicated branch so they survive across runs.
+#
+# This is the 24/7 cloud version of the local `python -m agents.run`
+# loop the founder was running on his machine — runs free in GitHub's
+# infrastructure, no Fly.io deploy, no flyctl, no admin.
+#
+# Why every 30 min (not 10): each round can run 5-8 dispatches across
+# departments + each Claude call takes 10-60s; staying inside the
+# free GitHub Actions tier means we don't crank cadence higher than
+# we can actually drain.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes, best-effort
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "LLM backend (anthropic/openai/codex/gemini)"
+        required: false
+        default: "anthropic"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: agents-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Secrets are set per repo via `gh secret set`. Already populated
+      # for ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY,
+      # OPENROUTER_API_KEY.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY:    ${{ secrets.GOOGLE_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ARCHHUB_AGENTS_BACKEND: ${{ github.event.inputs.backend || 'anthropic' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r agents/requirements.txt
+
+      - name: Run one dispatch round
+        id: round
+        run: |
+          set -e
+          python -c "
+          import os, sys, time, json
+          # Force the right backend into the agents package.
+          import importlib
+          from agents.cloud_runner import _install_backend, _select_backend
+          backend = _select_backend()
+          print(f'[gh-dispatch] backend={backend}')
+          _install_backend(backend)
+          from agents.queue import TaskQueue
+          from agents.dispatcher import Dispatcher
+          q = TaskQueue()
+          d = Dispatcher(q)
+          start = time.time()
+          results = d.run_round()
+          elapsed = int(time.time() - start)
+          print(f'[gh-dispatch] complete in {elapsed}s; depts={len(results)}')
+          summary = {dept: {'ok': r.success, 'summary': (r.summary or r.error or '')[:120]}
+                     for dept, r in results.items()}
+          print(json.dumps(summary, indent=2))
+          # Stash for the next step
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'depts_run={len(results)}\n')
+              f.write(f'elapsed_seconds={elapsed}\n')
+          "
+
+      - name: Commit any new outputs
+        run: |
+          git config user.name "archhub-bot"
+          git config user.email "bot@archhub.app"
+          git add agents/outputs agents/state || true
+          if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -m "auto(agents): dispatch round $(date -u +%FT%TZ) — ${{ steps.round.outputs.depts_run }} depts, ${{ steps.round.outputs.elapsed_seconds }}s"
+            git push origin main || echo "push failed (race) — next round retries"
+          else
+            echo "no new outputs this round"
+          fi

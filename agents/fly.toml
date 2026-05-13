@@ -1,0 +1,57 @@
+# fly.toml — ArchHub Autonomous Agents (cloud daemon).
+#
+# This is a SEPARATE app from cloud_backend. Customer-facing API lives
+# at archhub-cloud; the autonomous-workforce daemon lives here at
+# archhub-agents. Different concerns, different lifecycles.
+#
+# One-time setup (or use `agents/deploy.ps1`):
+#   flyctl apps create archhub-agents
+#   flyctl volumes create archhub_agents_data --size 1 --region iad -a archhub-agents
+#   flyctl secrets set ANTHROPIC_API_KEY=sk-ant-... -a archhub-agents
+#   flyctl deploy --config agents/fly.toml --dockerfile agents/Dockerfile
+#
+# 24/7 vs scale-to-zero: this is a daemon — it doesn't serve requests,
+# it produces them. `auto_stop_machines = false` keeps it running.
+
+app = "archhub-agents"
+primary_region = "iad"
+
+[build]
+  dockerfile = "agents/Dockerfile"
+
+[env]
+  PORT = "8080"
+  ENV = "production"
+  ARCHHUB_AGENTS_BACKEND = "anthropic"
+  ARCHHUB_AGENTS_DATA_ROOT = "/data/agents"
+  ARCHHUB_AGENTS_CYCLE = "60"
+
+[[mounts]]
+  source = "archhub_agents_data"
+  destination = "/data"
+
+# Smallest VM that comfortably fits httpx + fastapi + 8 dept agents
+# idling. CPU is bursty (only when a task is running), so shared is fine.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1
+
+# Dashboard endpoint — opt-in public access. Comment out the whole
+# http_service block if you want the daemon strictly private and reach
+# it via `fly proxy 8080 -a archhub-agents` from a local shell.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # IMPORTANT: don't let Fly stop this machine — the loop won't run.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "60s"
+  method = "GET"
+  timeout = "5s"
+  path = "/healthz"

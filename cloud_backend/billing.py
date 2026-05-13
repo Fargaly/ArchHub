@@ -61,6 +61,42 @@ def create_checkout_url(*, user: dict, tier: str) -> Optional[str]:
     return session.url
 
 
+def create_company_checkout(*, company_id: str, plan: str,
+                              billing_email: Optional[str] = None,
+                              ) -> Optional[str]:
+    """Stripe Checkout for the company seat-based plan. Metadata
+    carries `company_id` so the webhook can route the resulting
+    subscription back to the correct row."""
+    if not _ensure_stripe():
+        return None
+    price = config.PLAN_PRICE_IDS.get(plan)
+    if not price:
+        return None
+    success_url = f"{config.PUBLIC_URL.rstrip('/')}/billing/success"
+    cancel_url = f"{config.PUBLIC_URL.rstrip('/')}/billing/cancel"
+    seats = config.PLAN_SEATS.get(plan, 1)
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer_email=billing_email or None,
+            # quantity = seats so Stripe shows per-seat pricing on the
+            # invoice; flip to `quantity=1` if the Stripe price already
+            # encodes the bundle.
+            line_items=[{"price": price, "quantity": seats}],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            client_reference_id=company_id,
+            allow_promotion_codes=True,
+            metadata={"company_id": company_id, "tier": plan,
+                      "kind": "company"},
+        )
+    except Exception as ex:
+        print(f"[stripe] company checkout.create failed: {ex}",
+              flush=True)
+        return None
+    return session.url
+
+
 def create_portal_url(*, user: dict) -> Optional[str]:
     """Stripe Customer Portal for plan changes / cancel / card update."""
     if not _ensure_stripe():
@@ -121,6 +157,36 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
     obj = event["data"]["object"]
 
     if etype == "checkout.session.completed":
+        meta = obj.get("metadata") or {}
+        # Company-scoped checkout (multi-seat plans). The router stamps
+        # `company_id` + `kind=company` into the session metadata so we
+        # can route the subscription update to the right table.
+        if meta.get("company_id") or meta.get("kind") == "company":
+            cid = meta.get("company_id") or obj.get("client_reference_id")
+            tier = meta.get("tier") or "studio"
+            stripe_customer = obj.get("customer")
+            sub_id = obj.get("subscription")
+            period_end = None
+            if sub_id:
+                try:
+                    sub = stripe.Subscription.retrieve(sub_id)
+                    period_end = int(sub.get("current_period_end") or 0)
+                except Exception:
+                    period_end = None
+            seat_limit = config.PLAN_SEATS.get(tier, 5)
+            if cid:
+                db.update_company(
+                    cid,
+                    plan=tier,
+                    seat_limit=seat_limit,
+                    stripe_customer_id=stripe_customer,
+                    stripe_subscription_id=sub_id,
+                    period_end=period_end,
+                )
+            return {"ok": True, "handled": etype, "company_id": cid,
+                    "tier": tier}
+
+        # Legacy per-user flow (Solo plan).
         uid = _user_id_from_event(event)
         tier = _tier_from_event(event) or "solo"
         stripe_id = obj.get("customer")

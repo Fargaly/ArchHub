@@ -70,6 +70,52 @@ CREATE INDEX IF NOT EXISTS idx_codes_user ON codes(user_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_log(user_id, ts);
 
+-- Companies / multi-seat -------------------------------------------------
+-- A "company" is a billing + membership unit. The Studio ($79) and Firm
+-- ($299) plans pay per company and ship N seats. Solo users continue to
+-- bill on the legacy `users.plan` column — they don't need a company row.
+CREATE TABLE IF NOT EXISTS companies (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    slug            TEXT UNIQUE,
+    owner_user_id   TEXT NOT NULL,
+    plan            TEXT NOT NULL DEFAULT 'studio',
+    seat_limit      INTEGER NOT NULL DEFAULT 5,
+    billing_email   TEXT,
+    stripe_customer_id  TEXT,
+    stripe_subscription_id TEXT,
+    period_end      INTEGER,
+    created_at      INTEGER NOT NULL,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS company_members (
+    company_id      TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member',
+    joined_at       INTEGER NOT NULL,
+    invited_by_user_id  TEXT,
+    PRIMARY KEY (company_id, user_id),
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS company_invites (
+    token           TEXT PRIMARY KEY,
+    company_id      TEXT NOT NULL,
+    email           TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member',
+    invited_by_user_id TEXT NOT NULL,
+    expires_at      INTEGER NOT NULL,
+    accepted_at     INTEGER,
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites(company_id);
+CREATE INDEX IF NOT EXISTS idx_company_invites_email ON company_invites(email);
+
 -- Marketplace v1 ----------------------------------------------------------
 -- Architects upload signed skill packs (zip + Ed25519 signature). Packs
 -- start as 'pending_review'; an admin approves before they appear in the
@@ -151,6 +197,73 @@ def init_schema() -> None:
         except sqlite3.OperationalError:
             # Column already exists — idempotent re-run.
             pass
+        # Multi-seat: which company is the user operating under in the
+        # desktop app right now? NULL for solo users.
+        for ddl in (
+            "ALTER TABLE users ADD COLUMN current_company_id TEXT",
+            # Customer-profile fields captured at signup / dashboard edit.
+            "ALTER TABLE users ADD COLUMN full_name TEXT",
+            "ALTER TABLE users ADD COLUMN firm_name TEXT",
+            "ALTER TABLE users ADD COLUMN aec_role TEXT",
+            "ALTER TABLE users ADD COLUMN aec_discipline TEXT",
+            "ALTER TABLE users ADD COLUMN firm_size TEXT",
+            "ALTER TABLE users ADD COLUMN country TEXT",
+            "ALTER TABLE users ADD COLUMN signup_source TEXT",
+            "ALTER TABLE users ADD COLUMN landing_variant TEXT",
+        ):
+            try:
+                con.execute(ddl)
+            except sqlite3.OperationalError:
+                # Column already exists — idempotent re-run.
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Customer profile
+# ---------------------------------------------------------------------------
+# Whitelist for update_user_profile. Anything not in this set is silently
+# ignored — prevents an attacker from setting `is_admin = 1` or smuggling
+# raw SQL through unknown keys.
+PROFILE_FIELDS = frozenset({
+    "full_name",
+    "firm_name",
+    "aec_role",
+    "aec_discipline",
+    "firm_size",
+    "country",
+    "signup_source",
+    "landing_variant",
+})
+
+
+def update_user_profile(user_id: str, **fields) -> None:
+    """Write whitelisted profile fields onto the users row.
+
+    Unknown keys are dropped (no error). Empty / None values are skipped
+    so partial updates don't blank a previously-set value.
+    """
+    sets: list[str] = []
+    vals: list = []
+    for k, v in fields.items():
+        if k not in PROFILE_FIELDS:
+            continue
+        if v is None:
+            continue
+        sets.append(f"{k} = ?")
+        vals.append(v)
+    if not sets:
+        return
+    vals.append(user_id)
+    with connect() as con:
+        con.execute(
+            f"UPDATE users SET {', '.join(sets)} WHERE id = ?",
+            vals,
+        )
+
+
+def get_user_with_profile(user_id: str) -> Optional[dict]:
+    """Return the user row including every profile column."""
+    return get_user(user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -321,4 +434,232 @@ def log_usage(user_id: str, *, model: str, input_toks: int,
             " output_toks, cost_micros) VALUES (?, ?, ?, ?, ?, ?)",
             (user_id, int(time.time()), model,
              int(input_toks), int(output_toks), int(cost_micros)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Companies
+# ---------------------------------------------------------------------------
+import re as _re
+
+
+def _company_id() -> str:
+    return f"co_{int(time.time()*1000):x}_{uuid.uuid4().hex[:12]}"
+
+
+def _slugify(name: str) -> str:
+    s = _re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return s or "company"
+
+
+def _unique_slug(base: str) -> str:
+    """Find a slug not yet taken — appends -2, -3, … on collision."""
+    with connect() as con:
+        if not con.execute(
+            "SELECT 1 FROM companies WHERE slug = ?", (base,)
+        ).fetchone():
+            return base
+        n = 2
+        while True:
+            candidate = f"{base}-{n}"
+            if not con.execute(
+                "SELECT 1 FROM companies WHERE slug = ?", (candidate,)
+            ).fetchone():
+                return candidate
+            n += 1
+
+
+def create_company(*, name: str, owner_user_id: str,
+                    plan: str = "studio",
+                    seat_limit: Optional[int] = None,
+                    billing_email: Optional[str] = None,
+                    slug: Optional[str] = None) -> dict:
+    """Insert a company + the owner row in `company_members`. Returns the
+    new company dict."""
+    cid = _company_id()
+    now = int(time.time())
+    raw_slug = slug.strip() if slug else _slugify(name)
+    final_slug = _unique_slug(_slugify(raw_slug))
+    # Default seat counts mirror config.PLAN_SEATS — but config imports db
+    # via the router, so we don't reach back here. Caller passes the
+    # explicit number when they have one.
+    if seat_limit is None:
+        seat_limit = {"studio": 5, "firm": 25}.get(plan, 5)
+    with connect() as con:
+        con.execute(
+            "INSERT INTO companies (id, name, slug, owner_user_id, plan,"
+            " seat_limit, billing_email, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (cid, name, final_slug, owner_user_id, plan,
+             seat_limit, billing_email, now),
+        )
+        con.execute(
+            "INSERT INTO company_members (company_id, user_id, role,"
+            " joined_at) VALUES (?, ?, 'owner', ?)",
+            (cid, owner_user_id, now),
+        )
+    return get_company(cid)
+
+
+def get_company(company_id: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM companies WHERE id = ?", (company_id,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def get_company_by_slug(slug: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM companies WHERE slug = ?", (slug,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def get_company_by_stripe_customer(customer_id: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM companies WHERE stripe_customer_id = ?",
+            (customer_id,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def update_company(company_id: str, **fields) -> None:
+    """Whitelisted update for company rows."""
+    allowed = {
+        "name", "billing_email", "plan", "seat_limit",
+        "stripe_customer_id", "stripe_subscription_id", "period_end",
+    }
+    sets: list[str] = []
+    vals: list = []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        sets.append(f"{k} = ?")
+        vals.append(v)
+    if not sets:
+        return
+    vals.append(company_id)
+    with connect() as con:
+        con.execute(
+            f"UPDATE companies SET {', '.join(sets)} WHERE id = ?",
+            vals,
+        )
+
+
+def list_companies_for_user(user_id: str) -> list[dict]:
+    """Companies the user belongs to (with their role)."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT c.*, m.role AS member_role"
+            " FROM companies c JOIN company_members m"
+            " ON c.id = m.company_id"
+            " WHERE m.user_id = ? ORDER BY c.created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_membership(company_id: str, user_id: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM company_members"
+            " WHERE company_id = ? AND user_id = ?",
+            (company_id, user_id),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def list_company_members(company_id: str) -> list[dict]:
+    """Members joined to users so callers can show email + role."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT m.company_id, m.user_id, m.role, m.joined_at,"
+            " m.invited_by_user_id, u.email, u.full_name"
+            " FROM company_members m JOIN users u ON m.user_id = u.id"
+            " WHERE m.company_id = ? ORDER BY m.joined_at ASC",
+            (company_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_company_members(company_id: str) -> int:
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS n FROM company_members WHERE company_id = ?",
+            (company_id,),
+        ).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def add_company_member(*, company_id: str, user_id: str,
+                        role: str = "member",
+                        invited_by_user_id: Optional[str] = None) -> None:
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO company_members"
+            " (company_id, user_id, role, joined_at, invited_by_user_id)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (company_id, user_id, role, now, invited_by_user_id),
+        )
+
+
+def remove_company_member(company_id: str, user_id: str) -> None:
+    with connect() as con:
+        con.execute(
+            "DELETE FROM company_members"
+            " WHERE company_id = ? AND user_id = ?",
+            (company_id, user_id),
+        )
+
+
+def set_current_company(user_id: str, company_id: Optional[str]) -> None:
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET current_company_id = ? WHERE id = ?",
+            (company_id, user_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Company invites
+# ---------------------------------------------------------------------------
+def create_company_invite(*, company_id: str, email: str, role: str,
+                           invited_by_user_id: str,
+                           ttl_seconds: int = 7 * 24 * 3600) -> dict:
+    """Issue an invite token (32-char urlsafe, 7-day expiry by default)."""
+    token = secrets.token_urlsafe(24)   # 24 bytes ≈ 32 char base64
+    expires_at = int(time.time()) + ttl_seconds
+    with connect() as con:
+        con.execute(
+            "INSERT INTO company_invites (token, company_id, email, role,"
+            " invited_by_user_id, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (token, company_id, email.strip().lower(), role,
+             invited_by_user_id, expires_at),
+        )
+    return {
+        "token": token, "company_id": company_id,
+        "email": email.strip().lower(), "role": role,
+        "invited_by_user_id": invited_by_user_id,
+        "expires_at": expires_at, "accepted_at": None,
+    }
+
+
+def get_company_invite(token: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM company_invites WHERE token = ?", (token,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def mark_invite_accepted(token: str) -> None:
+    with connect() as con:
+        con.execute(
+            "UPDATE company_invites SET accepted_at = ? WHERE token = ?",
+            (int(time.time()), token),
         )

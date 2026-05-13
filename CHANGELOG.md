@@ -3,6 +3,145 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-05-13
+
+The "customer infrastructure" release. Earlier today's audit revealed
+the cloud backend tracked email-only — no firm name, no team support,
+no real path from signup to revenue. Six hotfix releases trimmed the
+distractions; this minor bump replaces them with the missing
+customer + revenue plumbing.
+
+| Track | Status |
+|---|---|
+| Customer profile fields on signup | ✅ shipped |
+| Companies + multi-seat + invite flow | ✅ shipped |
+| Per-company Stripe Checkout (Studio 5 seats / Firm 25 seats) | ✅ shipped |
+| Stripe webhook end-to-end tests | ✅ 7 new tests (mocked) |
+| Cloud backend one-command Fly.io deploy | ✅ shipped |
+| Go-live checklist (Stripe account → first $) | ✅ shipped |
+| Agents 24/7 cloud daemon on Fly.io | ✅ shipped (Anthropic Haiku backend) |
+| Agents `/healthz` + `/status` dashboard | ✅ shipped |
+
+### Added — Customer profiling + companies
+
+- **`cloud_backend/db.py`** — 8 idempotent profile columns on `users`:
+  `full_name`, `firm_name`, `aec_role`, `aec_discipline`, `firm_size`,
+  `country`, `signup_source`, `current_company_id`.
+- **3 new tables**:
+  - `companies` (id, name, slug, owner_user_id, plan, seat_limit,
+    billing_email, stripe_customer_id, stripe_subscription_id,
+    period_end, created_at)
+  - `company_members` (company_id, user_id, role, joined_at,
+    invited_by_user_id) — role ∈ owner / admin / member
+  - `company_invites` (token, company_id, email, role,
+    invited_by_user_id, expires_at, accepted_at)
+- **DAO helpers**: `update_user_profile`, `get_user_with_profile`,
+  `create_company`, `get_company`, `list_companies_for_user`,
+  `list_company_members`, `add_company_member`, `remove_company_member`,
+  `create_company_invite`, `get_company_invite`, `mark_invite_accepted`,
+  `set_current_company`. Slug-collision retry built in.
+
+### Added — Companies API (`cloud_backend/companies.py`)
+
+- `POST   /v1/companies`                       — create + auto-add owner
+- `GET    /v1/companies/mine`                  — list with roles
+- `GET    /v1/companies/{id}`                  — detail + members (owner/admin)
+- `PATCH  /v1/companies/{id}`                  — update (owner)
+- `POST   /v1/companies/{id}/invites`          — invite teammate (owner/admin)
+- `POST   /v1/companies/invites/accept`        — accept invite token
+- `DELETE /v1/companies/{id}/members/{uid}`    — remove member (owner, no-self)
+- `POST   /v1/companies/{id}/switch`           — set caller's `current_company_id`
+- `POST   /v1/auth/register`                   — now accepts profile fields
+
+### Added — Stripe seat-based billing
+
+- **`cloud_backend/billing.py`**: `create_company_checkout(company_id,
+  plan, billing_email)` builds Stripe Checkout with
+  `metadata.company_id` + `metadata.kind=company`. Quantity = seats
+  (5 / 25) for per-seat unit prices.
+- Webhook handler routes company-scoped sessions to
+  `db.update_company(plan, seat_limit, stripe_customer_id,
+  stripe_subscription_id, period_end)`.
+- **`PLAN_SEATS = {"studio": 5, "firm": 25}`** in
+  `cloud_backend/config.py`.
+
+### Added — Agents 24/7 on Fly.io
+
+- **`agents/anthropic_client.py`** — Anthropic `/messages` HTTP client
+  matching the Ollama envelope shape. Ollama model id → Anthropic map:
+  every existing dept model maps to `claude-haiku-4-5` (cheapest
+  reasonable). Edit the dict in one place to change.
+- **`agents/cloud_runner.py`** — 24/7 daemon entry. Backend selected
+  via `ARCHHUB_AGENTS_BACKEND=anthropic|ollama` (anthropic default in
+  cloud). Heartbeat to `/data/agents/heartbeat.txt`. SIGTERM-graceful.
+  Spawns the dashboard endpoint on a thread.
+- **`agents/dashboard_endpoint.py`** — FastAPI sub-app on port 8080:
+  - `GET /healthz`               — last heartbeat + status
+  - `GET /status`                — depts, pending task count, today's
+    completed, last outputs
+  - `GET /outputs/<dept>/<task>` — fetch a specific output file
+- **`agents/Dockerfile`** — python:3.13-slim, non-root, /data volume,
+  CMD runs cloud_runner.
+- **`agents/fly.toml`** — app `archhub-agents`, region iad,
+  shared-cpu-1x 256MB, mount, `auto_stop_machines=false`.
+- **`agents/deploy.ps1`** — idempotent one-shot. Installs flyctl if
+  missing, creates app + volume, prompts for `ANTHROPIC_API_KEY`,
+  deploys.
+- **`agents/CLOUD_DEPLOY.md`** — pre-reqs, deploy, verify, cost
+  estimate (~$5-16/mo Anthropic Haiku + free shared VM tier).
+
+### Added — Cloud backend deploy automation
+
+- **`cloud_backend/deploy.ps1`** — one-command Fly.io deploy for the
+  customer-facing backend. Installs flyctl, creates the app + volume,
+  prompts for each Stripe / Anthropic / OpenAI / Google / Resend / JWT
+  secret, deploys, hits `/healthz`, optional `--DnsAttach` for
+  `cloud.archhub.app`.
+- **`docs/GO_LIVE_CHECKLIST.md`** — 5-phase walkthrough from blank
+  Stripe account → real $19 charge. Phase 1 Stripe setup (10 min),
+  Phase 2 backend deploy (5 min), Phase 3 webhook registration (3 min),
+  Phase 4 DNS (optional), Phase 5 real-card smoke test
+  (`4242 4242 4242 4242` then flip to LIVE).
+
+### Added — Stripe webhook end-to-end tests
+
+- **`cloud_backend/tests/test_stripe_webhook.py`** — 7 tests covering:
+  - `checkout.session.completed` → plan upgrades + msg_used reset
+  - `customer.subscription.updated` → tier mapped via price id
+  - `customer.subscription.deleted` → downgrade to trial
+  - `invoice.payment_failed` → log only, no auto-downgrade
+  - bad signature → reject cleanly
+  - stripe not configured → safe error
+  - unknown event type → ignored
+
+### Tests
+
+- `tests/` — **433 passing** (up from 413; +20 agent cloud tests)
+- `cloud_backend/tests/` — **77 passing** (up from 40; +30 companies +
+  user_profile + stripe webhook tests)
+
+### Limitations / Phase 2 follow-ups
+
+- **Frontend invite acceptance page** is not yet built. Invite tokens
+  are returned in the API response so the dashboard can offer a "copy
+  link" fallback today.
+- **Email-match on invite acceptance is loose** — token is the only
+  credential. Tightening to require matching user email = Phase 2.
+- **Owner transfer flow** is not yet built — owner can't remove self.
+- **Per-company quota** is not wired into `proxy.chat_completions` yet
+  — proxy still reads the legacy `users.msg_limit`/`msg_used` columns.
+- **Desktop app profile capture** — UI still doesn't ask for firm
+  name / AEC role / discipline on first run. Backend accepts the
+  fields; UI follow-up.
+- **Civil 3D connector** stays deferred — needs $2.4k/yr Civil 3D
+  licence on a build runner.
+
+### Roadmap
+
+`docs/GO_LIVE_CHECKLIST.md` is the next 2-hour playbook for the
+founder. Run it end-to-end and the cloud backend goes from "code on
+disk" → "real Stripe webhook deliveries showing in your dashboard."
+
 ## [1.1.1] — 2026-05-13
 
 The "founder economics" release. Three signing / legal / compliance

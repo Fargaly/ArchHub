@@ -83,8 +83,9 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.1.1 — Azure Trusted Signing
-        # setup automation, TM symbol rollout, slim trademark filing
-        # ($350 instead of $1,400), Trust Center + CAIQ-Lite to
-        # replace the $19k SOC 2 audit for the solo-founder stage.
-        assert v == "1.1.1"
+        # Track the latest stable. v1.2.0 — customer infrastructure
+        # release: companies + multi-seat + invites, customer profile
+        # fields on signup, per-company Stripe checkout, agents 24/7
+        # on Fly.io with Anthropic backend + /healthz dashboard, cloud
+        # backend one-command deploy script + go-live checklist.
+        assert v == "1.2.0"

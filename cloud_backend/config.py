@@ -78,3 +78,10 @@ PLAN_PRICE_IDS: dict[str, str] = {
     "studio": STRIPE_PRICE_STUDIO,
     "firm":   STRIPE_PRICE_FIRM,
 }
+
+# Seats per paid company plan. Studio = 5, Firm = 25. Companies created
+# on `solo` are rejected at the router (solo is a single-user plan).
+PLAN_SEATS: dict[str, int] = {
+    "studio": 5,
+    "firm":   25,
+}

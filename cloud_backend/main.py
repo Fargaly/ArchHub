@@ -38,6 +38,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 import auth
 import billing
+import companies
 import config
 import db
 import marketplace
@@ -74,6 +75,9 @@ def _startup() -> None:
 # URL constants live next to /v1/* rather than under a separate prefix.
 app.include_router(marketplace.router)
 
+# Companies / multi-seat — POST /v1/companies, invites, members, switch.
+app.include_router(companies.router)
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -82,6 +86,16 @@ class RegisterReq(BaseModel):
     email: EmailStr
     code_challenge: str = Field(min_length=20, max_length=200)
     redirect: str = ""
+    # Optional customer-profile fields captured by the landing form.
+    # All optional — magic-link sign-in still works without them.
+    full_name: str | None = None
+    firm_name: str | None = None
+    aec_role: str | None = None
+    aec_discipline: str | None = None
+    firm_size: str | None = None
+    country: str | None = None
+    signup_source: str | None = None
+    landing_variant: str | None = None
 
 
 class ExchangeReq(BaseModel):
@@ -122,7 +136,13 @@ def healthz() -> dict:
 
 @app.post("/v1/auth/register", status_code=202)
 async def register(req: RegisterReq) -> dict:
-    """Trigger the magic-link email + capture the PKCE challenge."""
+    """Trigger the magic-link email + capture the PKCE challenge.
+
+    Optional profile fields on the request body (full_name, firm_name,
+    aec_role, …) are written to the users table before the email goes
+    out so marketing has attribution data even if the user never clicks
+    the magic-link.
+    """
     ok = await auth.register_via_email(
         email=req.email,
         code_challenge=req.code_challenge,
@@ -131,6 +151,15 @@ async def register(req: RegisterReq) -> dict:
     if not ok:
         raise HTTPException(status_code=502,
                              detail="email_send_failed")
+    # User row was created inside register_via_email — write profile
+    # fields onto it. db.update_user_profile drops unknown keys so
+    # this is safe to call with the full request dict.
+    user = db.get_user_by_email(str(req.email))
+    if user is not None:
+        profile = req.model_dump(exclude={"email", "code_challenge",
+                                          "redirect"}, exclude_none=True)
+        if profile:
+            db.update_user_profile(user["id"], **profile)
     return {"status": "accepted"}
 
 

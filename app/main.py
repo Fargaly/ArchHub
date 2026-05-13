@@ -116,8 +116,22 @@ def _startup_self_test() -> None:
         def _go(m=mod_name):
             mod = __import__(m)
             sess = list(mod.list_sessions() or [])
-            return f"{len(sess)} session(s)" + (
-                f" [{','.join(s.token for s in sess)}]" if sess else "")
+            if not sess:
+                return "0 session(s)"
+            # Session shapes vary per broker — revit/acad/max use
+            # `session_id`, outlook keys on `smtp_address`. Try the
+            # likely fields, fall back to repr() so the self-test
+            # never crashes the launch sequence.
+            ids = []
+            for s in sess:
+                for attr in ("session_id", "smtp_address", "doc_title",
+                              "token", "name"):
+                    val = getattr(s, attr, None)
+                    if val:
+                        ids.append(str(val)); break
+                else:
+                    ids.append(repr(s)[:40])
+            return f"{len(sess)} session(s) [{','.join(ids)}]"
         _probe(mod_name, _go)
 
     # Outlook COM

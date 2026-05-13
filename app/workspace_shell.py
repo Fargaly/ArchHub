@@ -554,6 +554,29 @@ class WorkspaceShell(QMainWindow):
         g.setdefault("nodes", []).append(node)
 
     # ────────────────────────────────────────────────────────────
+    # Tray + summon contract (matches StudioShell + ChatWindow)
+    # ────────────────────────────────────────────────────────────
+    def show_centered(self) -> None:
+        """Restore + centre on the primary screen.
+
+        Matches the contract of StudioShell.show_centered + ChatWindow.
+        show_centered so the tray + single-instance summoner can keep
+        calling `surface.show_centered()` regardless of which shell is
+        active.
+        """
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            geom = screen.availableGeometry()
+            self.move(
+                geom.x() + (geom.width()  - self.width())  // 2,
+                geom.y() + (geom.height() - self.height()) // 2,
+            )
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    # ────────────────────────────────────────────────────────────
     # Settings modal
     # ────────────────────────────────────────────────────────────
     def _open_settings_modal(self) -> None:

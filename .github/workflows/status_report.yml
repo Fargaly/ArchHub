@@ -12,13 +12,11 @@ name: Status report
 # To redirect to a different issue, edit GH_ISSUE below.
 
 on:
-  # 2026-05-13: cron paused while cloud is undeployed. Status report
-  # body reports backend=RED / agents=RED on every cycle, so the
-  # emails are pure noise until production exists. Manual dispatch
-  # still works for ad-hoc snapshots. Re-enable by uncommenting the
-  # schedule block AFTER `fly deploy` lands.
-  # schedule:
-  #   - cron: "*/10 * * * *"
+  # 2026-05-13: cron re-enabled at 30-min cadence (was 10-min) after
+  # Fly deploy. 30 min keeps inbox quiet while still catching any
+  # backend death within one cycle.
+  schedule:
+    - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
 permissions:

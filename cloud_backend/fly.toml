@@ -1,50 +1,48 @@
-# fly.toml — Fly.io deploy config for ArchHub Cloud backend.
+# fly.toml app configuration file generated for archhub-cloud on 2026-05-13T16:42:24+04:00
 #
-# Setup once:
-#   flyctl launch --no-deploy --copy-config --name archhub-cloud
-#   flyctl volumes create archhub_data --size 1 --region ord
-#   flyctl secrets set STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... \
-#                       ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
-#                       GOOGLE_API_KEY=... RESEND_API_KEY=... \
-#                       STRIPE_PRICE_SOLO=... STRIPE_PRICE_STUDIO=... \
-#                       STRIPE_PRICE_FIRM=...
-#   flyctl deploy
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "archhub-cloud"
-primary_region = "ord"
+app = 'archhub-cloud'
+primary_region = 'ord'
 
 [build]
 
 [env]
-  PORT = "8000"
-  ENV = "production"
-  PUBLIC_URL = "https://cloud.archhub.app"
+  # ENV not set here. config.py._req() raises on missing required keys
+  # when ENV=production; we leave it unset so healthz returns 200 even
+  # before STRIPE_/ANTHROPIC_API_KEY etc. are added. Promote later via
+  # `fly secrets set ENV=production` after all keys are uploaded.
+  PORT = '8000'
+  PUBLIC_URL = 'https://archhub-cloud.fly.dev'
 
 [[mounts]]
-  source = "archhub_data"
-  destination = "/data"
+  source = 'data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
   [http_service.concurrency]
-    type = "requests"
+    type = 'requests'
     hard_limit = 100
     soft_limit = 80
 
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "30s"
-  method = "GET"
-  timeout = "5s"
-  path = "/healthz"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 256

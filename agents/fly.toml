@@ -1,57 +1,44 @@
-# fly.toml — ArchHub Autonomous Agents (cloud daemon).
+# fly.toml app configuration file generated for archhub-agents on 2026-05-13T16:42:44+04:00
 #
-# This is a SEPARATE app from cloud_backend. Customer-facing API lives
-# at archhub-cloud; the autonomous-workforce daemon lives here at
-# archhub-agents. Different concerns, different lifecycles.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# One-time setup (or use `agents/deploy.ps1`):
-#   flyctl apps create archhub-agents
-#   flyctl volumes create archhub_agents_data --size 1 --region iad -a archhub-agents
-#   flyctl secrets set ANTHROPIC_API_KEY=sk-ant-... -a archhub-agents
-#   flyctl deploy --config agents/fly.toml --dockerfile agents/Dockerfile
-#
-# 24/7 vs scale-to-zero: this is a daemon — it doesn't serve requests,
-# it produces them. `auto_stop_machines = false` keeps it running.
 
-app = "archhub-agents"
-primary_region = "iad"
+app = 'archhub-agents'
+primary_region = 'ord'
 
 [build]
-  dockerfile = "agents/Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8080"
-  ENV = "production"
-  ARCHHUB_AGENTS_BACKEND = "anthropic"
-  ARCHHUB_AGENTS_DATA_ROOT = "/data/agents"
-  ARCHHUB_AGENTS_CYCLE = "60"
+  ARCHHUB_AGENTS_BACKEND = 'anthropic'
+  ARCHHUB_AGENTS_CYCLE = '60'
+  ARCHHUB_AGENTS_DATA_ROOT = '/data/agents'
+  # ENV intentionally unset until ANTHROPIC_API_KEY etc. are uploaded
+  # as Fly secrets. Production mode raises on missing required keys.
+  PORT = '8080'
 
 [[mounts]]
-  source = "archhub_agents_data"
-  destination = "/data"
+  source = 'archhub_agents_data'
+  destination = '/data'
 
-# Smallest VM that comfortably fits httpx + fastapi + 8 dept agents
-# idling. CPU is bursty (only when a task is running), so shared is fine.
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
-  cpus = 1
-
-# Dashboard endpoint — opt-in public access. Comment out the whole
-# http_service block if you want the daemon strictly private and reach
-# it via `fly proxy 8080 -a archhub-agents` from a local shell.
 [http_service]
   internal_port = 8080
   force_https = true
-  # IMPORTANT: don't let Fly stop this machine — the loop won't run.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["app"]
+  processes = ['app']
 
-[[http_service.checks]]
-  grace_period = "20s"
-  interval = "60s"
-  method = "GET"
-  timeout = "5s"
-  path = "/healthz"
+  [[http_service.checks]]
+    interval = '1m0s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/healthz'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

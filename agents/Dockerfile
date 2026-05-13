@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /build
-COPY agents/requirements.txt ./requirements.txt
+COPY requirements.txt ./requirements.txt
 RUN pip install --prefix=/install -r requirements.txt
 
 
@@ -26,20 +26,22 @@ FROM python:3.13-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    ENV=production \
     PORT=8080 \
     ARCHHUB_AGENTS_BACKEND=anthropic \
     ARCHHUB_AGENTS_DATA_ROOT=/data/agents \
     ARCHHUB_AGENTS_CYCLE=60
+# ENV=production omitted intentionally — agents config raises on
+# missing ANTHROPIC_API_KEY when production is set. Promote after
+# the key lands as a Fly secret.
 
 WORKDIR /app
 
 # Bring the pre-installed deps from the build stage.
 COPY --from=build /install /usr/local
 
-# Copy ONLY the agents package — we don't need the rest of the repo on
-# the container. recurring.yaml ships alongside the .py modules.
-COPY agents/ /app/agents/
+# Copy the agents package contents into /app/agents/. Build context
+# is the agents/ directory (fly.toml lives there too).
+COPY . /app/agents/
 
 # Drop privileges. The Fly volume gets chowned to this user on first
 # mount via the entrypoint shim below.

@@ -117,10 +117,12 @@ class SettingsDialog(QDialog):
         self.router = router
         self.setWindowTitle("ArchHub — Settings")
         self.setObjectName("settingsDialog")
-        # Bumped from 560×520 in v1.0.2 — the AI Behaviour section
-        # (thinking + per-tool policies) needs a taller dialog so
-        # everything fits without forcing a global scroll.
-        self.resize(640, 720)
+        # v1.3.2 round-2 cut: collapsing Cloud sync / Speckle / Procore /
+        # HUD / Privacy behind 'Show advanced' shrunk the typical dialog
+        # back to a manageable height. 560px fits Sign-ins + AI Behaviour
+        # without scrolling. Wrap in a QScrollArea so opening the
+        # advanced block never overflows the screen.
+        self.resize(640, 560)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 18, 20, 18)
@@ -139,10 +141,7 @@ class SettingsDialog(QDialog):
         sub.setWordWrap(True)
         outer.addWidget(sub)
 
-        # ── Cloud sync ─────────────────────────────────────────────────────
-        outer.addWidget(self._build_cloud_sync_row())
-
-        # ── Provider rows ──────────────────────────────────────────────────
+        # ── Provider rows (always visible — primary CTAs) ──────────────────
         self._rows: list[_ProviderRow] = []
         for prov, _label, env_var in LLM_PROVIDERS:
             row = _ProviderRow(prov, env_var, self)
@@ -156,6 +155,35 @@ class SettingsDialog(QDialog):
         self._show_local.setObjectName("settingsSubtitle")
         self._show_local.setChecked(bool(load_setting("show_local_models")))
         outer.addWidget(self._show_local)
+
+        # ── AI Behaviour (always visible — thinking + per-tool policies) ──
+        outer.addWidget(self._build_ai_behaviour_row())
+
+        # ── Master "Show advanced" disclosure (v1.3.2 round-2 cut) ────────
+        # Cloud sync, Firm relay, Speckle, Procore, Appearance/HUD, and
+        # Privacy & crash reports all collapse behind ONE toggle. Most
+        # users only need Sign-ins + AI Behaviour. The advanced block
+        # is auto-expanded if the user already configured any of these
+        # (cloud signed in, Speckle on, Procore token set, etc.) so they
+        # don't lose access. To restore the always-visible old layout,
+        # drop the `_adv_wrap.setVisible(False)` line and remove the
+        # disclosure checkbox.
+        self._show_advanced = QCheckBox(
+            "Show advanced  (Cloud sync, Speckle, Procore, HUD overlay, Privacy, Firm relay)"
+        )
+        self._show_advanced.setObjectName("settingsSubtitle")
+        outer.addWidget(self._show_advanced)
+
+        # All advanced sections live inside this container which we
+        # show/hide as one unit.
+        self._adv_wrap = QWidget()
+        adv = QVBoxLayout(self._adv_wrap)
+        adv.setContentsMargins(0, 0, 0, 0)
+        adv.setSpacing(12)
+        outer.addWidget(self._adv_wrap)
+
+        # ── Cloud sync ─────────────────────────────────────────────────────
+        adv.addWidget(self._build_cloud_sync_row())
 
         # ── Firm relay (path B — OpenAI-compatible self-hosted endpoint) ───
         # Hidden behind "Show advanced" toggle in v1.3.1 — most users
@@ -200,17 +228,12 @@ class SettingsDialog(QDialog):
         relay_form.addWidget(self._relay_token, 1)
 
         rb.addLayout(relay_form)
-        # Show advanced disclosure — collapsed by default unless the user
-        # already has a relay URL saved (in which case keeping it hidden
-        # would be confusing).
+        # Firm relay lives inside the master 'Show advanced' wrap (v1.3.2)
+        # so it doesn't need its own toggle anymore. Track whether the
+        # user has a relay configured so we auto-expand the master
+        # disclosure for them below.
         has_relay = bool((load_setting("relay_base_url") or "").strip())
-        self._show_relay = QCheckBox("Show advanced — firm relay")
-        self._show_relay.setObjectName("settingsSubtitle")
-        self._show_relay.setChecked(has_relay)
-        relay_box.setVisible(has_relay)
-        self._show_relay.toggled.connect(relay_box.setVisible)
-        outer.addWidget(self._show_relay)
-        outer.addWidget(relay_box)
+        adv.addWidget(relay_box)
 
         # ── Speckle (optional, collapsed by default) ───────────────────────
         from PyQt6.QtWidgets import QRadioButton, QButtonGroup
@@ -221,7 +244,7 @@ class SettingsDialog(QDialog):
         self._speckle_toggle.setObjectName("settingsSubtitle")
         speckle_enabled = bool(load_setting("speckle_enabled"))
         self._speckle_toggle.setChecked(speckle_enabled)
-        outer.addWidget(self._speckle_toggle)
+        adv.addWidget(self._speckle_toggle)
 
         self._speckle_widget = QWidget()
         speckle_box = QVBoxLayout(self._speckle_widget)
@@ -315,7 +338,7 @@ class SettingsDialog(QDialog):
 
         self._speckle_widget.setVisible(speckle_enabled)
         self._speckle_toggle.toggled.connect(self._speckle_widget.setVisible)
-        outer.addWidget(self._speckle_widget)
+        adv.addWidget(self._speckle_widget)
 
         # ── Construction PM ───────────────────────────────────────────────
         # Procore is the dominant SaaS for construction PM (RFIs,
@@ -324,7 +347,7 @@ class SettingsDialog(QDialog):
         # Procore has OAuth but for desktop tooling a long-lived
         # Personal Access Token (minted in Procore admin) is simpler
         # and matches how Speckle is handled here.
-        outer.addWidget(self._build_procore_row())
+        adv.addWidget(self._build_procore_row())
 
         # ── Appearance — HUD overlay toggle ────────────────────────────────
         from PyQt6.QtCore import Qt as _Qt
@@ -384,17 +407,37 @@ class SettingsDialog(QDialog):
         ab.addWidget(self._show_hud_hotkey)
         ab.addWidget(hk_wrap)
 
-        outer.addWidget(appearance_box)
-
-        # ── AI Behaviour ───────────────────────────────────────────────────
-        # Thinking-effort dropdown + per-tool policies, grouped by host.
-        # Sections only render for hosts whose tools are registered with
-        # the live tool_engine — install a new connector, restart, and a
-        # new section appears here. No code change needed.
-        outer.addWidget(self._build_ai_behaviour_row())
+        adv.addWidget(appearance_box)
 
         # ── Privacy / telemetry ────────────────────────────────────────────
-        outer.addWidget(self._build_privacy_row())
+        adv.addWidget(self._build_privacy_row())
+
+        # Auto-expand the advanced wrap if the user has any of the
+        # advanced surfaces already configured — never hide their kit
+        # behind a closed door.
+        adv_active = False
+        try:
+            import cloud_sync as _cs
+            adv_active = adv_active or _cs.status().signed_in
+        except Exception:
+            pass
+        adv_active = adv_active or speckle_enabled or has_relay
+        try:
+            adv_active = adv_active or bool(load_api_key("procore_access_token"))
+        except Exception:
+            pass
+        try:
+            adv_active = adv_active or bool(load_setting("hud_overlay_mode"))
+        except Exception:
+            pass
+        try:
+            import telemetry as _tel
+            adv_active = adv_active or (_tel.consent_state() is True)
+        except Exception:
+            pass
+        self._adv_wrap.setVisible(bool(adv_active))
+        self._show_advanced.setChecked(bool(adv_active))
+        self._show_advanced.toggled.connect(self._adv_wrap.setVisible)
 
         outer.addStretch(1)
 

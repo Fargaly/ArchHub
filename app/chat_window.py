@@ -220,6 +220,27 @@ class _SessionWorker(QObject):
         self._stop = True
 
 # ---------------------------------------------------------------------------
+#  AutoHideLabel — collapses + hides the status bar when both labels are
+#  blank. Round 2 dead-surface pass: the bar was always 24px of chrome
+#  that almost never said anything. Now it disappears entirely until a
+#  transient routing-note / warning needs to surface.
+# ---------------------------------------------------------------------------
+class _AutoHideLabel(QLabel):
+    def __init__(self, owner_window, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._owner = owner_window
+
+    def setText(self, s: str) -> None:        # type: ignore[override]
+        super().setText(s or "")
+        try:
+            sync = getattr(self._owner, "_sync_status_visibility", None)
+            if callable(sync):
+                sync()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 #  Multi-line chat input — QPlainTextEdit with QLineEdit-compatible API.
 #  Enter sends, Shift+Enter inserts newline. Auto-grows up to MAX_LINES.
 #  Mirrors the original _PasteInput surface (text/setText/clear/
@@ -1409,21 +1430,25 @@ class ChatWindow(QMainWindow):
         self._body_split.setSizes([900, 300])
 
     def _build_header(self) -> QWidget:
-        """Slim header: brand + host status pills + model picker + Add Host + menu.
+        """Slim header (v1.3.2 round-2 density pass).
 
-        Add Host gets a top-level button (not buried in menu) so users
-        always have a one-click path to install / activate a connector.
-        Host pills next to the brand show which connectors are live so
-        the user immediately sees real state, not just chrome.
+        Brand text 'ArchHub™' was 80px of redundant chrome — the OS
+        window title + taskbar entry already say ArchHub. The brand
+        slot is now a tight 'A' monogram in a 24px plate so the brand
+        anchor stays without eating header width. Host pills + model
+        picker + Add Host + Menu fit under 60% of a 1280px window now.
+        To revive the wordmark: restore the QLabel('ArchHub™') line.
         """
         bar = QFrame()
         bar.setObjectName("header")
         h = QHBoxLayout(bar)
-        h.setContentsMargins(20, 12, 16, 12)
-        h.setSpacing(12)
+        h.setContentsMargins(14, 10, 14, 10)
+        h.setSpacing(10)
 
-        title = QLabel("ArchHub™")
+        title = QLabel("A")
         title.setObjectName("brand")
+        title.setFixedSize(24, 24)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setToolTip(
             "ArchHub™ — common-law trademark, USPTO filing pending. "
             "Filed under Class 042 (SaaS) by Ahmed Yasser Fargaly."
@@ -1655,10 +1680,13 @@ class ChatWindow(QMainWindow):
         # Connections + sign-ins
         sign_in_action = menu.addAction("Sign-ins…")
         sign_in_action.triggered.connect(self._open_settings)
-        connectors_action = menu.addAction("Connectors…")
-        connectors_action.triggered.connect(self._open_connectors)
-
-        menu.addSeparator()
+        # v1.3.2 round-2 cut: 'Connectors…' menu item removed. The rail
+        # HOSTS section already shows every connector with an inline
+        # toggle (live state · port · click-to-activate), and the
+        # 'Add Host' button is the primary discovery surface. The modal
+        # was REDUNDANT chrome. _open_connectors is retained below so
+        # programmatic / palette callers keep working. To revive the
+        # menu line, re-add an action that wires self._open_connectors.
 
         # Skills + sessions
         skills_action = menu.addAction("Skills…")
@@ -1670,12 +1698,12 @@ class ChatWindow(QMainWindow):
 
         menu.addSeparator()
 
-        # Updates + about + pricing
+        # Updates + about + pricing. 'Plans & pricing' moves to the
+        # Studio rail's Pricing page (still accessible through the More
+        # disclosure). The menu no longer carries it — the cog menu was
+        # cluttered with duplicate paths.
         self._update_menu_action = menu.addAction(self._update_menu_label())
         self._update_menu_action.triggered.connect(self._open_update_dialog)
-
-        pricing_action = menu.addAction("Plans & pricing…")
-        pricing_action.triggered.connect(self._open_pricing_dialog)
 
         # Reality Check used to live here as a modal smoke-test entry.
         # Removed in the v1.3.1 dead-surface pass — the Studio shell's
@@ -1749,55 +1777,47 @@ class ChatWindow(QMainWindow):
         return scroll
 
     def _show_welcome(self) -> None:
-        welcome = QFrame()
-        welcome.setObjectName("welcomeCard")
-        w = QVBoxLayout(welcome)
-        w.setContentsMargins(32, 28, 32, 28)
-        w.setSpacing(12)
+        """Conversation-area welcome (v1.3.2 round-2 cut).
 
-        title = QLabel("What do you want to build?")
-        title.setObjectName("welcomeTitle")
-        w.addWidget(title)
-
-        sub = QLabel(
-            "Type what you want; ArchHub drives the tools.  "
-            "Connectors, sign-ins, and skills live behind the menu in the top right."
-        )
-        sub.setObjectName("welcomeSubtitle")
-        sub.setWordWrap(True)
-        w.addWidget(sub)
-
-        # Quick-start chips: top 3 saved Skills, surfaced as one-click buttons.
+        Round 1 still rendered a 'What do you want to build?' title + a
+        subtitle pointing to the menu — both decoration, both gone now.
+        The empty conversation area IS the welcome state: the input bar
+        below already says 'Message ArchHub…' with the keyboard hints.
+        We keep the saved-skill chip row IFF the user actually has any
+        saved skills — that's a real one-click CTA. When the library is
+        empty we render nothing at all (the input bar is the only chrome
+        the user needs to see). To revive the title + subtitle, restore
+        from git history."""
         try:
             top_skills = skills.list_skills()[:3]
         except Exception:
             top_skills = []
+        if not top_skills:
+            self._welcome_widget = None
+            return
 
-        if top_skills:
-            chip_label = QLabel("Try a saved Skill:")
-            chip_label.setObjectName("welcomeSubtitle")
-            w.addSpacing(6)
-            w.addWidget(chip_label)
+        welcome = QFrame()
+        welcome.setObjectName("welcomeCard")
+        w = QVBoxLayout(welcome)
+        w.setContentsMargins(24, 14, 24, 14)
+        w.setSpacing(6)
 
-            chip_row = QHBoxLayout()
-            chip_row.setSpacing(8)
-            chip_row.setContentsMargins(0, 0, 0, 0)
-            for s in top_skills:
-                # Typographic bullet — BRAND.voice rule 2 forbids emoji.
-                # The ✦ four-point-star here used to render as an emoji on
-                # some Windows builds (Segoe UI Emoji vs Segoe UI Symbol).
-                chip = QPushButton(f"  ·  {s['name']}")
-                chip.setObjectName("welcomeChip")
-                chip.setToolTip(s.get("intent", ""))
-                chip.clicked.connect(
-                    lambda _checked=False, sid=s["id"]:
-                    self._run_skill_by_id(sid, {"prompt": ""})
-                )
-                chip_row.addWidget(chip)
-            chip_row.addStretch(1)
-            chip_wrap = QFrame()
-            chip_wrap.setLayout(chip_row)
-            w.addWidget(chip_wrap)
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+        chip_row.setContentsMargins(0, 0, 0, 0)
+        for s in top_skills:
+            chip = QPushButton(f"  ·  {s['name']}")
+            chip.setObjectName("welcomeChip")
+            chip.setToolTip(s.get("intent", ""))
+            chip.clicked.connect(
+                lambda _checked=False, sid=s["id"]:
+                self._run_skill_by_id(sid, {"prompt": ""})
+            )
+            chip_row.addWidget(chip)
+        chip_row.addStretch(1)
+        chip_wrap = QFrame()
+        chip_wrap.setLayout(chip_row)
+        w.addWidget(chip_wrap)
 
         self.conv_layout.insertWidget(self.conv_layout.count() - 1, welcome)
         self._welcome_widget = welcome
@@ -1866,21 +1886,44 @@ class ChatWindow(QMainWindow):
         return wrapper
 
     def _build_status_bar(self) -> QWidget:
+        """Slim status bar — collapses to zero height in steady state (v1.3.2).
+
+        Round 2 cut: the bar was always-visible 24px of chrome that almost
+        never said anything actionable. It now exists only as a carrier
+        for transient runtime status (routing notes from `_on_finished`,
+        skill match nudges, missing-LLM warnings). When both text labels
+        are empty the bar hides itself; the moment a label sets text the
+        bar reappears. To revive default visibility: drop the
+        `_sync_status_visibility` calls and set `bar.setVisible(True)`."""
         bar = QFrame()
         bar.setObjectName("statusBar")
         h = QHBoxLayout(bar)
-        h.setContentsMargins(18, 6, 18, 6)
+        h.setContentsMargins(18, 4, 18, 4)
         h.setSpacing(10)
 
-        self.status_left = QLabel("")
+        self.status_left = _AutoHideLabel(self)
         self.status_left.setObjectName("statusText")
         h.addWidget(self.status_left)
         h.addStretch(1)
 
-        self.status_right = QLabel("")
+        self.status_right = _AutoHideLabel(self)
         self.status_right.setObjectName("statusText")
         h.addWidget(self.status_right)
+        bar.setVisible(False)
+        self._status_bar_widget = bar
         return bar
+
+    def _sync_status_visibility(self) -> None:
+        """Hide the status bar entirely when both labels are blank — the
+        previous always-visible 24px row was decoration."""
+        bar = getattr(self, "_status_bar_widget", None)
+        if bar is None:
+            return
+        has_text = bool(
+            (getattr(self, "status_left", None) and self.status_left.text())
+            or (getattr(self, "status_right", None) and self.status_right.text())
+        )
+        bar.setVisible(has_text)
 
     # ---- Send / receive ----------------------------------------------------
 

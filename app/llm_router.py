@@ -387,21 +387,24 @@ def _looks_like_action(messages: list[dict]) -> bool:
 # minting per-provider keys — one OAuth sign-in covers everything below
 # the openrouter prefix.
 KNOWN_MODELS: list[tuple[str, str]] = [
-    ("anthropic:claude-opus-4-7",                       "Claude Opus 4.7 — best reasoning"),
-    ("anthropic:claude-opus-4-6",                       "Claude Opus 4.6 — strong & balanced"),
-    ("anthropic:claude-sonnet-4-6",                     "Claude Sonnet 4.6 — balanced"),
-    ("anthropic:claude-haiku-4-5-20251001",             "Claude Haiku 4.5 — fast"),
-    ("openai:gpt-4o",                                   "GPT-4o — multimodal"),
-    ("openai:gpt-4o-mini",                              "GPT-4o mini — fast"),
+    # Labels trimmed in v1.3.2 — the dropdown is read at a glance, so the
+    # marketing tail ("— best reasoning", "OpenRouter · …") was decoration.
+    # Tooltip on the row still surfaces the longer description.
+    ("anthropic:claude-opus-4-7",                       "Claude Opus 4.7"),
+    ("anthropic:claude-opus-4-6",                       "Claude Opus 4.6"),
+    ("anthropic:claude-sonnet-4-6",                     "Claude Sonnet 4.6"),
+    ("anthropic:claude-haiku-4-5-20251001",             "Claude Haiku 4.5"),
+    ("openai:gpt-4o",                                   "GPT-4o"),
+    ("openai:gpt-4o-mini",                              "GPT-4o mini"),
     ("google:gemini-2.5-pro",                           "Gemini 2.5 Pro"),
-    ("google:gemini-2.0-flash",                         "Gemini 2.0 Flash — fast"),
-    ("openrouter:anthropic/claude-opus-4",              "OpenRouter · Claude Opus 4"),
-    ("openrouter:anthropic/claude-sonnet-4",            "OpenRouter · Claude Sonnet 4"),
-    ("openrouter:openai/gpt-4o",                        "OpenRouter · GPT-4o"),
-    ("openrouter:google/gemini-2.5-flash",              "OpenRouter · Gemini 2.5 Flash"),
-    ("openrouter:meta-llama/llama-3.3-70b-instruct",    "OpenRouter · Llama 3.3 70B"),
-    ("openrouter:qwen/qwen-2.5-coder-32b-instruct",     "OpenRouter · Qwen 2.5 Coder 32B"),
-    ("relay:auto",                                      "Firm relay · auto"),
+    ("google:gemini-2.0-flash",                         "Gemini 2.0 Flash"),
+    ("openrouter:anthropic/claude-opus-4",              "Claude Opus 4 (OR)"),
+    ("openrouter:anthropic/claude-sonnet-4",            "Claude Sonnet 4 (OR)"),
+    ("openrouter:openai/gpt-4o",                        "GPT-4o (OR)"),
+    ("openrouter:google/gemini-2.5-flash",              "Gemini 2.5 Flash (OR)"),
+    ("openrouter:meta-llama/llama-3.3-70b-instruct",    "Llama 3.3 70B (OR)"),
+    ("openrouter:qwen/qwen-2.5-coder-32b-instruct",     "Qwen 2.5 Coder 32B (OR)"),
+    ("relay:auto",                                      "Firm relay"),
 ]
 
 

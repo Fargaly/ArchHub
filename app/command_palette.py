@@ -258,11 +258,15 @@ class CommandPalette(QDialog):
     def _default_providers(self, shell):
         """Each provider is a callable(query: str) → list[PaletteResult].
         We close over `shell` so providers can drive its navigation."""
-        from studio_shell import NAV_ITEMS
+        # v1.3.2 round-2: rail has been split into primary NAV_ITEMS + a
+        # secondary NAV_ITEMS_MORE behind a 'More' disclosure. Palette
+        # surfaces every page (NAV_ITEMS_ALL) so users can ⌘K-jump to
+        # any page without expanding the disclosure first.
+        from studio_shell import NAV_ITEMS_ALL as _NAV
 
         def nav_provider(_q: str) -> list[PaletteResult]:
             out = []
-            for nav_id, label, key in NAV_ITEMS:
+            for nav_id, label, key in _NAV:
                 out.append(PaletteResult(
                     category="Page",
                     title=label,

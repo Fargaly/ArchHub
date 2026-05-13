@@ -499,8 +499,18 @@ class MarketplacePanel(QWidget):
                     continue
             rows.append(it)
         if not rows:
-            empty = QLabel("No catalog matches your filter.")
+            # v1.3.2 round-2: useful empty state copy. Direct the user
+            # to a concrete next step ("Browse the Skills tab" or "clear
+            # the filter") instead of the generic grey-grid stub.
+            if self.search.text().strip():
+                msg = "No catalog matches your filter. Clear the search to see all packs."
+            elif self._kind_filter == "workflow":
+                msg = "No workflow packs installed. Switch to Skills tab — the catalog has 3."
+            else:
+                msg = "No skill packs installed. Click ↻ Sync to pull the latest catalog."
+            empty = QLabel(msg)
             empty.setObjectName("studioMonoMuted")
+            empty.setWordWrap(True)
             self.grid.addWidget(empty, 0, 0, 1, 3)
             return
         for i, it in enumerate(rows):

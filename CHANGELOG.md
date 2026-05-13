@@ -3,6 +3,102 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.2] — 2026-05-13
+
+The "ruthless UI cleanup" patch. Round 1 of dead-surface cuts (v1.3.1)
+was too gentle — founder feedback was "the ui still shitty as fuck
+with stagnant things with no use... i don't want things for show only".
+Round 2 enforces a strict rule: a surface stays only if it drives a
+click within 60 s of being seen, or shows a number the user reads
+before acting.
+
+### UI cuts (15, file:line evidence in `docs/UI_DEAD_SURFACE_AUDIT_v2.md`)
+
+1. `app/chat_window.py:1425-1444` — brand wordmark "ArchHub™" → 24×24
+   "A" monogram plate.
+2. `app/llm_router.py:389-405` — KNOWN_MODELS labels trimmed (drop
+   "— best reasoning", "OpenRouter ·" prefixes). Picker fits less
+   width.
+3. `app/chat_window.py:1764-1809` — welcome card removed in default
+   state; chip row only, renders only when saved skills exist.
+4. `app/chat_window.py:1881-1920` — `_AutoHideLabel` makes the
+   bottom status bar disappear when both labels blank.
+5. `app/chat_window.py:1680-1689` — cog menu "Connectors…" item cut
+   (Studio rail covers).
+6. `app/chat_window.py:1700-1706` — cog menu "Plans & pricing…" item
+   cut (rail Pricing page covers).
+7. `app/studio_shell.py:82-102` — `NAV_ITEMS` split: 4 primary +
+   4 behind "More" disclosure.
+8. `app/studio_shell.py:308-343` — rail "More" toggle wired; secondary
+   nav renders when toggled.
+9. `app/studio_shell.py:710-806` — right inspector default-collapses
+   to 8 px click strip on Marketplace / Skills / Settings / Pricing /
+   Telemetry pages.
+10. `app/studio_shell.py:1063-1093` — bottom status-rule shortcut hint
+    trio cut; only `v{ver}` remains in steady state.
+11. `app/settings_dialog.py:120-178` — Cloud sync nested in new
+    master "Show advanced" disclosure.
+12. `app/settings_dialog.py:158-210` — Firm relay rolled into master
+    disclosure (per-section toggle removed).
+13. `app/settings_dialog.py:218-330` — Speckle + Procore + Appearance/
+    HUD + Privacy all nested in master `adv` wrap. Dialog height
+    720 → 560.
+14. `app/onboarding.py:50-110, 245-260, 305-340` — 3-step
+    `QStackedWidget` collapsed into ONE scrollable column. Continue
+    button + 3-dot indicator deleted.
+15. `app/marketplace_panel.py:483-510` — generic empty-state replaced
+    with actionable copy ("Click ↻ Sync…" / "Switch to Skills
+    tab…"). No "Coming soon" anywhere.
+
+Plus `app/command_palette.py:261` updated to `NAV_ITEMS_ALL` so the
+palette still enumerates demoted pages.
+
+### Disclosures added (5)
+
+| Surface | Default | Toggle |
+|---|---|---|
+| Studio rail "More" | hidden | secondary nav (Workflows / Marketplace / Telemetry / Pricing) |
+| Studio right inspector | 8 px strip | full width on click |
+| Settings master "Show advanced" | hidden | Cloud sync · Speckle · Procore · HUD/Appearance · Privacy · Firm relay (auto-expands if any configured) |
+| Chat status bar | hidden | shown when status label has text |
+| Chat welcome card | hidden | shown only when saved skills exist |
+
+### Added — LLM auto-detector (v1.3.x rollup)
+
+- `app/llm_detector.py` (shipped earlier today) — probes Anthropic,
+  OpenAI, Google, OpenRouter, Ollama (with model list), LM Studio
+  (with loaded model), Codex CLI (with configured model), ArchHub
+  Cloud. Cache TTL 25 s.
+- `ai_detect_local` tool registered — primary LLM can introspect
+  available backends mid-turn + route to cheapest live one.
+- 24 new tests in `tests/test_llm_detector.py` (key probers, network
+  probers, codex_cli paths, cache TTL, summary buckets, tool registry).
+
+### Fixed — roadmap source drift
+
+`agents/status_report.py` was reading root `ROADMAP.md` while
+`agents/roadmap_source.py` was reading `docs/ROADMAP.md`. Pending
+counts diverged between status reports + queue. Unified to
+`docs/ROADMAP.md` with legacy-root fallback. Paired-AI partner caught
+this — saved a future "why don't my numbers match" investigation.
+
+### Tests
+
+- `tests/` — **571 passing** (was 545; +26 in v1.3.x rollup)
+- `cloud_backend/tests/` — **97 passing** (unchanged)
+- Total: **668 passing.** Zero regressions.
+
+### What's STILL not cut (deferred to round 3)
+
+- Model picker still surfaces 16 rows including OpenRouter variants
+  user may never click. Round 3 candidate: top 4 + "More models…".
+- `AI Behaviour` section in Settings stays visible — per-tool
+  Allow/Ask/Deny is real action surface.
+- `connector_panel.py` modal file stays — Add Host wizard + chat
+  fallback both still call into it.
+- Studio right inspector on Chat page still has 5 KV rows + 4 router
+  rows + quick actions. Fold further in round 3.
+
 ## [1.3.1] — 2026-05-13
 
 UI dead-surface patch + zero-setup status reports.

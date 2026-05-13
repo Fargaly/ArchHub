@@ -152,6 +152,30 @@ class TestGenerateReport:
         assert ag["pending_total"] == 2
         assert ag["pending_by_dept"]["eng"] == 2
 
+    def test_roadmap_default_source_is_docs_roadmap(self):
+        from agents import status_report
+        assert status_report.ROADMAP_PATH == REPO_ROOT / "docs" / "ROADMAP.md"
+
+    def test_roadmap_counts_next_7_days_section(self, tmp_path, monkeypatch):
+        from agents import status_report
+
+        p = tmp_path / "ROADMAP.md"
+        p.write_text(
+            "# ArchHub roadmap\n\n"
+            "## NEXT 7 DAYS\n\n"
+            "- [ ] #P0 First urgent item (eng)\n"
+            "- [ ] #P1 Second urgent item (docs)\n\n"
+            "## NEXT 30 DAYS\n\n"
+            "- [ ] #P2 Later item (ops)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(status_report, "ROADMAP_PATH", p)
+
+        r = status_report._section_roadmap()
+
+        assert r["available"] is True
+        assert r["pending_next_7d"] == 2
+
 
 # ---------------------------------------------------------------------------
 class TestSendLive:

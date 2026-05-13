@@ -79,16 +79,26 @@ try: _load_theme_pref()
 except Exception: pass
 T = _LivePalette()
 
+# v1.3.2 round-2 cut: only the 4 nav items that drive a click in <60s
+# stay primary. Workflows / Marketplace / Pricing / Telemetry collapse
+# behind a "More" disclosure on the rail. Telemetry is the closest to
+# being demoted-too-far — KPI cards do read live numbers — but most
+# users still don't visit it unless something's broken.
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
     ("chat",      "Chat",        "2"),
     ("skills",    "Skills",      "3"),
+    ("settings",  "Settings",    ","),
+]
+NAV_ITEMS_MORE = [
     ("flows",     "Workflows",   "4"),
     ("market",    "Marketplace", "5"),
     ("telemetry", "Telemetry",   "6"),
     ("pricing",   "Pricing",     "7"),
-    ("settings",  "Settings",    ","),
 ]
+# All nav ids together — used by `_set_page` for validity, by the
+# command palette for jumping, and by the keyboard-shortcut wiring.
+NAV_ITEMS_ALL = NAV_ITEMS + NAV_ITEMS_MORE
 
 
 # Map ConnectorEntry.family → port (mirrors connector_health.LISTENER_URL).
@@ -199,8 +209,10 @@ class StudioShell(QMainWindow):
         # Apply Studio styles inline (in addition to theme.qss).
         self.setStyleSheet(_inline_qss())
 
-        # Global shortcuts: 1..6 = nav, ⌘, = Settings.
-        for nav_id, _, key in NAV_ITEMS:
+        # Global shortcuts: 1..7 = nav, ⌘, = Settings. Cover ALL pages
+        # including the ones collapsed under "More" so keyboard users
+        # don't need to use the disclosure.
+        for nav_id, _, key in NAV_ITEMS_ALL:
             sc = QShortcut(QKeySequence(f"Ctrl+{key}"), self)
             sc.activated.connect(lambda _id=nav_id: self._set_page(_id))
         # ⌘K command palette overlay.
@@ -283,7 +295,12 @@ class StudioShell(QMainWindow):
         ck_l.addWidget(ck)
         v.addWidget(ck_wrap)
 
-        # Nav
+        # Nav — primary 4 always visible; the rest live behind a "More"
+        # disclosure (v1.3.2 round-2 cut). Workflows / Marketplace /
+        # Telemetry / Pricing are real pages but they're aspirational
+        # destinations (most users have 0 workflows, 0 packs installed,
+        # don't read telemetry until something breaks, and reach pricing
+        # via the cog or banner). The disclosure preserves discoverability.
         nav_wrap = QWidget()
         nav_l = QVBoxLayout(nav_wrap)
         nav_l.setContentsMargins(8, 0, 8, 0)
@@ -297,6 +314,29 @@ class StudioShell(QMainWindow):
             btn.clicked.connect(lambda _=False, _id=nav_id: self._set_page(_id))
             self._nav_buttons[nav_id] = btn
             nav_l.addWidget(btn)
+        # "More" disclosure — secondary nav. Collapsed by default.
+        self._more_toggle = QPushButton("More")
+        self._more_toggle.setObjectName("studioNavItem")
+        self._more_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._more_toggle.setStyleSheet(_nav_style(False))
+        nav_l.addWidget(self._more_toggle)
+        # Secondary nav rows live inside a child wrap that hides until
+        # the toggle is clicked.
+        self._more_wrap = QWidget()
+        more_l = QVBoxLayout(self._more_wrap)
+        more_l.setContentsMargins(0, 0, 0, 0)
+        more_l.setSpacing(1)
+        for nav_id, label, key in NAV_ITEMS_MORE:
+            btn = QPushButton(f"  {label}     ⌘{key}")
+            btn.setObjectName("studioNavItem")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(_nav_style(False))
+            btn.clicked.connect(lambda _=False, _id=nav_id: self._set_page(_id))
+            self._nav_buttons[nav_id] = btn
+            more_l.addWidget(btn)
+        self._more_wrap.setVisible(False)
+        nav_l.addWidget(self._more_wrap)
+        self._more_toggle.clicked.connect(self._toggle_more_nav)
         v.addWidget(nav_wrap)
 
         # HOSTS section — content rebuilt by _refresh_hosts.
@@ -700,7 +740,15 @@ class StudioShell(QMainWindow):
           QUICK ACTIONS  chevron-prefix command list
 
         On Chat the SELECTION section swaps to the live ParametersPanel.
+
+        v1.3.2 round-2: the inspector default-collapses to an 8px click
+        strip on pages where it has nothing to drive (Marketplace,
+        Pricing, Settings, Skills, Telemetry — they all carry their
+        own context). It still auto-expands on Chat (live PARAMETERS)
+        and Home (LLM Router + KV at-a-glance). Click the collapsed
+        strip to expand. Track state in `_inspector_collapsed`.
         """
+        self._inspector_collapsed = False
         ins = QFrame()
         ins.setObjectName("studioInspector")
         ins.setFixedWidth(304)
@@ -771,6 +819,21 @@ class StudioShell(QMainWindow):
         v.addStretch(1)
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
+
+        # Collapsed strip — 8px hairline shown only when the inspector
+        # is in collapsed mode. Click to expand. Lives stacked under
+        # the scrollarea; visibility is toggled by
+        # _set_inspector_collapsed.
+        self._inspector_strip = QFrame()
+        self._inspector_strip.setObjectName("studioInspectorStrip")
+        self._inspector_strip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._inspector_strip.setToolTip("Expand inspector")
+        self._inspector_strip.setFixedHeight(48)
+        self._inspector_strip.mousePressEvent = (
+            lambda _e: self._set_inspector_collapsed(False)
+        )
+        outer.addWidget(self._inspector_strip)
+        self._inspector_strip.setVisible(False)
 
         # Initial fill.
         self._refresh_router_rows()
@@ -1051,9 +1114,14 @@ class StudioShell(QMainWindow):
         heal_wrap.setVisible(False)
         h.addWidget(heal_wrap)
         h.addStretch(1)
-        # Read version dynamically so the status bar reflects the
-        # actual VERSION file, not a stale hardcoded string. Falls
-        # back to "dev" if the file is unreadable.
+        # v1.3.2 round-2 cut: the shortcut hint trio ("⌘K palette · ⌘↩
+        # run skill · ⌘/ docs") was textbook DECORATION — once the user
+        # has used ArchHub for more than a day they know the shortcuts,
+        # and on day one they discover via the cog menu / ⌘K palette.
+        # Repeating those keys on every screen at the bottom-right was
+        # noise. Keep only the version stamp so the user can read it at
+        # a glance for bug reports. To revive: paste back the
+        # "⌘K palette · ⌘↩ run skill · ⌘/ docs" trio into the label.
         ver_str = "dev"
         try:
             from pathlib import Path as _P
@@ -1062,10 +1130,7 @@ class StudioShell(QMainWindow):
                 ver_str = vpath.read_text(encoding="utf-8").strip() or "dev"
         except Exception:
             pass
-        right = QLabel(
-            f"⌘K palette     ⌘↩ run skill     "
-            f"⌘/ docs     v{ver_str}"
-        )
+        right = QLabel(f"v{ver_str}")
         right.setObjectName("studioStatusItem")
         h.addWidget(right)
         return rule
@@ -2352,7 +2417,44 @@ class StudioShell(QMainWindow):
         except Exception:
             pass
 
+        # v1.3.2 round-2: collapse inspector to an 8px strip on pages
+        # where it has nothing actionable to drive. The full 304px panel
+        # IS useful on Chat (live params), Home (router + KV), and
+        # addhost (Refresh detection). Everything else is a waste of
+        # screen real-estate — Marketplace / Skills / Settings / Telemetry
+        # / Pricing all carry their own context. The collapsed strip is
+        # click-to-expand so power users keep access.
+        try:
+            _full_pages = {"chat", "home", "addhost"}
+            should_collapse = page_id not in _full_pages
+            self._set_inspector_collapsed(should_collapse)
+        except Exception:
+            pass
+
         self.nav_changed.emit(page_id)
+
+    def _toggle_more_nav(self) -> None:
+        """Toggle the 'More' nav disclosure visibility."""
+        wrap = getattr(self, "_more_wrap", None)
+        if wrap is None:
+            return
+        wrap.setVisible(not wrap.isVisible())
+
+    def _set_inspector_collapsed(self, collapsed: bool) -> None:
+        """Toggle the right inspector between full (304px) + slim (8px)."""
+        self._inspector_collapsed = bool(collapsed)
+        if not hasattr(self, "inspector") or self.inspector is None:
+            return
+        self.inspector.setFixedWidth(8 if collapsed else 304)
+        # The inspector body is the QScrollArea inserted first; the
+        # collapsed strip is the second child added in _build_inspector.
+        for child in self.inspector.findChildren(QScrollArea):
+            child.setVisible(not collapsed)
+        # Re-show the strip every time (it's hidden under the scrollarea
+        # in the full state).
+        strip = getattr(self, "_inspector_strip", None)
+        if strip is not None:
+            strip.setVisible(True)
 
     def _selection_title(self) -> str:
         """Pull the most useful "what's open right now" string we can:

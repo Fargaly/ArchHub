@@ -1,25 +1,23 @@
 """First-run onboarding wizard.
 
-Shows once per device, the very first time the user opens ArchHub. Walks
-them through three steps:
+v1.3.2 round-2 cut: collapsed from a 3-step Continue/Next stack into ONE
+modal with three real CTAs and a skip footer. The three steps were
+'show one screen, click Continue, show next screen' chrome that wasted
+the user's time on day one. The compressed flow surfaces:
 
-  1. Sign in to a cloud LLM (OpenRouter is the default — real OAuth,
-     covers Claude / GPT / Gemini / Llama / Qwen).
-  2. Show what AEC tools were detected on this machine and which
-     connectors are ready.
-  3. Demo a first Skill so the user has something concrete to click.
+  • Sign-ins   (primary OpenRouter button + Anthropic/OpenAI/Google secondaries)
+  • Connectors (live detection summary + 'Open connector settings' link)
+  • Skill library (top 4 starter skills as one-click chips)
+
+All three blocks live in one scrollable column. Skip dismisses; clicking
+any chip auto-completes onboarding.
 
 The wizard records `onboarding_completed` in settings.json and never
 appears again. The user can re-run it from Settings → "Show
 onboarding again" if they want a refresher.
 
-Design choices:
-  - No back button. Each step is small enough that "go forward, change
-    your mind later in Settings" is the right UX.
-  - Skip is always available — onboarding shouldn't block the user
-    from reaching the chat.
-  - Sign-in step uses the same SignInDialog the Settings panel uses,
-    so we don't duplicate the OAuth flow.
+Sign-in path uses the same SignInDialog the Settings panel uses, so we
+don't duplicate the OAuth flow.
 """
 from __future__ import annotations
 
@@ -28,8 +26,8 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from secrets_store import load_setting, save_setting
@@ -49,7 +47,7 @@ def mark_completed() -> None:
 
 # ---------------------------------------------------------------------------
 class OnboardingWizard(QDialog):
-    """Three-step first-run wizard. Modal but skippable."""
+    """Single-screen first-run wizard. Modal but skippable."""
 
     finished_onboarding = pyqtSignal()
 
@@ -59,7 +57,7 @@ class OnboardingWizard(QDialog):
         self.manager = manager
         self.setWindowTitle("Welcome to ArchHub")
         self.setObjectName("panel")
-        self.setMinimumSize(640, 480)
+        self.setMinimumSize(640, 560)
         self.setModal(True)
 
         outer = QVBoxLayout(self)
@@ -67,14 +65,25 @@ class OnboardingWizard(QDialog):
         outer.setSpacing(0)
         outer.addWidget(self._build_header())
 
-        self._stack = QStackedWidget()
-        self._stack.addWidget(self._build_step_signin())
-        self._stack.addWidget(self._build_step_connectors())
-        self._stack.addWidget(self._build_step_first_skill())
-        outer.addWidget(self._stack, 1)
+        # Scrollable single-screen body — three sections stacked top to
+        # bottom: Sign-ins · Connectors · Starter skills. No Continue
+        # button, no "Step 1 of 3" chrome.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(40, 20, 40, 20)
+        bl.setSpacing(20)
+        bl.addWidget(self._build_section_signin())
+        bl.addWidget(self._build_section_connectors())
+        bl.addWidget(self._build_section_first_skill())
+        bl.addStretch(1)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
         outer.addWidget(self._build_footer())
-        self._update_buttons()
+        self._refresh_connector_summary()
 
     # ---- header ----------------------------------------------------------
 
@@ -84,28 +93,24 @@ class OnboardingWizard(QDialog):
         t = QLabel("Welcome to ArchHub")
         t.setObjectName("panelTitle"); v.addWidget(t)
         s = QLabel(
-            "A two-minute setup — then you can stop reading and start "
-            "asking ArchHub to do things."
+            "A two-minute setup — sign in to an AI, see your tools, "
+            "try a starter skill. Skip anything, change later in Settings."
         )
         s.setObjectName("panelSubtitle"); s.setWordWrap(True)
         v.addWidget(s)
-
-        # Step indicator: ● ○ ○ → ○ ● ○ → ○ ○ ●
-        self._dots = QLabel("●  ○  ○")
-        self._dots.setStyleSheet(
-            "color: #cc785c; font-size: 14px; letter-spacing: 6px; padding-top: 8px;"
-        )
-        v.addWidget(self._dots)
+        # v1.3.2 round-2: the 3-step dot indicator was decoration when
+        # we still had a Continue button between screens; with the
+        # single-screen layout it's meaningless. Removed.
         return hf
 
-    # ---- step 1: sign in --------------------------------------------------
+    # ---- section 1: sign in ----------------------------------------------
 
-    def _build_step_signin(self) -> QWidget:
+    def _build_section_signin(self) -> QWidget:
         page = QWidget()
-        v = QVBoxLayout(page); v.setContentsMargins(40, 28, 40, 20); v.setSpacing(14)
+        v = QVBoxLayout(page); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
 
-        title = QLabel("<b>Step 1 of 3 — Sign in to a cloud AI</b>")
-        title.setStyleSheet("font-size: 18px; color: #f4efe8;")
+        title = QLabel("<b>Sign in to a cloud AI</b>")
+        title.setStyleSheet("font-size: 17px; color: #f4efe8;")
         v.addWidget(title)
 
         body = QLabel(
@@ -158,7 +163,6 @@ class OnboardingWizard(QDialog):
         dlg.signed_in.connect(lambda _p: self._update_signin_status())
         dlg.exec()
         self._update_signin_status()
-        self._update_buttons()
 
     def _update_signin_status(self) -> None:
         configured = sorted(self.router.configured_providers())
@@ -173,14 +177,14 @@ class OnboardingWizard(QDialog):
                 "local Ollama model if you have one running.</i>"
             )
 
-    # ---- step 2: connectors ----------------------------------------------
+    # ---- section 2: connectors ------------------------------------------
 
-    def _build_step_connectors(self) -> QWidget:
+    def _build_section_connectors(self) -> QWidget:
         page = QWidget()
-        v = QVBoxLayout(page); v.setContentsMargins(40, 28, 40, 20); v.setSpacing(14)
+        v = QVBoxLayout(page); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
 
-        title = QLabel("<b>Step 2 of 3 — Your AEC tools</b>")
-        title.setStyleSheet("font-size: 18px; color: #f4efe8;")
+        title = QLabel("<b>Your AEC tools</b>")
+        title.setStyleSheet("font-size: 17px; color: #f4efe8;")
         v.addWidget(title)
 
         body = QLabel(
@@ -242,14 +246,14 @@ class OnboardingWizard(QDialog):
         dlg.exec()
         self._refresh_connector_summary()
 
-    # ---- step 3: first skill ---------------------------------------------
+    # ---- section 3: first skill -----------------------------------------
 
-    def _build_step_first_skill(self) -> QWidget:
+    def _build_section_first_skill(self) -> QWidget:
         page = QWidget()
-        v = QVBoxLayout(page); v.setContentsMargins(40, 28, 40, 20); v.setSpacing(14)
+        v = QVBoxLayout(page); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
 
-        title = QLabel("<b>Step 3 of 3 — Try a Skill</b>")
-        title.setStyleSheet("font-size: 18px; color: #f4efe8;")
+        title = QLabel("<b>Try a starter skill</b>")
+        title.setStyleSheet("font-size: 17px; color: #f4efe8;")
         v.addWidget(title)
 
         body = QLabel(
@@ -312,33 +316,18 @@ class OnboardingWizard(QDialog):
 
         h.addStretch(1)
 
-        self._next_btn = QPushButton("Continue →")
-        self._next_btn.setObjectName("primaryButton")
-        self._next_btn.clicked.connect(self._on_next)
-        h.addWidget(self._next_btn)
+        # v1.3.2: single-screen layout — no Continue button, just Finish.
+        self._finish_btn = QPushButton("Finish")
+        self._finish_btn.setObjectName("primaryButton")
+        self._finish_btn.clicked.connect(self._on_finish)
+        h.addWidget(self._finish_btn)
 
         return f
 
-    def _update_buttons(self) -> None:
-        idx = self._stack.currentIndex()
-        dots = ["●  ○  ○", "○  ●  ○", "○  ○  ●"][idx]
-        self._dots.setText(dots)
-        if idx == 1:
-            self._refresh_connector_summary()
-        if idx == self._stack.count() - 1:
-            self._next_btn.setText("Finish")
-        else:
-            self._next_btn.setText("Continue →")
-
-    def _on_next(self) -> None:
-        idx = self._stack.currentIndex()
-        if idx < self._stack.count() - 1:
-            self._stack.setCurrentIndex(idx + 1)
-            self._update_buttons()
-        else:
-            mark_completed()
-            self.finished_onboarding.emit()
-            self.accept()
+    def _on_finish(self) -> None:
+        mark_completed()
+        self.finished_onboarding.emit()
+        self.accept()
 
     def _on_skip(self) -> None:
         mark_completed()

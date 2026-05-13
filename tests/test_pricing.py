@@ -83,8 +83,11 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.3.1 — UI dead-surface patch +
-        # status reports via GitHub Actions cron. Cog menu trimmed,
-        # legacy workflow methods removed, status bar de-noised,
-        # Settings power-user rows hidden behind disclosures.
-        assert v == "1.3.1"
+        # Track the latest stable. v1.3.2 — UI round 2 (ruthless):
+        # brand mark only, welcome card gone unless skills saved,
+        # status bar auto-hide, NAV split 4 primary + 4 disclosure,
+        # right inspector auto-collapse 8px on non-Home/Chat pages,
+        # Settings master "Show advanced" wraps Cloud+Speckle+Procore+
+        # HUD+Privacy+Relay, onboarding 3-step → 1 scrollable column,
+        # llm_detector + ai_detect_local with 24 tests.
+        assert v == "1.3.2"

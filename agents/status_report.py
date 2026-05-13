@@ -11,7 +11,7 @@ exposes — heartbeat, queue depth, last outputs — and joins them with:
                           agents, GitHub Actions status (best-effort)
   * cost signals        — Anthropic spend derived from usage_log token
                           totals, projected over 30 days
-  * roadmap signals     — pending vs done counts from ROADMAP.md
+  * roadmap signals     — pending vs done counts from docs/ROADMAP.md
   * error signals       — tail of boot.log + Sentry hook (stubbed when
                           SENTRY_DSN absent)
 
@@ -55,7 +55,7 @@ OUTPUTS_DIR = DATA_ROOT / "outputs"
 LOGS_DIR = DATA_ROOT / "logs"
 HEARTBEAT_PATH = DATA_ROOT / "heartbeat.txt"
 BOOT_LOG_PATH = REPO_ROOT / "boot.log"
-ROADMAP_PATH = REPO_ROOT / "ROADMAP.md"
+ROADMAP_PATH = REPO_ROOT / "docs" / "ROADMAP.md"
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +389,10 @@ def _section_cost() -> dict:
 # Roadmap — counts of pending vs shipped items
 # ---------------------------------------------------------------------------
 def _section_roadmap() -> dict:
-    """Walk ROADMAP.md, count pending items with 'target' dates inside
-    the next 7 days + items marked shipped today."""
+    """Walk docs/ROADMAP.md and count next-7-days + shipped-today items."""
     if not ROADMAP_PATH.exists():
-        return {"available": False, "reason": "ROADMAP.md not found"}
+        return {"available": False,
+                "reason": f"{ROADMAP_PATH.relative_to(REPO_ROOT)} not found"}
     try:
         text = ROADMAP_PATH.read_text(encoding="utf-8")
     except OSError as ex:
@@ -401,16 +401,28 @@ def _section_roadmap() -> dict:
     next_week = today + timedelta(days=7)
     pending_next_week = 0
     shipped_24h = 0
-    # Match "target YYYY-MM-DD" — the roadmap convention is
-    # "(target 2026-05-15)" or "target 2026-05-15".
+    # Current autonomous-loop roadmap convention: every unchecked bullet
+    # under "NEXT 7 DAYS" is reportable for the weekly window.
     import re
-    for m in re.finditer(r"target\s+(\d{4}-\d{2}-\d{2})", text):
-        try:
-            d = datetime.fromisoformat(m.group(1)).date()
-        except ValueError:
+    in_next_7_days = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_next_7_days = stripped.lower() == "## next 7 days"
             continue
-        if today <= d <= next_week:
+        if in_next_7_days and re.match(r"^-\s*\[\s*\]", stripped):
             pending_next_week += 1
+
+    if pending_next_week == 0:
+        # Legacy fallback: old root ROADMAP.md used "(target YYYY-MM-DD)".
+        # Keep supporting that format for tests and transitional docs.
+        for m in re.finditer(r"target\s+(\d{4}-\d{2}-\d{2})", text):
+            try:
+                d = datetime.fromisoformat(m.group(1)).date()
+            except ValueError:
+                continue
+            if today <= d <= next_week:
+                pending_next_week += 1
     # "shipped" rows live in the table — look for today's ISO date in
     # the same line as a version number.
     for line in text.splitlines():

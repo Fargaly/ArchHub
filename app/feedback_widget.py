@@ -1,14 +1,14 @@
-"""In-chat thumbs / feedback row.
+"""In-chat feedback row.
 
-Shown attached to the bottom of every assistant bubble. Two clicks:
-  👍 — `feedback_thumb_up`
-  👎 — opens a tiny inline text box → `feedback_thumb_down` event with
-        free-text comment.
+Shown attached to the bottom of every assistant bubble. Two text links
+("yes" / "no") under a tiny mono "Helpful?" prompt — emoji buttons were
+replaced with quiet text in v1.3.x (BRAND.voice rule 2: no emoji).
+Clicking "no" reveals a one-line comment input.
 
 Events fire through `telemetry.track_event` so they obey the user's
-opt-in. If telemetry is off, clicks still register as a local
-in-memory "appreciated" / "complained" tally that the friction-report
-script can read from `%LOCALAPPDATA%/ArchHub/feedback.json`.
+opt-in. If telemetry is off, clicks still register locally in
+`%LOCALAPPDATA%/ArchHub/feedback.json` so the friction-report script
+can read them.
 """
 from __future__ import annotations
 

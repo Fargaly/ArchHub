@@ -3,6 +3,13 @@
 Phase 1 UI: a list of saved workflows with name, description, node count,
 and trigger types. Buttons: Run, Edit JSON, Delete. The canvas comes in
 phase 3; for now the JSON editor is the editing surface.
+
+TODO(shadow-audit): this module is currently orphan — no code path
+instantiates WorkflowsPanel anywhere. The Studio Workflows page uses
+WorkflowCanvas, and the chat menu's legacy "Workflows..." item was
+removed in v1.3.1. File kept on disk only as documentation of the
+underlying Workflow JSON contract (referenced by workflow_canvas.py:5).
+Delete after the canvas docs absorb that note.
 """
 from __future__ import annotations
 

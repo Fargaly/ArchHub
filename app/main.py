@@ -448,6 +448,13 @@ def main() -> int:
     # When the Studio shell wraps it, the shell IS the chrome — overlay
     # would conflict (it grabs `window` as its host). Skip overlay if
     # `surface is not window`.
+    #
+    # TODO(shadow-audit): Settings → Appearance → "Use HUD overlay
+    # chrome" + hotkey rebind are SHOWN to every user, but persist a
+    # setting that's only honoured when the StudioShell construction
+    # fails. For 99% of users (Studio is the default), this is a
+    # disconnected toggle. Either hide the row when wrapped, or wire
+    # Studio-shell-aware overlay support.
     overlay_controller = None
     if surface is window:
         try:
@@ -543,10 +550,15 @@ def main() -> int:
             rc = dlg.exec()
             # rc == 2 → user clicked "I have a Claude/OpenAI account";
             # surface Settings so they can paste a key right away.
-            if rc == 2 and 'window' in locals():
+            # Route through `surface` (the StudioShell when wrapped),
+            # not `window` (the bare ChatWindow which has no _set_page).
+            if rc == 2:
                 try:
-                    if hasattr(window, "_set_page"):
-                        window._set_page("settings")
+                    target = surface if 'surface' in locals() else window
+                    if hasattr(target, "_set_page"):
+                        target._set_page("settings")
+                    elif hasattr(target, "_open_settings"):
+                        target._open_settings()
                 except Exception:
                     pass
     except Exception:

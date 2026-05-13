@@ -394,16 +394,16 @@ def check_and_download(*, on_status=None, force: bool = False) -> dict:
     if not ok:
         return {"status": "ok", "up_to_date": True, "current": current}
 
-    on_status(f"Update available: {release.tag_name}", 30,
-              f"installed {current} → {release.tag_name}")
+    on_status(f"Update available: {release.tag}", 30,
+              f"installed {current} → {release.tag}")
 
     try:
-        on_status(f"Downloading {release.tag_name}", 50, "")
+        on_status(f"Downloading {release.tag}", 50, "")
         installer = download_asset(release)
     except Exception as ex:
         return {"status": "error", "error": f"download failed: {ex}"}
 
-    on_status(f"{release.tag_name} ready — restart to install", 100, "")
+    on_status(f"{release.tag} ready — restart to install", 100, "")
     return {
         "status": "ok",
         "up_to_date": False,
@@ -464,7 +464,7 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
         sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "agents"))
         from notify import notify as _toast
         _toast(
-            f"ArchHub {release.tag_name} available",
+            f"ArchHub {release.tag} available",
             ("Installing silently…" if mode == "silent"
              else "Restart ArchHub to install."),
             html=None, toast=True,
@@ -479,10 +479,10 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
                 "current": current,
                 "release": release,
                 "installer_path": installer,
-                "latest": release.tag_name}
+                "latest": release.tag}
 
     # mode == 'silent' → install + restart NOW
-    on_status(f"Installing {release.tag_name} silently", 90, "")
+    on_status(f"Installing {release.tag} silently", 90, "")
     try:
         run_installer(installer, silent=True, relaunch=True)
     except Exception as ex:

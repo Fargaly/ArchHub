@@ -146,7 +146,16 @@ class SettingsPage(QWidget):
 
     # ------------------------------------------------------------------
     def _build_providers_section(self) -> QWidget:
-        """Wraps the legacy SettingsDialog inside a scrollable card."""
+        """Wraps the legacy SettingsDialog inside a scrollable card.
+
+        TODO(shadow-audit): SettingsDialog ALREADY contains its own AI
+        Behaviour section (thinking-effort + per-tool combos). When we
+        embed it here AND show a separate "AI Behaviour" section
+        (built by `_build_ai_behaviour_section`), the user sees both
+        surfaces stacked in the Studio Settings page. Either drop the
+        embedded AI Behaviour from SettingsDialog when it's wrapped, or
+        remove the dedicated section. Picking one is a design call.
+        """
         wrap = QScrollArea()
         wrap.setObjectName("studioScroll")
         wrap.setWidgetResizable(True)

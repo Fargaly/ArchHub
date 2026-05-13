@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ArchHub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin:0; padding:0; background:#0e0e11; font-family:'Inter',system-ui,sans-serif; color:#ece8e0;
+                height:100%; overflow:hidden; }
+  *, *::before, *::after { box-sizing: border-box; }
+  #root { height:100vh; width:100vw; }
+  /* Scrollbar polish for embedded panels */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="shared-data.jsx"></script>
+<script type="text/babel" src="studio-lm.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+// Mount the StudioLM artboard fullscreen — no DesignCanvas wrapper.
+// This is the actual app surface: every panel, every node, every
+// setting from the prototype rendered into ArchHub's runtime window.
+function App() {
+  return <div style={{ height: '100vh', width: '100vw' }}><StudioLM /></div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

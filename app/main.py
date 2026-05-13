@@ -393,16 +393,35 @@ def main() -> int:
     # Home/Skills/Workflows/Marketplace/Telemetry/Settings pages,
     # left rail (brand · ⌘K · nav · hosts · threads · user), right
     # inspector (304px), bottom mono status rule (26px).
-    # v1.4.0-alpha (ADR-003 pivot): WorkspaceShell — graph-first canvas
-    # as the only surface. Falls through to StudioShell when the new
-    # shell can't construct (e.g. workflows.registry import error),
-    # then to bare ChatWindow as a last resort.
+    # v1.4.0-alpha (ADR-003 pivot): the actual designer's prototype is
+    # the surface. WebShell embeds web_ui/index.html (which mounts
+    # <StudioLM /> from the design bundle) via QtWebEngine. That gets
+    # pixel-perfect fidelity to the prototype while we migrate state
+    # bridges across QWebChannel. Fallback chain:
+    #     WebShell (prototype) → WorkspaceShell (Qt-native skeleton)
+    #                          → StudioShell (legacy pages)
+    #                          → bare ChatWindow
     surface = window
     try:
-        from workspace_shell import WorkspaceShell
-        shell = WorkspaceShell(chat_widget=window, router=router,
-                                manager=manager, tools=tools)
+        from web_shell import WebShell
+        shell = WebShell(chat_widget=window, router=router,
+                          manager=manager, tools=tools)
         surface = shell
+    except Exception:
+        try:
+            import traceback as _tb
+            with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
+                _f.write("WebShell build failed — trying WorkspaceShell:\n")
+                _tb.print_exc(file=_f)
+        except Exception:
+            pass
+
+    try:
+        if surface is window:
+            from workspace_shell import WorkspaceShell
+            shell = WorkspaceShell(chat_widget=window, router=router,
+                                    manager=manager, tools=tools)
+            surface = shell
     except Exception:
         try:
             import traceback as _tb

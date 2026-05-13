@@ -141,15 +141,27 @@ class Edge:
     src_port: str
     dst_node: str
     dst_port: str
+    # v1.4 (ADR-003 §"Execution model" + Agent A wire-research):
+    # Edges carry runtime data state on disk. The actual `value` lives
+    # only in the in-process WireBus to avoid bloating session.graph;
+    # `cache_key` lets a re-opened session detect "still fresh".
+    cache_key: str = ""
+    state: str = "idle"   # idle | flowing | cached | stale | error | upstream_error
+    value_preview: str = ""   # repr(value)[:200] for hover tooltip
 
     def to_dict(self) -> dict:
         return {"id": self.id, "src_node": self.src_node, "src_port": self.src_port,
-                "dst_node": self.dst_node, "dst_port": self.dst_port}
+                "dst_node": self.dst_node, "dst_port": self.dst_port,
+                "cache_key": self.cache_key, "state": self.state,
+                "value_preview": self.value_preview}
 
     @staticmethod
     def from_dict(d: dict) -> "Edge":
         return Edge(id=d["id"], src_node=d["src_node"], src_port=d["src_port"],
-                    dst_node=d["dst_node"], dst_port=d["dst_port"])
+                    dst_node=d["dst_node"], dst_port=d["dst_port"],
+                    cache_key=d.get("cache_key", "") or "",
+                    state=d.get("state", "idle") or "idle",
+                    value_preview=d.get("value_preview", "") or "")
 
 
 # ---------------------------------------------------------------------------

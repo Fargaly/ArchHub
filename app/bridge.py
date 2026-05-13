@@ -65,6 +65,9 @@ class ArchHubBridge(QObject):
     sessions_changed = pyqtSignal()
     memory_changed  = pyqtSignal()
     notice          = pyqtSignal(str, str)       # (level, text) — toast hook
+    # v1.4 wire-as-data-bridge — runner pushes wire state into JS so
+    # the canvas can colour wires by data state in real time.
+    wire_state_changed = pyqtSignal(str, str, str)   # (edge_id, state, preview)
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None):
@@ -539,49 +542,95 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── Wire validation (canvas drop-validation) ──────────────────
+    @pyqtSlot(str, str, bool, bool, result=bool)
+    def can_wire(self, out_type: str, in_type: str,
+                  out_exec: bool, in_exec: bool) -> bool:
+        """Type-check a prospective wire from canvas mouseup. Returns
+        False when the rubber-band should snap back instead of
+        committing the wire."""
+        try:
+            from workflows.typesystem import can_wire as _cw
+            from workflows.graph import PortType
+            out_t = PortType(out_type) if out_type else PortType.ANY
+            in_t  = PortType(in_type)  if in_type  else PortType.ANY
+            return bool(_cw(out_t, in_t,
+                             output_is_exec=bool(out_exec),
+                             input_is_exec=bool(in_exec)))
+        except Exception:
+            return True   # fail-open: prefer accepting questionable
+                          # types over refusing valid ones
+
+    @pyqtSlot(str, str, str, str, result=bool)
+    def would_create_cycle(self, session_id: str,
+                             src_node: str, dst_node: str,
+                             graph_json: str = "") -> bool:
+        """True if dropping a wire from src→dst would create a cycle.
+        Canvas calls this on socket-drop before committing."""
+        try:
+            import json as _json
+            graph = _json.loads(graph_json) if graph_json else None
+            if graph is None:
+                # Load from disk fallback.
+                from pathlib import Path
+                from session_io import (
+                    SESSIONS_DIR, load_session_with_messages,
+                )
+                p = Path(session_id)
+                if not p.exists():
+                    p = SESSIONS_DIR / f"{session_id}.archhub-session.json"
+                if not p.exists():
+                    return False
+                session, _name, _m = load_session_with_messages(p)
+                graph = session.graph or {}
+            from workflows.runner import WorkflowRunner
+            return WorkflowRunner(graph).would_create_cycle(
+                src_node, dst_node)
+        except Exception:
+            return False
+
     @pyqtSlot(str, str, str, result=str)
     def run_node(self, session_id: str, node_id: str,
-                  inputs_json: str = "{}") -> str:
-        """Invoke the executor for a node in the active graph.
+                  graph_json: str = "") -> str:
+        """Cook a node via WorkflowRunner.pull — lazy upstream walk +
+        dirty cascade + caching. Emits wire_state(edge_id, state,
+        preview) signals as values flow so the JS canvas can light up
+        wires in real time.
 
-        Looks up the node by id, resolves its type from workflows
-        registry, runs `executor(config, inputs, ctx)`, returns the
-        outputs dict. The canvas can use this for per-node "run"
-        buttons + cascading re-runs.
+        graph_json is optional. When given, the runner runs against
+        that in-memory shape (no disk roundtrip). When empty, we read
+        session.graph from the saved session.
         """
         try:
             import json as _json
             from pathlib import Path
-            from session_io import (
-                SESSIONS_DIR, load_session_with_messages,
-            )
-            from workflows.registry import get as _get_spec
             sid = session_id or "workspace"
-            p = Path(sid)
-            if not p.exists():
-                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
-            if not p.exists():
-                return _safe_json({"error": "session not found"})
-            session, _name, _msgs = load_session_with_messages(p)
-            g = session.graph or {}
-            node = None
-            for n in g.get("nodes") or []:
-                if n.get("id") == node_id:
-                    node = n
-                    break
-            if not node:
-                return _safe_json({"error": f"node {node_id} not in graph"})
-            spec_tup = _get_spec(node.get("type") or "")
-            if not spec_tup:
-                return _safe_json({"error": f"unknown node type: {node.get('type')}"})
-            _spec, executor = spec_tup
-            try:
-                inputs = _json.loads(inputs_json or "{}")
-            except Exception:
-                inputs = {}
-            config = dict(node.get("config") or {})
-            result = executor(config, inputs, None)
-            return _safe_json(result if result is not None else {"status": "ok"})
+            graph: dict
+            if graph_json:
+                try:
+                    graph = _json.loads(graph_json)
+                except Exception as ex:
+                    return _safe_json({"error": f"bad graph_json: {ex}"})
+            else:
+                from session_io import (
+                    SESSIONS_DIR, load_session_with_messages,
+                )
+                p = Path(sid)
+                if not p.exists():
+                    p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+                if not p.exists():
+                    return _safe_json({"error": "session not found"})
+                session, _name, _m = load_session_with_messages(p)
+                graph = session.graph or {}
+            from workflows.runner import WorkflowRunner
+            runner = WorkflowRunner(graph)
+            # Wire wire-state changes through to JS via Qt signal.
+            runner.on_wire_state(
+                lambda eid, state, preview:
+                    self.wire_state_changed.emit(eid, state, preview))
+            result = runner.pull(node_id)
+            return _safe_json(result if isinstance(result, dict)
+                                else {"value": result})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 

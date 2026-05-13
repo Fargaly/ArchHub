@@ -1248,6 +1248,29 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return () => window.removeEventListener('lm-wire-start', onWireStart);
   }, []);
 
+  // ── Runner-driven wire state: bridge emits wire_state_changed
+  //     while a node is being pulled (flowing → cached / stale /
+  //     error). We stamp the matching edge's `state` so the SVG
+  //     repaints with the right stroke pattern.
+  React.useEffect(() => {
+    if (!window.archhub || !window.archhub.wire_state_changed) return;
+    const handler = (edgeId, state, preview) => {
+      // Find the edge by canonical id `{srcNode}.{srcPort}-{dstNode}.{dstPort}`.
+      LM_GRAPH.wires.forEach((w, idx) => {
+        const id = `${w.from[0]}.${w.from[1]}-${w.to[0]}.${w.to[1]}`;
+        if (id === edgeId) {
+          w._state = state;
+          w._preview = preview;
+        }
+      });
+      forceTick();
+    };
+    try { window.archhub.wire_state_changed.connect(handler); } catch (e) {}
+    return () => {
+      try { window.archhub.wire_state_changed.disconnect(handler); } catch (e) {}
+    };
+  }, []);
+
   React.useEffect(() => {
     if (!wireDrag) return;
     const onMove = (e) => {
@@ -1260,6 +1283,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (sock) {
         const toNode = sock.getAttribute('data-socket-node');
         const toSocket = sock.getAttribute('data-socket-id');
+        const toType = sock.getAttribute('data-socket-type') || 'any';
+        const fromType = wireDrag.fromType || 'any';
         if (toNode && toSocket &&
               wireDrag.fromNode && wireDrag.fromSocket &&
               toNode !== wireDrag.fromNode) {
@@ -1269,13 +1294,37 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                 && w.from[1] === wireDrag.fromSocket
                 && w.to[0] === toNode
                 && w.to[1] === toSocket);
-          if (!dupe) {
+          // Type-check via bridge (fail-open if bridge offline).
+          let typeOk = true;
+          if (window.archhub && window.archhub.can_wire) {
+            try {
+              typeOk = window.archhub.can_wire(fromType, toType, false, false);
+            } catch (e) { typeOk = true; }
+          }
+          // Cycle check (DAG-only).
+          let cycle = false;
+          if (window.archhub && window.archhub.would_create_cycle) {
+            try {
+              const graphJson = JSON.stringify(LM_GRAPH);
+              cycle = window.archhub.would_create_cycle(
+                'workspace', wireDrag.fromNode, toNode, graphJson);
+            } catch (e) { cycle = false; }
+          }
+          if (!dupe && typeOk && !cycle) {
             LM_GRAPH.wires.push({
               from: [wireDrag.fromNode, wireDrag.fromSocket],
               to:   [toNode, toSocket],
             });
             _autosaveGraph();
             forceTick();
+          } else if (!typeOk || cycle) {
+            // Flash the target socket red briefly to signal refusal.
+            try {
+              sock.animate(
+                [{ filter: 'drop-shadow(0 0 6px #e6705f)' },
+                 { filter: 'drop-shadow(0 0 0 #e6705f)' }],
+                { duration: 280 });
+            } catch (e) {}
           }
         }
       }
@@ -1430,23 +1479,49 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
             const color = WIRE[w.t] || LM.inkSoft;
             const sel = selectedWire === w.i;
-            const strokeW = sel ? 3.4 : (w.focused ? 2.4 : 1.4);
-            const op = sel ? 1 : (w.focused ? 1 : 0.5);
+            // Runtime data state from WorkflowRunner via wire_state_changed.
+            const raw = LM_GRAPH.wires[w.i] || {};
+            const dataState = raw._state || 'idle';
+            const isFlowing = dataState === 'flowing';
+            const isStale   = dataState === 'stale';
+            const isError   = dataState === 'error' ||
+                               dataState === 'upstream_error';
+            const isCached  = dataState === 'cached';
+            const strokeW = sel ? 3.4 :
+                              isError ? 2.2 :
+                              isCached ? 2.4 :
+                              isFlowing ? 2.6 :
+                              (w.focused ? 2.4 : 1.4);
+            const op = sel ? 1 :
+                        isStale ? 0.35 :
+                        isError ? 0.85 :
+                        isCached ? 0.95 :
+                        (w.focused ? 1 : 0.5);
+            const useColor = sel ? LM.err :
+                              isError ? LM.err :
+                              isStale ? LM.inkMuted :
+                              color;
+            const dash = isStale ? '4 6' :
+                          isError ? '2 4' : undefined;
             return (
               <g key={w.i}>
-                {/* Invisible wider hit-zone so the user can click thin wires. */}
+                {/* Invisible wider hit-zone for click selection. */}
                 <path d={d} stroke="transparent" strokeWidth={14} fill="none"
                        style={{ cursor:'pointer', pointerEvents:'stroke' }}
                        onClick={(e) => {
                          e.stopPropagation();
                          setSelectedWire(sel ? null : w.i);
-                       }}/>
-                <path d={d} stroke={sel ? LM.err : color}
+                       }}>
+                  {raw._preview && <title>{raw._preview}</title>}
+                </path>
+                <path d={d} stroke={useColor}
                        strokeWidth={strokeW} fill="none" opacity={op}
-                       filter={(w.focused || sel) ? "url(#lm-wire-glow)" : undefined}
+                       strokeDasharray={dash}
+                       filter={(w.focused || sel || isCached) ? "url(#lm-wire-glow)" : undefined}
                        style={{ pointerEvents:'none' }}/>
-                {w.animated && (
-                  <path d={d} stroke={color} strokeWidth={strokeW} fill="none"
+                {(w.animated || isFlowing) && (
+                  <path d={d} stroke={useColor}
+                         strokeWidth={strokeW} fill="none"
                          strokeDasharray="6 10"
                          style={{ animation:'lmDash 0.9s linear infinite',
                                    pointerEvents:'none' }}/>

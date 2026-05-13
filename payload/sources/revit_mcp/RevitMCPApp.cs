@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -59,6 +60,14 @@ namespace RevitMCP
             {
                 _app = application;
                 _revitVersion = SafeRevitVersion(application);
+
+                // Make Roslyn (Microsoft.CodeAnalysis*) + System.Text.Json
+                // + their dependencies resolvable when /exec scripts the
+                // host. Revit's default probing doesn't include this
+                // add-in's own folder — without the handler the CLR
+                // throws "FileNotFoundException: Microsoft.CodeAnalysis
+                // 4.11.0.0 not found" on the first /exec call.
+                InstallAssemblyResolver();
 
                 _handler = new RevitEventHandler();
                 _externalEvent = ExternalEvent.Create(_handler);
@@ -267,6 +276,79 @@ namespace RevitMCP
         {
             try { return app.ControlledApplication.VersionNumber ?? ""; }
             catch { return ""; }
+        }
+
+        // ------------------------------------------------------------------
+        //  Assembly resolver — fixes the "/exec broken: Microsoft.CodeAnalysis
+        //  4.11.0.0 not found" error.
+        //
+        //  Revit hosts the add-in inside its own process. When /exec invokes
+        //  Roslyn (Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript), the
+        //  CLR probes (1) Revit.exe's directory, (2) the GAC. Neither contains
+        //  the Roslyn DLLs we ship alongside RevitMCP.dll. Default behaviour:
+        //  FileNotFoundException, /exec dies.
+        //
+        //  This handler intercepts AssemblyResolve on the current AppDomain
+        //  and looks in the add-in's own directory for the requested DLL,
+        //  honouring exact version when present and falling back to name-only
+        //  match. Idempotent — guarded by _resolverInstalled so multiple
+        //  RevitMCP installations (one per Revit version) don't stack.
+        // ------------------------------------------------------------------
+
+        private static bool _resolverInstalled;
+        private static readonly object _resolverLock = new object();
+
+        private void InstallAssemblyResolver()
+        {
+            lock (_resolverLock)
+            {
+                if (_resolverInstalled) return;
+                AppDomain.CurrentDomain.AssemblyResolve += AddinDirResolver;
+                _resolverInstalled = true;
+            }
+        }
+
+        private static Assembly AddinDirResolver(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                var requested = new AssemblyName(args.Name);
+                // Add-in folder = where THIS assembly was loaded from.
+                var addinDir = Path.GetDirectoryName(
+                    typeof(RevitMCPApp).Assembly.Location);
+                if (string.IsNullOrEmpty(addinDir)) return null;
+
+                // Try exact name first (most common case for Roslyn DLLs).
+                var candidate = Path.Combine(addinDir, requested.Name + ".dll");
+                if (File.Exists(candidate))
+                {
+                    try { return Assembly.LoadFrom(candidate); }
+                    catch { /* fall through */ }
+                }
+
+                // Some assemblies ship as .resources.dll — try that too.
+                candidate = Path.Combine(addinDir, requested.Name + ".resources.dll");
+                if (File.Exists(candidate))
+                {
+                    try { return Assembly.LoadFrom(candidate); }
+                    catch { /* fall through */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Best-effort — log once per session to the add-in log file
+                // so a missing dep can be diagnosed without crashing Revit.
+                try
+                {
+                    var logPath = Path.Combine(Path.GetTempPath(),
+                        "RevitMCP.AssemblyResolve.log");
+                    File.AppendAllText(logPath,
+                        DateTime.UtcNow.ToString("o") + "  " +
+                        args.Name + "  ERR: " + ex.Message + "\n");
+                }
+                catch { }
+            }
+            return null;
         }
 
         // ------------------------------------------------------------------

@@ -17,10 +17,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
+def _force_top_level_agents() -> None:
+    """Resolve `agents` to repo-root agents/, not app/agents/."""
+    repo = str(REPO_ROOT)
+    if repo in sys.path:
+        sys.path.remove(repo)
+    sys.path.insert(0, repo)
+    for k in list(sys.modules):
+        if k == "agents" or k.startswith("agents."):
+            sys.modules.pop(k, None)
+
+
 # Clear any cached agents.* modules so the per-test backend installs
 # don't bleed.
 @pytest.fixture(autouse=True)
 def _reset_agents_modules():
+    _force_top_level_agents()
     yield
     for k in list(sys.modules):
         if k == "agents" or k.startswith("agents."):

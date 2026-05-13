@@ -137,6 +137,65 @@ only invoked by the Docker image's `CMD`. Both paths share the same
 queue + dispatcher + scheduler, just with a different LLM backend
 selected by `ARCHHUB_AGENTS_BACKEND`.
 
+## Founder status reports (every-N-min email)
+
+The cloud daemon emails a per-cycle ArchHub digest to the founder
+through Resend. Wired in `agents/status_report.py` (builds the dict +
+HTML) and `agents/report_sender.py` (the Resend POST + cadence gate).
+The runner calls it from `CloudDaemon.tick_once` so failures stay
+contained — a Resend hiccup never crashes the agent loop.
+
+### Env vars
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `RESEND_API_KEY` | unset | Required for live send. When absent, the sender logs to stdout + `agents/logs/reports.log` and returns ok. |
+| `ARCHHUB_REPORT_RECIPIENT` | `ahmed.fargaly98@gmail.com` | Address the digest goes to. |
+| `ARCHHUB_REPORT_FROM_EMAIL` | `noreply@archhub.app` | `from` header. Must be a verified Resend sender. |
+| `ARCHHUB_REPORT_INTERVAL_MIN` | `60` | Minutes between sends. `0` disables the feature. |
+| `ARCHHUB_REPORT_DIGEST_HOURS` | unset (off) | Buffers reports for N hours and sends one combined email — rate-limit-friendly. |
+| `ARCHHUB_REPORT_DRY_RUN` | unset | Any truthy value forces stdout-only (useful for staging). |
+| `ARCHHUB_BACKEND_HEALTHZ` | `http://127.0.0.1:8000/healthz` | URL probed for cloud_backend reachability. |
+| `ARCHHUB_AGENTS_HEALTHZ` | `http://127.0.0.1:8080/healthz` | URL probed for the agents daemon. |
+| `ARCHHUB_GH_REPO` / `GITHUB_TOKEN` | unset | When both set, the report includes the latest GitHub Actions run status. |
+
+Change live (no redeploy required):
+
+```bash
+flyctl secrets set ARCHHUB_REPORT_INTERVAL_MIN=30 -a archhub-agents
+flyctl secrets set ARCHHUB_REPORT_RECIPIENT=ops@archhub.app -a archhub-agents
+```
+
+### Resend free-tier reality — read this first
+
+Resend's free tier ships **100 emails/day** (3,000/mo). Interval math:
+
+| Interval | Sends/day | Free tier? |
+| -------- | --------- | ---------- |
+| 10 min   | 144       | NO — past the 100/day cap by 11 am UTC |
+| 15 min   | 96        | tight, no headroom |
+| 30 min   | 48        | comfortable |
+| 60 min   | 24        | DEFAULT — leaves room for ad-hoc magic links too |
+
+The default is **60 minutes** on purpose. For a pre-revenue product
+the founder doesn't need a 10-minute pulse; an hourly digest catches
+every meaningful signal (signups, billing webhooks, agent failures)
+without flooding the inbox or burning the free tier.
+
+If you genuinely want 10-min granularity:
+
+* **Upgrade Resend** — $20/mo for the 50,000-email Pro tier.
+* **Use digest mode** — `ARCHHUB_REPORT_DIGEST_HOURS=1` with a 10-min
+  interval. Signals collected every 10 min; one combined email per
+  hour. 24 emails/day instead of 144.
+
+### Per-send audit log
+
+Every send (live or dry-run) writes a JSONL row to
+`agents/logs/reports.log`. Cadence state lives in
+`agents/state/last_report_at.txt`. To force the next tick to send,
+delete the file.
+
 ## Gotchas
 
 - **`ANTHROPIC_API_KEY` is required.** The daemon starts without

@@ -194,6 +194,39 @@ async def chat(req: Request,
     return await proxy.chat_completions(user=user, body=body)
 
 
+@app.get("/v1/billing/plans")
+def billing_plans() -> dict:
+    """Public plan catalog — used by the desktop app to render the
+    pricing dialog without hardcoding tier metadata client-side.
+
+    Returns whichever provider's tier IDs are configured. Both
+    providers share the same tier names (solo / studio / firm) and
+    quotas, so the desktop UI never needs to know which billing
+    backend is in use.
+    """
+    tiers = []
+    for tier_name in ("solo", "studio", "firm"):
+        quota = config.PLAN_QUOTAS.get(tier_name, 0)
+        seats = config.PLAN_SEATS.get(tier_name)
+        if config.BILLING_PROVIDER == "polar":
+            external_id = config.POLAR_PRODUCT_IDS.get(tier_name) or None
+        else:
+            external_id = config.PLAN_PRICE_IDS.get(tier_name) or None
+        tiers.append({
+            "tier": tier_name,
+            "monthly_quota": quota,
+            "seats": seats,
+            # external_id is null when the price/product hasn't been
+            # configured yet — the desktop UI shows "Coming soon".
+            "external_id_configured": external_id is not None,
+        })
+    return {
+        "provider": config.BILLING_PROVIDER,
+        "tiers": tiers,
+        "trial_messages": config.TRIAL_MESSAGES,
+    }
+
+
 def _billing_provider_module():
     """Return the module that backs the current BILLING_PROVIDER.
 

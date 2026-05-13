@@ -3,6 +3,189 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] — 2026-05-13
+
+The "operations + verification" release. Earlier today's v1.2.0 added
+the customer/billing/agents infrastructure on paper. v1.3.0 makes it
+operate continuously, picks up alternatives where the original choice
+was a wall (Stripe KYC), and adds the verification layer that catches
+"we shipped it but it doesn't actually work" before the user does.
+
+### Added — Polar.sh billing alternative
+
+Founder feedback: Stripe direct requires KYC + business entity (10-30 min
++ verification waits). Solo founder pre-revenue hits a wall.
+
+- `cloud_backend/polar.py` — full Merchant-of-Record provider with
+  same surface as Stripe (`create_checkout_url`, `create_portal_url`,
+  `handle_webhook`). Polar handles EU VAT + US sales tax + chargebacks.
+- `cloud_backend/main.py` — `_billing_provider_module()` picks at
+  handler time based on `BILLING_PROVIDER` env (default `stripe`).
+  Both `/v1/webhooks/stripe` + `/v1/webhooks/polar` routes co-exist.
+- `cloud_backend/config.py` — `BILLING_PROVIDER`, `POLAR_ACCESS_TOKEN`,
+  `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_SOLO/STUDIO/FIRM` env vars.
+- **`PUBLIC_URL` default flipped** from `https://cloud.archhub.app`
+  (never bought/built) → `https://archhub-cloud.fly.dev` (Fly's
+  default subdomain) so backend deploys WITHOUT requiring a custom
+  domain first.
+- `cloud_backend/tests/test_polar.py` — 13 tests covering HMAC-SHA256
+  signature verification, every event type, provider routing.
+- `docs/BILLING_ALTERNATIVES.md` — Stripe vs Polar vs LemonSqueezy vs
+  Paddle comparison. 10-min Polar onboarding walkthrough.
+
+### Added — `/v1/billing/plans` endpoint
+
+Public plan catalog for the desktop pricing dialog. Provider-agnostic
+shape — returns Polar product IDs when `BILLING_PROVIDER=polar`,
+Stripe price IDs otherwise. 7 tests.
+
+### Added — Multi-LLM agent backends
+
+Founder wanted ChatGPT / Codex / Gemini / local models as backends for
+agents, not just Anthropic. Cloud daemon now supports:
+
+  - `anthropic` — Claude Haiku 4.5 (default)
+  - `openai` — GPT-4o-mini + o4-mini for code reasoning
+  - `gemini` — Flash 2.5 + Pro 2.5 for long context
+  - `lmstudio` — local OpenAI-compat at :1234 (privacy/offline)
+  - `ollama` — local (free, dev default)
+
+`ARCHHUB_AGENTS_BACKEND=<id>` env switches. Single `_BACKENDS` dict in
+`agents/cloud_runner.py` = single source of truth. Adding a new
+backend = one row + one client module.
+
+- `agents/openai_client.py`, `agents/gemini_client.py`,
+  `agents/lmstudio_client.py` — same `OllamaCompletion`-shape
+  envelope. Per-backend model maps so `qwen2.5-coder` → the right
+  cloud model.
+- `tests/test_agents_multi_llm.py` — 16 tests cover each client +
+  selector + backend-install patching.
+
+### Added — Autonomous roadmap loop
+
+Founder wanted agents to autonomously tackle the backlog, not sit
+idle. The loop reads `docs/ROADMAP.md`, dedupes against completed
+state, enqueues new items by priority + department.
+
+- `agents/roadmap_source.py` — reads ROADMAP.md, CHANGELOG.md
+  "Limitations" sections, GitHub Issues (label `roadmap`), draft PRs,
+  `# ROADMAP:` source comments. Stable 12-char hash ids.
+- `agents/roadmap_dispatcher.py` — `tick()` enqueues new items, lock
+  file prevents concurrent enqueue, throttle via
+  `ARCHHUB_ROADMAP_INTERVAL_MIN` (default 30 min).
+- `agents/cloud_runner.py` — `tick_once()` runs the roadmap dispatcher
+  alongside the recurring scheduler each cycle.
+- `docs/ROADMAP.md` — 13 curated initial items (3 #P0 / 5 #P1 / 5 #P2)
+  across NEXT 7 / 30 / LATER horizons. Auto-updated "Done — last 7 days".
+- `docs/AGENTS_AUTONOMOUS_LOOP.md` — how it works, how to add/complete/
+  pause items, source taxonomy.
+- `tests/test_roadmap_dispatcher.py` — 17 tests.
+
+### Added — Email status reports
+
+Founder wanted "every 10 minutes" reports to ahmed.fargaly98@gmail.com.
+Reality: Resend free tier is 100 emails/day = 10-min cadence (144/day)
+blows past the cap. Built it with a digest-mode escape valve.
+
+- `agents/status_report.py` — `generate_report()` returns business
+  (signups / paying / MRR delta), infrastructure (cloud + agents
+  healthz), agents (pending tasks by dept), cost (Anthropic spend),
+  roadmap, errors, meta. Each section catches its own exceptions.
+- `agents/report_sender.py` — Resend HTTP POST (stdlib `urllib.request`,
+  no new deps). Cadence gate via `state/last_report_at.txt`. Digest
+  mode buffers reports + sends combined email after N hours.
+- Env vars: `RESEND_API_KEY`, `ARCHHUB_REPORT_RECIPIENT`,
+  `ARCHHUB_REPORT_INTERVAL_MIN` (**default 60**, not 10 — see
+  "Honest verdict" below), `ARCHHUB_REPORT_DIGEST_HOURS`,
+  `ARCHHUB_REPORT_FROM_EMAIL`, `ARCHHUB_REPORT_DRY_RUN`.
+- `agents/cloud_runner.py` — `tick_once()` invokes
+  `report_sender.tick_send_report()`. Failures swallowed.
+- `docs/STATUS_REPORTS.md` — sample subject/HTML/text, free-tier cap
+  table, digest-mode walkthrough, how to throttle/mute.
+- `tests/test_status_report.py` — 22 tests.
+
+**Honest verdict on cadence:** 10-min default is noise, not signal.
+Pre-revenue, meaningful state changes happen hours/days, not minutes.
+**60-min default is sane** + leaves headroom for ad-hoc magic-link
+emails on the Resend free tier. Override via `ARCHHUB_REPORT_INTERVAL_MIN`
+when MRR justifies $20/mo Resend Pro.
+
+### Added — Reality smoke test (real verification)
+
+Founder demanded reality, not "code complete with mocks". This is the
+actual verification layer.
+
+- `scripts/reality_smoke.py` — 16 checks across 6 categories:
+  cloud backend `/healthz` + `/v1/billing/plans` + register + webhook
+  route; agents `/healthz` + `/status`; Stripe live products (opt-in);
+  GitHub CI green + release matches VERSION + open PRs; local boot.log
+  + startup_self_test + ai_runner providers; LLM live touches (opt-in).
+- Flags: `--json`, `--cloud-url`, `--agents-url`, `--stripe-check`,
+  `--llm-check`, `--quiet`, `--retry N`. Exit code 1 if anything red.
+- `.github/workflows/reality.yml` — `*/30 * * * *` cron + manual
+  dispatch. Auto-opens/edits/closes a single `reality-down` GitHub
+  issue. Uploads `reality.json` as a 7-day artifact.
+- `docs/REALITY_SMOKE.md` — how to read output, common failure modes
+  + their fixes, how to add a new check.
+- `tests/test_reality_smoke.py` — 55 tests, all mocked. Covers
+  all-green, cloud down, agents stale, gh missing, LLM key missing,
+  secret-leak regression, CLI exit codes.
+
+**Current live verdict** against the un-deployed repo: **3/10 green**
+(only local desktop checks pass). After `cloud_backend/deploy.ps1`
+runs + Resend key entered: **~9/10 green**. The 1 remaining red
+becomes green after `agents/deploy.ps1` runs for the separate agents
+Fly app.
+
+### Fixed — UI brand-drift
+
+`docs/UI_AUDIT_v1.2.md` — full forensic report. Top fixes:
+
+- `app/chat_window.py` — host pills + update banner colours switched
+  from hardcoded hex to `_LivePalette` tokens. Now obey dark mode.
+- `app/chat_window.py` — cog menu items: emoji removed (BRAND.voice
+  rule "No emoji"). Plain mono labels.
+- `app/settings_dialog.py` — provider rows: emoji icons (🔒 ✓ ○ 🧠 🛡
+  ☁ 🏗 👁 🌐 ⚡) replaced with consistent objectName-driven
+  status pills. Matches `COMPONENTS.row` spec.
+- `app/feedback_widget.py` + `app/onboarding_dialog.py` — small
+  spacing + radius fixes onto the 4px / radius scale.
+
+Studio shell, Add Host panel, Parameters panel, Skill cards were
+already on-spec.
+
+### Fixed — Test cross-contamination (AUMID failures)
+
+`tests/test_reality_smoke.py` was inserting tmp_path/app into
+sys.path during `check_local_ai_runner` tests + leaking a stub
+`main.py` into `sys.modules["main"]`. The leak broke
+`test_session_history.py::TestAUMIDRegistration` whenever the suite
+ran in order. Added an autouse fixture in `test_reality_smoke.py` that
+snapshots + restores `sys.path` + `sys.modules` per-test. 4 false
+failures → 0.
+
+### Tests
+
+- `tests/` — **543 passing** (was 433; +110 new across reality,
+  roadmap, status_report, multi-LLM, billing-plans, polar)
+- `cloud_backend/tests/` — **97 passing** (was 77; +20 polar +
+  billing-plans tests)
+- **Total: 640 passing.** Zero regressions.
+
+### Notes on what's actually deployed
+
+- `cloud-archhub.fly.dev` — **still NOT deployed**. Code complete +
+  tested + deploy.ps1 ready. Founder runs `cloud_backend/deploy.ps1`
+  to flip the switch.
+- `cloud.archhub.app` — DNS record still doesn't exist. `archhub.app`
+  domain IS registered at Namecheap (verified via DNS lookup). When
+  founder wants the custom subdomain, add one A record + run
+  `flyctl certs add cloud.archhub.app`.
+- `archhub-agents.fly.dev` — agents 24/7 cloud is code-ready, not yet
+  deployed. `agents/deploy.ps1` is the one-command path.
+- All UI fixes ship in the desktop installer. Restart ArchHub after
+  installing v1.3.0 to see them.
+
 ## [1.2.0] — 2026-05-13
 
 The "customer infrastructure" release. Earlier today's audit revealed

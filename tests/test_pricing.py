@@ -83,9 +83,9 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.2.0 — customer infrastructure
-        # release: companies + multi-seat + invites, customer profile
-        # fields on signup, per-company Stripe checkout, agents 24/7
-        # on Fly.io with Anthropic backend + /healthz dashboard, cloud
-        # backend one-command deploy script + go-live checklist.
-        assert v == "1.2.0"
+        # Track the latest stable. v1.3.0 — operations release:
+        # Polar.sh alternative to Stripe (no business/KYC required),
+        # multi-LLM agent backends (anthropic/openai/gemini/lmstudio),
+        # autonomous roadmap loop, 10-min email status reports,
+        # reality smoke test + GH Actions cron, UI brand-drift fixes.
+        assert v == "1.3.0"

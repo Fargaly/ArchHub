@@ -196,7 +196,7 @@ class OnboardingDialog(QDialog):
         msg = f"Signed in. You're on the {plan} plan"
         if remaining is not None:
             msg += f" — {remaining} messages available."
-        self.stage_lbl.setText("All set! You're signed in to ArchHub Cloud.")
+        self.stage_lbl.setText("Signed in to ArchHub Cloud.")
         self.detail_lbl.setText(msg)
         self.bar.setValue(100)
         self.btn_cloud.setText("Done")
@@ -256,7 +256,7 @@ class OnboardingDialog(QDialog):
         )
 
     def _on_finished(self, model: str) -> None:
-        self.stage_lbl.setText("All set! Your AI brain is ready.")
+        self.stage_lbl.setText("Your AI brain is ready.")
         self.detail_lbl.setText(
             "You can close this window and start chatting. "
             "Open Settings any time to add a cloud account if you'd "

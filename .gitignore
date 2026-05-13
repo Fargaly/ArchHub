@@ -85,6 +85,10 @@ agents/tasks/
 agents/logs/
 agents/dashboard.html
 agents/_smoke/
+# Roadmap-dispatcher per-machine state (completed ids, lock, last
+# tick). Per-machine; never commit.
+agents/state/*
+!agents/state/.gitkeep
 
 # ==== Codex / temporary boot logs ====
 boot.log

@@ -48,6 +48,15 @@ class Dispatcher:
 
             if result.success:
                 self.queue.mark_done(task, result.summary)
+                # If this was a roadmap-sourced task, flush the id so
+                # the next roadmap-dispatcher tick won't re-enqueue it.
+                rid = (task.inputs or {}).get("roadmap_id")
+                if rid:
+                    try:
+                        from .roadmap_dispatcher import mark_complete
+                        mark_complete(rid)
+                    except Exception:
+                        pass
             else:
                 self.queue.mark_failed(task, result.error or result.summary)
             return result

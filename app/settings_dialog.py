@@ -52,7 +52,10 @@ class _ProviderRow(QFrame):
         h.setContentsMargins(12, 8, 12, 8)
         h.setSpacing(10)
 
-        self.icon = QLabel("🔒")
+        # Typographic bullet — BRAND.voice rule 2 forbids emoji. The
+        # providerIcon QSS draws a bordered terra plate around this so
+        # it still reads as a credential slot.
+        self.icon = QLabel("·")
         self.icon.setObjectName("providerIcon")
         h.addWidget(self.icon)
 
@@ -74,7 +77,9 @@ class _ProviderRow(QFrame):
 
     def refresh(self) -> None:
         if _key_present(self.provider, self.env_var):
-            self.icon.setText("✓")
+            # Filled bullet = key present; hollow circle = none. Both
+            # are typographic, not emoji.
+            self.icon.setText("●")
             masked = self._masked_key()
             self.status.setText(f"<i>signed in {masked}</i>")
             self.action_btn.setText("Sign out")
@@ -250,7 +255,7 @@ class SettingsDialog(QDialog):
         own_help.setObjectName("settingsSubtitle"); own_help.setWordWrap(True)
         sh.addRow("", own_help)
 
-        setup_btn = QPushButton("⚡  Set up local Speckle for me")
+        setup_btn = QPushButton("Set up local Speckle for me")
         setup_btn.setObjectName("primaryButton")
         setup_btn.setToolTip(
             "Runs Setup-Speckle.bat in a console window. Installs Docker "
@@ -279,7 +284,7 @@ class SettingsDialog(QDialog):
                 "Paste a Speckle PAT (Speckle has no OAuth for desktop apps)"
             )
         token_row.addWidget(self._speckle_field, 1)
-        sp_show = QPushButton("👁"); sp_show.setFixedWidth(34); sp_show.setObjectName("ghostButton")
+        sp_show = QPushButton("Show"); sp_show.setFixedWidth(56); sp_show.setObjectName("ghostButton")
         sp_show.setCheckable(True)
         sp_show.toggled.connect(
             lambda c: self._speckle_field.setEchoMode(
@@ -380,7 +385,8 @@ class SettingsDialog(QDialog):
         v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(8)
 
         title_row = QHBoxLayout(); title_row.setSpacing(8)
-        icon = QLabel("🧠"); icon.setObjectName("providerIcon")
+        # No emoji per BRAND.voice rule 2 — typographic plate instead.
+        icon = QLabel("AI"); icon.setObjectName("providerIcon")
         title_row.addWidget(icon)
         title = QLabel("AI Behaviour"); title.setObjectName("providerName")
         title_row.addWidget(title); title_row.addStretch(1)
@@ -509,7 +515,7 @@ class SettingsDialog(QDialog):
         v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(6)
 
         title_row = QHBoxLayout(); title_row.setSpacing(8)
-        icon = QLabel("🛡"); icon.setObjectName("providerIcon")
+        icon = QLabel("Pr"); icon.setObjectName("providerIcon")
         title_row.addWidget(icon)
         title = QLabel("Privacy & crash reports"); title.setObjectName("providerName")
         title_row.addWidget(title); title_row.addStretch(1)
@@ -699,7 +705,7 @@ class SettingsDialog(QDialog):
         status = cloud_sync.status()
 
         title_row = QHBoxLayout(); title_row.setSpacing(8)
-        icon = QLabel("☁"); icon.setObjectName("providerIcon")
+        icon = QLabel("CS"); icon.setObjectName("providerIcon")
         title_row.addWidget(icon)
         title = QLabel("Cloud sync — Skills, Sessions"); title.setObjectName("providerName")
         title_row.addWidget(title)
@@ -749,12 +755,12 @@ class SettingsDialog(QDialog):
             )
             if status.behind > 0:
                 help_lines.append(
-                    f"⚠ {status.behind} update(s) on the remote "
+                    f"{status.behind} update(s) on the remote "
                     f"haven't been pulled yet."
                 )
             if status.ahead > 0:
                 help_lines.append(
-                    f"⚠ {status.ahead} local commit(s) "
+                    f"{status.ahead} local commit(s) "
                     f"haven't been pushed yet."
                 )
 
@@ -809,7 +815,7 @@ class SettingsDialog(QDialog):
         v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(6)
 
         title_row = QHBoxLayout(); title_row.setSpacing(8)
-        icon = QLabel("🏗"); icon.setObjectName("providerIcon")
+        icon = QLabel("Pc"); icon.setObjectName("providerIcon")
         title_row.addWidget(icon)
         title = QLabel("Procore — sign in to enable RFI/submittal tools")
         title.setObjectName("providerName")
@@ -835,7 +841,7 @@ class SettingsDialog(QDialog):
         v.addWidget(help_lbl)
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(6)
-        open_btn = QPushButton("🌐  Open developers.procore.com")
+        open_btn = QPushButton("Open developers.procore.com")
         open_btn.setObjectName("primaryButton")
         open_btn.clicked.connect(
             lambda: self._start_procore_clipboard_watch(
@@ -864,7 +870,7 @@ class SettingsDialog(QDialog):
                 "if you copy it to the clipboard"
             )
         token_row.addWidget(self._procore_token, 1)
-        pc_show = QPushButton("👁"); pc_show.setFixedWidth(34)
+        pc_show = QPushButton("Show"); pc_show.setFixedWidth(56)
         pc_show.setObjectName("ghostButton")
         pc_show.setCheckable(True)
         pc_show.toggled.connect(

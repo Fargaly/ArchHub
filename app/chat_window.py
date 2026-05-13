@@ -445,7 +445,12 @@ class ToolCard(QFrame):
         # Inline error preview to the right of the title — saves a click.
         self.error_preview = QLabel("")
         self.error_preview.setObjectName("toolCardStatus")
-        self.error_preview.setStyleSheet("color: #d97757;")
+        try:
+            from design_tokens import current as _palette
+            _err = _palette()["err"]
+        except Exception:
+            _err = "#b8493e"
+        self.error_preview.setStyleSheet(f"color: {_err};")
         header.addWidget(self.error_preview)
 
         self.status_label = QLabel(invocation.status)
@@ -632,7 +637,22 @@ class SkillStepperCard(QFrame):
             self._rows["__only__"] = row
 
     def _format_row(self, icon: str, label: str, status: str) -> str:
-        return f"<span style='color:#cc785c;font-size:14px;'>{icon}</span>  {label}  <i style='color:#8a8580;'>{status}</i>"
+        # Pull accent + muted from the live palette so the stepper card
+        # matches whichever theme is active. The previous hardcoded
+        # "#cc785c" / "#8a8580" drifted from COLOR.accent (#c96442)
+        # and didn't track dark mode.
+        try:
+            from design_tokens import current as _palette
+            p = _palette()
+            accent = p["accent"]
+            muted = p["inkMuted"]
+        except Exception:
+            accent = "#c96442"
+            muted = "#7a7064"
+        return (
+            f"<span style='color:{accent};font-size:14px;'>{icon}</span>  "
+            f"{label}  <i style='color:{muted};'>{status}</i>"
+        )
 
     def handle_event(self, ev) -> None:
         nid = getattr(ev, "node_id", None)
@@ -688,7 +708,14 @@ class _StatusDot(QLabel):
 
     def _update_style(self) -> None:
         from PyQt6.QtGui import QColor
-        c = QColor("#c96442")
+        # Read accent from the active palette so the pulsing status dot
+        # tracks light/dark theme. Previously hardcoded #c96442 (light).
+        try:
+            from design_tokens import current as _palette
+            _accent_hex = _palette()["accent"]
+        except Exception:
+            _accent_hex = "#c96442"
+        c = QColor(_accent_hex)
         c.setAlphaF(max(0.0, min(1.0, 0.35 + 0.65 * self._intensity)))
         self.setStyleSheet(
             f"color:{c.name(QColor.NameFormat.HexArgb)}; "
@@ -815,9 +842,16 @@ class MessageBubble(QFrame):
             sr.addWidget(self._status_dot)
             self.status_line = QLabel("")
             self.status_line.setObjectName("bubbleStatus")
+            # Pull muted ink from the active palette so the status row
+            # stays legible in both light and dark themes.
+            try:
+                from design_tokens import current as _palette
+                _muted = _palette()["inkMuted"]
+            except Exception:
+                _muted = "#9a9183"
             self.status_line.setStyleSheet(
-                "color: #9a9183; font-style: italic; font-size: 12px; "
-                "padding: 0; margin: 0;"
+                f"color: {_muted}; font-style: italic; font-size: 12px; "
+                f"padding: 0; margin: 0;"
             )
             sr.addWidget(self.status_line, 1)
             self._status_row.setVisible(False)
@@ -834,13 +868,20 @@ class MessageBubble(QFrame):
             self._reasoning_toggle.setText("▾  Reasoning")
             self._reasoning_toggle.setCheckable(True)
             self._reasoning_toggle.setChecked(True)
+            try:
+                from design_tokens import current as _palette
+                _p = _palette()
+                _muted = _p["inkMuted"]
+                _accent = _p["accent"]
+            except Exception:
+                _muted, _accent = "#9a9183", "#c96442"
             self._reasoning_toggle.setStyleSheet(
-                "QToolButton#reasoningToggle { "
-                "  background:transparent; border:none; "
-                "  color:#9a9183; font-size:10.5px; font-weight:500; "
-                "  letter-spacing:0.06em; padding:2px 0; text-align:left; "
-                "} "
-                "QToolButton#reasoningToggle:hover { color:#c96442; }"
+                f"QToolButton#reasoningToggle {{ "
+                f"  background:transparent; border:none; "
+                f"  color:{_muted}; font-size:10.5px; font-weight:500; "
+                f"  letter-spacing:0.06em; padding:2px 0; text-align:left; "
+                f"}} "
+                f"QToolButton#reasoningToggle:hover {{ color:{_accent}; }}"
             )
             self._reasoning_toggle.setVisible(False)
             self._reasoning_toggle.toggled.connect(self._toggle_reasoning)
@@ -855,13 +896,20 @@ class MessageBubble(QFrame):
                 Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.reasoning_view.document().setDocumentMargin(0)
             self.reasoning_view.textChanged.connect(self._adjust_reasoning_height)
+            try:
+                from design_tokens import current as _palette
+                _p = _palette()
+                _soft = _p["inkSoft"]
+                _line = _p["line"]
+            except Exception:
+                _soft, _line = "#7a7064", "#3a3128"
             self.reasoning_view.setStyleSheet(
-                "QTextEdit#reasoningView { "
-                "  background:transparent; border:none; "
-                "  color:#7a7064; font-style:italic; font-size:12px; "
-                "  border-left:2px solid #3a3128; padding-left:10px; "
-                "  margin-bottom:4px; "
-                "}"
+                f"QTextEdit#reasoningView {{ "
+                f"  background:transparent; border:none; "
+                f"  color:{_soft}; font-style:italic; font-size:12px; "
+                f"  border-left:2px solid {_line}; padding-left:10px; "
+                f"  margin-bottom:4px; "
+                f"}}"
             )
             self.reasoning_view.setVisible(False)
             v.addWidget(self.reasoning_view)
@@ -1173,28 +1221,37 @@ class ChatWindow(QMainWindow):
     def _build_update_banner(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("updateBanner")
+        # Build from design tokens so the banner tracks the active
+        # palette. The previous hand-tuned brown (#2a2018 / #f0d49a)
+        # only made sense in dark mode and broke the "one warm color"
+        # principle in light mode.
+        from design_tokens import current as _palette, RADIUS as _R
+        p = _palette()
         bar.setStyleSheet(
-            "QFrame#updateBanner {"
-            "  background:#2a2018; border-top:1px solid #4a3a28;"
-            "  border-bottom:1px solid #4a3a28; }"
-            "QLabel#updateBannerLabel { color:#f0d49a; padding:0; }"
-            "QPushButton#updateBannerPrimary {"
-            "  background:#d97757; color:#fff; border:none;"
-            "  border-radius:6px; padding:6px 14px; font-weight:500; }"
-            "QPushButton#updateBannerPrimary:hover { background:#e58866; }"
-            "QPushButton#updateBannerGhost {"
-            "  background:transparent; color:#f0d49a;"
-            "  border:1px solid #4a3a28; border-radius:6px;"
-            "  padding:6px 14px; }"
-            "QPushButton#updateBannerGhost:hover { color:#fff;"
-            "  border-color:#d97757; }"
+            f"QFrame#updateBanner {{"
+            f"  background:{p['accentSoft']};"
+            f"  border-top:1px solid {p['line']};"
+            f"  border-bottom:1px solid {p['line']}; }}"
+            f"QLabel#updateBannerLabel {{ color:{p['ink']}; padding:0; }}"
+            f"QPushButton#updateBannerPrimary {{"
+            f"  background:{p['accent']}; color:#fff; border:none;"
+            f"  border-radius:{_R['md']}px; padding:6px 14px; font-weight:500; }}"
+            f"QPushButton#updateBannerPrimary:hover {{ background:{p['accentHi']}; }}"
+            f"QPushButton#updateBannerGhost {{"
+            f"  background:transparent; color:{p['inkSoft']};"
+            f"  border:1px solid {p['line']}; border-radius:{_R['md']}px;"
+            f"  padding:6px 14px; }}"
+            f"QPushButton#updateBannerGhost:hover {{ color:{p['accent']};"
+            f"  border-color:{p['accent']}; }}"
         )
         h = QHBoxLayout(bar)
         h.setContentsMargins(20, 10, 16, 10)
         h.setSpacing(12)
 
         icon = QLabel("↻")
-        icon.setStyleSheet("color:#d97757; font-size:16px; font-weight:bold;")
+        icon.setStyleSheet(
+            f"color:{p['accent']}; font-size:16px; font-weight:bold;"
+        )
         h.addWidget(icon)
 
         self._update_banner_label = QLabel("Update downloaded · restart to install.")
@@ -1402,11 +1459,14 @@ class ChatWindow(QMainWindow):
         # Single menu button — everything that used to be a header button
         # is now a labelled item in this menu, with the running version
         # surfaced inline so the user can see it at a glance.
+        # Text label "Menu" rather than a gear emoji — BRAND.voice rule:
+        # "No emoji." The bordered ghost-button styling makes it read
+        # as a menu without iconography.
         self.menu_btn = QToolButton()
         self.menu_btn.setObjectName("menuButton")
-        self.menu_btn.setText("⚙")
+        self.menu_btn.setText("Menu")
         self.menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.menu_btn.setFixedSize(40, 36)
+        self.menu_btn.setFixedSize(64, 36)
         self.menu_btn.setToolTip("Settings, connectors, skills, updates")
         self.menu_btn.setMenu(self._build_app_menu())
         h.addWidget(self.menu_btn)
@@ -1516,8 +1576,19 @@ class ChatWindow(QMainWindow):
             return "missing"
 
     def _build_host_pill(self, family: str, short: str, status: str) -> QLabel:
-        dot = {"live": "#5fb87a", "idle": "#b09060", "missing": "#666"}[status]
-        ink = {"live": "#e8e6dc", "idle": "#a4a098", "missing": "#666"}[status]
+        # Read live palette so host pills track light/dark theme swaps
+        # instead of carrying the hardcoded "green dot, brown idle"
+        # values that drifted from BRAND.principles[2] (one warm color).
+        try:
+            from design_tokens import current as _palette
+            p = _palette()
+        except Exception:
+            p = {"ok": "#5a8a5e", "warn": "#c08533", "inkDim": "#cdc6b8",
+                 "ink": "#1a1612", "inkSoft": "#3a3128"}
+        dot = {"live": p["ok"], "idle": p["warn"],
+                "missing": p["inkDim"]}[status]
+        ink = {"live": p["ink"], "idle": p["inkSoft"],
+                "missing": p["inkDim"]}[status]
         pill = QLabel(f"<span style='color:{dot}'>●</span> "
                        f"<span style='color:{ink}'>{short}</span>")
         pill.setObjectName("hostPill")
@@ -1569,24 +1640,29 @@ class ChatWindow(QMainWindow):
             )
 
     def _build_app_menu(self) -> QMenu:
-        """The single dropdown that holds every secondary action."""
+        """The single dropdown that holds every secondary action.
+
+        Labels are plain text — BRAND.voice rule 2 forbids emoji. The
+        ASCII-arrow glyphs (↻, etc.) on Updates stay because they're
+        typographic, not emoji.
+        """
         menu = QMenu(self)
         menu.setObjectName("appMenu")
 
         # Connections + sign-ins
-        sign_in_action = menu.addAction("🔑   Sign-ins…")
+        sign_in_action = menu.addAction("Sign-ins…")
         sign_in_action.triggered.connect(self._open_settings)
-        connectors_action = menu.addAction("🔌   Connectors…")
+        connectors_action = menu.addAction("Connectors…")
         connectors_action.triggered.connect(self._open_connectors)
 
         menu.addSeparator()
 
         # Skills + sessions
-        skills_action = menu.addAction("✦   Skills…")
+        skills_action = menu.addAction("Skills…")
         skills_action.triggered.connect(self._open_skills_panel)
-        sessions_action = menu.addAction("📂  Sessions…")
+        sessions_action = menu.addAction("Sessions…")
         sessions_action.triggered.connect(self._open_sessions)
-        save_chat_action = menu.addAction("⇣   Save chat as Skill…")
+        save_chat_action = menu.addAction("Save chat as Skill…")
         save_chat_action.triggered.connect(self._save_chat_as_skill)
 
         menu.addSeparator()
@@ -1595,18 +1671,18 @@ class ChatWindow(QMainWindow):
         self._update_menu_action = menu.addAction(self._update_menu_label())
         self._update_menu_action.triggered.connect(self._open_update_dialog)
 
-        pricing_action = menu.addAction("◆   Plans & pricing…")
+        pricing_action = menu.addAction("Plans & pricing…")
         pricing_action.triggered.connect(self._open_pricing_dialog)
 
-        reality_action = menu.addAction("⚡   Reality Check")
+        reality_action = menu.addAction("Reality Check")
         reality_action.setToolTip("Smoke-test every connector + LLM end-to-end.")
         reality_action.triggered.connect(self._open_reality_check)
 
-        about_action = menu.addAction("ⓘ   About ArchHub")
+        about_action = menu.addAction("About ArchHub")
         about_action.triggered.connect(self._show_about)
 
         menu.addSeparator()
-        quit_action = menu.addAction("⏻   Quit")
+        quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(QApplication.instance().quit)
 
         return menu
@@ -1915,8 +1991,9 @@ class ChatWindow(QMainWindow):
                 continue
             if host not in active:
                 self._add_assistant_note(
-                    f"⚠️ This looks like a **{host.title()}** action, but "
-                    f"the {host.title()} connector isn't active.\n\n"
+                    f"Heads up — this looks like a **{host.title()}** "
+                    f"action, but the {host.title()} connector isn't "
+                    f"active.\n\n"
                     f"Open **Connectors** (header), enable {host.title()}, "
                     f"then make sure {host.title()} is running on this "
                     f"machine. I'll never paste code for you to copy — "
@@ -1933,7 +2010,7 @@ class ChatWindow(QMainWindow):
                 process_running = self._host_process_running(host)
                 if process_running:
                     self._add_assistant_note(
-                        f"⚠️ {host.title()} is running but the ArchHub "
+                        f"{host.title()} is running but the ArchHub "
                         f"addin hasn't loaded into the process yet.\n\n"
                         f"Two ways to fix:\n"
                         f"  • In {host.title()}'s command line type "
@@ -1946,7 +2023,7 @@ class ChatWindow(QMainWindow):
                     )
                 else:
                     self._add_assistant_note(
-                        f"⚠️ The {host.title()} connector is enabled, but "
+                        f"The {host.title()} connector is enabled, but "
                         f"{host.title()} isn't running.\n\n"
                         f"Open {host.title()}, wait until the project is "
                         f"loaded, then ask me again."
@@ -1960,7 +2037,7 @@ class ChatWindow(QMainWindow):
         if (active.isdisjoint(modelling_hosts)
                 and any(v in lower for v in self._ACTION_VERBS)):
             self._add_assistant_note(
-                "⚠️ No modelling connector is active. To execute actions in "
+                "No modelling connector is active. To execute actions in "
                 "Revit / AutoCAD / 3ds Max / Blender, enable the matching "
                 "connector first via the **Connectors** button in the header, "
                 "and have that application open.\n\n"
@@ -2151,7 +2228,7 @@ class ChatWindow(QMainWindow):
             error = ev.get("error", "Unknown error")
             if self._current_bubble:
                 existing = self.history[-1].content if self.history else ""
-                error_text = (existing + "\n\n" if existing else "") + f"⚠️ {error}"
+                error_text = (existing + "\n\n" if existing else "") + f"Error — {error}"
                 self._current_bubble.set_text(error_text)
                 if self.history:
                     self.history[-1].content = error_text
@@ -2751,7 +2828,7 @@ class ChatWindow(QMainWindow):
         """Inline assistant bubble proposing the matched Skill."""
         msg = ChatMessage(
             role="assistant",
-            content=(f"💡 **Skill match:** {match.name}\n"
+            content=(f"**Skill match:** {match.name}\n"
                      f"_{match.intent}_\n\n"
                      f"Run this saved Skill or continue for a fresh response."),
             model=self.model_picker.currentData(),
@@ -2798,7 +2875,7 @@ class ChatWindow(QMainWindow):
             QMessageBox.warning(self, "Could not capture Skill", str(ex))
             return
         self._add_assistant_note(
-            f"✓ Saved as Skill **{wf.name}**.\n"
+            f"Saved as Skill **{wf.name}**.\n"
             f"Intent: {meta.intent}\n"
             f"Keywords: {', '.join(meta.keywords) or '(none)'}\n"
             f"File: {path}"
@@ -2898,7 +2975,7 @@ class ChatWindow(QMainWindow):
         error: str | None = None
         if not success and result is not None and result.errors:
             error = result.errors[0]
-        summary = "✓ Skill complete." if success else "✗ Skill failed."
+        summary = "Skill complete." if success else "Skill failed."
         if result and result.errors:
             summary += "\n" + "\n".join(result.errors[:5])
         if result and result.outputs:
@@ -3072,7 +3149,7 @@ class ChatWindow(QMainWindow):
         if not status.has_updates:
             return
         # Show a quiet line in the status bar.
-        msg = (f"✨ {status.behind} update"
+        msg = (f"{status.behind} update"
                f"{'s' if status.behind != 1 else ''} available — "
                f"click the ↻ Update button.")
         try:
@@ -3137,7 +3214,8 @@ class ChatWindow(QMainWindow):
         from PyQt6.QtGui import QGuiApplication
         QGuiApplication.clipboard().setText(text)
         self._add_assistant_note(
-            f"📋 Copied **{match['name']}** to your clipboard ({len(text):,} chars).\n"
+            f"Copied **{match['name']}** to your clipboard "
+            f"({len(text):,} chars).\n"
             f"Paste it into another ArchHub via `/skill import`, "
             f"or share it however you like — Slack, email, Notion."
         )
@@ -3163,7 +3241,7 @@ class ChatWindow(QMainWindow):
             self._add_assistant_note(f"Import failed: {ex}")
             return
         self._add_assistant_note(
-            f"✓ Imported Skill **{wf.name}**. The matcher can now find it."
+            f"Imported Skill **{wf.name}**. The matcher can now find it."
         )
 
     def _run_workflow_by_id(self, workflow_id: str, inputs: dict) -> None:
@@ -3183,7 +3261,7 @@ class ChatWindow(QMainWindow):
 
         try:
             result = executor.run(wf, inputs=inputs)
-            summary = "✓ Workflow complete." if result.success else "✗ Workflow failed."
+            summary = "Workflow complete." if result.success else "Workflow failed."
             if result.errors:
                 summary += "\n" + "\n".join(result.errors)
             bubble.set_text(f"{announce}\n\n{summary}")
@@ -3226,7 +3304,7 @@ class ChatWindow(QMainWindow):
         v.setContentsMargins(16, 16, 16, 16)
 
         # Save current button
-        save_btn = QPushButton("💾  Save current session")
+        save_btn = QPushButton("Save current session")
         save_btn.clicked.connect(lambda: (dlg.accept(), self._save_session()))
         v.addWidget(save_btn)
 

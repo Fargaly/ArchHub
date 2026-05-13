@@ -19,8 +19,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout,
-    QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 

@@ -60,6 +60,7 @@ HOST_CATALOG = [
     {"id": "max-2026",     "label": "3ds Max 2026",   "kind": "max_year",     "year": 2026, "letter": "M"},
     {"id": "max-2025",     "label": "3ds Max 2025",   "kind": "max_year",     "year": 2025, "letter": "M"},
     {"id": "blender",      "label": "Blender",        "kind": "blender",      "year": 0,    "letter": "B"},
+    {"id": "rhino",        "label": "Rhino 7 / 8",    "kind": "rhino",        "year": 0,    "letter": "R"},
     {"id": "speckle",      "label": "Speckle",        "kind": "speckle",      "year": 0,    "letter": "S"},
     {"id": "outlook",      "label": "Outlook (classic)", "kind": "outlook",   "year": 0,    "letter": "O"},
 ]
@@ -143,6 +144,8 @@ class HostRow(QFrame):
                 self._refresh_max()
             elif kind == "blender":
                 self._refresh_blender()
+            elif kind == "rhino":
+                self._refresh_rhino()
             elif kind == "speckle":
                 self._refresh_speckle()
             elif kind == "outlook":
@@ -238,6 +241,31 @@ class HostRow(QFrame):
         )
         self._set_action("Open instructions", primary=False)
 
+    def _refresh_rhino(self) -> None:
+        try:
+            from connectors import rhino_runner as _rh
+            exe = _rh.find_rhino_executable()
+            version = _rh.detect_rhino_version(exe) if exe else None
+            live = _rh.is_reachable()
+        except Exception:
+            exe, version, live = None, None, False
+        if exe is None:
+            self.detail.setText("Rhino not detected on this machine.")
+            self._set_action("n/a", enabled=False)
+            return
+        if live:
+            self.detail.setText(
+                f"Rhino {version or '?'} live · MCP bridge on :9879."
+            )
+            self._set_action("Reinstall addon", primary=False)
+            return
+        self.detail.setText(
+            f"Rhino {version or '?'} detected at {exe}. Bridge not "
+            f"running — install the addon, then run "
+            f"_-RunPythonScript archhub_mcp.py in Rhino."
+        )
+        self._set_action("Install addon", primary=True)
+
     def _refresh_speckle(self) -> None:
         self.detail.setText("Cloud only — sign in via Settings → Speckle.")
         self._set_action("Open Settings", primary=False)
@@ -262,6 +290,8 @@ class HostRow(QFrame):
             self._kick_max()
         elif kind == "blender":
             self._show_blender_instructions()
+        elif kind == "rhino":
+            self._kick_rhino()
         elif kind == "speckle":
             self._open_settings_speckle()
 
@@ -288,6 +318,35 @@ class HostRow(QFrame):
     def _kick_max(self) -> None:
         year = self.host["year"]
         self._start_build(lambda cb: auto_build.install_max_connector(year, on_progress=cb))
+
+    def _kick_rhino(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        try:
+            from connectors import rhino_runner as _rh
+            exe = _rh.find_rhino_executable()
+            version = _rh.detect_rhino_version(exe)
+            if not version:
+                QMessageBox.warning(self, "Rhino",
+                    "Could not detect Rhino version. Open Rhino, then "
+                    "manually run _-RunPythonScript "
+                    "payload/rhino/archhub_mcp.py."
+                )
+                return
+            res = _rh.install_addon(version)
+            if res.get("status") != "ok":
+                QMessageBox.warning(self, "Rhino",
+                    f"Could not install addon: {res.get('error', '?')}"
+                )
+                return
+            QMessageBox.information(self, "Rhino addon installed",
+                f"Copied to:\n{res['dest']}\n\n"
+                f"In Rhino, run:\n"
+                f"_-RunPythonScript archhub_mcp.py\n\n"
+                f"The bridge will listen on :9879. ArchHub auto-detects."
+            )
+            QTimer.singleShot(800, self.refresh_state)
+        except Exception as ex:
+            QMessageBox.warning(self, "Rhino", f"Install failed: {ex}")
 
     def _show_blender_instructions(self) -> None:
         from PyQt6.QtWidgets import QMessageBox

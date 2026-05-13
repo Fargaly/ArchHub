@@ -19,7 +19,30 @@ name: Release
 #   4. Downloads + installs Inno Setup 6.
 #   5. Compiles installer/setup.iss, which reads the version string out
 #      of the VERSION file at compile time.
-#   6. Uploads dist/ArchHub-Setup-*.exe as a Release asset.
+#   6. Signs the .exe via scripts/sign_installer.ps1 (no-op if no
+#      signing config is present — see "Required secrets" below).
+#   7. Uploads dist/ArchHub-Setup-*.exe as a Release asset.
+#
+# ── Required GitHub Actions secrets (all optional) ─────────────────
+# Add these under Repo → Settings → Secrets and variables → Actions.
+# If none are set, the build proceeds with an unsigned installer
+# (still functional, just shows "Unknown Publisher" in SmartScreen).
+#
+# Path A — Azure Trusted Signing (preferred, $9/mo, no hardware token):
+#   AZURE_TENANT_ID                       — Entra tenant GUID
+#   AZURE_CLIENT_ID                       — service-principal app GUID
+#   AZURE_CLIENT_SECRET                   — service-principal secret
+#   AZURE_TRUSTED_SIGNING_ENDPOINT        — e.g. https://eus.codesigning.azure.net
+#   AZURE_TRUSTED_SIGNING_ACCOUNT_NAME    — Trusted Signing account name
+#   AZURE_TRUSTED_SIGNING_CERT_PROFILE    — certificate profile name
+#
+# Path B — Classic .pfx (Sectigo / SSL.com / DigiCert EV or OV):
+#   ARCHHUB_SIGN_CERT_BASE64              — base64 of the .pfx file
+#                                           (decoded into a temp file at
+#                                            build time, see Sign step)
+#   ARCHHUB_SIGN_CERT_PASSWORD            — .pfx password (omit if none)
+#
+# See docs/CODE_SIGNING.md for end-to-end setup of both paths.
 
 on:
   push:
@@ -208,6 +231,62 @@ jobs:
           "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "name=$($exe.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Built $($exe.FullName) ($([math]::Round($exe.Length/1MB,1)) MB)"
+
+      # ── Code-signing (Authenticode) ─────────────────────────────────
+      # Path selection is automatic in sign_installer.ps1: AZURE_TENANT_ID
+      # picks Azure Trusted Signing, ARCHHUB_SIGN_CERT_PATH picks .pfx,
+      # neither set = no-op (exit 0). For Path B, the .pfx itself is
+      # delivered through a base64-encoded secret and reconstituted into
+      # a temp file here so we never store binary blobs in the repo.
+      - name: Sign installer
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID:                    ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:                    ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET:                ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT:     ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+          ARCHHUB_SIGN_CERT_BASE64:           ${{ secrets.ARCHHUB_SIGN_CERT_BASE64 }}
+          ARCHHUB_SIGN_CERT_PASSWORD:         ${{ secrets.ARCHHUB_SIGN_CERT_PASSWORD }}
+        run: |
+          # If a base64-encoded .pfx is provided, materialize it on disk
+          # and point ARCHHUB_SIGN_CERT_PATH at the temp file before
+          # invoking the sign script. The path-selection logic in
+          # sign_installer.ps1 keys off ARCHHUB_SIGN_CERT_PATH, so this
+          # is what wires Path B to the workflow.
+          if (-not [string]::IsNullOrWhiteSpace($env:ARCHHUB_SIGN_CERT_BASE64)) {
+            $pfxPath = Join-Path $env:RUNNER_TEMP "archhub-signing.pfx"
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:ARCHHUB_SIGN_CERT_BASE64))
+            # Make the path visible to subsequent steps in case anything
+            # else wants it; also exported for the current step.
+            $env:ARCHHUB_SIGN_CERT_PATH = $pfxPath
+            Add-Content -Path $env:GITHUB_ENV -Value "ARCHHUB_SIGN_CERT_PATH=$pfxPath"
+          }
+          & "scripts\sign_installer.ps1" -InstallerPath "${{ steps.find.outputs.path }}"
+          if ($LASTEXITCODE -ne 0) { throw "Signing failed (exit $LASTEXITCODE)" }
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          # Verify only if signing was actually configured. We re-check
+          # the same env vars sign_installer.ps1 uses for path selection;
+          # if neither is set, `signtool verify` would fail with "no
+          # signature was found", which is misleading in the unsigned
+          # path-C case.
+          $hasAzure = -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}')
+          $hasPfx   = -not [string]::IsNullOrWhiteSpace('${{ secrets.ARCHHUB_SIGN_CERT_BASE64 }}')
+          if (-not ($hasAzure -or $hasPfx)) {
+            Write-Host "No signing secrets configured — skipping verify."
+            return
+          }
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found on runner." }
+          & $signtool.FullName verify /pa /v "${{ steps.find.outputs.path }}"
+          if ($LASTEXITCODE -ne 0) { throw "Signature verification failed (exit $LASTEXITCODE)" }
 
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v4

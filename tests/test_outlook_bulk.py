@@ -14,6 +14,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Outlook integration is Win32 COM only — skip on Linux/macOS CI runners.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Outlook bulk macros depend on pywin32 / Win32 COM (Windows only)",
+)
+
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_ROOT))
 

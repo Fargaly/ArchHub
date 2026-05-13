@@ -3,6 +3,132 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-05-13
+
+The "minor-bump deep build" release. Three production hotfixes earlier
+today (v1.0.2, v1.0.3, v1.0.4) cleared the burning issues; this minor
+bump pushes the platform into new territory:
+
+- 2 new host connectors (Rhino + Procore)
+- Marketplace v1 (signed skill packs, cloud-hosted)
+- Cross-platform CI matrix (Win/Mac/Linux)
+- Code-signing infrastructure (Azure Trusted Signing + classic .pfx)
+- Civil 3D roadmap, US trademark filing pack, SOC 2 readiness pack
+
+### Added — new host connectors
+
+#### Rhino 7 / 8
+- `payload/rhino/archhub_mcp.py` — HTTP bridge inside Rhino's embedded
+  Python. Drop-in script. Marshals all calls to Rhino's UI thread.
+- `app/connectors/rhino_runner.py` — Python client: discovery,
+  reachability probe, ping/info/execute_python/screenshot.
+- 4 new tools in `tool_engine.TOOLS` (family `rhino`):
+  `rhino_ping`, `rhino_info`, `rhino_execute_python`, `rhino_screenshot`.
+- Auto-activate via `_rhino_active_cached()` — same 30-s TTL pattern
+  as Outlook. Bridge listens on `:9879`.
+- Add Host catalog entry + dedicated `_refresh_rhino` + `_kick_rhino`
+  install action.
+- `_FAMILY_DEFAULTS["rhino"]` defaults; `host_display_label("rhino")
+  → "Rhino"`.
+- 14 new tests in `tests/test_rhino_runner.py`.
+
+#### Procore (construction PM SaaS)
+- `app/connectors/procore_runner.py` — REST client. Bearer-token auth,
+  stdlib `urllib.request`, no new deps.
+- 10 new tools in `tool_engine.TOOLS` (family `procore`):
+  `procore_ping`, `procore_info`, `procore_list_rfis`,
+  `procore_get_rfi`, `procore_create_rfi`, `procore_list_submittals`,
+  `procore_list_change_orders`, `procore_list_daily_logs`,
+  `procore_list_projects`, `procore_list_users`.
+- Procore is **always-on** in `tool_schemas_for()` (same as `_local`
+  and `ai`) — no host install, just an API token.
+- `_FAMILY_DEFAULTS["procore"]` — reads default `allow`, `create_rfi`
+  defaults `ask` (writes to a live construction record).
+- Settings → Sign-ins surfaces Procore as a provider.
+- 16 new tests in `tests/test_procore_runner.py`.
+
+### Added — Marketplace v1
+
+#### Cloud backend
+- `cloud_backend/marketplace.py` — FastAPI router. Endpoints:
+  - `POST /marketplace/packs` — signed-pack upload (multipart)
+  - `GET  /marketplace/packs` — list with text search, category,
+    `verified_only`, cursor pagination
+  - `GET  /marketplace/packs/{pack_id}` — pack detail
+  - `GET  /marketplace/packs/{pack_id}/download` — streams zip + sig
+  - `POST /marketplace/packs/{pack_id}/review` — admin approve/reject
+  - `POST /marketplace/packs/{pack_id}/report` — abuse report
+- 3 new tables in `cloud_backend/db.py`:
+  `marketplace_packs`, `marketplace_pack_files`,
+  `marketplace_reports`. Plus an idempotent `is_admin` column on
+  `users`.
+- Mounted in `cloud_backend/main.py`.
+- 16 new tests in `cloud_backend/tests/test_marketplace.py`.
+
+#### Client
+- `app/marketplace_client.py` — `list_packs`, `install_pack`,
+  `uninstall_pack`, `list_installed`, `upload_pack`. Re-verifies the
+  Ed25519 signature after download — bad-sig packs are refused at
+  install time.
+- `app/skills/library.py` — marketplace install dir now part of the
+  local skill search path. Entries tagged with `source: "marketplace"`,
+  `pack_id`, `pack_version` for UI provenance.
+- 9 new tests in `tests/test_marketplace_client.py`.
+
+### Added — CI matrix + cross-platform builds
+
+- `.github/workflows/test.yml` — matrix on `windows-latest`,
+  `macos-latest`, `ubuntu-latest`. Python 3.14. Runs `pytest tests/`
+  + `pytest cloud_backend/tests/` on every push + PR. Concurrency
+  group keyed on PR ref so old runs cancel.
+- `.github/workflows/build-macos.yml` — tag-triggered `.app` + `.dmg`
+  via PyInstaller + `hdiutil`. Upload as release asset.
+- `.github/workflows/build-linux.yml` — tag-triggered `tar.gz` (and
+  AppImage where the runtime allows).
+- `tests/test_outlook_bulk.py` + `tests/test_outlook_execute.py` —
+  module-level `@pytest.mark.skipif(sys.platform != "win32", ...)`
+  so non-Windows CI doesn't try to import win32com.
+
+### Added — Code-signing infrastructure
+
+- `scripts/sign_installer.ps1` — auto-detect dispatcher:
+  - Azure Trusted Signing first (if AZURE_TENANT_ID set)
+  - Classic .pfx fallback (if ARCHHUB_SIGN_CERT_PATH set)
+  - Logs "unsigned — no signing config" + exits 0 if neither
+- `scripts/build_installer.ps1` — replaces inline signtool with the
+  new dispatcher; runs `signtool verify /pa /v` after a real signing.
+- `.github/workflows/release.yml` — secrets block documented, sign
+  step + verify step added.
+- `docs/CODE_SIGNING.md` — Azure setup walkthrough, classic EV cert
+  vendor table with prices, timestamp servers, troubleshooting.
+
+### Added — Strategy + compliance docs
+
+- `docs/CIVIL_3D_ROADMAP.md` — architecture memo for the deferred
+  Civil 3D connector (blocked on Civil 3D licence on a build runner).
+- `docs/TRADEMARK_FILING.md` — USPTO TEAS Plus prep pack: wordmark +
+  stylized mark, Class 009 + 042 descriptions, basis 1(a) specimens,
+  global Madrid Protocol strategy. ~$1,400 US filing cost mapped out.
+- `docs/SOC2_READINESS.md` — Year-1 Type I plan: controls inventory,
+  Phase A gaps, the 15 policies an auditor will request, vendor list,
+  cost projection ($19k Year 1).
+
+### Changed
+
+- `tool_engine._active_families()` — added Rhino reachability cache
+  (30-s TTL probe of `:9879`) alongside the existing Outlook cache.
+- `tool_engine.tool_schemas_for()` always-on tuple extended:
+  `("_local", "ai", "procore")`.
+- `ai_behaviour._FAMILY_DEFAULTS` — added `rhino` + `procore` blocks.
+- `ai_behaviour.host_display_label()` — added Rhino + Procore.
+- Display order tuple in `tools_grouped_by_host()` — added rhino +
+  procore in the preferred position.
+
+### Tests
+
+413 passing in `tests/` (up from 353 — +60), 40 passing in
+`cloud_backend/tests/` (up from 24 — +16).
+
 ## [1.0.4] — 2026-05-13
 
 The "auto-update like Claude Desktop" release. Until now the choice

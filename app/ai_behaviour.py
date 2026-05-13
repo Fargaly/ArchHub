@@ -92,6 +92,11 @@ _FAMILY_DEFAULTS: dict[str, dict[str, str]] = {
         "execute_python": "ask",  # sandbox but can still hose a .blend
         "save": "ask", "render": "ask",
     },
+    "rhino": {
+        "ping": "allow", "info": "allow",
+        "execute_python": "ask",   # rhinoscriptsyntax + .NET — can mutate doc
+        "screenshot": "ask",
+    },
     "outlook": {
         "ping": "allow", "info": "allow",
         "list_inbox": "allow", "list_sent_items": "allow",
@@ -106,6 +111,21 @@ _FAMILY_DEFAULTS: dict[str, dict[str, str]] = {
         "auto_categorize_by_sender": "ask",
         "auto_categorize_by_subject_keywords": "ask",
         "execute_python": "ask",  # COM escape hatch — risky
+    },
+    "procore": {
+        # Read surface — safe to fire without prompting. Reading RFIs,
+        # submittals, change orders, and daily logs never mutates the
+        # construction project record.
+        "ping": "allow", "info": "allow",
+        "list_rfis": "allow", "get_rfi": "allow",
+        "list_submittals": "allow",
+        "list_change_orders": "allow",
+        "list_daily_logs": "allow",
+        "list_projects": "allow", "list_users": "allow",
+        # Write surface — files an RFI against a LIVE construction
+        # project. Default to "ask" so the user reviews subject /
+        # question / assignee before submission.
+        "create_rfi": "ask",
     },
     "speckle": {
         "list_projects": "allow", "get_project": "allow",
@@ -307,8 +327,11 @@ def tools_grouped_by_host() -> dict[str, list[dict]]:
         })
 
     # Preferred display order; unknown families appended alphabetically.
-    order = ("revit", "acad", "max", "outlook", "blender", "speckle",
-             "ai", "archhub", "_local")
+    # procore slots between outlook and blender — it's another SaaS
+    # connector grouped near the office-tool side of the catalogue
+    # rather than the modelling hosts.
+    order = ("revit", "acad", "max", "outlook", "procore", "blender",
+             "rhino", "speckle", "ai", "archhub", "_local")
     out: dict[str, list[dict]] = {}
     for fam in order:
         if fam in bucket:
@@ -325,7 +348,9 @@ def host_display_label(family: str) -> str:
         "acad":    "AutoCAD",
         "max":     "3ds Max",
         "outlook": "Outlook (classic)",
+        "procore": "Procore (construction PM)",
         "blender": "Blender",
+        "rhino":   "Rhino",
         "speckle": "Speckle",
         "ai":      "AI delegations (ChatGPT · Gemini · LM Studio · Antigravity)",
         "archhub": "ArchHub (local)",

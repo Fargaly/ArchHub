@@ -83,7 +83,8 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.0.4 ships the Claude-Desktop
-        # update prompt — silent download in the background, in-app
-        # banner asking the user to Restart now / Later.
-        assert v == "1.0.4"
+        # Track the latest stable. v1.1.0 is the "deep build" minor
+        # bump — Rhino + Procore connectors, marketplace v1 cloud
+        # backend, cross-platform CI matrix, code-signing infra, plus
+        # Civil 3D / trademark / SOC 2 prep docs.
+        assert v == "1.1.0"

@@ -40,6 +40,7 @@ import auth
 import billing
 import config
 import db
+import marketplace
 import proxy
 
 
@@ -66,6 +67,12 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup() -> None:
     db.init_schema()
+
+
+# Marketplace v1 routes — author upload, browse, install, review, report.
+# Mounted at root (paths start /marketplace/...) so the desktop client's
+# URL constants live next to /v1/* rather than under a separate prefix.
+app.include_router(marketplace.router)
 
 
 # ---------------------------------------------------------------------------

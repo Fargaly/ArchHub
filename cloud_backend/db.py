@@ -69,6 +69,57 @@ CREATE TABLE IF NOT EXISTS usage_log (
 CREATE INDEX IF NOT EXISTS idx_codes_user ON codes(user_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_log(user_id, ts);
+
+-- Marketplace v1 ----------------------------------------------------------
+-- Architects upload signed skill packs (zip + Ed25519 signature). Packs
+-- start as 'pending_review'; an admin approves before they appear in the
+-- public listing. The signed zip is stored as a blob in
+-- marketplace_pack_files so we don't depend on external object storage
+-- for v1. (S3/R2 migration is Phase 2 — the column shape stays the same;
+-- swap the BLOB for an `object_url TEXT`.)
+CREATE TABLE IF NOT EXISTS marketplace_packs (
+    id              TEXT PRIMARY KEY,
+    slug            TEXT UNIQUE NOT NULL,
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    version         TEXT NOT NULL DEFAULT '0.1.0',
+    category        TEXT NOT NULL DEFAULT '',
+    author_user_id  TEXT NOT NULL,
+    manifest_json   TEXT NOT NULL,
+    signature       TEXT NOT NULL,
+    pubkey          TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending_review',
+    download_count  INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    approved_at     INTEGER,
+    approved_by     TEXT,
+    rejected_reason TEXT,
+    FOREIGN KEY (author_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS marketplace_pack_files (
+    pack_id     TEXT PRIMARY KEY,
+    content     BLOB NOT NULL,
+    sha256      TEXT NOT NULL,
+    size_bytes  INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    FOREIGN KEY (pack_id) REFERENCES marketplace_packs(id)
+);
+
+CREATE TABLE IF NOT EXISTS marketplace_reports (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    pack_id           TEXT NOT NULL,
+    reporter_user_id  TEXT NOT NULL,
+    reason            TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (pack_id) REFERENCES marketplace_packs(id),
+    FOREIGN KEY (reporter_user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
+CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id);
+CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
 """
 
 
@@ -90,6 +141,16 @@ def init_schema() -> None:
     """Apply schema. Idempotent — safe to call on every startup."""
     with connect() as con:
         con.executescript(SCHEMA)
+        # is_admin was added in v0.40 for marketplace review. ALTER TABLE
+        # is wrapped in try/except so the SCHEMA above stays declarative
+        # for fresh databases while existing deployments self-migrate.
+        try:
+            con.execute(
+                "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            # Column already exists — idempotent re-run.
+            pass
 
 
 # ---------------------------------------------------------------------------

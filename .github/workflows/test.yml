@@ -1,0 +1,58 @@
+name: Tests
+
+# Cross-platform test matrix. Runs the top-level `tests/` suite and the
+# `cloud_backend/tests/` suite on Windows + macOS + Linux for every push
+# to main and every pull request. Python 3.14 to match production.
+#
+# Win32 COM tests (Outlook) are skipped on macOS/Linux via
+# `pytest.mark.skipif(sys.platform != 'win32', ...)` at the test module
+# level — pywin32 is not installed on non-Windows runners.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same PR ref so we don't burn minutes on
+# stale commits. `main` pushes use the SHA so each lands independently.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python-version: ['3.14']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            cloud_backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt -r cloud_backend/requirements.txt
+          python -m pip install pytest pytest-asyncio
+
+      - name: Run app test suite
+        run: pytest tests/ -v
+
+      - name: Run cloud backend test suite
+        run: pytest cloud_backend/tests/ -v

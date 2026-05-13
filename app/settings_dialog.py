@@ -297,6 +297,15 @@ class SettingsDialog(QDialog):
         self._speckle_toggle.toggled.connect(self._speckle_widget.setVisible)
         outer.addWidget(self._speckle_widget)
 
+        # ── Construction PM ───────────────────────────────────────────────
+        # Procore is the dominant SaaS for construction PM (RFIs,
+        # submittals, change orders, daily logs). Token + company id +
+        # project id live in secrets_store; the runner is stateless.
+        # Procore has OAuth but for desktop tooling a long-lived
+        # Personal Access Token (minted in Procore admin) is simpler
+        # and matches how Speckle is handled here.
+        outer.addWidget(self._build_procore_row())
+
         # ── Appearance — HUD overlay toggle ────────────────────────────────
         from PyQt6.QtCore import Qt as _Qt
         appearance_box = QFrame(); appearance_box.setObjectName("providerRow")
@@ -784,6 +793,157 @@ class SettingsDialog(QDialog):
         delete_api_key("speckle")
         self._speckle_field.clear()
 
+    # ─────────────────────────────────────────────────────────────────────────
+    def _build_procore_row(self):
+        """Procore (construction PM) — token + company id + project id.
+
+        Mirrors the Speckle Personal Access Token flow: user clicks the
+        site button, mints a token in the Procore admin UI, pastes it
+        here, ArchHub stores it under the `procore_access_token` key.
+        Company + project ids identify the active project context that
+        every Procore tool call defaults to."""
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        row = QFrame(); row.setObjectName("providerRow")
+        v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(6)
+
+        title_row = QHBoxLayout(); title_row.setSpacing(8)
+        icon = QLabel("🏗"); icon.setObjectName("providerIcon")
+        title_row.addWidget(icon)
+        title = QLabel("Procore — sign in to enable RFI/submittal tools")
+        title.setObjectName("providerName")
+        title_row.addWidget(title); title_row.addStretch(1)
+
+        existing_tok = load_api_key("procore_access_token")
+        status = QLabel("<i>signed in</i>" if existing_tok else "<i>not signed in</i>")
+        status.setObjectName("providerStatus")
+        title_row.addWidget(status)
+        v.addLayout(title_row)
+
+        help_lbl = QLabel(
+            "Procore is the dominant SaaS for construction project "
+            "management (RFIs, submittals, change orders, daily logs). "
+            "ArchHub talks to Procore's REST API with a Personal "
+            "Access Token you mint at <b>developers.procore.com</b>. "
+            "Click below to open the developer site, create a token "
+            "in your Procore admin, copy it, and ArchHub will pick it "
+            "up from your clipboard automatically (same flow as "
+            "OpenRouter / Anthropic)."
+        )
+        help_lbl.setObjectName("settingsSubtitle"); help_lbl.setWordWrap(True)
+        v.addWidget(help_lbl)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(6)
+        open_btn = QPushButton("🌐  Open developers.procore.com")
+        open_btn.setObjectName("primaryButton")
+        open_btn.clicked.connect(
+            lambda: self._start_procore_clipboard_watch(
+                QDesktopServices.openUrl(
+                    QUrl("https://developers.procore.com")
+                )
+            )
+        )
+        btn_row.addWidget(open_btn)
+        btn_row.addStretch(1)
+        v.addLayout(btn_row)
+
+        # Token field + show/clear (same pattern as Speckle).
+        token_label = QLabel("<b>Personal Access Token</b>")
+        token_label.setObjectName("settingsSubtitle")
+        v.addWidget(token_label)
+
+        token_row = QHBoxLayout(); token_row.setSpacing(6)
+        self._procore_token = QLineEdit()
+        self._procore_token.setEchoMode(QLineEdit.EchoMode.Password)
+        if existing_tok:
+            self._procore_token.setText(existing_tok)
+        else:
+            self._procore_token.setPlaceholderText(
+                "Paste a Procore PAT — ArchHub will also auto-detect it "
+                "if you copy it to the clipboard"
+            )
+        token_row.addWidget(self._procore_token, 1)
+        pc_show = QPushButton("👁"); pc_show.setFixedWidth(34)
+        pc_show.setObjectName("ghostButton")
+        pc_show.setCheckable(True)
+        pc_show.toggled.connect(
+            lambda c: self._procore_token.setEchoMode(
+                QLineEdit.EchoMode.Normal if c else QLineEdit.EchoMode.Password
+            )
+        )
+        token_row.addWidget(pc_show)
+        pc_clear = QPushButton("Clear"); pc_clear.setObjectName("ghostButton")
+        pc_clear.clicked.connect(self._clear_procore)
+        token_row.addWidget(pc_clear)
+        token_wrap = QWidget(); token_wrap.setLayout(token_row)
+        v.addWidget(token_wrap)
+
+        # Active project context — company id + project id. The runner
+        # uses these as defaults for every list/get tool; an @-mention
+        # in chat can still target a different project per-call.
+        ctx_form = QFormLayout(); ctx_form.setSpacing(6)
+        self._procore_company = QLineEdit()
+        self._procore_company.setPlaceholderText("e.g. 1234567")
+        cid = load_setting("procore_company_id")
+        if cid:
+            self._procore_company.setText(str(cid))
+        ctx_form.addRow("Company id", self._procore_company)
+
+        self._procore_project = QLineEdit()
+        self._procore_project.setPlaceholderText("e.g. 76543")
+        pid = load_setting("procore_project_id")
+        if pid:
+            self._procore_project.setText(str(pid))
+        ctx_form.addRow("Active project id", self._procore_project)
+        v.addLayout(ctx_form)
+
+        return row
+
+    def _start_procore_clipboard_watch(self, _open_result) -> None:
+        """Poll the clipboard for ~3 minutes — when a string that looks
+        like a Procore token lands, save it. Same UX as the OpenRouter
+        clipboard fallback (see sign_in_dialog._check_clipboard).
+
+        Procore tokens are typically long hex / base64-ish strings; we
+        match anything >= 32 chars of url-safe characters that isn't
+        already an LLM key shape we know."""
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtGui import QGuiApplication
+
+        cb = QGuiApplication.clipboard()
+        self._procore_initial_cb = (cb.text() or "").strip()
+        self._procore_poll = QTimer(self)
+        self._procore_poll.setInterval(250)
+
+        def _check():
+            current = (QGuiApplication.clipboard().text() or "").strip()
+            if not current or current == self._procore_initial_cb:
+                return
+            if len(current) < 24 or " " in current or "\n" in current:
+                return
+            # Skip known LLM key shapes — those belong to other providers.
+            if current.startswith(("sk-", "AIza", "phc_")):
+                return
+            self._procore_token.setText(current)
+            save_api_key("procore_access_token", current)
+            self._procore_poll.stop()
+            QMessageBox.information(
+                self, "Procore signed in",
+                "Token detected on clipboard and saved. Procore tools "
+                "are now live in chat.",
+            )
+            self.notify_changed()
+
+        self._procore_poll.timeout.connect(_check)
+        self._procore_poll.start()
+        # Stop polling after 3 minutes so the timer doesn't run forever.
+        QTimer.singleShot(180_000, self._procore_poll.stop)
+
+    def _clear_procore(self) -> None:
+        delete_api_key("procore_access_token")
+        self._procore_token.clear()
+
     def _run_speckle_setup(self) -> None:
         """Launch Setup-Speckle.bat with a visible console so the user can
         watch progress. Pre-fills the self-hosted URL field optimistically."""
@@ -857,6 +1017,29 @@ class SettingsDialog(QDialog):
             save_setting("relay_base_url", relay_url)
         if relay_tok:
             save_api_key("relay", relay_tok)
+
+        # Procore — token + active project context. Token saved via
+        # save_api_key so it lands in keyring when available; ids are
+        # plain settings.
+        try:
+            pc_tok = (self._procore_token.text() or "").strip()
+            if pc_tok:
+                save_api_key("procore_access_token", pc_tok)
+            pc_company = (self._procore_company.text() or "").strip()
+            if pc_company:
+                try:
+                    save_setting("procore_company_id", int(pc_company))
+                except Exception:
+                    save_setting("procore_company_id", pc_company)
+            pc_project = (self._procore_project.text() or "").strip()
+            if pc_project:
+                try:
+                    save_setting("procore_project_id", int(pc_project))
+                except Exception:
+                    save_setting("procore_project_id", pc_project)
+        except AttributeError:
+            # _build_procore_row not yet wired — graceful no-op.
+            pass
 
         # "Show local Ollama models" toggle persisted so the next launch
         # respects the choice without nagging.

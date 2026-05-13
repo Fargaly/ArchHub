@@ -12,8 +12,9 @@
 # Prerequisites:
 #   - Inno Setup 6 installed (https://jrsoftware.org/isdl.php)
 #   - Optional for -Release: gh CLI logged in
-#   - Optional for -Sign: signtool.exe in PATH + a code-signing cert
-#                          configured via SIGNING_CERT_THUMBPRINT env var
+#   - Optional for -Sign: signtool.exe in PATH + signing config via env vars.
+#     See scripts/sign_installer.ps1 and docs/CODE_SIGNING.md for the two
+#     supported paths (Azure Trusted Signing or classic .pfx).
 
 [CmdletBinding()]
 param(
@@ -80,20 +81,39 @@ if (-not $Setup) {
 }
 Write-Host "Built: $($Setup.FullName)" -ForegroundColor Green
 
-# Optional Authenticode signing.
+# Optional Authenticode signing. Delegated to sign_installer.ps1, which
+# auto-detects which path is configured (Azure Trusted Signing vs .pfx)
+# via env vars. If neither is configured the sign script exits 0 and
+# the build proceeds with an unsigned installer.
 if ($Sign) {
-    $Thumbprint = $env:SIGNING_CERT_THUMBPRINT
-    if (-not $Thumbprint) {
-        Write-Warning "SIGNING_CERT_THUMBPRINT env var not set — skipping sign step"
-    } else {
-        Write-Host "Signing with cert thumbprint $Thumbprint..." -ForegroundColor Cyan
+    $signScript = Join-Path $ScriptRoot "sign_installer.ps1"
+    if (-not (Test-Path $signScript)) {
+        Write-Error "sign_installer.ps1 not found at $signScript"
+        exit 1
+    }
+    & $signScript -InstallerPath $Setup.FullName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Signing failed (exit $LASTEXITCODE)"
+        exit $LASTEXITCODE
+    }
+
+    # Verify the signature only if signing actually happened. We
+    # detect that by re-checking the same env vars sign_installer.ps1
+    # uses for path selection — if neither was set, the sign script
+    # was a no-op and verify would error with "no signature found".
+    $signed = (-not [string]::IsNullOrWhiteSpace($env:AZURE_TENANT_ID)) -or `
+              (-not [string]::IsNullOrWhiteSpace($env:ARCHHUB_SIGN_CERT_PATH))
+    if ($signed) {
         $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
-        if (-not $signtool) {
-            Write-Warning "signtool.exe not on PATH — skipping sign step"
+        if ($signtool) {
+            Write-Host "Verifying signature..." -ForegroundColor Cyan
+            & $signtool verify /pa /v $Setup.FullName
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Signature verification failed (exit $LASTEXITCODE)"
+                exit $LASTEXITCODE
+            }
         } else {
-            & $signtool sign /sha1 $Thumbprint /fd SHA256 `
-                /tr "http://timestamp.digicert.com" /td SHA256 `
-                $Setup.FullName
+            Write-Warning "signtool.exe not on PATH — skipping signature verification"
         }
     }
 }

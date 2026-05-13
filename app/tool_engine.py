@@ -232,6 +232,58 @@ TOOLS: list[dict] = [
         "endpoint": ("blender", "POST", "/exec", ("code",)),
     },
 
+    # Rhino — HTTP bridge running inside Rhino's embedded Python.
+    # Activated when the user runs `_-RunPythonScript archhub_mcp.py`
+    # at the Rhino command line (see payload/rhino/README.md).
+    {
+        "name": "rhino_ping",
+        "family": "rhino",
+        "description": "Verify the Rhino MCP bridge is alive on :9879.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("rhino", "ping"),
+    },
+    {
+        "name": "rhino_info",
+        "family": "rhino",
+        "description": "Active Rhino document info — path, units, layer count, object count, active view.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("rhino", "info"),
+    },
+    {
+        "name": "rhino_execute_python",
+        "family": "rhino",
+        "description": (
+            "Execute Python code live in Rhino's context. Globals pre-loaded: "
+            "`rs` (rhinoscriptsyntax), `sc` (scriptcontext), `Rhino` (.NET API), "
+            "`doc` (sc.doc), `System`. Assign to `result` to return data. "
+            "Runs on Rhino's UI thread."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python source"},
+                "timeout_seconds": {"type": "integer", "default": 60},
+            },
+            "required": ["code"],
+        },
+        "endpoint": ("rhino", "execute_python"),
+    },
+    {
+        "name": "rhino_screenshot",
+        "family": "rhino",
+        "description": "Capture the active viewport to a PNG. Optional output_path / width / height.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_path": {"type": "string"},
+                "width":  {"type": "integer", "default": 1920},
+                "height": {"type": "integer", "default": 1080},
+            },
+            "required": [],
+        },
+        "endpoint": ("rhino", "screenshot"),
+    },
+
     # Speckle
     {
         "name": "speckle_list_projects",
@@ -679,6 +731,177 @@ TOOLS: list[dict] = [
         "endpoint": ("outlook", "flag_for_followup"),
     },
 
+    # Procore (construction PM) — drives Procore's REST API. No host
+    # install required; user pastes a Personal Access Token in
+    # Settings → Sign-ins → Procore and the tools become live.
+    # Always-on like the `ai` family: the schema is exposed to the LLM
+    # even when no token is saved, so the model can suggest signing in
+    # rather than silently lacking the capability.
+    {
+        "name": "procore_ping",
+        "family": "procore",
+        "description": "Verify the Procore API is reachable with the saved access token. Pings /me.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("procore", "is_reachable"),
+    },
+    {
+        "name": "procore_info",
+        "family": "procore",
+        "description": "Snapshot of the active Procore context: company name, active project name + id, user role. Requires procore_access_token saved.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer",
+                                "description": "Override the saved active project id."},
+                "company_id": {"type": "integer",
+                                "description": "Override the saved active company id."},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "info"),
+    },
+    {
+        "name": "procore_list_projects",
+        "family": "procore",
+        "description": "List Procore projects the user can access within a company. Pass company_id to target a different company than the saved default.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "company_id": {"type": "integer"},
+                "limit": {"type": "integer", "default": 50},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_projects"),
+    },
+    {
+        "name": "procore_list_users",
+        "family": "procore",
+        "description": "List users on the active Procore project. Use this to resolve a name to an id for assignee_id on create_rfi.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer"},
+                "limit": {"type": "integer", "default": 50},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_users"),
+    },
+    {
+        "name": "procore_list_rfis",
+        "family": "procore",
+        "description": (
+            "List RFIs on the active Procore project, newest first. "
+            "Each item carries id, number, subject, status, assignee, "
+            "due_date. Filter by status='open' / 'closed' / 'draft' etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer",
+                                "description": "Override the active project id."},
+                "status": {"type": "string",
+                            "description": "Procore RFI status filter (open / closed / draft)."},
+                "limit": {"type": "integer", "default": 20},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_rfis"),
+    },
+    {
+        "name": "procore_get_rfi",
+        "family": "procore",
+        "description": (
+            "Fetch the full body of one Procore RFI by id. REQUIRES a "
+            "real rfi_id from procore_list_rfis — RFI ids are integers "
+            "assigned by Procore, NOT placeholders. Returns the full "
+            "RFI envelope (question, responses, attachments, etc.)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rfi_id":     {"type": "integer",
+                                "description": "Procore RFI id (integer)."},
+                "project_id": {"type": "integer"},
+            },
+            "required": ["rfi_id"],
+        },
+        "endpoint": ("procore", "get_rfi"),
+    },
+    {
+        "name": "procore_create_rfi",
+        "family": "procore",
+        "description": (
+            "Create a new RFI on the active Procore project. WRITES to "
+            "a live construction database — by default the user is "
+            "prompted to approve before submission (ai_behaviour policy "
+            "= 'ask'). assignee_id can be resolved via procore_list_users."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject":      {"type": "string",
+                                  "description": "Short RFI subject line."},
+                "question":     {"type": "string",
+                                  "description": "The RFI question body. Markdown OK."},
+                "project_id":   {"type": "integer"},
+                "assignee_id":  {"type": "integer",
+                                  "description": "Procore user id of the primary assignee."},
+                "due_date":     {"type": "string",
+                                  "description": "Due date as YYYY-MM-DD."},
+            },
+            "required": ["subject", "question"],
+        },
+        "endpoint": ("procore", "create_rfi"),
+    },
+    {
+        "name": "procore_list_submittals",
+        "family": "procore",
+        "description": "List submittals on the active Procore project. Each item carries id, number, title, status, ball_in_court.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer"},
+                "status":     {"type": "string"},
+                "limit":      {"type": "integer", "default": 20},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_submittals"),
+    },
+    {
+        "name": "procore_list_change_orders",
+        "family": "procore",
+        "description": "List change orders (CCOs / PCOs) on the active Procore project. Each item has id, number, title, status, amount.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer"},
+                "status":     {"type": "string"},
+                "limit":      {"type": "integer", "default": 20},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_change_orders"),
+    },
+    {
+        "name": "procore_list_daily_logs",
+        "family": "procore",
+        "description": "List daily-log entries from the active Procore project. Pass log_date='YYYY-MM-DD' to target one date; omit for most recent.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "integer"},
+                "log_date":   {"type": "string",
+                                "description": "YYYY-MM-DD"},
+                "limit":      {"type": "integer", "default": 10},
+            },
+            "required": [],
+        },
+        "endpoint": ("procore", "list_daily_logs"),
+    },
+
     # ArchHub local helpers (always available)
     {
         "name": "archhub_list_connectors",
@@ -821,12 +1044,14 @@ class ToolEngine:
         active_families = self._active_families()
         out: list[dict] = []
         for t in TOOLS:
-            # Always-on families: `_local` (ArchHub helpers) and `ai`
-            # (AI-as-tool delegations). Per-provider key may still be
-            # missing — handler returns a clean error rather than the
-            # tool being filtered out, so the model can suggest signing
-            # in instead of silently ignoring the capability.
-            if (t["family"] not in ("_local", "ai")
+            # Always-on families: `_local` (ArchHub helpers), `ai`
+            # (AI-as-tool delegations), and `procore` (SaaS — auth via
+            # access token, no host install required). Per-provider key
+            # may still be missing — handler returns a clean error
+            # rather than the tool being filtered out, so the model can
+            # suggest signing in instead of silently ignoring the
+            # capability.
+            if (t["family"] not in ("_local", "ai", "procore")
                     and t["family"] not in active_families):
                 continue
             if provider == "anthropic":
@@ -887,6 +1112,14 @@ class ToolEngine:
                 active.add("outlook")
         except Exception:
             pass
+        # Rhino auto-activates when the in-Rhino HTTP bridge answers on
+        # :9879. Same cache pattern as Outlook — cheap TCP probe but we
+        # don't want to run it on every schema call.
+        try:
+            if self._rhino_active_cached():
+                active.add("rhino")
+        except Exception:
+            pass
         return active
 
     # Outlook reachability cache state. Populated by the worker thread
@@ -912,6 +1145,26 @@ class ToolEngine:
             self._outlook_reachable = bool(is_reachable())
         except Exception:
             self._outlook_reachable = False
+
+    _RH_TTL_SECONDS = 30.0
+
+    def _rhino_active_cached(self) -> bool:
+        import time as _t
+        now = _t.time()
+        last = getattr(self, "_rhino_last_check", 0.0)
+        if now - last >= self._RH_TTL_SECONDS:
+            self._rhino_last_check = now
+            import threading
+            threading.Thread(target=self._refresh_rhino_async,
+                              daemon=True).start()
+        return bool(getattr(self, "_rhino_reachable", False))
+
+    def _refresh_rhino_async(self) -> None:
+        try:
+            from connectors.rhino_runner import is_reachable as _rh_reachable
+            self._rhino_reachable = bool(_rh_reachable())
+        except Exception:
+            self._rhino_reachable = False
 
     # ---- invocation -------------------------------------------------------
 
@@ -1012,6 +1265,31 @@ class ToolEngine:
             except Exception as ex:
                 return {"status": "error", "error": str(ex)[:300]}
 
+        # rhino family — HTTP bridge inside Rhino's embedded Python.
+        # Dispatch mirrors outlook: handler name in ep[1], rhino_runner
+        # exposes one function per handler. No session pin (Rhino has
+        # one active doc per process).
+        if tool["family"] == "rhino":
+            handler = ep[1]
+            try:
+                from connectors import rhino_runner as _rh
+                fn = getattr(_rh, handler, None)
+                if fn is None:
+                    return {"status": "error",
+                            "error": f"Unknown rhino handler: {handler}"}
+                import inspect
+                sig = inspect.signature(fn)
+                kwargs = {k: v for k, v in (args or {}).items()
+                          if k in sig.parameters}
+                result = fn(**kwargs)
+                if isinstance(result, dict):
+                    if "status" not in result:
+                        result = {"status": "ok", **result}
+                    return result
+                return {"status": "ok", "result": result}
+            except Exception as ex:
+                return {"status": "error", "error": str(ex)[:300]}
+
         # outlook family — drives classic Outlook in-process via COM.
         # No localhost listener; we route directly to outlook_runner. The
         # session_pin (when present) is forwarded as `account` to handlers
@@ -1033,6 +1311,43 @@ class ToolEngine:
                 kwargs = {k: v for k, v in merged.items() if k in sig.parameters}
                 result = fn(**kwargs)
                 # Normalise list/dict results into the {status: ok, ...} envelope.
+                if isinstance(result, dict):
+                    if "status" not in result:
+                        result = {"status": "ok", **result}
+                    return result
+                if isinstance(result, list):
+                    return {"status": "ok", "items": result}
+                return {"status": "ok", "result": result}
+            except Exception as ex:
+                return {"status": "error", "error": str(ex)[:300]}
+
+        # procore family — REST/SaaS, no host install. Routes directly
+        # to procore_runner. The session_pin (when present) is forwarded
+        # as `project_id` to handlers that accept it, so a chat-time
+        # "@token" can target a different project than the saved default.
+        if tool["family"] == "procore":
+            handler = ep[1]
+            try:
+                from connectors import procore_runner as _pc
+                fn = getattr(_pc, handler, None)
+                if fn is None:
+                    return {"status": "error",
+                            "error": f"Unknown procore handler: {handler}"}
+                import inspect
+                sig = inspect.signature(fn)
+                merged = dict(args or {})
+                if session_pin and "project_id" in sig.parameters \
+                        and not merged.get("project_id"):
+                    try:
+                        merged["project_id"] = int(session_pin)
+                    except Exception:
+                        pass
+                kwargs = {k: v for k, v in merged.items() if k in sig.parameters}
+                result = fn(**kwargs)
+                # is_reachable returns a bare bool — normalise into the
+                # standard envelope so the chat layer can render it.
+                if isinstance(result, bool):
+                    return {"status": "ok", "reachable": result}
                 if isinstance(result, dict):
                     if "status" not in result:
                         result = {"status": "ok", **result}

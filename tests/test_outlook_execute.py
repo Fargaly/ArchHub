@@ -12,6 +12,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# outlook_execute_python runs user code inside a live Win32 COM context.
+# The runner module lazy-imports pywin32, so non-Windows runners skip.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="outlook_execute_python depends on pywin32 / Win32 COM (Windows only)",
+)
+
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_ROOT))
 

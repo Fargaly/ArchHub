@@ -10,7 +10,7 @@ python-dotenv==1.2.2
 # FastAPI lazy-imports python-multipart on first Form()/File() touch;
 # CI surfaces the missing dep as "RuntimeError: Form data requires
 # python-multipart to be installed" — local dev had it transitively.
-python-multipart==0.0.18
+python-multipart==0.0.27
 # v1.1.0 marketplace signing — needed for Ed25519 signature verification
 # of uploaded packs. Re-uses the same dep app/requirements.txt added.
 cryptography>=42.0

@@ -352,6 +352,42 @@ const StudioLM = () => {
   const openSession = (id) => {
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
+    // v1.4 — clicking a session in the Chats panel also spawns a
+    // Conversation node on the canvas with that session's message
+    // history. Chat IS a node — the panel is just an opener.
+    if (window.archhub && window.archhub.load_session) {
+      try {
+        const raw = window.archhub.load_session(id);
+        let payload; try { payload = JSON.parse(raw); } catch { payload = {}; }
+        const msgs = (payload.graph && payload.graph.nodes)
+          ? (payload.graph.nodes.find(
+              (n) => n.type === 'conversation.chat')?.config?.body?.messages)
+          : [];
+        const nodeId = `chat_${id}_${Date.now().toString(36).slice(-4)}`;
+        // Position the new node near the centre of the visible canvas.
+        const newNode = {
+          id: nodeId, cat: 'ai',
+          x: 80, y: 80, w: 320, h: 240,
+          title: payload.name || id,
+          sub: 'conversation · session ' + id,
+          ins: [{ id: 'context', t: 'any', label: 'context' }],
+          outs: [{ id: 'response', t: 'completion', label: 'response' }],
+          messages: (msgs || []).map((m) => ({
+            me: m.role === 'user', text: m.content || '',
+          })),
+          state: 'idle', _user: true,
+          _sessionRef: id,
+        };
+        LM_GRAPH.nodes.push(newNode);
+        setUserNodes((ns) => [...ns, newNode]);
+        setFocusId(nodeId);
+        if (window.archhub.save_graph) {
+          try {
+            window.archhub.save_graph('workspace', JSON.stringify(LM_GRAPH));
+          } catch (e) {}
+        }
+      } catch (e) { console.warn('load_session failed', e); }
+    }
   };
   const closeTab = (id) => {
     setOpenTabs(t => {
@@ -3316,10 +3352,37 @@ const SettingsHosts = () => (
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:3,
               background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
             }}>{h.state}</span>
-            <div style={{
-              width:30, height:16, borderRadius:999, padding:1, position:'relative', cursor:'pointer',
-              background: h.state !== 'off' ? LM.accent : LM.lineSoft,
-            }}>
+            <div
+              onClick={() => {
+                const goingOn = h.state === 'off';
+                if (window.archhub && window.archhub.set_host_active) {
+                  try {
+                    window.archhub.set_host_active(h.id, goingOn);
+                    h.state = goingOn ? 'connected' : 'off';
+                    // Re-pull hosts to update the next refresh tick.
+                    window.bridgeJson('get_hosts').then((rows) => {
+                      if (!Array.isArray(rows) || rows.length === 0) return;
+                      const next = rows.map((x) => ({
+                        id:    x.id || x.family,
+                        name:  x.name || x.family,
+                        port:  (x.port != null) ? String(x.port) : null,
+                        state: (x.state === 'live' ? 'connected'
+                                 : x.state === 'loaded_dead' ? 'syncing'
+                                 : 'off'),
+                        file:  x.version ? `${x.name} ${x.version}` : '—',
+                        version: x.version || '',
+                      }));
+                      window.__archhub_LM_HOSTS.splice(
+                        0, window.__archhub_LM_HOSTS.length, ...next);
+                    });
+                  } catch (e) { console.warn('set_host_active failed', e); }
+                }
+              }}
+              title={h.state === 'off' ? 'Connect this host' : 'Disconnect this host'}
+              style={{
+                width:30, height:16, borderRadius:999, padding:1, position:'relative', cursor:'pointer',
+                background: h.state !== 'off' ? LM.accent : LM.lineSoft,
+              }}>
               <span style={{ position:'absolute', top:1, left: h.state !== 'off' ? 14 : 1, width:14, height:14, borderRadius:'50%', background:'#fff', transition:'left .15s' }}/>
             </div>
           </div>

@@ -37,7 +37,8 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Defaults — kept conservative so a tool call doesn't accidentally use
 # an expensive frontier model when a fast/cheap one suffices.
-DEFAULT_OPENAI_MODEL    = "gpt-4o-mini"
+DEFAULT_OPENAI_MODEL    = "gpt-5.4-mini"     # bumped 2026-04-23 release
+DEFAULT_CODEX_MODEL     = "gpt-5.3-codex"    # newest codex variant
 DEFAULT_GEMINI_MODEL    = "gemini-2.5-flash"
 DEFAULT_LMSTUDIO_URL    = "http://localhost:1234/v1"
 DEFAULT_LMSTUDIO_MODEL  = "auto"        # LM Studio resolves locally
@@ -53,6 +54,28 @@ def _load_key(provider: str) -> Optional[str]:
         return k or None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+def codex_ask(prompt: str, model: Optional[str] = None,
+              system: Optional[str] = None,
+              temperature: Optional[float] = None,
+              max_tokens: Optional[int] = None) -> dict:
+    """Ask OpenAI Codex (gpt-5.3-codex / gpt-5.1-codex-max / ...) for
+    code-focused work. Same wire format as `chatgpt_ask` but defaults
+    to a code-tuned model + temperature 0.1.
+
+    Use this when the primary model wants a second opinion on a patch,
+    refactor, or test case. Stays cheap relative to gpt-5.5 because
+    Codex variants are priced lower.
+    """
+    return chatgpt_ask(
+        prompt=prompt,
+        model=model or DEFAULT_CODEX_MODEL,
+        system=system,
+        temperature=0.1 if temperature is None else temperature,
+        max_tokens=max_tokens,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +97,19 @@ def chatgpt_ask(prompt: str, model: Optional[str] = None,
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        params = {"model": model or DEFAULT_OPENAI_MODEL, "messages": messages}
-        if temperature is not None:
+        chosen_model = model or DEFAULT_OPENAI_MODEL
+        params: dict = {"model": chosen_model, "messages": messages}
+        # GPT-5+ Pro and o-series ignore `temperature` (must be omitted)
+        # and use `max_completion_tokens` instead of `max_tokens`.
+        is_pro = chosen_model.endswith("-pro") or chosen_model.startswith("o")
+        is_gpt5_family = chosen_model.startswith("gpt-5")
+        if not is_pro and temperature is not None:
             params["temperature"] = float(temperature)
         if max_tokens is not None:
-            params["max_tokens"] = int(max_tokens)
+            if is_gpt5_family or is_pro:
+                params["max_completion_tokens"] = int(max_tokens)
+            else:
+                params["max_tokens"] = int(max_tokens)
         resp = client.chat.completions.create(**params)
         text = (resp.choices[0].message.content or "").strip()
         usage = getattr(resp, "usage", None)
@@ -265,7 +296,10 @@ def list_providers() -> dict:
     out: dict[str, dict] = {}
     out["openai"] = {
         "configured": bool(_load_key("openai")),
-        "models": [DEFAULT_OPENAI_MODEL, "gpt-4o", "o4-mini", "o3-mini"],
+        "models": [DEFAULT_OPENAI_MODEL, "gpt-5.5", "gpt-5.5-pro",
+                    "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
+                    DEFAULT_CODEX_MODEL, "gpt-5.1-codex-max",
+                    "gpt-5.1-codex-mini"],
     }
     out["google"] = {
         "configured": bool(_load_key("google")),

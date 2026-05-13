@@ -83,7 +83,10 @@ class TestListProviders:
         r = ai_runner.list_providers()
         models = r["providers"]["openai"]["models"]
         assert isinstance(models, list)
-        assert any("gpt-4o" in m for m in models)
+        # v1.3.2 bumped from gpt-4o-* family to gpt-5.5 / gpt-5.4-mini /
+        # gpt-5.3-codex defaults. The catalog should expose the current
+        # generation, not the retired one.
+        assert any("gpt-5" in m for m in models)
 
     def test_antigravity_marked_unavailable(self):
         from connectors import ai_runner

@@ -28,21 +28,28 @@ import httpx
 OPENAI_BASE = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 600
 
-# Ollama model id -> OpenAI model id. Bumps:
-#   - Code-oriented dept work goes to gpt-4o-mini (cheap + fast)
-#   - Reasoning-heavy work goes to o4-mini (paid, slower, smarter)
+# Ollama model id -> OpenAI model id. v1.3.2 bumps to the GPT-5
+# family (Apr 2026 release window). Codex variants get the code-
+# oriented depts; gpt-5.4-mini covers cheap general work; gpt-5.5
+# does heavier reasoning. The catch-all default is gpt-5.4-mini —
+# meaningful gains over gpt-4o-mini at similar cost.
 MODEL_MAP: dict[str, str] = {
-    "qwen2.5-coder:7b":  "gpt-4o-mini",
-    "qwen2.5-coder:14b": "gpt-4o-mini",
-    "llama3.2:3b":       "gpt-4o-mini",
-    "llama3.1:latest":   "gpt-4o-mini",
-    "llama3.1:8b":       "gpt-4o-mini",
-    "command-r7b":       "gpt-4o-mini",
-    "command-r:latest":  "gpt-4o-mini",
-    "deepseek-r1:8b":    "o4-mini",
-    "deepseek-r1:14b":   "o4-mini",
+    "qwen2.5-coder:7b":  "gpt-5.3-codex",       # newest dedicated codex
+    "qwen2.5-coder:14b": "gpt-5.3-codex",
+    "llama3.2:3b":       "gpt-5.4-mini",        # fast + cheap general
+    "llama3.1:latest":   "gpt-5.4-mini",
+    "llama3.1:8b":       "gpt-5.4-mini",
+    "command-r7b":       "gpt-5.4-mini",
+    "command-r:latest":  "gpt-5.4-mini",
+    "deepseek-r1:8b":    "gpt-5.5",             # reasoning-heavy work
+    "deepseek-r1:14b":   "gpt-5.5",
+    # Direct GPT-5 family identity mappings — used when an Agent
+    # subclass names a GPT model directly.
+    "gpt-5.5":           "gpt-5.5",
+    "gpt-5.5-pro":       "gpt-5.5-pro",
+    "gpt-5.3-codex":     "gpt-5.3-codex",
 }
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 
 
 @dataclass
@@ -70,6 +77,12 @@ def complete(*, model: str, system: str, user: str,
     mapped = MODEL_MAP.get(model, DEFAULT_OPENAI_MODEL)
     is_reasoning = mapped.startswith("o3") or mapped.startswith("o4")
 
+    # GPT-5+ Pro models use `max_completion_tokens` not `max_tokens`.
+    # The non-reasoning models accept `temperature`; Pro / o-series do
+    # not. Codex variants accept temperature but reward low values.
+    is_pro = mapped.endswith("-pro") or "pro" in mapped.split("-")
+    is_codex = "codex" in mapped
+    is_gpt5_family = mapped.startswith("gpt-5")
     body: dict = {
         "model": mapped,
         "messages": [
@@ -77,12 +90,17 @@ def complete(*, model: str, system: str, user: str,
             {"role": "user",   "content": user},
         ],
     }
-    if is_reasoning:
-        # o-series — no temperature param; reasoning_effort optional.
+    if is_reasoning or is_pro:
+        # o-series + GPT-5 Pro — no temperature param; reasoning_effort
+        # optional. `max_completion_tokens` is the GPT-5 spelling.
         body["reasoning_effort"] = "low"
+        body["max_completion_tokens"] = int(max_tokens)
     else:
-        body["temperature"] = float(temperature)
-        body["max_tokens"]  = int(max_tokens)
+        body["temperature"] = (0.1 if is_codex else float(temperature))
+        if is_gpt5_family:
+            body["max_completion_tokens"] = int(max_tokens)
+        else:
+            body["max_tokens"] = int(max_tokens)
 
     started = time.time()
     with httpx.Client(timeout=timeout_seconds) as cx:

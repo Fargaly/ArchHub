@@ -920,10 +920,10 @@ TOOLS: list[dict] = [
         "name": "ai_chatgpt_ask",
         "family": "ai",
         "description": (
-            "Ask OpenAI (ChatGPT / GPT-4o / o-series) a question and "
-            "return the answer text. Useful for delegating code tasks "
-            "or getting a second opinion from a different model. "
-            "Requires an OpenAI API key in Settings → Sign-ins."
+            "Ask OpenAI (GPT-5.5 / GPT-5.4 / o-series) a question and "
+            "return the answer text. Default model: gpt-5.4-mini (cheap "
+            "+ fast). Bump to gpt-5.5 for reasoning, gpt-5.5-pro for the "
+            "heaviest work. Requires an OpenAI API key + active billing."
         ),
         "input_schema": {
             "type": "object",
@@ -931,17 +931,44 @@ TOOLS: list[dict] = [
                 "prompt": {"type": "string",
                             "description": "The question / instruction to send."},
                 "model": {"type": "string",
-                          "description": "OpenAI model id, e.g. 'gpt-4o', 'gpt-4o-mini', 'o4-mini'. Default: gpt-4o-mini."},
+                          "description": "OpenAI model id, e.g. 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini', 'gpt-5.4-nano'. Default: gpt-5.4-mini."},
                 "system": {"type": "string",
                             "description": "Optional system prompt."},
                 "temperature": {"type": "number",
-                                 "description": "0.0–2.0. Lower = more deterministic."},
+                                 "description": "0.0-2.0. Lower = more deterministic. Ignored for Pro / o-series."},
                 "max_tokens": {"type": "integer",
                                 "description": "Cap on the response length."},
             },
             "required": ["prompt"],
         },
         "endpoint": ("ai", "chatgpt_ask"),
+    },
+    {
+        "name": "ai_codex_ask",
+        "family": "ai",
+        "description": (
+            "Ask OpenAI Codex (gpt-5.3-codex / gpt-5.1-codex-max / "
+            "gpt-5.1-codex-mini) for code-focused work — refactors, "
+            "patches, tests, code review. Codex variants are tuned for "
+            "code generation + cheaper than gpt-5.5 for equal-quality "
+            "code output. Defaults to temperature 0.1."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                            "description": "The question / instruction (code-focused)."},
+                "model": {"type": "string",
+                          "description": "Codex model id: 'gpt-5.3-codex' (default), 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'."},
+                "system": {"type": "string",
+                            "description": "Optional system prompt."},
+                "temperature": {"type": "number",
+                                 "description": "Default 0.1 — code work rewards low temperatures."},
+                "max_tokens": {"type": "integer"},
+            },
+            "required": ["prompt"],
+        },
+        "endpoint": ("ai", "codex_ask"),
     },
     {
         "name": "ai_gemini_ask",

@@ -12,15 +12,67 @@
                 height:100%; overflow:hidden; }
   *, *::before, *::after { box-sizing: border-box; }
   #root { height:100vh; width:100vw; }
-  /* Scrollbar polish for embedded panels */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
+  /* Composer animated caret used by FloatingComposer */
+  @keyframes lmCaret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <!-- Pre-mount splash so the user sees something during the ~1s
+       Babel transform + first React paint -->
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh;
+              font-family:'Instrument Serif',Georgia,serif;font-size:48px;color:#d97757;
+              letter-spacing:-0.02em;">
+    Arch<i>Hub</i>
+  </div>
+</div>
 
+<!-- QWebChannel ships with QtWebEngine under qrc://. Load it FIRST so
+     window.archhub is set up before the React tree mounts. -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+  // Bridge wiring — runs synchronously, exposes:
+  //   window.archhub          — bridge proxy (slots become callable)
+  //   window.archhubReady     — Promise that resolves once channel is ready
+  //   window.onArchhubReady() — chainable wait
+  window.__archhub_ready = false;
+  window.archhubReady = new Promise((resolve) => {
+    if (typeof QWebChannel === 'undefined') {
+      // QtWebEngine not bridged (e.g. local file opened in browser).
+      console.warn('QWebChannel unavailable — running in standalone mode');
+      window.archhub = null;
+      window.__archhub_ready = true;
+      resolve(null);
+      return;
+    }
+    new QWebChannel(qt.webChannelTransport, (channel) => {
+      window.archhub = channel.objects.archhub;
+      window.__archhub_ready = true;
+      console.log('[archhub] bridge ready · version=' +
+                  (window.archhub.get_version
+                    ? window.archhub.get_version() : '?'));
+      resolve(window.archhub);
+    });
+  });
+  window.onArchhubReady = (cb) => window.archhubReady.then(cb);
+
+  // Promise-wrapper for slots that return JSON strings. Most bridge
+  // slots return JSON-encoded payloads; this unwraps them so callers
+  // can `await window.bridgeJson('get_hosts')` directly.
+  window.bridgeJson = (slot, ...args) => {
+    return window.archhubReady.then((b) => {
+      if (!b) return null;
+      const raw = b[slot](...args);
+      if (typeof raw !== 'string') return raw;
+      try { return JSON.parse(raw); } catch { return raw; }
+    });
+  };
+</script>
+
+<!-- React + Babel for the prototype JSX -->
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
@@ -29,12 +81,135 @@
 <script type="text/babel" src="studio-lm.jsx"></script>
 
 <script type="text/babel" data-presets="env,react">
-// Mount the StudioLM artboard fullscreen — no DesignCanvas wrapper.
-// This is the actual app surface: every panel, every node, every
-// setting from the prototype rendered into ArchHub's runtime window.
 function App() {
-  return <div style={{ height: '100vh', width: '100vw' }}><StudioLM /></div>;
+  // ── Bridge-driven state. Pulls hosts/sessions/models from Python
+  //     once the channel is ready; falls back to the prototype's
+  //     demo data when running standalone.
+  const [hosts, setHosts] = React.useState(null);
+  const [sessions, setSessions] = React.useState(null);
+  const [models, setModels] = React.useState(null);
+  const [memStats, setMemStats] = React.useState(null);
+  const [bridgeReady, setBridgeReady] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    window.archhubReady.then((bridge) => {
+      if (cancelled) return;
+      setBridgeReady(true);
+      if (!bridge) return;
+      // Initial pulls.
+      window.bridgeJson('get_hosts').then(h => !cancelled && setHosts(h));
+      window.bridgeJson('get_sessions').then(s => !cancelled && setSessions(s));
+      window.bridgeJson('get_models').then(m => !cancelled && setModels(m));
+      window.bridgeJson('get_memory_stats').then(s => !cancelled && setMemStats(s));
+      // Re-pull on signals.
+      try {
+        bridge.hosts_changed.connect(() => {
+          window.bridgeJson('get_hosts').then(h => setHosts(h));
+        });
+        bridge.sessions_changed.connect(() => {
+          window.bridgeJson('get_sessions').then(s => setSessions(s));
+        });
+        bridge.memory_changed.connect(() => {
+          window.bridgeJson('get_memory_stats').then(s => setMemStats(s));
+        });
+      } catch (e) {
+        console.warn('signal wire failed', e);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Splice real desktop state into the window-level LM_* arrays the
+  // JSX reads by name. The const refs stay the same — mutating
+  // contents lets every read site keep working without rewriting the
+  // 2916 lines of prototype.
+  //
+  // Bump `tick` after each splice to force StudioLM to remount with
+  // the fresh data. The remount cost is acceptable for first-paint
+  // hydration; once steady-state, signals trigger targeted slices
+  // instead of full remounts.
+  const [tick, setTick] = React.useState(0);
+
+  const _splice = React.useCallback((targetName, next) => {
+    const target = window[targetName];
+    if (!target || !Array.isArray(target)) return;
+    if (!Array.isArray(next) || next.length === 0) return;
+    target.splice(0, target.length, ...next);
+  }, []);
+
+  React.useEffect(() => {
+    if (!hosts || !Array.isArray(hosts)) return;
+    if (hosts.length === 0) return;
+    _splice('__archhub_LM_HOSTS', hosts.map((h) => ({
+      id:    h.id || h.family,
+      name:  h.name || h.family,
+      port:  (h.port != null) ? String(h.port) : null,
+      state: (h.state === 'live' ? 'connected'
+              : h.state === 'loaded_dead' ? 'syncing'
+              : 'off'),
+      file:  h.version ? `${h.name} ${h.version}` : '—',
+      version: h.version || '',
+    })));
+    setTick((t) => t + 1);
+  }, [hosts, _splice]);
+
+  React.useEffect(() => {
+    if (!sessions || !Array.isArray(sessions)) return;
+    if (sessions.length === 0) return;
+    _splice('__archhub_LM_SESSIONS', sessions.map((s) => ({
+      id:    s.id,
+      title: s.title || s.id,
+      state: 'done',
+      host:  'revit',
+      file:  String(s.saved_at || ''),
+      model: '—',
+      when:  String(s.saved_at || ''),
+      last:  `${s.messages || 0} messages`,
+    })));
+    setTick((t) => t + 1);
+  }, [sessions, _splice]);
+
+  // Pull memory / permissions / providers / skills lazily after
+  // bridge ready; each hydrates the matching LM_* const.
+  React.useEffect(() => {
+    if (!bridgeReady || !window.archhub) return;
+    let cancelled = false;
+    window.bridgeJson('list_memory_facts', '').then((r) => {
+      if (cancelled || !r) return;
+      const results = (r && r.results) || [];
+      if (!results.length) return;
+      _splice('__archhub_LM_MEMORY', results.map((f) => ({
+        id:    String(f.id),
+        text:  f.text || '',
+        src:   f.scope === 'project' ? 'project'
+              : f.scope === 'global' ? 'global' : 'profile',
+      })));
+      setTick((t) => t + 1);
+    });
+    window.bridgeJson('get_saved_skills').then((s) => {
+      if (cancelled || !Array.isArray(s) || s.length === 0) return;
+      _splice('__archhub_LM_SAVED_SKILLS', s);
+      setTick((t) => t + 1);
+    });
+    window.bridgeJson('get_permissions').then((p) => {
+      if (cancelled || !Array.isArray(p) || p.length === 0) return;
+      _splice('__archhub_LM_PERMISSIONS', p);
+      setTick((t) => t + 1);
+    });
+    window.bridgeJson('get_providers').then((p) => {
+      if (cancelled || !Array.isArray(p) || p.length === 0) return;
+      _splice('__archhub_LM_PROVIDERS', p);
+      setTick((t) => t + 1);
+    });
+    return () => { cancelled = true; };
+  }, [bridgeReady, _splice]);
+
+  return <div style={{ height: '100vh', width: '100vw' }}>
+    <StudioLM key={tick}/>
+  </div>;
 }
+
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 </body>

@@ -41,7 +41,12 @@ const WIRE = {
 };
 
 // ──────────────────────── DATA ────────────────────────
-const LM_SESSIONS = [
+// v1.4.0-alpha: arrays exposed on `window` so the QWebChannel bridge
+// in index.html can SPLICE real desktop state in-place after
+// archhubReady resolves. The const ref stays the same — only
+// contents change — so every consumer's `LM_SESSIONS.find(...)` /
+// `LM_HOSTS.filter(...)` keeps working unchanged.
+const LM_SESSIONS = window.__archhub_LM_SESSIONS = window.__archhub_LM_SESSIONS || [
   { id:'walls',   title:'Schedule wall types',   state:'running',  host:'revit',
     file:'Tower-A_central.rvt · L03', model:'sonnet 4.5', when:'1 min',
     last:'Placing 37 dimensions across 2 stages.' },
@@ -62,7 +67,7 @@ const LM_SESSIONS = [
     last:'Routed 4 emails to threads · drafted 2 replies for review.' },
 ];
 
-const LM_HOSTS = [
+const LM_HOSTS = window.__archhub_LM_HOSTS = window.__archhub_LM_HOSTS || [
   { id:'r25', name:'Revit 2025',  port:'48884', state:'connected', file:'Tower-A_central.rvt · 47 walls' },
   { id:'r24', name:'Revit 2024',  port:'48886', state:'connected', file:'AssetA_lib.rvt' },
   { id:'bld', name:'Blender 5.1', port:'48890', state:'syncing',   file:'sketch.blend · awaiting handshake' },
@@ -86,7 +91,7 @@ const LM_STATE_META = {
 };
 
 // ─── The active graph for "walls" session — typed AEC nodes
-const LM_GRAPH = {
+const LM_GRAPH = window.__archhub_LM_GRAPH = window.__archhub_LM_GRAPH || {
   nodes: [
     { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
       title:'Revit 2025', sub:'Tower-A_central.rvt · L03',
@@ -384,7 +389,17 @@ const StudioLM = () => {
       <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
-        onHome={() => setOpenId(null)} onSettings={() => setSettingsOpen(true)}
+        onHome={() => setOpenId(null)}
+        onSettings={() => {
+          // v1.4.0-alpha — open the native SettingsDialog via the
+          // Python bridge instead of the in-React modal when the
+          // bridge is up. The in-React <Settings> overlay stays as
+          // a fallback for standalone browser preview.
+          if (window.archhub && window.archhub.open_settings) {
+            try { window.archhub.open_settings(); return; } catch (e) {}
+          }
+          setSettingsOpen(true);
+        }}
         addNodeFromLibrary={addNodeFromLibrary}/>
       {session
         ? <Workspace
@@ -744,7 +759,7 @@ const NodeLibItem = ({ it, cat, onAdd }) => {
 };
 
 // ─── Skills panel — saved templates the user has accrued ───
-const LM_SAVED_SKILLS = [
+const LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS || [
   { id:'dim_walls',   name:'Dimension walls in active view',  runs:14, args:'scale, min_length', when:'2 days ago' },
   { id:'door_qa',     name:'Door schedule QA',                runs:38, args:'level',             when:'today' },
   { id:'mass_extract',name:'Sketch \u2192 mass',              runs:6,  args:'floor_count, height',when:'last week' },
@@ -1909,25 +1924,124 @@ const toolBtn = () => ({
 });
 
 // ─── floating composer (BOTTOM CENTER — always-bottom anchor) ───
-const FloatingComposer = ({ setLibraryOpen }) => (
-  <div data-no-pan style={{
-    position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
-    width:620, maxWidth:'82%',
-    background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
-    borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
-    padding:'10px 13px',
-  }}>
-    <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
-      <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-      <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
-      <span style={{ flex:1, color:LM.inkMuted, fontStyle:'italic', fontFamily:LM.serif, fontSize:14, marginLeft:6 }}>
-        Reply, or type / to add a node…
-      </span>
-      <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
-      <button style={{ padding:'4px 11px', background:LM.accent, color:'#fff', border:0, borderRadius:5, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+// v1.4.0-alpha — wired to window.archhub.send_chat. Slash prefix opens
+// the library overlay; everything else fires a real LLM round-trip via
+// the Python bridge. Streamed response is appended via chat_chunk
+// signals listened to in App().
+const FloatingComposer = ({ setLibraryOpen }) => {
+  const [text, setText] = React.useState('');
+  const [sending, setSending] = React.useState(false);
+  const [reply, setReply] = React.useState('');
+  const sessionId = 'workspace';
+
+  const fire = React.useCallback(() => {
+    const t = text.trim();
+    if (!t) return;
+    if (t.startsWith('/')) {
+      setText('');
+      setLibraryOpen(true);
+      return;
+    }
+    setSending(true);
+    setReply('');
+    if (window.archhub && window.archhub.send_chat) {
+      try {
+        // Wire one-shot listeners for this turn.
+        const onChunk = (sid, chunk) => {
+          if (sid !== sessionId) return;
+          setReply(r => r + chunk);
+        };
+        const onDone = (sid) => {
+          if (sid !== sessionId) return;
+          setSending(false);
+          try { window.archhub.chat_chunk.disconnect(onChunk); } catch (e) {}
+          try { window.archhub.chat_done.disconnect(onDone); } catch (e) {}
+        };
+        const onErr = (sid, err) => {
+          if (sid !== sessionId) return;
+          setSending(false);
+          setReply(`error: ${err}`);
+          try { window.archhub.chat_error.disconnect(onErr); } catch (e) {}
+        };
+        try { window.archhub.chat_chunk.connect(onChunk); } catch (e) {}
+        try { window.archhub.chat_done.connect(onDone); } catch (e) {}
+        try { window.archhub.chat_error.connect(onErr); } catch (e) {}
+        window.archhub.send_chat(sessionId, t);
+      } catch (e) {
+        setSending(false);
+        setReply(`bridge error: ${e.message || e}`);
+      }
+    } else {
+      // Standalone fallback (browser preview, no Python bridge).
+      setReply(`[preview mode] would send: ${t}`);
+      setTimeout(() => setSending(false), 400);
+    }
+    setText('');
+  }, [text, sessionId, setLibraryOpen]);
+
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      fire();
+    }
+  };
+
+  return (
+    <div data-no-pan style={{
+      position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
+      width:620, maxWidth:'82%',
+      background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
+      borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
+      padding:'10px 13px',
+    }}>
+      {reply ? (
+        <div style={{
+          maxHeight:160, overflow:'auto', padding:'6px 8px',
+          marginBottom:6, fontSize:13, fontFamily:LM.sans,
+          color:LM.ink, borderBottom:`1px solid ${LM.lineSoft}`,
+        }}>
+          <span style={{ color:LM.inkMuted, fontFamily:LM.mono,
+                          fontSize:10, letterSpacing:'0.1em' }}>
+            ASSISTANT
+          </span>
+          <div style={{ marginTop:4, whiteSpace:'pre-wrap' }}>{reply}</div>
+        </div>
+      ) : null}
+      <div style={{ display:'flex', alignItems:'center', gap:8,
+                     fontSize:13.5, fontFamily:LM.sans, color:LM.ink,
+                     minHeight:24 }}>
+        <span style={{ color:LM.accent, fontFamily:LM.mono,
+                        fontSize:13 }}>/</span>
+        <input
+          value={text}
+          autoFocus
+          disabled={sending}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={sending ? 'Thinking…' :
+                        'Reply, or type / to add a node…'}
+          style={{
+            flex:1, background:'transparent', border:'none', outline:'none',
+            color:LM.ink, fontFamily:LM.sans, fontSize:14, padding:'2px 4px',
+          }}
+        />
+        <button onClick={(e) => { e.stopPropagation();
+                                    setLibraryOpen(true); }}
+                style={{ ...smallBtn(), padding:'3px 9px' }}>
+          library
+        </button>
+        <button onClick={fire} disabled={sending}
+                style={{ padding:'4px 11px',
+                          background: sending ? LM.accentDim : LM.accent,
+                          color:'#fff', border:0, borderRadius:5,
+                          fontSize:11.5, fontWeight:500,
+                          cursor: sending ? 'wait' : 'pointer' }}>
+          {sending ? 'Sending…' : 'Send ↵'}
+        </button>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─── mini-map (TOP-RIGHT) ───
 const MiniMap = ({ pan, zoom, positions, allNodes }) => {
@@ -2412,7 +2526,7 @@ const SHead = ({ title, sub }) => (
 );
 
 // ── Memory: things the AI remembers about you (Notion AI / Claude style)
-const LM_MEMORY = [
+const LM_MEMORY = window.__archhub_LM_MEMORY = window.__archhub_LM_MEMORY || [
   { id:'m1', text:'Works at Habib Studio · architect, project lead on Tower A.', src:'profile' },
   { id:'m2', text:'Prefers millimeters and ISO drafting conventions, never imperial.', src:'preference · 12 confirmations' },
   { id:'m3', text:'Tower-A_central.rvt is the central model; never edit linked files.', src:'project' },
@@ -2431,7 +2545,28 @@ const SettingsMemory = () => (
     }}>
       <span style={{ color:LM.accent, fontSize:14 }}>✦</span>
       <span style={{ flex:1, fontSize:12.5 }}>You can also say "<span style={{ color:LM.accent, fontFamily:LM.mono }}>/remember</span> …" inside any chat — I'll save it here.</span>
-      <button style={smallBtn()}>add fact</button>
+      <button
+        onClick={() => {
+          const t = window.prompt("Remember what?", "");
+          if (!t) return;
+          if (window.archhub && window.archhub.add_memory_fact) {
+            try {
+              window.archhub.add_memory_fact(t, "user");
+              window.bridgeJson('list_memory_facts', '').then((r) => {
+                const results = (r && r.results) || [];
+                if (!results.length) return;
+                const next = results.map((f) => ({
+                  id: String(f.id), text: f.text || '',
+                  src: f.scope === 'project' ? 'project'
+                      : f.scope === 'global' ? 'global' : 'profile',
+                }));
+                window.__archhub_LM_MEMORY.splice(
+                  0, window.__archhub_LM_MEMORY.length, ...next);
+              });
+            } catch (e) { console.warn(e); }
+          }
+        }}
+        style={smallBtn()}>add fact</button>
     </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:8, overflow:'hidden' }}>
       {LM_MEMORY.map((m, i) => (
@@ -2444,8 +2579,33 @@ const SettingsMemory = () => (
             <div style={{ fontSize:13, color:LM.ink, lineHeight:1.4 }}>{m.text}</div>
             <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{m.src}</div>
           </div>
-          <button style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
-          <button style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
+          <button
+            onClick={() => {
+              const t = window.prompt("Update fact:", m.text);
+              if (t == null) return;
+              if (window.archhub && window.archhub.update_memory_fact) {
+                try {
+                  window.archhub.update_memory_fact(parseInt(m.id, 10), t);
+                  m.text = t;   // optimistic
+                } catch (e) { console.warn(e); }
+              }
+            }}
+            style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
+          <button
+            onClick={() => {
+              if (!window.confirm("Forget this fact?")) return;
+              if (window.archhub && window.archhub.forget_memory_fact) {
+                try {
+                  window.archhub.forget_memory_fact(parseInt(m.id, 10));
+                  const idx = window.__archhub_LM_MEMORY.findIndex(
+                    (x) => x.id === m.id);
+                  if (idx >= 0) {
+                    window.__archhub_LM_MEMORY.splice(idx, 1);
+                  }
+                } catch (e) { console.warn(e); }
+              }
+            }}
+            style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
         </div>
       ))}
     </div>
@@ -2505,7 +2665,7 @@ const SField = ({ label, value, select }) => (
 );
 
 // ── Permissions: what the AI can do without asking
-const LM_PERMISSIONS = [
+const LM_PERMISSIONS = window.__archhub_LM_PERMISSIONS = window.__archhub_LM_PERMISSIONS || [
   { id:'read',  label:'Read host data',           sub:'List walls, doors, views, etc.', mode:'auto' },
   { id:'filter',label:'Filter & search',          sub:'No side effects.',                mode:'auto' },
   { id:'dim',   label:'Place dimensions & tags',  sub:'Annotation only · no model change.', mode:'auto' },
@@ -2545,6 +2705,16 @@ const SettingsPermissions = () => (
                     background: sel ? m.col + '22' : 'transparent',
                     color: sel ? m.col : LM.inkMuted,
                     fontFamily:LM.mono, fontSize:9.5, fontWeight: sel ? 600 : 400, letterSpacing:'0.1em',
+                  }}
+                  onClick={() => {
+                    // Real wire: persist policy via bridge + flip the
+                    // in-memory mode so the row re-renders. The next
+                    // bridge pull will overwrite from the source of
+                    // truth (secrets_store).
+                    p.mode = k;
+                    if (window.archhub && window.archhub.set_permission) {
+                      try { window.archhub.set_permission(p.id, k); } catch (e) {}
+                    }
                   }}>{m.label}</button>
                 );
               })}
@@ -2560,7 +2730,7 @@ const SettingsPermissions = () => (
 );
 
 // ── Providers
-const LM_PROVIDERS = [
+const LM_PROVIDERS = window.__archhub_LM_PROVIDERS = window.__archhub_LM_PROVIDERS || [
   { id:'anthropic', name:'Anthropic',  state:'connected', key:'ant-•••••••••e2af', usage:'$23.84 this month', col:'#cc785c' },
   { id:'openai',    name:'OpenAI',     state:'connected', key:'sk-••••••••••8e1b', usage:'$0.00 (subscription)', col:'#10a37f' },
   { id:'openrouter',name:'OpenRouter', state:'connected', key:'or-••••••••••9c4d', usage:'$2.14 this month', col:'#3a6acc' },
@@ -2586,7 +2756,31 @@ const SettingsProviders = () => (
             background: p.state==='connected'?LM.ok+'14' : p.state==='local'?LM.cyan+'14' : LM.bgSoft,
             color:       p.state==='connected'?LM.ok      : p.state==='local'?LM.cyan      : LM.inkMuted,
           }}>{p.state}</span>
-          <button style={{ ...smallBtn(), padding:'3px 8px' }}>{p.state==='off' ? 'connect' : 'manage'}</button>
+          <button
+            onClick={() => {
+              const next = window.prompt(
+                `Paste your ${p.name} API key (leave blank to skip):`,
+                ""
+              );
+              if (next == null) return;
+              if (!next) return;
+              if (window.archhub && window.archhub.set_provider_key) {
+                try {
+                  const res = window.archhub.set_provider_key(p.id, next);
+                  console.log('[archhub] set_provider_key', p.id, res);
+                  // Trigger a refresh by re-fetching providers.
+                  window.bridgeJson('get_providers').then((rows) => {
+                    if (Array.isArray(rows) && rows.length) {
+                      window.__archhub_LM_PROVIDERS.splice(
+                        0, window.__archhub_LM_PROVIDERS.length, ...rows);
+                    }
+                  });
+                } catch (e) { console.warn(e); }
+              }
+            }}
+            style={{ ...smallBtn(), padding:'3px 8px' }}>
+            {p.state==='off' ? 'connect' : 'manage'}
+          </button>
         </div>
       ))}
     </div>

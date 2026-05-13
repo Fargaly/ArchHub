@@ -612,20 +612,63 @@ class CanvasScene(QGraphicsScene):
         ev.accept()
 
     def _show_palette(self, scene_pos: QPointF, screen_pos) -> None:
+        """Right-click palette — now pulls EVERY registered node from
+        `workflows.registry`, grouped by category submenu. Was hardcoded
+        to 6 placeholder items, so the 9 AEC nodes + tool.* dynamic
+        nodes never showed up. Founder feedback: "where are the nodes?"
+        — the menu wasn't wired to the registry.
+        """
         menu = QMenu()
-        # Node-type catalog.
-        catalog = [
-            ("user.prompt",   "User prompt"),
-            ("llm.complete",  "LLM · complete"),
-            ("tool.run",      "Tool · run"),
-            ("control.if",    "Control · if"),
-            ("control.loop",  "Control · loop"),
-            ("output.value",  "Output value"),
-        ]
-        for type_name, label in catalog:
-            act = menu.addAction(f"+ {label}")
-            act.triggered.connect(
-                lambda _=False, t=type_name, p=scene_pos: self._add_node(t, p))
+        # Pull live catalog.
+        try:
+            from workflows.registry import _REGISTRY
+            specs = [s for s, _ in _REGISTRY.values()]
+        except Exception:
+            specs = []
+
+        if not specs:
+            # Fallback: minimal hardcoded set so the menu isn't empty
+            # if the registry import fails.
+            specs = []
+            from collections import namedtuple
+            FB = namedtuple("FB", "type category display_name icon")
+            for t, c, d, i in (
+                ("user.prompt",   "io",      "User prompt",   "→"),
+                ("llm.complete",  "llm",     "LLM · complete", "✦"),
+                ("output.value",  "io",      "Output value",  "←"),
+            ):
+                specs.append(FB(t, c, d, i))
+
+        # Group by top-level category so 30+ entries don't dump in one list.
+        by_cat: dict[str, list] = {}
+        for spec in specs:
+            cat = (getattr(spec, "category", "") or "misc").split(".")[0]
+            by_cat.setdefault(cat, []).append(spec)
+
+        # Preferred ordering — io / aec / llm / tool / control / misc.
+        order = ["io", "aec", "llm", "tool", "control", "data", "misc"]
+        seen = set()
+        for cat in order + sorted(by_cat.keys()):
+            if cat in seen or cat not in by_cat:
+                continue
+            seen.add(cat)
+            entries = sorted(by_cat[cat], key=lambda s: s.display_name)
+            if len(entries) == 1:
+                spec = entries[0]
+                act = menu.addAction(
+                    f"{getattr(spec, 'icon', '·')}  {spec.display_name}")
+                t = spec.type
+                act.triggered.connect(
+                    lambda _=False, tn=t, p=scene_pos: self._add_node(tn, p))
+                continue
+            sub = menu.addMenu(cat.upper())
+            for spec in entries:
+                act = sub.addAction(
+                    f"{getattr(spec, 'icon', '·')}  {spec.display_name}")
+                t = spec.type
+                act.triggered.connect(
+                    lambda _=False, tn=t, p=scene_pos: self._add_node(tn, p))
+
         menu.addSeparator()
         clear = menu.addAction("Clear canvas")
         clear.triggered.connect(self._clear)

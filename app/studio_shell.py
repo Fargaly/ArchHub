@@ -30,9 +30,10 @@ Live wiring:
   status     <- connector_health.snapshot() live count + healing count, model,
                 latency, spend (telemetry total_cost_usd if exposed).
   Home       <- same wiring as the rail/status surfaces.
-  Skills     <- embeds existing SkillsPanel as a widget.
-  Workflows  <- embeds existing WorkflowsPanel as a widget.
-  Settings   <- embeds existing SettingsDialog content as a widget.
+  Skills     <- embeds SkillsGridPanel (Studio-native card grid).
+  Workflows  <- embeds WorkflowCanvas (Blueprint node canvas).
+  Settings   <- embeds SettingsPage (sectioned chrome wrapping
+                SettingsDialog under the Providers section).
 
 Refresh: a single QTimer ticks every 2s and rebuilds the live surfaces.
 """
@@ -52,7 +53,7 @@ from PyQt6.QtGui import (
     QPixmap, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout,
     QWidget,
 )
@@ -79,22 +80,20 @@ try: _load_theme_pref()
 except Exception: pass
 T = _LivePalette()
 
-# v1.3.2 round-2 cut: only the 4 nav items that drive a click in <60s
-# stay primary. Workflows / Marketplace / Pricing / Telemetry collapse
-# behind a "More" disclosure on the rail. Telemetry is the closest to
-# being demoted-too-far — KPI cards do read live numbers — but most
-# users still don't visit it unless something's broken.
+# v1.3.3 — Codex review: round-2 over-cut. Primary nav now restored to
+# the 7 destinations the cockpit was always supposed to surface. Pricing
+# stays behind the cog menu (cmd-, jumps to Settings).
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
     ("chat",      "Chat",        "2"),
     ("skills",    "Skills",      "3"),
-    ("settings",  "Settings",    ","),
-]
-NAV_ITEMS_MORE = [
     ("flows",     "Workflows",   "4"),
     ("market",    "Marketplace", "5"),
     ("telemetry", "Telemetry",   "6"),
-    ("pricing",   "Pricing",     "7"),
+    ("settings",  "Settings",    "7"),
+]
+NAV_ITEMS_MORE = [
+    ("pricing",   "Pricing",     "8"),
 ]
 # All nav ids together — used by `_set_page` for validity, by the
 # command palette for jumping, and by the keyboard-shortcut wiring.
@@ -255,26 +254,29 @@ class StudioShell(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Brand row — ArchMark (arch + node keystone) + 'Arch' + italic 'Hub'
-        # + theme-toggle sun/moon button on the right (matches studio.jsx).
-        # v1.3.3 cut — Studio brand row used to render ArchMark + Wordmark
-        # + "STUDIO · BOOTING" subtitle (30+19+caption = ~70px of pure
-        # chrome). Founder feedback: invisible chat_window cuts in v1.3.2
-        # didn't land because THIS row was painting over them. Brand
-        # row is now: mark only (24px) + theme toggle. Wordmark gone.
+        # Brand row — ArchMark + 'Arch' italic 'Hub' wordmark + STUDIO
+        # mono subtitle + theme toggle. Matches studio.jsx 119-137: the
+        # measured cockpit rhythm Codex review flagged as over-cut.
         brand_wrap = QWidget()
         brand_row = QHBoxLayout(brand_wrap)
-        brand_row.setContentsMargins(14, 14, 14, 10)
-        brand_row.setSpacing(10)
-        self._brand_mark = ArchMark(size=24)
+        brand_row.setContentsMargins(14, 12, 14, 8)
+        brand_row.setSpacing(8)
+        self._brand_mark = ArchMark(size=22)
         brand_row.addWidget(self._brand_mark)
-        # Keep refs alive so legacy callers don't NPE — both hidden.
-        self._brand_word = Wordmark(size=19)
-        self._brand_word.setVisible(False)
-        self._brand_sub = QLabel("")
+        brand_col_w = QWidget()
+        brand_col = QVBoxLayout(brand_col_w)
+        brand_col.setContentsMargins(0, 0, 0, 0)
+        brand_col.setSpacing(0)
+        self._brand_word = Wordmark(size=17)
+        brand_col.addWidget(self._brand_word)
+        self._brand_sub = QLabel("STUDIO")
         self._brand_sub.setObjectName("studioBrandSub")
-        self._brand_sub.setVisible(False)
-        brand_row.addStretch(1)
+        self._brand_sub.setStyleSheet(
+            f"font-family:{TYPE['fontMono']}; font-size:8px; "
+            f"letter-spacing:0.18em; color:{T['inkMuted']};"
+        )
+        brand_col.addWidget(self._brand_sub)
+        brand_row.addWidget(brand_col_w, 1)
         # Theme toggle — sun glyph in light, moon glyph in dark.
         self._theme_btn = QToolButton()
         self._theme_btn.setObjectName("studioThemeToggle")
@@ -551,19 +553,98 @@ class StudioShell(QMainWindow):
             return self._error_card("Skills", str(ex))
 
     def _build_workflows_page(self) -> QWidget:
-        """Workflows — Blueprint-style node canvas (v0.29).
+        """Workflows — Blueprint-style node canvas (v0.29) with a slim
+        chat strip docked at the bottom (v1.3.3 founder ask: chat
+        should be visible from the canvas).
 
-        Drop-in replacement for the legacy list view: same Workflow
-        data model, same JSON file format. Anyone still wanting the
-        list view can open Settings → Workflows or run skills via the
-        Skills page.
+        The chat strip dispatches the prompt back to the wrapped
+        ChatWindow + switches to the Chat page so the user sees the
+        response stream. From the canvas they get a one-shot prompt
+        without losing the workflow context.
         """
         try:
             from workflow_canvas import WorkflowCanvas
-            return WorkflowCanvas(router=self.router, tool_engine=self.tools,
-                                  manager=self.manager, parent=None)
         except Exception as ex:
             return self._error_card("Workflows", str(ex))
+
+        page = QWidget()
+        page.setObjectName("studioPage")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        canvas = WorkflowCanvas(router=self.router, tool_engine=self.tools,
+                                  manager=self.manager, parent=None)
+        v.addWidget(canvas, 1)
+
+        # Chat strip — slim, docked, always visible while on Workflows.
+        # Same brand as the chat input (terracotta accent, paper-line).
+        strip = QFrame()
+        strip.setObjectName("workflowsChatStrip")
+        T = current_palette()
+        strip.setStyleSheet(
+            f"QFrame#workflowsChatStrip {{"
+            f"  background: {T['bgPanel']};"
+            f"  border-top: 1px solid {T['line']};"
+            f"}}"
+        )
+        sh = QHBoxLayout(strip)
+        sh.setContentsMargins(14, 8, 14, 8)
+        sh.setSpacing(8)
+
+        cap = QLabel("CHAT")
+        cap.setObjectName("studioMonoCap")
+        cap.setStyleSheet(
+            f"font-family:{TYPE['fontMono']}; font-size:9px; "
+            f"letter-spacing:0.16em; color:{T['inkMuted']};"
+        )
+        sh.addWidget(cap)
+
+        wf_input = QLineEdit()
+        wf_input.setObjectName("workflowsChatInput")
+        wf_input.setPlaceholderText(
+            "Ask about this workflow or run anything via chat…"
+        )
+        wf_input.setMinimumHeight(28)
+        sh.addWidget(wf_input, 1)
+
+        wf_send = QPushButton("Send to chat")
+        wf_send.setObjectName("primaryButton")
+        wf_send.setCursor(Qt.CursorShape.PointingHandCursor)
+        sh.addWidget(wf_send)
+
+        def _dispatch_to_chat() -> None:
+            text = wf_input.text().strip()
+            if not text:
+                return
+            cw = self.chat_widget
+            input_widget = getattr(cw, "input", None)
+            on_send = getattr(cw, "_on_send", None)
+            try:
+                if input_widget is not None and on_send is not None:
+                    # Drop the prompt into the real chat input + fire.
+                    try:
+                        input_widget.setPlainText(text)
+                    except Exception:
+                        input_widget.setText(text)
+                    on_send()
+                    wf_input.clear()
+                    # Flip to Chat page so the user sees the response.
+                    self._set_page("chat")
+                else:
+                    wf_input.setPlaceholderText(
+                        "Chat backend unavailable. Open the Chat tab."
+                    )
+            except Exception as ex:
+                wf_input.setPlaceholderText(
+                    f"Send failed: {type(ex).__name__}. Open Chat tab."
+                )
+
+        wf_send.clicked.connect(_dispatch_to_chat)
+        wf_input.returnPressed.connect(_dispatch_to_chat)
+
+        v.addWidget(strip)
+        return page
 
     def _build_settings_page(self) -> QWidget:
         """Settings — Studio-native sectioned chrome (v0.41).
@@ -961,6 +1042,14 @@ class StudioShell(QMainWindow):
                         "price":   m.get("price") or "",
                         "latency": m.get("latency") or "",
                     })
+                elif isinstance(m, (tuple, list)) and len(m) >= 2:
+                    # KNOWN_MODELS is list[tuple[(model_id, label)]] —
+                    # provider is the prefix before ':' in the id.
+                    model_id, label = m[0], m[1]
+                    provider = str(model_id).partition(":")[0]
+                    out.append({"id": model_id, "name": label,
+                                "company": provider.upper(),
+                                "price": "", "latency": ""})
                 elif isinstance(m, str):
                     out.append({"id": m, "name": m, "company": "",
                                 "price": "", "latency": ""})
@@ -1132,6 +1221,23 @@ class StudioShell(QMainWindow):
                 ver_str = vpath.read_text(encoding="utf-8").strip() or "dev"
         except Exception:
             pass
+        # v1.3.3 — Codex review: restore a muted ⌘K affordance on the
+        # right so the palette is discoverable from every page without
+        # repainting the whole shortcut trio.
+        palette_btn = QPushButton("⌘K")
+        palette_btn.setObjectName("studioStatusItem")
+        palette_btn.setFlat(True)
+        palette_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        palette_btn.setToolTip("Open command palette (Ctrl+K)")
+        palette_btn.setStyleSheet(
+            f"QPushButton#studioStatusItem {{ "
+            f"  background:transparent; border:none; padding:0 4px; "
+            f"  font-family:{TYPE['fontMono']}; font-size:10px; "
+            f"  color:{T['inkMuted']}; }}"
+            f"QPushButton#studioStatusItem:hover {{ color:{T['ink']}; }}"
+        )
+        palette_btn.clicked.connect(self._open_palette)
+        h.addWidget(palette_btn)
         right = QLabel(f"v{ver_str}")
         right.setObjectName("studioStatusItem")
         h.addWidget(right)
@@ -1197,8 +1303,10 @@ class StudioShell(QMainWindow):
         )
         act_theme.triggered.connect(self._toggle_theme)
         menu.addSeparator()
-        act_about = menu.addAction(f"About — {BRAND['name']} {BRAND['version']}")
-        act_about.setEnabled(False)
+        # About menu item used to be `setEnabled(False)` (decoration);
+        # cut in shadow audit. To revive, re-add and wire to ChatWindow's
+        # _show_about (or a Studio-native About dialog).
+        # TODO(shadow-audit): Studio-native About dialog with version + commit.
         cog.setMenu(menu)
         h.addWidget(cog)
         return card
@@ -1804,8 +1912,11 @@ class StudioShell(QMainWindow):
         lat = self._last_latency_ms() or "—"
         self._home_meta.setText(f"{model} · {lat}")
 
-        # Brand sub-caption (rail).
-        self._brand_sub.setText(f"STUDIO · {live} LIVE")
+        # Brand sub-caption (rail) — guard the write on visibility so we
+        # don't waste a setText call into a permanently-hidden QLabel
+        # (round-2 cut left it hidden but still updated every tick).
+        if self._brand_sub.isVisible():
+            self._brand_sub.setText(f"STUDIO · {live} LIVE")
 
         # Skills grid — top 3 by use (or first 3).
         self._refresh_home_skills()
@@ -1827,26 +1938,43 @@ class StudioShell(QMainWindow):
         # quietly demoted so the row always feels earned.
         sks_ranked = sorted(sks,
                              key=lambda s: -int(s.get("run_count", 0) or 0))
-        # Only feature skills with at least 1 actual run on Home; the
-        # rest live in the full Skills page.
         ranked_used = [s for s in sks_ranked
                        if int(s.get("run_count", 0) or 0) > 0]
-        showing = ranked_used[:3] if ranked_used else sks_ranked[:3]
+        has_usage = bool(ranked_used)
+        showing = ranked_used[:3] if has_usage else sks_ranked[:3]
         for s in showing:
             cat = (s.get("category") or s.get("type") or "SKILL").upper()
             name = s.get("name") or s.get("id") or "Untitled"
-            runs = f"{s.get('run_count', 0)} runs"
+            # Honest count: don't print "0 runs" on seed cards.
+            rc = int(s.get("run_count", 0) or 0)
+            runs = f"{rc} runs" if rc > 0 else "not yet run"
             hosts = s.get("hosts") or []
             layout.addWidget(_skill_card(cat, name, runs, hosts[:3]))
-        # Hide the section header + grid when no skills exist at all
-        # rather than showing an empty grey box.
         has_any = bool(showing)
         self._home_skills_grid_wrap.setVisible(has_any)
+        # v1.3.3 — Codex review: don't label 0-run seed cards as
+        # "Suggested Skills" with "from your library" copy. Swap the
+        # header to an honest "Start here" until real usage exists.
         try:
             self._home_skills_header.setVisible(has_any)
+            self._update_home_skills_header(has_usage)
         except Exception:
             pass
         layout.addStretch(1)
+
+    def _update_home_skills_header(self, has_usage: bool) -> None:
+        hdr = getattr(self, "_home_skills_header", None)
+        if hdr is None:
+            return
+        title_text = "Suggested Skills" if has_usage else "Start here"
+        sub_text = ("from your library" if has_usage
+                    else "first skills to try — none have run yet")
+        for child in hdr.findChildren(QLabel):
+            obj = child.objectName()
+            if obj == "studioH2":
+                child.setText(title_text)
+            elif obj == "studioMonoMuted":
+                child.setText(sub_text)
 
     def _refresh_home_activity(self) -> None:
         layout = self._home_activity.layout()
@@ -2322,18 +2450,21 @@ class StudioShell(QMainWindow):
         super().resizeEvent(ev)
         try:
             w = self.width()
-            self.inspector.setVisible(w >= 1100)
+            # Respect per-page hide (Workflows/Settings) — don't unhide
+            # on a wide window if the page asked for inspector=hidden.
+            if not getattr(self, "_inspector_collapsed", False):
+                self.inspector.setVisible(w >= 1100)
+            nav_lookup = {k: (l, n) for k, l, n in NAV_ITEMS + NAV_ITEMS_MORE}
             if w < 900:
                 self.rail.setFixedWidth(60)
-                # Hide labels on rail nav buttons; show only key.
                 for nid, btn in self._nav_buttons.items():
-                    btn.setText("⌘" + dict(((k, n) for k, _, n in NAV_ITEMS))[nid])
+                    _, key = nav_lookup.get(nid, ("", ""))
+                    btn.setText(f"⌘{key}" if key else "")
             else:
                 self.rail.setFixedWidth(232)
                 for nid, btn in self._nav_buttons.items():
-                    label = dict(((k, l) for k, l, _ in NAV_ITEMS))[nid]
-                    key = dict(((k, n) for k, _, n in NAV_ITEMS))[nid]
-                    btn.setText(f"{label}     ⌘{key}")
+                    label, key = nav_lookup.get(nid, ("", ""))
+                    btn.setText(f"{label}     ⌘{key}" if label else "")
         except Exception:
             pass
 
@@ -2419,17 +2550,13 @@ class StudioShell(QMainWindow):
         except Exception:
             pass
 
-        # v1.3.2 round-2: collapse inspector to an 8px strip on pages
-        # where it has nothing actionable to drive. The full 304px panel
-        # IS useful on Chat (live params), Home (router + KV), and
-        # addhost (Refresh detection). Everything else is a waste of
-        # screen real-estate — Marketplace / Skills / Settings / Telemetry
-        # / Pricing all carry their own context. The collapsed strip is
-        # click-to-expand so power users keep access.
+        # v1.3.3 — Codex review: 8px mystery strip removed. Inspector
+        # carries real context on Home/Chat/Skills/Marketplace/Telemetry
+        # so we keep the full 304px there. Workflows + Settings own
+        # their own right-side surface — inspector hides cleanly (w=0).
         try:
-            _full_pages = {"chat", "home", "addhost"}
-            should_collapse = page_id not in _full_pages
-            self._set_inspector_collapsed(should_collapse)
+            _hide_pages = {"flows", "settings"}
+            self._set_inspector_collapsed(page_id in _hide_pages)
         except Exception:
             pass
 
@@ -2443,20 +2570,23 @@ class StudioShell(QMainWindow):
         wrap.setVisible(not wrap.isVisible())
 
     def _set_inspector_collapsed(self, collapsed: bool) -> None:
-        """Toggle the right inspector between full (304px) + slim (8px)."""
+        """Show full 304px inspector, or hide it cleanly (width 0).
+
+        v1.3.3 — Codex review: the previous 8px collapsed strip was a
+        mystery hairline. Either we show the inspector or we don't.
+        """
         self._inspector_collapsed = bool(collapsed)
         if not hasattr(self, "inspector") or self.inspector is None:
             return
-        self.inspector.setFixedWidth(8 if collapsed else 304)
-        # The inspector body is the QScrollArea inserted first; the
-        # collapsed strip is the second child added in _build_inspector.
-        for child in self.inspector.findChildren(QScrollArea):
-            child.setVisible(not collapsed)
-        # Re-show the strip every time (it's hidden under the scrollarea
-        # in the full state).
+        if collapsed:
+            self.inspector.setFixedWidth(0)
+            self.inspector.setVisible(False)
+        else:
+            self.inspector.setFixedWidth(304)
+            self.inspector.setVisible(True)
         strip = getattr(self, "_inspector_strip", None)
         if strip is not None:
-            strip.setVisible(True)
+            strip.setVisible(False)
 
     def _selection_title(self) -> str:
         """Pull the most useful "what's open right now" string we can:

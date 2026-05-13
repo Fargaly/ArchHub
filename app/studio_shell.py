@@ -257,22 +257,24 @@ class StudioShell(QMainWindow):
 
         # Brand row — ArchMark (arch + node keystone) + 'Arch' + italic 'Hub'
         # + theme-toggle sun/moon button on the right (matches studio.jsx).
+        # v1.3.3 cut — Studio brand row used to render ArchMark + Wordmark
+        # + "STUDIO · BOOTING" subtitle (30+19+caption = ~70px of pure
+        # chrome). Founder feedback: invisible chat_window cuts in v1.3.2
+        # didn't land because THIS row was painting over them. Brand
+        # row is now: mark only (24px) + theme toggle. Wordmark gone.
         brand_wrap = QWidget()
         brand_row = QHBoxLayout(brand_wrap)
         brand_row.setContentsMargins(14, 14, 14, 10)
         brand_row.setSpacing(10)
-        self._brand_mark = ArchMark(size=30)
+        self._brand_mark = ArchMark(size=24)
         brand_row.addWidget(self._brand_mark)
-        brand_col_w = QWidget()
-        brand_col = QVBoxLayout(brand_col_w)
-        brand_col.setContentsMargins(0, 0, 0, 0)
-        brand_col.setSpacing(0)
+        # Keep refs alive so legacy callers don't NPE — both hidden.
         self._brand_word = Wordmark(size=19)
-        brand_col.addWidget(self._brand_word)
-        self._brand_sub = QLabel("STUDIO · BOOTING")
+        self._brand_word.setVisible(False)
+        self._brand_sub = QLabel("")
         self._brand_sub.setObjectName("studioBrandSub")
-        brand_col.addWidget(self._brand_sub)
-        brand_row.addWidget(brand_col_w, 1)
+        self._brand_sub.setVisible(False)
+        brand_row.addStretch(1)
         # Theme toggle — sun glyph in light, moon glyph in dark.
         self._theme_btn = QToolButton()
         self._theme_btn.setObjectName("studioThemeToggle")

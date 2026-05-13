@@ -501,6 +501,90 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── Graph persistence + execution ─────────────────────────
+    @pyqtSlot(str, str, result=str)
+    def save_graph(self, session_id: str, graph_json: str) -> str:
+        """Persist a graph (JSON-string) to its session's on-disk file.
+
+        Mutating the canvas (add wire, drop node, delete) fires this
+        so reload restores state. Round-trip-safe per ADR-003 Phase 2:
+        we update session.graph + session_io.save_session writes the
+        same JSON back.
+        """
+        try:
+            import json as _json
+            from pathlib import Path
+            from session_io import (
+                SESSIONS_DIR, save_session, load_session_with_messages,
+            )
+            graph = _json.loads(graph_json or "{}")
+            sid = session_id or "workspace"
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if p.exists():
+                session, name, messages = load_session_with_messages(p)
+            else:
+                # Fresh session — create one + use sid as name slug.
+                from session import Session
+                session = Session()
+                name = sid
+                messages = []
+            session.graph = graph
+            save_session(session, name=name, messages=messages or None)
+            self.sessions_changed.emit()
+            return _safe_json({"ok": True, "session_id": sid,
+                                "nodes": len(graph.get("nodes") or []),
+                                "wires": len(graph.get("wires") or [])})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, str, result=str)
+    def run_node(self, session_id: str, node_id: str,
+                  inputs_json: str = "{}") -> str:
+        """Invoke the executor for a node in the active graph.
+
+        Looks up the node by id, resolves its type from workflows
+        registry, runs `executor(config, inputs, ctx)`, returns the
+        outputs dict. The canvas can use this for per-node "run"
+        buttons + cascading re-runs.
+        """
+        try:
+            import json as _json
+            from pathlib import Path
+            from session_io import (
+                SESSIONS_DIR, load_session_with_messages,
+            )
+            from workflows.registry import get as _get_spec
+            sid = session_id or "workspace"
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if not p.exists():
+                return _safe_json({"error": "session not found"})
+            session, _name, _msgs = load_session_with_messages(p)
+            g = session.graph or {}
+            node = None
+            for n in g.get("nodes") or []:
+                if n.get("id") == node_id:
+                    node = n
+                    break
+            if not node:
+                return _safe_json({"error": f"node {node_id} not in graph"})
+            spec_tup = _get_spec(node.get("type") or "")
+            if not spec_tup:
+                return _safe_json({"error": f"unknown node type: {node.get('type')}"})
+            _spec, executor = spec_tup
+            try:
+                inputs = _json.loads(inputs_json or "{}")
+            except Exception:
+                inputs = {}
+            config = dict(node.get("config") or {})
+            result = executor(config, inputs, None)
+            return _safe_json(result if result is not None else {"status": "ok"})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
     # ─── Workflow / node library ────────────────────────────────
     @pyqtSlot(result=str)
     def get_node_library(self) -> str:

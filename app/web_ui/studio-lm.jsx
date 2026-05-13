@@ -373,8 +373,17 @@ const StudioLM = () => {
       params: tmpl.params || [],
       _user: true,
     };
+    // v1.4 — push directly into LM_GRAPH so the canvas + autosave both
+    // see the node. Keep userNodes in sync for the legacy reads.
+    LM_GRAPH.nodes.push(newNode);
     setUserNodes(ns => [...ns, newNode]);
     setFocusId(id);
+    // Autosave through the bridge so reload restores the graph.
+    if (window.archhub && window.archhub.save_graph) {
+      try {
+        window.archhub.save_graph('workspace', JSON.stringify(LM_GRAPH));
+      } catch (e) { console.warn('save_graph failed', e); }
+    }
   };
 
   return (
@@ -1147,8 +1156,22 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const [expanded, setExpanded] = React.useState({});
   const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
+  const [wireDrag, setWireDrag] = React.useState(null); // {fromNode, fromSocket, fromType, x, y}
+  const [selectedWire, setSelectedWire] = React.useState(null); // wire array index
+  const [, forceTick] = React.useReducer((n) => n + 1, 0);
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
+
+  const _autosaveGraph = React.useCallback(() => {
+    // Push the current LM_GRAPH back to the desktop. The bridge writes
+    // session.graph + the legacy _messages, so reload restores state.
+    if (window.archhub && window.archhub.save_graph) {
+      try {
+        const payload = JSON.stringify(LM_GRAPH);
+        window.archhub.save_graph('workspace', payload);
+      } catch (e) { console.warn('save_graph failed', e); }
+    }
+  }, []);
 
   // Convert client coords → canvas coords (the world space the nodes live in)
   const toCanvasCoords = (clientX, clientY) => {
@@ -1194,14 +1217,116 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         setPositions(p => ({ ...p, [d.id]: { x: d.nx + dx / zoom, y: d.ny + dy / zoom } }));
       }
     };
-    const onUp = () => { dragRef.current = null; };
+    const onUp = () => {
+      if (dragRef.current && dragRef.current.mode === 'node') {
+        // Persist position change.
+        _autosaveGraph();
+      }
+      dragRef.current = null;
+    };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [zoom]);
+  }, [zoom, _autosaveGraph]);
+
+  // ── Wire-drag: dispatched by an output Socket's mousedown.
+  //    onMouseMove tracks the rubber-band endpoint, onMouseUp checks
+  //    if the cursor is over an input socket and commits a new wire.
+  React.useEffect(() => {
+    const onWireStart = (ev) => {
+      const d = ev.detail || {};
+      setWireDrag({
+        fromNode: d.fromNode, fromSocket: d.fromSocket,
+        fromType: d.fromType,
+        x: d.clientX, y: d.clientY,
+      });
+    };
+    window.addEventListener('lm-wire-start', onWireStart);
+    return () => window.removeEventListener('lm-wire-start', onWireStart);
+  }, []);
+
+  React.useEffect(() => {
+    if (!wireDrag) return;
+    const onMove = (e) => {
+      setWireDrag((w) => w && ({ ...w, x: e.clientX, y: e.clientY }));
+    };
+    const onUp = (e) => {
+      // Look for an input socket under the cursor.
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const sock = el && el.closest && el.closest('[data-socket-side="in"]');
+      if (sock) {
+        const toNode = sock.getAttribute('data-socket-node');
+        const toSocket = sock.getAttribute('data-socket-id');
+        if (toNode && toSocket &&
+              wireDrag.fromNode && wireDrag.fromSocket &&
+              toNode !== wireDrag.fromNode) {
+          // Don't dupe.
+          const dupe = LM_GRAPH.wires.some(
+            (w) => w.from[0] === wireDrag.fromNode
+                && w.from[1] === wireDrag.fromSocket
+                && w.to[0] === toNode
+                && w.to[1] === toSocket);
+          if (!dupe) {
+            LM_GRAPH.wires.push({
+              from: [wireDrag.fromNode, wireDrag.fromSocket],
+              to:   [toNode, toSocket],
+            });
+            _autosaveGraph();
+            forceTick();
+          }
+        }
+      }
+      setWireDrag(null);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [wireDrag, _autosaveGraph]);
+
+  // Keyboard: Delete / Backspace removes the currently-selected wire,
+  //           or the focused node if no wire is selected.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      // Don't steal keys while typing in inputs/textareas.
+      const tag = (document.activeElement &&
+                    document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (selectedWire != null) {
+        LM_GRAPH.wires.splice(selectedWire, 1);
+        setSelectedWire(null);
+        _autosaveGraph();
+        forceTick();
+        e.preventDefault();
+        return;
+      }
+      if (focusId) {
+        // Remove the focused node + all incident wires.
+        const idx = LM_GRAPH.nodes.findIndex((n) => n.id === focusId);
+        if (idx >= 0) {
+          LM_GRAPH.nodes.splice(idx, 1);
+          for (let i = LM_GRAPH.wires.length - 1; i >= 0; i--) {
+            const w = LM_GRAPH.wires[i];
+            if (w.from[0] === focusId || w.to[0] === focusId) {
+              LM_GRAPH.wires.splice(i, 1);
+            }
+          }
+          setFocusId(null);
+          _autosaveGraph();
+          forceTick();
+          e.preventDefault();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selectedWire, focusId, _autosaveGraph, setFocusId]);
 
   const onWheel = (e) => {
     e.preventDefault();
@@ -1304,17 +1429,52 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
             const color = WIRE[w.t] || LM.inkSoft;
-            const strokeW = w.focused ? 2.4 : 1.4;
-            const op = w.focused ? 1 : 0.5;
+            const sel = selectedWire === w.i;
+            const strokeW = sel ? 3.4 : (w.focused ? 2.4 : 1.4);
+            const op = sel ? 1 : (w.focused ? 1 : 0.5);
             return (
               <g key={w.i}>
-                <path d={d} stroke={color} strokeWidth={strokeW} fill="none" opacity={op} filter={w.focused ? "url(#lm-wire-glow)" : undefined}/>
+                {/* Invisible wider hit-zone so the user can click thin wires. */}
+                <path d={d} stroke="transparent" strokeWidth={14} fill="none"
+                       style={{ cursor:'pointer', pointerEvents:'stroke' }}
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         setSelectedWire(sel ? null : w.i);
+                       }}/>
+                <path d={d} stroke={sel ? LM.err : color}
+                       strokeWidth={strokeW} fill="none" opacity={op}
+                       filter={(w.focused || sel) ? "url(#lm-wire-glow)" : undefined}
+                       style={{ pointerEvents:'none' }}/>
                 {w.animated && (
-                  <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10" style={{ animation:'lmDash 0.9s linear infinite' }}/>
+                  <path d={d} stroke={color} strokeWidth={strokeW} fill="none"
+                         strokeDasharray="6 10"
+                         style={{ animation:'lmDash 0.9s linear infinite',
+                                   pointerEvents:'none' }}/>
                 )}
               </g>
             );
           })}
+          {/* Rubber-band line while dragging a new wire. */}
+          {wireDrag && (() => {
+            const rect = wrapRef.current?.getBoundingClientRect();
+            if (!rect) return null;
+            const fromNode = nodeById[wireDrag.fromNode];
+            if (!fromNode) return null;
+            const fromIdx = fromNode.outs.findIndex(o => o.id === wireDrag.fromSocket);
+            if (fromIdx < 0) return null;
+            const x1 = fromNode.x + fromNode.w;
+            const y1 = fromNode.y + socketY(fromIdx);
+            const x2 = (wireDrag.x - rect.left - pan.x) / zoom;
+            const y2 = (wireDrag.y - rect.top  - pan.y) / zoom;
+            const dxr = Math.max(40, Math.abs(x2 - x1) * 0.5);
+            const dr = `M${x1},${y1} C${x1+dxr},${y1} ${x2-dxr},${y2} ${x2},${y2}`;
+            const c = WIRE[wireDrag.fromType] || LM.accent;
+            return (
+              <path d={dr} stroke={c} strokeWidth={2.4} fill="none"
+                     opacity={0.85} strokeDasharray="4 6"
+                     style={{ pointerEvents:'none' }}/>
+            );
+          })()}
         </svg>
 
         {allNodes.map(n => {
@@ -1486,9 +1646,10 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
       </div>
 
-      {/* Sockets */}
-      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label}/>)}
-      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label}/>)}
+      {/* Sockets — receive their host node id so wire-drag can attach
+          metadata to the dispatched window events. */}
+      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} nodeId={n.id} socketId={s.id}/>)}
+      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} nodeId={n.id} socketId={s.id}/>)}
     </div>
   );
 };
@@ -1507,25 +1668,47 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ side, i, t, label }) => {
+const Socket = ({ side, i, t, label, nodeId, socketId }) => {
   const col = WIRE[t] || LM.inkSoft;
+  // Output socket starts a wire-drag on mousedown; input socket
+  // identifies itself via data attrs so the canvas can detect drop
+  // targets on mouseup.
+  const onMouseDown = (e) => {
+    if (side !== 'out') return;
+    e.stopPropagation();
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent('lm-wire-start', {
+      detail: {
+        fromNode: nodeId, fromSocket: socketId, fromType: t,
+        clientX: e.clientX, clientY: e.clientY,
+      },
+    }));
+  };
   return (
-    <div style={{
-      position:'absolute', top: socketY(i) - SOCKET_R,
-      [side === 'in' ? 'left' : 'right']: -SOCKET_R,
-      display:'flex', alignItems:'center', gap:6,
-      flexDirection: side === 'in' ? 'row' : 'row-reverse',
-      pointerEvents:'none',
-    }}>
+    <div
+      data-no-pan
+      data-socket-side={side}
+      data-socket-node={nodeId}
+      data-socket-id={socketId}
+      data-socket-type={t}
+      onMouseDown={onMouseDown}
+      style={{
+        position:'absolute', top: socketY(i) - SOCKET_R,
+        [side === 'in' ? 'left' : 'right']: -SOCKET_R,
+        display:'flex', alignItems:'center', gap:6,
+        flexDirection: side === 'in' ? 'row' : 'row-reverse',
+        cursor: side === 'out' ? 'crosshair' : 'default',
+        zIndex: 5,
+      }}>
       <span style={{
-        width: SOCKET_R*2, height: SOCKET_R*2, borderRadius:'50%',
+        width: SOCKET_R*2 + 2, height: SOCKET_R*2 + 2, borderRadius:'50%',
         background: side === 'out' ? col : LM.bgPanel,
         border:`1.5px solid ${col}`, boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
       }}/>
       <span style={{
-        fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.04em',
-        whiteSpace:'nowrap', padding:'0 4px',
-        opacity: label ? 0.85 : 0,
+        fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
+        letterSpacing:'0.04em', whiteSpace:'nowrap', padding:'0 4px',
+        opacity: label ? 0.85 : 0, pointerEvents:'none',
       }}>{label}</span>
     </div>
   );

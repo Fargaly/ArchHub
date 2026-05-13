@@ -1278,7 +1278,7 @@ class ChatWindow(QMainWindow):
         )
         h.addWidget(icon)
 
-        self._update_banner_label = QLabel("Update downloaded · restart to install.")
+        self._update_banner_label = QLabel("Update installed · restart to finish.")
         self._update_banner_label.setObjectName("updateBannerLabel")
         h.addWidget(self._update_banner_label, 1)
 
@@ -1316,8 +1316,8 @@ class ChatWindow(QMainWindow):
         self._update_banner_installer = installer_path
         self._update_banner_release = release
         tag = getattr(release, "tag_name", None) or getattr(release, "tag", "")
-        msg = (f"ArchHub {tag} downloaded · restart to install."
-               if tag else "Update downloaded · restart to install.")
+        msg = (f"ArchHub {tag} installed · restart to finish."
+               if tag else "Update installed · restart to finish.")
         try:
             self._update_banner_label.setText(msg)
             self._update_banner.setVisible(True)
@@ -1340,29 +1340,21 @@ class ChatWindow(QMainWindow):
             pass
 
     def _restart_for_update(self) -> None:
-        """User clicked Restart now — fire the silent installer.
-        run_installer calls os._exit(0) after the spawn; Inno Setup's
-        /RESTARTAPPLICATIONS brings ArchHub back up automatically."""
-        if not self._update_banner_installer:
-            self._dismiss_update_banner()
-            return
+        """User clicked Restart now after the update has been staged."""
         try:
-            self._update_banner_label.setText("Installing… ArchHub will reopen shortly.")
+            self._update_banner_label.setText("Restarting... ArchHub will reopen shortly.")
             self._update_banner_restart.setEnabled(False)
             self._update_banner_later.setEnabled(False)
             QApplication.processEvents()
         except Exception:
             pass
         try:
-            import release_updater
-            release_updater.run_installer(
-                self._update_banner_installer,
-                silent=True, relaunch=True,
-            )
+            import updater
+            updater.restart()
         except Exception as ex:
             try:
                 QMessageBox.warning(
-                    self, "Update", f"Could not start installer: {ex}"
+                    self, "Update", f"Could not restart ArchHub: {ex}"
                 )
                 self._update_banner_restart.setEnabled(True)
                 self._update_banner_later.setEnabled(True)

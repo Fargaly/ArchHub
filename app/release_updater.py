@@ -48,6 +48,7 @@ REPO_SLUG = f"{REPO_OWNER}/{REPO_NAME}"
 ASSET_PATTERN = re.compile(r"^ArchHub-Setup.*\.exe$", re.IGNORECASE)
 DOWNLOAD_TIMEOUT_SECONDS = 600
 GH_TIMEOUT_SECONDS = 30
+STAGE_INSTALL_TIMEOUT_SECONDS = 900
 
 
 @dataclass
@@ -322,8 +323,7 @@ def run_installer(installer_path: Path, *, silent: bool = True,
                   relaunch: bool = True) -> None:
     """Spawn the installer and exit the current process so the installer
     can replace running files. Inno Setup's silent flags upgrade in place
-    and (because the .iss has CloseApplications=force) close any old
-    ArchHub instances itself.
+    and the installer closes any old ArchHub instances itself.
 
     Inno's `/RESTARTAPPLICATIONS` flag re-launches what it closed when the
     install finishes. We pass it when relaunch=True so the user lands back
@@ -349,6 +349,63 @@ def run_installer(installer_path: Path, *, silent: bool = True,
     import time
     time.sleep(1.0)
     os._exit(0)
+
+
+def stage_installer(installer_path: Path) -> dict:
+    """Run the release installer as a background stage, without restart.
+
+    Installers built from current `installer/setup.iss` understand
+    `/ARCHHUB_STAGE=1`: they copy files and write the version stamp without
+    closing the current ArchHub process. The already-running Python process
+    keeps using its loaded modules; the new code takes effect after the user
+    clicks Restart.
+    """
+    if not installer_path.exists():
+        return {"status": "error", "error": f"Installer not found at {installer_path}"}
+
+    args = [
+        str(installer_path),
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NOCANCEL",
+        "/NORESTART",
+        "/NOCLOSEAPPLICATIONS",
+        "/NORESTARTAPPLICATIONS",
+        "/ARCHHUB_STAGE=1",
+    ]
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=STAGE_INSTALL_TIMEOUT_SECONDS,
+            creationflags=creationflags,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "error": f"installer staging timed out after {STAGE_INSTALL_TIMEOUT_SECONDS}s",
+            "installer_path": installer_path,
+        }
+    except Exception as ex:
+        return {
+            "status": "error",
+            "error": f"installer staging failed: {type(ex).__name__}: {ex}",
+            "installer_path": installer_path,
+        }
+
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        return {
+            "status": "error",
+            "error": f"installer staging failed with exit {result.returncode}: {err[:500]}",
+            "installer_path": installer_path,
+        }
+    return {"status": "ok", "installer_path": installer_path}
 
 
 # ---------------------------------------------------------------------------
@@ -419,9 +476,9 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
 
       'off'    — never check
       'notify' — toast only; legacy behaviour. No in-app prompt.
-      'prompt' — silent download; the chat window banner asks the user
-                 to restart when ready. Claude-Desktop pattern. Default
-                 for new installs.
+      'prompt' — silent download + background staging; the chat window
+                 banner asks the user to restart into the staged build.
+                 Default for new installs.
       'silent' — old 'auto' behaviour. Silent install + force-restart
                  with no user prompt. Opt-in (sysadmin / kiosk).
 
@@ -457,6 +514,38 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
     installer = res.get("installer_path")
     current = res.get("current")
 
+    if mode == "prompt":
+        on_status(f"Installing {release.tag} in the background", 80,
+                  "Restart when ready to finish.")
+        staged = stage_installer(installer)
+        if staged.get("status") != "ok":
+            return {
+                "status": "error",
+                "error": staged.get("error", "install staging failed"),
+                "release": release,
+                "installer_path": installer,
+            }
+        on_status(f"{release.tag} installed - restart to finish", 100, "")
+        try:
+            import sys
+            from pathlib import Path as _P
+            sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "agents"))
+            from notify import notify as _toast
+            _toast(
+                f"ArchHub {release.tag} installed",
+                "Click Restart in ArchHub to finish the update.",
+                html=None, toast=True,
+            )
+        except Exception:
+            pass
+        return {"status": "ok", "up_to_date": False,
+                "current": current,
+                "release": release,
+                "installer_path": installer,
+                "latest": release.tag,
+                "staged": True,
+                "restart_required": True}
+
     # Windows toast — both notify + silent fire it.
     try:
         import sys
@@ -466,20 +555,20 @@ def auto_check_and_apply(*, on_status=None, force: bool = False) -> dict:
         _toast(
             f"ArchHub {release.tag} available",
             ("Installing silently…" if mode == "silent"
-             else "Restart ArchHub to install."),
+             else "Update downloaded. Open Updates to install."),
             html=None, toast=True,
         )
     except Exception:
         pass
 
-    if mode in ("notify", "prompt"):
-        # Caller (chat_window's update watcher) consumes the result and
-        # surfaces the in-app banner.
+    if mode == "notify":
+        # Toast-only legacy mode. No installer_path is returned, so the
+        # periodic watcher will not show the in-app restart banner.
         return {"status": "ok", "up_to_date": False,
                 "current": current,
                 "release": release,
-                "installer_path": installer,
-                "latest": release.tag}
+                "latest": release.tag,
+                "downloaded": True}
 
     # mode == 'silent' → install + restart NOW
     on_status(f"Installing {release.tag} silently", 90, "")
@@ -501,7 +590,7 @@ def schedule_auto_check(delay_seconds: float = 6.0,
     are swallowed — never blocks the UI thread.
 
     `on_ready(installer_path, release)` is called when a new version
-    has been downloaded and is waiting to install. The callback runs
+    has been downloaded and staged. The callback runs
     on the daemon thread; consumers must marshal to the Qt main thread
     themselves (e.g. via a pyqtSignal).
     """

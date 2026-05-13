@@ -9,6 +9,24 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+APP_ROOT = Path(__file__).resolve().parent
+ASSETS = APP_ROOT / "assets"
+THEME = APP_ROOT / "theme.qss"
+
+
+def _maybe_sync_dev_source_at_startup() -> None:
+    """Let an installed AppData launch refresh from a configured checkout."""
+    try:
+        from dev_source_sync import maybe_sync_and_relaunch
+        maybe_sync_and_relaunch(APP_ROOT.parent, sys.argv)
+    except Exception:
+        # Startup sync is a convenience path. If it fails, the normal launch
+        # should continue so release updates and diagnostics remain available.
+        pass
+
+
+_maybe_sync_dev_source_at_startup()
+
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -23,10 +41,6 @@ from workflows.triggers import TriggerScheduler
 from skills import ensure_starter_skills, ensure_production_skills
 import cloud_sync
 import threading
-
-APP_ROOT = Path(__file__).resolve().parent
-ASSETS = APP_ROOT / "assets"
-THEME = APP_ROOT / "theme.qss"
 
 
 def _register_aumid_icon(aumid: str, ico_path: Path, display_name: str) -> None:

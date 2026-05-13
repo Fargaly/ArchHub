@@ -82,7 +82,7 @@ T = _LivePalette()
 
 # v1.3.3 — Codex review: round-2 over-cut. Primary nav now restored to
 # the 7 destinations the cockpit was always supposed to surface. Pricing
-# stays behind the cog menu (cmd-, jumps to Settings).
+# pricing stays behind Plan and billing / cmd-, while Settings is a rail page.
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
     ("chat",      "Chat",        "2"),
@@ -818,7 +818,7 @@ class StudioShell(QMainWindow):
     def _build_inspector(self) -> QFrame:
         """Right inspector — three stacked sections matching studio.jsx:
 
-          LLM ROUTER     model rows with active dot, latency, price
+          ACTIVE MODEL   one compact model/route context row
           SELECTION      contextual entity + property rows
           QUICK ACTIONS  chevron-prefix command list
 
@@ -828,7 +828,7 @@ class StudioShell(QMainWindow):
         strip on pages where it has nothing to drive (Marketplace,
         Pricing, Settings, Skills, Telemetry — they all carry their
         own context). It still auto-expands on Chat (live PARAMETERS)
-        and Home (LLM Router + KV at-a-glance). Click the collapsed
+        and Home (project pulse + AEC actions). Click the collapsed
         strip to expand. Track state in `_inspector_collapsed`.
         """
         self._inspector_collapsed = False
@@ -850,10 +850,10 @@ class StudioShell(QMainWindow):
         v.setContentsMargins(18, 18, 18, 18)
         v.setSpacing(SPACE["lg"])
 
-        # ── LLM ROUTER ────────────────────────────────────────────
-        cap1 = QLabel("LLM ROUTER")
-        cap1.setObjectName("studioMonoCap")
-        v.addWidget(cap1)
+        # ── ACTIVE MODEL ──────────────────────────────────────────
+        self._ins_model_cap = QLabel("ACTIVE MODEL")
+        self._ins_model_cap.setObjectName("studioMonoCap")
+        v.addWidget(self._ins_model_cap)
         self._ins_router_wrap = QWidget()
         rwl = QVBoxLayout(self._ins_router_wrap)
         rwl.setContentsMargins(0, 0, 0, 0)
@@ -861,7 +861,7 @@ class StudioShell(QMainWindow):
         v.addWidget(self._ins_router_wrap)
 
         # ── SELECTION (or PARAMETERS on Chat) ─────────────────────
-        self._ins_cap = QLabel("SELECTION")
+        self._ins_cap = QLabel("PROJECT PULSE")
         self._ins_cap.setObjectName("studioMonoCap")
         v.addWidget(self._ins_cap)
         self._ins_title = QLabel("Nothing selected")
@@ -874,7 +874,7 @@ class StudioShell(QMainWindow):
         kv_l.setContentsMargins(0, 0, 0, 0)
         kv_l.setSpacing(SPACE["xs"])
         self._ins_rows: dict[str, QLabel] = {}
-        for key in ("Active host", "Connectors", "Skills", "Model", "Latency"):
+        for key in ("Document", "Selection", "Warnings", "Memory", "Bridge"):
             row, value_lbl = _inspector_kv(key, "…")
             kv_l.addWidget(row)
             self._ins_rows[key] = value_lbl
@@ -932,14 +932,40 @@ class StudioShell(QMainWindow):
                 w.deleteLater()
         models = self._known_models()
         active = (self._current_model() or "").strip()
+        chosen = None
         for m in models:
-            row = self._make_router_row(
-                name=m["name"], company=m["company"],
-                price=m.get("price", ""), latency=m.get("latency", ""),
-                active=(m["id"] == active or m["name"] == active),
-                model_id=m["id"],
-            )
-            layout.addWidget(row)
+            if m["id"] == active or m["name"] == active:
+                chosen = m
+                break
+        if chosen is None and active:
+            chosen = {
+                "id": active,
+                "name": active,
+                "company": "router",
+                "price": "active",
+                "latency": self._last_latency_ms() or "",
+            }
+        if chosen is None:
+            chosen = {
+                "id": "auto",
+                "name": "Auto - best model per task",
+                "company": "router",
+                "price": "BYO/local",
+                "latency": self._last_latency_ms() or "",
+            }
+
+        row = self._make_router_row(
+            name=chosen["name"], company=chosen["company"],
+            price=chosen.get("price", ""), latency=chosen.get("latency", ""),
+            active=True,
+            model_id=chosen["id"],
+        )
+        layout.addWidget(row)
+
+        note = QLabel("Instructor/route shown only as task context.")
+        note.setObjectName("studioMonoMuted")
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
     def _make_router_row(self, *, name: str, company: str, price: str,
                          latency: str, active: bool, model_id: str) -> QFrame:
@@ -1108,6 +1134,8 @@ class StudioShell(QMainWindow):
             return [
                 ("Save session", lambda: getattr(self.chat_widget,
                     "_save_session", lambda: None)()),
+                ("Save chat as Skill", lambda: getattr(self.chat_widget,
+                    "_save_chat_as_skill", lambda: None)()),
                 ("Open session…", lambda: getattr(self.chat_widget,
                     "_open_sessions", lambda: None)()),
             ]
@@ -1115,13 +1143,34 @@ class StudioShell(QMainWindow):
             return [
                 ("Refresh detection", lambda: (self.manager.refresh()
                     if self.manager is not None else None)),
+                ("Open connector settings", lambda: self._set_page("settings")),
             ]
-        # Default: shell-wide actions.
+        if page == "home":
+            return [
+                ("Dimension active selection",
+                 lambda: self._send_prompt_to_chat(
+                     "Dimension the active Revit selection or active view. "
+                     "Use the current document context and summarize what changed."
+                 )),
+                ("List selected types",
+                 lambda: self._send_prompt_to_chat(
+                     "List the selected Revit elements by category, family, "
+                     "type, level, and count. If nothing is selected, inspect "
+                     "the active view context first."
+                 )),
+                ("Open model warnings",
+                 lambda: self._send_prompt_to_chat(
+                     "Inspect the active Revit document warnings and group "
+                     "them by severity, owner, and recommended fix."
+                 )),
+                ("Restart bridge", lambda: (self.manager.refresh()
+                    if self.manager is not None else self._toast(
+                        "No connector manager is available.", kind="warn"))),
+            ]
+        # Default: a page without selected context should not show
+        # navigation filler in the inspector.
         return [
-            ("Open ⌘K palette",     self._open_palette),
-            ("Add host…",           lambda: self._set_page("addhost")),
-            ("Browse Marketplace",  lambda: self._set_page("market")),
-            ("Switch theme",        self._toggle_theme),
+            ("Open command palette", self._open_palette),
         ]
 
     def _ensure_params_panel(self):
@@ -1292,10 +1341,15 @@ class StudioShell(QMainWindow):
         cog.setObjectName("studioCog")
         cog.setCursor(Qt.CursorShape.PointingHandCursor)
         cog.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        # Cog menu: Settings · Theme toggle · Sign out.
+        # Cog menu: account actions only. Settings stays in the rail.
         menu = QMenu(cog)
-        act_settings = menu.addAction("Settings")
-        act_settings.triggered.connect(lambda: self._set_page("settings"))
+        menu.setObjectName("studioAccountMenu")
+        act_profile = menu.addAction("Profile")
+        act_profile.triggered.connect(self._open_account_profile)
+        act_cloud = menu.addAction("Cloud sync")
+        act_cloud.triggered.connect(self._open_cloud_sync)
+        act_billing = menu.addAction("Plan and billing")
+        act_billing.triggered.connect(self._open_account_billing)
         menu.addSeparator()
         act_theme = menu.addAction(
             "Switch to dark theme" if active_theme() == "light"
@@ -1303,13 +1357,33 @@ class StudioShell(QMainWindow):
         )
         act_theme.triggered.connect(self._toggle_theme)
         menu.addSeparator()
-        # About menu item used to be `setEnabled(False)` (decoration);
-        # cut in shadow audit. To revive, re-add and wire to ChatWindow's
-        # _show_about (or a Studio-native About dialog).
-        # TODO(shadow-audit): Studio-native About dialog with version + commit.
+        act_about = menu.addAction("About ArchHub")
+        act_about.triggered.connect(self._open_about)
         cog.setMenu(menu)
         h.addWidget(cog)
         return card
+
+    def _open_account_profile(self) -> None:
+        self._set_page("settings")
+        self._toast("Profile lives in the workspace settings surface.")
+
+    def _open_cloud_sync(self) -> None:
+        self._set_page("settings")
+        self._toast("Cloud sync settings opened.")
+
+    def _open_account_billing(self) -> None:
+        if not self._open_cloud_portal():
+            self._set_page("pricing")
+
+    def _open_about(self) -> None:
+        about = getattr(self.chat_widget, "_show_about", None)
+        if callable(about):
+            try:
+                about()
+                return
+            except Exception:
+                pass
+        self._set_page("settings")
 
     # ──────────────────────────────────────────────────────────────────
     # Live refresh
@@ -1819,7 +1893,7 @@ class StudioShell(QMainWindow):
         except Exception:
             self._sr_cloud.setVisible(False)
 
-    def _open_cloud_portal(self) -> None:
+    def _open_cloud_portal(self) -> bool:
         """Click on the cloud meter → open Stripe Customer Portal in
         the user's default browser so they can change plan / cancel /
         update card without leaving the app."""
@@ -1829,8 +1903,9 @@ class StudioShell(QMainWindow):
             from PyQt6.QtCore import QUrl
             url = portal_url() or "https://archhub.app/billing"
             QDesktopServices.openUrl(QUrl(url))
+            return True
         except Exception:
-            pass
+            return False
 
     def _tokens_label(self) -> str:
         # Best-effort: read telemetry total tokens; fall back to dash.
@@ -1849,25 +1924,40 @@ class StudioShell(QMainWindow):
 
     def _refresh_inspector(self) -> None:
         active_count = 0
-        active_name = "—"
+        total_count = 0
         if self.manager is not None:
             try:
                 from manager import ConnectorState
-                actives = [e for e in self.manager.entries if e.state == ConnectorState.ACTIVE]
+                entries = getattr(self.manager, "entries", []) or []
+                total_count = len(entries)
+                actives = [e for e in entries if e.state == ConnectorState.ACTIVE]
                 active_count = len(actives)
-                if actives:
-                    active_name = actives[0].display_name
             except Exception:
                 pass
         skills_count = self._skills_count()
-        model = self._current_model() or "—"
-        lat = self._last_latency_ms() or "—"
+        if total_count <= 0:
+            total_count = active_count
 
-        self._ins_rows["Active host"].setText(active_name)
-        self._ins_rows["Connectors"].setText(f"{active_count} active")
-        self._ins_rows["Skills"].setText(f"{skills_count} synced")
-        self._ins_rows["Model"].setText(model)
-        self._ins_rows["Latency"].setText(lat)
+        doc = self._selection_title()
+        selection = (
+            "Ask Revit for active selection" if active_count > 0
+            else "No active host"
+        )
+        warnings = (
+            "Use Open warnings action" if active_count > 0
+            else "No bridge context"
+        )
+        memory = f"{skills_count} skills synced"
+        bridge = (
+            f"{active_count}/{total_count} hosts live" if total_count
+            else "No hosts live"
+        )
+
+        self._ins_rows["Document"].setText(doc)
+        self._ins_rows["Selection"].setText(selection)
+        self._ins_rows["Warnings"].setText(warnings)
+        self._ins_rows["Memory"].setText(memory)
+        self._ins_rows["Bridge"].setText(bridge)
 
     def _refresh_home(self) -> None:
         # Date caption.
@@ -2260,6 +2350,34 @@ class StudioShell(QMainWindow):
         except Exception:
             pass
 
+    def _send_prompt_to_chat(self, text: str) -> None:
+        """Push a concrete inspector action into the real chat input."""
+        text = (text or "").strip()
+        if not text:
+            self._set_page("chat")
+            return
+        cw = self.chat_widget
+        inp = getattr(cw, "input", None)
+        try:
+            if inp is not None and hasattr(inp, "setText"):
+                inp.setText(text)
+        except Exception:
+            pass
+        self._set_page("chat")
+        try:
+            send_slot = getattr(cw, "_on_send", None)
+            if callable(send_slot):
+                QTimer.singleShot(50, send_slot)
+        except Exception:
+            pass
+
+    def _toast(self, message: str, *, kind: str = "ok") -> None:
+        try:
+            from toast import show_toast
+            show_toast(self, message, kind=kind)
+        except Exception:
+            pass
+
     def _home_attach_sketch(self) -> None:
         """Open a file picker for an image and route it to the chat
         widget's image-pasted handler. Switches to Chat after."""
@@ -2533,12 +2651,17 @@ class StudioShell(QMainWindow):
             if on_chat and self._ensure_params_panel():
                 self._ins_kv_wrap.setVisible(False)
                 self._ins_params_wrap.setVisible(True)
-                self._ins_cap.setText("PARAMETERS · LIVE")
+                self._ins_model_cap.setText("INSTRUCTOR MODEL")
+                self._ins_cap.setText("PARAMETERS - LIVE")
                 self._ins_title.setText("Session parameters")
             else:
                 self._ins_kv_wrap.setVisible(True)
                 self._ins_params_wrap.setVisible(False)
-                self._ins_cap.setText("SELECTION")
+                self._ins_model_cap.setText("ACTIVE MODEL")
+                if page_id == "addhost":
+                    self._ins_cap.setText("CONNECTOR CONTEXT")
+                else:
+                    self._ins_cap.setText("PROJECT PULSE")
                 # Title surfaces the active host when one's connected.
                 self._ins_title.setText(self._selection_title())
         except Exception:
@@ -2555,7 +2678,8 @@ class StudioShell(QMainWindow):
         # so we keep the full 304px there. Workflows + Settings own
         # their own right-side surface — inspector hides cleanly (w=0).
         try:
-            _hide_pages = {"flows", "settings"}
+            _hide_pages = {"flows", "settings", "market", "pricing",
+                           "skills", "telemetry"}
             self._set_inspector_collapsed(page_id in _hide_pages)
         except Exception:
             pass
@@ -3348,6 +3472,16 @@ def _inline_qss() -> str:
         f"  font-size:{TYPE['body']['size']}px; "
         f"  padding:0 {s['xs']}px; }}"
         f"QToolButton#studioCog:hover {{ color:{T['accent']}; }}"
+        f"QMenu#studioAccountMenu {{ background:{T['bgPanel']}; "
+        f"  color:{T['ink']}; border:1px solid {T['line']}; "
+        f"  border-radius:{r['md']}px; padding:5px; }}"
+        f"QMenu#studioAccountMenu::item {{ "
+        f"  padding:7px 18px 7px 12px; min-width:190px; "
+        f"  border-radius:{r['sm']}px; color:{T['inkSoft']}; }}"
+        f"QMenu#studioAccountMenu::item:selected {{ "
+        f"  background:{T['bgHover']}; color:{T['accent']}; }}"
+        f"QMenu#studioAccountMenu::separator {{ height:1px; "
+        f"  background:{T['lineSoft']}; margin:4px 8px; }}"
 
         # ── Page typography ─────────────────────────────────────────
         f"QWidget#studioPage, QWidget#studioHomeBody {{ "

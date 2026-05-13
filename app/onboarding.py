@@ -126,7 +126,7 @@ class OnboardingWizard(QDialog):
 
         button_row = QHBoxLayout(); button_row.setSpacing(10)
 
-        self._or_btn = QPushButton("🔐  Sign in with OpenRouter")
+        self._or_btn = QPushButton("Sign in with OpenRouter")
         self._or_btn.setObjectName("primaryButton")
         self._or_btn.clicked.connect(lambda: self._open_signin("openrouter"))
         button_row.addWidget(self._or_btn)
@@ -169,7 +169,7 @@ class OnboardingWizard(QDialog):
         cloud = [p for p in configured if p in ("anthropic", "openai", "google", "openrouter")]
         if cloud:
             self._signin_status.setText(
-                f"✓ Signed in to: <b>{', '.join(cloud)}</b>"
+                f"Signed in: <b>{', '.join(cloud)}</b>"
             )
         else:
             self._signin_status.setText(
@@ -268,7 +268,7 @@ class OnboardingWizard(QDialog):
         try:
             import skills as _skills
             for s in _skills.list_skills()[:4]:
-                chip = QPushButton(f"  ✦  {s['name']}  —  {s['intent'][:60]}")
+                chip = QPushButton(f"  ·  {s['name']}  —  {s['intent'][:60]}")
                 chip.setObjectName("welcomeChip")
                 chip.clicked.connect(
                     lambda _checked=False, sid=s["id"]: self._launch_skill(sid)
@@ -294,11 +294,24 @@ class OnboardingWizard(QDialog):
         # if the skill run fails.
         mark_completed()
         self.finished_onboarding.emit()
-        # Forward the run request to the parent chat window.
+        # Forward the run request to the chat backend. Parent may be
+        # the StudioShell (which holds the chat backend as `chat_widget`)
+        # or the bare ChatWindow itself in the fallback path.
         parent = self.parent()
-        if parent is not None and hasattr(parent, "_run_skill_by_id"):
+        target = parent
+        if parent is not None and hasattr(parent, "chat_widget"):
+            target = parent.chat_widget
+        if target is not None and hasattr(target, "_run_skill_by_id"):
             try:
-                parent._run_skill_by_id(skill_id, {"prompt": ""})
+                # Switch to the Chat page first if we're inside the Studio
+                # shell so the user sees the run unfold instead of landing
+                # on Home with no visible response.
+                if parent is not None and hasattr(parent, "_set_page"):
+                    try:
+                        parent._set_page("chat")
+                    except Exception:
+                        pass
+                target._run_skill_by_id(skill_id, {"prompt": ""})
             except Exception:
                 pass
         self.accept()

@@ -291,11 +291,28 @@ class CommandPalette(QDialog):
                     if not name:
                         continue
                     runs = s.get("run_count", 0)
+                    sid = s.get("id") or ""
+
+                    def _run(skill_id=sid):
+                        # Switch to chat first so the user sees the run.
+                        try:
+                            shell._set_page("chat")
+                        except Exception:
+                            pass
+                        # Best-effort dispatch through the chat backend
+                        # so the palette behaves like the welcome chip.
+                        cw = getattr(shell, "chat_widget", None)
+                        if cw is not None and hasattr(cw, "_run_skill_by_id"):
+                            try:
+                                cw._run_skill_by_id(skill_id, {"prompt": ""})
+                            except Exception:
+                                pass
+
                     out.append(PaletteResult(
                         category="Skill",
                         title=name,
                         detail=f"{runs} runs",
-                        on_invoke=lambda: shell._set_page("skills"),
+                        on_invoke=_run,
                     ))
             except Exception:
                 pass
@@ -344,11 +361,22 @@ class CommandPalette(QDialog):
             try:
                 from marketplace_panel import _ensure_catalog
                 for item in _ensure_catalog()[:25]:
+                    iid = item.get("id") or ""
+
+                    def _open(item_id=iid):
+                        # Switch to the Marketplace page so the user can
+                        # see the item. A future revision can deep-link
+                        # the panel to scroll/highlight the chosen card.
+                        try:
+                            shell._set_page("market")
+                        except Exception:
+                            pass
+
                     out.append(PaletteResult(
                         category="Market",
                         title=item.get("name", ""),
                         detail=f"{item.get('kind','')} · {item.get('author','')}",
-                        on_invoke=lambda: shell._set_page("market"),
+                        on_invoke=_open,
                     ))
             except Exception:
                 pass

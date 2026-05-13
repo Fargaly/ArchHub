@@ -43,7 +43,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 UninstallDisplayName={#MyAppName}
 UninstallFilesDir={app}\uninstall
-CloseApplications=force
+; ArchHub handles closing itself in [Code] for normal installs. Staged
+; background updates pass /NOCLOSEAPPLICATIONS and /ARCHHUB_STAGE=1 so the
+; running app can keep working until the user clicks Restart.
+CloseApplications=no
 RestartApplications=no
 
 SetupIconFile=..\app\assets\archhub.ico
@@ -124,6 +127,11 @@ begin
   if not Result then
     Result := Exec('cmd.exe', '/c py --version >nul 2>&1', '',
                    SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+function IsStageInstall: Boolean;
+begin
+  Result := ExpandConstant('{param:ARCHHUB_STAGE|0}') = '1';
 end;
 
 procedure VerifyPythonExists;
@@ -243,7 +251,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then
+  if (CurStep = ssInstall) and (not IsStageInstall) then
     StopRunningArchHub
   else if CurStep = ssPostInstall then
   begin

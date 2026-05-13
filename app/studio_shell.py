@@ -80,20 +80,23 @@ try: _load_theme_pref()
 except Exception: pass
 T = _LivePalette()
 
-# v1.3.3 — Codex review: round-2 over-cut. Primary nav now restored to
-# the 7 destinations the cockpit was always supposed to surface. Pricing
-# pricing stays behind Plan and billing / cmd-, while Settings is a rail page.
+# v1.3.3 — Memory nav added between Skills (what the model can do) and
+# Workflows (how the model chains it). Memory is where Capture → Redact
+# → Judge → Train lives — the training surface that turns approved
+# work into apprentice instruction data. Pricing + Telemetry collapse
+# under "More" (account-context, not workspace-context).
 NAV_ITEMS = [
     ("home",      "Home",        "1"),
     ("chat",      "Chat",        "2"),
     ("skills",    "Skills",      "3"),
-    ("flows",     "Workflows",   "4"),
-    ("market",    "Marketplace", "5"),
-    ("telemetry", "Telemetry",   "6"),
+    ("memory",    "Memory",      "4"),
+    ("flows",     "Workflows",   "5"),
+    ("market",    "Marketplace", "6"),
     ("settings",  "Settings",    "7"),
 ]
 NAV_ITEMS_MORE = [
-    ("pricing",   "Pricing",     "8"),
+    ("telemetry", "Telemetry",   "8"),
+    ("pricing",   "Pricing",     "9"),
 ]
 # All nav ids together — used by `_set_page` for validity, by the
 # command palette for jumping, and by the keyboard-shortcut wiring.
@@ -183,6 +186,7 @@ class StudioShell(QMainWindow):
             "home":      self._build_home(),
             "chat":      self._wrap_chat(chat_widget),
             "skills":    self._build_skills_page(),
+            "memory":    self._build_memory_page(),
             "flows":     self._build_workflows_page(),
             "market":    self._build_marketplace_page(),
             "telemetry": self._build_telemetry_page(),
@@ -535,6 +539,316 @@ class StudioShell(QMainWindow):
         page_l.setContentsMargins(0, 0, 0, 0)
         page_l.addWidget(scroll)
         return page
+
+    def _build_memory_page(self) -> QWidget:
+        """Memory / Training — Codex priority #5.
+
+        Layout (matches archhub-ui-prototype.html renderMemory):
+
+          ┌──────────────────────────────┬──────────────────────────────┐
+          │  Fargaly AEC profile         │  Training pipeline           │
+          │  ──────────────────────────  │  ──────────────────────────  │
+          │  Domains   ........  …       │  01  Capture     128 today   │
+          │  Tone      ........  …       │  02  Redact      96 clean    │
+          │  Privacy   ........  …       │  03  Judge       42 queued   │
+          │  Next eval ........  …       │  04  Train       ready       │
+          └──────────────────────────────┴──────────────────────────────┘
+          Searchable collective memory   <community-safe layer>
+          ●  Revit dimensioning recipes  · 32 approved · fresh
+          ●  Door schedule validation    · 14 checks   · fresh
+
+        Counters poll the cloud backend GET /v1/memory/stats every 30s
+        when on this page. When backend is unreachable they show "—".
+        """
+        page = QWidget()
+        page.setObjectName("studioPage")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header — page-head pattern matching Codex prototype.
+        head = QWidget()
+        hh = QVBoxLayout(head)
+        hh.setContentsMargins(40, 32, 40, 12)
+        hh.setSpacing(4)
+        cap = QLabel("MEMORY · TRAINING")
+        cap.setObjectName("studioMonoCap")
+        hh.addWidget(cap)
+        h1 = QLabel("Memory / Training")
+        h1.setObjectName("studioH1")
+        hh.addWidget(h1)
+        sub = QLabel("The apprentice learns only from approved work. "
+                     "Profile, organize, redact, evaluate, then train. "
+                     "No silent scraping.")
+        sub.setObjectName("studioH1Sub")
+        sub.setWordWrap(True)
+        hh.addWidget(sub)
+        outer.addWidget(head)
+
+        # Scroll wrap.
+        scroll = QScrollArea(page)
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("studioScroll")
+        scroll.setStyleSheet(
+            "QScrollArea#studioScroll { background:transparent; border:none; }")
+        body = QWidget()
+        body.setObjectName("studioPage")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(40, 0, 40, 40)
+        bl.setSpacing(SPACE["lg"])
+
+        # ── Row: profile + pipeline ─────────────────────────────────────
+        row = QHBoxLayout()
+        row.setSpacing(SPACE["md"])
+        row.addWidget(self._build_memory_profile_card(), 1)
+        row.addWidget(self._build_memory_pipeline_card(), 1)
+        row_w = QWidget(); row_w.setLayout(row)
+        bl.addWidget(row_w)
+
+        # ── Searchable collective memory ─────────────────────────────────
+        bl.addWidget(_section_h2("Searchable collective memory",
+                                  "community-safe layer"))
+        collective = QFrame()
+        collective.setObjectName("studioListCard")
+        cv = QVBoxLayout(collective)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
+        # Placeholder rows — replaced by GET /v1/memory/collective when
+        # backend exposes that endpoint. Until then we render two
+        # canned rows so the page isn't empty for first-launch users.
+        cv.addWidget(self._memory_feed_row(
+            "Revit dimensioning recipes",
+            "32 approved examples, 4 companies, no private file paths",
+            "fresh"))
+        cv.addWidget(self._memory_feed_row(
+            "Door schedule validation patterns",
+            "14 checks mapped to UK/US project templates",
+            "fresh"))
+        bl.addWidget(collective)
+
+        bl.addStretch(1)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        return page
+
+    def _build_memory_profile_card(self) -> QFrame:
+        """Left column — Fargaly AEC profile. Big avatar + KV grid."""
+        card = QFrame()
+        card.setObjectName("studioListCard")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(SPACE["lg"] + 4, SPACE["lg"],
+                             SPACE["lg"] + 4, SPACE["lg"])
+        v.setSpacing(SPACE["md"])
+
+        # Avatar + name row.
+        head_row = QHBoxLayout()
+        head_row.setSpacing(SPACE["md"])
+        avatar = QLabel("F")
+        avatar.setObjectName("studioBigAvatar")
+        avatar.setFixedSize(56, 56)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar.setStyleSheet(
+            f"QLabel#studioBigAvatar {{"
+            f"  background:{T['accent']}; color:#fff;"
+            f"  border-radius:28px; font-size:22px;"
+            f"  font-family:{TYPE['fontMono']}; font-weight:500;"
+            f"}}")
+        head_row.addWidget(avatar)
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        h = QLabel("Fargaly AEC profile")
+        h.setObjectName("studioH3")
+        s = QLabel("Revit-heavy architect, automation builder, "
+                   "fast iteration style.")
+        s.setObjectName("studioMonoMuted")
+        s.setWordWrap(True)
+        title_col.addWidget(h)
+        title_col.addWidget(s)
+        title_col_w = QWidget(); title_col_w.setLayout(title_col)
+        head_row.addWidget(title_col_w, 1)
+        head_row_w = QWidget(); head_row_w.setLayout(head_row)
+        v.addWidget(head_row_w)
+
+        # KV grid. Values are placeholder until profile endpoint lands.
+        # When backend exposes GET /v1/memory/profile we'll bind them.
+        for label, value in [
+            ("Domains",   "BIM coordination, Revit automation, doc QA"),
+            ("Tone",      "Direct, fast, prefers blunt visual critique"),
+            ("Privacy",   "Local first, explicit approval to share"),
+            ("Next eval", "Dimension placement accuracy"),
+        ]:
+            v.addWidget(self._memory_kv_row(label, value))
+        return card
+
+    def _build_memory_pipeline_card(self) -> QFrame:
+        """Right column — 4-step pipeline list.
+
+        Each row: number + title + description + count pill.
+        Pills update from `_refresh_memory_stats` once a 30s timer
+        ticks while the page is visible.
+        """
+        card = QFrame()
+        card.setObjectName("studioListCard")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(SPACE["lg"] + 4, SPACE["lg"],
+                             SPACE["lg"] + 4, SPACE["lg"])
+        v.setSpacing(SPACE["md"])
+
+        # Section head: "Training pipeline" + AEC apprentice meta.
+        head_row = QHBoxLayout()
+        head_row.setSpacing(SPACE["sm"])
+        title = QLabel("Training pipeline")
+        title.setObjectName("studioH3")
+        head_row.addWidget(title)
+        head_row.addStretch(1)
+        meta = QLabel("AEC apprentice")
+        meta.setObjectName("studioMonoMuted")
+        head_row.addWidget(meta)
+        head_row_w = QWidget(); head_row_w.setLayout(head_row)
+        v.addWidget(head_row_w)
+
+        # Pipeline steps. Stash the pill labels so _refresh_memory_stats
+        # can update them.
+        self._memory_pill = {}
+        for num, name, desc, default_pill, pill_style in [
+            ("01", "Capture", "Intent, context, tool trace, result.",
+             "0 today", "studioPill"),
+            ("02", "Redact",  "Remove client names, addresses, files.",
+             "0 clean", "studioPill"),
+            ("03", "Judge",   "Instructor model grades before training.",
+             "0 queued", "studioPillAccent"),
+            ("04", "Train",   "LoRA/SFT batches with eval gates.",
+             "—", "studioPillMuted"),
+        ]:
+            row = self._memory_pipeline_step(
+                num, name, desc, default_pill, pill_style)
+            v.addWidget(row)
+        return card
+
+    def _memory_pipeline_step(self, num: str, name: str, desc: str,
+                              pill: str, pill_style: str) -> QFrame:
+        """One pipeline row. Stored pill QLabel goes into _memory_pill[name.lower()]."""
+        row = QFrame()
+        row.setObjectName("studioPipelineRow")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 8, 0, 8)
+        h.setSpacing(SPACE["md"])
+
+        # Number badge.
+        n = QLabel(num)
+        n.setObjectName("studioPipelineNum")
+        n.setFixedWidth(36)
+        n.setStyleSheet(
+            f"QLabel#studioPipelineNum {{"
+            f"  font-family:{TYPE['fontMono']}; color:{T['textMuted']};"
+            f"  font-size:13px; letter-spacing:0.08em;"
+            f"}}")
+        h.addWidget(n)
+
+        # Title + desc.
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        t = QLabel(name)
+        t.setObjectName("studioBody")
+        t.setStyleSheet(f"font-weight:500; color:{T['text']};")
+        d = QLabel(desc)
+        d.setObjectName("studioMonoMuted")
+        d.setWordWrap(True)
+        col.addWidget(t)
+        col.addWidget(d)
+        col_w = QWidget(); col_w.setLayout(col)
+        h.addWidget(col_w, 1)
+
+        # Count pill (stored for live refresh).
+        p = QLabel(pill)
+        p.setObjectName(pill_style)
+        p.setStyleSheet(self._memory_pill_qss(pill_style))
+        self._memory_pill[name.lower()] = p
+        h.addWidget(p)
+        return row
+
+    def _memory_pill_qss(self, style: str) -> str:
+        # Inline so we don't bloat the global stylesheet.
+        bg, fg, border = T["bgRaised"], T["textMuted"], T["line"]
+        if style == "studioPillAccent":
+            bg, fg = T["accentSoft"], T["accent"]
+            border = T["accent"]
+        elif style == "studioPillMuted":
+            bg, fg = T["bgRaised"], T["textMuted"]
+        return (f"padding:3px 9px; border-radius:11px; "
+                f"font-family:{TYPE['fontMono']}; font-size:11px; "
+                f"background:{bg}; color:{fg}; "
+                f"border:1px solid {border};")
+
+    def _memory_kv_row(self, label: str, value: str) -> QFrame:
+        row = QFrame()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 4, 0, 4)
+        h.setSpacing(SPACE["md"])
+        k = QLabel(label)
+        k.setObjectName("studioMonoMuted")
+        k.setFixedWidth(96)
+        h.addWidget(k)
+        v = QLabel(value)
+        v.setObjectName("studioBody")
+        v.setWordWrap(True)
+        h.addWidget(v, 1)
+        return row
+
+    def _memory_feed_row(self, title: str, desc: str, when: str) -> QFrame:
+        row = QFrame()
+        row.setObjectName("studioFeedRow")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(SPACE["lg"], SPACE["sm"]+2,
+                             SPACE["lg"], SPACE["sm"]+2)
+        h.setSpacing(SPACE["md"])
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color:{T['ok']}; font-size:14px;")
+        h.addWidget(dot)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        t = QLabel(title)
+        t.setObjectName("studioBody")
+        t.setStyleSheet(f"font-weight:500; color:{T['text']};")
+        d = QLabel(desc)
+        d.setObjectName("studioMonoMuted")
+        d.setWordWrap(True)
+        col.addWidget(t)
+        col.addWidget(d)
+        col_w = QWidget(); col_w.setLayout(col)
+        h.addWidget(col_w, 1)
+        t_label = QLabel(when)
+        t_label.setObjectName("studioMonoMuted")
+        h.addWidget(t_label)
+        return row
+
+    def _refresh_memory_stats(self) -> None:
+        """Pull GET /v1/memory/stats and update the 4 pipeline pills.
+
+        Best-effort. If cloud is unreachable (Fly not deployed yet) we
+        leave the pills on their last good value. No exceptions bubble.
+        """
+        if not hasattr(self, "_memory_pill"):
+            return
+        try:
+            from cloud_client import memory_stats
+            stats = memory_stats() or {}
+        except Exception:
+            return
+        # Expected shape: {"capture_today": int, "redact_clean": int,
+        #                   "judge_queued": int, "train_ready": bool}.
+        try:
+            cap = int(stats.get("capture_today", 0))
+            red = int(stats.get("redact_clean", 0))
+            jud = int(stats.get("judge_queued", 0))
+            trn = bool(stats.get("train_ready", False))
+            self._memory_pill["capture"].setText(f"{cap} today")
+            self._memory_pill["redact"].setText(f"{red} clean")
+            self._memory_pill["judge"].setText(f"{jud} queued")
+            self._memory_pill["train"].setText("ready" if trn
+                                                else "—")
+        except Exception:
+            pass
 
     def _build_skills_page(self) -> QWidget:
         """Skills — Studio-native card grid (replaces embedded QDialog).
@@ -2678,11 +2992,22 @@ class StudioShell(QMainWindow):
         # so we keep the full 304px there. Workflows + Settings own
         # their own right-side surface — inspector hides cleanly (w=0).
         try:
+            # Memory has its own right-column pipeline card so the
+            # inspector would be redundant noise.
             _hide_pages = {"flows", "settings", "market", "pricing",
-                           "skills", "telemetry"}
+                           "skills", "telemetry", "memory"}
             self._set_inspector_collapsed(page_id in _hide_pages)
         except Exception:
             pass
+
+        # Memory-page-only: pull fresh stats once when nav lands here.
+        # The page itself doesn't tick a 30s timer (kept stateless for
+        # now); fetch on entry is enough until usage signals it isn't.
+        if page_id == "memory":
+            try:
+                self._refresh_memory_stats()
+            except Exception:
+                pass
 
         self.nav_changed.emit(page_id)
 

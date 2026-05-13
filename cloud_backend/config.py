@@ -89,6 +89,11 @@ DATABASE_URL      = _req("DATABASE_URL", "./archhub_cloud.db")
 TRIAL_MESSAGES    = int(_req("TRIAL_MESSAGES", "30"))
 RATE_LIMIT_PER_MIN = int(_req("RATE_LIMIT_PER_MIN", "30"))
 
+# Memory/training: number of approved samples before the Train stage
+# unlocks. Default 100 — below that we don't waste GPU minutes training
+# on too-small a dataset. Override per-deploy with TRAIN_READY_THRESHOLD.
+TRAIN_READY_THRESHOLD = int(_req("TRAIN_READY_THRESHOLD", "100"))
+
 # Quotas per plan. Keys match Stripe tier ids in /v1/billing/checkout.
 PLAN_QUOTAS: dict[str, int] = {
     "trial":  TRIAL_MESSAGES,

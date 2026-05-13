@@ -163,9 +163,29 @@ CREATE TABLE IF NOT EXISTS marketplace_reports (
     FOREIGN KEY (reporter_user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS training_samples (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    company_id      TEXT,                  -- NULL for solo / pre-team capture
+    role            TEXT NOT NULL,         -- 'user' | 'assistant' | 'tool'
+    content         TEXT NOT NULL,
+    tool_trace      TEXT NOT NULL DEFAULT '[]',
+                                            -- JSON array of {name, args, result}
+    intent          TEXT NOT NULL DEFAULT '',
+    stage           TEXT NOT NULL DEFAULT 'captured',
+                                            -- captured | redacted | judged | rejected | approved
+    judge_score     REAL,                  -- 0..1 from instructor model
+    redacted_at     INTEGER,
+    judged_at       INTEGER,
+    created_at      INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
 CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
+CREATE INDEX IF NOT EXISTS idx_training_user_stage ON training_samples(user_id, stage);
+CREATE INDEX IF NOT EXISTS idx_training_created ON training_samples(created_at);
 """
 
 
@@ -500,6 +520,124 @@ def log_usage(user_id: str, *, model: str, input_toks: int,
             " output_toks, cost_micros) VALUES (?, ?, ?, ?, ?, ?)",
             (user_id, int(time.time()), model,
              int(input_toks), int(output_toks), int(cost_micros)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Memory / training samples (v1.3.3)
+# ---------------------------------------------------------------------------
+#
+# Stages a sample moves through:
+#   captured  → just inserted from desktop client (raw approved turn)
+#   redacted  → PII scrubbed (client names, file paths, addresses)
+#   judged    → instructor model scored quality + alignment
+#   rejected  → judge flagged hallucination / off-domain — never trained
+#   approved  → ready for the next training batch
+#
+# train_ready threshold lives in cloud_backend/config (default 100).
+import json as _json
+
+
+def insert_training_sample(*, user_id: str, role: str, content: str,
+                            tool_trace: list | None = None,
+                            intent: str = "",
+                            company_id: Optional[str] = None) -> int:
+    """Persist one approved turn. Returns the new row id.
+
+    `tool_trace` is JSON-serialised before storage so the SQLite column
+    stays TEXT. Loose typing on the way in (list[dict] expected) lets
+    the desktop forward whatever the tool engine produced without
+    re-shaping it.
+    """
+    payload = _json.dumps(tool_trace or [], separators=(",", ":"))
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO training_samples ("
+            " user_id, company_id, role, content, tool_trace, intent,"
+            " stage, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'captured', ?)",
+            (user_id, company_id, role, content, payload, intent,
+             int(time.time())),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def get_training_sample(sample_id: int) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM training_samples WHERE id = ?",
+            (sample_id,),
+        ).fetchone()
+    return dict(r) if r else None
+
+
+def memory_stats(user_id: str) -> dict:
+    """Counters for the 4 pipeline stages, scoped to one user.
+
+    `capture_today` = rows captured in the trailing 24h.
+    `redact_clean` = lifetime rows that have been redacted but not yet judged.
+    `judge_queued` = rows waiting on the instructor model.
+    `train_ready` = True once approved samples >= TRAIN_THRESHOLD.
+    """
+    threshold = getattr(config, "TRAIN_READY_THRESHOLD", 100)
+    day_ago = int(time.time()) - 86400
+    with connect() as con:
+        cap = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples "
+            "WHERE user_id = ? AND created_at >= ?",
+            (user_id, day_ago),
+        ).fetchone()
+        red = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples "
+            "WHERE user_id = ? AND stage = 'redacted'",
+            (user_id,),
+        ).fetchone()
+        jud = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples "
+            "WHERE user_id = ? AND stage = 'judged'",
+            (user_id,),
+        ).fetchone()
+        app = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples "
+            "WHERE user_id = ? AND stage = 'approved'",
+            (user_id,),
+        ).fetchone()
+    approved_count = int(app["n"]) if app else 0
+    return {
+        "capture_today": int(cap["n"]) if cap else 0,
+        "redact_clean":  int(red["n"]) if red else 0,
+        "judge_queued":  int(jud["n"]) if jud else 0,
+        "approved":      approved_count,
+        "train_ready":   approved_count >= int(threshold),
+        "threshold":     int(threshold),
+    }
+
+
+def advance_training_sample(sample_id: int, *, stage: str,
+                             judge_score: Optional[float] = None) -> None:
+    """Move a sample to the next pipeline stage.
+
+    Valid stages: 'redacted' / 'judged' / 'rejected' / 'approved'.
+    The redact + judge worker jobs call this once each phase completes.
+    """
+    now = int(time.time())
+    field_updates = ["stage = ?"]
+    params: list = [stage]
+    if stage == "redacted":
+        field_updates.append("redacted_at = ?")
+        params.append(now)
+    elif stage in ("judged", "approved", "rejected"):
+        field_updates.append("judged_at = ?")
+        params.append(now)
+        if judge_score is not None:
+            field_updates.append("judge_score = ?")
+            params.append(float(judge_score))
+    params.append(sample_id)
+    with connect() as con:
+        con.execute(
+            f"UPDATE training_samples SET {', '.join(field_updates)} "
+            f"WHERE id = ?",
+            tuple(params),
         )
 
 

@@ -217,3 +217,37 @@ def portal_url() -> Optional[str]:
         return None
     j = r.get("json") or {}
     return j.get("url")
+
+
+# ---------------------------------------------------------------------------
+# Memory / training pipeline (v1.3.3+)
+# ---------------------------------------------------------------------------
+def memory_capture(*, role: str, content: str, tool_trace: list,
+                    intent: Optional[str] = None) -> Optional[dict]:
+    """Send one approved chat turn to the training data store.
+
+    The desktop calls this when the user clicks 'Approve for training'
+    on an assistant message. The backend stamps it pending-redact and
+    queues it for the Judge stage. Returns the persisted row or None
+    on auth/network failure (caller can retry from local queue).
+    """
+    body = {"role": role, "content": content,
+            "tool_trace": tool_trace,
+            "intent": intent or ""}
+    r = _request("POST", "/v1/memory/capture", body=body)
+    if r["status"] != "ok":
+        return None
+    return r.get("json") or None
+
+
+def memory_stats() -> Optional[dict]:
+    """Pull counters for the 4 pipeline stages.
+
+    Shape: {capture_today, redact_clean, judge_queued, train_ready}.
+    Returns None when not signed in OR cloud unreachable so the UI
+    can render '—' without crashing.
+    """
+    r = _request("GET", "/v1/memory/stats")
+    if r["status"] != "ok":
+        return None
+    return r.get("json") or None

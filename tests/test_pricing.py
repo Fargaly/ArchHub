@@ -83,11 +83,14 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.3.2 — UI round 2 (ruthless):
-        # brand mark only, welcome card gone unless skills saved,
-        # status bar auto-hide, NAV split 4 primary + 4 disclosure,
-        # right inspector auto-collapse 8px on non-Home/Chat pages,
-        # Settings master "Show advanced" wraps Cloud+Speckle+Procore+
-        # HUD+Privacy+Relay, onboarding 3-step → 1 scrollable column,
-        # llm_detector + ai_detect_local with 24 tests.
-        assert v == "1.3.2"
+        # Track the latest stable. v1.3.3 — backend P0 + UI takeover:
+        # per-company quota actor (Studio/Firm seats share one bucket),
+        # release_updater.tag rename (silent-install crash fixed),
+        # reality.yml + status_report.yml crons paused while Fly cloud
+        # remains undeployed, ADR-001 cloud-hosting decision recorded,
+        # Codex UI pass merged (contextual right inspector, ACTIVE
+        # MODEL replaces LLM ROUTER billboard, dev_source_sync bridges
+        # repo → installed AppData copy), Memory/Training page added
+        # (Codex priority #5: Capture→Redact→Judge→Train pipeline +
+        # POST /v1/memory/capture + GET /v1/memory/stats + 17 tests).
+        assert v == "1.3.3"

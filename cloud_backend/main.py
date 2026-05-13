@@ -194,6 +194,47 @@ async def chat(req: Request,
     return await proxy.chat_completions(user=user, body=body)
 
 
+@app.post("/v1/memory/capture")
+async def memory_capture(req: Request,
+                         authorization: str | None = Header(None)) -> dict:
+    """Desktop client posts one user-approved chat turn for training.
+
+    Body: {role, content, tool_trace?, intent?}. The server stamps it
+    `captured` and queues it for the redact/judge workers (worker
+    daemon in agents/ does the actual stage advance).
+    """
+    user = _require_user(authorization)
+    body = await req.json()
+    role = (body.get("role") or "").strip().lower()
+    if role not in ("user", "assistant", "tool"):
+        raise HTTPException(status_code=400,
+                             detail={"error": "role must be user|assistant|tool"})
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400,
+                             detail={"error": "content required"})
+    tool_trace = body.get("tool_trace") or []
+    if not isinstance(tool_trace, list):
+        raise HTTPException(status_code=400,
+                             detail={"error": "tool_trace must be a list"})
+    sid = db.insert_training_sample(
+        user_id=user["id"],
+        role=role,
+        content=content,
+        tool_trace=tool_trace,
+        intent=(body.get("intent") or "").strip(),
+        company_id=user.get("current_company_id") or None,
+    )
+    return {"id": sid, "stage": "captured"}
+
+
+@app.get("/v1/memory/stats")
+def memory_stats(authorization: str | None = Header(None)) -> dict:
+    """Counters for the 4-stage pipeline. Scoped to the caller."""
+    user = _require_user(authorization)
+    return db.memory_stats(user_id=user["id"])
+
+
 @app.get("/v1/billing/plans")
 def billing_plans() -> dict:
     """Public plan catalog — used by the desktop app to render the

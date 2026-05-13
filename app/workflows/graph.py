@@ -24,16 +24,55 @@ SCHEMA_VERSION = "1.0"
 
 # ---------------------------------------------------------------------------
 class PortType(str, Enum):
-    """Type tags for ports. Used for compatibility checking when wiring."""
-    ANY      = "any"           # accepts anything; escape hatch
-    STRING   = "string"
-    NUMBER   = "number"
-    BOOLEAN  = "boolean"
-    OBJECT   = "object"        # arbitrary JSON object
-    LIST     = "list"          # array of any element
-    IMAGE    = "image"         # binary image (base64 or url)
-    GEOMETRY = "geometry"      # Speckle object graph or similar
-    TOOL_RESULT = "tool_result"   # the dict returned by ToolEngine
+    """Type tags for ports. Used for compatibility checking when wiring.
+
+    Type families per ADR-003:
+      Primitives   — ANY, STRING, NUMBER, BOOLEAN, OBJECT, LIST
+      Bridge       — HOST, DOCUMENT, MODEL, PROJECT
+      AI           — PROMPT, MESSAGE, CONVERSATION, TOOL_RESULT, INTENT,
+                     COMPLETION
+      AEC          — ELEMENT, SELECTION (subsumes WALL/DOOR/etc when LOD
+                     differentiation isn't required)
+      Files / IO   — FILE, PATH, IMAGE, IFC, CSV
+      Geometry     — GEOMETRY (Speckle / Rhino object graph)
+      Control      — EXEC (Unreal-style execution pin, white-arrow wire)
+                     CRON, TRIGGER, EVENT
+    """
+    # Primitives
+    ANY        = "any"
+    STRING     = "string"
+    NUMBER     = "number"
+    BOOLEAN    = "boolean"
+    OBJECT     = "object"
+    LIST       = "list"
+    # Bridge (ADR-003)
+    HOST       = "host"        # one of the AEC host adapters
+    DOCUMENT   = "document"    # an opened document inside a host
+    MODEL      = "model"       # alias for DOCUMENT in 3D contexts
+    PROJECT    = "project"     # a project / firm scope grouping
+    # AI
+    PROMPT       = "prompt"
+    MESSAGE      = "message"
+    CONVERSATION = "conversation"
+    INTENT       = "intent"
+    COMPLETION   = "completion"
+    TOOL_RESULT  = "tool_result"
+    # AEC entity references
+    ELEMENT    = "element"
+    SELECTION  = "selection"
+    # Files / IO
+    FILE       = "file"
+    PATH       = "path"
+    IMAGE      = "image"
+    IFC        = "ifc"
+    CSV        = "csv"
+    # Geometry
+    GEOMETRY   = "geometry"
+    # Control flow
+    EXEC       = "exec"        # white-arrow execution wire (Unreal pattern)
+    CRON       = "cron"
+    TRIGGER    = "trigger"
+    EVENT      = "event"
 
 
 @dataclass
@@ -43,11 +82,15 @@ class Port:
     description: str = ""
     required: bool = False
     default: Any = None
+    # ADR-003 additions:
+    exec: bool = False         # True = execution pin (draws white arrow)
+    multiple: bool = False     # True = input accepts multiple wires
 
     def to_dict(self) -> dict:
         return {"name": self.name, "type": self.type.value,
                 "description": self.description, "required": self.required,
-                "default": self.default}
+                "default": self.default,
+                "exec": self.exec, "multiple": self.multiple}
 
     @staticmethod
     def from_dict(d: dict) -> "Port":
@@ -55,7 +98,9 @@ class Port:
                     type=PortType(d.get("type", "any")),
                     description=d.get("description", ""),
                     required=d.get("required", False),
-                    default=d.get("default"))
+                    default=d.get("default"),
+                    exec=bool(d.get("exec", False)),
+                    multiple=bool(d.get("multiple", False)))
 
 
 # ---------------------------------------------------------------------------

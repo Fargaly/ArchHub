@@ -158,6 +158,11 @@ class SettingsDialog(QDialog):
         outer.addWidget(self._show_local)
 
         # ── Firm relay (path B — OpenAI-compatible self-hosted endpoint) ───
+        # Hidden behind "Show advanced" toggle in v1.3.1 — most users
+        # never run their own OpenAI-compatible gateway. The fields stay
+        # populated from disk so values persist across the collapse. To
+        # revive default visibility: drop the `relay_box.setVisible(False)`
+        # line below and remove the advanced toggle wrapper.
         relay_box = QFrame()
         relay_box.setObjectName("providerRow")
         rb = QVBoxLayout(relay_box)
@@ -195,6 +200,16 @@ class SettingsDialog(QDialog):
         relay_form.addWidget(self._relay_token, 1)
 
         rb.addLayout(relay_form)
+        # Show advanced disclosure — collapsed by default unless the user
+        # already has a relay URL saved (in which case keeping it hidden
+        # would be confusing).
+        has_relay = bool((load_setting("relay_base_url") or "").strip())
+        self._show_relay = QCheckBox("Show advanced — firm relay")
+        self._show_relay.setObjectName("settingsSubtitle")
+        self._show_relay.setChecked(has_relay)
+        relay_box.setVisible(has_relay)
+        self._show_relay.toggled.connect(relay_box.setVisible)
+        outer.addWidget(self._show_relay)
         outer.addWidget(relay_box)
 
         # ── Speckle (optional, collapsed by default) ───────────────────────
@@ -333,7 +348,15 @@ class SettingsDialog(QDialog):
         self._hud_overlay.setChecked(bool(load_setting("hud_overlay_mode")))
         ab.addWidget(self._hud_overlay)
 
-        # HUD toggle hotkey — global, registered against Win32 RegisterHotKey.
+        # HUD toggle hotkey — collapsed inside an "advanced" disclosure
+        # in v1.3.1. The default `ctrl+space` works for the overwhelming
+        # majority of users; the rebind field is power-user kit. To
+        # revive default visibility: drop the `hk_wrap.setVisible(...)`
+        # gating below.
+        hk_wrap = QWidget()
+        hk_v = QVBoxLayout(hk_wrap)
+        hk_v.setContentsMargins(0, 0, 0, 0)
+        hk_v.setSpacing(6)
         hk_form = QFormLayout(); hk_form.setSpacing(6)
         self._hud_hotkey = QLineEdit()
         self._hud_hotkey.setPlaceholderText("ctrl+space")
@@ -342,12 +365,24 @@ class SettingsDialog(QDialog):
         hk_help = QLabel(
             "Examples: <code>ctrl+space</code>, <code>ctrl+shift+a</code>, "
             "<code>f8</code>, <code>alt+f9</code>. Restart ArchHub after "
-            "changing. Press once → HUD appears; press again or "
-            "<kbd>Esc</kbd> → collapses to pet strip."
+            "changing. Press once and HUD appears; press again or "
+            "<kbd>Esc</kbd> to collapse to pet strip."
         )
         hk_help.setObjectName("settingsSubtitle"); hk_help.setWordWrap(True)
-        ab.addLayout(hk_form)
-        ab.addWidget(hk_help)
+        hk_v.addLayout(hk_form)
+        hk_v.addWidget(hk_help)
+
+        # Show advanced disclosure — collapsed unless a non-default hotkey
+        # has already been saved (so users who set one don't lose access).
+        saved_hk = (load_setting("hud_hotkey") or "ctrl+space").lower().strip()
+        self._show_hud_hotkey = QCheckBox("Show advanced — rebind hotkey")
+        self._show_hud_hotkey.setObjectName("settingsSubtitle")
+        non_default = saved_hk and saved_hk != "ctrl+space"
+        self._show_hud_hotkey.setChecked(bool(non_default))
+        hk_wrap.setVisible(bool(non_default))
+        self._show_hud_hotkey.toggled.connect(hk_wrap.setVisible)
+        ab.addWidget(self._show_hud_hotkey)
+        ab.addWidget(hk_wrap)
 
         outer.addWidget(appearance_box)
 

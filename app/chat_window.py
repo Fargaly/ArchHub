@@ -29,7 +29,10 @@ import session_runner
 from settings_dialog import SettingsDialog
 from tool_engine import ToolEngine, ToolInvocation
 from workflows import chat_to_workflow, save_workflow, load_workflow, get_workflow, WorkflowExecutor
-from workflows_panel import WorkflowsPanel
+# Note: workflows_panel.WorkflowsPanel was imported here historically but is
+# no longer instantiated anywhere — the Skills panel hosts workflow editing
+# and the Studio shell embeds workflow_canvas.WorkflowCanvas for the
+# blueprint view. The module file stays on disk for the JSON-contract docs.
 from skills_panel import SkillsPanel
 from update_dialog import UpdateDialog
 import skills
@@ -1674,9 +1677,13 @@ class ChatWindow(QMainWindow):
         pricing_action = menu.addAction("Plans & pricing…")
         pricing_action.triggered.connect(self._open_pricing_dialog)
 
-        reality_action = menu.addAction("Reality Check")
-        reality_action.setToolTip("Smoke-test every connector + LLM end-to-end.")
-        reality_action.triggered.connect(self._open_reality_check)
+        # Reality Check used to live here as a modal smoke-test entry.
+        # Removed in the v1.3.1 dead-surface pass — the Studio shell's
+        # Telemetry page now embeds RealityCheckPanel with live 24h
+        # sparklines, which is the supported surface. `_open_reality_check`
+        # is retained below so command-palette / programmatic callers
+        # keep working. To revive the menu line, re-add an action that
+        # wires to self._open_reality_check.
 
         about_action = menu.addAction("About ArchHub")
         about_action.triggered.connect(self._show_about)
@@ -1776,7 +1783,10 @@ class ChatWindow(QMainWindow):
             chip_row.setSpacing(8)
             chip_row.setContentsMargins(0, 0, 0, 0)
             for s in top_skills:
-                chip = QPushButton(f"  ✦  {s['name']}")
+                # Typographic bullet — BRAND.voice rule 2 forbids emoji.
+                # The ✦ four-point-star here used to render as an emoji on
+                # some Windows builds (Segoe UI Emoji vs Segoe UI Symbol).
+                chip = QPushButton(f"  ·  {s['name']}")
                 chip.setObjectName("welcomeChip")
                 chip.setToolTip(s.get("intent", ""))
                 chip.clicked.connect(
@@ -2626,18 +2636,29 @@ class ChatWindow(QMainWindow):
     # ---- Misc --------------------------------------------------------------
 
     def _refresh_status(self) -> None:
+        """Slim the status bar to actionable signals only (v1.3.1 cut).
+
+        The header host pills already paint live host state with a dot;
+        repeating "Live: Revit, AutoCAD" in the status bar was a
+        REDUNDANT echo. The model picker dropdown already shows which
+        providers are configured (greyed rows for unconfigured); the
+        "LLM: openai, anthropic" right label was the same data twice.
+
+        We keep the bar present (other call sites write transient
+        status into it — e.g. routing notes, send-warnings) but clear
+        the default echo. The empty-state nudge ("Add API keys…") stays
+        because it's actionable: the user needs to know to open
+        Settings before the chat will work."""
         self.manager.refresh()
-        active = [e for e in self.manager.entries if e.state.name == "ACTIVE"]
-        ready  = [e for e in self.manager.entries if e.state.name == "READY"]
-        if active:
-            names = ", ".join(e.display_name for e in active)
-            self.status_left.setText(f"Live: {names}")
-        else:
-            self.status_left.setText(f"{len(ready)} tools detected · open Connectors to enable")
+        # Clear by default. The bar fills with transient status
+        # messages from `_on_finished`, `_block_if_required_connector_inactive`,
+        # `_propose_skill_match` etc. — those calls overwrite this line
+        # when they have something to say.
+        self.status_left.setText("")
 
         if self.router.has_credentials():
-            providers = ", ".join(self.router.configured_providers())
-            self.status_right.setText(f"LLM: {providers}")
+            # Picker already shows configured providers. Don't repeat.
+            self.status_right.setText("")
         else:
             self.status_right.setText("Add API keys in Settings to start chatting")
 
@@ -2651,30 +2672,11 @@ class ChatWindow(QMainWindow):
         dlg.exec()
         self._refresh_status()
 
-    def _open_workflows(self) -> None:
-        # Legacy entry point — Skills panel hosts the workflow editor now.
-        self._open_skills_panel()
-
-    def _save_chat_as_workflow(self) -> None:
-        if not self.history:
-            QMessageBox.information(self, "Nothing to save",
-                                    "Have a conversation first, then save it as a workflow.")
-            return
-        # Use the first user message as the default name
-        first_user = next((m.content for m in self.history if m.role == "user"), "")
-        default_name = (first_user[:60] or f"Workflow {len(self.history)} turns").strip()
-        name, ok = QInputDialog.getText(self, "Save as workflow",
-                                        "Workflow name:", text=default_name)
-        if not ok or not name.strip():
-            return
-        wf = chat_to_workflow(self.history, name=name.strip(),
-                              model=self.model_picker.currentData())
-        path = save_workflow(wf)
-        QMessageBox.information(
-            self, "Workflow saved",
-            f"Saved as '{wf.name}'.\n\nLocation:\n{path}\n\n"
-            f"Open Workflows to run it again or set a trigger.",
-        )
+    # Legacy `_open_workflows` and `_save_chat_as_workflow` methods were
+    # removed in the v1.3.1 dead-surface pass. The Skills panel is the
+    # single library editor (`_open_skills_panel`) and capture verb
+    # (`_save_chat_as_skill`). To revive workflow-only capture, restore
+    # `_save_chat_as_workflow` from git history and re-add a menu line.
 
     # ---- Skills: slash commands, matcher, capture -------------------------
 

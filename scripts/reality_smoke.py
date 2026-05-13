@@ -439,19 +439,56 @@ def _gh_json(*args: str) -> Optional[list | dict]:
         return None
 
 
+def _github_repo() -> str:
+    return os.environ.get("ARCHHUB_GH_REPO", "Fargaly/ArchHub")
+
+
+def _github_api_json(path: str) -> Optional[list | dict]:
+    """Fetch public GitHub API JSON.
+
+    Used as a fallback when the GitHub CLI is missing or unauthenticated.
+    Public repositories should not require local `gh auth login` just to
+    answer release/CI smoke checks.
+    """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    url = f"https://api.github.com/repos/{_github_repo()}/{path.lstrip('/')}"
+    try:
+        resp = http_request(url, headers=headers, timeout=15)
+    except Exception:
+        return None
+    if resp.status != 200:
+        return None
+    return resp.json()
+
+
 @check("github.ci_latest", "GitHub")
 def check_github_ci(args: argparse.Namespace) -> CheckResult:
     """Latest CI run on main: green? Falls back gracefully if gh is missing."""
-    if not _gh_available():
-        return CheckResult("github.ci_latest", "GitHub", STATUS_SKIP,
-                           "gh CLI not installed")
-    data = _gh_json(
-        "run", "list", "--workflow=test.yml", "--branch=main",
-        "--limit=1", "--json", "conclusion,status,headSha,createdAt",
-    )
+    data = None
+    if _gh_available():
+        data = _gh_json(
+            "run", "list", "--workflow=test.yml", "--branch=main",
+            "--limit=1", "--json", "conclusion,status,headSha,createdAt",
+        )
+    if not data:
+        api = _github_api_json("actions/runs?per_page=1")
+        runs = api.get("workflow_runs") if isinstance(api, dict) else None
+        if isinstance(runs, list):
+            data = [{
+                "conclusion": r.get("conclusion"),
+                "status": r.get("status"),
+                "headSha": r.get("head_sha"),
+                "createdAt": r.get("created_at"),
+            } for r in runs]
     if not data:
         return CheckResult("github.ci_latest", "GitHub", STATUS_SKIP,
-                           "gh returned no data (auth / no runs?)")
+                           "GitHub returned no data (auth / no runs?)")
     if not isinstance(data, list) or not data:
         return CheckResult("github.ci_latest", "GitHub", STATUS_FAIL,
                            "no CI runs found")
@@ -476,15 +513,13 @@ def check_github_release(args: argparse.Namespace) -> CheckResult:
         return CheckResult("github.release_matches_version", "GitHub",
                            STATUS_FAIL, "VERSION file missing")
     local_v = version_file.read_text(encoding="utf-8").strip().lstrip("vV")
-    if not _gh_available():
-        return CheckResult("github.release_matches_version", "GitHub",
-                           STATUS_SKIP,
-                           f"gh CLI not installed; local VERSION={local_v}")
     data = _gh_json("release", "view", "--json", "tagName")
+    if not data:
+        data = _github_api_json("releases/latest")
     if not data or not isinstance(data, dict):
         return CheckResult("github.release_matches_version", "GitHub",
                            STATUS_FAIL, "no published release found")
-    tag = (data.get("tagName") or "").lstrip("vV")
+    tag = (data.get("tagName") or data.get("tag_name") or "").lstrip("vV")
     if tag == local_v:
         return CheckResult("github.release_matches_version", "GitHub",
                            STATUS_OK,

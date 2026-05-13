@@ -943,11 +943,15 @@ class StudioShell(QMainWindow):
             layout.addWidget(row)
 
     def _quick_actions_for_page(self) -> list[tuple[str, callable]]:
+        # v1.3.1 dead-surface pass: dropped "New session" (chat) and
+        # "Spawn pet strip" (default). The former wired to a method
+        # that doesn't exist on ChatWindow (`_new_session`), so the row
+        # silently no-op'd. The latter was a deprecation toast left over
+        # from the v1.0.2 pet-strip removal. To revive: re-add the
+        # tuple in the matching branch.
         page = self._active_page
         if page == "chat":
             return [
-                ("New session", lambda: getattr(self.chat_widget,
-                    "_new_session", lambda: None)()),
                 ("Save session", lambda: getattr(self.chat_widget,
                     "_save_session", lambda: None)()),
                 ("Open session…", lambda: getattr(self.chat_widget,
@@ -963,23 +967,8 @@ class StudioShell(QMainWindow):
             ("Open ⌘K palette",     self._open_palette),
             ("Add host…",           lambda: self._set_page("addhost")),
             ("Browse Marketplace",  lambda: self._set_page("market")),
-            ("Spawn pet strip",     self._spawn_pet_strip),
             ("Switch theme",        self._toggle_theme),
         ]
-
-    def _spawn_pet_strip(self) -> None:
-        """Deprecated since v1.0.2 — the pet strip widget was removed
-        in this release (decoration without value, source of UI
-        flakiness). Kept as a no-op so legacy menu actions don't crash
-        if they're still wired up somewhere; toast tells the user the
-        feature is gone."""
-        try:
-            from toast import show_toast
-            show_toast(self,
-                       "Pet strip was removed in v1.0.2 — no action.",
-                       kind="warn")
-        except Exception:
-            pass
 
     def _ensure_params_panel(self):
         """Instantiate (once) the live ParametersPanel bound to the
@@ -1027,8 +1016,13 @@ class StudioShell(QMainWindow):
         self._sr_hosts = QLabel("● 0/0 hosts")
         self._sr_hosts.setObjectName("studioStatusItem")
         h.addWidget(self._sr_hosts)
+        # `tokens —` placeholder was always "—" — no live data was ever
+        # wired in. v1.3.1 hides it. To revive: setVisible(True) here
+        # and write `self._sr_tokens.setText(...)` from a token-count
+        # source (router last-response usage, or a rolling tally).
         self._sr_tokens = QLabel("tokens —")
         self._sr_tokens.setObjectName("studioStatusItem")
+        self._sr_tokens.setVisible(False)
         h.addWidget(self._sr_tokens)
         self._sr_spend = QLabel("spend $0.00")
         self._sr_spend.setObjectName("studioStatusItem")

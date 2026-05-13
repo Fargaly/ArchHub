@@ -3,6 +3,72 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] — 2026-05-13
+
+UI dead-surface patch + zero-setup status reports.
+
+### Cuts (surgical, all reversible — see `docs/UI_DEAD_SURFACE_AUDIT.md`)
+
+Founder feedback: "a lot of shit is visible with no actual use." Audit
+of 56 surfaces across 13 groups. Distribution: USED 39 · REDUNDANT 3 ·
+DECORATION 4 · DEAD 5 · PHASE-2 5.
+
+- Removed legacy `from workflows_panel import WorkflowsPanel` import
+  (`app/chat_window.py:32`) — Skills panel hosts the workflow editor.
+- Removed "Reality Check" cog-menu item — Telemetry page already
+  embeds `RealityCheckPanel`.
+- Removed dead methods `_open_workflows` + `_save_chat_as_workflow`
+  (no callers anywhere in repo).
+- Slimmed `_refresh_status` — dropped duplicate "Live: …" + "LLM: …"
+  echoes (the host pills + model picker already show this).
+- Removed "New session" + "Spawn pet strip" Studio quick actions
+  (both no-op since v1.0.2).
+- Removed orphan `_spawn_pet_strip` method.
+- Hid placeholder `tokens —` status-rule item (never wired to live data).
+- Collapsed Firm-relay row behind "Show advanced" disclosure in
+  Settings (auto-shown if a relay URL is already saved).
+- Collapsed HUD hotkey rebind behind "Show advanced" disclosure
+  (auto-shown if non-default hotkey set).
+- Welcome chip glyph `✦` → typographic `·` (BRAND.voice rule).
+
+### Status reports — GitHub Actions cron
+
+Founder wanted "every 10 minutes" reports. v1.3.0 shipped the code +
+default 60-min cadence + Resend-only delivery. Reality: no Resend key
+was ever set + the daemon was never deployed = zero emails ever sent.
+
+v1.3.1 fixes both:
+
+- **`.github/workflows/status_report.yml`** — cron `*/10 * * * *`.
+  Runs in GitHub's runners (no local machine dependency, no admin).
+  Uses `GITHUB_TOKEN` automatically — zero setup. Posts a status
+  comment to issue #20 every cycle. GitHub's notification system
+  auto-emails issue subscribers (founder is the issue author = auto-
+  subscribed = email lands at his GitHub-account-configured address).
+- **`agents/post_report_to_github.py`** — one-shot CLI: generates a
+  report, formats as markdown, posts via `gh issue comment`.
+- **`agents/github_report_loop.py`** — long-running daemon variant
+  (used briefly on the founder's machine as a redundancy layer; now
+  superseded by the cron, kept in repo for offline scenarios).
+- **SMTP fallback in `agents/report_sender.py`** — when
+  `ARCHHUB_REPORT_SMTP_HOST/PORT/USER/PASSWORD` are set, the report
+  sender uses stdlib `smtplib` + STARTTLS instead of Resend. Lets a
+  founder with Gmail app password get reports without a Resend
+  signup. Test in `tests/test_status_report.py` updated.
+
+### Tests
+
+- `tests/` — 545 passing (was 543; +2 from earlier agents)
+- `cloud_backend/tests/` — 97 passing (unchanged)
+- Total: **642 passing.** Zero regressions.
+
+### Verified live
+
+- Issue #20 has received 3+ comments since cutover.
+- GH Actions workflow "Status report" is enabled + first scheduled
+  run completed successfully:
+  https://github.com/Fargaly/ArchHub/issues/20#issuecomment-4438885191
+
 ## [1.3.0] — 2026-05-13
 
 The "operations + verification" release. Earlier today's v1.2.0 added

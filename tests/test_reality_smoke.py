@@ -324,10 +324,22 @@ class TestStripeProducts:
 # ---------------------------------------------------------------------------
 class TestGithubCI:
     def test_skip_when_gh_missing(self):
-        with mock.patch.object(smoke, "_gh_available", return_value=False):
+        with mock.patch.object(smoke, "_gh_available", return_value=False), \
+             mock.patch.object(smoke, "_github_api_json", return_value=None):
             r = smoke.check_github_ci(make_args())
         assert r.status == "skip"
-        assert "gh" in r.detail.lower()
+        assert "github" in r.detail.lower()
+
+    def test_ok_when_public_api_latest_run_green(self):
+        with mock.patch.object(smoke, "_gh_available", return_value=False), \
+             mock.patch.object(smoke, "_github_api_json", return_value={
+                 "workflow_runs": [{
+                     "conclusion": "success", "status": "completed",
+                     "head_sha": "abc1234567", "created_at": "now",
+                 }]
+             }):
+            r = smoke.check_github_ci(make_args())
+        assert r.status == "ok"
 
     def test_ok_when_latest_run_green(self):
         with mock.patch.object(smoke, "_gh_available", return_value=True), \
@@ -350,9 +362,18 @@ class TestGithubCI:
 
 class TestGithubRelease:
     def test_skip_when_gh_missing(self):
-        with mock.patch.object(smoke, "_gh_available", return_value=False):
+        with mock.patch.object(smoke, "_gh_available", return_value=False), \
+             mock.patch.object(smoke, "_github_api_json", return_value=None):
             r = smoke.check_github_release(make_args())
-        assert r.status == "skip"
+        assert r.status == "fail"
+
+    def test_ok_when_public_api_tag_matches_version(self):
+        local_v = (REPO_ROOT / "VERSION").read_text().strip()
+        with mock.patch.object(smoke, "_gh_available", return_value=False), \
+             mock.patch.object(smoke, "_github_api_json",
+                               return_value={"tag_name": f"v{local_v}"}):
+            r = smoke.check_github_release(make_args())
+        assert r.status == "ok"
 
     def test_ok_when_tag_matches_version(self):
         # The repo ships a VERSION file containing the current version;
@@ -621,13 +642,25 @@ class TestAllGreenPath:
                 make_resp(200, {"departments": ["a", "b"],
                                 "completed_today": 5}),
         }
+        def fake_github_api(path: str):
+            if path.startswith("actions/runs"):
+                return {"workflow_runs": [{
+                    "conclusion": "success",
+                    "status": "completed",
+                    "head_sha": "abc1234567",
+                }]}
+            if path == "releases/latest":
+                return {"tag_name": "v1.2.0"}
+            return None
+
         with mock.patch.object(smoke, "http_request",
                                 side_effect=lambda url, **k:
                                     next(v for k_, v in responses.items()
                                          if k_ in url)), \
-             mock.patch.object(smoke, "_gh_available", return_value=False):
-            # gh_available=False makes the github checks SKIP, so they
-            # never become a failure that pollutes the all-green path.
+             mock.patch.object(smoke, "_gh_available", return_value=False), \
+             mock.patch.object(smoke, "_github_api_json",
+                               side_effect=fake_github_api):
+            # gh_available=False exercises the public GitHub API fallback.
             results = smoke.run_all(make_args())
         green = [r for r in results if r.status == "ok"]
         failed = [r for r in results if r.status == "fail"]

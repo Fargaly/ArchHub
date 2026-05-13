@@ -14,14 +14,20 @@ Required for production:
   OPENAI_API_KEY           — sk-... (server's own)
   GOOGLE_API_KEY           — AIza... (server's own)
   RESEND_API_KEY           — re_... (magic-link email sender)
-  FROM_EMAIL               — noreply@archhub.app
-  PUBLIC_URL               — https://cloud.archhub.app
+  FROM_EMAIL               — noreply@<your-domain> (default: archhub-cloud.fly.dev)
+  PUBLIC_URL               — https://<your-host> (default: archhub-cloud.fly.dev)
   DESKTOP_REDIRECT_BASE    — http://127.0.0.1   (clients only ever use loopback)
 
 Optional:
   DATABASE_URL             — sqlite path; defaults to ./archhub_cloud.db
   TRIAL_MESSAGES           — 30
   RATE_LIMIT_PER_MIN       — 30
+  BILLING_PROVIDER         — "stripe" (default) | "polar"
+  POLAR_ACCESS_TOKEN       — Polar.sh API key (when BILLING_PROVIDER=polar)
+  POLAR_WEBHOOK_SECRET     — Polar.sh webhook signing key
+  POLAR_PRODUCT_SOLO       — Polar.sh product UUID for Solo tier
+  POLAR_PRODUCT_STUDIO     — Polar.sh product UUID for Studio tier
+  POLAR_PRODUCT_FIRM       — Polar.sh product UUID for Firm tier
 """
 from __future__ import annotations
 
@@ -58,8 +64,26 @@ OPENAI_API_KEY    = _req("OPENAI_API_KEY")
 GOOGLE_API_KEY    = _req("GOOGLE_API_KEY")
 
 RESEND_API_KEY = _req("RESEND_API_KEY")
+# PUBLIC_URL defaults to the Fly.io subdomain so the backend works
+# WITHOUT requiring a custom domain to be purchased/configured first.
+# Override via `flyctl secrets set PUBLIC_URL=https://cloud.archhub.app`
+# once the user's own DNS is wired up.
+PUBLIC_URL     = _req("PUBLIC_URL", "https://archhub-cloud.fly.dev")
+# FROM_EMAIL — Resend will reject sends from unverified domains. Fly's
+# *.fly.dev subdomain isn't verifiable on Resend, so we keep the
+# branded sender BUT require the user verify ownership of the parent
+# domain in Resend's dashboard before live email goes out.
 FROM_EMAIL     = _req("FROM_EMAIL", "noreply@archhub.app")
-PUBLIC_URL     = _req("PUBLIC_URL", "http://localhost:8000")
+
+# Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
+# they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).
+# Polar signup is ~10 min vs Stripe's 30-120 min KYC verification.
+BILLING_PROVIDER = _req("BILLING_PROVIDER", "stripe").lower().strip()
+POLAR_ACCESS_TOKEN   = _req("POLAR_ACCESS_TOKEN", "")
+POLAR_WEBHOOK_SECRET = _req("POLAR_WEBHOOK_SECRET", "")
+POLAR_PRODUCT_SOLO   = _req("POLAR_PRODUCT_SOLO", "")
+POLAR_PRODUCT_STUDIO = _req("POLAR_PRODUCT_STUDIO", "")
+POLAR_PRODUCT_FIRM   = _req("POLAR_PRODUCT_FIRM", "")
 
 DATABASE_URL      = _req("DATABASE_URL", "./archhub_cloud.db")
 TRIAL_MESSAGES    = int(_req("TRIAL_MESSAGES", "30"))
@@ -77,6 +101,13 @@ PLAN_PRICE_IDS: dict[str, str] = {
     "solo":   STRIPE_PRICE_SOLO,
     "studio": STRIPE_PRICE_STUDIO,
     "firm":   STRIPE_PRICE_FIRM,
+}
+
+# Polar.sh product UUID per tier — populated when BILLING_PROVIDER=polar.
+POLAR_PRODUCT_IDS: dict[str, str] = {
+    "solo":   POLAR_PRODUCT_SOLO,
+    "studio": POLAR_PRODUCT_STUDIO,
+    "firm":   POLAR_PRODUCT_FIRM,
 }
 
 # Seats per paid company plan. Studio = 5, Firm = 25. Companies created

@@ -60,9 +60,25 @@ if _USE_DATA:
 
 
 def _select_backend() -> str:
-    """Choose anthropic vs ollama. Cloud default is anthropic; local
-    `python -m agents.run` keeps using ollama untouched."""
+    """Choose the LLM backend. Cloud default = anthropic. Supported:
+
+      ollama    — local, free, requires Ollama running on localhost
+      anthropic — Claude via api.anthropic.com (default in cloud)
+      openai    — GPT-4o-mini / o4-mini via api.openai.com
+      gemini    — Gemini Flash / Pro via generativelanguage.googleapis.com
+      lmstudio  — local OpenAI-compat server at localhost:1234/v1
+    """
     return os.environ.get("ARCHHUB_AGENTS_BACKEND", "anthropic").lower().strip()
+
+
+# Map backend id -> (module, completion_class_name). Single source of
+# truth. Adding a new backend = one row here + one client module.
+_BACKENDS: dict[str, tuple[str, str]] = {
+    "anthropic": ("anthropic_client", "AnthropicCompletion"),
+    "openai":    ("openai_client",    "OpenAICompletion"),
+    "gemini":    ("gemini_client",    "GeminiCompletion"),
+    "lmstudio":  ("lmstudio_client",  "LMStudioCompletion"),
+}
 
 
 def _install_backend(backend: str) -> None:
@@ -75,18 +91,30 @@ def _install_backend(backend: str) -> None:
     if backend == "ollama":
         return  # default — nothing to do
 
-    if backend != "anthropic":
-        raise ValueError(f"Unknown ARCHHUB_AGENTS_BACKEND: {backend!r}")
+    if backend not in _BACKENDS:
+        raise ValueError(
+            f"Unknown ARCHHUB_AGENTS_BACKEND: {backend!r}. "
+            f"Supported: ollama, {', '.join(_BACKENDS.keys())}."
+        )
 
-    from . import anthropic_client, base, ollama
+    mod_name, completion_class_name = _BACKENDS[backend]
+    from importlib import import_module
+    client_mod = import_module(f".{mod_name}", package="agents")
+    from . import base, ollama
+
+    # The client's `is_configured()` (or `is_running()` for parity with
+    # ollama) tells the rest of the system whether the backend is up.
+    is_running_fn = (getattr(client_mod, "is_running", None)
+                     or client_mod.is_configured)
+
     # Replace the three symbols base.py uses from .ollama
-    base.complete = anthropic_client.complete  # type: ignore[attr-defined]
-    base.is_running = anthropic_client.is_running  # type: ignore[attr-defined]
-    base.OllamaCompletion = anthropic_client.AnthropicCompletion  # type: ignore[attr-defined]
+    base.complete = client_mod.complete  # type: ignore[attr-defined]
+    base.is_running = is_running_fn  # type: ignore[attr-defined]
+    base.OllamaCompletion = getattr(client_mod, completion_class_name)  # type: ignore[attr-defined]
     # Also overlay the module attributes so anything else that imports
     # from agents.ollama at runtime gets the cloud client.
-    ollama.complete = anthropic_client.complete  # type: ignore[assignment]
-    ollama.is_running = anthropic_client.is_running  # type: ignore[assignment]
+    ollama.complete = client_mod.complete  # type: ignore[assignment]
+    ollama.is_running = is_running_fn  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -128,20 +156,78 @@ class CloudDaemon:
             print(f"[cloud_runner] heartbeat write failed: {ex}", flush=True)
 
     def tick_once(self) -> dict:
-        """One cycle without sleeping. Returns the scheduler summary."""
+        """One cycle without sleeping. Returns the scheduler summary.
+
+        The roadmap dispatcher runs alongside the recurring scheduler
+        — it self-throttles via ARCHHUB_ROADMAP_INTERVAL_MIN so even
+        with a 60-s cloud cycle it only enqueues every 30 min by
+        default.
+        """
         from .scheduler import Scheduler
         if self._scheduler is None:
             self._scheduler = Scheduler()
         summary = self._scheduler.tick()
+        try:
+            from . import roadmap_dispatcher
+            roadmap = roadmap_dispatcher.tick()
+            summary["roadmap"] = {
+                "enqueued": roadmap.enqueued,
+                "skipped_queued": roadmap.skipped_already_queued,
+                "skipped_done": roadmap.skipped_already_done,
+                "throttled": roadmap.throttled,
+                "locked": roadmap.locked,
+                "error": roadmap.error,
+            }
+        except Exception as ex:
+            summary["roadmap"] = {"error": f"{type(ex).__name__}: {ex}"}
         self._cycles += 1
         self.write_heartbeat()
+        # Status report — cadence-gated email digest to the founder.
+        # Disabled by default in tests; the cloud picks up the interval
+        # via ARCHHUB_REPORT_INTERVAL_MIN. Wrapped because a Resend
+        # hiccup must never crash the agent loop.
+        try:
+            rep = self._maybe_send_status_report()
+            if rep and rep.get("sent"):
+                summary["report"] = rep
+        except Exception as ex:  # noqa: BLE001
+            print(f"[cloud_runner] status report failed: "
+                  f"{type(ex).__name__}: {ex}", flush=True)
         return summary
+
+    def _maybe_send_status_report(self) -> Optional[dict]:
+        """Send the founder digest if the cadence has elapsed.
+
+        Lazy import: a test that monkey-patches the queue dirs before
+        importing cloud_runner picks up the right paths.
+        """
+        from . import report_sender, status_report
+        interval = report_sender.interval_minutes()
+        if interval <= 0:
+            return None
+
+        def _gen() -> dict:
+            return status_report.generate_report(cadence_minutes=interval)
+
+        return report_sender.tick_send_report(_gen)
 
     def run_forever(self) -> int:
         """Block forever. Returns process exit code."""
         self.install_signal_handlers()
         print(f"[cloud_runner] starting; cycle={self.cycle_seconds}s "
               f"backend={_select_backend()} data={DATA_ROOT}", flush=True)
+
+        # Roadmap snapshot on boot — gives observability into how much
+        # work is queued before the first tick fires.
+        try:
+            from . import roadmap_dispatcher
+            pending = roadmap_dispatcher.pending_count()
+            done = roadmap_dispatcher.completed_count()
+            print(f"[cloud_runner] roadmap pending={pending} completed={done}",
+                  flush=True)
+        except Exception as ex:
+            print(f"[cloud_runner] roadmap snapshot failed: "
+                  f"{type(ex).__name__}: {ex}", flush=True)
 
         # First heartbeat *before* the first tick so /healthz can answer
         # immediately while the initial scheduler call runs.

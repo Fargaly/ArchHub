@@ -194,13 +194,34 @@ async def chat(req: Request,
     return await proxy.chat_completions(user=user, body=body)
 
 
+def _billing_provider_module():
+    """Return the module that backs the current BILLING_PROVIDER.
+
+    Defaults to Stripe. Set BILLING_PROVIDER=polar to swap to Polar.sh
+    (Merchant of Record, ~10 min signup vs Stripe's KYC).
+    """
+    if config.BILLING_PROVIDER == "polar":
+        import polar  # local import — avoids importing httpx on Stripe path
+        return polar
+    return billing  # default = Stripe
+
+
 @app.post("/v1/billing/checkout")
 def checkout(req: CheckoutReq,
               authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
-    if req.tier not in config.PLAN_PRICE_IDS:
+    # Validate tier against whichever provider is configured. Both
+    # provider dicts share the same tier keys.
+    valid_tiers = (
+        config.POLAR_PRODUCT_IDS
+        if config.BILLING_PROVIDER == "polar"
+        else config.PLAN_PRICE_IDS
+    )
+    if req.tier not in valid_tiers:
         raise HTTPException(status_code=400, detail="unknown_tier")
-    url = billing.create_checkout_url(user=user, tier=req.tier)
+    url = _billing_provider_module().create_checkout_url(
+        user=user, tier=req.tier,
+    )
     if not url:
         raise HTTPException(status_code=503,
                              detail="checkout_unavailable")
@@ -210,11 +231,25 @@ def checkout(req: CheckoutReq,
 @app.get("/v1/billing/portal")
 def portal(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
-    url = billing.create_portal_url(user=user)
+    url = _billing_provider_module().create_portal_url(user=user)
     if not url:
         raise HTTPException(status_code=400,
                              detail="no_subscription")
     return {"url": url}
+
+
+@app.post("/v1/webhooks/polar")
+async def polar_webhook(req: Request) -> dict:
+    """Polar.sh webhook receiver. Always present in main.py — selection
+    happens at handler call time so a single deploy can serve either
+    provider depending on BILLING_PROVIDER env."""
+    import polar as polar_mod
+    payload = await req.body()
+    sig = req.headers.get("polar-webhook-signature", "")
+    result = polar_mod.handle_webhook(payload=payload, signature=sig)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "bad"))
+    return result
 
 
 @app.post("/v1/webhooks/stripe")

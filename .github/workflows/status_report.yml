@@ -1,0 +1,58 @@
+name: Status report
+
+# Posts a status-report comment to the tracking issue every 10 minutes.
+# Runs in GitHub's runners — doesn't depend on the founder's machine
+# being on. The issue's subscribers (founder = author by default) get
+# an email for each new comment via GitHub's notification system.
+#
+# Cadence: */10 = every 10 minutes. Change to "*/30" or "0 * * * *"
+# (hourly) if the inbox volume is too much.
+#
+# Issue number: 20 (the "ArchHub live status reports" tracking issue).
+# To redirect to a different issue, edit GH_ISSUE below.
+
+on:
+  schedule:
+    # Every 10 minutes. NOTE: GitHub's scheduler is best-effort and can
+    # lag 5-30 minutes during high load; cadence is approximate.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: status-report
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_ISSUE: "20"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ARCHHUB_REPORT_RECIPIENT: "ahmed.fargaly98@gmail.com"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml httpx
+
+      # The status_report generator reads agents/queue/ + boot.log +
+      # cloud_backend health. In the CI environment those are empty
+      # which is fine — the report degrades gracefully + still surfaces
+      # GitHub-side signals (CI green, open PRs, release matches
+      # VERSION) which is the most actionable data anyway.
+      - name: Generate + post status report
+        run: |
+          python -m agents.post_report_to_github --issue "$GH_ISSUE"

@@ -223,7 +223,9 @@ class TestSendLive:
         assert result["mode"] == "stdout"
         captured = capsys.readouterr()
         assert "would send" in captured.out
-        assert "no_resend_api_key" in captured.out
+        # v1.3.1 added SMTP fallback so the unset-reason string changed
+        # from "no_resend_api_key" to "no_email_provider_key".
+        assert "no_email_provider_key" in captured.out
 
     def test_send_respects_dry_run_env(self, monkeypatch, capsys):
         from agents import report_sender

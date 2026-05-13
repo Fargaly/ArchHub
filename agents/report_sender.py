@@ -120,8 +120,60 @@ def is_dry_run() -> bool:
 
 
 def is_configured() -> bool:
-    """True when Resend will accept our POST (key present, not dry)."""
-    return bool(os.environ.get("RESEND_API_KEY")) and not is_dry_run()
+    """True when at least one email path is reachable (Resend OR SMTP)."""
+    if is_dry_run():
+        return False
+    if os.environ.get("RESEND_API_KEY"):
+        return True
+    if _smtp_configured():
+        return True
+    return False
+
+
+def _smtp_configured() -> bool:
+    """True when all four SMTP env vars are set. Gmail app-password path:
+        ARCHHUB_REPORT_SMTP_HOST=smtp.gmail.com
+        ARCHHUB_REPORT_SMTP_PORT=587
+        ARCHHUB_REPORT_SMTP_USER=<email>
+        ARCHHUB_REPORT_SMTP_PASSWORD=<16-char app password>
+    """
+    return all(
+        os.environ.get(k)
+        for k in ("ARCHHUB_REPORT_SMTP_HOST",
+                  "ARCHHUB_REPORT_SMTP_PORT",
+                  "ARCHHUB_REPORT_SMTP_USER",
+                  "ARCHHUB_REPORT_SMTP_PASSWORD")
+    )
+
+
+def _send_via_smtp(*, subject: str, html: str, text: str,
+                    to_addr: str, from_addr: str) -> tuple[bool, int, str]:
+    """SMTP fallback when no Resend key. Uses stdlib smtplib + STARTTLS.
+    Returns (ok, status_code, body) — matches _post_resend's shape."""
+    import smtplib
+    from email.message import EmailMessage
+    host = os.environ["ARCHHUB_REPORT_SMTP_HOST"]
+    port = int(os.environ["ARCHHUB_REPORT_SMTP_PORT"])
+    user = os.environ["ARCHHUB_REPORT_SMTP_USER"]
+    pwd  = os.environ["ARCHHUB_REPORT_SMTP_PASSWORD"]
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"]    = from_addr or user
+    msg["To"]      = to_addr
+    msg.set_content(text or " ")
+    if html:
+        msg.add_alternative(html, subtype="html")
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as s:
+            s.ehlo()
+            s.starttls()
+            s.login(user, pwd)
+            s.send_message(msg)
+        return True, 250, "sent via SMTP"
+    except smtplib.SMTPAuthenticationError as ex:
+        return False, 535, f"auth failed: {ex}"
+    except Exception as ex:
+        return False, 0, f"{type(ex).__name__}: {ex}"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +248,9 @@ def send(report: dict, *, recipient_addr: Optional[str] = None,
 
     if not is_configured():
         # Dev / unset / dry-run path: print + log, don't actually send.
-        why = "dry_run" if is_dry_run() else "no_resend_api_key"
+        why = ("dry_run" if is_dry_run()
+               else "no_email_provider_key (set RESEND_API_KEY or "
+                    "ARCHHUB_REPORT_SMTP_* env vars)")
         sys_write = ("[report_sender] would send "
                      f"({why}) to={to} subject={payload['subject']!r}")
         print(sys_write, flush=True)
@@ -205,13 +259,26 @@ def send(report: dict, *, recipient_addr: Optional[str] = None,
         return {"ok": True, "status": 0,
                 "mode": mode or "stdout", "body": why}
 
-    api_key = os.environ["RESEND_API_KEY"]
-    ok, status, body = _post_resend(api_key=api_key, payload=payload)
+    # Provider selection: Resend first (cheapest stdlib path), SMTP
+    # fallback for Gmail app-password / generic SMTP setups.
+    if os.environ.get("RESEND_API_KEY"):
+        api_key = os.environ["RESEND_API_KEY"]
+        ok, status, body = _post_resend(api_key=api_key, payload=payload)
+        used_mode = mode or "live_resend"
+    else:
+        ok, status, body = _send_via_smtp(
+            subject=payload["subject"],
+            html=payload.get("html") or "",
+            text=payload.get("text") or "",
+            to_addr=to,
+            from_addr=from_email(),
+        )
+        used_mode = mode or "live_smtp"
     _log_outcome(ok=ok, status=status, subject=payload["subject"],
-                 mode=mode or "live", recipient_addr=to,
+                 mode=used_mode, recipient_addr=to,
                  note=body[:200] if not ok else "")
     return {"ok": ok, "status": status,
-            "mode": mode or "live", "body": body}
+            "mode": used_mode, "body": body}
 
 
 # ---------------------------------------------------------------------------

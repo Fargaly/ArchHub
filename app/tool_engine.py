@@ -687,6 +687,125 @@ TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
         "endpoint": ("_local", "list_connectors"),
     },
+
+    # AI-as-tool — call other models from inside a chat turn. The
+    # primary LLM can delegate to ChatGPT for code, Gemini for vision /
+    # long context, or LM Studio for offline / privacy-bound work.
+    # No host needs to be installed; configuration is per-provider
+    # API key in Settings → Sign-ins.
+    {
+        "name": "ai_chatgpt_ask",
+        "family": "ai",
+        "description": (
+            "Ask OpenAI (ChatGPT / GPT-4o / o-series) a question and "
+            "return the answer text. Useful for delegating code tasks "
+            "or getting a second opinion from a different model. "
+            "Requires an OpenAI API key in Settings → Sign-ins."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                            "description": "The question / instruction to send."},
+                "model": {"type": "string",
+                          "description": "OpenAI model id, e.g. 'gpt-4o', 'gpt-4o-mini', 'o4-mini'. Default: gpt-4o-mini."},
+                "system": {"type": "string",
+                            "description": "Optional system prompt."},
+                "temperature": {"type": "number",
+                                 "description": "0.0–2.0. Lower = more deterministic."},
+                "max_tokens": {"type": "integer",
+                                "description": "Cap on the response length."},
+            },
+            "required": ["prompt"],
+        },
+        "endpoint": ("ai", "chatgpt_ask"),
+    },
+    {
+        "name": "ai_gemini_ask",
+        "family": "ai",
+        "description": (
+            "Ask Google Gemini a question and return the answer text. "
+            "Strengths: long-context retrieval, image understanding, "
+            "fast/cheap general queries. Requires a Google AI API key "
+            "in Settings → Sign-ins."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                            "description": "The question / instruction to send."},
+                "model": {"type": "string",
+                          "description": "Gemini model id, e.g. 'gemini-2.5-flash', 'gemini-2.5-pro'. Default: gemini-2.5-flash."},
+                "system": {"type": "string",
+                            "description": "Optional system instruction."},
+                "temperature": {"type": "number",
+                                 "description": "0.0–2.0. Lower = more deterministic."},
+            },
+            "required": ["prompt"],
+        },
+        "endpoint": ("ai", "gemini_ask"),
+    },
+    {
+        "name": "ai_lmstudio_ask",
+        "family": "ai",
+        "description": (
+            "Ask the model currently loaded in LM Studio (local, "
+            "OpenAI-compatible). No API key needed for localhost. "
+            "Strengths: offline / privacy-bound work, free inference. "
+            "LM Studio must be running with a model loaded."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                            "description": "The question / instruction."},
+                "model": {"type": "string",
+                          "description": "Model id LM Studio should use; pass 'auto' (default) for whichever is loaded."},
+                "system": {"type": "string",
+                            "description": "Optional system prompt."},
+                "base_url": {"type": "string",
+                              "description": "LM Studio server URL. Default: http://localhost:1234/v1."},
+                "temperature": {"type": "number",
+                                 "description": "0.0–2.0."},
+            },
+            "required": ["prompt"],
+        },
+        "endpoint": ("ai", "lmstudio_ask"),
+    },
+    {
+        "name": "ai_antigravity_ask",
+        "family": "ai",
+        "description": (
+            "Ask Google Antigravity (experimental coding agent). NOTE: "
+            "Antigravity has no public API yet — the tool errors with "
+            "instructions on how to track availability. Listed so the "
+            "model can suggest it and the user can be told it's coming."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                            "description": "The question / instruction."},
+                "model": {"type": "string",
+                          "description": "Antigravity model id (when available)."},
+                "system": {"type": "string",
+                            "description": "Optional system prompt."},
+            },
+            "required": ["prompt"],
+        },
+        "endpoint": ("ai", "antigravity_ask"),
+    },
+    {
+        "name": "ai_list_providers",
+        "family": "ai",
+        "description": (
+            "List configured AI-as-tool providers + which are reachable. "
+            "Returns { provider: { configured, reachable?, models } } "
+            "so the primary model can decide which ai_*_ask tool to call."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "endpoint": ("ai", "list_providers"),
+    },
 ]
 
 
@@ -702,7 +821,13 @@ class ToolEngine:
         active_families = self._active_families()
         out: list[dict] = []
         for t in TOOLS:
-            if t["family"] != "_local" and t["family"] not in active_families:
+            # Always-on families: `_local` (ArchHub helpers) and `ai`
+            # (AI-as-tool delegations). Per-provider key may still be
+            # missing — handler returns a clean error rather than the
+            # tool being filtered out, so the model can suggest signing
+            # in instead of silently ignoring the capability.
+            if (t["family"] not in ("_local", "ai")
+                    and t["family"] not in active_families):
                 continue
             if provider == "anthropic":
                 out.append({
@@ -860,6 +985,32 @@ class ToolEngine:
                 return self.speckle.dispatch(handler, args)
             except Exception as ex:
                 return {"status": "error", "error": str(ex)}
+
+        # ai family — call other LLMs as tools (ChatGPT / Gemini /
+        # LM Studio / Antigravity). No host install required; each
+        # handler in ai_runner.py uses the user's saved API key for
+        # that provider. session_pin is ignored — there is no concept
+        # of a session for these calls.
+        if tool["family"] == "ai":
+            handler = ep[1]
+            try:
+                from connectors import ai_runner as _ai
+                fn = getattr(_ai, handler, None)
+                if fn is None:
+                    return {"status": "error",
+                            "error": f"Unknown ai handler: {handler}"}
+                import inspect
+                sig = inspect.signature(fn)
+                kwargs = {k: v for k, v in (args or {}).items()
+                          if k in sig.parameters}
+                result = fn(**kwargs)
+                if isinstance(result, dict):
+                    if "status" not in result:
+                        result = {"status": "ok", **result}
+                    return result
+                return {"status": "ok", "result": result}
+            except Exception as ex:
+                return {"status": "error", "error": str(ex)[:300]}
 
         # outlook family — drives classic Outlook in-process via COM.
         # No localhost listener; we route directly to outlook_runner. The

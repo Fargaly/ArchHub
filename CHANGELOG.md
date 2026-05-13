@@ -3,6 +3,76 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.3] — 2026-05-13
+
+The "AI-as-tool" release. Architects increasingly mix multiple AIs in
+their workflow — Claude for reasoning, GPT for code, Gemini for
+vision / long context, LM Studio for offline privacy-bound work. v1.0.3
+makes every one of those a first-class tool the primary model can call
+mid-conversation, instead of forcing the user to swap chat backends.
+
+### Added
+
+- **`ai_runner.py` connector** — `chatgpt_ask`, `gemini_ask`,
+  `lmstudio_ask`, `antigravity_ask`, `list_providers`. Each returns
+  the same envelope (`{status, provider, model, text, ...}`) so the
+  primary model can consume any of them uniformly.
+- **5 new tools in `tool_engine.TOOLS`** under the `ai` family:
+  - `ai_chatgpt_ask` — OpenAI (default `gpt-4o-mini`, override via
+    `model:`)
+  - `ai_gemini_ask` — Google (default `gemini-2.5-flash`)
+  - `ai_lmstudio_ask` — local OpenAI-compatible at
+    `http://localhost:1234/v1` (no key needed)
+  - `ai_antigravity_ask` — stub returning a clean
+    "no public API yet" error so the model can discover the capability
+    and the user gets a setup hint when Google ships an SDK
+  - `ai_list_providers` — inventory of which AI-as-tool providers are
+    configured + reachable. The primary model uses this to decide
+    which delegation tool to call.
+- **`ai` family is always-on** in `tool_engine.tool_schemas_for()` —
+  no host needs to be installed; if a provider key is missing the
+  handler returns a clean error pointing at Settings → Sign-ins
+  rather than the tool being filtered out of the schema.
+- **REST fallback for Gemini** — when `google.generativeai` isn't
+  installed (light-install user), the runner hits
+  `generativelanguage.googleapis.com` directly. Tool works either way.
+- **LM Studio reachability probe** — `_lmstudio_reachable()` does a
+  1.5 s GET on `/models`; `list_providers()` surfaces the result so
+  the primary model knows whether the local server is up before
+  calling it.
+- **AI Behaviour defaults for the `ai` family** — all 5 tools default
+  to `allow` (calling another LLM is a read, not a mutation). The
+  user can tighten any specific tool to `ask` in Settings if they
+  want a confirmation before spending tokens on a delegation.
+- **16 new tests** in `tests/test_ai_runner.py` covering: missing-key
+  handling, empty-prompt rejection, antigravity stub, list_providers
+  shape, tool-registry membership, every handler exists, always-on
+  filter, and AI-Behaviour defaults.
+
+### Changed
+
+- `tool_engine.tool_schemas_for()` — `_local` always-on rule extended
+  to `_local` + `ai`. Schema breakdown stays per-provider (anthropic /
+  openai / google native shapes) — just the gate widened.
+- `ai_behaviour._FAMILY_DEFAULTS` — added `"ai"` family table.
+- `ai_behaviour.host_display_label("ai")` →
+  `"AI delegations (ChatGPT · Gemini · LM Studio · Antigravity)"` so
+  the Settings section header explains what it is.
+
+### Notes
+
+- Antigravity (Google's experimental coding-agent platform) has no
+  public stable API as of 2026-05. The tool is registered as a stub so
+  the schema is stable today; when Google ships an SDK we'll replace
+  the body without touching the input schema.
+- LM Studio defaults to `http://localhost:1234/v1`. Custom URL +
+  optional API key live under `lmstudio` in Settings → Sign-ins
+  (advanced — most users never set this).
+
+### Tests
+
+344 passing in `tests/` (up from 328), 24 in `cloud_backend/tests/`.
+
 ## [1.0.2] — 2026-05-13
 
 The "alive again" hotfix release. Production Sentry alerts after

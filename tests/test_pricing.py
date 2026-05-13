@@ -83,7 +83,7 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. Bumped 1.0.1 → 1.0.2 with hotfix
-        # release covering Sentry PYTHON-7/9 + dynamic AI Behaviour
-        # + first-class Add Host button. v0.x and 1.0.0 are pre-stable.
-        assert v == "1.0.2"
+        # Track the latest stable. v1.0.3 adds AI-as-tool — primary
+        # model can delegate to ChatGPT / Gemini / LM Studio /
+        # Antigravity (stub) via ai_*_ask tools.
+        assert v == "1.0.3"

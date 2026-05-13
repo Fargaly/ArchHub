@@ -124,6 +124,17 @@ _FAMILY_DEFAULTS: dict[str, dict[str, str]] = {
         "list_skills": "allow",
         "run_skill": "ask",
     },
+    "ai": {
+        # AI-as-tool — primary model delegates to another LLM. Calling
+        # an LLM is a read (no mutation of user data) so defaults are
+        # "allow". The user can flip any specific tool to "ask" if they
+        # want a confirmation before spending tokens on the second LLM.
+        "chatgpt_ask":   "allow",
+        "gemini_ask":    "allow",
+        "lmstudio_ask":  "allow",
+        "antigravity_ask": "allow",
+        "list_providers":  "allow",
+    },
 }
 
 # Generic per-suffix fallback when a tool's family isn't yet known
@@ -297,7 +308,7 @@ def tools_grouped_by_host() -> dict[str, list[dict]]:
 
     # Preferred display order; unknown families appended alphabetically.
     order = ("revit", "acad", "max", "outlook", "blender", "speckle",
-             "archhub", "_local")
+             "ai", "archhub", "_local")
     out: dict[str, list[dict]] = {}
     for fam in order:
         if fam in bucket:
@@ -316,6 +327,7 @@ def host_display_label(family: str) -> str:
         "outlook": "Outlook (classic)",
         "blender": "Blender",
         "speckle": "Speckle",
+        "ai":      "AI delegations (ChatGPT · Gemini · LM Studio · Antigravity)",
         "archhub": "ArchHub (local)",
         "_local":  "ArchHub (local)",
     }.get((family or "").lower(), (family or "").title())

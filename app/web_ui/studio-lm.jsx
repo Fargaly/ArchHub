@@ -1248,6 +1248,43 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return () => window.removeEventListener('lm-wire-start', onWireStart);
   }, []);
 
+  // ── Publish the focused AI node id on `window` so the composer (a
+  //    sibling component, not parent) can write into that node's
+  //    `messages` array. Tracks every focusId change.
+  React.useEffect(() => {
+    const focused = allNodes.find(n => n.id === focusId);
+    if (focused && focused.cat === 'ai') {
+      window.__archhub_active_conv = focused;
+    } else {
+      window.__archhub_active_conv = null;
+    }
+  }, [focusId, allNodes]);
+
+  // ── Right-click on a port → disconnect every wire touching that
+  //     port. Sockets dispatch `lm-port-disconnect` with {nodeId,
+  //     socketId, side}. We remove matching wires from LM_GRAPH and
+  //     autosave.
+  React.useEffect(() => {
+    const onPortDisconnect = (ev) => {
+      const d = ev.detail || {};
+      if (!d.nodeId || !d.socketId) return;
+      const before = LM_GRAPH.wires.length;
+      LM_GRAPH.wires = LM_GRAPH.wires.filter((w) => {
+        if (d.side === 'out') {
+          return !(w.from[0] === d.nodeId && w.from[1] === d.socketId);
+        }
+        return !(w.to[0] === d.nodeId && w.to[1] === d.socketId);
+      });
+      const removed = before - LM_GRAPH.wires.length;
+      if (removed > 0) {
+        _autosaveGraph();
+        forceTick();
+      }
+    };
+    window.addEventListener('lm-port-disconnect', onPortDisconnect);
+    return () => window.removeEventListener('lm-port-disconnect', onPortDisconnect);
+  }, [_autosaveGraph]);
+
   // ── Runner-driven wire state: bridge emits wire_state_changed
   //     while a node is being pulled (flowing → cached / stale /
   //     error). We stamp the matching edge's `state` so the SVG
@@ -1701,6 +1738,28 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         <div style={{ flex:1 }}/>
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
+        {/* Per-node Run button → bridge.run_node fires WorkflowRunner.pull,
+            cascading upstream cooks + lighting wires by data state. */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!window.archhub || !window.archhub.run_node) return;
+            try {
+              const graphJson = JSON.stringify(LM_GRAPH);
+              const raw = window.archhub.run_node('workspace', n.id, graphJson);
+              let res; try { res = JSON.parse(raw); } catch { res = raw; }
+              console.log('[archhub] run_node', n.id, res);
+            } catch (e) { console.warn('run_node failed', e); }
+          }}
+          title="Run this node (pulls upstream)"
+          style={{
+            padding:'2px 8px', border:0, borderRadius:3,
+            background:LM.accent, color:'#fff', cursor:'pointer',
+            fontFamily:LM.mono, fontSize:9, fontWeight:600,
+            letterSpacing:'0.08em', marginLeft:4,
+          }}>
+          ▶ RUN
+        </button>
         {isAi && (
           <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:3,
@@ -1759,6 +1818,15 @@ const Socket = ({ side, i, t, label, nodeId, socketId }) => {
       },
     }));
   };
+  // Right-click on a port → disconnect every wire touching this port.
+  // No modal, no menu — just unwire and toast. Founder's explicit ask.
+  const onContextMenu = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent('lm-port-disconnect', {
+      detail: { nodeId, socketId, side },
+    }));
+  };
   return (
     <div
       data-no-pan
@@ -1767,6 +1835,8 @@ const Socket = ({ side, i, t, label, nodeId, socketId }) => {
       data-socket-id={socketId}
       data-socket-type={t}
       onMouseDown={onMouseDown}
+      onContextMenu={onContextMenu}
+      title={`${side === 'out' ? 'Drag' : 'Drop'} · right-click to disconnect`}
       style={{
         position:'absolute', top: socketY(i) - SOCKET_R,
         [side === 'in' ? 'left' : 'right']: -SOCKET_R,
@@ -2189,8 +2259,8 @@ const toolBtn = () => ({
 const FloatingComposer = ({ setLibraryOpen }) => {
   const [text, setText] = React.useState('');
   const [sending, setSending] = React.useState(false);
-  const [reply, setReply] = React.useState('');
   const sessionId = 'workspace';
+  const [, bump] = React.useReducer(n => n + 1, 0);
 
   const fire = React.useCallback(() => {
     const t = text.trim();
@@ -2201,24 +2271,50 @@ const FloatingComposer = ({ setLibraryOpen }) => {
       return;
     }
     setSending(true);
-    setReply('');
+    // Find the focused AI node — composer writes user message into it
+    // immediately so the canvas shows the turn right where it landed.
+    // Streamed reply appends to the same node's body as chat_chunk
+    // fires. This is "chat IS a node" — no separate reply pane.
+    const conv = window.__archhub_active_conv || null;
+    if (conv) {
+      conv.messages = conv.messages || [];
+      conv.messages.push({ me: true, text: t });
+      // Provisional assistant bubble (empty, accumulates chunks).
+      conv.messages.push({ me: false, text: '' });
+      bump();
+    }
     if (window.archhub && window.archhub.send_chat) {
       try {
-        // Wire one-shot listeners for this turn.
         const onChunk = (sid, chunk) => {
           if (sid !== sessionId) return;
-          setReply(r => r + chunk);
+          if (conv && conv.messages && conv.messages.length) {
+            const last = conv.messages[conv.messages.length - 1];
+            if (!last.me) {
+              last.text = (last.text || '') + chunk;
+              bump();
+            }
+          }
         };
         const onDone = (sid) => {
           if (sid !== sessionId) return;
           setSending(false);
           try { window.archhub.chat_chunk.disconnect(onChunk); } catch (e) {}
           try { window.archhub.chat_done.disconnect(onDone); } catch (e) {}
+          // Persist after every completed turn.
+          if (window.archhub.save_graph) {
+            try {
+              window.archhub.save_graph('workspace', JSON.stringify(LM_GRAPH));
+            } catch (e) {}
+          }
         };
         const onErr = (sid, err) => {
           if (sid !== sessionId) return;
           setSending(false);
-          setReply(`error: ${err}`);
+          if (conv && conv.messages && conv.messages.length) {
+            const last = conv.messages[conv.messages.length - 1];
+            if (!last.me) last.text = `error: ${err}`;
+            bump();
+          }
           try { window.archhub.chat_error.disconnect(onErr); } catch (e) {}
         };
         try { window.archhub.chat_chunk.connect(onChunk); } catch (e) {}
@@ -2227,12 +2323,15 @@ const FloatingComposer = ({ setLibraryOpen }) => {
         window.archhub.send_chat(sessionId, t);
       } catch (e) {
         setSending(false);
-        setReply(`bridge error: ${e.message || e}`);
       }
     } else {
-      // Standalone fallback (browser preview, no Python bridge).
-      setReply(`[preview mode] would send: ${t}`);
-      setTimeout(() => setSending(false), 400);
+      // Preview mode — no bridge. Echo into the focused conv node.
+      if (conv && conv.messages && conv.messages.length) {
+        const last = conv.messages[conv.messages.length - 1];
+        if (!last.me) last.text = `[preview] echo: ${t}`;
+        bump();
+      }
+      setTimeout(() => setSending(false), 200);
     }
     setText('');
   }, [text, sessionId, setLibraryOpen]);
@@ -2252,19 +2351,8 @@ const FloatingComposer = ({ setLibraryOpen }) => {
       borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
       padding:'10px 13px',
     }}>
-      {reply ? (
-        <div style={{
-          maxHeight:160, overflow:'auto', padding:'6px 8px',
-          marginBottom:6, fontSize:13, fontFamily:LM.sans,
-          color:LM.ink, borderBottom:`1px solid ${LM.lineSoft}`,
-        }}>
-          <span style={{ color:LM.inkMuted, fontFamily:LM.mono,
-                          fontSize:10, letterSpacing:'0.1em' }}>
-            ASSISTANT
-          </span>
-          <div style={{ marginTop:4, whiteSpace:'pre-wrap' }}>{reply}</div>
-        </div>
-      ) : null}
+      {/* No reply panel — replies stream into the focused conv node's
+          body. Composer is JUST the input bar now. */}
       <div style={{ display:'flex', alignItems:'center', gap:8,
                      fontSize:13.5, fontFamily:LM.sans, color:LM.ink,
                      minHeight:24 }}>

@@ -42,6 +42,22 @@ from skills import ensure_starter_skills, ensure_production_skills
 import cloud_sync
 import threading
 
+# Eagerly import QtWebEngine BEFORE QApplication is constructed in
+# main(). QtWebEngine on Windows refuses to initialize when the
+# QApplication already exists, which made WebShell fall through to
+# WorkspaceShell on every cold start. Catching ImportError here means
+# the rest of the app stays launchable when WebEngine is missing.
+try:
+    from PyQt6.QtCore import Qt as _Qt, QCoreApplication as _QCA
+    try:
+        _QCA.setAttribute(_Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    except Exception:
+        pass
+    from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
+    _WEBENGINE_OK = True
+except Exception:
+    _WEBENGINE_OK = False
+
 
 def _register_aumid_icon(aumid: str, ico_path: Path, display_name: str) -> None:
     """Register the AppUserModelID → icon mapping in the user's
@@ -402,17 +418,24 @@ def main() -> int:
     #                          → StudioShell (legacy pages)
     #                          → bare ChatWindow
     surface = window
-    try:
-        from web_shell import WebShell
-        shell = WebShell(chat_widget=window, router=router,
-                          manager=manager, tools=tools)
-        surface = shell
-    except Exception:
+    if _WEBENGINE_OK:
         try:
-            import traceback as _tb
+            from web_shell import WebShell
+            shell = WebShell(chat_widget=window, router=router,
+                              manager=manager, tools=tools)
+            surface = shell
+        except Exception:
+            try:
+                import traceback as _tb
+                with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
+                    _f.write("WebShell build failed — trying WorkspaceShell:\n")
+                    _tb.print_exc(file=_f)
+            except Exception:
+                pass
+    else:
+        try:
             with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                _f.write("WebShell build failed — trying WorkspaceShell:\n")
-                _tb.print_exc(file=_f)
+                _f.write("WebShell skipped — PyQt6-WebEngine not importable at boot.\n")
         except Exception:
             pass
 

@@ -9,20 +9,50 @@ doc gives the answers.
 > one-time). For a simple software / SaaS mark like ours, TEAS Plus
 > + this guide is sufficient for most founders.
 
-## Marks to file
+## Marks to file — **minimum viable filing** ($350)
 
-We file **two** marks in parallel — a wordmark + a stylized mark with
-the logo. Different filings, different fees, same applicant.
+The v1.1.1 update revises the plan from the original $1,400 four-filing
+strategy down to a **$350 single-filing** strategy. Rationale: the
+wordmark in a single class gives 90% of the protection at 25% of the
+cost, and we can layer the stylized mark / additional class on later
+without losing priority.
 
-| Mark | Type | Class(es) | TEAS Plus fee |
-|---|---|---|---|
-| **ArchHub** (standard characters) | Wordmark | 009 + 042 | $350 / class = **$700** |
-| **ArchHub + logo** (special form) | Stylized + design | 009 + 042 | $350 / class = **$700** |
+| Filing | Mark | Type | Class | Fee | Priority |
+|---|---|---|---|---|---|
+| **Today** | **ArchHub** (standard chars) | Wordmark | **042** (SaaS) | **$350 — TEAS Standard** | 🔴 Must file |
+| Year 2 | ArchHub | Wordmark | 009 (downloadable software) | $350 | 🟡 If desktop revenue justifies |
+| Year 2 | ArchHub + logo | Stylized + design | 042 | $350 | 🟢 Once logo is final |
 
-**Total US filing cost: $1,400** (two marks, two classes each).
+**Total today: $350.** (Down from $1,400.)
 
-You can file the wordmark first (most defensible) and add the stylized
-mark later if budget is tight. The wordmark is the priority.
+### Why TEAS Standard, not TEAS Plus
+
+TEAS Plus saves $100 but requires you to use pre-approved descriptions
+from the USPTO ID Manual *exactly*. The Class 042 ID for "SaaS in AEC"
+isn't a clean Plus match. TEAS Standard ($350) lets you write a custom
+description — important for our specific AEC + AI niche.
+
+### Why Class 042 (not 009)
+
+Class 042 covers "providing online non-downloadable software" — our
+**cloud** revenue lives here (Solo, Studio, Firm tiers via Stripe).
+Class 009 covers "downloadable software" — useful when desktop is the
+business, but our model is open-core: desktop is free + cloud is paid.
+Protect where the revenue is.
+
+When desktop revenue meaningfully grows (custom enterprise distribution,
+white-label, etc.), file Class 009 in Year 2.
+
+### What ™ vs ® gets you today
+
+Until USPTO registration issues (~9-14 months), use the **™** symbol.
+Common-law trademark protection applies in every US state where you've
+actually sold the product. After registration, use **®** — that flips
+nationwide protection on, plus the right to:
+- Recover statutory damages ($25k-$200k) without proving actual harm
+- Treble damages for willful infringement
+- Use TM in customs to block knock-offs at the border
+- File in USPTO TMEP database — visible to anyone searching
 
 ## Pre-filing checklist
 
@@ -159,17 +189,22 @@ allowed — you need that registration as the "base mark."
 - **`Skill Pack`** as a descriptive mark — likely refused but worth
   considering when marketplace launches
 
-## Cost summary (US only)
+## Cost summary (US only) — slim filing
 
 | Item | One-time | Annual |
 |---|---|---|
-| Wordmark Class 009 (TEAS Plus) | $350 | — |
-| Wordmark Class 042 (TEAS Plus) | $350 | — |
-| Stylized mark Class 009 (TEAS Plus) | $350 | — |
-| Stylized mark Class 042 (TEAS Plus) | $350 | — |
-| Optional attorney review (1 hour) | $300–$600 | — |
-| Renewal (years 5–6 + 10) | — | $375 / class / mark every 10 yrs |
-| **Year 1 total** | **$1,400–$2,000** | — |
+| Wordmark Class 042 (TEAS Standard) | **$350** | — |
+| Optional attorney review (skip — TEAS Standard is straightforward) | $0 | — |
+| Renewal (year 5-6 declaration + year 10) | — | $325 / class every 10 yrs |
+| **Year 1 total** | **$350** | — |
+
+Optional add-ons (defer to Year 2 unless deal flow demands them):
+
+| Add-on | One-time | When to add |
+|---|---|---|
+| Wordmark Class 009 (downloadable software) | $350 | If desktop revenue > $5k MRR |
+| Stylized mark + logo (Class 042) | $350 | When logo is final + budget allows |
+| Madrid Protocol (EU / UK / UAE) | $1,500-3,000 | Year 2 if international deals appear |
 
 ## What not to do
 

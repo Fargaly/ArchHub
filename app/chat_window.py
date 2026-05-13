@@ -1362,8 +1362,12 @@ class ChatWindow(QMainWindow):
         h.setContentsMargins(20, 12, 16, 12)
         h.setSpacing(12)
 
-        title = QLabel("ArchHub")
+        title = QLabel("ArchHub™")
         title.setObjectName("brand")
+        title.setToolTip(
+            "ArchHub™ — common-law trademark, USPTO filing pending. "
+            "Filed under Class 042 (SaaS) by Ahmed Yasser Fargaly."
+        )
         h.addWidget(title)
 
         # Host status pills — one per detected host family, dot colour
@@ -1630,14 +1634,18 @@ class ChatWindow(QMainWindow):
         except Exception:
             commit = branch = remote = "unknown"
         QMessageBox.information(
-            self, "About ArchHub",
-            f"<h3>ArchHub</h3>"
+            self, "About ArchHub™",
+            f"<h3>ArchHub™</h3>"
             f"<p>Parametric design environment for architects with chat as "
             f"the input surface and AI as the construction agent.</p>"
             f"<p style='color:#8a8a8c;font-size:11px;'>"
             f"Commit:  <code>{commit}</code><br>"
             f"Branch:  <code>{branch}</code><br>"
-            f"Remote:  <code>{remote}</code></p>",
+            f"Remote:  <code>{remote}</code></p>"
+            f"<p style='color:#8a8a8c;font-size:10px;margin-top:14px;'>"
+            f"ArchHub™ is a trademark of Ahmed Yasser Fargaly. "
+            f"USPTO filing pending under Class 042 (SaaS). "
+            f"MIT licensed open source.</p>",
         )
 
     def _build_conversation_area(self) -> QWidget:

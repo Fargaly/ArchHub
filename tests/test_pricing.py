@@ -83,8 +83,8 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.1.0 is the "deep build" minor
-        # bump — Rhino + Procore connectors, marketplace v1 cloud
-        # backend, cross-platform CI matrix, code-signing infra, plus
-        # Civil 3D / trademark / SOC 2 prep docs.
-        assert v == "1.1.0"
+        # Track the latest stable. v1.1.1 — Azure Trusted Signing
+        # setup automation, TM symbol rollout, slim trademark filing
+        # ($350 instead of $1,400), Trust Center + CAIQ-Lite to
+        # replace the $19k SOC 2 audit for the solo-founder stage.
+        assert v == "1.1.1"

@@ -3,6 +3,70 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] — 2026-05-13
+
+The "founder economics" release. Three signing / legal / compliance
+tracks left over from v1.1.0 reframed against actual solo-founder
+budget. Reduces $20,400 of "ready to spend" obligations to
+**$390 + 60 min of paperwork** today.
+
+| Track | v1.1.0 plan | v1.1.1 plan | Saved |
+|---|---|---|---|
+| Code signing | Azure Trusted Signing setup pending | **Going.** Automated setup script + GitHub secrets walkthrough | — |
+| Trademark | $1,400 (4 USPTO filings) | **$350** (1 USPTO filing — wordmark Class 042 only) | $1,050 |
+| SOC 2 Type I | $19,000 audit + Drata subscription | **$0** Trust Center page + CAIQ-Lite + CSA STAR self-assessment | $19,000 |
+
+Total run-rate trimmed: **$20,050** — without losing core protection.
+SOC 2 Type I goes back on the plan when the first enterprise prospect
+with a real budget asks for it.
+
+### Added
+
+- **`scripts/setup_azure_trusted_signing.ps1`** — one-command Azure
+  setup. Verifies `az` CLI, creates the resource group + Trusted
+  Signing account (Basic SKU = $9.99/mo), registers
+  `Microsoft.CodeSigning`, creates a Certificate Profile, creates an
+  Entra service principal with the right RBAC role, prints the 6
+  GitHub Actions secret values to paste. Idempotent — safe to re-run.
+- **`docs/AZURE_SIGNING_QUICKSTART.md`** — start-to-signed-installer
+  walkthrough. Step 1 (identity verification, $40) is the only thing
+  the user does manually in the Azure portal; everything else is
+  automated.
+- **`docs/TRUST_CENTER.md`** — source content for the public
+  <https://archhub.app/security> page. Covers data handling,
+  sub-processors with DPA status, security practices, compliance
+  roadmap, incident reporting. Replaces "where's your SOC 2?" with
+  a credible answer mid-market buyers accept.
+- **`docs/CAIQ_LITE.md`** — CAIQ-Lite v3.1 with every question
+  pre-filled for ArchHub. When a buyer sends their security review
+  questionnaire, copy-paste from here. Drops a 4-hour task to 5
+  minutes.
+- **™ symbol rollout** — landing page title, hero copy, footer
+  attribution; chat window header brand label + tooltip explaining
+  the TM status; About dialog with full attribution + Class 042
+  filing note. Common-law trademark protection now active in every
+  US state where ArchHub sells.
+
+### Changed
+
+- **`docs/TRADEMARK_FILING.md`** rewritten for the slim path:
+  - Single filing today: wordmark, Class 042 (SaaS), TEAS Standard,
+    **$350**
+  - Year-2 add-ons documented with triggers (Class 009 when desktop
+    revenue > $5k MRR; stylized mark when logo finalises; Madrid
+    Protocol when international deals appear)
+  - "TEAS Standard vs Plus" decision rationale captured
+  - Filing-pending → ® transition called out
+
+### Why this matters
+
+Most pre-revenue solo founders skip TM + compliance entirely because
+the "real" plan looks like $20k+ of out-of-pocket. v1.1.1 ships the
+**cheap correct path** for both: $350 + free templates that don't lose
+material protection at our stage. The expensive paths stay documented
+(`docs/SOC2_READINESS.md`, original `docs/TRADEMARK_FILING.md` history)
+for the moment revenue justifies them.
+
 ## [1.1.0] — 2026-05-13
 
 The "minor-bump deep build" release. Three production hotfixes earlier
@@ -45,7 +109,7 @@ bump pushes the platform into new territory:
 - `_FAMILY_DEFAULTS["procore"]` — reads default `allow`, `create_rfi`
   defaults `ask` (writes to a live construction record).
 - Settings → Sign-ins surfaces Procore as a provider.
-- 16 new tests in `tests/test_procore_runner.py`.
+- 37 new tests in `tests/test_procore_runner.py`.
 
 ### Added — Marketplace v1
 

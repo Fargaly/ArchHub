@@ -2,3 +2,9 @@ PyQt6>=6.7
 anthropic>=0.40
 openai>=1.50
 keyring>=25.0
+# v1.1.0 added marketplace signing — needs cryptography for Ed25519.
+# Was implicitly satisfied locally; CI revealed the missing dep.
+cryptography>=42.0
+# google-generativeai is referenced via ai_runner.gemini_ask but falls
+# back to REST when missing, so it's NOT pinned here — users pick
+# whether to install. CI tests run without it.

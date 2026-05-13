@@ -34,7 +34,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          # 3.13 because pydantic-core caps at Py 3.13 on its Rust
+          # build. Bump alongside test.yml when PyO3 0.23+ lands in
+          # the pydantic-core release chain.
+          python-version: '3.13'
           cache: pip
           cache-dependency-path: app/requirements.txt
 

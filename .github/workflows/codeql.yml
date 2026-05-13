@@ -31,7 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ python, javascript ]
+        # `javascript` was here while the relay/ TypeScript shim
+        # existed. Deleted in v1.0.2; CodeQL was failing every push
+        # with "no JS/TS source seen". Re-add when an actual JS or TS
+        # surface lands (e.g. a future browser extension).
+        language: [ python ]
 
     steps:
       - name: Checkout

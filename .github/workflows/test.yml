@@ -30,11 +30,27 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        python-version: ['3.14']
+        # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
+        # Local dev boxes can run 3.14; CI cannot until pydantic-core
+        # ships against PyO3 0.23+. Bump alongside build-macos /
+        # build-linux when that lands.
+        python-version: ['3.13']
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # PyQt6 on Linux needs xcb + EGL system libs even for headless
+      # tests — Qt resolves a platform plugin during QApplication init.
+      - name: Install Qt6 runtime libs (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libegl1 \
+            libfontconfig1 libdbus-1-3
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -51,8 +67,15 @@ jobs:
           python -m pip install -r app/requirements.txt -r cloud_backend/requirements.txt
           python -m pip install pytest pytest-asyncio
 
+      # Offscreen platform lets PyQt6 init QApplication without a
+      # display server — required for any test that imports a widget
+      # at module load.
       - name: Run app test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: pytest tests/ -v
 
       - name: Run cloud backend test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: pytest cloud_backend/tests/ -v

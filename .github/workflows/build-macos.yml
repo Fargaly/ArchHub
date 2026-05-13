@@ -29,7 +29,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          # 3.13 because pydantic-core (via openai/anthropic SDKs) caps
+          # at Py 3.13 on its Rust build. Bump alongside test.yml when
+          # PyO3 upstream ships 3.14 support.
+          python-version: '3.13'
           cache: pip
           cache-dependency-path: app/requirements.txt
 
@@ -49,15 +52,23 @@ jobs:
       # `--windowed` produces a .app bundle (no Terminal window on launch).
       # `--onedir` is preferred over `--onefile` on macOS because Gatekeeper
       # validates the entire bundle once vs. extracting per-launch.
+      # archhub.icns isn't in the repo yet (we ship .ico + .png today;
+      # generating an .icns can land later). PyInstaller tolerates a
+      # missing icon if you don't pass --icon — Gatekeeper uses the
+      # default Python icon, acceptable until a real one ships.
       - name: Build .app with PyInstaller
         run: |
+          ICON_FLAG=""
+          if [ -f app/assets/archhub.icns ]; then
+            ICON_FLAG="--icon app/assets/archhub.icns"
+          fi
           pyinstaller \
             --noconfirm \
             --onedir \
             --windowed \
             --name ArchHub \
             --osx-bundle-identifier io.archhub.studio \
-            --icon app/assets/archhub.icns \
+            $ICON_FLAG \
             --collect-all PyQt6 \
             app/main.py
 

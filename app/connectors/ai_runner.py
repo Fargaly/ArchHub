@@ -321,6 +321,39 @@ def list_providers() -> dict:
     return {"status": "ok", "providers": out}
 
 
+def detect_local(force: bool = False) -> dict:
+    """Wrapper around app/llm_detector.detect_all so the tool engine
+    can route ai_detect_local to it. Adds the call-time timestamp."""
+    try:
+        # llm_detector lives next to ai_runner under app/; sys.path
+        # already includes app/ when the tool engine runs.
+        import sys
+        from pathlib import Path
+        app_root = str(Path(__file__).resolve().parent.parent)
+        if app_root not in sys.path:
+            sys.path.insert(0, app_root)
+        from llm_detector import detect_all  # type: ignore
+    except Exception as ex:
+        return {"status": "error",
+                "error": f"detector unavailable: {type(ex).__name__}: {ex}"}
+    import datetime as _dt
+    results = detect_all(force=bool(force))
+    summary = {
+        "live":      [p for p, i in results.items()
+                      if i.get("status") == "live"],
+        "available": [p for p, i in results.items()
+                      if i.get("status") == "available"],
+        "missing":   [p for p, i in results.items()
+                      if i.get("status") == "missing"],
+    }
+    return {
+        "status":  "ok",
+        "ts":      _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "summary": summary,
+        "providers": results,
+    }
+
+
 def _lmstudio_reachable(base_url: str) -> bool:
     """Quick GET /models probe — LM Studio responds even before a model
     is loaded, so this is a 'process up' check, not 'model loaded'."""

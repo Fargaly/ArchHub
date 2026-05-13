@@ -1056,6 +1056,25 @@ TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
         "endpoint": ("ai", "list_providers"),
     },
+    {
+        "name": "ai_detect_local",
+        "family": "ai",
+        "description": (
+            "Detect ALL LLM backends on the user's machine: Claude, GPT, "
+            "Gemini, OpenRouter, Ollama (with model list), LM Studio "
+            "(with loaded model), Codex CLI, ArchHub Cloud. Returns "
+            "per-provider {status:'live'|'available'|'missing', models, "
+            "note}. Cheap probes only (no paid API calls). The primary "
+            "model uses this to pick the best ai_*_ask tool — e.g. if "
+            "OpenAI is quota-blocked, fall through to Anthropic or LM "
+            "Studio."
+        ),
+        "input_schema": {"type": "object",
+                          "properties": {"force": {"type": "boolean",
+                                                    "description": "Skip the 25s cache"}},
+                          "required": []},
+        "endpoint": ("ai", "detect_local"),
+    },
 ]
 
 

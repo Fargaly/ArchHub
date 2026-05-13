@@ -420,6 +420,27 @@ def ollama_models() -> list[tuple[str, str]]:
         return []
 
 
+def lmstudio_models() -> list[tuple[str, str]]:
+    """Return (model_id, label) pairs for every model loaded in LM Studio.
+
+    Uses llm_detector.probe_lmstudio (which queries the LM Studio local
+    server at 127.0.0.1:1234/v1/models). When the LM Studio server is
+    NOT running we return []. The probe is cached for 25s per llm_detector
+    so the model picker refresh is fast.
+    """
+    try:
+        from llm_detector import probe_lmstudio
+        res = probe_lmstudio() or {}
+        if res.get("status") != "live":
+            return []
+        return [
+            (f"lmstudio:{name}", f"{name} — local (LM Studio)")
+            for name in (res.get("models") or [])
+        ]
+    except Exception:
+        return []
+
+
 @dataclass
 class LLMResponse:
     text: str
@@ -568,6 +589,15 @@ class LLMRouter:
                 providers.add("ollama")
         except Exception:
             pass
+        # LM Studio if running with at least one chat model loaded.
+        # Server lives at 127.0.0.1:1234/v1; probe is cached 25s.
+        try:
+            from llm_detector import probe_lmstudio
+            res = probe_lmstudio() or {}
+            if res.get("status") == "live" and res.get("models"):
+                providers.add("lmstudio")
+        except Exception:
+            pass
         # Drop providers we've blocked due to recent 4xx (no credits,
         # bad key, quota exceeded). They re-enter the set automatically
         # when the blocklist entry expires (~10 min).
@@ -580,6 +610,20 @@ class LLMRouter:
         if provider == "ollama":
             from llm_providers.ollama_client import OllamaClient
             self._clients[provider] = OllamaClient()
+            return self._clients[provider]
+        # LM Studio also runs locally with no auth by default; built
+        # below by reusing CustomOpenAICompatibleClient. Short-circuit
+        # the api-key gate so the user doesn't get "No API key
+        # configured for lmstudio" when picking a local model.
+        if provider == "lmstudio":
+            from llm_providers.openrouter_client import CustomOpenAICompatibleClient
+            from secrets_store import load_setting, load_api_key
+            base = (load_setting("lmstudio_base_url")
+                    or "http://127.0.0.1:1234/v1").rstrip("/")
+            key = load_api_key("lmstudio") or "lm-studio"
+            self._clients[provider] = CustomOpenAICompatibleClient(
+                api_key=key, base_url=base,
+            )
             return self._clients[provider]
         # ArchHub Cloud uses a bearer token via cloud_client, not the
         # provider-key store. Short-circuit before the api_key gate.
@@ -630,9 +674,8 @@ class LLMRouter:
                 api_key=relay_key, base_url=base_url
             )
         # archhub_cloud handled by short-circuit above (no api_key gate).
-        elif provider == "ollama":
-            from llm_providers.ollama_client import OllamaClient
-            self._clients[provider] = OllamaClient()
+        # ollama + lmstudio short-circuit at the top of this function so
+        # they don't hit the api_key gate.
         else:
             raise RuntimeError(f"Unknown provider: {provider}")
         return self._clients[provider]

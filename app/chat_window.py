@@ -3161,14 +3161,16 @@ class ChatWindow(QMainWindow):
         from secrets_store import load_setting
 
         configured = set(self.router.configured_providers())
-        # Local Ollama models always surface when Ollama is reachable.
-        # The legacy `show_local_models` setting (default False) used
-        # to hide them — overriding that here because users repeatedly
-        # asked "where's qwen / llama?" when their local models were
-        # silently filtered out. To explicitly hide local models now,
-        # set `hide_local_models=True` in Settings.
+        # Local Ollama + LM Studio models always surface when the
+        # respective service is reachable. The legacy `show_local_models`
+        # setting (default False) used to hide them — overriding that
+        # here because users repeatedly asked "where's qwen / llama?"
+        # when their local models were silently filtered out. To
+        # explicitly hide local models now, set `hide_local_models=True`
+        # in Settings.
         hide_local = bool(load_setting("hide_local_models"))
-        show_local = ("ollama" in configured) and not hide_local
+        show_ollama   = ("ollama"   in configured) and not hide_local
+        show_lmstudio = ("lmstudio" in configured) and not hide_local
 
         self.model_picker.clear()
         # Replace the underlying model so we can disable individual items.
@@ -3220,10 +3222,15 @@ class ChatWindow(QMainWindow):
             _add(label + suffix, model_id, enabled=row_enabled,
                  tooltip=tip)
 
-        if show_local:
+        if show_ollama:
             for model_id, label in ollama_models():
                 _add(label, model_id, enabled=True,
                      tooltip="Local model running in Ollama.")
+        if show_lmstudio:
+            from llm_router import lmstudio_models
+            for model_id, label in lmstudio_models():
+                _add(label, model_id, enabled=True,
+                     tooltip="Local model running in LM Studio (127.0.0.1:1234).")
 
     def _refresh_model_picker(self) -> None:
         """Public hook so SettingsDialog can re-enable models after the user

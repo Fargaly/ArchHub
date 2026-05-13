@@ -7,8 +7,12 @@ name: Reality smoke
 # after a deploy to verify the smoke test sees the new build.
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"    # every 30 minutes, on the hour + half-hour
+  # 2026-05-13: cron paused while Fly cloud + agents are undeployed.
+  # Every probe goes RED → opens issue → emails founder. Re-enable
+  # by uncommenting the schedule block AFTER `fly deploy` succeeds
+  # and `archhub-cloud.fly.dev` resolves.
+  # schedule:
+  #   - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       cloud_url:

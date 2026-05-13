@@ -12,10 +12,13 @@ name: Status report
 # To redirect to a different issue, edit GH_ISSUE below.
 
 on:
-  schedule:
-    # Every 10 minutes. NOTE: GitHub's scheduler is best-effort and can
-    # lag 5-30 minutes during high load; cadence is approximate.
-    - cron: "*/10 * * * *"
+  # 2026-05-13: cron paused while cloud is undeployed. Status report
+  # body reports backend=RED / agents=RED on every cycle, so the
+  # emails are pure noise until production exists. Manual dispatch
+  # still works for ad-hoc snapshots. Re-enable by uncommenting the
+  # schedule block AFTER `fly deploy` lands.
+  # schedule:
+  #   - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
 permissions:

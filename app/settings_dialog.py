@@ -11,8 +11,9 @@ import os
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from secrets_store import save_api_key, load_api_key, delete_api_key, save_setting, load_setting
@@ -111,7 +112,10 @@ class SettingsDialog(QDialog):
         self.router = router
         self.setWindowTitle("ArchHub — Settings")
         self.setObjectName("settingsDialog")
-        self.resize(560, 520)
+        # Bumped from 560×520 in v1.0.2 — the AI Behaviour section
+        # (thinking + per-tool policies) needs a taller dialog so
+        # everything fits without forcing a global scroll.
+        self.resize(640, 720)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 18, 20, 18)
@@ -333,6 +337,13 @@ class SettingsDialog(QDialog):
 
         outer.addWidget(appearance_box)
 
+        # ── AI Behaviour ───────────────────────────────────────────────────
+        # Thinking-effort dropdown + per-tool policies, grouped by host.
+        # Sections only render for hosts whose tools are registered with
+        # the live tool_engine — install a new connector, restart, and a
+        # new section appears here. No code change needed.
+        outer.addWidget(self._build_ai_behaviour_row())
+
         # ── Privacy / telemetry ────────────────────────────────────────────
         outer.addWidget(self._build_privacy_row())
 
@@ -345,6 +356,134 @@ class SettingsDialog(QDialog):
         close_btn.clicked.connect(self._save_and_close)
         btn_row.addWidget(close_btn)
         outer.addLayout(btn_row)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def _build_ai_behaviour_row(self):
+        """AI Behaviour panel — thinking budget + per-tool policy.
+
+        Renders dynamically from `tool_engine.TOOLS`. New connectors
+        appear here without any code change as soon as they register
+        their tools.
+        """
+        import ai_behaviour as _aib
+
+        row = QFrame(); row.setObjectName("providerRow")
+        v = QVBoxLayout(row); v.setContentsMargins(12, 10, 12, 10); v.setSpacing(8)
+
+        title_row = QHBoxLayout(); title_row.setSpacing(8)
+        icon = QLabel("🧠"); icon.setObjectName("providerIcon")
+        title_row.addWidget(icon)
+        title = QLabel("AI Behaviour"); title.setObjectName("providerName")
+        title_row.addWidget(title); title_row.addStretch(1)
+        v.addLayout(title_row)
+
+        help_lbl = QLabel(
+            "Control how hard the model thinks and which tools it can run "
+            "without asking you first. Sections below appear only for hosts "
+            "ArchHub has detected — connect a new host and it shows up here "
+            "automatically on next restart."
+        )
+        help_lbl.setObjectName("settingsSubtitle"); help_lbl.setWordWrap(True)
+        v.addWidget(help_lbl)
+
+        # Thinking effort ----------------------------------------------------
+        eff_row = QHBoxLayout(); eff_row.setSpacing(8)
+        eff_lbl = QLabel("Extended thinking"); eff_lbl.setObjectName("settingsSubtitle")
+        eff_row.addWidget(eff_lbl)
+        eff_row.addStretch(1)
+        self._thinking_combo = QComboBox()
+        self._thinking_combo.addItem("Off — fastest, cheapest", "off")
+        self._thinking_combo.addItem("Low (1k tokens) — quick reasoning", "low")
+        self._thinking_combo.addItem("Medium (4k tokens) — balanced", "medium")
+        self._thinking_combo.addItem("High (16k tokens) — deepest", "high")
+        current_effort = _aib.get_thinking_effort()
+        idx = next((i for i in range(self._thinking_combo.count())
+                    if self._thinking_combo.itemData(i) == current_effort), 0)
+        self._thinking_combo.setCurrentIndex(idx)
+        self._thinking_combo.currentIndexChanged.connect(
+            lambda _: _aib.set_thinking_effort(
+                self._thinking_combo.currentData() or "off"
+            )
+        )
+        eff_row.addWidget(self._thinking_combo, 0)
+        v.addLayout(eff_row)
+
+        # Per-tool policy ----------------------------------------------------
+        section_caption = QLabel("Tool permissions")
+        section_caption.setObjectName("providerName")
+        v.addWidget(section_caption)
+
+        # Scrollable container so the dialog stays a sensible height
+        # even when the user has 60+ tools registered.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setMaximumHeight(260)
+        scroll.setStyleSheet("QScrollArea{ background:transparent; border:none; }")
+        inner = QWidget()
+        inner_v = QVBoxLayout(inner)
+        inner_v.setContentsMargins(0, 0, 0, 0)
+        inner_v.setSpacing(6)
+
+        grouped = _aib.tools_grouped_by_host()
+        if not grouped:
+            empty = QLabel(
+                "No tools registered yet. Install a connector from "
+                "Connectors → Add Host and reopen Settings."
+            )
+            empty.setObjectName("settingsSubtitle"); empty.setWordWrap(True)
+            inner_v.addWidget(empty)
+        else:
+            self._tool_policy_combos: dict[str, QComboBox] = {}
+            for family, tools in grouped.items():
+                label = _aib.host_display_label(family)
+                hdr = QLabel(f"<b>{label}</b>  <span style='opacity:0.65'>· {len(tools)} tool"
+                              f"{'s' if len(tools) != 1 else ''}</span>")
+                hdr.setObjectName("settingsSubtitle")
+                hdr.setTextFormat(Qt.TextFormat.RichText)
+                inner_v.addWidget(hdr)
+                for tool in tools:
+                    inner_v.addLayout(self._make_tool_policy_row(tool, _aib))
+                inner_v.addSpacing(4)
+
+        inner_v.addStretch(1)
+        scroll.setWidget(inner)
+        v.addWidget(scroll)
+
+        return row
+
+    def _make_tool_policy_row(self, tool: dict, aib_mod):
+        """One QHBoxLayout per tool: name + tooltip + Allow/Ask/Deny combo."""
+        h = QHBoxLayout(); h.setSpacing(8)
+        # Tool name — leave the family prefix off for compactness.
+        bare = tool["name"]
+        if "_" in bare:
+            bare = bare.split("_", 1)[1]
+        name_lbl = QLabel(bare)
+        name_lbl.setObjectName("settingsSubtitle")
+        name_lbl.setMinimumWidth(180)
+        name_lbl.setToolTip(f"{tool['name']}\n\n{tool['description']}")
+        h.addWidget(name_lbl, 1)
+
+        combo = QComboBox()
+        combo.addItem("Allow", "allow")
+        combo.addItem("Ask",   "ask")
+        combo.addItem("Deny",  "deny")
+        for i in range(combo.count()):
+            if combo.itemData(i) == tool["policy"]:
+                combo.setCurrentIndex(i); break
+        combo.setToolTip(
+            f"Default: {tool['default']}"
+            + (" (user override)" if tool["overridden"] else "")
+        )
+        tool_name = tool["name"]
+        combo.currentIndexChanged.connect(
+            lambda _, t=tool_name, c=combo:
+                aib_mod.set_tool_policy(t, c.currentData() or "allow")
+        )
+        self._tool_policy_combos[tool_name] = combo
+        h.addWidget(combo, 0)
+        return h
 
     # ─────────────────────────────────────────────────────────────────────────
     def _build_privacy_row(self):

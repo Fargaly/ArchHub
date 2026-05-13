@@ -9,7 +9,7 @@ toolset, and an output sink at `agents/outputs/<dept>/<task-id>/`.
 
 Safety contract (do NOT relax without explicit human review):
 
-  * Outputs land in `agents/outputs/`, never in `app/` or `relay/`.
+  * Outputs land in `agents/outputs/`, never in `app/` or `cloud_backend/`.
   * Branches are prefixed `auto/<dept>/<task-id>`. Never to `main`.
   * Pushes are off by default; any push needs `ARCHHUB_AUTO_PUSH=1`.
   * Every Ollama call is logged to `agents/logs/<dept>-YYYYMMDD.log`.

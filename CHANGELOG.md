@@ -3,6 +3,76 @@
 All notable changes to ArchHub.
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.2] — 2026-05-13
+
+The "alive again" hotfix release. Production Sentry alerts after
+v1.0.1 revealed dead code paths, missing imports, and a handful of UX
+gaps that made the app feel stagnant even when it was working. v1.0.2
+ships the diagnosis + every fix in one shot.
+
+### Fixed
+
+- **Settings → Cloud Sync no longer crashes** — `_on_sync_now` raised
+  `NameError: name 'QApplication' is not defined` (Sentry PYTHON-9).
+  Added the missing import.
+- **Transient network blips no longer kill a turn** — `llm_router`
+  retries once on `APIConnectionError`, `httpx.ReadError`,
+  `WinError 10054`, anthropic 529 / cloudflare 502-504 (Sentry
+  PYTHON-7). Auth/quota errors still switch provider as before.
+
+### Added
+
+- **Per-host AI Behaviour defaults** — `ai_behaviour._FAMILY_DEFAULTS`
+  maps each host family (revit / acad / max / outlook / blender / speckle
+  / archhub) to its own policy table. New connectors slotted into
+  `_FAMILY_DEFAULTS` get sensible defaults without touching the UI
+  or the generic rules.
+- **AI Behaviour panel in the legacy Settings dialog** — the section
+  previously lived only in the Studio shell; users opening the gear
+  from the chat window saw an empty old dialog. Settings now renders
+  the dynamic per-host tool list (grouped by family, scroll-area
+  capped at 260 px) plus the thinking-effort dropdown in both
+  surfaces.
+- **`+ Add Host` button in the chat header** — first-class entry
+  point instead of being buried in the Studio sidebar / app menu.
+  Routes to the Studio page when present, falls back to a modal
+  `AddHostPanel` so the chat-only fallback path also gets it.
+- **Live host status pills next to the brand** — one pill per
+  detected host family (●green = broker reports a live session,
+  ●amber = installed but no session, hidden = not detected). Probed
+  every 6 s; never blocks the UI.
+- **Startup self-test** — `_startup_self_test()` writes a one-block
+  summary to `boot.log` on every launch: broker session counts, host
+  installation paths, .NET SDK version, tool-registry breakdown by
+  family. Diagnosing "nothing works" becomes a one-file lookup.
+- **21 new tests** — coverage for `_FAMILY_DEFAULTS`,
+  `tools_grouped_by_host()`, `host_display_label()`, and
+  `_looks_like_transient_network()`. Total: 328 passing in `tests/`,
+  24 in `cloud_backend/tests/`.
+
+### Changed
+
+- `ai_behaviour._DEFAULT_RULES` renamed to `_GENERIC_RULES` and made
+  longest-pattern-first. Legacy name kept as an alias so external
+  callers don't break.
+- `ai_behaviour.tools_grouped_by_host()` added — single helper that
+  pulls live `tool_engine.TOOLS`, applies family + suffix rules,
+  groups by host, marks user overrides. UI consumes this instead of
+  iterating `TOOLS` itself.
+- `SettingsDialog` default size bumped 560 × 520 → 640 × 720 to fit
+  the new AI Behaviour section without forcing a global scroll.
+
+### Removed
+
+- **Orphan files deleted** — `app/company_pets.py` (pet-strip
+  decoration, no value), `app/do_build_2023.py`,
+  `app/do_build_2024.py` (superseded by
+  `auto_build.build_revit_connector(year)`).
+- **Dangling `relay/**/*.ts` glob references scrubbed** from
+  `agents/departments.py` (now `cloud_backend/**/*.py`).
+- **`relay/` directory cleaned up** — `.vercel/` cache + leftover
+  `node_modules/` removed (source files were deleted in v1.0.1).
+
 ## [1.0.1] — 2026-05-12
 
 The "make it actually work" release. v1.0.0 shipped 22 features in a

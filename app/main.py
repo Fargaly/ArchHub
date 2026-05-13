@@ -75,6 +75,99 @@ def _register_aumid_icon(aumid: str, ico_path: Path, display_name: str) -> None:
         pass
 
 
+def _startup_self_test() -> None:
+    """Probe every host broker + runner at startup, log results.
+
+    Writes one block to `boot.log` per launch:
+
+        === ArchHub startup self-test · 2026-05-13T14:02:08 ===
+        revit_broker    : 0 session(s)            [ok]
+        acad_broker     : 0 session(s)            [ok]
+        max_broker      : 1 session(s)            [ok]
+        outlook_broker  : 0 session(s)            [ok]
+        outlook_runner  : COM reachable           [ok]
+        revit installs  : 2024 → C:\\Program Files\\…
+        autocad installs: (none)
+        max installs    : (none)
+        dotnet sdk      : 8.0.300                 [ok]
+        tools registered: 37 (revit:4 acad:3 max:5 outlook:18 blender:5 archhub:2)
+
+    Diagnosing 'nothing works' becomes a one-file lookup. The block is
+    silent on success — the user only opens boot.log when something
+    feels off.
+    """
+    import datetime as _dt
+    from pathlib import Path as _P
+    lines: list[str] = []
+    lines.append("")
+    lines.append(f"=== ArchHub startup self-test · "
+                 f"{_dt.datetime.now().isoformat(timespec='seconds')} ===")
+
+    def _probe(label: str, fn) -> None:
+        try:
+            result = fn()
+            lines.append(f"{label:<16}: {result}")
+        except Exception as ex:
+            lines.append(f"{label:<16}: ERR — {type(ex).__name__}: {ex}")
+
+    # Brokers
+    for mod_name in ("revit_broker", "acad_broker", "max_broker",
+                      "outlook_broker"):
+        def _go(m=mod_name):
+            mod = __import__(m)
+            sess = list(mod.list_sessions() or [])
+            return f"{len(sess)} session(s)" + (
+                f" [{','.join(s.token for s in sess)}]" if sess else "")
+        _probe(mod_name, _go)
+
+    # Outlook COM
+    def _probe_outlook_com():
+        from connectors import outlook_runner
+        return "COM reachable" if outlook_runner.is_reachable() else "COM unreachable"
+    _probe("outlook_runner", _probe_outlook_com)
+
+    # Installed hosts (detection only, no build).
+    try:
+        import auto_build as _ab
+        revit_yrs = [y for y in (2020, 2021, 2022, 2023, 2024, 2025)
+                     if _ab.find_revit_install(y)]
+        acad_yrs = [y for y in (2024, 2025, 2026)
+                    if _ab.find_autocad_install(y)]
+        max_yrs = [y for y in (2025, 2026)
+                   if _ab.find_max_install(y)]
+        lines.append(f"{'revit installs':<16}: {revit_yrs or '(none)'}")
+        lines.append(f"{'autocad installs':<16}: {acad_yrs or '(none)'}")
+        lines.append(f"{'max installs':<16}: {max_yrs or '(none)'}")
+        sdk = None
+        try:
+            sdk = _ab.detect_dotnet_sdk()
+        except Exception:
+            sdk = None
+        lines.append(f"{'dotnet sdk':<16}: {sdk or '(not detected)'}")
+    except Exception as ex:
+        lines.append(f"{'detection':<16}: ERR — {type(ex).__name__}: {ex}")
+
+    # Tool registry summary.
+    try:
+        from tool_engine import TOOLS as _T
+        fams: dict[str, int] = {}
+        for t in _T:
+            fam = (t.get("family") or "?").lower()
+            fams[fam] = fams.get(fam, 0) + 1
+        breakdown = " ".join(f"{k}:{v}" for k, v in sorted(fams.items()))
+        lines.append(f"{'tools registered':<16}: {len(_T)} ({breakdown})")
+    except Exception as ex:
+        lines.append(f"{'tools registered':<16}: ERR — {ex}")
+
+    # Append to boot.log.
+    try:
+        log_path = APP_ROOT.parent / "boot.log"
+        with open(str(log_path), "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+
 def main() -> int:
     # Sentry init must happen BEFORE QApplication so import-time crashes
     # in Qt code get captured. No-op if user opted out / no DSN.
@@ -303,6 +396,16 @@ def main() -> int:
     except Exception:
         pass
 
+    # Startup self-test — probe every broker + host and write a one-line
+    # summary to boot.log. v1.0.2 addition: makes "stagnant / nothing
+    # alive" diagnosable from the user's own log without us asking them
+    # to run anything. Non-fatal — any probe that raises gets logged as
+    # "err" and the next host is probed.
+    try:
+        _startup_self_test()
+    except Exception:
+        pass
+
     # Tray
     icon = QIcon(str(ASSETS / "archhub.png")) if (ASSETS / "archhub.png").exists() else QIcon()
     tray = ArchHubTray(icon, surface, manager)
@@ -325,8 +428,7 @@ def main() -> int:
 
     # HUD overlay chrome — opt-in via Settings → Appearance. Default
     # is OFF: chat opens as a normal window so it doesn't obstruct
-    # Revit / AutoCAD work. The ambient layer is the pet strip
-    # (small, bottom-right) — it stays out of the way.
+    # Revit / AutoCAD work.
     #
     # Overlay only applies when the bare ChatWindow is the surface.
     # When the Studio shell wraps it, the shell IS the chrome — overlay
@@ -375,9 +477,6 @@ def main() -> int:
         except Exception:
             pass
 
-        # Pet strip is opt-in — runnable via `pythonw -m app.company_pets`
-        # for users who want a glanceable dept indicator. Auto-spawn was
-        # decoration, not value. Removed.
         # First-run onboarding wizard. Shows once per device; the user can
         # re-run from the menu via Show onboarding again. Done after the
         # main window is on screen so the wizard floats above it.

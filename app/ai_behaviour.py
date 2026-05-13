@@ -61,35 +61,109 @@ _OPENAI_EFFORT_MAP = {
     "high": "high",
 }
 
-# Tool-name patterns to default policy. Order matters — first match wins.
-_DEFAULT_RULES: tuple[tuple[str, str], ...] = (
-    # Deny path is reserved for future destructive ops. None today.
-    # Mutating / writing ops → ask. User confirms each call.
-    ("_execute_python", "ask"),
-    ("_execute_csharp", "ask"),
-    ("_execute_maxscript", "ask"),
-    ("_set_categories", "ask"),
-    ("_set_categories_by_filter", "ask"),
-    ("_auto_categorize", "ask"),
-    ("_draft_reply", "ask"),
-    ("_save_attachments", "ask"),
-    ("_create_folder", "ask"),
-    ("_move_to_folder", "ask"),
-    ("_mark_read", "ask"),
-    ("_flag_for_followup", "ask"),
-    ("_push_parameters", "ask"),
-    ("_screenshot", "ask"),
-    # Read-only / status calls → allow.
-    ("_ping",     "allow"),
-    ("_info",     "allow"),
-    ("_list",     "allow"),
-    ("_search",   "allow"),
-    ("_read_",    "allow"),
-    ("_pull_parameters", "allow"),
-    ("_get_",     "allow"),
-    # Local helpers → allow.
-    ("archhub_",  "allow"),
+# Per-host suffix → default policy. Lookup proceeds:
+#   1) family of the tool ("revit", "max", "outlook", …)
+#   2) suffix match within that family's table (longest match wins)
+#   3) cross-family fallback (`_FAMILY_DEFAULTS` row below)
+#   4) generic per-suffix fallback (`_GENERIC_RULES`)
+#
+# Why per-host: an "execute_python" in Blender (read-only sandbox)
+# is much lower-risk than "execute_python" in Outlook (talks to
+# corporate email). Per-host lets us nudge sensible defaults.
+_FAMILY_DEFAULTS: dict[str, dict[str, str]] = {
+    "revit": {
+        "ping": "allow", "info": "allow",
+        "execute_csharp": "ask", "execute_python": "ask",
+        "push_parameters": "ask", "pull_parameters": "allow",
+        "screenshot": "ask",
+    },
+    "acad": {
+        "ping": "allow", "info": "allow",
+        "execute_csharp": "ask", "execute_python": "ask",
+        "execute_lisp": "ask",
+    },
+    "max": {
+        "ping": "allow", "info": "allow",
+        "execute_python": "ask", "execute_maxscript": "ask",
+        "screenshot": "ask",
+    },
+    "blender": {
+        "ping": "allow", "info": "allow",
+        "execute_python": "ask",  # sandbox but can still hose a .blend
+        "save": "ask", "render": "ask",
+    },
+    "outlook": {
+        "ping": "allow", "info": "allow",
+        "list_inbox": "allow", "list_sent_items": "allow",
+        "list_folders": "allow", "list_distinct_senders": "allow",
+        "search_threads": "allow", "read_thread": "allow",
+        "draft_reply": "ask",
+        "send_draft": "ask",
+        "save_attachments": "ask",
+        "create_folder": "ask", "move_to_folder": "ask",
+        "mark_read": "ask", "flag_for_followup": "ask",
+        "set_categories": "ask", "set_categories_by_filter": "ask",
+        "auto_categorize_by_sender": "ask",
+        "auto_categorize_by_subject_keywords": "ask",
+        "execute_python": "ask",  # COM escape hatch — risky
+    },
+    "speckle": {
+        "list_projects": "allow", "get_project": "allow",
+        "push_parameters": "ask",
+    },
+    "archhub": {
+        # Local helpers — always safe.
+        "list_connectors": "allow",
+        "list_skills": "allow",
+        "run_skill": "ask",
+    },
+    "_local": {
+        # tool_engine.TOOLS uses "_local" as the family for ArchHub's
+        # own helpers (archhub_*). Alias of the "archhub" family above.
+        "list_connectors": "allow",
+        "list_skills": "allow",
+        "run_skill": "ask",
+    },
+}
+
+# Generic per-suffix fallback when a tool's family isn't yet known
+# (e.g. brand-new connector that hasn't been wired into ai_behaviour).
+# Longest suffix wins, so `execute_python` beats `execute`.
+_GENERIC_RULES: tuple[tuple[str, str], ...] = (
+    # Mutating / writing ops → ask.
+    ("execute_python", "ask"),
+    ("execute_csharp", "ask"),
+    ("execute_maxscript", "ask"),
+    ("execute_lisp", "ask"),
+    ("execute", "ask"),
+    ("draft_reply", "ask"),
+    ("send_draft", "ask"),
+    ("save_attachments", "ask"),
+    ("set_categories_by_filter", "ask"),
+    ("set_categories", "ask"),
+    ("auto_categorize_by_sender", "ask"),
+    ("auto_categorize_by_subject_keywords", "ask"),
+    ("auto_categorize", "ask"),
+    ("create_folder", "ask"),
+    ("move_to_folder", "ask"),
+    ("mark_read", "ask"),
+    ("flag_for_followup", "ask"),
+    ("push_parameters", "ask"),
+    ("screenshot", "ask"),
+    ("render", "ask"),
+    ("save", "ask"),
+    # Read-only.
+    ("ping", "allow"),
+    ("info", "allow"),
+    ("list_", "allow"),
+    ("search_", "allow"),
+    ("read_", "allow"),
+    ("pull_parameters", "allow"),
+    ("get_", "allow"),
 )
+
+# Legacy public name retained for any external caller — same semantics.
+_DEFAULT_RULES = _GENERIC_RULES
 
 
 def get_thinking_effort() -> str:
@@ -129,14 +203,122 @@ def openai_reasoning_effort(level: Optional[str] = None) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-def _default_policy_for(tool_name: str) -> str:
+def _family_of(tool_name: str) -> str:
+    """Best-effort guess of the host family for a tool name.
+
+    Pattern: tools are named `<family>_<verb>` (revit_ping, outlook_list_inbox,
+    archhub_list_connectors). Take the prefix up to the first underscore.
+    """
     n = (tool_name or "").lower()
-    for pattern, policy in _DEFAULT_RULES:
-        if pattern in n or n.startswith(pattern.lstrip("_")):
+    if "_" not in n:
+        return n
+    return n.split("_", 1)[0]
+
+
+def _suffix_of(tool_name: str) -> str:
+    n = (tool_name or "").lower()
+    if "_" not in n:
+        return ""
+    return n.split("_", 1)[1]
+
+
+def _default_policy_for(tool_name: str) -> str:
+    """Decide the default policy ('allow' / 'ask' / 'deny') for a tool.
+
+    Priority chain:
+      1. Family-specific override (`_FAMILY_DEFAULTS[family][suffix]`)
+      2. Family-specific longest-suffix substring match (e.g.
+         `list_distinct_senders` falls through to `list_` in family
+         table when present)
+      3. Generic suffix rules (`_GENERIC_RULES`), longest match wins
+      4. Catch-all: `"allow"` (user can tighten via Settings)
+    """
+    family = _family_of(tool_name)
+    suffix = _suffix_of(tool_name)
+
+    fam_table = _FAMILY_DEFAULTS.get(family, {})
+    # Exact suffix hit in family.
+    if suffix and suffix in fam_table:
+        return fam_table[suffix]
+    # Longest-prefix-of-suffix hit in family (longest first).
+    for key in sorted(fam_table.keys(), key=len, reverse=True):
+        if suffix.startswith(key) or key in suffix:
+            return fam_table[key]
+
+    # Generic rules — longest pattern first.
+    n = (tool_name or "").lower()
+    for pattern, policy in sorted(_GENERIC_RULES, key=lambda kv: len(kv[0]), reverse=True):
+        if pattern in n:
             return policy
-    # Fallback: unknown → allow. Better to err on usability; user can
-    # tighten any specific tool to ask/deny in Settings.
+
     return "allow"
+
+
+# ---------------------------------------------------------------------------
+def tools_grouped_by_host() -> dict[str, list[dict]]:
+    """Snapshot of the live `tool_engine.TOOLS` registry grouped by
+    host family, with each tool dict carrying:
+
+        { "name":        "outlook_list_inbox",
+          "description": "List the N most recent emails…",
+          "policy":      "allow",                      # active policy
+          "default":     "allow",                      # built-in default
+          "overridden":  False }                       # user-set?
+
+    Group ordering: revit → acad → max → outlook → blender → speckle
+    → archhub → anything else alphabetically. Tools within a group
+    sort alphabetically.
+
+    Used by Settings → AI Behaviour to render a section per connected
+    host. If a host's tools aren't registered (broker offline / not
+    installed) the corresponding section just doesn't appear.
+    """
+    try:
+        from tool_engine import TOOLS  # local import — avoid circular at module load
+    except Exception:
+        return {}
+
+    overrides = _load_overrides()
+    bucket: dict[str, list[dict]] = {}
+    for t in TOOLS:
+        name = t.get("name") or ""
+        if not name:
+            continue
+        fam = (t.get("family") or _family_of(name)).lower()
+        default = _default_policy_for(name)
+        policy = overrides.get(name, default)
+        bucket.setdefault(fam, []).append({
+            "name":        name,
+            "description": t.get("description") or "",
+            "policy":      policy,
+            "default":     default,
+            "overridden":  name in overrides,
+        })
+
+    # Preferred display order; unknown families appended alphabetically.
+    order = ("revit", "acad", "max", "outlook", "blender", "speckle",
+             "archhub", "_local")
+    out: dict[str, list[dict]] = {}
+    for fam in order:
+        if fam in bucket:
+            out[fam] = sorted(bucket.pop(fam), key=lambda d: d["name"])
+    for fam in sorted(bucket.keys()):
+        out[fam] = sorted(bucket[fam], key=lambda d: d["name"])
+    return out
+
+
+def host_display_label(family: str) -> str:
+    """Human label for a host family — used in Settings section headers."""
+    return {
+        "revit":   "Revit",
+        "acad":    "AutoCAD",
+        "max":     "3ds Max",
+        "outlook": "Outlook (classic)",
+        "blender": "Blender",
+        "speckle": "Speckle",
+        "archhub": "ArchHub (local)",
+        "_local":  "ArchHub (local)",
+    }.get((family or "").lower(), (family or "").title())
 
 
 def _load_overrides() -> dict[str, str]:

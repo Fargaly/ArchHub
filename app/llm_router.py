@@ -57,6 +57,50 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     return any(n in s for n in needles)
 
 
+def _looks_like_transient_network(ex: Exception) -> bool:
+    """True for short-lived network blips that a single retry fixes.
+    Examples we've seen in production Sentry:
+      - WinError 10054 'forcibly closed by the remote host'
+      - httpx ReadError / ConnectError / RemoteProtocolError
+      - openai.APIConnectionError 'Connection error.'
+      - cloudflare 502/503/504 wrapping the upstream
+    These are NOT quota / auth — same provider on retry usually works.
+    """
+    s = (str(ex) or "").lower()
+    cls = type(ex).__name__.lower()
+    needles_msg = (
+        "forcibly closed",
+        "winerror 10054",
+        "connection error",
+        "connection reset",
+        "connection aborted",
+        "remote end closed",
+        "read timed out",
+        "read error",
+        "remoteprotocolerror",
+        "temporary failure",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "502",
+        "503",
+        "504",
+        "529",  # anthropic overloaded
+        "overloaded",
+    )
+    needles_cls = (
+        "apiconnectionerror",
+        "readerror",
+        "connecterror",
+        "remoteprotocolerror",
+        "readtimeout",
+        "connecttimeout",
+    )
+    if any(n in cls for n in needles_cls):
+        return True
+    return any(n in s for n in needles_msg)
+
+
 # Family-level keyword expansions — natural-language nouns the user
 # is likely to use that map to a host family. When any keyword on a
 # row matches the user's last message, ALL tools whose name starts
@@ -827,14 +871,39 @@ class LLMRouter:
             attempts.append(provider)
             try:
                 client = self._get_client(provider)
-                response = self._complete_once(
-                    history=history, provider=provider, model_name=model_name,
-                    note=note, client=client,
-                    on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
-                    on_reasoning=on_reasoning,
-                    on_status=on_status,
-                    session_pin=session_pin,
-                )
+                # Single transient-retry wrapper. Same provider, same
+                # model, one extra shot — catches WinError 10054, httpx
+                # ReadError, APIConnectionError, 502/503/504, anthropic
+                # 529 overloaded. Real auth/quota errors fall through
+                # to the outer except below and switch provider.
+                response = None
+                _net_retried = False
+                while True:
+                    try:
+                        response = self._complete_once(
+                            history=history, provider=provider, model_name=model_name,
+                            note=note, client=client,
+                            on_chunk=on_chunk, on_tool_invocation=on_tool_invocation,
+                            on_reasoning=on_reasoning,
+                            on_status=on_status,
+                            session_pin=session_pin,
+                        )
+                        break
+                    except Exception as _net_ex:
+                        if (_looks_like_transient_network(_net_ex)
+                                and not _net_retried):
+                            _net_retried = True
+                            try:
+                                on_status(
+                                    f"{provider}: transient network "
+                                    f"hiccup — retrying once…"
+                                )
+                            except Exception:
+                                pass
+                            import time as _t
+                            _t.sleep(1.2)
+                            continue
+                        raise
                 # Refusal detector — Gemini Flash + Pro emit refusal
                 # text ('I cannot read your emails') instead of using
                 # the tools, despite the AUTHORITY grant. We treat

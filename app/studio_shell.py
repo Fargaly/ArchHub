@@ -968,38 +968,18 @@ class StudioShell(QMainWindow):
         ]
 
     def _spawn_pet_strip(self) -> None:
-        """Launch the company pet strip — small floating dept indicator
-        bottom-right of the screen. Opt-in by user action; auto-spawn
-        was removed in v0.27 (decoration without value)."""
-        import subprocess as _sp
-        import sys as _sys
-        from pathlib import Path as _P
+        """Deprecated since v1.0.2 — the pet strip widget was removed
+        in this release (decoration without value, source of UI
+        flakiness). Kept as a no-op so legacy menu actions don't crash
+        if they're still wired up somewhere; toast tells the user the
+        feature is gone."""
         try:
-            py = _sys.executable.replace("python.exe", "pythonw.exe")
-            mod_path = _P(__file__).resolve().parent / "company_pets.py"
-            if not _P(py).exists() or not mod_path.exists():
-                from toast import show_toast
-                show_toast(self,
-                           "Pet strip script unavailable on this install.",
-                           kind="warn")
-                return
-            kw = {}
-            if _sys.platform == "win32":
-                kw["creationflags"] = getattr(_sp, "CREATE_NO_WINDOW",
-                                              0x08000000)
-            _sp.Popen([py, str(mod_path)], **kw)
             from toast import show_toast
             show_toast(self,
-                       "Pet strip spawned — bottom-right of your primary screen.",
-                       kind="ok")
-        except Exception as ex:
-            try:
-                from toast import show_toast
-                show_toast(self,
-                           f"Pet strip launch failed — {type(ex).__name__}",
-                           kind="err")
-            except Exception:
-                pass
+                       "Pet strip was removed in v1.0.2 — no action.",
+                       kind="warn")
+        except Exception:
+            pass
 
     def _ensure_params_panel(self):
         """Instantiate (once) the live ParametersPanel bound to the

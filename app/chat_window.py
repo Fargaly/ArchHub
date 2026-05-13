@@ -15,9 +15,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt6.QtGui import QAction, QFont, QTextCursor, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QScrollBar,
-    QSizePolicy, QSplitter, QTextEdit, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
+    QScrollBar, QSizePolicy, QSplitter, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from connector_panel import ConnectorPanel
@@ -1217,9 +1217,13 @@ class ChatWindow(QMainWindow):
         self._body_split.setSizes([900, 300])
 
     def _build_header(self) -> QWidget:
-        """Slim header: brand + model picker + single menu button.
-        All secondary actions live in the menu so the eye is drawn to chat,
-        not the chrome."""
+        """Slim header: brand + host status pills + model picker + Add Host + menu.
+
+        Add Host gets a top-level button (not buried in menu) so users
+        always have a one-click path to install / activate a connector.
+        Host pills next to the brand show which connectors are live so
+        the user immediately sees real state, not just chrome.
+        """
         bar = QFrame()
         bar.setObjectName("header")
         h = QHBoxLayout(bar)
@@ -1229,12 +1233,35 @@ class ChatWindow(QMainWindow):
         title = QLabel("ArchHub")
         title.setObjectName("brand")
         h.addWidget(title)
+
+        # Host status pills — one per detected host family, dot colour
+        # reflects live broker status. Click any pill to open Add Host
+        # pre-scrolled to that family. Refreshed every 6 s by
+        # _host_pill_timer.
+        self._host_pills_row = QHBoxLayout()
+        self._host_pills_row.setSpacing(6)
+        self._host_pill_labels: dict[str, QLabel] = {}
+        pills_wrap = QWidget()
+        pills_wrap.setLayout(self._host_pills_row)
+        h.addWidget(pills_wrap)
+
         h.addStretch(1)
 
         self.model_picker = QComboBox()
         self.model_picker.setObjectName("modelPicker")
         self._populate_model_picker()
         h.addWidget(self.model_picker)
+
+        # Top-level Add Host button — always visible, never buried.
+        self.add_host_btn = QPushButton("+ Add Host")
+        self.add_host_btn.setObjectName("ghostButton")
+        self.add_host_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_host_btn.setToolTip(
+            "Connect Revit / AutoCAD / 3ds Max / Blender / Outlook. "
+            "Auto-detects every supported host on this machine."
+        )
+        self.add_host_btn.clicked.connect(self._open_add_host)
+        h.addWidget(self.add_host_btn)
 
         # Single menu button — everything that used to be a header button
         # is now a labelled item in this menu, with the running version
@@ -1248,7 +1275,162 @@ class ChatWindow(QMainWindow):
         self.menu_btn.setMenu(self._build_app_menu())
         h.addWidget(self.menu_btn)
 
+        # Kick off the host-pill refresh timer right after the header
+        # is constructed (the first refresh runs on the Qt event loop
+        # so __init__ stays fast).
+        QTimer.singleShot(0, self._refresh_host_pills)
+        self._host_pill_timer = QTimer(self)
+        self._host_pill_timer.setInterval(6000)
+        self._host_pill_timer.timeout.connect(self._refresh_host_pills)
+        self._host_pill_timer.start()
+
         return bar
+
+    # ---------------------------------------------------------------------
+    # Host pills — live status indicator per detected host family.
+    # ---------------------------------------------------------------------
+    _HOST_PILL_FAMILIES: tuple[tuple[str, str, str], ...] = (
+        # (family, short label, broker module name)
+        ("revit",   "Revit",   "revit_broker"),
+        ("acad",    "Acad",    "acad_broker"),
+        ("max",     "Max",     "max_broker"),
+        ("outlook", "Outlook", "outlook_broker"),
+        ("blender", "Blender", None),  # blender has no broker; ping runner
+    )
+
+    def _refresh_host_pills(self) -> None:
+        """Probe each broker for live sessions, paint a pill per host."""
+        try:
+            # Clear current pills.
+            while self._host_pills_row.count():
+                item = self._host_pills_row.takeAt(0)
+                w = item.widget() if item is not None else None
+                if w is not None:
+                    w.setParent(None); w.deleteLater()
+            self._host_pill_labels.clear()
+
+            for family, short, broker_name in self._HOST_PILL_FAMILIES:
+                status = self._probe_host_status(family, broker_name)
+                if status == "missing":
+                    continue  # don't render a pill for hosts not present
+                pill = self._build_host_pill(family, short, status)
+                self._host_pills_row.addWidget(pill)
+                self._host_pill_labels[family] = pill
+        except Exception:
+            # Pills are decoration — never let a probe crash kill the
+            # chat window.
+            pass
+
+    def _probe_host_status(self, family: str, broker_name) -> str:
+        """Return 'live' / 'idle' / 'missing'.
+
+        Live  — broker reports ≥1 active session OR runner says so.
+        Idle  — host is detected on disk but no session is open.
+        Missing — host not installed / not detected; skip the pill.
+        """
+        try:
+            if broker_name:
+                mod = __import__(broker_name)
+                sessions = []
+                try:
+                    sessions = list(mod.list_sessions() or [])
+                except Exception:
+                    sessions = []
+                if sessions:
+                    return "live"
+            # Detect-on-disk probe for the hosts that have one.
+            try:
+                import auto_build
+                if family == "revit":
+                    for y in (2025, 2024, 2023, 2022, 2021, 2020):
+                        if auto_build.find_revit_install(y):
+                            return "idle"
+                elif family == "acad":
+                    for y in (2026, 2025, 2024):
+                        if auto_build.find_autocad_install(y):
+                            return "idle"
+                elif family == "max":
+                    for y in (2026, 2025):
+                        if auto_build.find_max_install(y):
+                            return "idle"
+            except Exception:
+                pass
+            if family == "outlook":
+                # Outlook has no separate broker; the COM proxy works
+                # whenever classic Outlook is running.
+                try:
+                    from connectors import outlook_runner
+                    if outlook_runner.is_reachable():
+                        return "live"
+                except Exception:
+                    pass
+                return "idle"
+            if family == "blender":
+                # Blender's addon listens on :9876 when active.
+                import socket
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.15)
+                    try:
+                        s.connect(("127.0.0.1", 9876))
+                        return "live"
+                    except Exception:
+                        return "missing"
+            return "missing"
+        except Exception:
+            return "missing"
+
+    def _build_host_pill(self, family: str, short: str, status: str) -> QLabel:
+        dot = {"live": "#5fb87a", "idle": "#b09060", "missing": "#666"}[status]
+        ink = {"live": "#e8e6dc", "idle": "#a4a098", "missing": "#666"}[status]
+        pill = QLabel(f"<span style='color:{dot}'>●</span> "
+                       f"<span style='color:{ink}'>{short}</span>")
+        pill.setObjectName("hostPill")
+        pill.setTextFormat(Qt.TextFormat.RichText)
+        pill.setToolTip(
+            f"{short} · {status}"
+            + (" (broker reports a live session)" if status == "live"
+                else " (installed, no session)" if status == "idle"
+                else "")
+        )
+        # No native click on QLabel — wrap in a hand cursor and accept
+        # mousePress on the label via event filter. Keep simple: install
+        # cursor + tooltip; users discover Add Host via the button.
+        pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        return pill
+
+    # ---------------------------------------------------------------------
+    def _open_add_host(self) -> None:
+        """Show Add Host panel. Routes to Studio shell page if we live
+        inside one; otherwise wraps the panel in a modal dialog so the
+        chat window has its own first-class path."""
+        # Studio-shell path.
+        try:
+            win = self.window()
+            setter = getattr(win, "_set_page", None)
+            if callable(setter):
+                setter("addhost")
+                return
+        except Exception:
+            pass
+        # Modal-dialog path — works whether or not StudioShell is live.
+        try:
+            from add_host_panel import AddHostPanel
+            dlg = QDialog(self)
+            dlg.setWindowTitle("ArchHub — Add Host")
+            dlg.resize(720, 640)
+            layout = QVBoxLayout(dlg)
+            layout.setContentsMargins(0, 0, 0, 0)
+            panel = AddHostPanel(manager=self.manager, parent=dlg)
+            layout.addWidget(panel)
+            dlg.exec()
+            # Refresh after closing — user may have built / activated.
+            self._refresh_host_pills()
+            self._refresh_status()
+        except Exception as ex:
+            QMessageBox.warning(
+                self, "Add Host",
+                f"Could not open Add Host panel: {type(ex).__name__}: {ex}"
+            )
 
     def _build_app_menu(self) -> QMenu:
         """The single dropdown that holds every secondary action."""

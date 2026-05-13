@@ -75,14 +75,17 @@ def _default_model_for(provider: str) -> str:
 # ---------------------------------------------------------------------------
 async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
     """Handle one chat completion request. Streams SSE."""
-    # Quota gate first — saves a provider round-trip when the user
-    # is already over.
-    remaining = db.quota_remaining(user["id"])
+    # Quota gate first — saves a provider round-trip when the actor is
+    # already over. v1.3.3: actor = company when user.current_company_id
+    # is set (Studio + Firm seats share one bucket); falls back to user
+    # quota for solo + trial users.
+    remaining = db.quota_remaining_for_actor(user)
     if remaining <= 0:
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "quota_exhausted",
+                "actor":  "company" if user.get("current_company_id") else "user",
                 "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
             },
         )
@@ -149,8 +152,8 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
                                            u.get("completion_tokens") or 0)
                 except Exception:
                     pass
-        # End-of-stream: decrement + log.
-        db.increment_usage(user["id"], 1)
+        # End-of-stream: decrement + log. Actor-aware (company vs user).
+        db.increment_usage_for_actor(user, 1)
         cost = _COST_PER_MTOK_USD.get(model, {"in": 1.0, "out": 4.0})
         cost_micros = int(
             (in_toks * cost["in"] + out_toks * cost["out"])

@@ -210,6 +210,11 @@ def init_schema() -> None:
             "ALTER TABLE users ADD COLUMN country TEXT",
             "ALTER TABLE users ADD COLUMN signup_source TEXT",
             "ALTER TABLE users ADD COLUMN landing_variant TEXT",
+            # v1.3.3: per-company quota tracking. Studio plan seeds 2000,
+            # Firm plan seeds 1_000_000 (fair-use, throttled by per-min
+            # rate limit). Webhook + create_company set the right value.
+            "ALTER TABLE companies ADD COLUMN msg_limit INTEGER NOT NULL DEFAULT 2000",
+            "ALTER TABLE companies ADD COLUMN msg_used INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 con.execute(ddl)
@@ -343,6 +348,67 @@ def increment_usage(user_id: str, n: int = 1) -> int:
     if r is None:
         return 0
     return max(0, int(r["msg_limit"]) - int(r["msg_used"]))
+
+
+def quota_remaining_for_actor(user: dict) -> int:
+    """Resolve quota for the right billing actor: company if the user
+    is operating under a company context, user otherwise.
+
+    Studio + Firm plan seats share one company-level quota bucket.
+    Solo + trial users have their own user-level bucket.
+    """
+    if not isinstance(user, dict):
+        return 0
+    cid = user.get("current_company_id") or None
+    if cid:
+        with connect() as con:
+            r = con.execute(
+                "SELECT msg_limit, msg_used FROM companies WHERE id = ?",
+                (cid,),
+            ).fetchone()
+        if r is not None:
+            return max(0, int(r["msg_limit"]) - int(r["msg_used"]))
+        # Company row missing — fall through to user quota so the user
+        # isn't locked out by a stale current_company_id pointer.
+    return quota_remaining(user["id"])
+
+
+def increment_usage_for_actor(user: dict, n: int = 1) -> int:
+    """Bump usage on the right billing actor. Returns NEW remaining."""
+    if not isinstance(user, dict):
+        return 0
+    cid = user.get("current_company_id") or None
+    if cid:
+        with connect() as con:
+            con.execute(
+                "UPDATE companies SET msg_used = msg_used + ? WHERE id = ?",
+                (n, cid),
+            )
+            r = con.execute(
+                "SELECT msg_limit, msg_used FROM companies WHERE id = ?",
+                (cid,),
+            ).fetchone()
+        if r is not None:
+            return max(0, int(r["msg_limit"]) - int(r["msg_used"]))
+        # Company row missing — fall through to user-level.
+    return increment_usage(user["id"], n)
+
+
+def update_company_quota(company_id: str, *, plan: str) -> None:
+    """Seed company.msg_limit from plan + reset msg_used.
+
+    Called by the Stripe webhook on `checkout.session.completed` /
+    `customer.subscription.updated` when `metadata.kind == "company"`.
+    Mirrors `update_user_plan` shape so the per-plan quotas are kept
+    in one source of truth (config.PLAN_QUOTAS).
+    """
+    msg_limit = config.PLAN_QUOTAS.get(plan, config.PLAN_QUOTAS["trial"])
+    with connect() as con:
+        con.execute(
+            "UPDATE companies SET plan = ?, msg_limit = ?, msg_used = 0"
+            " WHERE id = ?",
+            (plan, msg_limit, company_id),
+        )
 
 
 def quota_remaining(user_id: str) -> int:

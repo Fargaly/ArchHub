@@ -7,4 +7,5 @@ app startup).
 from . import io_data       # noqa: F401  registers input.parameter, output.parameter, data.constant, data.template
 from . import llm           # noqa: F401  registers llm.complete, llm.complete_with_tools, llm.classify
 from . import control       # noqa: F401  registers control.if, control.merge, control.foreach
+from . import aec           # noqa: F401  registers aec.dxf_reader, aec.ifc_reader, aec.csv_reader, aec.revit_wall, aec.column, aec.qto_pricing, aec.cost_estimate, aec.schedule_builder, aec.team_member_selector
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

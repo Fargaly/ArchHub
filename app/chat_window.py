@@ -1907,24 +1907,29 @@ class ChatWindow(QMainWindow):
             ("files",  "Chat with Files", "Inline files referenced in this turn"),
             ("code",   "Code",   "Permit execute_python tools this turn (otherwise auto-deny)"),
         )
-        # Inline-style chips so they render correctly even when
-        # theme.qss hasn't been regenerated to know about `toolChip`.
-        # Pill shape, neutral off / warm-accent on.
+        # Inline-style chips built from design_tokens so dark mode
+        # works (BRAND v0.1: hex literals are the round-1 audit's main
+        # palette-drift offender — don't add new ones).
+        from design_tokens import current as _palette
+        T = _palette()
         chip_qss = (
-            "QPushButton#toolChip { "
-            "  background: transparent; "
-            "  color: #8a8a8c; "
-            "  border: 1px solid #3a3a3c; "
-            "  border-radius: 12px; "
-            "  padding: 3px 12px; "
-            "  font-size: 11px; "
-            "} "
-            "QPushButton#toolChip:hover { color: #e8e6dc; "
-            "  border-color: #5a5a5c; } "
-            "QPushButton#toolChip:checked { "
-            "  background: #d97757; color: #fff; "
-            "  border-color: #d97757; "
-            "} "
+            f"QPushButton#toolChip {{ "
+            f"  background: transparent; "
+            f"  color: {T['inkMuted']}; "
+            f"  border: 1px solid {T['line']}; "
+            f"  border-radius: 12px; "
+            f"  padding: 3px 12px; "
+            f"  font-size: 11px; "
+            f"}} "
+            f"QPushButton#toolChip:hover {{ "
+            f"  color: {T['ink']}; "
+            f"  border-color: {T['inkMuted']}; "
+            f"}} "
+            f"QPushButton#toolChip:checked {{ "
+            f"  background: {T['accent']}; "
+            f"  color: {T['bgRaised']}; "
+            f"  border-color: {T['accent']}; "
+            f"}} "
         )
         for key, label, tip in chip_specs:
             btn = QPushButton(label)

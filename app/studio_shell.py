@@ -740,7 +740,7 @@ class StudioShell(QMainWindow):
         n.setFixedWidth(36)
         n.setStyleSheet(
             f"QLabel#studioPipelineNum {{"
-            f"  font-family:{TYPE['fontMono']}; color:{T['textMuted']};"
+            f"  font-family:{TYPE['fontMono']}; color:{T['inkMuted']};"
             f"  font-size:13px; letter-spacing:0.08em;"
             f"}}")
         h.addWidget(n)
@@ -750,7 +750,7 @@ class StudioShell(QMainWindow):
         col.setSpacing(2)
         t = QLabel(name)
         t.setObjectName("studioBody")
-        t.setStyleSheet(f"font-weight:500; color:{T['text']};")
+        t.setStyleSheet(f"font-weight:500; color:{T['ink']};")
         d = QLabel(desc)
         d.setObjectName("studioMonoMuted")
         d.setWordWrap(True)
@@ -809,7 +809,7 @@ class StudioShell(QMainWindow):
         col.setSpacing(2)
         t = QLabel(title)
         t.setObjectName("studioBody")
-        t.setStyleSheet(f"font-weight:500; color:{T['text']};")
+        t.setStyleSheet(f"font-weight:500; color:{T['ink']};")
         d = QLabel(desc)
         d.setObjectName("studioMonoMuted")
         d.setWordWrap(True)

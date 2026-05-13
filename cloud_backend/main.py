@@ -235,6 +235,201 @@ def memory_stats(authorization: str | None = Header(None)) -> dict:
     return db.memory_stats(user_id=user["id"])
 
 
+# ── Semantic facts (ADR-002) ─────────────────────────────────────────
+import memory_writer
+import memory_extractor
+
+
+@app.post("/v1/memory/facts")
+async def memory_facts_create(req: Request,
+                               authorization: str | None = Header(None)) -> dict:
+    """Manual fact insertion. `/remember <fact>` from the desktop maps
+    here; the chat composer can also call this directly."""
+    user = _require_user(authorization)
+    body = await req.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400,
+                             detail={"error": "text required"})
+    scope = body.get("scope") or "user"
+    if scope not in db.VALID_SCOPES:
+        raise HTTPException(status_code=400,
+                             detail={"error": f"scope must be one of {db.VALID_SCOPES}"})
+    visibility = body.get("visibility") or "private"
+    if visibility not in db.VALID_VISIBILITY:
+        raise HTTPException(status_code=400,
+                             detail={"error": f"visibility must be one of {db.VALID_VISIBILITY}"})
+    res = memory_writer.apply_ops(
+        user_id=user["id"],
+        ops=[{"op": "ADD", "text": text, "scope": scope,
+              "confidence": float(body.get("confidence") or 0.7),
+              "subject": body.get("subject", ""),
+              "predicate": body.get("predicate", ""),
+              "object": body.get("object", ""),
+              "project_id": body.get("project_id"),
+              "company_id": user.get("current_company_id"),
+              "rationale": body.get("rationale", "manual add")}],
+    )
+    if res["errors"] or not res["added"]:
+        raise HTTPException(status_code=400,
+                             detail={"error": "write failed",
+                                     "details": res["errors"]})
+    fid = res["added"][0]
+    return {"id": fid, "stage": "added"}
+
+
+@app.get("/v1/memory/facts")
+def memory_facts_list(q: str | None = None,
+                       scope: str | None = None,
+                       limit: int = 50,
+                       authorization: str | None = Header(None)) -> dict:
+    """Search (q=) or list (q omitted). Always scoped to caller; shared
+    facts are included when the caller asks."""
+    user = _require_user(authorization)
+    limit = max(1, min(int(limit), 200))
+    if q:
+        rows = db.search_memory_facts(
+            user_id=user["id"], query=q,
+            include_shared=True, limit=limit,
+        )
+        # Audit reads of shared facts (private ones don't trigger).
+        for r in rows:
+            if r.get("visibility") in ("shared_company", "shared_public"):
+                db.log_memory_access(
+                    reader_user_id=user["id"], fact_id=int(r["id"]),
+                    purpose="search",
+                )
+        return {"results": rows, "query": q, "limit": limit}
+    rows = db.list_memory_facts(
+        user_id=user["id"], scope=scope, limit=limit,
+    )
+    return {"results": rows, "scope": scope, "limit": limit}
+
+
+@app.put("/v1/memory/facts/{fact_id}")
+async def memory_facts_update(fact_id: int, req: Request,
+                               authorization: str | None = Header(None)) -> dict:
+    user = _require_user(authorization)
+    existing = db.get_memory_fact(fact_id)
+    if not existing or existing["user_id"] != user["id"]:
+        raise HTTPException(status_code=404,
+                             detail={"error": "fact not found"})
+    body = await req.json()
+    res = memory_writer.apply_ops(
+        user_id=user["id"],
+        ops=[{"op": "UPDATE", "fact_id": fact_id,
+              "text": (body.get("text") or existing["text"]),
+              "confidence": body.get("confidence"),
+              "rationale": body.get("rationale", "manual update")}],
+    )
+    if res["errors"]:
+        raise HTTPException(status_code=400,
+                             detail={"error": "update failed",
+                                     "details": res["errors"]})
+    return {"id": fact_id, "stage": "updated"}
+
+
+@app.delete("/v1/memory/facts/{fact_id}")
+def memory_facts_delete(fact_id: int,
+                         authorization: str | None = Header(None)) -> dict:
+    """Soft-delete (sets valid_until=now). The row remains for audit."""
+    user = _require_user(authorization)
+    existing = db.get_memory_fact(fact_id)
+    if not existing or existing["user_id"] != user["id"]:
+        raise HTTPException(status_code=404,
+                             detail={"error": "fact not found"})
+    res = memory_writer.apply_ops(
+        user_id=user["id"],
+        ops=[{"op": "DELETE", "fact_id": fact_id,
+              "rationale": "manual forget"}],
+    )
+    if res["errors"]:
+        raise HTTPException(status_code=400,
+                             detail={"error": "delete failed",
+                                     "details": res["errors"]})
+    return {"id": fact_id, "stage": "deleted"}
+
+
+@app.post("/v1/memory/facts/{fact_id}/promote")
+async def memory_facts_promote(fact_id: int, req: Request,
+                                 authorization: str | None = Header(None)) -> dict:
+    """Private → collective. Redacts via transform policy first."""
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    try:
+        cid = memory_writer.promote_to_shared(
+            fact_id=fact_id, user_id=user["id"],
+            access_policy=body.get("access_policy", "public"),
+            domain=body.get("domain", "aec.general"),
+        )
+    except ValueError as ex:
+        raise HTTPException(status_code=400,
+                             detail={"error": str(ex)})
+    return {"collective_id": cid, "stage": "promoted"}
+
+
+@app.get("/v1/memory/collective")
+def memory_collective_list(domain: str | None = None,
+                             limit: int = 50,
+                             authorization: str | None = Header(None)) -> dict:
+    """Browse community-shared facts. Reads are audited for any user
+    other than the contributor."""
+    user = _require_user(authorization)
+    rows = db.list_collective_memory(domain=domain,
+                                       limit=max(1, min(int(limit), 200)))
+    for r in rows:
+        db.log_memory_access(
+            reader_user_id=user["id"], collective_id=int(r["id"]),
+            purpose="browse",
+        )
+    return {"results": rows}
+
+
+@app.post("/v1/memory/extract")
+async def memory_extract(req: Request,
+                          authorization: str | None = Header(None)) -> dict:
+    """Run the heuristic extractor on a chunk of chat text and apply
+    the resulting ops. Returns the writer summary."""
+    user = _require_user(authorization)
+    body = await req.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400,
+                             detail={"error": "text required"})
+    source_sample_id = body.get("source_sample_id")
+    ops = memory_extractor.extract_ops(
+        user_id=user["id"], text=text,
+    )
+    res = memory_writer.apply_ops(
+        user_id=user["id"], ops=ops,
+        source_sample_id=int(source_sample_id) if source_sample_id else None,
+    )
+    return {"ops_proposed": ops, "result": res}
+
+
+@app.get("/v1/memory/ops")
+def memory_ops_list(limit: int = 50,
+                     authorization: str | None = Header(None)) -> dict:
+    """Audit log for the calling user. Mem0-style op trace."""
+    user = _require_user(authorization)
+    rows = db.list_memory_ops(
+        user_id=user["id"],
+        limit=max(1, min(int(limit), 500)),
+    )
+    return {"results": rows}
+
+
+async def _has_body(req: Request) -> bool:
+    """FastAPI lets you call .json() on an empty body; we want to
+    distinguish that from a JSON object. Returns False when the
+    Content-Length is 0 or absent."""
+    cl = req.headers.get("content-length") or "0"
+    try:
+        return int(cl) > 0
+    except Exception:
+        return False
+
+
 @app.get("/v1/billing/plans")
 def billing_plans() -> dict:
     """Public plan catalog — used by the desktop app to render the

@@ -163,6 +163,128 @@ CREATE TABLE IF NOT EXISTS marketplace_reports (
     FOREIGN KEY (reporter_user_id) REFERENCES users(id)
 );
 
+-- ── Memory architecture (ADR-002, v1.3.4+) ──────────────────────────
+--
+-- Five tiers; this DB layer implements three of them:
+--
+--   EPISODIC   = training_samples (already above)
+--   SEMANTIC   = memory_facts + memory_facts_fts (below)
+--   COLLECTIVE = collective_memory (below)
+--
+-- HOT lives in-process on the desktop; PROCEDURAL is the LoRA-trained
+-- apprentice that ships when ADR-001 Stack A pivot point hits.
+--
+-- Every write to memory_facts is logged in memory_op_log so the user
+-- can audit "why does ArchHub remember X?" and rewind.
+
+CREATE TABLE IF NOT EXISTS memory_facts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             TEXT NOT NULL,
+    company_id          TEXT,
+    project_id          TEXT,
+    -- 'user' | 'project' | 'company' | 'global'
+    scope               TEXT NOT NULL DEFAULT 'user',
+    -- 'private' | 'shared_company' | 'shared_public'
+    visibility          TEXT NOT NULL DEFAULT 'private',
+    -- Triple form (sparse — text is the canonical form)
+    subject             TEXT NOT NULL DEFAULT '',
+    predicate           TEXT NOT NULL DEFAULT '',
+    object              TEXT NOT NULL DEFAULT '',
+    -- Canonical denormalised form for FTS5 + display
+    text                TEXT NOT NULL,
+    -- 0.0 - 1.0, raised by reinforce
+    confidence          REAL NOT NULL DEFAULT 0.7,
+    -- Provenance: which approved sample this came from (NULL when manual)
+    source_sample_id    INTEGER,
+    -- Temporal validity. valid_until=NULL means current.
+    valid_from          INTEGER NOT NULL,
+    valid_until         INTEGER,
+    created_at          INTEGER NOT NULL,
+    last_reinforced_at  INTEGER NOT NULL,
+    reinforce_count     INTEGER NOT NULL DEFAULT 1,
+    -- Optional sentence-transformer embedding (384-dim MiniLM) as BLOB
+    embedding           BLOB,
+    embedding_model     TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (source_sample_id) REFERENCES training_samples(id)
+);
+
+-- FTS5 index over the canonical text column. Keeps search fast on
+-- pure-SQLite deploys until pgvector lands (ADR-002 §"revisit").
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+    text,
+    content='memory_facts',
+    content_rowid='id'
+);
+
+-- Keep FTS in sync via triggers. Cheap — facts churn slowly.
+CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts
+BEGIN
+    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts
+BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
+        VALUES('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts
+BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
+        VALUES('delete', old.id, old.text);
+    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+-- Per arXiv 2505.18279 Collaborative Memory. Anonymised + redacted
+-- patterns promoted from private memory_facts. Searchable by everyone
+-- subject to access_policy.
+CREATE TABLE IF NOT EXISTS collective_memory (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    text                    TEXT NOT NULL,
+    domain                  TEXT NOT NULL DEFAULT 'aec.general',
+    -- Provenance audit. user_id kept on contributor side, NOT exposed in queries.
+    contributing_user_id    TEXT NOT NULL,
+    contributing_company_id TEXT,
+    source_fact_id          INTEGER,
+    redaction_policy        TEXT NOT NULL DEFAULT 'transform',
+    -- 'public' | 'architects_only' | 'studio_tier+'
+    access_policy           TEXT NOT NULL DEFAULT 'public',
+    confidence              REAL NOT NULL DEFAULT 0.7,
+    upvotes                 INTEGER NOT NULL DEFAULT 0,
+    downvotes               INTEGER NOT NULL DEFAULT 0,
+    promoted_at             INTEGER NOT NULL,
+    embedding               BLOB,
+    FOREIGN KEY (contributing_user_id) REFERENCES users(id),
+    FOREIGN KEY (source_fact_id) REFERENCES memory_facts(id)
+);
+
+-- Mem0-style op log. Every write to memory_facts (ADD/UPDATE/DELETE/NOOP)
+-- gets one row here. Lets the user audit "what did ArchHub learn from
+-- session X" and rewind.
+CREATE TABLE IF NOT EXISTS memory_op_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    fact_id         INTEGER,
+    op              TEXT NOT NULL,         -- 'ADD' | 'UPDATE' | 'DELETE' | 'NOOP'
+    source_sample_id INTEGER,
+    rationale       TEXT NOT NULL DEFAULT '',
+    before_text     TEXT,
+    after_text      TEXT,
+    ts              INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Per arXiv 2505.18279 audit log. Every READ of a non-private fact
+-- gets recorded so reviews can trace which user pulled which fact.
+CREATE TABLE IF NOT EXISTS memory_access_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    reader_user_id TEXT NOT NULL,
+    fact_id     INTEGER,                   -- NULL for collective_memory reads
+    collective_id INTEGER,                 -- NULL for memory_facts reads
+    purpose     TEXT NOT NULL DEFAULT 'retrieve',
+    ts          INTEGER NOT NULL,
+    FOREIGN KEY (reader_user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS training_samples (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT NOT NULL,
@@ -186,6 +308,12 @@ CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id)
 CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
 CREATE INDEX IF NOT EXISTS idx_training_user_stage ON training_samples(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_training_created ON training_samples(created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_user_scope ON memory_facts(user_id, scope, valid_until);
+CREATE INDEX IF NOT EXISTS idx_memory_visibility ON memory_facts(visibility);
+CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
+CREATE INDEX IF NOT EXISTS idx_memory_op_user ON memory_op_log(user_id, ts);
+CREATE INDEX IF NOT EXISTS idx_memory_access_reader ON memory_access_log(reader_user_id, ts);
+CREATE INDEX IF NOT EXISTS idx_collective_domain ON collective_memory(domain);
 """
 
 
@@ -611,6 +739,251 @@ def memory_stats(user_id: str) -> dict:
         "train_ready":   approved_count >= int(threshold),
         "threshold":     int(threshold),
     }
+
+
+# ---------------------------------------------------------------------------
+# Semantic memory facts (ADR-002)
+# ---------------------------------------------------------------------------
+#
+# Atomic facts. Mem0-style ADD/UPDATE/DELETE/NOOP operations apply through
+# `apply_memory_op` below. Search uses FTS5 over the `text` column; vector
+# search is best-effort via the embedding BLOB (populated by an async
+# embedding worker when one is configured).
+
+VALID_SCOPES = ("user", "project", "company", "global")
+VALID_VISIBILITY = ("private", "shared_company", "shared_public")
+VALID_OPS = ("ADD", "UPDATE", "DELETE", "NOOP")
+
+
+def insert_memory_fact(*, user_id: str, text: str,
+                        subject: str = "", predicate: str = "",
+                        object: str = "",
+                        scope: str = "user",
+                        visibility: str = "private",
+                        confidence: float = 0.7,
+                        company_id: Optional[str] = None,
+                        project_id: Optional[str] = None,
+                        source_sample_id: Optional[int] = None,
+                        ) -> int:
+    """Insert a new fact. Returns row id.
+
+    Caller is responsible for asserting non-private writes have gone
+    through the redaction policy (memory_writer.promote_to_shared).
+    """
+    if scope not in VALID_SCOPES:
+        raise ValueError(f"scope must be one of {VALID_SCOPES}")
+    if visibility not in VALID_VISIBILITY:
+        raise ValueError(f"visibility must be one of {VALID_VISIBILITY}")
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("text required")
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO memory_facts (user_id, company_id, project_id,"
+            " scope, visibility, subject, predicate, object, text,"
+            " confidence, source_sample_id, valid_from, valid_until,"
+            " created_at, last_reinforced_at, reinforce_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1)",
+            (user_id, company_id, project_id, scope, visibility,
+             subject, predicate, object, text,
+             float(confidence), source_sample_id, now, now, now),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def get_memory_fact(fact_id: int) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM memory_facts WHERE id = ?", (fact_id,),
+        ).fetchone()
+    return dict(r) if r else None
+
+
+def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
+                       include_expired: bool = False,
+                       limit: int = 50) -> list[dict]:
+    where = ["user_id = ?"]
+    params: list = [user_id]
+    if scope:
+        where.append("scope = ?")
+        params.append(scope)
+    if not include_expired:
+        where.append("valid_until IS NULL")
+    params.append(int(limit))
+    with connect() as con:
+        rows = con.execute(
+            f"SELECT * FROM memory_facts WHERE {' AND '.join(where)}"
+            f" ORDER BY last_reinforced_at DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_memory_facts(*, user_id: str, query: str,
+                         include_shared: bool = True,
+                         limit: int = 10) -> list[dict]:
+    """FTS5 search. When include_shared=True the user also sees their
+    company's shared facts (scope=company OR visibility=shared_company).
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    # FTS5 query — escape double-quotes by doubling them.
+    safe = query.replace('"', '""')
+    visibility_clauses = ["user_id = ?"]
+    params: list = [user_id]
+    if include_shared:
+        visibility_clauses.append(
+            "(visibility IN ('shared_company','shared_public'))"
+        )
+    visibility_sql = " OR ".join(visibility_clauses)
+    with connect() as con:
+        rows = con.execute(
+            "SELECT f.*, bm25(memory_facts_fts) AS rank"
+            " FROM memory_facts f"
+            " JOIN memory_facts_fts ON memory_facts_fts.rowid = f.id"
+            f" WHERE memory_facts_fts MATCH ? AND f.valid_until IS NULL"
+            f"   AND ({visibility_sql})"
+            " ORDER BY rank LIMIT ?",
+            (f'"{safe}"', *params, int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_memory_fact(fact_id: int, *,
+                        text: Optional[str] = None,
+                        confidence: Optional[float] = None,
+                        reinforce: bool = True) -> None:
+    """Apply a refinement to an existing fact. `reinforce=True` bumps
+    reinforce_count + last_reinforced_at."""
+    now = int(time.time())
+    sets = []
+    params: list = []
+    if text is not None and text.strip():
+        sets.append("text = ?")
+        params.append(text.strip())
+    if confidence is not None:
+        sets.append("confidence = ?")
+        params.append(float(confidence))
+    if reinforce:
+        sets.append("reinforce_count = reinforce_count + 1")
+        sets.append("last_reinforced_at = ?")
+        params.append(now)
+    if not sets:
+        return
+    params.append(fact_id)
+    with connect() as con:
+        con.execute(
+            f"UPDATE memory_facts SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+
+
+def delete_memory_fact(fact_id: int) -> None:
+    """Soft-delete. Sets valid_until=now; row stays for audit."""
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "UPDATE memory_facts SET valid_until = ? WHERE id = ? AND valid_until IS NULL",
+            (now, fact_id),
+        )
+
+
+def log_memory_op(*, user_id: str, op: str,
+                   fact_id: Optional[int] = None,
+                   source_sample_id: Optional[int] = None,
+                   rationale: str = "",
+                   before_text: Optional[str] = None,
+                   after_text: Optional[str] = None) -> int:
+    if op not in VALID_OPS:
+        raise ValueError(f"op must be one of {VALID_OPS}")
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO memory_op_log (user_id, fact_id, op,"
+            " source_sample_id, rationale, before_text, after_text, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, fact_id, op, source_sample_id, rationale,
+             before_text, after_text, now),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def list_memory_ops(*, user_id: str, limit: int = 50) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT * FROM memory_op_log WHERE user_id = ?"
+            " ORDER BY ts DESC LIMIT ?",
+            (user_id, int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Collective memory (community-shared, redacted) ──────────────────
+def promote_to_collective(*, fact_id: int, contributing_user_id: str,
+                            redaction_policy: str = "transform",
+                            access_policy: str = "public",
+                            domain: str = "aec.general",
+                            redacted_text: Optional[str] = None,
+                            ) -> int:
+    """Promote a private fact into the community store.
+
+    Per ADR-002: any non-private write must apply the `transform`
+    redaction policy. Caller passes the already-redacted text (from
+    memory_writer.redact_text); we just persist + audit."""
+    src = get_memory_fact(fact_id)
+    if not src:
+        raise ValueError(f"fact {fact_id} not found")
+    text = (redacted_text or src["text"]).strip()
+    company_id = src.get("company_id")
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO collective_memory ("
+            " text, domain, contributing_user_id, contributing_company_id,"
+            " source_fact_id, redaction_policy, access_policy,"
+            " confidence, promoted_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (text, domain, contributing_user_id, company_id,
+             fact_id, redaction_policy, access_policy,
+             float(src.get("confidence") or 0.7), now),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def list_collective_memory(*, domain: Optional[str] = None,
+                              limit: int = 50) -> list[dict]:
+    where = []
+    params: list = []
+    if domain:
+        where.append("domain = ?")
+        params.append(domain)
+    sql = "SELECT id, text, domain, redaction_policy, access_policy," \
+          " confidence, upvotes, downvotes, promoted_at" \
+          " FROM collective_memory"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY promoted_at DESC LIMIT ?"
+    params.append(int(limit))
+    with connect() as con:
+        rows = con.execute(sql, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def log_memory_access(*, reader_user_id: str,
+                       fact_id: Optional[int] = None,
+                       collective_id: Optional[int] = None,
+                       purpose: str = "retrieve") -> None:
+    """Per arXiv 2505.18279: record every read of a non-private fact."""
+    with connect() as con:
+        con.execute(
+            "INSERT INTO memory_access_log ("
+            " reader_user_id, fact_id, collective_id, purpose, ts)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (reader_user_id, fact_id, collective_id, purpose,
+             int(time.time())),
+        )
 
 
 def advance_training_sample(sample_id: int, *, stage: str,

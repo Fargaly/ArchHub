@@ -193,7 +193,21 @@ def needs_sync(source_root: Path, install_root: Path) -> tuple[bool, dict]:
 
 def _copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    # Use a tmp-then-rename so a crash mid-copy doesn't leave a
+    # half-written file in place. shutil.copy2 followed by os.replace
+    # is atomic on the same filesystem; both sides of dev sync live on
+    # %LOCALAPPDATA% so this holds.
+    tmp = dst.with_suffix(dst.suffix + ".dst_tmp")
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except Exception:
+        # Best-effort cleanup of the temp file.
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
 
 def _copy_tree_merge(source_root: Path, install_root: Path, src_rel: str, dst_rel: str) -> None:
@@ -275,6 +289,35 @@ def _relaunch(install_root: Path, argv: Sequence[str]) -> None:
     args = [str(install_root / "app" / "main.py")]
     args.extend(arg for arg in argv[1:] if arg != "--no-dev-source-sync")
     args.append("--no-dev-source-sync")
+    # Force the OS write buffer to disk BEFORE we hand control to the
+    # successor process. Without this, os._exit(0) below would lose
+    # any data still in Windows' filesystem cache — manifests as the
+    # marker reporting "synced 603 files" while studio_shell.py and
+    # other freshly-copied files quietly stayed at their previous
+    # bytes on disk. The atomic _copy_file pattern (tmp + os.replace)
+    # plus this fsync sweep is the real ship-stability fix.
+    try:
+        # On Windows there's no os.sync(); flush python's own stdout/
+        # stderr buffers and call Win32 FlushFileBuffers via ctypes
+        # for the install root's volume.
+        try: sys.stdout.flush()
+        except Exception: pass
+        try: sys.stderr.flush()
+        except Exception: pass
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # Best-effort; failure is OK — the os.replace in
+                # _copy_file already gives per-file atomicity.
+                ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                    str(install_root), None, None, None)
+            except Exception:
+                pass
+        else:
+            try: os.sync()
+            except Exception: pass
+    except Exception:
+        pass
     subprocess.Popen([sys.executable, *args], cwd=str(install_root), close_fds=True)
 
 

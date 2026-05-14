@@ -238,7 +238,11 @@ def _dispatch_host_action(family: str, action: str, inputs: dict,
                  "autocad": "acad_broker",
                  "max": "max_broker"}[family]
             )
-            session = broker.pick_session()
+            # Prefer a session already pinned by version (set by
+            # _host_exec via info["_pinned_session"]).
+            session = info.get("_pinned_session") if isinstance(info, dict) else None
+            if session is None:
+                session = broker.pick_session()
         except Exception as ex:
             return {"dispatched": False,
                     "reason": f"broker_failed: {ex}"}
@@ -246,13 +250,20 @@ def _dispatch_host_action(family: str, action: str, inputs: dict,
             return {"dispatched": False, "reason": "no_session"}
         body = _json.dumps(inputs or {}).encode("utf-8")
         path = "/" + a.replace(" ", "_")
+        # If a document was supplied, append it to the path as
+        # ?doc=<title> so adapters that support it can narrow.
+        doc_q = inputs.get("doc") if isinstance(inputs, dict) else None
+        if doc_q:
+            from urllib.parse import quote as _q
+            path = f"{path}?doc={_q(str(doc_q))}"
         try:
             res = broker.forward(session, path, body=body,
                                   method="POST", timeout=10.0)
         except Exception as ex:
             return {"dispatched": False,
                     "reason": f"forward_failed: {ex}"}
-        return {"dispatched": True, "result": res}
+        return {"dispatched": True, "result": res,
+                "session_id": getattr(session, "session_id", "")}
 
     # ---- runner-driven families (blender/rhino) ---------------------
     if family in ("blender", "rhino"):
@@ -343,6 +354,44 @@ def _dispatch_host_action(family: str, action: str, inputs: dict,
     return {"dispatched": False, "reason": "unhandled_family"}
 
 
+def _pick_session_by_version(family: str, version_filter: str):
+    """Pick a broker session matching `version_filter`. Returns the
+    session object (broker dataclass) or None when no match. When the
+    filter is empty we fall back to broker.pick_session() (most-recent
+    healthy).
+
+    Used by _host_exec to honour the founder direction (2026-05-14):
+    'host tools should allow for specific version connection.'
+    """
+    mod_map = {"revit": "revit_broker",
+                "autocad": "acad_broker",
+                "max":     "max_broker"}
+    if family not in mod_map:
+        return None
+    try:
+        broker = __import__(mod_map[family])
+    except Exception:
+        return None
+    if not (version_filter or "").strip():
+        try:
+            return broker.pick_session()
+        except Exception:
+            return None
+    needle = str(version_filter).strip().lower()
+    try:
+        sessions = broker.list_sessions(prune=False) or []
+    except Exception:
+        sessions = []
+    for s in sessions:
+        if not getattr(s, "healthy", False):
+            continue
+        sv = str(getattr(s, "version", "") or "").lower()
+        sid = str(getattr(s, "session_id", "") or "").lower()
+        if needle and (needle == sv or needle in sv or needle in sid):
+            return s
+    return None
+
+
 def _host_exec(config: dict, inputs: dict, ctx) -> dict:
     """Probe the matching host adapter + (if action) dispatch it.
 
@@ -353,22 +402,55 @@ def _host_exec(config: dict, inputs: dict, ctx) -> dict:
 
     `status="missing_dep"` is reserved for the catastrophic case where
     the adapter MODULE itself fails to import (truly unrecoverable).
+
+    Honours config.version (pick the matching live session) and
+    config.document (narrow commands to that doc).
     """
     family = config.get("_family") or config.get("family") or "revit"
-    version_cfg = config.get("version") or ""
+    version_cfg = (config.get("version") or "").strip()
+    document_cfg = (config.get("document") or "").strip()
     action = (inputs.get("action") or "").strip()
 
-    # 1. Resolve host info.
+    # 1. Resolve host info — narrowed by version when supplied.
     if family == "outlook":
         info = _outlook_host_info()
     elif family == "speckle":
         info = _speckle_host_info()
     elif family in ("revit", "autocad", "max"):
-        info = _broker_host_info(family)
+        if version_cfg:
+            # Try to pin to the session matching this version. Falls
+            # back to default _broker_host_info if no match found.
+            pinned = _pick_session_by_version(family, version_cfg)
+            if pinned is not None:
+                info = {
+                    "alive":   True,
+                    "port":    getattr(pinned, "port", 0),
+                    "version": getattr(pinned, "version", "") or "",
+                    "session_id": getattr(pinned, "session_id", ""),
+                    "opened_doc": getattr(pinned, "doc_title", "") or None,
+                    "selection": [],
+                    "warnings": [],
+                    "_pinned_session": pinned,
+                }
+            else:
+                info = _broker_host_info(family)
+                if info.get("alive"):
+                    # Surface that we asked for a specific version
+                    # but couldn't find it.
+                    info["version_mismatch"] = version_cfg
+        else:
+            info = _broker_host_info(family)
     elif family in ("blender", "rhino"):
         info = _runner_host_info(family)
     else:
         info = {"alive": False, "reason": "unsupported"}
+
+    # If a document was requested, narrow inputs so dispatch routes there.
+    if document_cfg:
+        inputs = dict(inputs or {})
+        # Pass through both common shapes adapters expect.
+        inputs.setdefault("doc", document_cfg)
+        inputs.setdefault("document", document_cfg)
 
     # 2. Dispatch action if one was supplied.
     dispatch_result: dict = {}
@@ -441,8 +523,31 @@ def _register_host_node(family: str, name: str, icon: str,
             config_schema={
                 "_family":     {"type": "string", "default": family,
                                 "hidden": True},
+                # Dynamic — JS picker fetches options live from
+                # bridge.list_host_sessions(family). Stored value is
+                # the chosen version string (e.g. "2025"). When empty,
+                # the runner picks the most-recent healthy session.
                 "version":     {"type": "string", "default": "",
-                                "description": f"{name} version (e.g. 2025)"},
+                                "enum": "<dynamic>",
+                                "source": "list_host_sessions",
+                                "source_args": [family],
+                                "description": (
+                                    f"Pick which running instance of {name} "
+                                    f"to connect to. Refreshes live."
+                                )},
+                # Dynamic — JS picker fetches via
+                # bridge.list_host_documents(family, session_id).
+                # Stored value is the document title/path; runner
+                # narrows commands to that doc.
+                "document":    {"type": "string", "default": "",
+                                "enum": "<dynamic>",
+                                "source": "list_host_documents",
+                                "source_args": [family],
+                                "depends_on": ["version"],
+                                "description": (
+                                    f"Pick which open document inside "
+                                    f"the selected {name} session."
+                                )},
                 "default_doc": {"type": "string", "default": "",
                                 "description": "Document to open on activate"},
                 "auto_run":    {"type": "boolean", "default": False,

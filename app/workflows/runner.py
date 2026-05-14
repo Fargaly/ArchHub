@@ -28,12 +28,157 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from typing import Any, Callable, Optional
 
 from . import registry
 from . import typesystem
 from .graph import PortType
+
+
+# ── profound-wire field selectors ───────────────────────────────────
+# A small dotted-path resolver. Supports:
+#   "a.b.c"          — walk attrs / dict keys
+#   "items[0]"       — list index
+#   "items[-1].name" — chained
+#   "a['b c']"       — bracketed string key with spaces
+# Missing pieces resolve to None instead of raising. This keeps a
+# slightly-wrong selector from blowing up the whole graph cook — the
+# downstream node just sees None on that input.
+_TOKEN_RE = re.compile(
+    r"""
+    (?P<dot>\.)
+    | \[ \s* (?P<idx>-?\d+) \s* \]
+    | \[ \s* (?P<sqkey>'[^']*'|\"[^\"]*\") \s* \]
+    | (?P<name>[A-Za-z_][A-Za-z0-9_]*)
+    """,
+    re.VERBOSE,
+)
+
+
+def _tokenize_path(path: str) -> list:
+    """Split a dotted/bracketed path into ('key'|'idx', value) tokens."""
+    if not path:
+        return []
+    toks: list = []
+    i = 0
+    while i < len(path):
+        m = _TOKEN_RE.match(path, i)
+        if not m:
+            i += 1
+            continue
+        if m.group("dot"):
+            pass
+        elif m.group("idx") is not None:
+            toks.append(("idx", int(m.group("idx"))))
+        elif m.group("sqkey") is not None:
+            toks.append(("key", m.group("sqkey")[1:-1]))
+        elif m.group("name") is not None:
+            toks.append(("key", m.group("name")))
+        i = m.end()
+    return toks
+
+
+def _resolve_field(value: Any, path: str) -> Any:
+    """Walk a dotted/bracketed path through dicts/lists/attrs.
+
+    Returns None on any miss (keyError / indexError / no-attr) so the
+    caller can decide whether to treat that as a soft failure. Never
+    raises for normal lookup misses — only for genuinely malformed
+    paths handled implicitly by the tokenizer."""
+    if not path:
+        return value
+    cur = value
+    for kind, key in _tokenize_path(path):
+        if cur is None:
+            return None
+        if kind == "idx":
+            try:
+                cur = cur[key]
+            except (IndexError, TypeError, KeyError):
+                return None
+        else:  # 'key'
+            if isinstance(cur, dict):
+                if key in cur:
+                    cur = cur[key]
+                else:
+                    return None
+            else:
+                # attribute access on objects
+                cur = getattr(cur, key, None)
+    return cur
+
+
+def _wrap_field(value: Any, path: str) -> Any:
+    """Inverse of _resolve_field — wrap `value` into a nested dict so
+    that resolving `path` on the result returns `value`.
+
+    Used to package an incoming value into a sub-key of a structured
+    input slot. List-index segments become integer-keyed dicts (we keep
+    it simple — receivers that care can index into them).
+    """
+    if not path:
+        return value
+    toks = _tokenize_path(path)
+    if not toks:
+        return value
+    cur: Any = value
+    for kind, key in reversed(toks):
+        if kind == "idx":
+            cur = {int(key): cur}
+        else:
+            cur = {key: cur}
+    return cur
+
+
+def _enumerate_paths(value: Any, *, max_depth: int = 4,
+                      max_items: int = 200,
+                      _prefix: str = "",
+                      _out: Optional[list] = None) -> list:
+    """Walk a sample value and return every dotted path you could pass
+    to `_resolve_field` to fetch a sub-value.
+
+    Used by the bridge `list_wire_fields` slot — given the last value
+    that flowed on a wire, the canvas can show the user a picker of
+    available sub-fields. Stays bounded so a huge selection dict doesn't
+    enumerate a million paths."""
+    out = _out if _out is not None else []
+    if len(out) >= max_items or max_depth < 0:
+        return out
+    if isinstance(value, dict):
+        for k, v in value.items():
+            key = str(k)
+            seg = key if (key.replace("_", "").isalnum()
+                          and key and not key[0].isdigit()) \
+                  else f"['{key}']"
+            path = (f"{_prefix}.{seg}"
+                    if _prefix and not seg.startswith("[") else
+                    f"{_prefix}{seg}" if _prefix else seg)
+            out.append(path)
+            if isinstance(v, (dict, list)):
+                _enumerate_paths(v, max_depth=max_depth - 1,
+                                  max_items=max_items, _prefix=path,
+                                  _out=out)
+            if len(out) >= max_items:
+                return out
+    elif isinstance(value, list):
+        # Enumerate first few indices only — show last item too because
+        # AI message lists often want messages[-1].content.
+        n = len(value)
+        idxs = list(range(min(3, n)))
+        if n > 0:
+            idxs.append(-1)
+        for i in idxs:
+            path = f"{_prefix}[{i}]"
+            out.append(path)
+            if isinstance(value[i], (dict, list)):
+                _enumerate_paths(value[i], max_depth=max_depth - 1,
+                                  max_items=max_items, _prefix=path,
+                                  _out=out)
+            if len(out) >= max_items:
+                return out
+    return out
 
 
 # Persistence whitelist — types we'll happily cache to disk.
@@ -82,6 +227,8 @@ class WorkflowRunner:
                     "dst_node": t[0], "dst_port": t[1],
                     "cache_key": e.get("cache_key", ""),
                     "state":     e.get("state", "idle"),
+                    "src_field": e.get("src_field", "") or "",
+                    "dst_field": e.get("dst_field", "") or "",
                 }
             else:
                 edge = {
@@ -92,6 +239,8 @@ class WorkflowRunner:
                     "dst_node": e["dst_node"], "dst_port": e["dst_port"],
                     "cache_key": e.get("cache_key", ""),
                     "state":     e.get("state", "idle"),
+                    "src_field": e.get("src_field", "") or "",
+                    "dst_field": e.get("dst_field", "") or "",
                 }
             self.edges.append(edge)
 
@@ -200,6 +349,16 @@ class WorkflowRunner:
             h.update(e["dst_port"].encode("utf-8"))
             parent_key = self.node_cache_keys.get(e["src_node"], "")
             h.update(parent_key.encode("utf-8"))
+            # Profound-wire selectors are part of the cache key — changing
+            # the selector should invalidate the downstream cache even if
+            # the upstream cooked value hasn't changed.
+            sf = e.get("src_field") or ""
+            df = e.get("dst_field") or ""
+            if sf or df:
+                h.update(b"|sf|")
+                h.update(sf.encode("utf-8"))
+                h.update(b"|df|")
+                h.update(df.encode("utf-8"))
         return h.hexdigest()
 
     # ── pull (lazy + cached) ────────────────────────────────────────
@@ -241,6 +400,15 @@ class WorkflowRunner:
                     value = parent_out.get(e["src_port"])
                 else:
                     value = parent_out
+                # "Profound wire" — apply src_field on the way out of
+                # the source (pick a sub-value), then dst_field on the
+                # way in to the destination (wrap into a sub-key).
+                sf = e.get("src_field") or ""
+                if sf:
+                    value = _resolve_field(value, sf)
+                df = e.get("dst_field") or ""
+                if df:
+                    value = _wrap_field(value, df)
                 inputs[e["dst_port"]] = value
                 # Park value on the bus + emit "flowing" then "cached".
                 self.wire_bus[e["id"]] = value

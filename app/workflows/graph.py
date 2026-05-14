@@ -148,12 +148,22 @@ class Edge:
     cache_key: str = ""
     state: str = "idle"   # idle | flowing | cached | stale | error | upstream_error
     value_preview: str = ""   # repr(value)[:200] for hover tooltip
+    # v1.4+ "profound wires" (founder direction 2026-05-14):
+    # Edges aren't just hoses — they can pick a sub-field of the source
+    # output and/or wrap into a sub-key of the destination input.
+    # Example: src_field="selection.walls" picks only the walls list
+    # from a selection dict before flowing. dst_field="messages[-1]"
+    # writes incoming value into messages[-1] of the input slot dict.
+    # Empty string = pass-through (no transform).
+    src_field: str = ""
+    dst_field: str = ""
 
     def to_dict(self) -> dict:
         return {"id": self.id, "src_node": self.src_node, "src_port": self.src_port,
                 "dst_node": self.dst_node, "dst_port": self.dst_port,
                 "cache_key": self.cache_key, "state": self.state,
-                "value_preview": self.value_preview}
+                "value_preview": self.value_preview,
+                "src_field": self.src_field, "dst_field": self.dst_field}
 
     @staticmethod
     def from_dict(d: dict) -> "Edge":
@@ -161,7 +171,9 @@ class Edge:
                     dst_node=d["dst_node"], dst_port=d["dst_port"],
                     cache_key=d.get("cache_key", "") or "",
                     state=d.get("state", "idle") or "idle",
-                    value_preview=d.get("value_preview", "") or "")
+                    value_preview=d.get("value_preview", "") or "",
+                    src_field=d.get("src_field", "") or "",
+                    dst_field=d.get("dst_field", "") or "")
 
 
 # ---------------------------------------------------------------------------

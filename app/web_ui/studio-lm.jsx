@@ -1349,6 +1349,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
   const [wireDrag, setWireDrag] = React.useState(null); // {fromNode, fromSocket, fromType, x, y}
   const [selectedWire, setSelectedWire] = React.useState(null); // wire array index
+  // Profound wires (founder direction 2026-05-14): right-click on a wire
+  // → menu with "Pick source field…" / "Pick destination field…" /
+  // "Disconnect". `wireMenu` is the menu's screen-anchor + wire idx;
+  // `wireFieldPicker` is the field-list overlay state when one of the
+  // two pick options is chosen.
+  const [wireMenu, setWireMenu] = React.useState(null);   // {x,y,idx}
+  const [wireFieldPicker, setWireFieldPicker] = React.useState(null); // {x,y,idx,side,paths}
   const [, forceTick] = React.useReducer((n) => n + 1, 0);
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
@@ -1747,6 +1754,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const isError   = dataState === 'error' ||
                                dataState === 'upstream_error';
             const isCached  = dataState === 'cached';
+            // Profound-wire field selectors. `src_field`/`dst_field`
+            // get serialized into the wire by the bridge round-trip;
+            // older wires won't have them so we default to "".
+            const srcField = raw.src_field || '';
+            const dstField = raw.dst_field || '';
+            const hasField = !!(srcField || dstField);
             const strokeW = sel ? 3.4 :
                               isError ? 2.2 :
                               isCached ? 2.4 :
@@ -1763,6 +1776,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                               color;
             const dash = isStale ? '4 6' :
                           isError ? '2 4' : undefined;
+            // Midpoint for the "•[field]" label.
+            const mx = (w.x1 + w.x2) / 2;
+            const my = (w.y1 + w.y2) / 2;
+            const fieldLabel = hasField
+              ? `• ${srcField || ''}${(srcField && dstField) ? ' → ' : ''}${dstField || ''}`
+              : '';
             return (
               <g key={w.i}>
                 {/* Invisible wider hit-zone for click selection. */}
@@ -1771,6 +1790,18 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                        onClick={(e) => {
                          e.stopPropagation();
                          setSelectedWire(sel ? null : w.i);
+                       }}
+                       onContextMenu={(e) => {
+                         e.preventDefault();
+                         e.stopPropagation();
+                         const rect = wrapRef.current?.getBoundingClientRect();
+                         if (!rect) return;
+                         setSelectedWire(w.i);
+                         setWireMenu({
+                           x: e.clientX - rect.left,
+                           y: e.clientY - rect.top,
+                           idx: w.i,
+                         });
                        }}>
                   {raw._preview && <title>{raw._preview}</title>}
                 </path>
@@ -1785,6 +1816,18 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                          strokeDasharray="6 10"
                          style={{ animation:'lmDash 0.9s linear infinite',
                                    pointerEvents:'none' }}/>
+                )}
+                {hasField && (
+                  <g style={{ pointerEvents:'none' }}>
+                    <rect x={mx - (fieldLabel.length * 3.4)} y={my - 9}
+                           width={fieldLabel.length * 6.8} height={16}
+                           rx={3} fill={LM.bgPanel}
+                           stroke={useColor} strokeWidth={0.8}
+                           opacity={0.92}/>
+                    <text x={mx} y={my + 3} textAnchor="middle"
+                           fontFamily={LM.mono} fontSize={9.5}
+                           fill={useColor}>{fieldLabel}</text>
+                  </g>
                 )}
               </g>
             );
@@ -1849,6 +1892,74 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       <FloatingComposer setLibraryOpen={setLibraryOpen}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>}
+      {wireMenu && (
+        <WireMenu
+          x={wireMenu.x} y={wireMenu.y}
+          wire={LM_GRAPH.wires[wireMenu.idx]}
+          onClose={() => setWireMenu(null)}
+          onPickSrc={() => {
+            const wire = LM_GRAPH.wires[wireMenu.idx];
+            if (!wire) { setWireMenu(null); return; }
+            const sample = (wire && wire._preview) || '';
+            let paths = [];
+            try {
+              if (window.archhub && window.archhub.list_wire_fields) {
+                const res = window.archhub.list_wire_fields(
+                  wire.from[0], wire.from[1], sample);
+                const parsed = JSON.parse(res || '{}');
+                paths = parsed.paths || [];
+              }
+            } catch (e) { /* offline / no bridge — keep paths empty */ }
+            setWireFieldPicker({
+              x: wireMenu.x, y: wireMenu.y,
+              idx: wireMenu.idx, side: 'src',
+              paths,
+              initial: wire.src_field || '',
+            });
+            setWireMenu(null);
+          }}
+          onPickDst={() => {
+            const wire = LM_GRAPH.wires[wireMenu.idx];
+            if (!wire) { setWireMenu(null); return; }
+            setWireFieldPicker({
+              x: wireMenu.x, y: wireMenu.y,
+              idx: wireMenu.idx, side: 'dst',
+              paths: [],   // dst_field is freeform — no sample to scan
+              initial: wire.dst_field || '',
+            });
+            setWireMenu(null);
+          }}
+          onDisconnect={() => {
+            LM_GRAPH.wires.splice(wireMenu.idx, 1);
+            setWireMenu(null);
+            setSelectedWire(null);
+            _autosaveGraph();
+            forceTick();
+          }}
+        />
+      )}
+      {wireFieldPicker && (
+        <WireFieldPicker
+          x={wireFieldPicker.x} y={wireFieldPicker.y}
+          side={wireFieldPicker.side}
+          paths={wireFieldPicker.paths}
+          initial={wireFieldPicker.initial}
+          onCancel={() => setWireFieldPicker(null)}
+          onApply={(value) => {
+            const w = LM_GRAPH.wires[wireFieldPicker.idx];
+            if (w) {
+              if (wireFieldPicker.side === 'src') {
+                w.src_field = value || '';
+              } else {
+                w.dst_field = value || '';
+              }
+              _autosaveGraph();
+              forceTick();
+            }
+            setWireFieldPicker(null);
+          }}
+        />
+      )}
       <CanvasHint/>
     </div>
   );
@@ -1921,6 +2032,149 @@ const CanvasMenu = ({ x, y, onAddNode, onFit, onClose }) => {
           {it.k && <kbd style={kbd()}>{it.k}</kbd>}
         </button>
       ))}
+    </div>
+  );
+};
+
+// Right-click on a wire — "profound wires" context menu. Lets the user
+// pin which sub-field of the source output should flow (src_field),
+// which sub-key of the destination input slot to wrap into (dst_field),
+// or just disconnect the wire. Founder direction 2026-05-14: wires
+// shouldn't be one-shot hoses — they should carry slices between nodes.
+const WireMenu = ({ x, y, wire, onClose,
+                    onPickSrc, onPickDst, onDisconnect }) => {
+  React.useEffect(() => {
+    const dismiss = () => onClose();
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('click', dismiss);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', dismiss);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+  const w = wire || {};
+  const srcField = w.src_field || '';
+  const dstField = w.dst_field || '';
+  const items = [
+    { i:'◐', t: srcField ? `Source field: ${srcField}`
+                          : 'Pick source field…',
+      on: onPickSrc },
+    { i:'◑', t: dstField ? `Destination field: ${dstField}`
+                          : 'Pick destination field…',
+      on: onPickDst },
+    { sep: true },
+    { i:'✕', t:'Disconnect', danger:true, on:onDisconnect, k:'⌫' },
+  ];
+  return (
+    <div data-no-pan onClick={e => e.stopPropagation()} style={{
+      position:'absolute', left:x, top:y, zIndex:32,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7,
+      boxShadow:'0 16px 36px rgba(0,0,0,.55)', padding:5, minWidth:240,
+      animation:'lmSlideIn .12s ease-out',
+    }}>
+      <div style={{
+        padding:'4px 10px 8px', borderBottom:`1px solid ${LM.lineSoft}`,
+        fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+        letterSpacing:'0.06em',
+      }}>
+        WIRE · {(w.from && w.from.join('.')) || '?'} → {(w.to && w.to.join('.')) || '?'}
+      </div>
+      {items.map((it, i) => it.sep ? (
+        <div key={i} style={{ height:1, background:LM.lineSoft, margin:'4px 4px' }}/>
+      ) : (
+        <button key={i} onClick={() => { it.on && it.on(); }} style={{
+          width:'100%', display:'flex', alignItems:'center', gap:10, padding:'6px 10px',
+          background:'transparent', border:0, borderRadius:4, cursor:'pointer',
+          color: it.danger ? LM.err : LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+          <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
+          <span style={{ flex:1 }}>{it.t}</span>
+          {it.k && <kbd style={kbd()}>{it.k}</kbd>}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+// Overlay that lists available dotted paths and lets the user pick one
+// (or type a custom one) as the wire's src_field / dst_field. Backed
+// by bridge.list_wire_fields when scanning a source output; for
+// destination fields it's freeform (no upstream sample to scan).
+const WireFieldPicker = ({ x, y, side, paths, initial, onCancel, onApply }) => {
+  const [value, setValue] = React.useState(initial || '');
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Enter') onApply(value);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [value, onApply, onCancel]);
+  const title = side === 'src' ? 'Pick source field' : 'Pick destination field';
+  const hint = side === 'src'
+    ? 'Select a sub-value of the upstream output to flow.'
+    : 'Wrap incoming value into this sub-key of the input slot.';
+  return (
+    <div data-no-pan onClick={e => e.stopPropagation()} style={{
+      position:'absolute', left:x, top:y, zIndex:33,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7,
+      boxShadow:'0 16px 36px rgba(0,0,0,.55)', padding:8, minWidth:300, maxWidth:380,
+      animation:'lmSlideIn .12s ease-out',
+    }}>
+      <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+                     letterSpacing:'0.06em', marginBottom:4 }}>
+        {title.toUpperCase()}
+      </div>
+      <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft,
+                     marginBottom:6 }}>{hint}</div>
+      <input
+        autoFocus type="text" value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={side === 'src' ? 'selection.walls[0].id' : 'messages[-1].content'}
+        style={{
+          width:'100%', boxSizing:'border-box', padding:'5px 8px',
+          background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`,
+          borderRadius:4, color:LM.ink, fontFamily:LM.mono, fontSize:11,
+          outline:'none',
+        }}/>
+      {paths && paths.length > 0 && (
+        <div style={{ maxHeight:160, overflowY:'auto', marginTop:6,
+                       border:`1px solid ${LM.lineSoft}`, borderRadius:4 }}>
+          {paths.map((p, i) => (
+            <button key={i} onClick={() => setValue(p)} style={{
+              display:'block', width:'100%', textAlign:'left',
+              padding:'4px 8px', background:'transparent', border:0,
+              borderBottom: i === paths.length - 1 ? 'none' : `1px solid ${LM.lineSoft}`,
+              cursor:'pointer', fontFamily:LM.mono, fontSize:11,
+              color: p === value ? LM.accent : LM.ink,
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display:'flex', gap:6, marginTop:8, justifyContent:'flex-end' }}>
+        <button onClick={onCancel} style={{
+          padding:'4px 10px', background:'transparent', border:`1px solid ${LM.lineSoft}`,
+          borderRadius:4, color:LM.inkSoft, fontFamily:LM.sans, fontSize:11,
+          cursor:'pointer',
+        }}>Cancel</button>
+        <button onClick={() => onApply('')} style={{
+          padding:'4px 10px', background:'transparent', border:`1px solid ${LM.lineSoft}`,
+          borderRadius:4, color:LM.inkSoft, fontFamily:LM.sans, fontSize:11,
+          cursor:'pointer',
+        }}>Clear</button>
+        <button onClick={() => onApply(value)} style={{
+          padding:'4px 10px', background:LM.accent, border:0,
+          borderRadius:4, color:'#000', fontFamily:LM.sans, fontSize:11,
+          cursor:'pointer', fontWeight:600,
+        }}>Apply</button>
+      </div>
     </div>
   );
 };
@@ -2398,6 +2652,23 @@ const OutputBody = ({ n }) => (
 );
 
 const CompactParam = ({ p }) => {
+  // host.* version/document picker — inline tag with a live indicator.
+  // The full picker lives in the right-rail (FullParam); this compact
+  // form just shows the selected value + a green/grey dot.
+  if (p && (p.k === 'version' || p.k === 'document') && p.family) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+        <span title={p.alive ? 'live' : 'offline'} style={{
+          width:6, height:6, borderRadius:'50%',
+          background: p.alive ? '#7ec18e' : LM.inkMuted,
+        }}/>
+        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:3 }}>
+          {p.v || '—'} <span style={{ color:LM.inkMuted, marginLeft:2 }}>▾</span>
+        </span>
+      </div>
+    );
+  }
   if (p.type === 'slider') {
     const pct = ((p.v - p.min) / (p.max - p.min)) * 100;
     return (
@@ -3016,7 +3287,98 @@ const railBtn = () => ({
   justifyContent:'center', fontWeight:500,
 });
 
+// Host picker — dynamic dropdown wired to bridge.list_host_sessions /
+// list_host_documents. Fetches on mount + a "Refresh" button beside the
+// select to re-pull live state. Shows a green dot when the selected
+// session is alive. Used by host.* node params named "version" or
+// "document". The picker is intentionally permissive: when the bridge
+// isn't available (standalone JSX demo) it falls back to an empty
+// dropdown — the canvas still renders.
+const HostPicker = ({ p }) => {
+  const isDoc = p.k === 'document';
+  const family = p.family || (p.node && p.node.family) || '';
+  const sessionId = (p.upstreamSession || '');
+  const [opts, setOpts] = React.useState([]);
+  const [val, setVal] = React.useState(p.v || '');
+  const [alive, setAlive] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+
+  const refresh = React.useCallback(() => {
+    if (!window.bridgeJson || !family) return;
+    setLoading(true);
+    const slot = isDoc ? 'list_host_documents' : 'list_host_sessions';
+    const args = isDoc ? [family, sessionId] : [family];
+    window.bridgeJson(slot, ...args).then((rows) => {
+      const list = Array.isArray(rows) ? rows : [];
+      setOpts(list);
+      if (isDoc) {
+        setAlive(list.length > 0);
+      } else {
+        setAlive(list.some(r => r && r.host_alive));
+      }
+    }).catch(() => setOpts([])).finally(() => setLoading(false));
+  }, [family, sessionId, isDoc]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  const labelFor = (o) => {
+    if (!o) return '';
+    if (isDoc) return o.title || o.path || '';
+    return [o.version, o.opened_doc].filter(Boolean).join(' · ')
+            || o.session_id || '';
+  };
+  const keyFor = (o) => isDoc ? (o.title || o.path || '')
+                                 : (o.version || o.session_id || '');
+  const dotColor = alive ? '#7ec18e' : LM.inkMuted;
+
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:6,
+                     marginBottom:4 }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10.5,
+                        color:LM.inkSoft, letterSpacing:'0.04em',
+                        flex:1 }}>{p.k}</span>
+        <span title={alive ? 'live' : 'offline'} style={{
+          width:7, height:7, borderRadius:'50%', background:dotColor,
+        }}/>
+        <button onClick={refresh} disabled={loading} title="Re-pull"
+          style={{ padding:'2px 6px', fontFamily:LM.mono, fontSize:9,
+                    background:'transparent', color:LM.inkSoft,
+                    border:`1px solid ${LM.lineSoft}`, borderRadius:3,
+                    cursor: loading ? 'wait' : 'pointer' }}>
+          {loading ? '…' : '↻'}
+        </button>
+      </div>
+      <select value={val}
+        onChange={(e) => { setVal(e.target.value);
+                            if (typeof p.onChange === 'function')
+                              p.onChange(e.target.value); }}
+        style={{
+          width:'100%', padding:'6px 8px', background:LM.bg,
+          border:`1px solid ${LM.line}`, borderRadius:5,
+          fontFamily:LM.mono, fontSize:11, color:LM.ink,
+          cursor:'pointer',
+        }}>
+        <option value="">{isDoc ? '— pick document —'
+                                  : '— pick version —'}</option>
+        {opts.map((o, i) => (
+          <option key={i} value={keyFor(o)}>{labelFor(o)}</option>
+        ))}
+      </select>
+    </div>
+  );
+};
+
 const FullParam = ({ p }) => {
+  // Dynamic host picker: host.* nodes wire `version` and `document`
+  // params to live data via bridge.list_host_sessions /
+  // list_host_documents. Renders an inline dropdown with a refresh
+  // button and a green/grey live indicator.
+  if (p && (p.type === 'host-picker'
+            || ((p.k === 'version' || p.k === 'document')
+                && p.family))) {
+    return <HostPicker p={p}/>;
+  }
   if (p.type === 'slider') {
     const pct = ((p.v - p.min) / (p.max - p.min)) * 100;
     return (

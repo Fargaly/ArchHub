@@ -54,6 +54,237 @@ def _safe_json(obj: Any) -> str:
         return "null"
 
 
+# ---------------------------------------------------------------------------
+# Host session/document picker implementation (used by the bridge slots
+# `list_host_sessions` and `list_host_documents`).
+#
+# Each host family exposes either a broker (revit/autocad/max/outlook) with
+# `list_sessions()` returning a list of Session dataclasses, OR a runner
+# (blender/rhino) with a single listener model. Speckle is cloud-only and
+# returns an empty list.
+# ---------------------------------------------------------------------------
+
+def _session_to_dict(s: Any, family: str) -> dict:
+    """Serialise a broker Session dataclass into a JSON-safe dict using
+    the contract the JS picker consumes."""
+    return {
+        "session_id": str(getattr(s, "session_id", "") or ""),
+        "family":     family,
+        "version":    str(getattr(s, "version", "") or ""),
+        "port":       int(getattr(s, "port", 0) or 0),
+        "opened_doc": str(getattr(s, "doc_title", "") or ""),
+        "host_alive": bool(getattr(s, "healthy", False)),
+        "pid":        int(getattr(s, "pid", 0) or 0),
+        "legacy":     bool(getattr(s, "legacy", False)),
+    }
+
+
+def _list_host_sessions_impl(family: str) -> list[dict]:
+    """Family-dispatched list of running host sessions. Pure helper —
+    no Qt, callable from tests + the QObject slot above."""
+    if family in ("revit", "autocad", "max"):
+        mod_map = {"revit": "revit_broker",
+                    "autocad": "acad_broker",
+                    "max":     "max_broker"}
+        try:
+            broker = __import__(mod_map[family])
+        except Exception:
+            return []
+        try:
+            sessions = broker.list_sessions(prune=False)
+        except Exception:
+            return []
+        return [_session_to_dict(s, family) for s in (sessions or [])]
+
+    if family == "outlook":
+        try:
+            from outlook_broker import list_sessions as _ol_list
+            sessions = _ol_list(prune=False)
+        except Exception:
+            return []
+        return [_session_to_dict(s, family) for s in (sessions or [])]
+
+    if family in ("blender", "rhino"):
+        # Single-listener model. Build a synthetic 1-entry list when the
+        # bridge is responding; empty list otherwise. The runner picker
+        # may expose list_sessions() in the future — try first, fall
+        # back to a probe.
+        try:
+            if family == "blender":
+                from connectors import blender_runner as runner  # type: ignore
+            else:
+                from connectors import rhino_runner as runner   # type: ignore
+        except Exception:
+            return []
+        listed = getattr(runner, "list_sessions", None)
+        if callable(listed):
+            try:
+                rows = listed() or []
+                # Normalise: runners may return list[dict] already; coerce.
+                return [{
+                    "session_id": str(r.get("session_id", f"{family}-default")),
+                    "family":     family,
+                    "version":    str(r.get("version", "") or ""),
+                    "port":       int(r.get("port", 0) or 0),
+                    "opened_doc": str(r.get("opened_doc")
+                                       or r.get("filepath", "") or ""),
+                    "host_alive": bool(r.get("host_alive", True)),
+                } for r in rows]
+            except Exception:
+                pass
+        # Fallback: single-listener probe.
+        try:
+            pong = runner.ping()
+        except Exception:
+            pong = None
+        if not pong:
+            return []
+        version = ""
+        opened = ""
+        try:
+            info_d = runner.info() or {}
+            version = str(info_d.get("version") or "")
+            opened = str(info_d.get("filepath")
+                          or info_d.get("doc_path")
+                          or info_d.get("filename") or "")
+        except Exception:
+            pass
+        return [{
+            "session_id": f"{family}-default",
+            "family":     family,
+            "version":    version,
+            "port":       int(getattr(runner,
+                                       "CONNECTOR_PORT_DEFAULT", 0) or 0),
+            "opened_doc": opened,
+            "host_alive": True,
+        }]
+
+    if family == "speckle":
+        # Streams not sessions — return empty list with a note.
+        return []
+
+    return []
+
+
+def _list_host_documents_impl(family: str, session_id: str) -> list[dict]:
+    """List documents available inside the chosen session. For broker-
+    backed hosts we POST to /list_docs (falling back to /info for the
+    single open doc). For runner-backed hosts we call list_files()/
+    info(). For Outlook we list folders."""
+    family = (family or "").strip().lower()
+    session_id = (session_id or "").strip()
+
+    if family in ("revit", "autocad", "max"):
+        mod_map = {"revit": "revit_broker",
+                    "autocad": "acad_broker",
+                    "max":     "max_broker"}
+        try:
+            broker = __import__(mod_map[family])
+        except Exception:
+            return []
+        # Find the matching session.
+        try:
+            sessions = broker.list_sessions(prune=False) or []
+        except Exception:
+            sessions = []
+        chosen = None
+        for s in sessions:
+            if not session_id or str(getattr(s, "session_id", ""))== session_id:
+                chosen = s
+                break
+        if chosen is None:
+            return []
+        # Try /list_docs; fall back to /info.
+        try:
+            docs = broker.forward(chosen, "/list_docs", timeout=2.0)
+        except Exception:
+            docs = None
+        if isinstance(docs, dict) and docs.get("status") != "error":
+            rows = docs.get("documents") or docs.get("docs") or []
+            return [{
+                "path":   str(d.get("path", "") or ""),
+                "title":  str(d.get("title")
+                               or d.get("name", "") or ""),
+                "active": bool(d.get("active", False)),
+                "kind":   str(d.get("kind", "") or ""),
+            } for d in rows if isinstance(d, dict)]
+        # Fallback: single doc from session metadata.
+        title = str(getattr(chosen, "doc_title", "") or "")
+        if not title:
+            return []
+        return [{"path": "", "title": title,
+                  "active": True, "kind": family}]
+
+    if family == "outlook":
+        # For outlook, "documents" = folders / accounts.
+        try:
+            from connectors import outlook_runner
+            folders = outlook_runner.list_folders() or []
+            return [{
+                "path":   str(f.get("path", "") or ""),
+                "title":  str(f.get("name", "") or ""),
+                "active": False,
+                "kind":   "folder",
+            } for f in folders if isinstance(f, dict)]
+        except Exception:
+            return []
+
+    if family in ("blender", "rhino"):
+        try:
+            if family == "blender":
+                from connectors import blender_runner as runner  # type: ignore
+            else:
+                from connectors import rhino_runner as runner   # type: ignore
+        except Exception:
+            return []
+        # Runner may expose list_files/list_docs explicitly.
+        for fn_name in ("list_files", "list_docs", "list_documents"):
+            fn = getattr(runner, fn_name, None)
+            if callable(fn):
+                try:
+                    rows = fn() or []
+                    return [{
+                        "path":   str(r.get("path", "") or ""),
+                        "title":  str(r.get("title")
+                                       or r.get("name", "") or ""),
+                        "active": bool(r.get("active", False)),
+                        "kind":   str(r.get("kind", "") or family),
+                    } for r in rows if isinstance(r, dict)]
+                except Exception:
+                    continue
+        # Fallback: info() exposes the single open doc.
+        try:
+            info_d = runner.info() or {}
+        except Exception:
+            info_d = {}
+        files = info_d.get("files") or []
+        if files and isinstance(files, list):
+            return [{
+                "path":   str(f.get("path", "") or "") if isinstance(f, dict)
+                          else str(f),
+                "title":  str(f.get("title")
+                               or f.get("name", "") or "") if isinstance(f, dict)
+                          else str(f),
+                "active": bool(f.get("active", False)) if isinstance(f, dict)
+                          else False,
+                "kind":   family,
+            } for f in files]
+        opened = (info_d.get("filepath")
+                   or info_d.get("doc_path")
+                   or info_d.get("filename") or "")
+        if not opened:
+            return []
+        from pathlib import Path as _P
+        return [{"path": str(opened),
+                  "title": _P(str(opened)).name,
+                  "active": True, "kind": family}]
+
+    if family == "speckle":
+        return []   # streams are not documents
+
+    return []
+
+
 class ArchHubBridge(QObject):
     """Bridge object registered on QWebChannel under the name `archhub`."""
 
@@ -678,6 +909,102 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── Host session + document pickers ───────────────────────
+    # Founder direction (2026-05-14): host tools should let the user
+    # pick WHICH version of the host (Revit 2024 vs Revit 2025) AND
+    # WHICH document inside that session. Below two slots feed the
+    # dynamic <select> dropdowns in studio-lm.jsx for host.* nodes.
+    @pyqtSlot(str, result=str)
+    def list_host_sessions(self, family: str) -> str:
+        """Return all running sessions for a host family.
+        Shape: [{session_id, version, port, opened_doc, host_alive}].
+        Empty list = nothing running (or unsupported family)."""
+        try:
+            family = (family or "").strip().lower()
+            return _safe_json(_list_host_sessions_impl(family))
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def list_host_documents(self, family: str,
+                             session_id: str = "") -> str:
+        """List documents inside the chosen session.
+        Shape: [{path, title, active, kind}]."""
+        try:
+            family = (family or "").strip().lower()
+            return _safe_json(_list_host_documents_impl(family, session_id))
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Profound wires (field selectors) ───────────────────────
+    # Founder direction (2026-05-14): "wires should be profound...
+    # capable of transferring models between models, taking out specific
+    # outputs." A wire can (a) pick a sub-field of the source output
+    # before flowing (src_field) and (b) wrap into a sub-key of the
+    # destination input slot (dst_field). The JS canvas exposes this as
+    # a right-click "Pick source field…" / "Pick destination field…"
+    # overlay on a wire. The two slots below back that UI.
+    @pyqtSlot(str, str, str, result=str)
+    def wire_transform(self, payload_json: str,
+                        src_field: str = "",
+                        dst_field: str = "") -> str:
+        """Apply the same src_field/dst_field resolver used by the
+        runner to an arbitrary JSON payload. Lets the JS canvas preview
+        a wire transformation without re-cooking the whole graph.
+        Returns `{"value": <result>}` or `{"error": "..."}`.
+        """
+        try:
+            import json as _json
+            from workflows.runner import (
+                _resolve_field, _wrap_field,
+            )
+            try:
+                payload = _json.loads(payload_json) if payload_json else None
+            except Exception as ex:
+                return _safe_json({"error": f"bad payload_json: {ex}"})
+            value = payload
+            if src_field:
+                value = _resolve_field(value, src_field)
+            if dst_field:
+                value = _wrap_field(value, dst_field)
+            return _safe_json({"value": value})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, str, result=str)
+    def list_wire_fields(self, node_id: str,
+                          port_name: str = "",
+                          sample_json: str = "") -> str:
+        """Introspect an upstream output schema and return the available
+        dotted paths the user could pick as a wire src_field.
+
+        The canvas is expected to pass the most recently cached preview
+        for `(node_id, port_name)` as `sample_json` — that's the value
+        the wire just carried. If sample_json is empty, returns an
+        empty paths list with no error.
+        Shape: `{"paths": ["selection.walls", "selection.walls[0].id",
+        ...], "sample": <pretty repr>}`.
+        """
+        try:
+            import json as _json
+            from workflows.runner import _enumerate_paths
+            if not sample_json:
+                return _safe_json({"paths": [], "sample": None,
+                                    "node": node_id, "port": port_name})
+            try:
+                sample = _json.loads(sample_json)
+            except Exception:
+                # Not JSON — caller passed e.g. repr(value). Still tell
+                # the user we can't introspect that.
+                return _safe_json({"paths": [], "sample": sample_json,
+                                    "node": node_id, "port": port_name,
+                                    "note": "preview not JSON"})
+            paths = _enumerate_paths(sample)
+            return _safe_json({"paths": paths, "sample": sample,
+                                "node": node_id, "port": port_name})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
     # ─── Workflow / node library ────────────────────────────────
     @pyqtSlot(result=str)
     def get_node_library(self) -> str:
@@ -698,5 +1025,113 @@ class ArchHubBridge(QObject):
                     "outputs":      [p.to_dict() for p in spec.outputs],
                 })
             return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Per-node MCP servers ───────────────────────────────────
+    # Founder direction (2026-05-14): "as if every node initiates its
+    # own MCP server." The canvas calls register_node_mcp(...) when a
+    # node is materialised, then get_node_mcp_tools / invoke_node_tool
+    # for live tool discovery + dispatch.
+    @pyqtSlot(str, str, str, result=str)
+    def register_node_mcp(self, node_id: str, node_type: str,
+                            config_json: str = "") -> str:
+        """Register a node as an MCP server. `config_json` is the same
+        config blob the workflow graph stores for the node — `path`,
+        `version`, `model`, etc."""
+        try:
+            from mcp.node_mcp import NodeMCPServer, REGISTRY
+            cfg: dict = {}
+            if config_json:
+                try:
+                    cfg = json.loads(config_json) or {}
+                except Exception as ex:
+                    return _safe_json(
+                        {"error": f"bad config_json: {ex}"})
+            server = NodeMCPServer(node_id=node_id,
+                                     node_type=node_type,
+                                     config=cfg)
+            REGISTRY.register(node_id, server)
+            return _safe_json(server.to_dict())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def get_node_mcp_tools(self, node_id: str) -> str:
+        """Return the JSON list of MCP tools the node exposes. The
+        canvas calls this once per node-mount and again after a
+        config change."""
+        try:
+            from mcp.node_mcp import REGISTRY
+            server = REGISTRY.get(node_id)
+            if server is None:
+                return _safe_json(
+                    {"error": f"Unknown node_id: {node_id}"})
+            return _safe_json(server.list_tools())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, str, result=str)
+    def invoke_node_tool(self, node_id: str, tool_name: str,
+                          args_json: str = "") -> str:
+        """Invoke a tool on the node's MCP server. Returns a JSON
+        envelope. Unknown node_id → error envelope (no raise)."""
+        try:
+            from mcp.node_mcp import REGISTRY
+            args: dict = {}
+            if args_json:
+                try:
+                    args = json.loads(args_json) or {}
+                except Exception as ex:
+                    return _safe_json(
+                        {"error": f"bad args_json: {ex}"})
+            return _safe_json(
+                REGISTRY.invoke(node_id, tool_name, args))
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def unregister_node_mcp(self, node_id: str) -> str:
+        """Unregister a node — called when the canvas deletes a node."""
+        try:
+            from mcp.node_mcp import REGISTRY
+            removed = REGISTRY.unregister(node_id)
+            return _safe_json({"ok": True, "removed": removed})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def list_node_mcp_servers(self) -> str:
+        """List every node-MCP server currently live."""
+        try:
+            from mcp.node_mcp import REGISTRY
+            return _safe_json(REGISTRY.list_servers())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, str, result=str)
+    def dispatch_node_mcp(self, node_id: str, method: str,
+                           params_json: str = "") -> str:
+        """Send a raw MCP JSON-RPC method (initialize / tools/list /
+        tools/call / ping) to the node's server. Returns the JSON-RPC
+        envelope."""
+        try:
+            from mcp.node_mcp import REGISTRY
+            server = REGISTRY.get(node_id)
+            if server is None:
+                return _safe_json(
+                    {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32001,
+                                "message": f"Unknown node_id: {node_id}"}})
+            params: dict = {}
+            if params_json:
+                try:
+                    params = json.loads(params_json) or {}
+                except Exception as ex:
+                    return _safe_json(
+                        {"jsonrpc": "2.0", "id": None,
+                         "error": {"code": -32700,
+                                    "message": f"bad params_json: {ex}"}})
+            return _safe_json(server.dispatch(method, params))
         except Exception as ex:
             return _safe_json({"error": str(ex)})

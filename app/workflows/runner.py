@@ -207,13 +207,22 @@ class WorkflowRunner:
         """Cook this node (if dirty) + return its outputs dict.
 
         Recursively pulls upstream parents first. Caches results so a
-        second pull with no upstream change returns immediately."""
+        second pull with no upstream change returns immediately.
+
+        Frozen nodes (`node.frozen == True`) short-circuit: they return
+        their last cached outputs (or a sentinel) without re-cooking.
+        This is the Houdini "bypass" pattern — let the user pin a node's
+        state while iterating upstream parts of the graph.
+        """
         if node_id in self._visiting:
             raise CycleDetected(f"cycle through {node_id}")
         if node_id not in self.nodes_by_id:
             return {"status": "error", "error": f"unknown node {node_id}"}
 
         node = self.nodes_by_id[node_id]
+        if node.get("frozen") is True:
+            return self.node_outputs.get(node_id,
+                {"status": "ok", "frozen": True})
         node_type = node.get("type") or ""
         # Pull upstream first.
         inputs: dict[str, Any] = {}
@@ -281,6 +290,33 @@ class WorkflowRunner:
             self._emit(e["id"], "cached", preview)
 
         return outputs
+
+    # ── workflow-level run (Houdini "render", Comfy "queue") ────────
+    def run_all(self) -> dict:
+        """Cook every sink node in the graph (nodes with no downstream
+        edges). Pulls cascade upstream automatically via `pull`. Frozen
+        nodes are skipped. Returns a per-node result map."""
+        downstream_targets = {e["src_node"] for e in self.edges}
+        sinks = [nid for nid in self.nodes_by_id
+                  if nid not in downstream_targets]
+        if not sinks:
+            # No clear sinks (e.g. all nodes feed each other) — cook
+            # every non-frozen node so user gets some progress.
+            sinks = [nid for nid, n in self.nodes_by_id.items()
+                      if not n.get("frozen")]
+        out: dict[str, dict] = {}
+        for nid in sinks:
+            try:
+                out[nid] = self.pull(nid)
+            except CycleDetected as ex:
+                out[nid] = {"status": "error", "error": str(ex)}
+        return {"status": "ok",
+                "sinks": sinks,
+                "results": out,
+                "edges_state": [
+                    {"id": e["id"], "state": e.get("state", "idle")}
+                    for e in self.edges
+                ]}
 
     # ── observability ───────────────────────────────────────────────
     def wire_state(self, edge_id: str) -> str:

@@ -90,6 +90,19 @@ class ArchHubBridge(QObject):
 
     # ─── Hosts ──────────────────────────────────────────────────
     @pyqtSlot(result=str)
+    def get_all_hosts(self) -> str:
+        """All desktop / SaaS hosts ArchHub knows about — Outlook,
+        Teams, Word, Excel, PowerPoint, Photoshop, Illustrator, InDesign,
+        LM Studio, Antigravity. Each entry: {status, version, note,
+        detail}. Used by the JS host-pill row to render live indicators
+        for non-LLM hosts."""
+        try:
+            from host_detector import detect_all_hosts
+            return _safe_json(detect_all_hosts())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
     def get_hosts(self) -> str:
         out: list[dict] = []
         try:
@@ -588,6 +601,37 @@ class ArchHubBridge(QObject):
                 src_node, dst_node)
         except Exception:
             return False
+
+    @pyqtSlot(str, str, result=str)
+    def run_workflow(self, session_id: str, graph_json: str = "") -> str:
+        """Run the entire workflow (Houdini render). Cooks every sink
+        node; pulls cascade upstream automatically; frozen nodes are
+        skipped. The canvas toolbar 'RUN WORKFLOW' button calls this."""
+        try:
+            import json as _json
+            graph: dict
+            if graph_json:
+                graph = _json.loads(graph_json)
+            else:
+                from pathlib import Path
+                from session_io import (
+                    SESSIONS_DIR, load_session_with_messages,
+                )
+                p = Path(session_id or "workspace")
+                if not p.exists():
+                    p = SESSIONS_DIR / f"{session_id}.archhub-session.json"
+                if not p.exists():
+                    return _safe_json({"error": "session not found"})
+                session, _name, _m = load_session_with_messages(p)
+                graph = session.graph or {}
+            from workflows.runner import WorkflowRunner
+            runner = WorkflowRunner(graph)
+            runner.on_wire_state(
+                lambda eid, state, preview:
+                    self.wire_state_changed.emit(eid, state, preview))
+            return _safe_json(runner.run_all())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
 
     @pyqtSlot(str, str, str, result=str)
     def run_node(self, session_id: str, node_id: str,

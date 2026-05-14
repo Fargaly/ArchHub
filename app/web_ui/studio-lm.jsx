@@ -397,6 +397,41 @@ const StudioLM = () => {
     });
   };
 
+  // Expose openSession globally so the SearchPanel (a sibling, not
+  // parent) can route a session result back into the canvas.
+  React.useEffect(() => {
+    window.__archhub_open_session = openSession;
+    return () => { if (window.__archhub_open_session === openSession)
+                      window.__archhub_open_session = null; };
+  }, []);
+
+  // Skills panel + search "spawn skill" → drop a skill subgraph node
+  // on the canvas as a single composite node. Phase 4: expand into
+  // its registered subgraph definition.
+  React.useEffect(() => {
+    const onSpawn = (ev) => {
+      const sk = ev.detail || {};
+      const id = `skill_${sk.id || 'unknown'}_${Date.now().toString(36).slice(-4)}`;
+      const newNode = {
+        id, cat: 'compose',
+        x: 200, y: 200, w: 240, h: 110,
+        title: sk.name || sk.id || 'skill',
+        sub: `args: ${sk.args || '—'} · ${sk.runs || 0} runs`,
+        ins: [{ id: 'in', t: 'any', label: 'in' }],
+        outs: [{ id: 'out', t: 'any', label: 'out' }],
+        _user: true, _skill: sk.id,
+      };
+      LM_GRAPH.nodes.push(newNode);
+      setUserNodes(ns => [...ns, newNode]);
+      setFocusId(id);
+      if (window.archhub && window.archhub.save_graph) {
+        try { window.archhub.save_graph('workspace', JSON.stringify(LM_GRAPH)); } catch (_) {}
+      }
+    };
+    window.addEventListener('lm-spawn-skill', onSpawn);
+    return () => window.removeEventListener('lm-spawn-skill', onSpawn);
+  }, []);
+
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
   const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
     const cat = libItem.cat;
@@ -555,7 +590,7 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, addNodeF
 
 const IconRail = ({ panel, setPanel, onHome, onSettings }) => {
   const items = [
-    { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
+    { id:'chats',  title:'Sessions',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
     { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
     { id:'skills', title:'Skills', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="12 2 15 8 22 9 17 14 18 21 12 17.7 6 21 7 14 2 9 9 8"/></svg> },
     { id:'search', title:'Search', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> },
@@ -610,7 +645,7 @@ const ChatsPanel = ({ openId, onOpen }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {/* Panel header */}
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
-      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
+      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Sessions</span>
       <div style={{ flex:1 }}/>
       <button title="More" style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
@@ -834,12 +869,18 @@ const SkillsPanel = () => (
     </div>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
       {LM_SAVED_SKILLS.map(s => (
-        <div key={s.id} draggable="true" style={{
-          padding:'7px 9px', borderRadius:5, cursor:'grab', marginBottom:1,
-          background:'transparent', borderLeft:`2px solid transparent`,
-        }}
-        onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.accent; }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
+        <div key={s.id} draggable="true"
+          onClick={() => window.dispatchEvent(
+            new CustomEvent('lm-spawn-skill', { detail: s }))}
+          onDoubleClick={() => window.dispatchEvent(
+            new CustomEvent('lm-spawn-skill', { detail: s }))}
+          title="Click to drop this skill onto the canvas as a node"
+          style={{
+            padding:'7px 9px', borderRadius:5, cursor:'pointer', marginBottom:1,
+            background:'transparent', borderLeft:`2px solid transparent`,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.accent; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
             <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{s.name}</span>
@@ -855,50 +896,164 @@ const SkillsPanel = () => (
 );
 
 // ─── Global search panel ───
-const SearchPanel = () => (
-  <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
-      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
-      <div style={{ flex:1 }}/>
-      <kbd style={kbd()}>⌘K</kbd>
-    </div>
-    <div style={{ padding:'0 10px 10px' }}>
-      <div style={{
-        display:'flex', alignItems:'center', gap:8, padding:'8px 12px',
-        background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:6,
-        boxShadow:`0 0 0 3px ${LM.accentDim}`,
-      }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <span style={{ flex:1, color:LM.inkMuted, fontStyle:'italic', fontFamily:LM.serif, fontSize:13 }}>
-          everything in studio…
-        </span>
+const SearchPanel = () => {
+  const [q, setQ] = React.useState('');
+  const [results, setResults] = React.useState({ sessions: [], nodes: [], skills: [], memory: [], hosts: [] });
+  const [searching, setSearching] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!q.trim()) { setResults({ sessions: [], nodes: [], skills: [], memory: [], hosts: [] }); return; }
+    setSearching(true);
+    const needle = q.trim().toLowerCase();
+    const collectNodes = () => (LM_GRAPH.nodes || []).filter(
+      (n) => (n.title || '').toLowerCase().includes(needle)
+          || (n.sub || '').toLowerCase().includes(needle)
+          || (n.id || '').toLowerCase().includes(needle));
+    const fetchAll = async () => {
+      const promises = [];
+      if (window.archhub) {
+        promises.push(window.bridgeJson('get_sessions').then((rows) =>
+          (rows || []).filter((s) =>
+            (s.title || '').toLowerCase().includes(needle) ||
+            (s.id || '').toLowerCase().includes(needle))));
+        promises.push(window.bridgeJson('get_saved_skills').then((rows) =>
+          (rows || []).filter((s) =>
+            (s.name || '').toLowerCase().includes(needle) ||
+            (s.args || '').toLowerCase().includes(needle))));
+        promises.push(window.bridgeJson('list_memory_facts', needle)
+          .then((r) => (r && r.results) || []));
+        promises.push(window.bridgeJson('get_hosts').then((rows) =>
+          (rows || []).filter((h) =>
+            (h.name || '').toLowerCase().includes(needle) ||
+            (h.id || '').toLowerCase().includes(needle))));
+      } else {
+        promises.push(Promise.resolve([]), Promise.resolve([]),
+                      Promise.resolve([]), Promise.resolve([]));
+      }
+      const [sessions, skills, memory, hosts] = await Promise.all(promises);
+      if (cancelled) return;
+      setResults({ sessions, nodes: collectNodes(), skills, memory, hosts });
+      setSearching(false);
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [q]);
+
+  const openSession = (id) => {
+    if (window.__archhub_open_session) window.__archhub_open_session(id);
+  };
+  const focusNode = (id) => {
+    window.dispatchEvent(new CustomEvent('lm-focus-node', { detail: { id } }));
+  };
+
+  const Row = ({ icon, label, sub, onClick, count }) => (
+    <button onClick={onClick} style={{
+      padding:'6px 10px', borderRadius:5, background:'transparent',
+      border:0, cursor:'pointer', textAlign:'left',
+      display:'flex', alignItems:'center', gap:8,
+    }}
+    onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, width:14 }}>{icon}</span>
+      <span style={{ flex:1, minWidth:0, fontSize:12, color:LM.ink,
+                       overflow:'hidden', textOverflow:'ellipsis',
+                       whiteSpace:'nowrap' }}>{label}</span>
+      {sub && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{sub}</span>}
+    </button>
+  );
+
+  const Group = ({ name, count, children }) => (
+    count > 0 ? (
+      <div style={{ marginTop:8 }}>
+        <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+          {name.toUpperCase()} · {count}
+        </div>
+        <div style={{ padding:'0 6px' }}>{children}</div>
+      </div>
+    ) : null
+  );
+
+  const total = results.sessions.length + results.nodes.length + results.skills.length + results.memory.length + results.hosts.length;
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+      <div style={{ padding:'12px 12px 6px', display:'flex', alignItems:'center', gap:8 }}>
+        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
+        <div style={{ flex:1 }}/>
+        <kbd style={kbd()}>⌘K</kbd>
+      </div>
+      <div style={{ padding:'4px 10px 8px' }}>
+        <div style={{
+          display:'flex', alignItems:'center', gap:8, padding:'8px 12px',
+          background:LM.bg, border:`1px solid ${q ? LM.accent + '99' : LM.line}`, borderRadius:6,
+          boxShadow: q ? `0 0 0 3px ${LM.accentDim}` : 'none',
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input
+            autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="everything in studio…"
+            style={{
+              flex:1, background:'transparent', border:0, outline:'none',
+              color:LM.ink, fontFamily:LM.sans, fontSize:13, padding:0,
+            }}/>
+          {q && (
+            <button onClick={() => setQ('')} style={{
+              padding:0, border:0, background:'transparent',
+              color:LM.inkMuted, cursor:'pointer', fontSize:13, lineHeight:1,
+            }}>×</button>
+          )}
+        </div>
+      </div>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 0 10px', minHeight:0 }}>
+        {!q.trim() && (
+          <div style={{ padding:'18px 14px', fontSize:11.5, color:LM.inkMuted,
+                          fontFamily:LM.mono, letterSpacing:'0.04em', lineHeight:1.6 }}>
+            type to search across sessions, nodes, skills, memory, hosts.<br/>
+            results click straight to action.
+          </div>
+        )}
+        {q.trim() && total === 0 && !searching && (
+          <div style={{ padding:'14px 14px', fontSize:11.5, color:LM.inkMuted }}>
+            no matches for &ldquo;{q}&rdquo;.
+          </div>
+        )}
+        <Group name="sessions" count={results.sessions.length}>
+          {results.sessions.map((s) => (
+            <Row key={'s-'+s.id} icon="◆" label={s.title || s.id}
+                  sub={`${s.messages || 0}`} onClick={() => openSession(s.id)}/>
+          ))}
+        </Group>
+        <Group name="nodes" count={results.nodes.length}>
+          {results.nodes.map((n) => (
+            <Row key={'n-'+n.id} icon="●" label={n.title || n.id}
+                  sub={n.cat || ''} onClick={() => focusNode(n.id)}/>
+          ))}
+        </Group>
+        <Group name="skills" count={results.skills.length}>
+          {results.skills.map((sk) => (
+            <Row key={'k-'+sk.id} icon="★" label={sk.name || sk.id}
+                  sub={sk.args || ''}
+                  onClick={() => window.dispatchEvent(
+                    new CustomEvent('lm-spawn-skill', { detail: sk }))}/>
+          ))}
+        </Group>
+        <Group name="memory" count={results.memory.length}>
+          {results.memory.map((m) => (
+            <Row key={'m-'+m.id} icon="◐" label={m.text || ''}
+                  sub={m.scope || ''} onClick={() => {}}/>
+          ))}
+        </Group>
+        <Group name="hosts" count={results.hosts.length}>
+          {results.hosts.map((h) => (
+            <Row key={'h-'+h.id} icon="⌬" label={h.name || h.id}
+                  sub={h.state || ''} onClick={() => {}}/>
+          ))}
+        </Group>
       </div>
     </div>
-    <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>SCOPES</div>
-    <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
-      {[
-        ['chats',  'sessions + messages',  14],
-        ['nodes',  'in current graph',      11],
-        ['skills', 'saved templates',       6],
-        ['memory', 'what Claude remembers', 8],
-        ['files',  'Revit / Rhino / Speckle', 47],
-        ['hosts',  'connectors',            6],
-      ].map(([k, sub, n]) => (
-        <button key={k} style={{
-          padding:'6px 10px', borderRadius:5, background:'transparent', border:0,
-          cursor:'pointer', textAlign:'left',
-          display:'flex', alignItems:'center', gap:8,
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:54 }}>{k}</span>
-          <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>
-        </button>
-      ))}
-    </div>
-  </div>
-);
+  );
+};
 
 const kbd = () => ({
   fontFamily:LM.mono, fontSize:9, padding:'1px 5px', background:LM.bgSoft,
@@ -1283,6 +1438,38 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     window.addEventListener('lm-wire-start', onWireStart);
     return () => window.removeEventListener('lm-wire-start', onWireStart);
   }, []);
+
+  // ── Generic "force re-render" signal used by freeze toggle + any
+  //    other code path that mutates LM_GRAPH in place.
+  React.useEffect(() => {
+    const onTick = () => forceTick();
+    window.addEventListener('lm-canvas-tick', onTick);
+    return () => window.removeEventListener('lm-canvas-tick', onTick);
+  }, []);
+
+  // ── Search-result click → focus this node on the canvas.
+  React.useEffect(() => {
+    const onFocus = (ev) => {
+      const id = (ev.detail || {}).id;
+      if (!id) return;
+      setFocusId(id);
+      // Center the canvas on the node so the user can see what got
+      // focused (otherwise focus state is invisible if the node is
+      // off-viewport).
+      const found = allNodes.find((n) => n.id === id);
+      if (found) {
+        const rect = wrapRef.current?.getBoundingClientRect();
+        if (rect) {
+          setPan({
+            x: rect.width / 2 - (found.x + found.w / 2) * zoom,
+            y: rect.height / 2 - (found.y + found.h / 2) * zoom,
+          });
+        }
+      }
+    };
+    window.addEventListener('lm-focus-node', onFocus);
+    return () => window.removeEventListener('lm-focus-node', onFocus);
+  }, [allNodes, zoom, setFocusId]);
 
   // ── Publish the focused AI node id on `window` so the composer (a
   //    sibling component, not parent) can write into that node's
@@ -1774,27 +1961,29 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         <div style={{ flex:1 }}/>
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
-        {/* Per-node Run button → bridge.run_node fires WorkflowRunner.pull,
-            cascading upstream cooks + lighting wires by data state. */}
+        {/* Freeze toggle — frozen nodes are skipped by the workflow
+            runner (Houdini "bypass" pattern). State persists in node.
+            The whole workflow runs via the canvas toolbar, not per-node. */}
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (!window.archhub || !window.archhub.run_node) return;
-            try {
-              const graphJson = JSON.stringify(LM_GRAPH);
-              const raw = window.archhub.run_node('workspace', n.id, graphJson);
-              let res; try { res = JSON.parse(raw); } catch { res = raw; }
-              console.log('[archhub] run_node', n.id, res);
-            } catch (e) { console.warn('run_node failed', e); }
+            n.frozen = !n.frozen;
+            if (window.archhub && window.archhub.save_graph) {
+              try { window.archhub.save_graph('workspace', JSON.stringify(LM_GRAPH)); } catch (_) {}
+            }
+            // Force a repaint by mutating a sentinel key.
+            window.dispatchEvent(new CustomEvent('lm-canvas-tick'));
           }}
-          title="Run this node (pulls upstream)"
+          title={n.frozen ? 'Unfreeze (let it cook)' : 'Freeze (runner skips this node)'}
           style={{
-            padding:'2px 8px', border:0, borderRadius:3,
-            background:LM.accent, color:'#fff', cursor:'pointer',
+            padding:'2px 7px', border:0, borderRadius:3,
+            background: n.frozen ? LM.cyan : 'transparent',
+            color: n.frozen ? '#fff' : LM.inkMuted,
+            cursor:'pointer',
             fontFamily:LM.mono, fontSize:9, fontWeight:600,
             letterSpacing:'0.08em', marginLeft:4,
           }}>
-          ▶ RUN
+          {n.frozen ? '❄ FROZEN' : '❄'}
         </button>
         {isAi && (
           <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
@@ -2261,26 +2450,65 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen }) => (
-  <div data-no-pan style={{
-    position:'absolute', left:14, top:14, display:'flex', gap:4,
-    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:4,
-    boxShadow:'0 4px 12px rgba(0,0,0,.3)',
-  }}>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} style={toolBtn()}>+</button>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} style={toolBtn()}>−</button>
-    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
-      {Math.round(zoom * 100)}%
+const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen }) => {
+  const [running, setRunning] = React.useState(false);
+  const runWorkflow = () => {
+    if (!window.archhub || !window.archhub.run_workflow) {
+      // Fall back to running every non-frozen node id one at a time.
+      if (!window.archhub || !window.archhub.run_node) return;
+      setRunning(true);
+      try {
+        const graphJson = JSON.stringify(LM_GRAPH);
+        LM_GRAPH.nodes.forEach((n) => {
+          if (n.frozen) return;
+          try { window.archhub.run_node('workspace', n.id, graphJson); } catch (e) {}
+        });
+      } finally { setRunning(false); }
+      return;
+    }
+    setRunning(true);
+    try {
+      const graphJson = JSON.stringify(LM_GRAPH);
+      const raw = window.archhub.run_workflow('workspace', graphJson);
+      let res; try { res = JSON.parse(raw); } catch { res = raw; }
+      console.log('[archhub] run_workflow', res);
+    } catch (e) { console.warn('run_workflow failed', e); }
+    finally { setRunning(false); }
+  };
+  return (
+    <div data-no-pan style={{
+      position:'absolute', left:14, top:14, display:'flex', gap:4,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:4,
+      boxShadow:'0 4px 12px rgba(0,0,0,.3)',
+    }}>
+      <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} style={toolBtn()}>+</button>
+      <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} style={toolBtn()}>−</button>
+      <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
+        {Math.round(zoom * 100)}%
+      </div>
+      <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" style={toolBtn()}>⟲</button>
+      <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
+      <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" style={{
+        padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
+        color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
+        display:'flex', alignItems:'center', gap:4,
+      }}>＋ add node</button>
+      <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
+      <button
+        onClick={(e) => { e.stopPropagation(); runWorkflow(); }}
+        disabled={running}
+        title="Run the whole workflow — sinks first, walks upstream, skips frozen nodes"
+        style={{
+          padding:'0 12px', height:22, border:0, cursor: running ? 'wait' : 'pointer',
+          background: running ? LM.accentDim : LM.accent, color:'#fff',
+          fontFamily:LM.mono, fontSize:10, fontWeight:700, letterSpacing:'0.1em',
+          borderRadius:4,
+        }}>
+        {running ? 'COOKING…' : '▶ RUN WORKFLOW'}
+      </button>
     </div>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" style={toolBtn()}>⟲</button>
-    <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" style={{
-      padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
-      color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
-      display:'flex', alignItems:'center', gap:4,
-    }}>＋ add node</button>
-  </div>
-);
+  );
+};
 
 const toolBtn = () => ({
   width:24, height:22, padding:0, border:0, background:'transparent',

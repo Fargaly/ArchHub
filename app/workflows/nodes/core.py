@@ -1,4 +1,4 @@
-"""Core node types for the graph-first architecture (ADR-003 Phase 1).
+"""Core node types for the graph-first architecture (ADR-003 Phase 4).
 
 Three families register here:
 
@@ -6,16 +6,20 @@ Three families register here:
   • conversation.* — chat nodes carrying message history + LLM params
   • doc.*          — opened documents inside a host (Revit model, DWG, IFC)
 
-Executors are **stubs** in Phase 1. They return well-typed envelopes
-that downstream tests can pin without needing live host adapters or
-LLM keys. Real wiring lands in Phase 4 (see ADR-003 action items).
+Phase 1 used stubs; Phase 4 wires real adapters under `app/connectors/`
++ `app/*_broker.py`. Stubs remain as graceful fallbacks when the
+adapter is unavailable (no Revit running, pywin32 missing, no LLM
+key) so unit tests + offline edits keep working.
 
-The shapes are stable — Phase 4 will replace the body of each executor
-with real `app/connectors/*` and `llm_router.complete` calls, but the
-inputs/outputs/config schemas frozen here are the contract.
+The return shapes are still pinned — Phase 4 ADD richer fields but
+NEVER drops the original envelope keys.
 """
 from __future__ import annotations
 
+import csv as _csv
+import io as _io
+import json as _json
+from pathlib import Path as _Path
 from typing import Any
 
 from ..graph import Port, PortType
@@ -49,26 +53,364 @@ _HOST_FAMILIES = (
 )
 
 
-def _host_exec(config: dict, inputs: dict, ctx) -> dict:
-    """Phase-1 stub. Returns a well-typed envelope so wired-downstream
-    nodes have predictable inputs to test against.
+# ---------------------------------------------------------------------------
+# Host adapter dispatch helpers
+# ---------------------------------------------------------------------------
 
-    Phase 4 replaces this with a call into the matching adapter under
-    `app/connectors/<family>_runner.py` — same return shape, real data.
+def _broker_host_info(family: str) -> dict:
+    """Resolve live host session info for the broker-style families
+    (revit/autocad/max/outlook). Returns:
+
+        {alive, port, version, opened_doc, selection, warnings, reason}
+
+    `alive=False` + `reason="missing_dep"` when the module can't import;
+    `alive=False` + `reason="unavailable"` when import works but no
+    session is reachable.
+    """
+    module_map = {
+        "revit":   "revit_broker",
+        "autocad": "acad_broker",
+        "max":     "max_broker",
+        "outlook": "outlook_broker",
+    }
+    mod_name = module_map.get(family)
+    if mod_name is None:
+        return {"alive": False, "reason": "unsupported"}
+    try:
+        broker = __import__(mod_name)
+    except Exception as ex:
+        return {"alive": False, "reason": "missing_dep",
+                "error": f"{type(ex).__name__}: {ex}"}
+    try:
+        session = broker.pick_session()
+    except Exception as ex:
+        return {"alive": False, "reason": "unavailable",
+                "error": f"{type(ex).__name__}: {ex}"}
+    if session is None:
+        return {"alive": False, "reason": "unavailable",
+                "error": f"No {family} session running"}
+    info: dict[str, Any] = {
+        "alive":   True,
+        "port":    getattr(session, "port", 0),
+        "version": getattr(session, "version", "") or "",
+        "session_id": getattr(session, "session_id", ""),
+        "opened_doc": getattr(session, "doc_title", "") or None,
+        "selection": [],
+        "warnings": [],
+    }
+    # Best-effort /info probe — pull live doc + selection counts. If
+    # the endpoint isn't implemented (legacy DLL) the broker returns
+    # status="error", which we silently absorb.
+    try:
+        probe = broker.forward(session, "/info", timeout=2.0)
+        if isinstance(probe, dict) and probe.get("status") != "error":
+            info["opened_doc"] = (probe.get("doc_title")
+                                   or probe.get("opened_doc")
+                                   or info["opened_doc"])
+            sel = probe.get("selection") or []
+            if isinstance(sel, list):
+                info["selection"] = sel
+            warns = probe.get("warnings") or []
+            if isinstance(warns, list):
+                info["warnings"] = warns
+            if probe.get("version"):
+                info["version"] = probe["version"]
+    except Exception:
+        pass
+    return info
+
+
+def _runner_host_info(family: str) -> dict:
+    """Resolve live host info for the connector-style families
+    (blender/rhino) which expose a single HTTP listener via their
+    `connectors/<family>_runner.py` module.
+    """
+    try:
+        if family == "blender":
+            from connectors import blender_runner as runner  # type: ignore
+        elif family == "rhino":
+            from connectors import rhino_runner as runner   # type: ignore
+        else:
+            return {"alive": False, "reason": "unsupported"}
+    except Exception as ex:
+        return {"alive": False, "reason": "missing_dep",
+                "error": f"{type(ex).__name__}: {ex}"}
+
+    # Both runners expose ping() and info(). ping returns dict|None.
+    try:
+        pong = runner.ping()
+    except Exception as ex:
+        return {"alive": False, "reason": "unavailable",
+                "error": f"{type(ex).__name__}: {ex}"}
+    if not pong or (isinstance(pong, dict)
+                     and pong.get("status") == "error"):
+        return {"alive": False, "reason": "unavailable",
+                "error": (isinstance(pong, dict)
+                          and pong.get("error")) or
+                         f"No {family} bridge responding"}
+    info_data: dict[str, Any] = {}
+    try:
+        info_data = runner.info() or {}
+    except Exception:
+        info_data = {}
+    return {
+        "alive":     True,
+        "port":      getattr(runner, "CONNECTOR_PORT_DEFAULT", 0),
+        "version":   str(info_data.get("version") or pong.get("version") or ""),
+        "opened_doc": (info_data.get("filepath")
+                        or info_data.get("doc_path")
+                        or info_data.get("filename")
+                        or None),
+        "selection": list(info_data.get("selection") or []),
+        "warnings":  list(info_data.get("warnings") or []),
+    }
+
+
+def _outlook_host_info() -> dict:
+    """Outlook is special — no listener, COM-only. Use the connectors
+    runner directly for the heartbeat."""
+    try:
+        from connectors import outlook_runner  # type: ignore
+    except Exception as ex:
+        return {"alive": False, "reason": "missing_dep",
+                "error": f"{type(ex).__name__}: {ex}"}
+    try:
+        if not outlook_runner.is_reachable():
+            return {"alive": False, "reason": "unavailable",
+                    "error": "Outlook not running or pywin32 missing"}
+        snap = outlook_runner.info() or {}
+    except Exception as ex:
+        return {"alive": False, "reason": "unavailable",
+                "error": f"{type(ex).__name__}: {ex}"}
+    return {
+        "alive":     True,
+        "port":      0,
+        "version":   "",
+        "opened_doc": snap.get("default_account_email") or None,
+        "selection": [],
+        "warnings":  [],
+        "extra":     {k: v for k, v in snap.items()
+                      if k not in ("status",)},
+    }
+
+
+def _speckle_host_info() -> dict:
+    """Speckle is a cloud service — no local session. We just ask
+    whether the SpeckleClient can be constructed (which doesn't talk
+    to the server yet) and surface that as 'alive=True'. Real reach-
+    ability is checked when an action posts a dispatch."""
+    try:
+        from speckle_client import SpeckleClient  # type: ignore
+        client = SpeckleClient()
+    except Exception as ex:
+        return {"alive": False, "reason": "missing_dep",
+                "error": f"{type(ex).__name__}: {ex}"}
+    return {
+        "alive":     True,
+        "port":      0,
+        "version":   "",
+        "opened_doc": None,
+        "selection": [],
+        "warnings":  [],
+        "client":    client,
+    }
+
+
+def _dispatch_host_action(family: str, action: str, inputs: dict,
+                           info: dict) -> dict:
+    """Route a typed action to the matching adapter.
+
+    Returns a dict with `dispatched: bool` + adapter-specific fields.
+    On adapter-missing / unreachable: dispatched=False + reason.
+    """
+    if not info.get("alive"):
+        return {"dispatched": False, "reason": info.get("reason", "")}
+
+    a = (action or "").strip().lower()
+    if not a:
+        return {"dispatched": False, "reason": "no_action"}
+
+    # ---- broker-driven families (revit/autocad/max) -----------------
+    if family in ("revit", "autocad", "max"):
+        try:
+            broker = __import__(
+                {"revit": "revit_broker",
+                 "autocad": "acad_broker",
+                 "max": "max_broker"}[family]
+            )
+            session = broker.pick_session()
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"broker_failed: {ex}"}
+        if session is None:
+            return {"dispatched": False, "reason": "no_session"}
+        body = _json.dumps(inputs or {}).encode("utf-8")
+        path = "/" + a.replace(" ", "_")
+        try:
+            res = broker.forward(session, path, body=body,
+                                  method="POST", timeout=10.0)
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"forward_failed: {ex}"}
+        return {"dispatched": True, "result": res}
+
+    # ---- runner-driven families (blender/rhino) ---------------------
+    if family in ("blender", "rhino"):
+        try:
+            if family == "blender":
+                from connectors import blender_runner as runner  # type: ignore
+            else:
+                from connectors import rhino_runner as runner   # type: ignore
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"missing_dep: {ex}"}
+        # Map a couple of common actions; everything else falls
+        # through to execute() with a one-liner Python snippet.
+        try:
+            if a in ("ping", "heartbeat"):
+                return {"dispatched": True, "result": runner.ping()}
+            if a in ("info", "session", "session_info"):
+                return {"dispatched": True, "result": runner.info()}
+            if a in ("open", "open_document"):
+                path = (inputs.get("path") or "").strip()
+                if hasattr(runner, "open_document"):
+                    return {"dispatched": True,
+                            "result": runner.open_document(path)}
+                code = (f"import bpy; bpy.ops.wm.open_mainfile("
+                         f"filepath={path!r})")
+                return {"dispatched": True,
+                        "result": runner.execute(code)}
+            # Generic — let the adapter dispatch if it can.
+            if hasattr(runner, "dispatch"):
+                return {"dispatched": True,
+                        "result": runner.dispatch(a, **(inputs or {}))}
+            # Last-ditch: just return info so the wire still carries data.
+            return {"dispatched": True,
+                    "result": runner.info(),
+                    "note": f"no handler for action '{a}'"}
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"adapter_failed: {ex}"}
+
+    # ---- outlook ----------------------------------------------------
+    if family == "outlook":
+        try:
+            from connectors import outlook_runner  # type: ignore
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"missing_dep: {ex}"}
+        try:
+            if hasattr(outlook_runner, "outlook_dispatch"):
+                res = outlook_runner.outlook_dispatch(action=a,
+                                                       **(inputs or {}))
+            elif a in ("list", "folders", "list_folders"):
+                res = outlook_runner.list_folders()
+            elif a in ("search", "find"):
+                res = outlook_runner.search(
+                    query=inputs.get("query", ""),
+                    sender=inputs.get("sender", ""),
+                    subject_contains=inputs.get("subject_contains", ""),
+                    days=int(inputs.get("days", 0) or 0),
+                    limit=int(inputs.get("limit", 30) or 30),
+                )
+            elif a in ("inbox", "list_inbox"):
+                res = outlook_runner.list_inbox(
+                    limit=int(inputs.get("limit", 20) or 20),
+                    unread_only=bool(inputs.get("unread_only", False)),
+                )
+            else:
+                res = outlook_runner.list_folders()
+            return {"dispatched": True, "result": res}
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"outlook_failed: {ex}"}
+
+    # ---- speckle ----------------------------------------------------
+    if family == "speckle":
+        try:
+            from speckle_client import SpeckleClient  # type: ignore
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"missing_dep: {ex}"}
+        try:
+            client = SpeckleClient()
+            res = client.dispatch(a, dict(inputs or {}))
+            return {"dispatched": True, "result": res}
+        except Exception as ex:
+            return {"dispatched": False,
+                    "reason": f"speckle_failed: {ex}"}
+
+    return {"dispatched": False, "reason": "unhandled_family"}
+
+
+def _host_exec(config: dict, inputs: dict, ctx) -> dict:
+    """Probe the matching host adapter + (if action) dispatch it.
+
+    Always returns a typed envelope so downstream nodes can pin shape
+    regardless of adapter availability. When the adapter is missing
+    or unreachable, `host_alive` is False + `state` carries the
+    reason; `status` stays "ok" so the workflow doesn't abort.
+
+    `status="missing_dep"` is reserved for the catastrophic case where
+    the adapter MODULE itself fails to import (truly unrecoverable).
     """
     family = config.get("_family") or config.get("family") or "revit"
-    version = config.get("version") or ""
+    version_cfg = config.get("version") or ""
     action = (inputs.get("action") or "").strip()
-    # Stub state — what a freshly-pinged adapter would report.
-    return {
-        "status":       "ok",
+
+    # 1. Resolve host info.
+    if family == "outlook":
+        info = _outlook_host_info()
+    elif family == "speckle":
+        info = _speckle_host_info()
+    elif family in ("revit", "autocad", "max"):
+        info = _broker_host_info(family)
+    elif family in ("blender", "rhino"):
+        info = _runner_host_info(family)
+    else:
+        info = {"alive": False, "reason": "unsupported"}
+
+    # 2. Dispatch action if one was supplied.
+    dispatch_result: dict = {}
+    if action:
+        dispatch_result = _dispatch_host_action(family, action, inputs, info)
+
+    # 3. Compose envelope.
+    alive = bool(info.get("alive"))
+    reason = info.get("reason", "")
+    status = "ok"
+    if not alive and reason == "missing_dep":
+        # Catastrophic: surface as missing_dep so the user sees a clear
+        # install hint upstream.
+        status = "missing_dep"
+
+    if not action:
+        state = "idle" if alive else (reason or "unavailable")
+    elif dispatch_result.get("dispatched"):
+        state = f"action: {action}"
+    else:
+        state = (f"action: {action} ({dispatch_result.get('reason', 'failed')})"
+                 if reason != "missing_dep" else (reason or "missing_dep"))
+
+    out = {
+        "status":       status,
         "family":       family,
-        "version":      version,
-        "opened_doc":   config.get("default_doc", "") or None,
-        "selection":    [],
-        "state":        "idle" if not action else f"action: {action}",
-        "tool_calls":   [],
+        "version":      info.get("version") or version_cfg,
+        "opened_doc":   info.get("opened_doc")
+                          or (config.get("default_doc") or None),
+        "selection":    list(info.get("selection") or []),
+        "state":        state,
+        "tool_calls":   [dispatch_result] if dispatch_result else [],
+        "host_alive":   alive,
+        "port":         info.get("port", 0),
+        "warnings":     list(info.get("warnings") or []),
+        "after":        None,        # exec pins don't carry data
     }
+    if status == "missing_dep":
+        out["reason"] = info.get("error") or reason
+        out["hint"]   = (f"Install or open {family} to enable this node. "
+                          f"({reason})")
+    return out
 
 
 def _register_host_node(family: str, name: str, icon: str,
@@ -126,30 +468,122 @@ for _family, _name, _icon, _desc in _HOST_FAMILIES:
 # emit the assistant's response, an extracted intent string (for downstream
 # Logic nodes), and the full tool_trace dict.
 #
-# Phase 4 wires the executor to `llm_router.complete` with the body's history
-# + the inputs as RAG context.
+# Phase 4 wires the executor to `ctx.router.complete(...)` (LLMRouter) when
+# a router is in scope; falls back to the deterministic stub when there's no
+# context (unit tests, offline editing, no provider keys).
 
 def _conversation_exec(config: dict, inputs: dict, ctx) -> dict:
-    """Phase-1 stub. Echoes a deterministic response so tests can assert
-    against shape. Phase 4 calls llm_router.complete(...)."""
+    """Append the user turn + LLM response to the conversation body.
+
+    Path A — `ctx.router` available (production WorkflowExecutor):
+        Build history from body.messages + the new prompt, call the
+        router, append the assistant turn back.
+
+    Path B — `ctx is None` or no router (unit tests, simple
+    WorkflowRunner): fall back to a deterministic stub so the shape
+    contract holds and tests are stable.
+
+    Path C — router raises (no key, blocked, refused):
+        status="missing_dep" + helpful provider hint.
+    """
     prompt = (inputs.get("prompt") or "").strip()
     if not prompt:
-        return {"status": "error", "error": "prompt required"}
+        return {"status": "error", "error": "prompt required",
+                "response": "", "intent": "", "tool_trace": [],
+                "messages": [], "conversation": [], "after": None}
+
     body = config.get("body") or {"messages": []}
     if isinstance(body, dict):
         msgs = list(body.get("messages") or [])
     else:
         msgs = []
-    response_text = f"[stub-{config.get('model', 'auto')}] {prompt[:80]}"
+    model = config.get("model") or "auto"
+    system_cfg = inputs.get("system") or config.get("system") or ""
+
+    # Path A: real router in scope.
+    router = getattr(ctx, "router", None) if ctx is not None else None
+    if router is not None and hasattr(router, "complete"):
+        # LLMRouter.complete signature: complete(history, model, on_chunk,
+        # on_tool_invocation, on_reasoning?, on_status?, session_pin?)
+        history: list[dict] = []
+        if system_cfg:
+            history.append({"role": "system_override",
+                             "content": str(system_cfg)})
+        history.extend(msgs)
+        history.append({"role": "user", "content": prompt})
+        invocations: list[dict] = []
+
+        def _on_inv(inv):
+            try:
+                invocations.append(inv.to_dict()
+                                    if hasattr(inv, "to_dict") else dict(inv))
+            except Exception:
+                invocations.append({"raw": repr(inv)[:200]})
+
+        try:
+            response = router.complete(
+                history=history,
+                model=model,
+                on_chunk=lambda _piece: None,
+                on_tool_invocation=_on_inv,
+            )
+        except Exception as ex:
+            # No key / blocked / refused — fall through to missing_dep
+            # with the best hint we can derive.
+            try:
+                blocked = router.blocked_providers() or {}
+            except Exception:
+                blocked = {}
+            try:
+                configured = router.configured_providers() or []
+            except Exception:
+                configured = []
+            return {
+                "status":      "missing_dep",
+                "response":    "",
+                "intent":      "",
+                "tool_trace":  [],
+                "messages":    msgs,
+                "conversation": msgs,
+                "reason":      f"{type(ex).__name__}: {ex}",
+                "hint": (
+                    f"LLM provider unavailable. Configured: {configured or 'none'}; "
+                    f"blocked: {dict(blocked) or 'none'}. Add a provider key in "
+                    f"Settings or start Ollama."
+                ),
+                "after":       None,
+            }
+
+        response_text = getattr(response, "text", "") or ""
+        appended = msgs + [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": response_text},
+        ]
+        return {
+            "status":       "ok",
+            "response":     response_text,
+            "intent":       prompt.split()[0].lower() if prompt else "",
+            "tool_trace":   invocations,
+            "messages":     appended,
+            "conversation": appended,
+            "model":        getattr(response, "model", model),
+            "after":        None,
+        }
+
+    # Path B: no router — deterministic stub keeps the shape contract.
+    response_text = f"[stub-{model}] {prompt[:80]}"
+    appended = msgs + [
+        {"role": "user", "content": prompt},
+        {"role": "assistant", "content": response_text},
+    ]
     return {
         "status":       "ok",
         "response":     response_text,
         "intent":       prompt.split()[0].lower() if prompt else "",
         "tool_trace":   [],
-        "messages":     msgs + [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": response_text},
-        ],
+        "messages":     appended,
+        "conversation": appended,
+        "after":        None,
     }
 
 
@@ -220,19 +654,234 @@ _DOC_FAMILIES = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Document adapter helpers
+# ---------------------------------------------------------------------------
+
+# Map doc family → host family so we can ask the live host for metadata
+# about the open document.
+_DOC_TO_HOST = {
+    "revit":   "revit",
+    "dwg":     "autocad",
+    "blender": "blender",
+    "3dm":     "rhino",
+    "max":     "max",
+}
+
+
+def _doc_from_host(family: str, path: str) -> dict:
+    """Ask the matching host adapter for live document metadata.
+
+    Returns {alive, contents, selection, warnings, current_view, ...}.
+    `alive=False` when the host isn't running — caller falls back to
+    the offline envelope.
+    """
+    host_family = _DOC_TO_HOST.get(family)
+    if host_family is None:
+        return {"alive": False}
+    if host_family == "outlook":
+        return {"alive": False}
+    if host_family in ("revit", "autocad", "max"):
+        info = _broker_host_info(host_family)
+    elif host_family in ("blender", "rhino"):
+        info = _runner_host_info(host_family)
+    else:
+        info = {"alive": False}
+    if not info.get("alive"):
+        return {"alive": False, "reason": info.get("reason", "")}
+
+    # Best-effort live read. We DO NOT auto-open the file — the host
+    # node owns open semantics — but we DO surface the currently-open
+    # document if it matches `path` (or no path was given).
+    opened = info.get("opened_doc") or ""
+    matches = (not path) or (path and str(opened).lower().endswith(
+        _Path(path).name.lower()))
+    return {
+        "alive":     True,
+        "contents":  None,   # heavy contents stay in the host
+        "selection": list(info.get("selection") or []),
+        "warnings":  list(info.get("warnings") or []),
+        "current_view": info.get("current_view") or "",
+        "opened_doc": opened or None,
+        "matches":   bool(matches),
+    }
+
+
+def _read_csv(path: str) -> dict:
+    """Read a CSV via stdlib. Returns columns + rows (first 100) +
+    full row_count."""
+    p = _Path(path)
+    if not p.exists():
+        return {"status": "missing", "error": f"file not found: {path}"}
+    try:
+        with p.open("r", encoding="utf-8", newline="") as fh:
+            reader = _csv.reader(fh)
+            rows_all = list(reader)
+    except UnicodeDecodeError:
+        with p.open("r", encoding="latin-1", newline="") as fh:
+            reader = _csv.reader(fh)
+            rows_all = list(reader)
+    except Exception as ex:
+        return {"status": "error",
+                "error": f"{type(ex).__name__}: {ex}"}
+    if not rows_all:
+        return {"status": "ok", "columns": [], "rows": [],
+                "row_count": 0}
+    header = rows_all[0]
+    data = rows_all[1:]
+    return {
+        "status":    "ok",
+        "columns":   header,
+        "rows":      data[:100],
+        "row_count": len(data),
+    }
+
+
+def _read_pdf(path: str) -> dict:
+    """Best-effort PDF text extraction. Returns status=missing_dep
+    when pypdf isn't installed."""
+    try:
+        import pypdf  # type: ignore
+    except ImportError:
+        return {"status": "missing_dep",
+                "hint": "pip install pypdf to enable PDF reading"}
+    p = _Path(path)
+    if not p.exists():
+        return {"status": "missing", "error": f"file not found: {path}"}
+    try:
+        reader = pypdf.PdfReader(str(p))
+        pages: list[str] = []
+        for i, page in enumerate(reader.pages):
+            if i >= 50:                         # cap so we don't OOM
+                break
+            try:
+                pages.append(page.extract_text() or "")
+            except Exception:
+                pages.append("")
+        return {
+            "status":     "ok",
+            "page_count": len(reader.pages),
+            "text":       "\n\n".join(pages)[:200_000],
+            "metadata":   dict(reader.metadata or {}),
+        }
+    except Exception as ex:
+        return {"status": "error",
+                "error": f"{type(ex).__name__}: {ex}"}
+
+
+def _read_ifc(path: str) -> dict:
+    """Best-effort IFC summary. Returns status=missing_dep when
+    ifcopenshell isn't installed."""
+    try:
+        import ifcopenshell  # type: ignore
+    except ImportError:
+        return {"status": "missing_dep",
+                "hint": "pip install ifcopenshell to enable IFC reading"}
+    p = _Path(path)
+    if not p.exists():
+        return {"status": "missing", "error": f"file not found: {path}"}
+    try:
+        f = ifcopenshell.open(str(p))
+        return {
+            "status":  "ok",
+            "schema":  getattr(f, "schema", ""),
+            "project": getattr(f, "wrapped_data", None) and "loaded",
+            "entity_count": len(list(f)),
+        }
+    except Exception as ex:
+        return {"status": "error",
+                "error": f"{type(ex).__name__}: {ex}"}
+
+
 def _doc_exec(config: dict, inputs: dict, ctx) -> dict:
-    """Phase-1 stub. Returns predictable doc envelope."""
+    """Return live doc metadata.
+
+    For host-resident docs (revit/dwg/blender/3dm/max): ask the host
+    runner if it's alive; otherwise return the offline envelope.
+
+    For file-resident docs (csv/pdf/ifc): read directly from disk
+    using stdlib (csv) or best-effort optional deps (pypdf,
+    ifcopenshell).
+    """
     family = config.get("_family") or "revit"
     path = (inputs.get("path") or config.get("path") or "").strip()
-    return {
-        "status":   "ok",
-        "family":   family,
-        "path":     path,
-        "version":  config.get("version", ""),
-        "contents": None,                 # filled by Phase 4 adapter
-        "selection": [],
-        "warnings": [],
+    version = config.get("version", "")
+
+    base = {
+        "status":     "ok",
+        "family":     family,
+        "path":       path,
+        "version":    version,
+        "contents":   None,
+        "selection":  [],
+        "warnings":   [],
+        "document":   {"family": family, "path": path,
+                       "version": version} if path else None,
+        "after":      None,
     }
+
+    # File-resident families ------------------------------------------
+    if family == "csv":
+        if not path:
+            return base                 # no file = empty envelope
+        res = _read_csv(path)
+        if res.get("status") == "ok":
+            base["contents"] = {
+                "columns":   res["columns"],
+                "rows":      res["rows"],
+                "row_count": res["row_count"],
+            }
+        else:
+            base["status"] = res.get("status", "ok")
+            base["warnings"] = [res.get("error") or ""]
+        return base
+
+    if family == "pdf":
+        if not path:
+            return base
+        res = _read_pdf(path)
+        if res.get("status") == "ok":
+            base["contents"] = {
+                "page_count": res["page_count"],
+                "text":       res["text"],
+                "metadata":   res["metadata"],
+            }
+        elif res.get("status") == "missing_dep":
+            base["status"]   = "missing_dep"
+            base["hint"]     = res["hint"]
+        else:
+            base["warnings"] = [res.get("error") or ""]
+        return base
+
+    if family == "ifc":
+        if not path:
+            return base
+        res = _read_ifc(path)
+        if res.get("status") == "ok":
+            base["contents"] = {
+                "schema":       res["schema"],
+                "entity_count": res["entity_count"],
+            }
+        elif res.get("status") == "missing_dep":
+            base["status"]   = "missing_dep"
+            base["hint"]     = res["hint"]
+        else:
+            base["warnings"] = [res.get("error") or ""]
+        return base
+
+    # Host-resident families ------------------------------------------
+    live = _doc_from_host(family, path)
+    if live.get("alive"):
+        base["selection"] = list(live.get("selection") or [])
+        base["warnings"]  = list(live.get("warnings") or [])
+        base["contents"]  = {
+            "current_view":   live.get("current_view") or "",
+            "selection_count": len(base["selection"]),
+            "warning_count":   len(base["warnings"]),
+            "opened_doc":      live.get("opened_doc"),
+            "matches":         live.get("matches", False),
+        }
+    return base
 
 
 def _register_doc_node(family: str, name: str, icon: str,

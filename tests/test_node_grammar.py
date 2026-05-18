@@ -132,6 +132,13 @@ class TestGrammarPayload:
         assert {"host", "op"} <= {p["k"] for p in by_kind["connector"]["params"]}
         assert by_kind["ai"]["params"][0]["k"] == "action"
         assert by_kind["logic"]["params"][0]["k"] == "kind"
+        assert {"value"} <= {p["k"] for p in by_kind["constant"]["params"]}
+        assert {"field", "op", "match"} <= {p["k"] for p in by_kind["filter"]["params"]}
+        # every READY primitive (except `skill`, configured on placement)
+        # lands with at least one editable param row — no bare nodes.
+        for e in payload:
+            if e["status"] == "ready" and e["kind"] != "skill":
+                assert e["params"], f"{e['kind']} has no param rows"
 
     def test_registry_primitives_carry_engine_ports(self):
         """A primitive with a registry engine type carries that type's

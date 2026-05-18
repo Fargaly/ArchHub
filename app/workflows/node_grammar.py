@@ -73,11 +73,14 @@ PRIMITIVES: list[Primitive] = [
         {"": "input.parameter"}, READY,
         "graph input; value/file/host-pick are input-UX variants over "
         "the one input.parameter executor",
+        params=({"k": "name", "v": "input", "type": "text"},
+                {"k": "default", "v": "", "type": "text"}),
     ),
     Primitive(
         "constant", "Constant", "input", "",
         {"": "data.constant"}, READY,
         "a literal typed value",
+        params=({"k": "value", "v": "", "type": "text"},),
     ),
     Primitive(
         "connector", "Connector", "connector", "",
@@ -115,6 +118,7 @@ PRIMITIVES: list[Primitive] = [
         "output", "Output", "output", "",
         {"": "output.parameter"}, READY,
         "graph output / sink",
+        params=({"k": "name", "v": "result", "type": "text"},),
     ),
     Primitive(
         "skill", "Skill", "skill", "",
@@ -126,18 +130,24 @@ PRIMITIVES: list[Primitive] = [
         "filter", "Filter", "shape", "",
         {"": "filter.apply"}, READY,
         "keep / drop list items by a `field` / `op` / `match` predicate",
+        params=({"k": "field", "v": "", "type": "text"},
+                {"k": "op", "v": "truthy", "type": "text"},
+                {"k": "match", "v": "", "type": "text"}),
     ),
     Primitive(
         "transform", "Transform", "shape", "",
         {"": "transform.apply"}, READY,
         "map / reshape data — `op`: count / pick / first / last / "
         "unique / sort / flatten / identity",
+        params=({"k": "op", "v": "identity", "type": "text"},
+                {"k": "field", "v": "", "type": "text"}),
     ),
     Primitive(
         "watch", "Watch", "watch", "",
         {"": "watch.preview"}, READY,
         "watcher — passes data through + emits a preview; `as` "
         "(list / table / json / ...) is the JSX render hint",
+        params=({"k": "as", "v": "json", "type": "text"},),
     ),
     Primitive(
         "trigger", "Trigger", "watch", "on",

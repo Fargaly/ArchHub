@@ -769,12 +769,20 @@ const StudioLM = () => {
       const gid = `${g.kind}_${Date.now().toString(36).slice(-4)}`;
       const gport = (p) => ({ id: p.id, label: p.id,
         t: String(p.type || 'any').toLowerCase() });
+      // Seed the selector param so a placed selector primitive (ai,
+      // logic) resolves to a real engine type + cooks immediately —
+      // default = the first engine_types key.
+      const gparams = [];
+      if (g.selector && g.engine_types) {
+        const dft = Object.keys(g.engine_types)[0];
+        if (dft) gparams.push({ k: g.selector, v: dft, type: 'select' });
+      }
       const gnode = {
         id: gid, kind: g.kind, cat: g.cat || 'node', x, y, w:220, h:112,
         title: g.display || g.kind, sub: g.note || g.kind,
         ins:  ((g.ports && g.ports.in)  || []).map(gport),
         outs: ((g.ports && g.ports.out) || []).map(gport),
-        params: [], _user: true,
+        params: gparams, _user: true,
       };
       LM_GRAPH.nodes.push(gnode);
       setFocusId(gid);

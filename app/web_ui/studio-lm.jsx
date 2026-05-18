@@ -556,6 +556,10 @@ const LM_LIBRARY = window.__archhub_LM_LIBRARY = window.__archhub_LM_LIBRARY || 
 // label,description,inputs,output_type,destructive}] }. The node library
 // reads this to surface all 116 connector operations as spawnable nodes.
 const LM_CONNECTORS = window.__archhub_LM_CONNECTORS = window.__archhub_LM_CONNECTORS || [];
+// The node grammar — bridge.get_node_grammar(), the ~12-primitive set
+// the redesigned palette is built from (docs/NODE_GRAMMAR.md). ONE
+// source; this replaces the 80-node LM_LIBRARY in the next slice.
+const LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR || [];
 // User-minted custom nodes — AI-designed via Node Smith or hand-built.
 const LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES || [];
 

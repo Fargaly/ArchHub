@@ -195,16 +195,23 @@ def _revit_wall_exec(config: dict, inputs: dict, ctx) -> dict:
     width_mm  = float(inputs.get("width_mm")  or config.get("width_mm")  or 200)
     level     = (inputs.get("level") or config.get("level") or "Level 1").strip()
     wall_type = (inputs.get("wall_type") or config.get("wall_type") or "Generic - 200mm").strip()
+    # Safely JSON-quote the user-controlled strings so a stray double-quote
+    # can't escape the generated C# (`Generic - 200"` would break out and
+    # let arbitrary code through). json.dumps emits a proper C-style
+    # escaped literal we can drop into a string slot.
+    import json as _json
+    level_lit = _json.dumps(level)
+    wall_type_lit = _json.dumps(wall_type)
     csharp = (
         f"// auto-emitted by aec.revit_wall node\n"
         f"var lvl = new FilteredElementCollector(Doc)\n"
         f"    .OfClass(typeof(Level)).Cast<Level>()\n"
-        f"    .FirstOrDefault(l => l.Name == \"{level}\");\n"
+        f"    .FirstOrDefault(l => l.Name == {level_lit});\n"
         f"if (lvl == null) {{ result = new {{ status = \"error\","
         f" reason = \"level {level} not found\" }}; return; }}\n"
         f"var wt = new FilteredElementCollector(Doc)\n"
         f"    .OfClass(typeof(WallType)).Cast<WallType>()\n"
-        f"    .FirstOrDefault(t => t.Name == \"{wall_type}\");\n"
+        f"    .FirstOrDefault(t => t.Name == {wall_type_lit});\n"
         f"if (wt == null) {{ result = new {{ status = \"error\","
         f" reason = \"wall type {wall_type} not found\" }}; return; }}\n"
         f"var line = Line.CreateBound(\n"

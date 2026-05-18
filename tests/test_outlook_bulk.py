@@ -196,10 +196,10 @@ class TestAutoCategoriseImpl:
         assert out["categorised"] == []
 
     def test_mail_prefix_stripped(self):
-        # 'mail.archhub.app' should derive 'Archhub' not 'Mail'.
+        # 'mail.archhub.io' should derive 'Archhub' not 'Mail'.
         from connectors import outlook_runner as r
         fake_msgs = [
-            {"entry_id": f"x{i}", "sender_email": f"u{i}@mail.archhub.app",
+            {"entry_id": f"x{i}", "sender_email": f"u{i}@mail.archhub.io",
              "subject": "x"} for i in range(3)
         ]
         with patch("connectors.outlook_runner.com_thread"), \

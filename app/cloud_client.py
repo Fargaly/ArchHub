@@ -1,4 +1,4 @@
-"""ArchHub Cloud HTTP client — talks to cloud.archhub.app.
+"""ArchHub Cloud HTTP client — talks to cloud.archhub.io.
 
 Open-core monetization spine. The desktop app stays open-source under
 AGPL; users who don't want to bring their own provider keys or
@@ -7,7 +7,7 @@ LLM call through our managed proxy. Same UI, no install friction,
 recurring revenue.
 
 This module is the thin HTTP wrapper. It does NOT contain any
-provider-specific logic — the proxy at cloud.archhub.app exposes an
+provider-specific logic — the proxy at cloud.archhub.io exposes an
 OpenAI-compatible Chat Completions endpoint, so the archhub_cloud
 LLM client reuses the existing OpenAI wire format.
 
@@ -52,7 +52,7 @@ from typing import Optional
 # Backend doesn't have to exist for the client to ship — the UI surfaces
 # clear "couldn't reach cloud" errors when calls fail.
 DEFAULT_BASE = os.environ.get(
-    "ARCHHUB_CLOUD_BASE_URL", "https://cloud.archhub.app"
+    "ARCHHUB_CLOUD_BASE_URL", "https://cloud.archhub.io"
 )
 
 # Secrets-store keys.

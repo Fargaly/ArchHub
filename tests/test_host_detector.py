@@ -333,8 +333,10 @@ class TestDetectAllHosts:
              patch("host_detector._tcp_open", return_value=False), \
              patch("host_detector._http_json", return_value=None):
             r = detect_all_hosts(force=True)
-        # Should still have entries for every host.
-        assert len(r) == 10
+        # Should still have entries for every host. Count tracks PROBERS
+        # so adding a new host (Notion) won't break the test.
+        from host_detector import PROBERS
+        assert len(r) == len(PROBERS)
         for hid, info in r.items():
             _shape_ok(info)
 

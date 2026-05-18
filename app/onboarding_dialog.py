@@ -160,7 +160,7 @@ class OnboardingDialog(QDialog):
 
     # ------------------------------------------------------------------
     def _start_cloud_signin(self) -> None:
-        """Open the browser PKCE flow against cloud.archhub.app. The
+        """Open the browser PKCE flow against cloud.archhub.io. The
         user lands on a friendly sign-up form; once they finish, the
         local callback receives a one-time code, exchanges it for a
         bearer token, and the dialog closes successfully."""
@@ -171,7 +171,7 @@ class OnboardingDialog(QDialog):
         self.stage_lbl.setText("Opening browser sign-in")
         self.bar.setValue(0)
         self.detail_lbl.setText(
-            "Your browser just opened on archhub.app. Finish sign-up "
+            "Your browser just opened on archhub.io. Finish sign-up "
             "there and come back — we'll detect it automatically."
         )
         try:

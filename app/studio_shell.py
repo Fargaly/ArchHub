@@ -2215,7 +2215,9 @@ class StudioShell(QMainWindow):
             from cloud_client import portal_url
             from PyQt6.QtGui import QDesktopServices
             from PyQt6.QtCore import QUrl
-            url = portal_url() or "https://archhub.app/billing"
+            # No bare /billing page exists; /upgrade is a real route
+            # that lands the user on plan selection / checkout.
+            url = portal_url() or "https://archhub.io/upgrade"
             QDesktopServices.openUrl(QUrl(url))
             return True
         except Exception:

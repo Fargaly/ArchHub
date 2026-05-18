@@ -10,7 +10,7 @@ Two-tier offering surfaced as a Studio page:
                         team Skills marketplace.
 
 The page is a comparison card grid. The "Choose Studio" button
-opens the upgrade flow on archhub.app/upgrade in the user's
+opens the upgrade flow on archhub.io/upgrade in the user's
 browser; the "Stay on BYO" button is a no-op marker that closes the
 page (BYO is the default state).
 """
@@ -80,7 +80,7 @@ TIERS: list[dict] = [
             "Email support",
         ],
         "cta": "Start free 7-day trial",
-        "url": "https://archhub.app/upgrade?tier=solo",
+        "url": "https://archhub.io/upgrade?tier=solo",
         "primary": False,
         "checkout_tier": "solo",
     },
@@ -104,7 +104,7 @@ TIERS: list[dict] = [
             "Onboarding session (1h with founder)",
         ],
         "cta": "Choose Studio",
-        "url": "https://archhub.app/upgrade?tier=studio",
+        "url": "https://archhub.io/upgrade?tier=studio",
         "primary": True,
         "checkout_tier": "studio",
     },
@@ -129,7 +129,9 @@ TIERS: list[dict] = [
             "Volume discounts at 25+ seats",
         ],
         "cta": "Talk to sales",
-        "url": "https://archhub.app/firm",
+        # No /firm marketing page exists — "talk to sales" opens a mail
+        # compose to the founder, which is the actual intent.
+        "url": "mailto:hello@archhub.io",
         "primary": False,
         "checkout_tier": "firm",
     },
@@ -176,8 +178,8 @@ class PricingPage(QWidget):
         # Footer note — discreet pointer to compare-tiers detail.
         foot = QLabel(
             "Switching tiers later is a no-op — your local data stays "
-            "exactly where it is. Email <a href='mailto:hello@archhub.app'>"
-            "hello@archhub.app</a> for firm-wide pricing or volume."
+            "exactly where it is. Email <a href='mailto:hello@archhub.io'>"
+            "hello@archhub.io</a> for firm-wide pricing or volume."
         )
         foot.setObjectName("studioMonoMuted")
         foot.setWordWrap(True)

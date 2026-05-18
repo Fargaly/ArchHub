@@ -105,8 +105,14 @@ def _resolve_field(value: Any, path: str) -> Any:
                 else:
                     return None
             else:
-                # attribute access on objects
-                cur = getattr(cur, key, None)
+                # Attribute access on objects — whitelist only public
+                # attrs. Dunders and private names ('_x', '__class__',
+                # '__subclasses__'…) could walk Python internals and
+                # leak / DoS via large traversals. Return None instead.
+                if hasattr(cur, key) and not key.startswith("_"):
+                    cur = getattr(cur, key, None)
+                else:
+                    return None
     return cur
 
 
@@ -181,16 +187,32 @@ def _enumerate_paths(value: Any, *, max_depth: int = 4,
     return out
 
 
-# Persistence whitelist — types we'll happily cache to disk.
-# Larger types (GEOMETRY / IMAGE / IFC / DOCUMENT) live only in WireBus.
-PERSISTABLE_TYPES = frozenset({
-    PortType.STRING.value, PortType.NUMBER.value, PortType.BOOLEAN.value,
-    PortType.OBJECT.value, PortType.LIST.value, PortType.PROMPT.value,
-    PortType.MESSAGE.value, PortType.INTENT.value, PortType.COMPLETION.value,
-    PortType.PATH.value, PortType.TOOL_RESULT.value, PortType.ANY.value,
-})
+# Persistence whitelist — Python types we'll happily cache to the WireBus.
+# Larger types (GEOMETRY / IMAGE / IFC / DOCUMENT) live only in the per-cook
+# in-memory map; we never pickle them back so a 50 MB IFC model can't
+# bloat session.graph on reload.
+PERSISTABLE_TYPES = (str, int, float, bool, list, dict, tuple, type(None))
 
 MAX_PERSIST_BYTES = 64 * 1024   # 64 KB upper bound per wire cache
+
+
+def _wire_safe(v):
+    """Return True if `v` is small + simple enough to keep on the WireBus.
+
+    Whitelist-by-type + size-cap. Anything else stays off the bus so the
+    runner can still cook the graph but reload won't carry the blob."""
+    try:
+        if v is None:
+            return True
+        if isinstance(v, PERSISTABLE_TYPES):
+            try:
+                import json as _j
+                return len(_j.dumps(v, default=str).encode('utf-8')) <= MAX_PERSIST_BYTES
+            except Exception:
+                return False
+        return False
+    except Exception:
+        return False
 
 
 class CycleDetected(RuntimeError):
@@ -203,12 +225,30 @@ class WorkflowRunner:
     """Cook a node graph the Houdini way: lazy, dirty, cached."""
 
     # ── construction ────────────────────────────────────────────────
-    def __init__(self, graph: dict):
+    def __init__(self, graph: dict, *,
+                  router: Any = None,
+                  tool_engine: Any = None,
+                  manager: Any = None,
+                  ctx: Any = None):
         # Graph shape matches the JSX prototype's LM_GRAPH + the
         # Workflow.to_dict shape:
         #   {"nodes": [{id, type, config, position, ins?, outs?, ...}],
         #    "wires"|"edges": [{from:[node,port], to:[node,port]}]
         #                  OR [{id, src_node, src_port, dst_node, dst_port}]}
+        #
+        # ctx threading: executors receive a context object whose attrs
+        # the live-cook executors (conversation.chat, host.*) reach into:
+        #   ctx.router       — LLMRouter (for conversation.chat round-trips)
+        #   ctx.tool_engine  — ToolEngine (for tool-call execution)
+        #   ctx.manager      — provider config manager
+        # Callers can either pass these as kwargs (legacy bridge style)
+        # or hand in a prebuilt ctx (any object with the right attrs).
+        if ctx is None:
+            from types import SimpleNamespace
+            ctx = SimpleNamespace(router=router,
+                                   tool_engine=tool_engine,
+                                   manager=manager)
+        self.ctx = ctx
         self.nodes_by_id: dict[str, dict] = {}
         for n in graph.get("nodes") or []:
             nid = n.get("id")
@@ -411,7 +451,10 @@ class WorkflowRunner:
                     value = _wrap_field(value, df)
                 inputs[e["dst_port"]] = value
                 # Park value on the bus + emit "flowing" then "cached".
-                self.wire_bus[e["id"]] = value
+                # Only whitelisted, size-capped values go on the wire bus —
+                # see PERSISTABLE_TYPES / MAX_PERSIST_BYTES at module scope.
+                if _wire_safe(value):
+                    self.wire_bus[e["id"]] = value
                 self._emit(e["id"], "flowing")
         finally:
             self._visiting.discard(node_id)
@@ -437,7 +480,7 @@ class WorkflowRunner:
 
         cfg = dict(node.get("config") or {})
         try:
-            outputs = executor(cfg, inputs, None)
+            outputs = executor(cfg, inputs, self.ctx)
             if not isinstance(outputs, dict):
                 outputs = {"value": outputs}
         except Exception as ex:
@@ -450,7 +493,10 @@ class WorkflowRunner:
         self.node_dirty.discard(node_id)
         for e in self._downstream_edges(node_id):
             v = outputs.get(e["src_port"]) if isinstance(outputs, dict) else None
-            self.wire_bus[e["id"]] = v
+            # See PERSISTABLE_TYPES / MAX_PERSIST_BYTES at module scope —
+            # keeps large or unwhitelisted payloads off the bus.
+            if _wire_safe(v):
+                self.wire_bus[e["id"]] = v
             try:
                 preview = repr(v)[:200]
             except Exception:

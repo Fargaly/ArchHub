@@ -110,10 +110,10 @@ def _list_host_sessions_impl(family: str) -> list[dict]:
         # may expose list_sessions() in the future — try first, fall
         # back to a probe.
         try:
-            if family == "blender":
-                from connectors import blender_runner as runner  # type: ignore
-            else:
-                from connectors import rhino_runner as runner   # type: ignore
+            import importlib as _il
+            runner = _il.import_module(
+                "connectors.blender_runner" if family == "blender"
+                else "connectors.rhino_runner")
         except Exception:
             return []
         listed = getattr(runner, "list_sessions", None)
@@ -231,10 +231,10 @@ def _list_host_documents_impl(family: str, session_id: str) -> list[dict]:
 
     if family in ("blender", "rhino"):
         try:
-            if family == "blender":
-                from connectors import blender_runner as runner  # type: ignore
-            else:
-                from connectors import rhino_runner as runner   # type: ignore
+            import importlib as _il
+            runner = _il.import_module(
+                "connectors.blender_runner" if family == "blender"
+                else "connectors.rhino_runner")
         except Exception:
             return []
         # Runner may expose list_files/list_docs explicitly.
@@ -290,15 +290,31 @@ class ArchHubBridge(QObject):
 
     # Signals visible to JS via QWebChannel auto-emit.
     chat_chunk      = pyqtSignal(str, str)       # (session_id, text)
+    chat_reasoning  = pyqtSignal(str, str)       # (session_id, reasoning_step)
     chat_done       = pyqtSignal(str)            # (session_id)
     chat_error      = pyqtSignal(str, str)       # (session_id, error)
     hosts_changed   = pyqtSignal()
     sessions_changed = pyqtSignal()
     memory_changed  = pyqtSignal()
+    skills_changed  = pyqtSignal()
     notice          = pyqtSignal(str, str)       # (level, text) — toast hook
     # v1.4 wire-as-data-bridge — runner pushes wire state into JS so
     # the canvas can colour wires by data state in real time.
     wire_state_changed = pyqtSignal(str, str, str)   # (edge_id, state, preview)
+    # v1.5 thread-safety: emitted when an async run_workflow/run_node
+    # worker thread finishes (success or error). Payload is JSON string
+    # of the runner result so JSX can hand it back to the original
+    # caller via `kind` ("workflow"|"node") + `request_id`.
+    workflow_done   = pyqtSignal(str, str, str)      # (kind, request_id, result_json)
+    # v1.5 thread-safety: emitted when a run_workflow / run_node worker
+    # thread is about to start. The session_id is the runner's req_id so
+    # the JS canvas can correlate started/done pairs and show spinners.
+    workflow_started = pyqtSignal(str, str)          # (kind, request_id)
+    trigger_fired   = pyqtSignal(str, str, str)     # (session_id, node_id, payload_json)
+    agent_step_done = pyqtSignal(str)               # (result_json) — LLM-orchestrator finished
+    connector_op_done = pyqtSignal(str)             # (result_json) — a connector op finished
+    param_options_ready = pyqtSignal(str)           # (json) — dynamic dropdown options resolved
+    node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None):
@@ -308,6 +324,47 @@ class ArchHubBridge(QObject):
         self.tools = tools
         self.chat_widget = chat_widget
         self._active_session_id: Optional[str] = None
+        # Register user-authored custom node types on boot so the canvas
+        # + runner pick them up without a relaunch. Failures must never
+        # bring the bridge down — a single bad spec on disk shouldn't
+        # block the rest of the app.
+        try:
+            from workflows.custom_nodes import load_all as _load_custom
+            _load_custom()
+        except Exception:
+            pass
+        # ── Founder demand 2026-05-15: ALL 18 host connectors. Import
+        # every connector module so each self-registers into the
+        # connectors.base registry. Best-effort — a connector whose host
+        # SDK is missing is skipped, never fatal.
+        try:
+            from connectors.base import load_all_connectors
+            load_all_connectors()
+        except Exception:
+            pass
+        # ── Founder demand 2026-05-15: TRIGGER nodes go live. The
+        # graph-trigger scheduler walks every session blob, finds in-graph
+        # trigger nodes (cat='trigger'), and dispatches `trigger_fired`
+        # when their schedule / file-watch / warning / event lands. Failure
+        # to start must not block the bridge — it just means triggers
+        # remain dormant until arm_triggers() is called explicitly.
+        self._graph_triggers = None
+        try:
+            from session_io import SESSIONS_DIR
+            from workflows.graph_triggers import GraphTriggerScheduler
+            def _on_fire(sid: str, node_id: str, payload: dict) -> None:
+                try:
+                    self.trigger_fired.emit(sid, node_id, _safe_json(payload))
+                except Exception:
+                    pass
+            self._graph_triggers = GraphTriggerScheduler(
+                sessions_dir=SESSIONS_DIR,
+                on_fire=_on_fire,
+                tick_seconds=10.0,
+            )
+            self._graph_triggers.start()
+        except Exception:
+            self._graph_triggers = None
 
     # ─── Identity ───────────────────────────────────────────────
     @pyqtSlot(result=str)
@@ -364,37 +421,285 @@ class ArchHubBridge(QObject):
                             if on else "deactivate_family", None)
             if mfn:
                 mfn(host_id)
-                self.hosts_changed.emit()
+                try: self.hosts_changed.emit()
+                except Exception: pass
                 return _safe_json({"ok": True})
             return _safe_json({"error": "manager has no toggle"})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
+
+    # ─── Host connectors (the 16-connector op layer) ───────────────
+    # Founder demand 2026-05-15: every host connector + its operations
+    # exposed to the canvas. get_connectors returns metadata + the op
+    # catalogue WITHOUT probing (probe is COM/HTTP — would block the Qt
+    # main thread, the freeze bug). run_connector_op runs one op on a
+    # background thread and emits connector_op_done.
+    @pyqtSlot(result=str)
+    def get_connectors(self) -> str:
+        """Connector catalogue: host, mechanism, and every op's metadata.
+        No probing here — status is fetched lazily via probe_connector."""
+        try:
+            from connectors.base import all_connectors
+            out = []
+            for c in all_connectors():
+                try:
+                    out.append({
+                        "host": c.host,
+                        "display_name": c.display_name,
+                        "mechanism": c.mechanism,
+                        "ops": [o.to_dict() for o in c.ops()],
+                    })
+                except Exception:
+                    continue
+            return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def probe_connector(self, host_id: str) -> str:
+        """Probe ONE connector's live status. COM/HTTP — keep callers off
+        the hot path; JSX calls this lazily per host pill."""
+        try:
+            from connectors.base import get as _get_connector
+            c = _get_connector(host_id)
+            if c is None:
+                return _safe_json({"status": "missing",
+                                    "note": f"no connector '{host_id}'"})
+            return _safe_json(c.probe())
+        except Exception as ex:
+            return _safe_json({"status": "missing", "note": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def run_connector_op(self, op_id: str, params_json: str) -> str:
+        """Run one connector operation on a background thread; emit
+        connector_op_done(result_json) when finished. Returns immediately
+        so a slow COM / HTTP / broker call never freezes the UI."""
+        import json as _json
+        try:
+            params = _json.loads(params_json) if params_json else {}
+        except Exception as ex:
+            return _safe_json({"async": False,
+                                "error": f"bad params_json: {ex}"})
+        if not isinstance(params, dict):
+            params = {}
+
+        def _runner():
+            try:
+                from connectors.base import run_op
+                result = run_op(op_id, **params)
+                payload = result.to_dict() if hasattr(result, "to_dict") \
+                    else {"ok": False, "error": "bad op result",
+                          "op_id": op_id}
+            except Exception as ex:
+                payload = {"ok": False, "op_id": op_id,
+                           "error": f"{type(ex).__name__}: {ex}"}
+            try:
+                self.connector_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        threading.Thread(target=_runner, daemon=True,
+                          name="ArchHubConnectorOp").start()
+        return _safe_json({"async": True, "op_id": op_id})
+
+    @pyqtSlot(str, str, str, result=str)
+    def request_param_options(self, req_id: str, source_op_id: str,
+                               context_json: str) -> str:
+        """Populate a parameter's dropdown dynamically. `source_op_id` is
+        a connector op whose result IS the option list (e.g. a `worksheet`
+        param has options_source='excel.list_worksheets'). Cascading: the
+        context (the node's other param values) is passed through, filtered
+        to the inputs the source op actually declares. Threaded — emits
+        param_options_ready(req_id, json). Founder demand 2026-05-15:
+        cascading dropdowns (document → views → levels)."""
+        import json as _json
+        try:
+            ctx = _json.loads(context_json) if context_json else {}
+        except Exception:
+            ctx = {}
+        if not isinstance(ctx, dict):
+            ctx = {}
+
+        def _runner():
+            try:
+                from connectors.base import run_op, get as _get_conn
+                host = source_op_id.split(".", 1)[0] if "." in source_op_id else ""
+                conn = _get_conn(host)
+                op = conn.op(source_op_id) if conn else None
+                # Filter context to the source op's declared inputs so a
+                # fixed-arg fn never trips over an unexpected kwarg.
+                if op is not None:
+                    allowed = {p.id for p in (op.inputs or [])}
+                    call_ctx = {k: v for k, v in ctx.items()
+                                if k in allowed and v not in (None, "")}
+                else:
+                    call_ctx = {}
+                result = run_op(source_op_id, **call_ctx)
+                opts = []
+                if getattr(result, "ok", False):
+                    val = getattr(result, "value", None)
+                    if isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, dict):
+                                opts.append({
+                                    "id": str(item.get("id")
+                                              or item.get("name")
+                                              or item.get("value") or item),
+                                    "label": str(item.get("label")
+                                                  or item.get("name")
+                                                  or item.get("title")
+                                                  or item.get("id") or item),
+                                })
+                            else:
+                                opts.append({"id": str(item), "label": str(item)})
+                    elif isinstance(val, dict):
+                        for k, v in val.items():
+                            opts.append({"id": str(k), "label": str(k)})
+                payload = {"req_id": req_id, "ok": getattr(result, "ok", False),
+                           "options": opts,
+                           "error": getattr(result, "error", "")}
+            except Exception as ex:
+                payload = {"req_id": req_id, "ok": False, "options": [],
+                           "error": f"{type(ex).__name__}: {ex}"}
+            try:
+                self.param_options_ready.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        threading.Thread(target=_runner, daemon=True,
+                          name="ArchHubParamOptions").start()
+        return _safe_json({"async": True, "req_id": req_id})
 
     # ─── Sessions ───────────────────────────────────────────────
     @pyqtSlot(result=str)
     def get_sessions(self) -> str:
         try:
             from session_io import list_sessions
+
+            def _when(iso) -> str:
+                """ISO timestamp -> short relative label for the session
+                card ('just now', '3h', '2d', 'May 04'). The JSX card
+                reads `s.when`; emitting nothing left it blank."""
+                if not iso:
+                    return ""
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(
+                        str(iso).replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    secs = (datetime.now(timezone.utc)
+                            - dt).total_seconds()
+                    if secs < 60:
+                        return "just now"
+                    if secs < 3600:
+                        return f"{int(secs // 60)}m"
+                    if secs < 86400:
+                        return f"{int(secs // 3600)}h"
+                    if secs < 7 * 86400:
+                        return f"{int(secs // 86400)}d"
+                    return dt.strftime("%b %d")
+                except Exception:
+                    return str(iso)[:10]
+
             entries = list_sessions() or []
             out = []
             for e in entries:
-                # e is either a SessionListEntry dataclass or a dict.
-                if hasattr(e, "name"):
+                # session_io.list_sessions actually returns 3-tuples
+                # (path, name, saved_at_iso). Older API variants returned
+                # SessionListEntry dataclasses or dicts. Handle all three
+                # shapes so the JSX side always gets uniform rows.
+                #
+                # Every row carries `state` + `when`: the JSX SessionCard
+                # renders both. A saved session that isn't actively
+                # running is "idle" — emitting no state made every card
+                # fall back to the "unknown" badge (founder bug
+                # 2026-05-18).
+                if isinstance(e, tuple) and len(e) >= 2:
+                    path = e[0]
+                    name = e[1] if len(e) > 1 else ""
+                    saved_at = e[2] if len(e) > 2 else ""
+                    # Derive a stable id from the file stem so load_session
+                    # can resolve it back to a path.
+                    try:
+                        from pathlib import Path
+                        stem = Path(str(path)).stem.replace(
+                            ".archhub-session", "")
+                    except Exception:
+                        stem = str(name or "")
+                    out.append({
+                        "id":       stem,
+                        "title":    str(name or stem),
+                        "saved_at": str(saved_at),
+                        "when":     _when(saved_at),
+                        "state":    "idle",
+                        "messages": 0,
+                    })
+                elif hasattr(e, "name"):
+                    saved_at = str(getattr(e, "saved_at", ""))
                     out.append({
                         "id":       getattr(e, "name", "")
                                       or getattr(e, "path", ""),
                         "title":    getattr(e, "name", ""),
-                        "saved_at": str(getattr(e, "saved_at", "")),
+                        "saved_at": saved_at,
+                        "when":     _when(saved_at),
+                        "state":    "idle",
                         "messages": getattr(e, "message_count", 0),
                     })
                 elif isinstance(e, dict):
+                    saved_at = str(e.get("saved_at", ""))
                     out.append({
                         "id":       e.get("name") or e.get("path") or "",
                         "title":    e.get("name", ""),
-                        "saved_at": str(e.get("saved_at", "")),
+                        "saved_at": saved_at,
+                        "when":     _when(saved_at),
+                        "state":    e.get("state") or "idle",
                         "messages": e.get("message_count", 0),
                     })
             return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def create_session(self, title: str) -> str:
+        """Mint a fresh empty session + return {id, title, saved_at}.
+        JSX `+ new session` button calls this; bridge persists an empty
+        graph immediately so save_graph keeps working without a special
+        first-write code path.
+
+        title is whatever the user typed (or "Untitled" if blank).
+        Returns a JSON object with `id` (fresh slug) + `title`."""
+        try:
+            from datetime import datetime
+            from session_io import SESSIONS_DIR
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            t = (title or "").strip() or "Untitled session"
+            # Slug: keep alnum + replace runs of other chars with `-`.
+            import re as _re
+            slug = _re.sub(r"[^A-Za-z0-9]+", "-", t).strip("-").lower()
+            if not slug:
+                slug = "session"
+            base = slug
+            k = 2
+            while (SESSIONS_DIR / f"{slug}.archhub-session.json").exists():
+                slug = f"{base}-{k}"
+                k += 1
+            payload = {
+                "id":    slug,
+                "name":  t,
+                "graph": {"nodes": [], "wires": []},
+                "saved_at": datetime.utcnow().isoformat() + "Z",
+            }
+            (SESSIONS_DIR / f"{slug}.archhub-session.json").write_text(
+                json.dumps(payload, indent=2), encoding="utf-8",
+            )
+            self._active_session_id = slug
+            # Notify the JSX so the sidebar list refreshes without a
+            # relaunch — fresh session should appear immediately.
+            try: self.sessions_changed.emit()
+            except Exception: pass
+            return _safe_json({"id": slug, "title": t,
+                                 "saved_at": payload["saved_at"]})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -458,58 +763,263 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── Graph triggers (in-canvas TRIGGER nodes) ──────────────
+    @pyqtSlot(result=str)
+    def arm_triggers(self) -> str:
+        try:
+            if self._graph_triggers:
+                self._graph_triggers.start()
+                return _safe_json({"ok": True, "armed": True})
+            return _safe_json({"ok": False, "error": "scheduler missing"})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def disarm_triggers(self) -> str:
+        try:
+            if self._graph_triggers:
+                self._graph_triggers.stop()
+                return _safe_json({"ok": True, "armed": False})
+            return _safe_json({"ok": False, "error": "scheduler missing"})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def trigger_status(self) -> str:
+        running = bool(self._graph_triggers
+                        and self._graph_triggers._thread
+                        and self._graph_triggers._thread.is_alive())
+        return _safe_json({"running": running,
+                            "tick_s": getattr(self._graph_triggers,
+                                              "tick_seconds", None)})
+
+    # ─── Local LLM detection ───────────────────────────────────
+    # Founder demand 2026-05-15: ArchHub auto-utilises whatever local
+    # AI stacks the user already has — Claude Desktop / CLI, Codex CLI,
+    # Gemini CLI, LM Studio, Ollama, Jan, GPT4All, LocalAI, etc. The
+    # detector runs filesystem + port checks; the JSX model picker
+    # shows them grouped under LOCAL.
+    @pyqtSlot(result=str)
+    def get_local_llms(self) -> str:
+        try:
+            from local_llm_detector import detect_all_local_llms
+            return _safe_json(detect_all_local_llms())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
     @pyqtSlot(str, result=str)
     def set_model(self, model_id: str) -> str:
+        # Founder demand 2026-05-15: model picker should actually pin the
+        # router. Stash the chosen id on the bridge so send_chat_history
+        # forwards it to router.complete (was hardcoded `auto`).
+        try:
+            self._selected_model = (model_id or "").strip() or "auto"
+        except Exception:
+            self._selected_model = "auto"
         try:
             if self.chat_widget and hasattr(self.chat_widget, "model_picker"):
                 cw = self.chat_widget
                 for i in range(cw.model_picker.count()):
                     if cw.model_picker.itemData(i) == model_id:
                         cw.model_picker.setCurrentIndex(i)
-                        return _safe_json({"ok": True})
-            return _safe_json({"error": "picker not available"})
+                        return _safe_json({"ok": True, "model": self._selected_model})
+            return _safe_json({"ok": True, "model": self._selected_model,
+                                "note": "picker widget not available"})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
     # ─── Chat ───────────────────────────────────────────────────
     @pyqtSlot(str, str)
     def send_chat(self, session_id: str, text: str) -> None:
-        """Fire-and-forget. Emits chat_chunk / chat_done / chat_error
-        back to JS on its own thread."""
+        """2-arg overload — empty history. Delegates to the 3-arg form."""
+        self.send_chat_history(session_id, text, "[]")
+
+    @pyqtSlot(str, str, str)
+    def send_chat_history(self, session_id: str, text: str,
+                            history_json: str) -> None:
+        """Fire-and-forget. JSX side passes the focused conversation
+        node's `messages` array as JSON so the LLM gets full context.
+        Emits chat_chunk / chat_done / chat_error back to JS on its own
+        thread."""
         text = (text or "").strip()
         if not text:
-            self.chat_error.emit(session_id, "empty prompt")
+            try: self.chat_error.emit(session_id, "empty prompt")
+            except Exception: pass
+            try: self.chat_done.emit(session_id)
+            except Exception: pass
             return
         if not self.router:
-            self.chat_error.emit(session_id, "router not wired")
+            try: self.chat_error.emit(session_id, "router not wired")
+            except Exception: pass
+            try: self.chat_done.emit(session_id)
+            except Exception: pass
             return
+
+        # Parse the front-end's conversation array into the LLMRouter's
+        # canonical [{role, content}, ...] shape. JSX uses {me, text}.
+        history: list[dict] = []
+        try:
+            raw = json.loads(history_json or "[]") if history_json else []
+        except Exception:
+            raw = []
+        for m in raw or []:
+            if not isinstance(m, dict):
+                continue
+            role = "user" if m.get("me") else "assistant"
+            content = m.get("text") or m.get("content") or ""
+            # Founder demand 2026-05-14: composer attachments. JSX writes
+            # attachments to disk via stash_attachment and stores paths
+            # under message.images. Forward them so vision-capable
+            # providers can read the blocks.
+            images = m.get("images") or []
+            if isinstance(content, str) and (content or images):
+                entry: dict = {"role": role,
+                                 "content": content if isinstance(content, str) else ""}
+                if images:
+                    entry["images"] = [str(p) for p in images if p]
+                history.append(entry)
+        # The fresh user turn the composer just submitted is the LAST
+        # entry on the JSX side too (it was pushed before send). Keep
+        # only entries strictly BEFORE that final user echo so we don't
+        # double-send. If the last entry is the assistant placeholder,
+        # drop it too (it's the empty bubble awaiting stream).
+        while history and history[-1]["content"] in ("", text):
+            history.pop()
+        history.append({"role": "user", "content": text})
+        # ── Founder bug (2026-05-15 → 16): the AI fabricated host facts
+        # — wrote a fake <function_calls>/<function_result> block and
+        # lied ("no files open in AutoCAD" while a drawing was open).
+        #
+        # ROOT CAUSE: the old patch here prepended a `role:"system_override"`
+        # message that ALSO lied — "you have NO tools in this chat". Two
+        # failures compounded: (1) `system_override` is not a valid
+        # provider message role, so Anthropic 400'd and the request fell
+        # back to a tool-less provider; (2) even the prompt text told the
+        # model it had no tools. A tool-less model asked a factual
+        # question fabricates.
+        #
+        # FIX: the conversation node IS tool-capable — the router hands
+        # the model every reachable host's connector ops. Frame it with a
+        # real `role:"system"` message (llm_router._complete_once now
+        # folds system messages into the system prompt) that tells the
+        # truth: you have tools, CALL them, never invent a result.
+        history.insert(0, {"role": "system", "content": (
+            "You are ArchHub's in-canvas copilot for AEC professionals, "
+            "answering inside a conversation node on the user's graph. "
+            "You have real tools — the connector operations for every "
+            "reachable host (Revit, AutoCAD, Excel, Outlook, …). When "
+            "the user asks anything factual about a host — what files "
+            "are open, the current selection, warnings, inbox contents — "
+            "CALL the matching tool and report the REAL result. Never "
+            "invent a tool call, never write <function_calls> / "
+            "<function_result> markup yourself, and never claim an "
+            "action succeeded unless a tool actually returned that. If "
+            "no tool fits, say so plainly. Be concise."
+        )})
 
         def _runner():
             try:
-                # ChatWindow is the integrated front-end — when present,
-                # invoke its send pipeline so we get the same tool-use
-                # loop + memory + telemetry pipeline. Otherwise call
-                # the router directly with no tools.
-                if self.chat_widget and hasattr(self.chat_widget, "_send_text_async"):
-                    # Use the chat widget's internal send pipeline.
-                    try:
-                        self.chat_widget._send_text_async(text)
-                        self.chat_done.emit(session_id)
-                        return
-                    except Exception:
-                        pass
-                # Fallback: direct router call.
-                result = self.router.complete(
-                    prompt=text, conversation=[],
+                # Honor the user's selected model (set via set_model). If
+                # the picker has never been touched, fall back to auto.
+                # Strip the "local:" prefix synthetic ids from the picker
+                # so the router doesn't try to look them up as KNOWN_MODELS.
+                sel = getattr(self, "_selected_model", "") or "auto"
+                if sel.startswith("local:"):
+                    sel = "auto"
+                model = sel
+                # Track whether the provider actually pushed any chunks.
+                # Founder bug 2026-05-14: reply appeared twice because the
+                # provider streamed chunks AND we also emitted the final
+                # response.text at the end. `streamed` flag on the response
+                # is not reliable — some providers call on_chunk but leave
+                # streamed=False. Use our own counter, not the flag.
+                emitted_chunks = [0]
+                def _on_chunk(piece: str) -> None:
+                    if piece:
+                        emitted_chunks[0] += 1
+                        try: self.chat_chunk.emit(session_id, piece)
+                        except Exception: pass
+                def _on_reasoning(step: str) -> None:
+                    # Forward each provider reasoning frame to JSX so the
+                    # Conversation node renders a real trace instead of
+                    # the v1.4 mocked 4-line block.
+                    if step:
+                        try: self.chat_reasoning.emit(session_id, str(step))
+                        except Exception: pass
+                response = self.router.complete(
+                    history=history,
+                    model=model,
+                    on_chunk=_on_chunk,
+                    on_reasoning=_on_reasoning,
+                    on_tool_invocation=lambda _inv: None,
                 )
-                if result is not None:
-                    reply = getattr(result, "text", str(result))
-                    self.chat_chunk.emit(session_id, reply)
-                self.chat_done.emit(session_id)
+                # Only emit response.text as a final chunk if NOTHING was
+                # streamed. Otherwise we'd duplicate the entire message.
+                if response is not None and emitted_chunks[0] == 0:
+                    text_out = getattr(response, "text", "") or ""
+                    if text_out:
+                        try: self.chat_chunk.emit(session_id, text_out)
+                        except Exception: pass
+                try: self.chat_done.emit(session_id)
+                except Exception: pass
             except Exception as ex:
-                self.chat_error.emit(session_id, f"{type(ex).__name__}: {ex}")
+                # Always emit BOTH chat_error and chat_done so the JS UI
+                # doesn't hang waiting for a terminal signal.
+                try: self.chat_error.emit(session_id, f"{type(ex).__name__}: {ex}")
+                except Exception: pass
+                try: self.chat_done.emit(session_id)
+                except Exception: pass
 
         threading.Thread(target=_runner, daemon=True).start()
+
+    # ─── Composer attachments (images / files / voice) ─────────
+    # Founder demand 2026-05-14: composer accepts images, voice clips,
+    # arbitrary files. JSX reads the file via FileReader → base64 →
+    # this slot writes to a session-scoped attachment dir and returns
+    # the absolute path. Multimodal-capable providers (Anthropic,
+    # OpenAI, Google) read the path back via the provider client.
+    @pyqtSlot(str, str, str, result=str)
+    def stash_attachment(self, filename: str, mime: str,
+                          base64_data: str) -> str:
+        """Stash a base64-encoded attachment to disk + return its abs
+        path. Filename + mime are passed through for metadata; we
+        sanitise filename to a safe slug and pick the extension off
+        mime when filename has none.
+        """
+        try:
+            import base64
+            from session_io import SESSIONS_DIR
+            import re as _re
+            stash_dir = SESSIONS_DIR / "_attachments"
+            stash_dir.mkdir(parents=True, exist_ok=True)
+            # Strip data: URL prefix if present.
+            data = base64_data or ""
+            if data.startswith("data:"):
+                comma = data.find(",")
+                if comma > 0:
+                    data = data[comma+1:]
+            # Sanitise filename.
+            stem = _re.sub(r"[^A-Za-z0-9._-]", "_",
+                            (filename or "attachment").strip())[:60]
+            if "." not in stem:
+                ext_map = {
+                    "image/png": ".png", "image/jpeg": ".jpg",
+                    "image/gif": ".gif", "image/webp": ".webp",
+                    "audio/webm": ".webm", "audio/mp3": ".mp3",
+                    "audio/wav": ".wav", "application/pdf": ".pdf",
+                    "text/plain": ".txt",
+                }
+                stem += ext_map.get(mime or "", ".bin")
+            from datetime import datetime
+            stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+            path = stash_dir / f"{stamp}_{stem}"
+            path.write_bytes(base64.b64decode(data))
+            return _safe_json({"ok": True, "path": str(path),
+                                "name": path.name, "mime": mime or "",
+                                "size": path.stat().st_size})
+        except Exception as ex:
+            return _safe_json({"ok": False,
+                                "error": f"{type(ex).__name__}: {ex}"})
 
     # ─── Settings ──────────────────────────────────────────────
     @pyqtSlot()
@@ -519,14 +1029,30 @@ class ArchHubBridge(QObject):
         QTimer.singleShot(0, self._open_settings_safe)
 
     def _open_settings_safe(self) -> None:
+        if not (self.router and self.manager and self.tools):
+            try:
+                self.notice.emit("warning",
+                    "Settings needs router + manager + tools — initialise the bridge first.")
+            except Exception:
+                pass
+            return
         try:
             from settings_dialog import SettingsDialog
             parent = self.parent()
-            dlg = SettingsDialog(parent=parent, router=self.router,
-                                   manager=self.manager, tools=self.tools)
+            # SettingsDialog.__init__(router, parent=None). Keep manager/
+            # tools out of the call sig — they're not consumed there. We
+            # try both signatures so an alternate dialog build (one that
+            # WANTS manager/tools) still works.
+            try:
+                dlg = SettingsDialog(router=self.router, parent=parent,
+                                       manager=self.manager,
+                                       tools=self.tools)
+            except TypeError:
+                dlg = SettingsDialog(self.router, parent)
             dlg.exec()
         except Exception as ex:
-            self.notice.emit("error", f"Settings unavailable: {ex}")
+            try: self.notice.emit("error", f"Settings unavailable: {ex}")
+            except Exception: pass
 
     @pyqtSlot()
     def open_pricing(self) -> None:
@@ -544,7 +1070,8 @@ class ArchHubBridge(QObject):
                 parent = self.parent()
                 UpgradeDialog(parent=parent).exec()
             except Exception as ex:
-                self.notice.emit("error", f"Pricing unavailable: {ex}")
+                try: self.notice.emit("error", f"Pricing unavailable: {ex}")
+                except Exception: pass
 
     # ─── Memory ────────────────────────────────────────────────
     @pyqtSlot(result=str)
@@ -576,34 +1103,39 @@ class ArchHubBridge(QObject):
                           body={"text": text, "scope": scope})
             if r["status"] != "ok":
                 return _safe_json({"error": "cloud unavailable"})
-            self.memory_changed.emit()
+            try: self.memory_changed.emit()
+            except Exception: pass
             return _safe_json(r.get("json") or {})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
     # ─── Memory mutations ──────────────────────────────────────
-    @pyqtSlot(int, str, result=str)
-    def update_memory_fact(self, fact_id: int, text: str) -> str:
+    @pyqtSlot(str, str, result=str)
+    def update_memory_fact(self, fact_id: str, text: str) -> str:
         try:
+            fid_int = int(fact_id)
             from cloud_client import _request
-            r = _request("PUT", f"/v1/memory/facts/{fact_id}",
+            r = _request("PUT", f"/v1/memory/facts/{fid_int}",
                           body={"text": text})
             if r["status"] != "ok":
                 return _safe_json({"error": "update failed"})
-            self.memory_changed.emit()
+            try: self.memory_changed.emit()
+            except Exception: pass
             return _safe_json(r.get("json") or {})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
-    @pyqtSlot(int, result=str)
-    def forget_memory_fact(self, fact_id: int) -> str:
+    @pyqtSlot(str, result=str)
+    def forget_memory_fact(self, fact_id: str) -> str:
         try:
+            fid_int = int(fact_id)
             from cloud_client import _request
-            r = _request("DELETE", f"/v1/memory/facts/{fact_id}")
+            r = _request("DELETE", f"/v1/memory/facts/{fid_int}")
             if r["status"] != "ok":
                 return _safe_json({"error": "forget failed"})
-            self.memory_changed.emit()
-            return _safe_json({"ok": True, "id": fact_id})
+            try: self.memory_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "id": fid_int})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -700,8 +1232,8 @@ class ArchHubBridge(QObject):
         try:
             from llm_router import lmstudio_models
             from secrets_store import load_api_key
-            configured = set(self.router.configured_providers()
-                              if self.router else [])
+            configured = set((self.router.configured_providers()
+                              if self.router else None) or [])
             providers_meta = [
                 ("anthropic",  "Anthropic",   "#cc785c"),
                 ("openai",     "OpenAI",      "#10a37f"),
@@ -779,7 +1311,8 @@ class ArchHubBridge(QObject):
                 messages = []
             session.graph = graph
             save_session(session, name=name, messages=messages or None)
-            self.sessions_changed.emit()
+            try: self.sessions_changed.emit()
+            except Exception: pass
             return _safe_json({"ok": True, "session_id": sid,
                                 "nodes": len(graph.get("nodes") or []),
                                 "wires": len(graph.get("wires") or [])})
@@ -835,12 +1368,18 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(str, str, result=str)
     def run_workflow(self, session_id: str, graph_json: str = "") -> str:
-        """Run the entire workflow (Houdini render). Cooks every sink
-        node; pulls cascade upstream automatically; frozen nodes are
-        skipped. The canvas toolbar 'RUN WORKFLOW' button calls this."""
+        """Run the entire workflow (Houdini render) in a background
+        thread. Cooks every sink node; pulls cascade upstream
+        automatically; frozen nodes are skipped. Wire-state updates
+        stream over `wire_state_changed`; the final result is delivered
+        via the `workflow_done` signal payload
+        ("workflow", request_id, result_json) so the Qt main thread
+        never blocks. Returns the request_id immediately."""
+        import json as _json
+        import time as _time
+        req_id = f"wf-{int(_time.time()*1000)}-{id(self)}"
+        graph: dict | None = None
         try:
-            import json as _json
-            graph: dict
             if graph_json:
                 graph = _json.loads(graph_json)
             else:
@@ -852,40 +1391,72 @@ class ArchHubBridge(QObject):
                 if not p.exists():
                     p = SESSIONS_DIR / f"{session_id}.archhub-session.json"
                 if not p.exists():
-                    return _safe_json({"error": "session not found"})
+                    try: self.workflow_done.emit("workflow", req_id,
+                                                  _safe_json({"error": "session not found"}))
+                    except Exception: pass
+                    return _safe_json({"request_id": req_id,
+                                         "error": "session not found"})
                 session, _name, _m = load_session_with_messages(p)
                 graph = session.graph or {}
-            from workflows.runner import WorkflowRunner
-            runner = WorkflowRunner(graph)
-            runner.on_wire_state(
-                lambda eid, state, preview:
-                    self.wire_state_changed.emit(eid, state, preview))
-            return _safe_json(runner.run_all())
         except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            payload = _safe_json({"error": str(ex)})
+            try: self.workflow_done.emit("workflow", req_id, payload)
+            except Exception: pass
+            return _safe_json({"request_id": req_id, "error": str(ex)})
+
+        def _worker():
+            try: self.workflow_started.emit("workflow", req_id)
+            except Exception: pass
+            try:
+                from workflows.runner import WorkflowRunner
+                runner = WorkflowRunner(graph,
+                                         router=self.router,
+                                         tool_engine=self.tools,
+                                         manager=self.manager)
+                def _emit_wire_state(eid, state, preview):
+                    try: self.wire_state_changed.emit(eid, state, preview)
+                    except Exception: pass
+                runner.on_wire_state(_emit_wire_state)
+                result = runner.run_all()
+                payload = _safe_json(result)
+            except Exception as ex:
+                payload = _safe_json({"error": str(ex)})
+            try: self.workflow_done.emit("workflow", req_id, payload)
+            except Exception: pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return _safe_json({"request_id": req_id, "status": "started"})
 
     @pyqtSlot(str, str, str, result=str)
     def run_node(self, session_id: str, node_id: str,
                   graph_json: str = "") -> str:
-        """Cook a node via WorkflowRunner.pull — lazy upstream walk +
-        dirty cascade + caching. Emits wire_state(edge_id, state,
-        preview) signals as values flow so the JS canvas can light up
-        wires in real time.
+        """Cook a node via WorkflowRunner.pull in a worker thread —
+        lazy upstream walk + dirty cascade + caching. Emits wire_state
+        signals as values flow so the JS canvas can light up wires in
+        real time, then emits `workflow_done("node", request_id,
+        result_json)` when finished. Returns the request_id
+        synchronously so the Qt main thread never blocks.
 
         graph_json is optional. When given, the runner runs against
         that in-memory shape (no disk roundtrip). When empty, we read
         session.graph from the saved session.
         """
+        import json as _json
+        import time as _time
+        req_id = f"nd-{int(_time.time()*1000)}-{id(self)}"
+        graph: dict | None = None
         try:
-            import json as _json
             from pathlib import Path
             sid = session_id or "workspace"
-            graph: dict
             if graph_json:
                 try:
                     graph = _json.loads(graph_json)
                 except Exception as ex:
-                    return _safe_json({"error": f"bad graph_json: {ex}"})
+                    payload = _safe_json({"error": f"bad graph_json: {ex}"})
+                    try: self.workflow_done.emit("node", req_id, payload)
+                    except Exception: pass
+                    return _safe_json({"request_id": req_id,
+                                         "error": f"bad graph_json: {ex}"})
             else:
                 from session_io import (
                     SESSIONS_DIR, load_session_with_messages,
@@ -894,20 +1465,42 @@ class ArchHubBridge(QObject):
                 if not p.exists():
                     p = SESSIONS_DIR / f"{sid}.archhub-session.json"
                 if not p.exists():
-                    return _safe_json({"error": "session not found"})
+                    payload = _safe_json({"error": "session not found"})
+                    try: self.workflow_done.emit("node", req_id, payload)
+                    except Exception: pass
+                    return _safe_json({"request_id": req_id,
+                                         "error": "session not found"})
                 session, _name, _m = load_session_with_messages(p)
                 graph = session.graph or {}
-            from workflows.runner import WorkflowRunner
-            runner = WorkflowRunner(graph)
-            # Wire wire-state changes through to JS via Qt signal.
-            runner.on_wire_state(
-                lambda eid, state, preview:
-                    self.wire_state_changed.emit(eid, state, preview))
-            result = runner.pull(node_id)
-            return _safe_json(result if isinstance(result, dict)
-                                else {"value": result})
         except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            payload = _safe_json({"error": str(ex)})
+            try: self.workflow_done.emit("node", req_id, payload)
+            except Exception: pass
+            return _safe_json({"request_id": req_id, "error": str(ex)})
+
+        def _worker():
+            try: self.workflow_started.emit("node", req_id)
+            except Exception: pass
+            try:
+                from workflows.runner import WorkflowRunner
+                runner = WorkflowRunner(graph,
+                                         router=self.router,
+                                         tool_engine=self.tools,
+                                         manager=self.manager)
+                def _emit_wire_state(eid, state, preview):
+                    try: self.wire_state_changed.emit(eid, state, preview)
+                    except Exception: pass
+                runner.on_wire_state(_emit_wire_state)
+                result = runner.pull(node_id)
+                payload = _safe_json(result if isinstance(result, dict)
+                                       else {"value": result})
+            except Exception as ex:
+                payload = _safe_json({"error": str(ex)})
+            try: self.workflow_done.emit("node", req_id, payload)
+            except Exception: pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return _safe_json({"request_id": req_id, "status": "started"})
 
     # ─── Host session + document pickers ───────────────────────
     # Founder direction (2026-05-14): host tools should let the user
@@ -1133,5 +1726,912 @@ class ArchHubBridge(QObject):
                          "error": {"code": -32700,
                                     "message": f"bad params_json: {ex}"}})
             return _safe_json(server.dispatch(method, params))
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Node context-menu actions (right-click on a node) ─────────
+    # Founder direction (2026-05-14): right-click on a node body /
+    # title bar opens a per-node menu. Two of those items need bridge
+    # support: "Save as Skill" packages the node + reachable downstream
+    # graph into a skill JSON, and "Duplicate" clones a node with a
+    # +30/+30 px offset so the JSX can splice it cleanly into LM_GRAPH.
+    @pyqtSlot(str, str, result=str)
+    def save_as_skill(self, name: str, payload_json: str) -> str:
+        """Persist a graph subset as a skill JSON under app/skills/.
+
+        `payload_json` is the JSON-serialised graph subset (the node + its
+        reachable downstream nodes + the connecting wires) emitted by
+        the JSX side. We write it as
+        `app/skills/<slug>.archhub-skill.json` and return the absolute
+        path (or an error envelope on failure).
+        """
+        try:
+            import json as _json
+            import re
+            from pathlib import Path
+            try:
+                payload = _json.loads(payload_json) if payload_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad payload_json: {ex}"})
+            if not isinstance(payload, dict):
+                return _safe_json({"error": "payload must be a JSON object"})
+            slug_src = (name or payload.get("name")
+                        or "untitled-skill")
+            slug = re.sub(r"[^a-z0-9]+", "-",
+                          str(slug_src).lower()).strip("-") or "untitled-skill"
+            skills_dir = Path(__file__).resolve().parent / "skills"
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            out_path = skills_dir / f"{slug}.archhub-skill.json"
+            # Wrap with a tiny envelope so loaders can distinguish a
+            # skill JSON from a raw graph dump.
+            envelope = {
+                "kind": "archhub.skill",
+                "name": str(name or slug_src),
+                "slug": slug,
+                "graph": payload,
+            }
+            out_path.write_text(_json.dumps(envelope, indent=2,
+                                              ensure_ascii=False),
+                                  encoding="utf-8")
+            # Notify the JSX side so the Skills panel refreshes without
+            # a relaunch — skills are nodes, not files; the user should
+            # see the new entry immediately.
+            try: self.skills_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "path": str(out_path),
+                                "slug": slug,
+                                "nodes": len(payload.get("nodes") or []),
+                                "wires": len(payload.get("wires") or [])})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def duplicate_node(self, graph_json: str, node_id: str) -> str:
+        """Return a cloned node dict (offset +30/+30 px, fresh id) so
+        the JSX side can splice it into LM_GRAPH without re-implementing
+        the deep-copy + id-rewriting logic in JS.
+
+        Returns `{"node": {...}}` on success or `{"error": "..."}` on
+        failure. The new id is `<original_id>_copyN` where N is the
+        smallest integer that yields a globally-unique id within the
+        provided graph.
+        """
+        try:
+            import copy
+            import json as _json
+            try:
+                graph = _json.loads(graph_json) if graph_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad graph_json: {ex}"})
+            nodes = (graph.get("nodes") or []) if isinstance(graph, dict) else []
+            existing = {n.get("id") for n in nodes if isinstance(n, dict)}
+            src = next((n for n in nodes
+                        if isinstance(n, dict) and n.get("id") == node_id),
+                       None)
+            if src is None:
+                return _safe_json({"error": f"node {node_id!r} not found"})
+            clone = copy.deepcopy(src)
+            # Mint a unique id: <orig>_copy, _copy2, _copy3, ...
+            base = f"{node_id}_copy"
+            new_id = base
+            n = 2
+            while new_id in existing:
+                new_id = f"{base}{n}"
+                n += 1
+            clone["id"] = new_id
+            # Offset position by +30/+30 px so the clone is visually
+            # distinguishable from its source.
+            try:
+                clone["x"] = float(src.get("x", 0)) + 30
+                clone["y"] = float(src.get("y", 0)) + 30
+            except Exception:
+                # Non-numeric coords — best-effort skip the bump.
+                pass
+            # Wipe runtime state — the clone is a fresh, idle copy.
+            for k in ("state", "progress", "runtime", "result", "ms",
+                     "frozen"):
+                clone.pop(k, None)
+            return _safe_json({"node": clone, "id": new_id})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Subgraph (composite-node) compose / expand ────────────────
+    # Founder direction (2026-05-13): the canvas needs to fold N
+    # selected nodes into one composite (Cmd-G) + unfold a composite
+    # back into its inner contents ("Expand subgraph" context menu).
+    # Both operations are pure data transforms on the graph dict, so
+    # the heavy lifting lives in `workflows/subgraph.py`. These two
+    # slots are thin JSON wrappers around those helpers.
+    @pyqtSlot(str, str, result=str)
+    def compose_subgraph(self, graph_json: str,
+                          node_ids_json: str) -> str:
+        """Wrap the listed node ids into one `subgraph.user` node.
+
+        `graph_json` is the JSON-serialised LM_GRAPH; `node_ids_json`
+        is a JSON list of node ids. Returns the new graph dict (with
+        the composite node spliced in) or an `{"error": "..."}`
+        envelope on failure.
+        """
+        try:
+            import json as _json
+            try:
+                graph = _json.loads(graph_json) if graph_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad graph_json: {ex}"})
+            try:
+                node_ids = _json.loads(node_ids_json) if node_ids_json else []
+            except Exception as ex:
+                return _safe_json({"error": f"bad node_ids_json: {ex}"})
+            if not isinstance(node_ids, list) or not node_ids:
+                return _safe_json(
+                    {"error": "node_ids must be a non-empty JSON list"})
+            from workflows.subgraph import compose_subgraph as _compose
+            new_graph = _compose(graph, list(node_ids))
+            return _safe_json({"ok": True, "graph": new_graph})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def expand_subgraph(self, graph_json: str,
+                         subgraph_node_id: str) -> str:
+        """Inverse of `compose_subgraph`: replaces the composite node
+        with its inner contents + reconnects the outer wires.
+
+        Returns the new graph dict or an `{"error": "..."}` envelope.
+        """
+        try:
+            import json as _json
+            try:
+                graph = _json.loads(graph_json) if graph_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad graph_json: {ex}"})
+            if not subgraph_node_id:
+                return _safe_json(
+                    {"error": "subgraph_node_id is required"})
+            from workflows.subgraph import expand_subgraph as _expand
+            new_graph = _expand(graph, subgraph_node_id)
+            return _safe_json({"ok": True, "graph": new_graph})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Composer slash-command parser ─────────────────────────────
+    # Founder direction (2026-05-13): when the FloatingComposer input
+    # starts with `/wire`, `/freeze`, `/delete`, `/rename`,
+    # `/duplicate`, or `/properties`, JSX calls this slot to parse the
+    # command into a typed action descriptor. JSX then applies the
+    # descriptor against LM_GRAPH (or emits `lm-node-properties` for
+    # the properties case).
+    @pyqtSlot(str, str, result=str)
+    def parse_composer_command(self, raw: str,
+                                focused_node_id: str = "") -> str:
+        """Parse a slash-command from the composer.
+
+        See `workflows/composer_commands.py` for the action descriptor
+        shape. Returns a JSON-string action descriptor — JSX dispatches
+        on `command` to apply the change."""
+        try:
+            from workflows.composer_commands import (
+                parse_composer_command as _parse,
+            )
+            action = _parse(raw, focused_node_id=focused_node_id or None)
+            return _safe_json(action)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Composer agent (LLM-as-orchestrator) ─────────────────────
+    # Founder demand (2026-05-14): "whatever I write on the composer
+    # the AI should act on it and call the nodes and wire them". Slash
+    # commands stay on parse_composer_command; everything else hits
+    # this slot. The composer_agent module hands the user message +
+    # graph state to Claude with a tool schema describing canvas
+    # primitives (spawn_node / add_wire / set_node_param / run_node /
+    # run_workflow / query_graph / chat). The LLM picks tool calls;
+    # we forward them as structured actions for the JSX side to apply.
+    @pyqtSlot(str, str, str, result=str)
+    def agent_step(self, user_msg: str, graph_json: str,
+                    focused_node_id: str = "") -> str:
+        """LLM-as-orchestrator. Founder bug 2026-05-15: the app froze
+        ("Not Responding") on every composer submit — root cause was
+        this slot running `run_agent_step` SYNCHRONOUSLY on the Qt main
+        thread. run_agent_step does ~10s of host probing + a full LLM
+        round-trip; both blocked the UI. Fix: run it on a background
+        thread and emit `agent_step_done(result_json)` when finished.
+        The slot returns immediately so the main thread never stalls.
+        """
+        import json as _json
+        try:
+            graph = _json.loads(graph_json) if graph_json else {}
+        except Exception as ex:
+            return _safe_json({"async": False,
+                                "error": f"bad graph_json: {ex}"})
+
+        def _runner():
+            try:
+                from agents.composer_agent import run_agent_step
+                result = run_agent_step(
+                    user_msg=user_msg or "",
+                    graph=graph if isinstance(graph, dict) else {},
+                    focused_node_id=focused_node_id or "",
+                    router=self.router,
+                )
+            except Exception as ex:
+                result = {"actions": [], "text": "", "error": str(ex)}
+            try:
+                self.agent_step_done.emit(_safe_json(result))
+            except Exception:
+                pass
+
+        threading.Thread(target=_runner, daemon=True,
+                          name="ArchHubAgentStep").start()
+        # Return immediately — JSX listens for agent_step_done.
+        return _safe_json({"async": True})
+
+    @pyqtSlot(str, str, str, result=str)
+    def apply_composer_command(self, graph_json: str, raw: str,
+                                 focused_node_id: str = "") -> str:
+        """One-shot: parse `raw` and apply the resulting action against
+        the supplied graph. Convenience wrapper for the JSX side so it
+        doesn't have to do `parse_composer_command` then dispatch.
+
+        Returns `{"action": {...}, "graph": {...}}`."""
+        try:
+            import json as _json
+            try:
+                graph = _json.loads(graph_json) if graph_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad graph_json: {ex}"})
+            from workflows.composer_commands import (
+                parse_composer_command as _parse,
+                apply_action as _apply,
+            )
+            action = _parse(raw, focused_node_id=focused_node_id or None)
+            new_graph = _apply(graph, action) if action.get("ok") else graph
+            return _safe_json({"action": action, "graph": new_graph})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    # ─── Custom node-type creator ─────────────────────────────────
+    # Founder direction (2026-05-14): the user should be able to mint a
+    # new node type from the UI. The JSX "Create node…" modal POSTs the
+    # spec here; we persist it to LOCALAPPDATA and register it with the
+    # workflows registry so the canvas + runner pick it up immediately,
+    # without requiring a relaunch.
+    @pyqtSlot(str, result=str)
+    def create_node_type(self, spec_json: str) -> str:
+        """Create + register a custom node type from a JSON spec.
+
+        spec_json shape (see workflows/custom_nodes.py):
+            {"type": "my.custom", "category": "filter",
+             "display_name": "My filter",
+             "inputs": ["walls"], "outputs": ["filtered"],
+             "config_schema": {...},
+             "code": "<optional python source>"}
+
+        Returns `{"ok": true, "type": "...", "path": "..."}` or an
+        `{"error": "..."}` envelope on failure. When `code` is empty the
+        node is registered as a passthrough — the founder still gets a
+        usable custom node without the security risk of exec'ing
+        user-supplied scripts."""
+        try:
+            spec = json.loads(spec_json or "{}")
+            if not isinstance(spec, dict):
+                return _safe_json({"error": "spec must be a JSON object"})
+            from workflows.custom_nodes import write_spec, register_spec
+            path = write_spec(spec)
+            node_spec = register_spec(spec)
+            try: self.skills_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "type": node_spec.type,
+                                "path": str(path),
+                                "inputs":  [p.name for p in node_spec.inputs],
+                                "outputs": [p.name for p in node_spec.outputs]})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_custom_nodes(self) -> str:
+        """Every user-minted custom node type, for the node library's
+        MY NODES section. Founder demand 2026-05-16."""
+        try:
+            from workflows.custom_nodes import list_specs
+            out = []
+            for spec in (list_specs() or []):
+                if not isinstance(spec, dict):
+                    continue
+                ins = spec.get("inputs") or []
+                outs = spec.get("outputs") or []
+                out.append({
+                    "type": spec.get("type", ""),
+                    "category": spec.get("category", "transform"),
+                    "title": spec.get("display_name") or spec.get("type", ""),
+                    "description": spec.get("description", ""),
+                    "icon": spec.get("icon", "⊕"),
+                    "inputs": ins, "outputs": outs,
+                })
+            return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def ai_create_node(self, req_id: str, description: str) -> str:
+        """Founder demand 2026-05-16: custom-make a node on a whim with
+        AI. The user describes a node in natural language; an LLM
+        generates the full spec — type, category, typed I/O, and a
+        sandboxed Python `execute(config, inputs, ctx)` body — which we
+        register as a real, runnable custom node. Threaded; emits
+        `node_created(result_json)` when done."""
+        def _runner():
+            try:
+                import json as _json
+                from agents.node_smith import design_node_spec
+                spec = design_node_spec(description or "", router=self.router)
+                if not isinstance(spec, dict) or spec.get("error"):
+                    self.node_created.emit(_safe_json({
+                        "req_id": req_id, "ok": False,
+                        "error": (spec or {}).get("error", "AI returned no spec"),
+                    }))
+                    return
+                from workflows.custom_nodes import write_spec, register_spec
+                write_spec(spec)
+                node_spec = register_spec(spec)
+                try: self.skills_changed.emit()
+                except Exception: pass
+                self.node_created.emit(_safe_json({
+                    "req_id": req_id, "ok": True,
+                    "type": node_spec.type,
+                    "spec": {
+                        "type": spec.get("type"),
+                        "category": spec.get("category", "transform"),
+                        "title": spec.get("display_name") or spec.get("type"),
+                        "description": spec.get("description", ""),
+                        "icon": spec.get("icon", "⊕"),
+                        "inputs": spec.get("inputs") or [],
+                        "outputs": spec.get("outputs") or [],
+                    },
+                }))
+            except Exception as ex:
+                try:
+                    self.node_created.emit(_safe_json({
+                        "req_id": req_id, "ok": False,
+                        "error": f"{type(ex).__name__}: {ex}"}))
+                except Exception:
+                    pass
+
+        threading.Thread(target=_runner, daemon=True,
+                          name="ArchHubNodeSmith").start()
+        return _safe_json({"async": True, "req_id": req_id})
+
+    # ─── Settings-overlay / housekeeping slots ─────────────────────
+    # Founder direction (2026-05-14): the Settings overlay in JSX calls
+    # a family of bridge slots for storage stats, theme persistence,
+    # session rename/fork/delete, export-all, cache clearing, and
+    # opening data folders. Without these, the JSX buttons silently
+    # no-op. Each slot here is defensive — failures must never bubble
+    # exceptions to the JSX side; they always return _safe_json with
+    # an `{"error": ...}` envelope on failure.
+
+    @pyqtSlot(str, str, result=str)
+    def rename_session(self, session_id: str, new_title: str) -> str:
+        """Rename a saved session. Updates payload['name'] + ['title']
+        and writes atomically. Emits sessions_changed."""
+        try:
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+            sid = (session_id or "").strip()
+            title = (new_title or "").strip()
+            if not sid:
+                return _safe_json({"error": "session_id is required"})
+            if not title:
+                return _safe_json({"error": "new_title is required"})
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if not p.exists():
+                return _safe_json({"error": "session not found"})
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+            except Exception as ex:
+                return _safe_json({"error": f"bad session JSON: {ex}"})
+            if not isinstance(payload, dict):
+                return _safe_json({"error": "session payload is not a dict"})
+            payload["name"]  = title
+            payload["title"] = title
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                           encoding="utf-8")
+            tmp.replace(p)
+            try: self.sessions_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "id": sid, "title": title})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, result=str)
+    def fork_session(self, session_id: str, new_title: str = "") -> str:
+        """Duplicate a saved session under a fresh slug + id. Same
+        graph, fresh id, new file. Emits sessions_changed."""
+        try:
+            import re as _re
+            from pathlib import Path
+            from datetime import datetime
+            from session_io import SESSIONS_DIR
+            sid = (session_id or "").strip()
+            if not sid:
+                return _safe_json({"error": "session_id is required"})
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if not p.exists():
+                return _safe_json({"error": "session not found"})
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+            except Exception as ex:
+                return _safe_json({"error": f"bad session JSON: {ex}"})
+            if not isinstance(payload, dict):
+                return _safe_json({"error": "session payload is not a dict"})
+            base_title = (new_title or "").strip()
+            if not base_title:
+                base_title = f"{payload.get('name') or payload.get('title') or sid}-fork"
+            slug_src = _re.sub(r"[^A-Za-z0-9]+", "-", base_title).strip("-").lower()
+            if not slug_src:
+                slug_src = "session-fork"
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            new_slug = slug_src
+            k = 2
+            while (SESSIONS_DIR / f"{new_slug}.archhub-session.json").exists():
+                new_slug = f"{slug_src}-{k}"
+                k += 1
+            payload["id"]       = new_slug
+            payload["name"]     = base_title
+            payload["title"]    = base_title
+            payload["saved_at"] = datetime.utcnow().isoformat() + "Z"
+            (SESSIONS_DIR / f"{new_slug}.archhub-session.json").write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            try: self.sessions_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "id": new_slug,
+                                "title": base_title})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def delete_session(self, session_id: str) -> str:
+        """Delete a session JSON file. Emits sessions_changed."""
+        try:
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+            sid = (session_id or "").strip()
+            if not sid:
+                return _safe_json({"error": "session_id is required"})
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if not p.exists():
+                return _safe_json({"error": "session not found"})
+            try:
+                p.unlink()
+            except Exception as ex:
+                return _safe_json({"error": f"unlink failed: {ex}"})
+            try: self.sessions_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "id": sid})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def duplicate_session(self, session_id: str) -> str:
+        """Duplicate a session in place — identical content under a
+        fresh slug, titled '<name> (copy)'. A distinct slot so the JSX
+        'Duplicate' menu item resolves: it previously called a
+        non-existent `duplicate_session` and silently no-op'd. Delegates
+        to fork_session so the atomic write + slug-collision handling +
+        sessions_changed signal stay in one place."""
+        try:
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+            sid = (session_id or "").strip()
+            if not sid:
+                return _safe_json({"error": "session_id is required"})
+            p = Path(sid)
+            if not p.exists():
+                p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+            if not p.exists():
+                return _safe_json({"error": "session not found"})
+            base = sid
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    base = (payload.get("name")
+                            or payload.get("title") or sid)
+            except Exception:
+                pass
+            return self.fork_session(session_id, f"{base} (copy)")
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def set_theme(self, name: str) -> str:
+        """Persist theme choice to %LOCALAPPDATA%/ArchHub/theme.json.
+        Accepts 'dark' / 'light' / 'system'."""
+        try:
+            import os as _os
+            from pathlib import Path
+            n = (name or "").strip().lower()
+            if n not in ("dark", "light", "system"):
+                return _safe_json({"error":
+                    "theme must be one of: dark, light, system"})
+            base = Path(_os.environ.get("LOCALAPPDATA",
+                                          str(Path.home()))) / "ArchHub"
+            base.mkdir(parents=True, exist_ok=True)
+            (base / "theme.json").write_text(
+                json.dumps({"theme": n}, indent=2),
+                encoding="utf-8",
+            )
+            return _safe_json({"ok": True, "theme": n})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_theme(self) -> str:
+        """Read theme.json, defaulting to 'dark' when missing/invalid."""
+        try:
+            import os as _os
+            from pathlib import Path
+            p = Path(_os.environ.get("LOCALAPPDATA",
+                                       str(Path.home()))) / "ArchHub" / "theme.json"
+            if not p.exists():
+                return _safe_json({"theme": "dark"})
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return _safe_json({"theme": "dark"})
+            theme = str((data or {}).get("theme", "dark") or "dark").lower()
+            if theme not in ("dark", "light", "system"):
+                theme = "dark"
+            return _safe_json({"theme": theme})
+        except Exception as ex:
+            return _safe_json({"error": str(ex), "theme": "dark"})
+
+    @pyqtSlot(result=str)
+    def get_storage_stats(self) -> str:
+        """Report on-disk usage across sessions/, app/, custom_nodes/
+        and skills/. Used by the Settings → Storage badge."""
+        try:
+            import os as _os
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+
+            def _stat(root: Path) -> dict:
+                count = 0
+                total = 0
+                try:
+                    if root.exists():
+                        for f in root.glob("**/*"):
+                            try:
+                                if f.is_file():
+                                    count += 1
+                                    total += f.stat().st_size
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+                return {"count": count, "bytes": total,
+                        "path":  str(root)}
+
+            appdata = Path(_os.environ.get("LOCALAPPDATA",
+                                              str(Path.home()))) / "ArchHub"
+            cn_dir = appdata / "custom_nodes"
+            skills_dir = appdata / "skills"
+            sessions = _stat(SESSIONS_DIR)
+            app_stat = _stat(appdata)
+            cn = _stat(cn_dir)
+            sk = _stat(skills_dir)
+            total = (sessions["bytes"] + app_stat["bytes"]
+                      + cn["bytes"] + sk["bytes"])
+            return _safe_json({
+                "sessions":     sessions,
+                "app":          app_stat,
+                "custom_nodes": cn,
+                "skills":       sk,
+                "total_bytes":  total,
+            })
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_profile(self) -> str:
+        """Read the user profile (firm / role / discipline) from
+        %LOCALAPPDATA%/ArchHub/profile.json. Returns {} when the file
+        is absent — the desktop UI reads that to decide whether to show
+        the first-run profile prompt. Roadmap #P0 2026-05-17."""
+        try:
+            import os as _os
+            from pathlib import Path
+            p = (Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
+                 / "ArchHub" / "profile.json")
+            if not p.exists():
+                return _safe_json({})
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return _safe_json(data if isinstance(data, dict) else {})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def save_profile(self, payload_json: str) -> str:
+        """Persist the user profile to profile.json. The first-run
+        prompt sends {firm, role, discipline}; a skipped prompt sends
+        {skipped: true} so it never nags again. Merges with any
+        existing profile. Roadmap #P0 2026-05-17."""
+        try:
+            import os as _os
+            from pathlib import Path
+            data = json.loads(payload_json or "{}")
+            if not isinstance(data, dict):
+                return _safe_json({"error": "profile must be a JSON object"})
+            appdata = (Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
+                       / "ArchHub")
+            appdata.mkdir(parents=True, exist_ok=True)
+            p = appdata / "profile.json"
+            existing: dict = {}
+            if p.exists():
+                try:
+                    loaded = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        existing = loaded
+                except Exception:
+                    existing = {}
+            existing.update({k: v for k, v in data.items() if v is not None})
+            p.write_text(json.dumps(existing, indent=2, ensure_ascii=False),
+                         encoding="utf-8")
+            return _safe_json({"ok": True, "profile": existing})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def export_all(self) -> str:
+        """Zip sessions/, skills/, custom_nodes/, profile.json,
+        theme.json into ~/Downloads/archhub-export-<ts>.zip."""
+        try:
+            import os as _os
+            import zipfile
+            from datetime import datetime
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+
+            appdata = Path(_os.environ.get("LOCALAPPDATA",
+                                              str(Path.home()))) / "ArchHub"
+            cn_dir = appdata / "custom_nodes"
+            skills_dir = appdata / "skills"
+            profile_path = appdata / "profile.json"
+            theme_path = appdata / "theme.json"
+
+            home = Path(_os.environ.get("USERPROFILE",
+                                           str(Path.home())))
+            downloads = home / "Downloads"
+            try:
+                downloads.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                downloads = home
+            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            zip_path = downloads / f"archhub-export-{ts}.zip"
+
+            def _add_dir(z: zipfile.ZipFile, root: Path, arc_prefix: str) -> None:
+                if not root.exists():
+                    return
+                try:
+                    for f in root.glob("**/*"):
+                        try:
+                            if f.is_file():
+                                rel = f.relative_to(root)
+                                z.write(f, arcname=f"{arc_prefix}/{rel}")
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            with zipfile.ZipFile(zip_path, "w",
+                                   compression=zipfile.ZIP_DEFLATED) as z:
+                _add_dir(z, SESSIONS_DIR, "sessions")
+                _add_dir(z, skills_dir,   "skills")
+                _add_dir(z, cn_dir,       "custom_nodes")
+                for one in (profile_path, theme_path):
+                    try:
+                        if one.exists() and one.is_file():
+                            z.write(one, arcname=one.name)
+                    except Exception:
+                        pass
+
+            size = 0
+            try:
+                size = zip_path.stat().st_size
+            except Exception:
+                pass
+            return _safe_json({"ok": True,
+                                "path": str(zip_path),
+                                "size": size})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def clear_model_cache(self) -> str:
+        """Best-effort delete of %LOCALAPPDATA%/ArchHub/model_cache/*.
+        Returns total bytes freed."""
+        try:
+            import os as _os
+            import shutil
+            from pathlib import Path
+            cache = Path(_os.environ.get("LOCALAPPDATA",
+                                            str(Path.home()))) / "ArchHub" / "model_cache"
+            freed = 0
+            if not cache.exists():
+                return _safe_json({"ok": True, "freed_bytes": 0,
+                                    "note": "no cache dir"})
+            try:
+                for f in cache.glob("**/*"):
+                    try:
+                        if f.is_file():
+                            freed += f.stat().st_size
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(cache, ignore_errors=True)
+            except Exception:
+                pass
+            try:
+                cache.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            return _safe_json({"ok": True, "freed_bytes": freed})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def forget_all_memory(self) -> str:
+        """Wipe local memory cache + best-effort cloud forget. Emits
+        memory_changed."""
+        try:
+            forgot_cloud = False
+            try:
+                import cloud_client
+                fn = getattr(cloud_client, "forget_all", None)
+                if callable(fn):
+                    fn()
+                    forgot_cloud = True
+            except Exception:
+                forgot_cloud = False
+            # Local memory cache — best-effort wipe of facts file.
+            try:
+                import os as _os
+                from pathlib import Path
+                base = Path(_os.environ.get("LOCALAPPDATA",
+                                              str(Path.home()))) / "ArchHub"
+                for name in ("memory_facts.json", "memory_cache.json"):
+                    p = base / name
+                    try:
+                        if p.exists():
+                            p.unlink()
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            try: self.memory_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True,
+                                "cloud_forgotten": forgot_cloud})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def delete_all_sessions(self) -> str:
+        """Remove every *.archhub-session.json under SESSIONS_DIR. Emits
+        sessions_changed."""
+        try:
+            from session_io import SESSIONS_DIR
+            deleted = 0
+            if SESSIONS_DIR.exists():
+                for f in SESSIONS_DIR.glob("*.archhub-session.json"):
+                    try:
+                        f.unlink()
+                        deleted += 1
+                    except Exception:
+                        continue
+            try: self.sessions_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "deleted": deleted})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def open_folder(self, kind: str) -> str:
+        """Open a known ArchHub directory in the OS file explorer."""
+        try:
+            import os as _os
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+            k = (kind or "").strip().lower()
+            appdata = Path(_os.environ.get("LOCALAPPDATA",
+                                              str(Path.home()))) / "ArchHub"
+            mapping = {
+                "sessions":      SESSIONS_DIR,
+                "skills":        appdata / "skills",
+                "custom_nodes":  appdata / "custom_nodes",
+                "app":           appdata,
+                "logs":          appdata / "logs",
+            }
+            if k not in mapping:
+                return _safe_json({"error":
+                    f"unknown kind: {k!r}; want sessions|skills|custom_nodes|app|logs"})
+            path = mapping[k]
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                startfile = getattr(_os, "startfile", None)
+                if callable(startfile):
+                    startfile(str(path))
+            except Exception as ex:
+                return _safe_json({"error": f"startfile failed: {ex}",
+                                    "path": str(path)})
+            return _safe_json({"ok": True, "path": str(path)})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_session_stats(self) -> str:
+        """Return summary of sessions on disk for Settings overlay."""
+        try:
+            from session_io import SESSIONS_DIR
+            count = 0
+            last_mtime = 0.0
+            if SESSIONS_DIR.exists():
+                for f in SESSIONS_DIR.glob("*.archhub-session.json"):
+                    try:
+                        count += 1
+                        m = f.stat().st_mtime
+                        if m > last_mtime:
+                            last_mtime = m
+                    except Exception:
+                        continue
+            last_iso = ""
+            if last_mtime > 0:
+                try:
+                    from datetime import datetime, timezone
+                    last_iso = (datetime.fromtimestamp(last_mtime,
+                                                        tz=timezone.utc)
+                                .isoformat())
+                except Exception:
+                    last_iso = ""
+            return _safe_json({
+                "count":         count,
+                "active_id":     self._active_session_id or "",
+                "last_modified": last_iso,
+            })
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_provider_stats(self) -> str:
+        """Return {configured, blocked} provider counts for badges."""
+        try:
+            configured = 0
+            blocked = 0
+            if self.router is not None:
+                try:
+                    cfg = self.router.configured_providers() or []
+                    configured = len(list(cfg))
+                except Exception:
+                    configured = 0
+                try:
+                    blk = self.router.blocked_providers() or {}
+                    blocked = len(list(blk))
+                except Exception:
+                    blocked = 0
+            return _safe_json({"configured": configured,
+                                "blocked":    blocked})
         except Exception as ex:
             return _safe_json({"error": str(ex)})

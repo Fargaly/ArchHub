@@ -209,7 +209,7 @@ class TestSendLive:
         assert body["subject"] == "[ArchHub] test"
         assert body["html"] == "<h1>ok</h1>"
         assert body["text"] == "ok"
-        # `from` defaults to noreply@archhub.app unless overridden
+        # `from` defaults to noreply@archhub.io unless overridden
         assert "@" in body["from"]
 
     def test_send_surfaces_http_error_without_raising(self, monkeypatch):

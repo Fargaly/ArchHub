@@ -612,7 +612,11 @@ def _conversation_exec(config: dict, inputs: dict, ctx) -> dict:
         # on_tool_invocation, on_reasoning?, on_status?, session_pin?)
         history: list[dict] = []
         if system_cfg:
-            history.append({"role": "system_override",
+            # `role:"system"` is folded into the system prompt by
+            # llm_router._complete_once; the tool surface stays intact
+            # (this node collects tool invocations). Was a bogus
+            # `role:"system_override"` role that provider APIs reject.
+            history.append({"role": "system",
                              "content": str(system_cfg)})
         history.extend(msgs)
         history.append({"role": "user", "content": prompt})

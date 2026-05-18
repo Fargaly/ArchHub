@@ -27,6 +27,15 @@ from manager import ConnectorManager, ConnectorState
 from speckle_client import SpeckleClient
 
 
+# Map a ParamSpec type to a JSON-schema type for LLM tool schemas.
+def _json_type(t: str) -> str:
+    return {
+        "number": "number", "range": "number",
+        "bool": "boolean", "boolean": "boolean",
+        "multi": "array", "list": "array",
+    }.get((t or "").lower(), "string")
+
+
 # ---------------------------------------------------------------------------
 @dataclass
 class ToolInvocation:
@@ -1087,7 +1096,57 @@ class ToolEngine:
     # ---- schema export for LLMs -------------------------------------------
 
     def tool_schemas_for(self, provider: str) -> list[dict]:
+        """Tool schemas for the LLM, in the provider's wire format.
+
+        ROOT-CAUSE FIX (2026-05-16): this used to be a hardcoded
+        if/elif over exactly four provider names — anthropic / openai /
+        ollama / google. Any provider NOT in that list (openrouter,
+        relay, archhub_cloud, lmstudio) silently fell through and got an
+        EMPTY tool list. So when the auto-router fell back to OpenRouter
+        — its #2 pick in every routing branch — the model received ZERO
+        tools, and a tool-less model asked a factual question FABRICATES
+        a <function_calls>/<function_result> block and lies about the
+        result (founder bug: "no files open in AutoCAD" while a drawing
+        was open).
+
+        OpenRouterClient / the relay client are OpenAIClient subclasses
+        — they already support tool calls. The only gap was the schema
+        export. Now: Anthropic and Google get their own shapes; EVERY
+        other provider speaks OpenAI function-calling. No configured
+        provider is ever silently tool-less again.
+        """
+        # Claude Code CLI runs as a headless agent: its tools arrive via
+        # `--mcp-config` (an ArchHub MCP server), never as request-time
+        # schemas. Phase 1 has no ArchHub tool bridge yet — either way
+        # the request-time schema list is empty for claude_cli.
+        if provider in ("claude_cli", "codex_cli"):
+            return []
         active_families = self._active_families()
+
+        # Wire format: Anthropic + Google have bespoke shapes; everything
+        # else (openai, ollama, openrouter, relay, archhub_cloud,
+        # lmstudio — all OpenAI-compatible) uses OpenAI function-calling.
+        if provider == "anthropic":
+            fmt = "anthropic"
+        elif provider == "google":
+            fmt = "google"
+        else:
+            fmt = "openai"
+
+        def _wire(name: str, description: str, schema: dict) -> dict:
+            if fmt == "anthropic":
+                return {"name": name, "description": description,
+                        "input_schema": schema}
+            if fmt == "google":
+                # Gemini wants name + description + JSONSchema params,
+                # later wrapped in {"function_declarations": [...]} by
+                # the GoogleClient.
+                return {"name": name, "description": description,
+                        "parameters": schema}
+            return {"type": "function", "function": {
+                "name": name, "description": description,
+                "parameters": schema}}
+
         out: list[dict] = []
         for t in TOOLS:
             # Always-on families: `_local` (ArchHub helpers), `ai`
@@ -1100,42 +1159,58 @@ class ToolEngine:
             if (t["family"] not in ("_local", "ai", "procore")
                     and t["family"] not in active_families):
                 continue
-            if provider == "anthropic":
-                out.append({
-                    "name": t["name"],
-                    "description": t["description"],
-                    "input_schema": t["input_schema"],
-                })
-            elif provider == "openai":
-                out.append({
-                    "type": "function",
-                    "function": {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": t["input_schema"],
-                    },
-                })
-            elif provider == "ollama":
-                # Ollama uses OpenAI-compatible function-calling format
-                out.append({
-                    "type": "function",
-                    "function": {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": t["input_schema"],
-                    },
-                })
-            elif provider == "google":
-                # Gemini wants name + description + JSONSchema params,
-                # later wrapped in {"function_declarations": [...]} by
-                # the GoogleClient. Pass the full input_schema here so
-                # the client doesn't have to re-fetch.
-                out.append({
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"],
-                })
+            out.append(_wire(t["name"], t["description"], t["input_schema"]))
+        # ── Founder bug 2026-05-15 (root): the LLM hallucinated host
+        # results because the 116 real, working connector ops were a
+        # SEPARATE registry the model could not see. Unify — emit every
+        # connector op as a real tool. The model now calls the actual op
+        # (e.g. autocad.list_documents) and gets real data or an honest
+        # error; it has no reason to fabricate. Ops are namespaced
+        # `host.op` so `invoke()` can route them to connectors.base.run_op.
+        for spec in self._connector_tool_specs():
+            out.append(_wire(spec["name"], spec["description"],
+                              spec["input_schema"]))
         return out
+
+    # Connector-op tool specs, cached 20s. Each of the 16 connectors'
+    # ops becomes an LLM tool. _CONNECTOR_TOOL_SAFE names use a double
+    # underscore in place of the dot so providers that reject '.' in a
+    # tool name still accept it; invoke() maps back.
+    _CONN_TOOLS_TTL = 20.0
+
+    def _connector_tool_specs(self) -> list:
+        import time as _t
+        now = _t.time()
+        last = getattr(self, "_conn_tools_ts", 0.0)
+        cached = getattr(self, "_conn_tools_cache", None)
+        if cached is not None and (now - last) < self._CONN_TOOLS_TTL:
+            return cached
+        specs: list = []
+        try:
+            from connectors.base import all_connectors
+            for c in all_connectors():
+                for op in c.ops():
+                    props = {}
+                    required = []
+                    for p in (op.inputs or []):
+                        props[p.id] = {"type": _json_type(p.type),
+                                       "description": p.help or p.label or p.id}
+                        if p.required:
+                            required.append(p.id)
+                    specs.append({
+                        "name": op.op_id.replace(".", "__"),
+                        "description": (op.label or op.op_id) + " — "
+                                       + (op.description or "")
+                                       + (" [MUTATES THE HOST]" if op.destructive else ""),
+                        "input_schema": {"type": "object",
+                                          "properties": props,
+                                          "required": required},
+                    })
+        except Exception:
+            specs = []
+        self._conn_tools_cache = specs
+        self._conn_tools_ts = now
+        return specs
 
     def _active_families(self) -> set[str]:
         active = set()
@@ -1156,6 +1231,21 @@ class ToolEngine:
         try:
             if self._outlook_active_cached():
                 active.add("outlook")
+        except Exception:
+            pass
+        # Founder bug 2026-05-15 (root cause): the LLM was hallucinating
+        # `<tool_call>` blocks + fabricating results ("Drawing1.dwg open").
+        # WHY: a host's tools were exposed to the model ONLY when the
+        # connector entry was manager-ACTIVE — a Settings toggle. The
+        # AutoCAD BROKER was live (the user could ping it) but the entry
+        # was never toggled, so the model had NO acad_* tool, wanted one,
+        # and role-played a fake. FIX: expose a family's tools whenever
+        # the host is genuinely REACHABLE right now — broker listener
+        # answering — regardless of the manager toggle. A model that has
+        # the real tool has no reason to fabricate.
+        try:
+            for fam in self._reachable_broker_families_cached():
+                active.add("acad" if fam == "autocad" else fam)
         except Exception:
             pass
         # Rhino auto-activates when the in-Rhino HTTP bridge answers on
@@ -1212,6 +1302,34 @@ class ToolEngine:
         except Exception:
             self._rhino_reachable = False
 
+    # Broker-host reachability cache (revit / autocad / max). A live
+    # broker listener = the model gets that host's real tools, so it
+    # never has to fabricate a tool call. 30s TTL, refreshed off-thread.
+    _BROKER_TTL_SECONDS = 30.0
+    _BROKER_PORTS = {"revit": 48884, "autocad": 48885, "max": 48886}
+
+    def _reachable_broker_families_cached(self) -> set:
+        import time as _t
+        now = _t.time()
+        last = getattr(self, "_broker_last_check", 0.0)
+        if now - last >= self._BROKER_TTL_SECONDS:
+            self._broker_last_check = now
+            import threading
+            threading.Thread(target=self._refresh_brokers_async,
+                              daemon=True).start()
+        return set(getattr(self, "_broker_reachable", set()))
+
+    def _refresh_brokers_async(self) -> None:
+        import socket
+        live = set()
+        for fam, port in self._BROKER_PORTS.items():
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                    live.add(fam)
+            except Exception:
+                pass
+        self._broker_reachable = live
+
     # ---- invocation -------------------------------------------------------
 
     def invoke(self, tool_name: str, args: dict,
@@ -1230,6 +1348,38 @@ class ToolEngine:
         by the chat layer after the user clicks Approve on a pending
         tool invocation. 'deny' policy is NOT bypassable.
         """
+        # ── Connector-op tools (host__op) route to connectors.base.run_op.
+        # Founder bug 2026-05-15 root fix: the 116 real connector ops are
+        # now the LLM's tools. A model that calls autocad__list_documents
+        # gets REAL data — it never has to fabricate.
+        if "__" in tool_name and not next(
+                (t for t in TOOLS if t["name"] == tool_name), None):
+            op_id = tool_name.replace("__", ".")
+            try:
+                from ai_behaviour import get_tool_policy
+                pol = get_tool_policy(tool_name)
+            except Exception:
+                pol = "allow"
+            if pol == "deny":
+                return {"status": "error", "policy": "deny",
+                        "error": f"Tool {tool_name!r} blocked by user policy."}
+            if pol == "ask" and not user_confirmed:
+                return {"status": "needs_confirmation", "tool_name": tool_name,
+                        "arguments": args, "policy": "ask",
+                        "reason": f"{op_id} needs your approval."}
+            try:
+                from connectors.base import run_op
+                res = run_op(op_id, **(args or {}))
+                d = res.to_dict() if hasattr(res, "to_dict") else {}
+                if d.get("ok"):
+                    return {"status": "ok", "result": d.get("value"),
+                            "preview": d.get("value_preview", "")}
+                return {"status": "error",
+                        "error": d.get("error") or "connector op failed"}
+            except Exception as ex:
+                return {"status": "error",
+                        "error": f"{type(ex).__name__}: {ex}"}
+
         tool = next((t for t in TOOLS if t["name"] == tool_name), None)
         if tool is None:
             return {"status": "error", "error": f"Unknown tool: {tool_name}"}

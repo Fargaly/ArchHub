@@ -419,7 +419,107 @@ def _office_com_probe(progid: str, display: str,
 
 # ---------------------------------------------------------------------------
 # Public surface.
+def probe_notion() -> dict:
+    """Detect Notion desktop app by process name. Notion ships as an
+    Electron app; process is `Notion.exe` on Windows. Status `live`
+    when found, `missing` otherwise. Uses the shared `_find_process`
+    helper so tests can mock it the same way as the other probes.
+    """
+    try:
+        proc = _find_process(["notion.exe", "notion"])
+    except Exception as ex:
+        return {"status": "unavailable", "version": "",
+                 "note": f"probe failed: {ex}", "detail": {}}
+    if proc:
+        return {"status": "live", "version": "",
+                 "note": "Notion running",
+                 "detail": {"pid": getattr(proc, "pid", None)}}
+    return {"status": "missing", "version": "",
+             "note": "Notion not running", "detail": {}}
+
+
+# ── Broker-backed AEC hosts ────────────────────────────────────────────
+# Founder demand 2026-05-15: "ALL connectors should be working — when I
+# ping AutoCAD it should work." Revit / AutoCAD / 3ds Max / Blender talk
+# to ArchHub through a host-side add-in that serves an HTTP listener on a
+# fixed port. We probe that listener directly so the agent + UI report
+# the TRUTH — live, host-running-but-addin-dead, or fully offline — and
+# never hallucinate a result against a dead broker.
+_BROKER_PORTS = {
+    "revit":   48884,
+    "autocad": 48885,
+    "max":     48886,
+    "blender": 9876,
+}
+_BROKER_PROCESS = {
+    "revit":   ["revit.exe"],
+    "autocad": ["acad.exe", "autocad.exe"],
+    "max":     ["3dsmax.exe"],
+    "blender": ["blender.exe"],
+}
+
+
+def _probe_broker(family: str) -> dict:
+    """Probe one broker-backed host. Returns the standard shape.
+
+    status:
+      live          — add-in listener answered /ping.
+      loaded_dead   — host process running but listener not answering
+                      (add-in not NETLOADed / crashed).
+      missing       — host process not running at all.
+    """
+    port = _BROKER_PORTS.get(family)
+    if port is None:
+        return {"status": "missing", "version": "",
+                 "note": f"{family}: no broker port", "detail": {}}
+    listener_up = _tcp_open("127.0.0.1", port, timeout=0.3)
+    if listener_up:
+        data = _http_json(f"http://127.0.0.1:{port}/ping", timeout=0.8) or {}
+        return {"status": "live", "version": str(data.get("version", "")),
+                 "note": f"{family} broker live on :{port}",
+                 "detail": {"port": port, **(data if isinstance(data, dict) else {})}}
+    # Listener down — is the host even open?
+    proc = None
+    try:
+        proc = _find_process(_BROKER_PROCESS.get(family, []))
+    except Exception:
+        proc = None
+    if proc:
+        return {"status": "loaded_dead", "version": "",
+                 "note": (f"{family} is running but the ArchHub add-in "
+                          f"isn't responding on :{port} — load the "
+                          f"connector inside {family}"),
+                 "detail": {"port": port, "pid": getattr(proc, "pid", None)}}
+    return {"status": "missing", "version": "",
+             "note": f"{family} not running",
+             "detail": {"port": port}}
+
+
+@_cached("revit")
+def probe_revit() -> dict:
+    return _probe_broker("revit")
+
+
+@_cached("autocad")
+def probe_autocad() -> dict:
+    return _probe_broker("autocad")
+
+
+@_cached("max")
+def probe_max() -> dict:
+    return _probe_broker("max")
+
+
+@_cached("blender")
+def probe_blender() -> dict:
+    return _probe_broker("blender")
+
+
 PROBERS = {
+    "revit":        probe_revit,
+    "autocad":      probe_autocad,
+    "max":          probe_max,
+    "blender":      probe_blender,
     "lmstudio":     probe_lmstudio,
     "antigravity":  probe_antigravity,
     "outlook":      probe_outlook,
@@ -430,10 +530,15 @@ PROBERS = {
     "photoshop":    probe_photoshop,
     "illustrator":  probe_illustrator,
     "indesign":     probe_indesign,
+    "notion":       probe_notion,
 }
 
 
 HOST_DISPLAY = {
+    "revit":        "Revit",
+    "autocad":      "AutoCAD",
+    "max":          "3ds Max",
+    "blender":      "Blender",
     "lmstudio":     "LM Studio",
     "antigravity":  "Antigravity",
     "outlook":      "Outlook",
@@ -444,6 +549,7 @@ HOST_DISPLAY = {
     "photoshop":    "Photoshop",
     "illustrator":  "Illustrator",
     "indesign":     "InDesign",
+    "notion":       "Notion",
 }
 
 

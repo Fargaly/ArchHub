@@ -2,7 +2,7 @@
 
 Open-core monetization: the architect who doesn't want to install
 Ollama and doesn't want to paste provider keys pays us a monthly
-subscription, and every chat call flows through cloud.archhub.app/
+subscription, and every chat call flows through cloud.archhub.io/
 v1/chat/completions. Our backend authenticates with their bearer
 token, decrements their quota, and forwards to whichever provider
 (Claude / GPT / Gemini) the routing layer picks server-side.
@@ -27,7 +27,7 @@ from .openai_client import OpenAIClient
 # Default base. Override via env for staging / local backend tests.
 import os
 DEFAULT_BASE_URL = os.environ.get(
-    "ARCHHUB_CLOUD_LLM_BASE", "https://cloud.archhub.app/v1"
+    "ARCHHUB_CLOUD_LLM_BASE", "https://cloud.archhub.io/v1"
 )
 
 

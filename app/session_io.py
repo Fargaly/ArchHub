@@ -175,7 +175,9 @@ def load_session(path: Path) -> tuple[Session, str]:
     """
     data = json.loads(path.read_text(encoding="utf-8"))
     session = _session_from_dict(data)
-    name = data.get("_name", path.stem)
+    # v1.4 graph-first schema stores `name` at top level; legacy chat
+    # schema stores `_name`. Try both, fall back to file stem.
+    name = data.get("name") or data.get("_name") or path.stem
     return session, name
 
 
@@ -185,7 +187,7 @@ def load_session_with_messages(path: Path) -> tuple[Session, str, list[dict]]:
     don't import the Qt module from this storage layer."""
     data = json.loads(path.read_text(encoding="utf-8"))
     session = _session_from_dict(data)
-    name = data.get("_name", path.stem)
+    name = data.get("name") or data.get("_name") or path.stem
     messages = data.get("_messages") or []
     return session, name, list(messages)
 
@@ -242,8 +244,10 @@ def list_sessions(*, include_empty: bool = False
     for f in SESSIONS_DIR.glob(f"*{SESSION_EXT}"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-            name = data.get("_name", f.stem)
-            saved_at = data.get("_saved_at", "")
+            # v1.4 graph-first schema uses `name` + `saved_at` at top level;
+            # legacy chat schema uses `_name` + `_saved_at`. Prefer v1.4 first.
+            name = data.get("name") or data.get("_name") or f.stem
+            saved_at = data.get("saved_at") or data.get("_saved_at") or ""
             if not include_empty:
                 # Real-content signals. Any one is enough:
                 #   • At least one assistant message with non-empty
@@ -251,15 +255,26 @@ def list_sessions(*, include_empty: bool = False
                 #     means the LLM never responded, so it's a stub)
                 #   • At least one parameter (Skills-style save)
                 #   • At least one chain step
+                #   • v1.4 graph-first: at least one graph node OR a
+                #     fresh v1.4 schema (id + name + saved_at present
+                #     means user explicitly minted this session via the
+                #     composer — keep it even if empty)
                 msgs = data.get("_messages") or []
                 params = data.get("parameters") or []
                 chain = data.get("chain") or []
+                graph_nodes = ((data.get("graph") or {}).get("nodes") or [])
+                v14_minted = (
+                    bool(data.get("id"))
+                    and bool(data.get("name"))
+                    and bool(data.get("saved_at"))
+                )
                 has_real_chat = any(
                     m.get("role") == "assistant"
                     and (m.get("content") or "").strip()
                     for m in msgs if isinstance(m, dict)
                 )
-                if not has_real_chat and not params and not chain:
+                if (not has_real_chat and not params and not chain
+                        and not graph_nodes and not v14_minted):
                     continue
         except Exception:
             if not include_empty:
@@ -346,9 +361,10 @@ def _session_from_dict(data: dict) -> Session:
 
     # ADR-003 Phase 2: restore the graph projection if present. Older
     # session files without `graph` leave it at None — chat surface
-    # continues to read `_messages` as before.
+    # continues to read `_messages` as before. v1.4: preserve even an
+    # empty graph dict so save_graph round-trips correctly.
     graph_dict = data.get("graph")
-    if isinstance(graph_dict, dict) and graph_dict.get("nodes"):
+    if isinstance(graph_dict, dict):
         session.graph = graph_dict
 
     return session

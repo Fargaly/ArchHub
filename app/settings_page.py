@@ -327,11 +327,11 @@ class SettingsPage(QWidget):
 
         card2 = self._kv_card("Links", [], buttons=[
             ("Open changelog", lambda: QDesktopServices.openUrl(
-                QUrl("https://github.com/archhub/archhub/blob/main/CHANGELOG.md"))),
+                QUrl("https://github.com/Fargaly/ArchHub/blob/main/CHANGELOG.md"))),
             ("File a bug", lambda: QDesktopServices.openUrl(
-                QUrl("https://github.com/archhub/archhub/issues/new"))),
+                QUrl("https://github.com/Fargaly/ArchHub/issues/new"))),
             ("Open docs", lambda: QDesktopServices.openUrl(
-                QUrl("https://archhub.app/docs"))),
+                QUrl("https://github.com/Fargaly/ArchHub/tree/main/docs"))),
         ])
         v.addWidget(card2)
         v.addStretch(1)

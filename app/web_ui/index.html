@@ -8,41 +8,42 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
-  html, body { margin:0; padding:0; background:#0e0e11; font-family:'Inter',system-ui,sans-serif; color:#ece8e0;
-                height:100%; overflow:hidden; }
+  html, body {
+    margin:0; padding:0; height:100%; width:100%;
+    background:#0e0e11; font-family:'Inter',system-ui,sans-serif; color:#e6e3dd;
+    overflow:hidden;
+  }
+  #root { height:100vh; width:100vw; overflow:hidden; }
   *, *::before, *::after { box-sizing: border-box; }
-  #root { height:100vh; width:100vw; }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  /* Composer animated caret used by FloatingComposer */
-  @keyframes lmCaret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+  .ah-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .ah-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 3px; }
+  .ah-scroll::-webkit-scrollbar-track { background: transparent; }
+  #__archhub_splash {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #0e0e11; z-index: 9999; pointer-events: none;
+    transition: opacity 280ms ease;
+  }
+  #__archhub_splash .word {
+    font-family: 'Instrument Serif', 'Times New Roman', serif;
+    font-style: italic; font-weight: 400;
+    font-size: 96px; letter-spacing: -0.02em;
+    color: #e8743a;
+    text-shadow: 0 1px 28px rgba(232,116,58,0.25);
+  }
+  #__archhub_splash.fade { opacity: 0; }
 </style>
 </head>
 <body>
-<div id="root">
-  <!-- Pre-mount splash so the user sees something during the ~1s
-       Babel transform + first React paint -->
-  <div style="display:flex;align-items:center;justify-content:center;height:100vh;
-              font-family:'Instrument Serif',Georgia,serif;font-size:48px;color:#d97757;
-              letter-spacing:-0.02em;">
-    Arch<i>Hub</i>
-  </div>
-</div>
+<div id="__archhub_splash"><div class="word">ArchHub</div></div>
+<div id="root"></div>
 
-<!-- QWebChannel ships with QtWebEngine under qrc://. Load it FIRST so
-     window.archhub is set up before the React tree mounts. -->
+<!-- QtWebChannel bridge — load FIRST so window.archhub is set before React boots. -->
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
-  // Bridge wiring — runs synchronously, exposes:
-  //   window.archhub          — bridge proxy (slots become callable)
-  //   window.archhubReady     — Promise that resolves once channel is ready
-  //   window.onArchhubReady() — chainable wait
   window.__archhub_ready = false;
   window.archhubReady = new Promise((resolve) => {
     if (typeof QWebChannel === 'undefined') {
-      // QtWebEngine not bridged (e.g. local file opened in browser).
-      console.warn('QWebChannel unavailable — running in standalone mode');
+      console.warn('[archhub] QWebChannel unavailable — running in standalone mode');
       window.archhub = null;
       window.__archhub_ready = true;
       resolve(null);
@@ -51,166 +52,201 @@
     new QWebChannel(qt.webChannelTransport, (channel) => {
       window.archhub = channel.objects.archhub;
       window.__archhub_ready = true;
-      console.log('[archhub] bridge ready · version=' +
-                  (window.archhub.get_version
-                    ? window.archhub.get_version() : '?'));
+      try {
+        console.log('[archhub] bridge ready · version=' +
+          (window.archhub.get_version ? window.archhub.get_version() : '?'));
+      } catch (e) {}
       resolve(window.archhub);
     });
   });
-  window.onArchhubReady = (cb) => window.archhubReady.then(cb);
-
-  // Promise-wrapper for slots that return JSON strings. Most bridge
-  // slots return JSON-encoded payloads; this unwraps them so callers
-  // can `await window.bridgeJson('get_hosts')` directly.
-  window.bridgeJson = (slot, ...args) => {
-    return window.archhubReady.then((b) => {
-      if (!b) return null;
-      const raw = b[slot](...args);
+  // Async bridge call. QWebChannel slots return a Promise (Qt 6) — the
+  // raw value must be awaited before JSON.parse, or every pullAll() splice
+  // silently no-ops on an unparsed Promise. Founder bug 2026-05-15.
+  window.bridgeJson = async (slot, ...args) => {
+    const b = await window.archhubReady;
+    if (!b || typeof b[slot] !== 'function') return null;
+    try {
+      let raw = b[slot](...args);
+      // QWebChannel slot invocation resolves asynchronously.
+      if (raw && typeof raw.then === 'function') raw = await raw;
       if (typeof raw !== 'string') return raw;
       try { return JSON.parse(raw); } catch { return raw; }
-    });
+    } catch (e) {
+      console.warn('[archhub] bridgeJson(' + slot + ') failed:', e);
+      return null;
+    }
   };
 </script>
 
-<!-- React + Babel for the prototype JSX -->
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
 
+<!-- Studio v2 only. No DesignCanvas wrapper. No alternate-direction prototypes. -->
 <script type="text/babel" src="shared-data.jsx"></script>
 <script type="text/babel" src="studio-lm.jsx"></script>
 
 <script type="text/babel" data-presets="env,react">
-function App() {
-  // ── Bridge-driven state. Pulls hosts/sessions/models from Python
-  //     once the channel is ready; falls back to the prototype's
-  //     demo data when running standalone.
-  const [hosts, setHosts] = React.useState(null);
-  const [sessions, setSessions] = React.useState(null);
-  const [models, setModels] = React.useState(null);
-  const [memStats, setMemStats] = React.useState(null);
-  const [bridgeReady, setBridgeReady] = React.useState(false);
+const { useState, useEffect, useRef } = React;
 
-  React.useEffect(() => {
-    let cancelled = false;
-    window.archhubReady.then((bridge) => {
-      if (cancelled) return;
-      setBridgeReady(true);
-      if (!bridge) return;
-      // Initial pulls.
-      window.bridgeJson('get_hosts').then(h => !cancelled && setHosts(h));
-      window.bridgeJson('get_sessions').then(s => !cancelled && setSessions(s));
-      window.bridgeJson('get_models').then(m => !cancelled && setModels(m));
-      window.bridgeJson('get_memory_stats').then(s => !cancelled && setMemStats(s));
-      // Re-pull on signals.
-      try {
-        bridge.hosts_changed.connect(() => {
-          window.bridgeJson('get_hosts').then(h => setHosts(h));
-        });
-        bridge.sessions_changed.connect(() => {
-          window.bridgeJson('get_sessions').then(s => setSessions(s));
-        });
-        bridge.memory_changed.connect(() => {
-          window.bridgeJson('get_memory_stats').then(s => setMemStats(s));
-        });
-      } catch (e) {
-        console.warn('signal wire failed', e);
-      }
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Splice real desktop state into the window-level LM_* arrays the
-  // JSX reads by name. The const refs stay the same — mutating
-  // contents lets every read site keep working without rewriting the
-  // 2916 lines of prototype.
-  //
-  // Bump `tick` after each splice to force StudioLM to remount with
-  // the fresh data. The remount cost is acceptable for first-paint
-  // hydration; once steady-state, signals trigger targeted slices
-  // instead of full remounts.
-  const [tick, setTick] = React.useState(0);
-
-  const _splice = React.useCallback((targetName, next) => {
-    const target = window[targetName];
-    if (!target || !Array.isArray(target)) return;
-    if (!Array.isArray(next) || next.length === 0) return;
-    target.splice(0, target.length, ...next);
-  }, []);
-
-  React.useEffect(() => {
-    if (!hosts || !Array.isArray(hosts)) return;
-    if (hosts.length === 0) return;
-    _splice('__archhub_LM_HOSTS', hosts.map((h) => ({
-      id:    h.id || h.family,
-      name:  h.name || h.family,
-      port:  (h.port != null) ? String(h.port) : null,
-      state: (h.state === 'live' ? 'connected'
-              : h.state === 'loaded_dead' ? 'syncing'
-              : 'off'),
-      file:  h.version ? `${h.name} ${h.version}` : '—',
-      version: h.version || '',
-    })));
-    setTick((t) => t + 1);
-  }, [hosts, _splice]);
-
-  React.useEffect(() => {
-    if (!sessions || !Array.isArray(sessions)) return;
-    if (sessions.length === 0) return;
-    _splice('__archhub_LM_SESSIONS', sessions.map((s) => ({
-      id:    s.id,
-      title: s.title || s.id,
-      state: 'done',
-      host:  'revit',
-      file:  String(s.saved_at || ''),
-      model: '—',
-      when:  String(s.saved_at || ''),
-      last:  `${s.messages || 0} messages`,
-    })));
-    setTick((t) => t + 1);
-  }, [sessions, _splice]);
-
-  // Pull memory / permissions / providers / skills lazily after
-  // bridge ready; each hydrates the matching LM_* const.
-  React.useEffect(() => {
-    if (!bridgeReady || !window.archhub) return;
-    let cancelled = false;
-    window.bridgeJson('list_memory_facts', '').then((r) => {
-      if (cancelled || !r) return;
-      const results = (r && r.results) || [];
-      if (!results.length) return;
-      _splice('__archhub_LM_MEMORY', results.map((f) => ({
-        id:    String(f.id),
-        text:  f.text || '',
-        src:   f.scope === 'project' ? 'project'
-              : f.scope === 'global' ? 'global' : 'profile',
-      })));
-      setTick((t) => t + 1);
-    });
-    window.bridgeJson('get_saved_skills').then((s) => {
-      if (cancelled || !Array.isArray(s) || s.length === 0) return;
-      _splice('__archhub_LM_SAVED_SKILLS', s);
-      setTick((t) => t + 1);
-    });
-    window.bridgeJson('get_permissions').then((p) => {
-      if (cancelled || !Array.isArray(p) || p.length === 0) return;
-      _splice('__archhub_LM_PERMISSIONS', p);
-      setTick((t) => t + 1);
-    });
-    window.bridgeJson('get_providers').then((p) => {
-      if (cancelled || !Array.isArray(p) || p.length === 0) return;
-      _splice('__archhub_LM_PROVIDERS', p);
-      setTick((t) => t + 1);
-    });
-    return () => { cancelled = true; };
-  }, [bridgeReady, _splice]);
-
-  return <div style={{ height: '100vh', width: '100vw' }}>
-    <StudioLM key={tick}/>
-  </div>;
+// ─── ErrorBoundary: catches render crashes so the app never goes white.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    try { console.error('[archhub] render crash:', error, info); } catch (e) {}
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    const stack = (this.state.error && this.state.error.stack) || String(this.state.error);
+    const compStack = (this.state.info && this.state.info.componentStack) || '';
+    return (
+      <div style={{
+        minHeight:'100vh', padding:'32px 40px', background:'#0e0e11', color:'#f3efe8',
+        fontFamily:'JetBrains Mono, ui-monospace, monospace', fontSize:13, lineHeight:1.55,
+      }}>
+        <div style={{
+          fontFamily:'Instrument Serif, serif', fontStyle:'italic',
+          fontSize:42, color:'#e8743a', marginBottom:18,
+        }}>ArchHub render crash</div>
+        <div style={{ color:'#c9c4ba', marginBottom:18, maxWidth:980 }}>
+          The UI hit an exception while rendering. Reload to retry. If it keeps
+          happening, copy the trace below for the bridge log.
+        </div>
+        <pre style={{
+          whiteSpace:'pre-wrap', background:'#17171c', border:'1px solid #2a2a32',
+          borderRadius:8, padding:'14px 16px', color:'#f3efe8', maxWidth:1100,
+          overflow:'auto',
+        }}>{stack}{compStack ? '\n\nComponent stack:' + compStack : ''}</pre>
+        <button
+          onClick={() => location.reload()}
+          style={{
+            marginTop:18, padding:'10px 18px', borderRadius:6,
+            background:'#e8743a', color:'#0e0e11', border:'none',
+            fontFamily:'Inter, system-ui, sans-serif', fontWeight:600, fontSize:13,
+            cursor:'pointer',
+          }}
+        >Reload</button>
+      </div>
+    );
+  }
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// ─── splice helper: replace the contents of a window-exposed array in place.
+function spliceInto(targetName, mapped) {
+  const target = window[targetName];
+  if (!Array.isArray(target) || !Array.isArray(mapped)) return false;
+  target.splice(0, target.length, ...mapped);
+  return true;
+}
+
+// ─── Pull all bridge data, splice into the matching window.__archhub_LM_* arrays.
+async function pullAll() {
+  const pulls = [
+    ['get_sessions',     '__archhub_LM_SESSIONS'],
+    ['get_hosts',        '__archhub_LM_HOSTS'],
+    ['get_models',       '__archhub_LM_MODELS'],
+    ['get_memory_stats', '__archhub_LM_MEMORY_STATS'],
+    ['get_saved_skills', '__archhub_LM_SAVED_SKILLS'],
+    ['get_permissions',  '__archhub_LM_PERMISSIONS'],
+    ['get_providers',    '__archhub_LM_PROVIDERS'],
+    ['list_memory_facts','__archhub_LM_MEMORY'],
+    // The 16-connector op catalogue — drives the node library.
+    ['get_connectors',   '__archhub_LM_CONNECTORS'],
+    // User-minted custom nodes (AI-designed or hand-built).
+    ['get_custom_nodes', '__archhub_LM_CUSTOM_NODES'],
+  ];
+  let any = false;
+  for (const [slot, target] of pulls) {
+    try {
+      const data = await window.bridgeJson(slot);
+      if (data == null) continue;
+      const mapped = Array.isArray(data) ? data
+                  : (data && Array.isArray(data.items)) ? data.items
+                  : (data && Array.isArray(data.facts)) ? data.facts
+                  : null;
+      if (mapped && spliceInto(target, mapped)) any = true;
+    } catch (e) {
+      console.warn('[archhub] pull ' + slot + ' failed:', e);
+    }
+  }
+  return any;
+}
+
+function App() {
+  const [tick, setTick] = useState(0);
+  const bumpRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Schedule a RE-RENDER (not a remount) after each successful pull
+    // batch. bumpRef bumps `tick`, which flows to StudioLM as the
+    // `dataVersion` prop below — App re-renders, StudioLM re-renders and
+    // re-reads the freshly-spliced window.__archhub_LM_* arrays, but its
+    // component state survives.
+    bumpRef.current = () => { if (!cancelled) setTick(t => t + 1); };
+
+    pullAll().then((any) => { if (any) bumpRef.current(); });
+
+    // Wire bridge signals. CRITICAL: return disconnect funcs in cleanup
+    // so listeners don't accumulate (the 2-min crash root cause).
+    const disconnects = [];
+    window.archhubReady.then((b) => {
+      if (cancelled || !b) return;
+      const wire = (sig) => {
+        if (!b[sig] || typeof b[sig].connect !== 'function') return;
+        const handler = () => { pullAll().then((any) => { if (any) bumpRef.current(); }); };
+        b[sig].connect(handler);
+        disconnects.push(() => {
+          try { b[sig].disconnect(handler); } catch (e) {}
+        });
+      };
+      wire('sessions_changed');
+      wire('hosts_changed');
+      wire('memory_changed');
+      wire('skills_changed');
+    });
+
+    return () => {
+      cancelled = true;
+      bumpRef.current = null;
+      for (const off of disconnects) { try { off(); } catch (e) {} }
+    };
+  }, []);
+
+  // `dataVersion`, NOT `key`. A changing `key` would unmount + remount
+  // StudioLM on every background pull — nuking open modals, canvas pan,
+  // focus, the active session. Passing it as a prop re-renders the tree
+  // (children re-read the LM_* arrays) while preserving all UI state.
+  return <StudioLM dataVersion={tick} />;
+}
+
+// ─── Boot.
+const SplashFader = () => {
+  useEffect(() => {
+    const s = document.getElementById('__archhub_splash');
+    if (!s) return;
+    const t = setTimeout(() => {
+      s.classList.add('fade');
+      setTimeout(() => { try { s.remove(); } catch (e) {} }, 320);
+    }, 120);
+    return () => clearTimeout(t);
+  }, []);
+  return null;
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary>
+    <SplashFader />
+    <App />
+  </ErrorBoundary>
+);
 </script>
 </body>
 </html>

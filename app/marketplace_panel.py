@@ -172,52 +172,67 @@ def _ensure_catalog() -> list[dict]:
     return list(_SEED_CATALOG)
 
 
-def fetch_remote_catalog() -> tuple[bool, str, list[dict]]:
-    """Pull the official catalog from the cloud_sync registry repo.
+def _pack_to_item(pack: dict) -> dict:
+    """Adapt a cloud marketplace pack (the shape from
+    marketplace_client.list_packs) to the panel's catalog-item shape.
 
-    The remote manifest lives at `marketplace/catalog.json` inside the
-    user's signed-in Skills git remote (same repo `cloud_sync` already
-    uses for Skill share). When found, the local catalog is rewritten
-    with the merged item list (remote items first, then any local-only
-    items not present in the remote).
+    The `_cloud_pack` flag tells `MarketplaceCard._install` to route
+    through `marketplace_client.install_pack` (download + verify +
+    unzip) rather than an embedded `payload` — cloud packs are signed
+    zips, not inline JSON."""
+    manifest = pack.get("manifest") or {}
+    kind = str(manifest.get("kind") or "").lower()
+    if kind not in ("skill", "workflow"):
+        kind = "skill"   # marketplace packs are Skill packs by default
+    return {
+        "_cloud_pack": True,
+        "kind": kind,
+        "id": pack.get("id") or pack.get("slug") or "",
+        "name": pack.get("title") or manifest.get("name") or "Untitled pack",
+        "author": manifest.get("author") or "",
+        "tags": (manifest.get("tags")
+                 or ([pack["category"]] if pack.get("category") else [])),
+        "hosts": manifest.get("hosts") or [],
+        "description": pack.get("description") or "",
+        "runs": int(pack.get("download_count") or 0),
+        "version": str(pack.get("version") or ""),
+        "signature": pack.get("signature") or "",
+        "pubkey": pack.get("pubkey") or "",
+    }
 
-    Returns (ok, message, catalog).
-    """
+
+def _load_catalog() -> tuple[bool, str, list[dict]]:
+    """The catalog's source of record: the cloud marketplace via
+    `marketplace_client.list_packs()`. Falls back to the local seed
+    catalog when the cloud is unreachable so the panel still works
+    offline. Returns (from_cloud, message, catalog).
+
+    Roadmap #P1 2026-05-17 — replaces the old `cloud_sync` git-repo
+    `fetch_remote_catalog`; the panel is now backed by the real
+    marketplace API."""
+    local = _ensure_catalog()
     try:
-        import cloud_sync
-        if not cloud_sync.is_signed_in():
-            return False, "Not signed in — local seed only.", _ensure_catalog()
+        import marketplace_client
+        resp = marketplace_client.list_packs(limit=100)
     except Exception as ex:
-        return False, f"cloud_sync unavailable — {type(ex).__name__}", _ensure_catalog()
-    try:
-        # cloud_sync exposes read_remote_file via its bootstrap path.
-        repo = getattr(cloud_sync, "_LOCAL_REPO_PATH", None) or getattr(
-            cloud_sync, "LOCAL_REPO_PATH", None)
-        if repo is None:
-            return False, "cloud_sync repo path missing.", _ensure_catalog()
-        remote_path = Path(repo) / "marketplace" / "catalog.json"
-        try:
-            cloud_sync.pull()  # refresh local mirror
-        except Exception:
-            pass
-        if not remote_path.exists():
-            return False, "No remote catalog yet — pushed at next release.", _ensure_catalog()
-        remote = json.loads(remote_path.read_text(encoding="utf-8"))
-        # Merge: remote items win, local-only items appended.
-        local = _ensure_catalog()
-        seen = {it.get("id") for it in remote if isinstance(it, dict)}
-        merged = list(remote)
-        for it in local:
-            if isinstance(it, dict) and it.get("id") not in seen:
-                merged.append(it)
-        try:
-            CATALOG_PATH.write_text(
-                json.dumps(merged, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        return True, f"Synced {len(remote)} items from cloud.", merged
-    except Exception as ex:
-        return False, f"Sync failed — {type(ex).__name__}", _ensure_catalog()
+        return (False,
+                f"Cloud unavailable ({type(ex).__name__}) — showing "
+                f"local catalog.", local)
+    if not isinstance(resp, dict) or resp.get("status") == "error":
+        why = (resp.get("error", "unreachable")
+               if isinstance(resp, dict) else "unreachable")
+        return (False, f"Cloud unavailable ({why}) — showing local "
+                f"catalog.", local)
+    packs = resp.get("packs") or []
+    cloud_items = [_pack_to_item(p) for p in packs if isinstance(p, dict)]
+    # Merge: cloud packs win; keep local-only seed items for offline use.
+    seen = {it["id"] for it in cloud_items}
+    merged = cloud_items + [it for it in local
+                            if isinstance(it, dict)
+                            and it.get("id") not in seen]
+    return (True,
+            f"Loaded {len(cloud_items)} packs from the marketplace.",
+            merged)
 
 
 # ---------------------------------------------------------------------------
@@ -309,54 +324,68 @@ class MarketplaceCard(QFrame):
         self.setStyleSheet(_card_qss())
 
     def _install(self) -> None:
-        kind = self.item.get("kind")
-        payload = self.item.get("payload") or {}
-        # Signature gate — signed items must verify before install. We
-        # accept unsigned items today (most of the seed catalog is
-        # legacy unsigned) but warn loudly. Once the publishing
-        # pipeline starts shipping signatures by default this should
-        # tighten to "signed required".
         try:
-            import marketplace_signing as _ms
-            if _ms.is_signed(self.item):
-                ok, reason = _ms.verify_item(self.item)
-                if not ok:
-                    raise RuntimeError(f"Signature check failed: {reason}")
-        except RuntimeError:
-            raise   # propagated to except below
-        except Exception:
-            pass    # signing module unavailable — fall through (warn-only)
-        try:
-            if kind == "skill":
-                from skills.library import add_skill
-                add_skill(payload)
-                detail = f"Installed Skill — {self.item['name']}."
-            elif kind == "workflow":
-                from workflows.graph import Workflow
-                from workflows import save_workflow
-                wf = Workflow.from_dict(payload)
-                save_workflow(wf)
-                detail = f"Installed Workflow — {self.item['name']}."
+            if self.item.get("_cloud_pack"):
+                # Cloud marketplace pack — download + verify + unzip via
+                # the marketplace client (signature re-checked there).
+                # Roadmap #P1 2026-05-17.
+                import marketplace_client
+                res = marketplace_client.install_pack(
+                    self.item.get("id") or "")
+                if not isinstance(res, dict) or res.get("status") != "ok":
+                    raise RuntimeError(
+                        (res or {}).get("error") or "install failed")
+                n = res.get("skill_count")
+                detail = ("Installed "
+                          + str(self.item.get("name") or "pack")
+                          + (f" — {n} skill(s)." if n else "."))
             else:
-                raise ValueError(f"Unknown kind: {kind}")
+                kind = self.item.get("kind")
+                payload = self.item.get("payload") or {}
+                # Signature gate — signed local items must verify before
+                # install. Unsigned legacy seed items fall through
+                # (warn-only) until publishing signs by default.
+                try:
+                    import marketplace_signing as _ms
+                    if _ms.is_signed(self.item):
+                        ok, reason = _ms.verify_item(self.item)
+                        if not ok:
+                            raise RuntimeError(
+                                f"Signature check failed: {reason}")
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass
+                if kind == "skill":
+                    from skills.library import add_skill
+                    add_skill(payload)
+                    detail = f"Installed Skill — {self.item['name']}."
+                elif kind == "workflow":
+                    from workflows.graph import Workflow
+                    from workflows import save_workflow
+                    wf = Workflow.from_dict(payload)
+                    save_workflow(wf)
+                    detail = f"Installed Workflow — {self.item['name']}."
+                else:
+                    raise ValueError(f"Unknown kind: {kind}")
+            # ── Shared post-install tail (cloud + local) ──────────────
             # Record installed-version metadata so the card can switch
-            # to "Installed" / "Update available" on subsequent renders.
+            # to "Installed" / "Update available" on later renders.
             try:
                 import marketplace_meta as _mm
                 _mm.record_install(self.item)
             except Exception:
                 pass
             ver = str(self.item.get("version") or "")
-            self.btn_install.setText(f"Installed{' · ' + ver if ver else ''}")
+            self.btn_install.setText(
+                f"Installed{' · ' + ver if ver else ''}")
             self.btn_install.setEnabled(False)
-            # Force the shell's Skills + Home caches to invalidate so
-            # the new item appears immediately when the user navigates
-            # to the Skills page.
+            # Invalidate the shell's Skills + Home caches so the new
+            # item appears immediately on the Skills page.
             try:
                 shell = self.window()
                 shell._skills_cache = (0.0, [])
                 shell._sessions_cache = (0.0, [])
-                # Re-render Skills page if it's already constructed.
                 p = getattr(shell, "pages", {}).get("skills")
                 if p is not None and hasattr(p, "_refresh"):
                     p._refresh()
@@ -461,7 +490,7 @@ class MarketplacePanel(QWidget):
         self._refresh()
 
     def _sync_remote(self) -> None:
-        ok, msg, catalog = fetch_remote_catalog()
+        ok, msg, catalog = _load_catalog()
         self._catalog = catalog
         try:
             from toast import show_toast

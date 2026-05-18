@@ -417,57 +417,31 @@ def main() -> int:
     #     WebShell (prototype) → WorkspaceShell (Qt-native skeleton)
     #                          → StudioShell (legacy pages)
     #                          → bare ChatWindow
-    surface = window
-    if _WEBENGINE_OK:
-        try:
-            from web_shell import WebShell
-            shell = WebShell(chat_widget=window, router=router,
-                              manager=manager, tools=tools)
-            surface = shell
-        except Exception:
-            try:
-                import traceback as _tb
-                with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                    _f.write("WebShell build failed — trying WorkspaceShell:\n")
-                    _tb.print_exc(file=_f)
-            except Exception:
-                pass
-    else:
-        try:
-            with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                _f.write("WebShell skipped — PyQt6-WebEngine not importable at boot.\n")
-        except Exception:
-            pass
-
+    # v1.5: committed to WebShell. PyQt6-WebEngine is a hard runtime
+    # requirement — no silent fallback to WorkspaceShell / StudioShell /
+    # ChatWindow. If WebShell fails to construct, surface the underlying
+    # error to the user instead of silently degrading.
+    if not _WEBENGINE_OK:
+        raise RuntimeError(
+            "PyQt6-WebEngine required — install with `pip install PyQt6-WebEngine`. "
+            "ArchHub's UI is rendered through the embedded WebShell."
+        )
     try:
-        if surface is window:
-            from workspace_shell import WorkspaceShell
-            shell = WorkspaceShell(chat_widget=window, router=router,
-                                    manager=manager, tools=tools)
-            surface = shell
-    except Exception:
+        from web_shell import WebShell
+        shell = WebShell(chat_widget=window, router=router,
+                          manager=manager, tools=tools)
+        surface = shell
+    except Exception as _shell_ex:
         try:
             import traceback as _tb
             with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                _f.write("WorkspaceShell build failed — trying StudioShell:\n")
+                _f.write("WebShell build failed:\n")
                 _tb.print_exc(file=_f)
         except Exception:
             pass
-        # Fallback A: legacy StudioShell.
-        try:
-            from studio_shell import StudioShell
-            shell = StudioShell(chat_widget=window, router=router,
-                                manager=manager, tools=tools)
-            surface = shell
-        except Exception:
-            surface = window
-            try:
-                import traceback as _tb
-                with open(str(APP_ROOT.parent / "boot.log"), "a", encoding="utf-8") as _f:
-                    _f.write("StudioShell build failed — falling back to bare ChatWindow:\n")
-                    _tb.print_exc(file=_f)
-            except Exception:
-                pass
+        raise RuntimeError(
+            f"PyQt6-WebEngine required — WebShell failed to build: {_shell_ex}"
+        ) from _shell_ex
 
     # Wire the single-instance summon signal: when a second launch
     # asks us to come forward, surface the window.

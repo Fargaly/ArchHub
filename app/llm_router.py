@@ -280,6 +280,35 @@ def _looks_like_refusal(text: str, had_tools: bool,
     return any(n in lo for n in needles)
 
 
+def _looks_like_fabricated_tools(text: str, tool_call_count: int) -> bool:
+    """True when the model TYPED tool-call / tool-result markup into its
+    prose instead of making a real structured tool call.
+
+    A model with working tools emits STRUCTURED calls — the router
+    executes them out-of-band and the markup never lands in `text`.
+    Only a tool-less, mis-routed, or confused model writes a literal
+    <function_calls>/<invoke> block — and then a fabricated
+    <function_result> and a false conclusion. This is the founder's
+    recurring bug: 'No files open in AutoCAD' typed under a fake
+    <function_result> while a drawing was open.
+
+    A tool RESULT in the model's own text is ALWAYS fabrication — real
+    results are injected by the runtime, never authored by the model.
+
+    GUARD (post-2026-05-16 root fix): the mechanism fix is that every
+    provider now carries the tool surface, so the model can make real
+    calls. This catches the residual case — every tool-capable provider
+    down — so a fabricated answer is re-routed or fails honestly,
+    never shown to the user as truth."""
+    if tool_call_count > 0:
+        return False          # a real tool call grounded this turn
+    lo = (text or "").lower()
+    return ("<function_result" in lo
+            or "<tool_result>" in lo
+            or ("<function_calls>" in lo and "<invoke" in lo)
+            or "<invoke" in lo)
+
+
 def _summarise_tool_result(inv) -> str:
     """Build a one-line, human-readable summary of a tool invocation
     so the chat surface has SOMETHING to render when the LLM
@@ -589,6 +618,23 @@ class LLMRouter:
                 providers.add("ollama")
         except Exception:
             pass
+        # Claude Code CLI — the installed `claude` binary. Runs on the
+        # user's Claude subscription (no API key, no metered credit), so
+        # it's "configured" whenever the binary is on PATH.
+        try:
+            from llm_providers.claude_cli_client import claude_cli_path
+            if claude_cli_path():
+                providers.add("claude_cli")
+        except Exception:
+            pass
+        # Codex CLI — the installed `codex` binary. Runs on the user's
+        # ChatGPT/Codex subscription (no API key, no metered quota).
+        try:
+            from llm_providers.codex_cli_client import codex_cli_path
+            if codex_cli_path():
+                providers.add("codex_cli")
+        except Exception:
+            pass
         # LM Studio if running with at least one chat model loaded.
         # Server lives at 127.0.0.1:1234/v1; probe is cached 25s.
         try:
@@ -611,13 +657,35 @@ class LLMRouter:
             from llm_providers.ollama_client import OllamaClient
             self._clients[provider] = OllamaClient()
             return self._clients[provider]
+        # Claude Code CLI — runs on the user's Claude SUBSCRIPTION via
+        # `claude -p`. No ANTHROPIC_API_KEY, no per-token credit: it
+        # keeps working when the API key is out of credit. Local binary,
+        # so short-circuit the api-key gate like ollama.
+        if provider == "claude_cli":
+            from llm_providers.claude_cli_client import ClaudeCliClient
+            self._clients[provider] = ClaudeCliClient()
+            return self._clients[provider]
+        # Codex CLI — runs on the user's ChatGPT/Codex SUBSCRIPTION via
+        # `codex exec`. No OPENAI_API_KEY, no per-token quota. Local
+        # binary — short-circuit the api-key gate like claude_cli.
+        if provider == "codex_cli":
+            from llm_providers.codex_cli_client import CodexCliClient
+            self._clients[provider] = CodexCliClient()
+            return self._clients[provider]
         # LM Studio also runs locally with no auth by default; built
         # below by reusing CustomOpenAICompatibleClient. Short-circuit
         # the api-key gate so the user doesn't get "No API key
         # configured for lmstudio" when picking a local model.
         if provider == "lmstudio":
             from llm_providers.openrouter_client import CustomOpenAICompatibleClient
-            from secrets_store import load_setting, load_api_key
+            # CRITICAL: do NOT re-import load_api_key here. It's already at
+            # module scope (line 24). Re-importing inside the function makes
+            # Python treat load_api_key as a function-local for the WHOLE
+            # function — so line 641's `api_key = load_api_key(provider)`
+            # (executed when provider != 'lmstudio') raises
+            # UnboundLocalError. Every chat call dies. Founder bug
+            # 2026-05-14: chats hang at "..." with no streaming response.
+            from secrets_store import load_setting
             base = (load_setting("lmstudio_base_url")
                     or "http://127.0.0.1:1234/v1").rstrip("/")
             key = load_api_key("lmstudio") or "lm-studio"
@@ -789,6 +857,27 @@ class LLMRouter:
             # Fall through to text-only routing if no vision provider available;
             # the provider client will simply ignore the image blocks.
 
+        # ── Local Claude Code — the preferred provider for every
+        # non-vision turn. Founder demand 2026-05-16: route through the
+        # installed `claude` CLI, which runs on the user's Claude
+        # SUBSCRIPTION (no ANTHROPIC_API_KEY, no per-token credit) and
+        # is fully tool-capable via the ArchHub MCP server. Metered API
+        # providers below become the FALLBACK — used only for vision,
+        # or when the local CLI fails. (Vision is handled above; `claude
+        # -p` headless can't take image attachments here.)
+        configured = set(self.configured_providers())
+        # Free local subscriptions first — claude_cli preferred (it is
+        # tool-capable via the ArchHub MCP server), codex_cli next.
+        # Either one missing from `configured` means it's blocked after
+        # a recent failure — routing then falls through to the metered
+        # API providers below.
+        if "claude_cli" in configured:
+            return ("claude_cli", "sonnet",
+                    "local Claude Code · subscription · no API credit")
+        if "codex_cli" in configured:
+            return ("codex_cli", "auto",
+                    "local Codex CLI · subscription · no API quota")
+
         modeling_signals = (
             "revit", "autocad", "3ds max", "blender", "model", "wall", "door",
             "window", "geometry", "extrude", "render", "ifc", "rvt", "dwg",
@@ -800,7 +889,7 @@ class LLMRouter:
         )
         quick_signals = ("hi", "hello", "thanks", "thank you")
 
-        configured = set(self.configured_providers())
+        # `configured` already computed above (claude_cli check).
 
         # Image present in the last message? Use multimodal.
         # (Future: detect QImage attachments. For now, look for "look at this" etc.)
@@ -841,6 +930,12 @@ class LLMRouter:
                     return "ollama", m, f"auto: analysis → local Ollama {m}"
 
         if any(s in text for s in quick_signals) or len(text) < 24:
+            # Short / chatty turns never need host tools — route them to
+            # local Claude Code first: runs on the user's subscription,
+            # zero API credit. Founder demand 2026-05-16.
+            if "claude_cli" in configured:
+                return ("claude_cli", "haiku",
+                        "auto: short → local Claude Code · no API credit")
             if "anthropic" in configured:
                 return "anthropic", "claude-haiku-4-5-20251001", "auto: short → Claude Haiku"
             if "openrouter" in configured:
@@ -873,6 +968,12 @@ class LLMRouter:
             m = self._pick_ollama_model("default")
             if m:
                 return "ollama", m, f"auto: default → local Ollama {m}"
+        # Last resort before giving up: local Claude Code on the user's
+        # subscription. Reachable whenever the `claude` binary exists —
+        # so a credit-exhausted API never leaves the user with nothing.
+        if "claude_cli" in configured:
+            return ("claude_cli", "sonnet",
+                    "auto: local Claude Code · no API credit")
 
         raise RuntimeError("No LLM configured. Add an API key in Settings, sign in to ArchHub Cloud, or start Ollama.")
 
@@ -887,16 +988,50 @@ class LLMRouter:
         on_reasoning: Optional[Callable[[str], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         session_pin: Optional[str] = None,
+        system_override: Optional[str] = None,
     ) -> LLMResponse:
         """session_pin — optional `@token` parsed out of the user's chat
         message (e.g. `@Tower-A`, `@Pavilion`, `@25232`). Forwarded to
         every tool invocation in this turn so multi-instance hosts (Revit
         × N, Max × N, Outlook accounts) bind to the chosen session
-        instead of falling back to the most-recent."""
+        instead of falling back to the most-recent.
+
+        system_override — when set, REPLACES the router's built-in
+        assistant system prompt for this call and suppresses the tool
+        surface. This is the supported mechanism for specialised
+        one-shot calls (e.g. Node Smith's JSON-spec generation) that
+        need their own instructions and must NOT be steered by the
+        chat-assistant prompt or tempted into tool calls. Previously
+        callers faked this with a `role:"system_override"` history
+        message — a role the provider clients silently dropped, so the
+        specialised instructions never reached the model."""
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
         on_reasoning = on_reasoning or (lambda _: None)
         on_status = on_status or (lambda _: None)
+
+        # Soft-route guard: when `auto` is requested but no provider is
+        # configured (clean install with no key + no Ollama / Cloud), the
+        # _route helper raises RuntimeError. v1.5 requirement: return a
+        # neutral LLMResponse instead so the workflow runner + chat
+        # bridge can render a clean "(no provider configured)" message
+        # rather than hanging or crashing.
+        if (not model or model == ROUTE_AUTO):
+            try:
+                _probe = self.configured_providers()
+            except Exception:
+                _probe = []
+            if not _probe:
+                return LLMResponse(
+                    text="",
+                    model="(no provider configured)",
+                    tool_invocations=[],
+                    routing_note=(
+                        "no LLM provider configured — add an API key in "
+                        "Settings → Providers, sign in to ArchHub Cloud, or "
+                        "start Ollama."
+                    ),
+                )
 
         # Auto-fallback chain: try the routed provider; on auth/quota
         # failure (4xx) block it for 10 min and pick the next available.
@@ -933,6 +1068,7 @@ class LLMRouter:
                             on_reasoning=on_reasoning,
                             on_status=on_status,
                             session_pin=session_pin,
+                            system_override=system_override,
                         )
                         break
                     except Exception as _net_ex:
@@ -978,12 +1114,49 @@ class LLMRouter:
                             f"{provider} refused to use tools"
                         )
                         continue
+                    # GUARD: the model fabricated tool-call / tool-result
+                    # markup in its prose instead of making a real call
+                    # (founder's recurring bug). Re-route — never let a
+                    # fabricated answer stand. No block_provider: the
+                    # provider isn't bad, the model glitched; `attempts`
+                    # stops it being re-picked. If every provider is
+                    # exhausted the loop raises → an honest error, not a
+                    # lie.
+                    if _looks_like_fabricated_tools(
+                            response.text or "", len(invs)):
+                        on_status(
+                            f"{provider}: fabricated a tool call — "
+                            f"switching provider…"
+                        )
+                        last_error = RuntimeError(
+                            f"{provider} fabricated tool-call markup"
+                        )
+                        model = ROUTE_AUTO
+                        continue
                 except Exception:
                     pass
                 return response
             except Exception as ex:
                 last_error = ex
-                if not _looks_like_auth_or_quota(ex):
+                try:
+                    import os as _os, time as _t
+                    from pathlib import Path as _P
+                    _lp = (_P(_os.environ.get("LOCALAPPDATA", str(_P.home())))
+                           / "ArchHub" / "logs")
+                    _lp.mkdir(parents=True, exist_ok=True)
+                    with open(_lp / "llm_trace.log", "a", encoding="utf-8") as _fh:
+                        _fh.write(f"{_t.strftime('%Y-%m-%d %H:%M:%S')} "
+                                  f"[{provider}] EXCEPTION "
+                                  f"{type(ex).__name__}: {str(ex)[:600]}\n")
+                except Exception:
+                    pass
+                # Local CLI providers (claude_cli / codex_cli) failing —
+                # CLI missing, not logged in, timeout, crash — is a SOFT
+                # failure: block briefly + re-route down the chain
+                # (claude_cli → codex_cli → metered APIs → ollama) rather
+                # than hard-raising and killing the whole turn.
+                if not (_looks_like_auth_or_quota(ex)
+                        or provider in ("claude_cli", "codex_cli")):
                     raise
                 self.block_provider(provider, reason=str(ex)[:200])
                 # Tell the chat layer so it can show a fallback toast —
@@ -1007,6 +1180,7 @@ class LLMRouter:
         on_chunk, on_tool_invocation, on_reasoning=None,
         on_status=None,
         session_pin: Optional[str] = None,
+        system_override: Optional[str] = None,
     ):
         on_reasoning = on_reasoning or (lambda _: None)
         on_status = on_status or (lambda _: None)
@@ -1018,15 +1192,57 @@ class LLMRouter:
         self._nudged_this_turn = False
         self._retried_no_tools = False
 
-        # Compose system prompt
-        system_prompt = self._build_system_prompt()
-        tool_schemas = self.tools.tool_schemas_for(provider)
-        # Gemini Flash refuses to pick when given 30+ tool schemas
-        # at once — emits empty type=final with no text + no tool
-        # calls. Trim the list per-request to the tools plausibly
-        # relevant to the user's last message. Anthropic / OpenAI
-        # tolerate larger lists; keep full list there.
-        if provider == "google" and len(tool_schemas) > 16:
+        # ── System prompt + message hygiene ──────────────────────────
+        # ROOT-CAUSE FIX (2026-05-16): a provider `messages` array accepts
+        # ONLY user / assistant / tool roles. Several callers (chat,
+        # composer, workflow LLM nodes) prepended a `role:"system_override"`
+        # — or `"system"` — message INTENDING it to act as a system
+        # prompt. The router never honoured that: it forwarded the bogus
+        # role straight to the provider. Anthropic/OpenAI 400 on it, so
+        # every such call fell through the auto-fallback chain to a
+        # provider that tolerates it — OpenRouter, which carries ZERO
+        # tool schemas here. A tool-less model asked a factual question
+        # then FABRICATES a <function_calls>/<function_result> block and
+        # lies about the result.
+        #
+        # Fix the class once, here: fold any system / system_override
+        # history message INTO the system prompt (what the callers always
+        # meant), and forward only real conversational turns. No provider
+        # ever sees a bad role again, so chat keeps its tool-capable
+        # provider and the model calls real tools instead of inventing
+        # them.
+        folded_system: list[str] = []
+        convo_history: list[dict] = []
+        for _m in history:
+            _role = _m.get("role")
+            if _role in ("system", "system_override"):
+                _c = _m.get("content")
+                if isinstance(_c, str) and _c.strip():
+                    folded_system.append(_c.strip())
+            elif _role in ("user", "assistant", "tool"):
+                convo_history.append(_m)
+            # Any other / unknown role is dropped — never forwarded.
+
+        # `system_override` (the real parameter) is a specialised one-shot
+        # (Node Smith JSON generation): own prompt verbatim, NO tools.
+        # Everything else — including chat that folded a system message
+        # above — gets the full tool surface so the model can actually
+        # act instead of fabricating.
+        base_prompt = system_override or self._build_system_prompt()
+        system_prompt = (
+            base_prompt + "\n\n" + "\n\n".join(folded_system)
+            if folded_system else base_prompt
+        )
+        tool_schemas = ([] if system_override
+                        else self.tools.tool_schemas_for(provider))
+        # Small models choke on a big tool list. Gemini Flash refuses
+        # to pick when given 30+ schemas (empty type=final, no call);
+        # local Ollama 7-8B models (command-r7b, qwen…) do the same —
+        # given all 177 tools, command-r7b emitted a bare pseudo-call
+        # `autocad.get_documents()` as text instead of a real call.
+        # Trim per-request to the tools plausibly relevant to the
+        # user's last message. Anthropic / OpenAI tolerate large lists.
+        if provider in ("google", "ollama") and len(tool_schemas) > 16:
             tool_schemas = _filter_tools_by_relevance(
                 tool_schemas, history, cap=12,
             )
@@ -1040,7 +1256,9 @@ class LLMRouter:
         # complex tool chains.
         all_invocations: list[ToolInvocation] = []
         full_text = ""
-        messages = [m for m in history]    # working copy for tool round-tripping
+        # Working copy for tool round-tripping — only real conversational
+        # turns (system messages were folded into system_prompt above).
+        messages = [m for m in convo_history]
 
         max_iters = self._max_iterations(model_name)
         # Diagnostic log — captures every iteration of the tool-use

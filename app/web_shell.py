@@ -82,6 +82,14 @@ class WebShell(QMainWindow):
         from PyQt6.QtWebEngineWidgets import QWebEngineView
         from PyQt6.QtWebEngineCore import QWebEngineSettings
         self.view = QWebEngineView()
+        # Suppress QtWebEngine's native browser context menu (Back / Forward /
+        # Reload / Save page / View source). ArchHub is a desktop app — the
+        # React canvas owns right-click via DOM 'contextmenu' events
+        # (CanvasMenu, WireMenu, port-disconnect), and the chromium menu is
+        # wrong/confusing for native-app surface. NoContextMenu makes Qt skip
+        # building/showing its menu while leaving the DOM contextmenu event
+        # path intact, so the custom React menus continue to work.
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         # Allow JS clipboard, local-content URL access, and remote font CDN.
         settings = self.view.settings()
         for attr_name in (
@@ -95,6 +103,20 @@ class WebShell(QMainWindow):
                 settings.setAttribute(attr, True)
             except Exception:
                 pass
+
+        # ── QWebChannel bridge — expose Python ArchHubBridge as
+        # window.archhub in the embedded React tree. The JS side reads
+        # real hosts/sessions/models/memory + fires real actions
+        # (send_chat, open_settings, ...).
+        from PyQt6.QtWebChannel import QWebChannel
+        from bridge import ArchHubBridge
+        self.bridge = ArchHubBridge(
+            router=router, manager=manager, tools=tools,
+            chat_widget=chat_widget, parent=self,
+        )
+        self.channel = QWebChannel(self.view.page())
+        self.channel.registerObject("archhub", self.bridge)
+        self.view.page().setWebChannel(self.channel)
 
         html_path = Path(__file__).resolve().parent / "web_ui" / "index.html"
         if not html_path.exists():

@@ -6,7 +6,7 @@ style flow every consumer SaaS uses:
   1. App generates a PKCE verifier + challenge.
   2. App spins up a local HTTP server on a random free port.
   3. App opens the user's default browser to
-     cloud.archhub.app/signin?challenge=...&redirect=http://127.0.0.1:<port>/cb
+     cloud.archhub.io/signin?challenge=...&redirect=http://127.0.0.1:<port>/cb
   4. User signs in on the web (magic link or password). Backend
      redirects to the local callback with a one-time `code`.
   5. App POSTs {code, code_verifier} to /v1/auth/exchange → gets

@@ -52,6 +52,7 @@ class Primitive:
                                   # ("" key = the fixed type when selector is "")
     status: str        # READY | NEEDS_EXECUTOR | UX_ONLY
     note: str = ""
+    params: tuple = ()  # default {k,v,type} rows a placed node lands with
 
     def engine_type_for(self, params: dict | None) -> str | None:
         """The registry type this node dispatches on, given its params.
@@ -85,6 +86,8 @@ PRIMITIVES: list[Primitive] = [
         "the operation; the op's ConnectorOp.inputs render in the right "
         "panel. Runs the connector contract through the `connector.run` "
         "engine executor (folds the run_op path into the runner).",
+        params=({"k": "host", "v": "", "type": "text"},
+                {"k": "op", "v": "", "type": "text"}),
     ),
     Primitive(
         "ai", "AI", "ai", "action",
@@ -96,6 +99,7 @@ PRIMITIVES: list[Primitive] = [
         }, READY,
         "MASTER AI node — `action` picks the engine type. vision / "
         "extract / embed actions are added when their executors ship.",
+        params=({"k": "action", "v": "chat", "type": "text"},),
     ),
     Primitive(
         "logic", "Logic", "logic", "kind",
@@ -105,6 +109,7 @@ PRIMITIVES: list[Primitive] = [
             "foreach": "control.foreach",
         }, READY,
         "branch / flow; `switch` is a slice-5 follow-up",
+        params=({"k": "kind", "v": "if", "type": "text"},),
     ),
     Primitive(
         "output", "Output", "output", "",
@@ -210,6 +215,7 @@ def grammar_payload() -> list[dict]:
             "selector": p.selector, "engine_types": dict(p.engine_types),
             "status": p.status, "note": p.note,
             "ports": _ports_for(rep),
+            "params": [dict(x) for x in p.params],
         })
     return out
 

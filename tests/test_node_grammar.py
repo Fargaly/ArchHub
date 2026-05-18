@@ -124,8 +124,14 @@ class TestGrammarPayload:
         json.dumps(payload)  # must not raise
         for entry in payload:
             assert {"kind", "display", "cat", "selector", "engine_types",
-                    "status", "note", "ports"} <= entry.keys()
+                    "status", "note", "ports", "params"} <= entry.keys()
             assert {"in", "out"} <= entry["ports"].keys()
+            assert isinstance(entry["params"], list)
+        by_kind = {e["kind"]: e for e in payload}
+        # the master nodes land with their selector/host/op param rows
+        assert {"host", "op"} <= {p["k"] for p in by_kind["connector"]["params"]}
+        assert by_kind["ai"]["params"][0]["k"] == "action"
+        assert by_kind["logic"]["params"][0]["k"] == "kind"
 
     def test_registry_primitives_carry_engine_ports(self):
         """A primitive with a registry engine type carries that type's

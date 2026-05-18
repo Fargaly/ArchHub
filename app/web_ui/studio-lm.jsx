@@ -769,14 +769,12 @@ const StudioLM = () => {
       const gid = `${g.kind}_${Date.now().toString(36).slice(-4)}`;
       const gport = (p) => ({ id: p.id, label: p.id,
         t: String(p.type || 'any').toLowerCase() });
-      // Seed the selector param so a placed selector primitive (ai,
-      // logic) resolves to a real engine type + cooks immediately —
-      // default = the first engine_types key.
-      const gparams = [];
-      if (g.selector && g.engine_types) {
-        const dft = Object.keys(g.engine_types)[0];
-        if (dft) gparams.push({ k: g.selector, v: dft, type: 'select' });
-      }
+      // Default param rows come from the grammar (node_grammar declares
+      // each primitive's params — ONE source). A placed connector / ai /
+      // logic master node lands with its host+op / action / kind rows
+      // ready, so it resolves an engine type + cooks immediately.
+      const gparams = (g.params || []).map(pp => ({
+        k: pp.k, v: pp.v, type: pp.type || 'text' }));
       const gnode = {
         id: gid, kind: g.kind, cat: g.cat || 'node', x, y, w:220, h:112,
         title: g.display || g.kind, sub: g.note || g.kind,

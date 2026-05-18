@@ -116,3 +116,20 @@ def test_params_to_config_handles_list_and_dict():
         [{"k": "a", "v": 1}, {"k": "b", "v": 2}]) == {"a": 1, "b": 2}
     assert ng._params_to_config({"a": 1}) == {"a": 1}
     assert ng._params_to_config(None) == {}
+
+
+def test_connector_node_cooks_and_reports_honestly():
+    """A `connector` node resolves to connector.run and runs through the
+    connector contract. With no host process reachable the op returns an
+    honest failure — never a crash, never a fabricated value (slice 2)."""
+    graph = {"nodes": [
+        {"id": "k1", "kind": "connector",
+         "params": [{"k": "host", "v": "excel"},
+                    {"k": "op", "v": "excel.read_range"}]},
+    ], "wires": []}
+    norm = ng.normalize_canvas_graph(graph)
+    assert norm["nodes"][0]["type"] == "connector.run"
+    out = WorkflowRunner(norm).pull("k1")
+    assert isinstance(out, dict)
+    # Either it ran (value present) or it failed honestly — never a crash.
+    assert "value" in out or out.get("status") == "error"

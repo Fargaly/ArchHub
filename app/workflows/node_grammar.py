@@ -33,12 +33,12 @@ READY = "ready"                  # every engine type it resolves to exists
 NEEDS_EXECUTOR = "needs-executor"  # executor must be built — see `note`
 UX_ONLY = "ux-only"              # never executes (e.g. a sticky note)
 
-# Primitives that run via a path OTHER than the node registry. The
-# `connector` master node executes through the connector `run_op` path
-# (`bridge.run_connector_op`), not a registry executor — so an empty
-# `engine_types` is correct + READY for these, and the grounding test
-# exempts them from the registry-resolution check.
-NON_REGISTRY_KINDS = {"connector"}
+# Primitives that run via a path OTHER than the node registry. As of
+# slice 2 the `connector` master node became a real registry executor
+# (`connector.run`), so this set is empty — kept as the mechanism for
+# any future non-registry kind. The grounding test exempts members of
+# this set from the registry-resolution check.
+NON_REGISTRY_KINDS: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -79,11 +79,12 @@ PRIMITIVES: list[Primitive] = [
         "a literal typed value",
     ),
     Primitive(
-        "connector", "Connector", "connector", "op",
-        {}, READY,
-        "MASTER host node — one per host. `host` + `op` params; the op's "
-        "ConnectorOp.inputs render in the right panel. Runs via the "
-        "connector run_op path, not a registry executor.",
+        "connector", "Connector", "connector", "",
+        {"": "connector.run"}, READY,
+        "MASTER host node — one per host. `host` + `op` config select "
+        "the operation; the op's ConnectorOp.inputs render in the right "
+        "panel. Runs the connector contract through the `connector.run` "
+        "engine executor (folds the run_op path into the runner).",
     ),
     Primitive(
         "ai", "AI", "ai", "action",

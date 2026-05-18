@@ -104,9 +104,12 @@ class TestEngineTypeResolution:
         assert ng.engine_type("ai", {"action": "telepathy"}) is None
         assert ng.engine_type("ai", {}) is None
 
-    def test_connector_and_note_have_no_registry_type(self):
-        # connector runs via the run_op path; note never executes.
-        assert ng.engine_type("connector", {"op": "list_walls"}) is None
+    def test_connector_resolves_to_connector_run(self):
+        # Slice 2: the connector master node is a real registry executor.
+        assert ng.engine_type(
+            "connector", {"host": "excel", "op": "read"}) == "connector.run"
+
+    def test_note_has_no_registry_type(self):
         assert ng.engine_type("note") is None
 
     def test_unknown_kind_is_none(self):

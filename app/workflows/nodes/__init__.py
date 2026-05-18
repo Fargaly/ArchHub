@@ -9,4 +9,5 @@ from . import llm           # noqa: F401  registers llm.complete, llm.complete_w
 from . import control       # noqa: F401  registers control.if, control.merge, control.foreach
 from . import aec           # noqa: F401  registers aec.dxf_reader, aec.ifc_reader, aec.csv_reader, aec.revit_wall, aec.column, aec.qto_pricing, aec.cost_estimate, aec.schedule_builder, aec.team_member_selector
 from . import core          # noqa: F401  ADR-003 Phase 1: registers host.* (7), conversation.chat, doc.* (8)
+from . import connector     # noqa: F401  node-grammar slice 2: registers connector.run (the master host node)
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

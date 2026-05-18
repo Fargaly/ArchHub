@@ -73,6 +73,8 @@ class TestOpSets:
             "outlook.list_calendar", "outlook.list_contacts",
             "outlook.list_drafts", "outlook.unread_count",
             "outlook.create_draft", "outlook.mark_read",
+            # Escape hatch — arbitrary Python over COM (2026-05-18).
+            "outlook.execute_python",
         }
 
     def test_blender_op_set(self):

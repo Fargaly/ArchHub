@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 import traceback
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -140,8 +141,14 @@ def _preview(value: Any, limit: int = 80) -> str:
 
 
 # ── connector base ──────────────────────────────────────────────────
-class Connector:
+class Connector(ABC):
     """Base class every host connector subclasses.
+
+    An ABC (founder mandate 2026-05-18): `probe()` and `build_ops()` are
+    `@abstractmethod`, so a connector that fails to implement EITHER
+    cannot be instantiated — it fails loud at import instead of
+    shipping as a silent shell. tests/test_connector_contract.py is the
+    CI-side twin that also checks every op is well-formed.
 
     Subclass contract:
       host          — the host id ("excel", "speckle", ...)
@@ -162,15 +169,18 @@ class Connector:
         self._ops_cache: Optional[list] = None
 
     # -- status -------------------------------------------------------
+    @abstractmethod
     def probe(self) -> dict:
-        """Override. Default = unknown."""
-        return {"status": "missing", "note": "probe not implemented",
-                "detail": {}}
+        """MUST be overridden. Returns {"status": ..., "note": str,
+        "detail": dict} — status is live / loaded_dead / missing /
+        unauthorized."""
+        raise NotImplementedError
 
     # -- operations ---------------------------------------------------
+    @abstractmethod
     def build_ops(self) -> list:
-        """Override. Return list[ConnectorOp]."""
-        return []
+        """MUST be overridden. Returns list[ConnectorOp]."""
+        raise NotImplementedError
 
     def ops(self) -> list:
         if self._ops_cache is None:

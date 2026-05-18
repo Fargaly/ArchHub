@@ -47,6 +47,9 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P1 Cloud Pro / Studio paid tiers — auth + Stripe phase per `docs/CLOUD_REVIVAL_PLAN.md` (eng)
 - [ ] #P2 Deploy the 3ds Max host add-in — `payload/max/` does not exist; the connector is code-complete but `probe()` honestly reports `missing` until the add-in ships. Build + deploy from `payload/sources/max_mcp/` (ops)
 - [ ] #P2 Outlook connector op gap — it ships 8 named ops, but `ai_behaviour.py` + `outlook_runner` were built for ~15 (`set_categories`, `set_categories_by_filter`, `auto_categorize_by_*`, `search_threads`, `list_folders`, `move_to_folder`, `flag_for_followup`, ...). The `execute_python` escape hatch was wired 2026-05-18; wire the named category/folder ops too (eng)
+- [ ] #P2 Connector escape-hatch parity — surface ops the runners already support but the connectors don't expose: `revit.execute_csharp` + `revit.screenshot`, `autocad.execute_csharp`, `max.execute_python`, `rhino.screenshot`, `{illustrator,indesign,photoshop}.execute_jsx`. Template: `outlook.execute_python` (commit ae79db5) (eng)
+- [ ] #P2 `acad` vs `autocad` host-name mismatch — the AutoCAD connector's `host` and the `tool_engine`/`ai_behaviour` family name disagree. Pick one, repo-wide (eng)
+- [ ] #P2 Flaky test `test_host_executor_returns_typed_envelope` — asserts Revit version `"2025"` but the host-node executor returns the machine-detected version (`"2020"` on this box). Pre-existing, environment-dependent. Fix: don't hardcode a machine-dependent version, or make the executor echo the requested config (qa)
 
 ## LATER
 

@@ -253,17 +253,59 @@ def _suffix_of(tool_name: str) -> str:
     return n.split("_", 1)[1]
 
 
+def _connector_op_policy(tool_name: str) -> Optional[str]:
+    """Derive a connector op's default policy from the op itself —
+    `kind` + `destructive` — so there is no hand-maintained table to
+    drift from. The op is the single source of truth for its own risk:
+    a `read` op is "allow", an `action` / `destructive` op is "ask".
+
+    Returns None for non-connector tools (`archhub_*`, `ai_*`), or when
+    the connector registry isn't loaded yet — the caller then falls
+    back to the family table / generic rules below.
+
+    Founder mandate 2026-05-18: the Outlook connector shipped as a
+    shell because a hand-maintained `_FAMILY_DEFAULTS` table drifted
+    from the real ops. Deriving from the op kills that whole class —
+    enforced by tests/test_connector_contract.py.
+    """
+    fam = _family_of(tool_name)
+    suffix = _suffix_of(tool_name)
+    if not fam or not suffix:
+        return None
+    try:
+        from connectors.base import all_ops
+        ops = all_ops()
+    except Exception:
+        return None
+    for o in ops:
+        host, _, verb = (getattr(o, "op_id", "") or "").partition(".")
+        if host == fam and verb == suffix:
+            mutating = (bool(getattr(o, "destructive", False))
+                        or getattr(o, "kind", "") == "action")
+            return "ask" if mutating else "allow"
+    return None
+
+
 def _default_policy_for(tool_name: str) -> str:
     """Decide the default policy ('allow' / 'ask' / 'deny') for a tool.
 
     Priority chain:
+      0. Connector op — DERIVED from the op's own kind/destructive
+         (`_connector_op_policy`). The op is the single source of
+         truth; no table to drift. This covers every connector op.
       1. Family-specific override (`_FAMILY_DEFAULTS[family][suffix]`)
       2. Family-specific longest-suffix substring match (e.g.
          `list_distinct_senders` falls through to `list_` in family
          table when present)
       3. Generic suffix rules (`_GENERIC_RULES`), longest match wins
       4. Catch-all: `"allow"` (user can tighten via Settings)
+
+    Steps 1-4 now only serve non-connector tools (`archhub_*`, `ai_*`)
+    and any tool whose connector isn't loaded.
     """
+    derived = _connector_op_policy(tool_name)
+    if derived is not None:
+        return derived
     family = _family_of(tool_name)
     suffix = _suffix_of(tool_name)
 

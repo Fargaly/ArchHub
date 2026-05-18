@@ -760,6 +760,28 @@ const StudioLM = () => {
       bumpGraph();
       return node;
     }
+    // ── Grammar primitive: one of the ~12 redesigned node kinds
+    // (docs/NODE_GRAMMAR.md). Carries `kind` so normalize_canvas_graph
+    // resolves it to a real engine `type`, and ports straight off the
+    // grammar payload (engine-sourced — wire ids match port names).
+    if (libItem._grammar) {
+      const g = libItem._grammar;
+      const gid = `${g.kind}_${Date.now().toString(36).slice(-4)}`;
+      const gport = (p) => ({ id: p.id, label: p.id,
+        t: String(p.type || 'any').toLowerCase() });
+      const gnode = {
+        id: gid, kind: g.kind, cat: g.cat || 'node', x, y, w:220, h:112,
+        title: g.display || g.kind, sub: g.note || g.kind,
+        ins:  ((g.ports && g.ports.in)  || []).map(gport),
+        outs: ((g.ports && g.ports.out) || []).map(gport),
+        params: [], _user: true,
+      };
+      LM_GRAPH.nodes.push(gnode);
+      setFocusId(gid);
+      saveCurrentGraph();
+      bumpGraph();
+      return gnode;
+    }
     const tmpl = LM_NODE_TEMPLATES[libItem.id] || LM_NODE_TEMPLATES[`__cat_${cat}`] || {};
     const id = `${libItem.id || cat}_${Date.now().toString(36).slice(-4)}`;
     const newNode = {
@@ -2459,6 +2481,41 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
             </div>
           );
         })()}
+        {/* ── NODES — the redesigned ~12-primitive grammar palette
+            (docs/NODE_GRAMMAR.md). Replaces the 80-node LM_LIBRARY when
+            the grammar is hydrated; the old pipeline palette below is
+            the offline fallback only. ── */}
+        {(() => {
+          const prims = q
+            ? (LM_NODE_GRAMMAR || []).filter(p =>
+                ((p.display || '') + ' ' + (p.kind || '') + ' ' + (p.note || ''))
+                  .toLowerCase().includes(q.toLowerCase()))
+            : (LM_NODE_GRAMMAR || []);
+          if (prims.length === 0) return null;
+          return (
+            <div style={{ marginBottom:6 }}>
+              <div style={{
+                padding:'5px 7px', color:LM.inkSoft, fontFamily:LM.mono,
+                fontSize:9.5, letterSpacing:'0.14em',
+              }}>◆ NODES · {prims.length}</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
+                {prims.map(p => {
+                  const it = {
+                    id: 'ng:' + p.kind,
+                    title: p.display || p.kind,
+                    sub: p.note || p.kind,
+                    _grammar: p,
+                  };
+                  return (
+                    <NodeLibItem key={p.kind} it={it} draggable={false}
+                      cat={{ col:LM.blue, icon:'◆', label:(p.cat || 'node') }}
+                      onAdd={() => addNodeFromLibrary(it)}/>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
         {/* Most-used section — top 5 across all categories. Hidden until
             the user actually adds a node from the library. Persisted in
             localStorage so it survives relaunches. */}
@@ -2482,7 +2539,9 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
             Founder demand 2026-05-17: the library's organising logic is
             graph flow, not a flat 10-category dump. Each stage holds its
             collapsible categories. ── */}
-        {PIPELINE.map(pipe => {
+        {/* Old 80-node LM_LIBRARY palette — rendered ONLY as the
+            offline fallback when the node grammar didn't hydrate. */}
+        {(LM_NODE_GRAMMAR || []).length === 0 && PIPELINE.map(pipe => {
           const stage = pipe.cats
             .map(cat => (LM_LIBRARY || []).find(g => g.cat === cat))
             .filter(Boolean)

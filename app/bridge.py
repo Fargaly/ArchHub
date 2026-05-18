@@ -1155,6 +1155,61 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    @pyqtSlot(str, result=str)
+    def load_skill(self, skill_id: str) -> str:
+        """Load a saved skill's graph for splicing onto the canvas.
+
+        Reads `app/skills/<slug>.archhub-skill.json` (written by
+        `save_as_skill`) and returns its graph — `{nodes, wires}` — so
+        the JSX `onSpawnSkill` handler can offset + insert the nodes.
+        `skill_id` is resolved against the file slug, the file stem, or
+        the envelope's `slug`/`name`. Returns an `{error: ...}`
+        envelope when the skill cannot be found.
+
+        Founder bug 2026-05-18: the Skills panel called `load_skill`
+        but no such slot existed — spawning a saved skill silently
+        no-op'd. This is that slot."""
+        try:
+            import json as _json
+            from pathlib import Path
+            sid = (skill_id or "").strip()
+            if not sid:
+                return _safe_json({"error": "skill_id is required"})
+            skills_dir = Path(__file__).resolve().parent / "skills"
+            # Direct slug match first; then scan by stem / envelope.
+            cand = skills_dir / f"{sid}.archhub-skill.json"
+            if not cand.exists():
+                cand = None
+                for f in skills_dir.glob("*.archhub-skill.json"):
+                    if f.stem.replace(".archhub-skill", "") == sid:
+                        cand = f
+                        break
+                    try:
+                        env = _json.loads(f.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    if (isinstance(env, dict)
+                            and (env.get("slug") == sid
+                                 or env.get("name") == sid)):
+                        cand = f
+                        break
+            if cand is None or not cand.exists():
+                return _safe_json({"error": f"skill not found: {sid}"})
+            envelope = _json.loads(cand.read_text(encoding="utf-8"))
+            graph = (envelope.get("graph")
+                     if isinstance(envelope, dict) else None)
+            if not isinstance(graph, dict):
+                # Older skill files may store the graph at top level.
+                graph = envelope if isinstance(envelope, dict) else {}
+            return _safe_json({
+                "nodes": list(graph.get("nodes") or []),
+                "wires": list(graph.get("wires") or []),
+                "name": (envelope.get("name")
+                         if isinstance(envelope, dict) else "") or sid,
+            })
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
     # ─── Permissions (auto/ask/block per tool) ─────────────────
     @pyqtSlot(result=str)
     def get_permissions(self) -> str:

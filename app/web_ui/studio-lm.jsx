@@ -1307,11 +1307,14 @@ const StudioLM = () => {
   const [wirePromote, setWirePromote] = React.useState(null);
   React.useEffect(() => {
     const onNewSession = () => createSession('untitled');
-    const onSpawnSkill = (ev) => {
+    const onSpawnSkill = async (ev) => {
       const skill = ev && ev.detail;
       if (!skill) return;
-      // Try to load the skill's graph (saved as JSON via save_as_skill).
-      const blob = bridgeJson('load_skill', skill.id || skill.name);
+      // Load the skill's graph (saved as JSON via save_as_skill).
+      // bridgeAsync — QWebChannel slots resolve async; the old sync
+      // bridgeJson always returned null here, so spawning a skill
+      // silently no-op'd (founder bug 2026-05-18).
+      const blob = await bridgeAsync('load_skill', skill.id || skill.name);
       if (blob && Array.isArray(blob.nodes)) {
         const offset = (LM_GRAPH.nodes || []).length * 6;
         blob.nodes.forEach(n => {

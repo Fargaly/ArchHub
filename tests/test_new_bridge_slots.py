@@ -325,8 +325,36 @@ def test_get_provider_stats_no_router_returns_zeros():
     "set_theme", "get_theme", "get_storage_stats", "export_all",
     "clear_model_cache", "forget_all_memory", "delete_all_sessions",
     "open_folder", "get_session_stats", "get_provider_stats",
+    "load_skill",
 ])
 def test_new_slots_present_on_bridge(name):
     assert hasattr(_bridge_module.ArchHubBridge, name), (
         f"missing bridge slot: {name}"
     )
+
+
+def test_load_skill_round_trips_a_saved_skill():
+    """save_as_skill writes a skill JSON; load_skill must read its
+    graph back. Founder bug 2026-05-18: load_skill was called by the
+    Skills panel but never existed — spawning a saved skill silently
+    no-op'd. This pins the round-trip."""
+    import json
+    from pathlib import Path
+    b = _bridge_module.ArchHubBridge()
+    payload = json.dumps({"nodes": [{"id": "n1", "cat": "host"}],
+                          "wires": []})
+    saved = json.loads(b.save_as_skill("Bridge Slot Test Skill", payload))
+    slug = saved.get("slug")
+    assert slug, saved
+    skill_file = (Path(_bridge_module.__file__).resolve().parent
+                  / "skills" / f"{slug}.archhub-skill.json")
+    try:
+        loaded = json.loads(b.load_skill(slug))
+        assert isinstance(loaded.get("nodes"), list)
+        assert loaded["nodes"] and loaded["nodes"][0]["id"] == "n1"
+        assert loaded.get("wires") == []
+        # Unknown skill -> honest error, never a fabricated graph.
+        missing = json.loads(b.load_skill("no-such-skill-xyz"))
+        assert "error" in missing
+    finally:
+        skill_file.unlink(missing_ok=True)

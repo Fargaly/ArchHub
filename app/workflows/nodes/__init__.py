@@ -11,4 +11,5 @@ from . import aec           # noqa: F401  registers aec.dxf_reader, aec.ifc_read
 from . import core          # noqa: F401  ADR-003 Phase 1: registers host.* (7), conversation.chat, doc.* (8)
 from . import connector     # noqa: F401  node-grammar slice 2: registers connector.run (the master host node)
 from . import shape         # noqa: F401  node-grammar slices 6-7: registers filter.apply, transform.apply, watch.preview
+from . import trigger       # noqa: F401  node-grammar: registers trigger.emit (the graph entry-point node)
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

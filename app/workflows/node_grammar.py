@@ -151,10 +151,11 @@ PRIMITIVES: list[Primitive] = [
         params=({"k": "as", "v": "json", "type": "text"},),
     ),
     Primitive(
-        "trigger", "Trigger", "watch", "on",
-        {}, NEEDS_EXECUTOR,
-        "fires the graph (manual / schedule / file / host-event) — "
-        "workflows/ triggers wired as a node in ROADMAP slice 6",
+        "trigger", "Trigger", "watch", "",
+        {"": "trigger.emit"}, READY,
+        "graph entry point — emits a fire event (`on`: manual / "
+        "schedule / file / host-event) + passes `value` through",
+        params=({"k": "on", "v": "manual", "type": "text"},),
     ),
     Primitive(
         "note", "Note", "note", "",

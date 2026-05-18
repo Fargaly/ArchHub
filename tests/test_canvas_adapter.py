@@ -111,6 +111,17 @@ def test_normalize_does_not_mutate_input():
     assert "type" not in graph["nodes"][0]    # original untouched
 
 
+def test_trigger_executor_emits_event():
+    """trigger.emit — the graph entry-point node: emits a fire event
+    (kind + timestamp), passes `value` through."""
+    from workflows.nodes.trigger import _trigger_executor
+    out = _trigger_executor({"on": "manual"}, {"value": 7}, None)
+    assert out["event"]["on"] == "manual"
+    assert isinstance(out["event"]["ts"], int)
+    assert out["value"] == 7
+    assert workflows.get("trigger.emit") is not None
+
+
 def test_switch_executor_routes_by_equality():
     """control.switch — the `logic` primitive's switch op: routes value
     to `match` on equality with `case`, else `default`."""

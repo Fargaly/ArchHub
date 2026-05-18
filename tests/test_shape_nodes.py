@@ -34,7 +34,7 @@ class TestRegisteredAndReady:
             assert ng.get_primitive(kind).status == ng.READY, kind
         unbuilt = {p.kind for p in ng.PRIMITIVES
                    if p.status == ng.NEEDS_EXECUTOR}
-        assert unbuilt == {"trigger"}
+        assert unbuilt == set()
 
 
 class TestFilter:

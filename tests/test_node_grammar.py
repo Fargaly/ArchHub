@@ -65,7 +65,7 @@ class TestGrammarIsGrounded:
         the backlog so it cannot grow silently."""
         unbuilt = {p.kind for p in ng.PRIMITIVES
                    if p.status == ng.NEEDS_EXECUTOR}
-        assert unbuilt == {"trigger"}   # filter/transform/watch shipped slices 6-7
+        assert unbuilt == set()   # all 12 primitives now have executors
 
 
 class TestGrammarShape:

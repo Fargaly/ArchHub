@@ -1207,6 +1207,21 @@ class ArchHubBridge(QObject):
             return _safe_json({"nodes": [], "wires": [],
                                 "error": str(ex)})
 
+    # ─── Node grammar (the JSX canvas palette source) ──────────
+    @pyqtSlot(result=str)
+    def get_node_grammar(self) -> str:
+        """The node grammar — the ~12-primitive set the JSX canvas
+        builds its node palette from. ONE source of truth
+        (`app/workflows/node_grammar.py`); the JSX side must not keep a
+        parallel node list — that parallel list (the 80-node
+        `LM_LIBRARY`) was the drift the redesign kills. See
+        `docs/NODE_GRAMMAR.md`."""
+        try:
+            from workflows.node_grammar import grammar_payload
+            return _safe_json(grammar_payload())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
     # ─── Saved skills (canvas-format store) ────────────────────
     @pyqtSlot(result=str)
     def get_saved_skills(self) -> str:

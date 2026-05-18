@@ -325,7 +325,7 @@ def test_get_provider_stats_no_router_returns_zeros():
     "set_theme", "get_theme", "get_storage_stats", "export_all",
     "clear_model_cache", "forget_all_memory", "delete_all_sessions",
     "open_folder", "get_session_stats", "get_provider_stats",
-    "load_skill",
+    "load_skill", "get_node_grammar",
 ])
 def test_new_slots_present_on_bridge(name):
     assert hasattr(_bridge_module.ArchHubBridge, name), (
@@ -396,3 +396,21 @@ def test_shipped_canvas_skills_are_loadable():
         loaded = json.loads(b.load_skill(slug))
         assert "error" not in loaded, (loaded, slug)
         assert isinstance(loaded.get("nodes"), list)
+
+
+def test_get_node_grammar_returns_the_canonical_grammar():
+    """get_node_grammar exposes the ~12-primitive node grammar so the
+    JSX canvas builds its palette from ONE source (no parallel JS-side
+    node list that drifts — the LM_LIBRARY mistake)."""
+    import json
+    b = _bridge_module.ArchHubBridge()
+    payload = json.loads(b.get_node_grammar())
+    assert isinstance(payload, list), payload
+    assert payload, "grammar must not be empty"
+    assert len(payload) <= 20, "a grammar, not a catalogue"
+    kinds = {p["kind"] for p in payload}
+    for fam in ("connector", "ai", "input", "output", "logic"):
+        assert fam in kinds, f"{fam!r} missing from the node grammar"
+    for entry in payload:
+        assert {"kind", "display", "cat", "selector",
+                "engine_types", "status", "note"} <= entry.keys()

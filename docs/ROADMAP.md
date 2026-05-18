@@ -36,7 +36,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot) is unverified and inert until the default branch is pushed (ops)
 - [ ] #P1 archhub.io go-live — DNS records, Fly deploy, Resend domain verification, `PUBLIC_URL` secret (ops)
-- [ ] #P1 Audit the `tool_policies` override store — every dangerous op (Revit/AutoCAD/Blender/Max code-exec + `outlook_execute_python` + Outlook mail mutation) is overridden to "allow", bypassing the "ask" defaults in `ai_behaviour.py`. Confirm founder-intended vs test-polluted; if a test writes the real `secrets_store`, fix the test isolation (qa)
+- [x] #P1 `tool_policies` override store audited (2026-05-18) — root fix: `tests/conftest.py` now isolates `secrets_store` suite-wide (autouse fixture), so no test can pollute the real settings store ever; verified 1156 tests pass. The existing all-"allow" overrides were NOT test-created (no test bulk-sets "allow"; `test_ai_behaviour` was already isolated) — they are founder/app Settings state. Resetting them is the founder's call (Settings → AI Behaviour → Reset) (qa)
 - [x] #P2 SessionCard host pills + last-message preview — `get_sessions` now emits `host` / `last` / `node_count` / `messages` via `session_io.list_sessions_rich`; the JSX card already had the render slots; shipped 2026-05-18 (eng)
 - [ ] #P2 Home filter chip `scheduled` is dead — no session-schedule model exists; remove the chip. (The `workflows` chip now works — `get_sessions` emits `node_count`.) (eng)
 

@@ -60,7 +60,15 @@ HOSTS = {
 }
 
 
-# Tool catalogue — single source of truth.
+# Hand-maintained host tool list — Revit/AutoCAD/Max/Blender/Rhino/
+# Speckle transports, AI delegations, local helpers.
+#
+# NOT the only tool registry: ~116 connector ops live in
+# `connectors.base`, and `tool_schemas_for()` emits BOTH lists to the
+# LLM. The two overlap for 6 hosts. Collapsing them into one — so the
+# model never sees duplicate tools for the same host — is tracked in
+# docs/ROADMAP.md (tool-registry unification). Until then this is a
+# hand list, not the single source of truth.
 # Each entry: (name, family-key-in-active-set, description, input_schema, dispatch_fn)
 TOOLS: list[dict] = [
     # Revit

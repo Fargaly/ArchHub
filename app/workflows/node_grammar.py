@@ -179,3 +179,49 @@ def grammar_payload() -> list[dict]:
         }
         for p in PRIMITIVES
     ]
+
+
+# ── canvas → engine adapter ───────────────────────────────────────────
+def _params_to_config(params) -> dict:
+    """Fold a canvas node's `params` into the flat `config` dict the
+    engine executors read. Canvas params are a list of `{k, v, ...}`;
+    an already-dict form (engine-native nodes) passes through."""
+    if isinstance(params, dict):
+        return dict(params)
+    cfg: dict = {}
+    for p in params or []:
+        if isinstance(p, dict) and "k" in p:
+            cfg[p["k"]] = p.get("v")
+    return cfg
+
+
+def normalize_canvas_graph(graph: dict) -> dict:
+    """Stamp each canvas node with the engine `type` + `config` that
+    `WorkflowRunner` dispatches on — the canvas/engine "one node model".
+
+    The runner already normalises EDGES ({from,to} ↔ {src_node,...});
+    only nodes need this. Rules:
+      - a node that already carries a real `type` is left untouched
+        (engine-native nodes);
+      - otherwise `type` is resolved from the node's `kind` (new model)
+        or `cat` (legacy) via `engine_type()`;
+      - a node whose kind/cat does not resolve is left WITHOUT a `type`
+        — the runner then returns an honest `no executor` error rather
+        than fabricating a result.
+    `config` is always present, folded from `params` unless already a
+    dict. Pure: returns a new graph, never mutates the input."""
+    if not isinstance(graph, dict):
+        return graph
+    out_nodes = []
+    for n in graph.get("nodes") or []:
+        n = dict(n)
+        cfg = (n["config"] if isinstance(n.get("config"), dict)
+               else _params_to_config(n.get("params")))
+        n["config"] = cfg
+        if not n.get("type"):
+            kind = n.get("kind") or n.get("cat") or ""
+            t = engine_type(kind, cfg)
+            if t:
+                n["type"] = t
+        out_nodes.append(n)
+    return {**graph, "nodes": out_nodes}

@@ -1491,7 +1491,12 @@ class ArchHubBridge(QObject):
             except Exception: pass
             try:
                 from workflows.runner import WorkflowRunner
-                runner = WorkflowRunner(graph,
+                from workflows.node_grammar import normalize_canvas_graph
+                # Stamp engine `type` + `config` onto canvas nodes so the
+                # runner can dispatch — the canvas/engine "one node model"
+                # (docs/NODE_GRAMMAR.md). Before this, canvas nodes carried
+                # only `cat` and every Run errored "no executor for ''".
+                runner = WorkflowRunner(normalize_canvas_graph(graph),
                                          router=self.router,
                                          tool_engine=self.tools,
                                          manager=self.manager)
@@ -1565,7 +1570,12 @@ class ArchHubBridge(QObject):
             except Exception: pass
             try:
                 from workflows.runner import WorkflowRunner
-                runner = WorkflowRunner(graph,
+                from workflows.node_grammar import normalize_canvas_graph
+                # Stamp engine `type` + `config` onto canvas nodes so the
+                # runner can dispatch — the canvas/engine "one node model"
+                # (docs/NODE_GRAMMAR.md). Before this, canvas nodes carried
+                # only `cat` and every Run errored "no executor for ''".
+                runner = WorkflowRunner(normalize_canvas_graph(graph),
                                          router=self.router,
                                          tool_engine=self.tools,
                                          manager=self.manager)

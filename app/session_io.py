@@ -228,20 +228,66 @@ def _msg_to_dict(msg) -> dict:
     }
 
 
-def list_sessions(*, include_empty: bool = False
-                   ) -> list[tuple[Path, str, str]]:
-    """Return [(path, name, saved_at)] sorted newest first.
+def _node_host_family(node: dict) -> str:
+    """Host family key for a `cat == "host"` graph node. Node ids look
+    like `h_<family>_<rand>` (e.g. `h_outlook_ma8p`); fall back to the
+    first word of the title. Lower-cased so it matches the JSX
+    `LM_HOST_META` keys."""
+    nid = str(node.get("id") or "")
+    if nid.startswith("h_"):
+        parts = nid.split("_")
+        if len(parts) >= 3 and parts[1]:
+            return parts[1].lower()
+    title = str(node.get("title") or "").strip().lower()
+    return title.split()[0] if title else ""
 
-    Pre-v1.0 autosave bug wrote stub files containing zero messages,
-    zero parameters, zero chain steps — sessions that look saved in
-    the THREADS rail but load an empty chat. By default we filter
-    those out so the rail only surfaces sessions with actual content.
-    Pass include_empty=True to see everything (cleanup utility / test).
-    """
+
+def _summarize(data: dict) -> dict:
+    """Pull the card-facing summary out of a parsed session blob:
+    distinct host families, last-message preview, message + node
+    counts. Graph-first sessions keep messages inside `cat == "ai"`
+    conversation nodes; legacy sessions keep them in top-level
+    `_messages`. Both are folded in."""
+    graph = data.get("graph") or {}
+    nodes = graph.get("nodes") or []
+    hosts: list[str] = []
+    msgs: list[dict] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if n.get("cat") == "host":
+            fam = _node_host_family(n)
+            if fam and fam not in hosts:
+                hosts.append(fam)
+        nm = n.get("messages")
+        if isinstance(nm, list):
+            msgs.extend(m for m in nm if isinstance(m, dict))
+    legacy = data.get("_messages")
+    if isinstance(legacy, list):
+        msgs.extend(m for m in legacy if isinstance(m, dict))
+    last = ""
+    if msgs:
+        raw = msgs[-1].get("text") or msgs[-1].get("content") or ""
+        last = " ".join(str(raw).split())[:120]
+    return {
+        "host": hosts,
+        "last": last,
+        "messages": len(msgs),
+        "node_count": len(nodes),
+    }
+
+
+def _scan_sessions(*, include_empty: bool = False) -> list[dict]:
+    """Single scanner — glob + parse every session file ONCE, apply the
+    stub filter, return a rich dict per surviving session. Both
+    `list_sessions` (legacy tuple shape) and `list_sessions_rich` are
+    thin views over this so the parse happens exactly once and the two
+    can never drift."""
     if not SESSIONS_DIR.exists():
         return []
-    results = []
+    out: list[dict] = []
     for f in SESSIONS_DIR.glob(f"*{SESSION_EXT}"):
+        summary = {"host": [], "last": "", "messages": 0, "node_count": 0}
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             # v1.4 graph-first schema uses `name` + `saved_at` at top level;
@@ -276,12 +322,43 @@ def list_sessions(*, include_empty: bool = False
                 if (not has_real_chat and not params and not chain
                         and not graph_nodes and not v14_minted):
                     continue
+            summary = _summarize(data)
         except Exception:
             if not include_empty:
                 continue
             name, saved_at = f.stem, ""
-        results.append((f, name, saved_at))
-    return sorted(results, key=lambda x: x[2], reverse=True)
+        out.append({"path": f, "name": name, "saved_at": saved_at,
+                    **summary})
+    return sorted(out, key=lambda r: r["saved_at"], reverse=True)
+
+
+def list_sessions(*, include_empty: bool = False
+                   ) -> list[tuple[Path, str, str]]:
+    """Return [(path, name, saved_at)] sorted newest first.
+
+    Legacy tuple shape — kept stable for existing callers. For the
+    host / last-message / counts the session cards render, use
+    `list_sessions_rich`.
+
+    Pre-v1.0 autosave bug wrote stub files containing zero messages,
+    zero parameters, zero chain steps — sessions that look saved in
+    the THREADS rail but load an empty chat. By default we filter
+    those out so the rail only surfaces sessions with actual content.
+    Pass include_empty=True to see everything (cleanup utility / test).
+    """
+    return [(r["path"], r["name"], r["saved_at"])
+            for r in _scan_sessions(include_empty=include_empty)]
+
+
+def list_sessions_rich(*, include_empty: bool = False) -> list[dict]:
+    """Like `list_sessions`, but each entry is a dict carrying the
+    fields the Home session cards render:
+
+        {path, name, saved_at, host: [str], last: str,
+         messages: int, node_count: int}
+
+    Same single scan + stub filter as `list_sessions`."""
+    return _scan_sessions(include_empty=include_empty)
 
 
 def cleanup_empty_sessions() -> int:

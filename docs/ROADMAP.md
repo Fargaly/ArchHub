@@ -36,8 +36,8 @@ Per-version detail: `CHANGELOG.md` and git history.
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot) is unverified and inert until the default branch is pushed (ops)
 - [ ] #P1 archhub.io go-live — DNS records, Fly deploy, Resend domain verification, `PUBLIC_URL` secret (ops)
-- [ ] #P2 SessionCard host pills + last-message preview — `bridge.get_sessions` does not emit `host` / `last`; the card renders them conditionally so they stay blank (eng)
-- [ ] #P2 Home filter chips `scheduled` / `workflows` filter on `s.schedule` / `s.node_count`, fields the bridge never sends — wire the fields or remove the chips (eng)
+- [x] #P2 SessionCard host pills + last-message preview — `get_sessions` now emits `host` / `last` / `node_count` / `messages` via `session_io.list_sessions_rich`; the JSX card already had the render slots; shipped 2026-05-18 (eng)
+- [ ] #P2 Home filter chip `scheduled` is dead — no session-schedule model exists; remove the chip. (The `workflows` chip now works — `get_sessions` emits `node_count`.) (eng)
 
 ## NEXT 30 DAYS
 

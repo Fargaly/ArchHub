@@ -574,7 +574,7 @@ class ArchHubBridge(QObject):
     @pyqtSlot(result=str)
     def get_sessions(self) -> str:
         try:
-            from session_io import list_sessions
+            from session_io import list_sessions_rich
 
             def _when(iso) -> str:
                 """ISO timestamp -> short relative label for the session
@@ -602,60 +602,29 @@ class ArchHubBridge(QObject):
                 except Exception:
                     return str(iso)[:10]
 
-            entries = list_sessions() or []
+            from pathlib import Path
             out = []
-            for e in entries:
-                # session_io.list_sessions actually returns 3-tuples
-                # (path, name, saved_at_iso). Older API variants returned
-                # SessionListEntry dataclasses or dicts. Handle all three
-                # shapes so the JSX side always gets uniform rows.
-                #
-                # Every row carries `state` + `when`: the JSX SessionCard
-                # renders both. A saved session that isn't actively
-                # running is "idle" — emitting no state made every card
-                # fall back to the "unknown" badge (founder bug
-                # 2026-05-18).
-                if isinstance(e, tuple) and len(e) >= 2:
-                    path = e[0]
-                    name = e[1] if len(e) > 1 else ""
-                    saved_at = e[2] if len(e) > 2 else ""
-                    # Derive a stable id from the file stem so load_session
-                    # can resolve it back to a path.
-                    try:
-                        from pathlib import Path
-                        stem = Path(str(path)).stem.replace(
-                            ".archhub-session", "")
-                    except Exception:
-                        stem = str(name or "")
-                    out.append({
-                        "id":       stem,
-                        "title":    str(name or stem),
-                        "saved_at": str(saved_at),
-                        "when":     _when(saved_at),
-                        "state":    "idle",
-                        "messages": 0,
-                    })
-                elif hasattr(e, "name"):
-                    saved_at = str(getattr(e, "saved_at", ""))
-                    out.append({
-                        "id":       getattr(e, "name", "")
-                                      or getattr(e, "path", ""),
-                        "title":    getattr(e, "name", ""),
-                        "saved_at": saved_at,
-                        "when":     _when(saved_at),
-                        "state":    "idle",
-                        "messages": getattr(e, "message_count", 0),
-                    })
-                elif isinstance(e, dict):
-                    saved_at = str(e.get("saved_at", ""))
-                    out.append({
-                        "id":       e.get("name") or e.get("path") or "",
-                        "title":    e.get("name", ""),
-                        "saved_at": saved_at,
-                        "when":     _when(saved_at),
-                        "state":    e.get("state") or "idle",
-                        "messages": e.get("message_count", 0),
-                    })
+            for r in list_sessions_rich():
+                # list_sessions_rich returns one uniform dict shape:
+                # {path, name, saved_at, host, last, messages,
+                #  node_count}. Stable id = the file stem so
+                # load_session can resolve it back to a path.
+                stem = Path(str(r.get("path") or "")).stem.replace(
+                    ".archhub-session", "")
+                saved_at = str(r.get("saved_at") or "")
+                out.append({
+                    "id":         stem,
+                    "title":      str(r.get("name") or stem),
+                    "saved_at":   saved_at,
+                    "when":       _when(saved_at),
+                    # Saved-not-running sessions are "idle"; the card's
+                    # state badge fell back to "unknown" without this.
+                    "state":      "idle",
+                    "host":       r.get("host") or [],
+                    "last":       r.get("last") or "",
+                    "messages":   r.get("messages") or 0,
+                    "node_count": r.get("node_count") or 0,
+                })
             return _safe_json(out)
         except Exception as ex:
             return _safe_json({"error": str(ex)})

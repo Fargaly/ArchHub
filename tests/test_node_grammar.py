@@ -123,5 +123,16 @@ class TestGrammarPayload:
         assert len(payload) == len(ng.PRIMITIVES)
         json.dumps(payload)  # must not raise
         for entry in payload:
-            assert {"kind", "display", "cat", "selector",
-                    "engine_types", "status", "note"} <= entry.keys()
+            assert {"kind", "display", "cat", "selector", "engine_types",
+                    "status", "note", "ports"} <= entry.keys()
+            assert {"in", "out"} <= entry["ports"].keys()
+
+    def test_registry_primitives_carry_engine_ports(self):
+        """A primitive with a registry engine type carries that type's
+        ports — the canvas sources ports from the engine, never invents
+        them (canvas wire ids must match engine port names)."""
+        by_kind = {e["kind"]: e for e in ng.grammar_payload()}
+        out_ids = [p["id"] for p in by_kind["constant"]["ports"]["out"]]
+        assert "value" in out_ids                 # data.constant -> `value`
+        in_ids = [p["id"] for p in by_kind["output"]["ports"]["in"]]
+        assert "value" in in_ids                  # output.parameter <- `value`

@@ -167,19 +167,51 @@ def engine_type(kind: str, params: dict | None = None) -> str | None:
     return p.engine_type_for(params) if p else None
 
 
+def _ports_for(engine_t: str) -> dict:
+    """The {in, out} ports of an engine type, read from its registry
+    NodeSpec. Empty when the type is not registered. The canvas needs
+    port ids that MATCH the engine port names — wires reference port
+    ids and the runner reads inputs by that name — so the palette
+    sources ports from the engine, never invents them."""
+    if not engine_t:
+        return {"in": [], "out": []}
+    try:
+        from .registry import get as _reg_get
+        tup = _reg_get(engine_t)
+    except Exception:
+        tup = None
+    if not tup:
+        return {"in": [], "out": []}
+    spec = tup[0]
+
+    def _p(ports) -> list[dict]:
+        out: list[dict] = []
+        for prt in ports or []:
+            ptype = getattr(getattr(prt, "type", None), "name", None) or "ANY"
+            out.append({"id": getattr(prt, "name", ""), "type": ptype})
+        return out
+    return {"in": _p(spec.inputs), "out": _p(spec.outputs)}
+
+
 def grammar_payload() -> list[dict]:
     """Serialisable grammar — what the bridge exposes to the JSX canvas
     so the library palette is built from ONE source (no JS-side copy
-    that can drift). Consumed by a later slice's `get_node_grammar`
-    bridge slot."""
-    return [
-        {
+    that can drift). Each entry carries the engine ports (from the
+    registry) the canvas needs to draw + wire a placed node. Consumed
+    by the `get_node_grammar` bridge slot."""
+    out: list[dict] = []
+    for p in PRIMITIVES:
+        # Representative engine type for the port shape. Selector
+        # primitives (ai/logic) refine ports when the selector value
+        # changes — that refinement is handled canvas-side.
+        rep = next(iter(p.engine_types.values()), "")
+        out.append({
             "kind": p.kind, "display": p.display, "cat": p.cat,
             "selector": p.selector, "engine_types": dict(p.engine_types),
             "status": p.status, "note": p.note,
-        }
-        for p in PRIMITIVES
-    ]
+            "ports": _ports_for(rep),
+        })
+    return out
 
 
 # ── canvas → engine adapter ───────────────────────────────────────────

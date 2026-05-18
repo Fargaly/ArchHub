@@ -1,5 +1,9 @@
 # Connector Master Plan — All 18 Hosts Genuinely Working
 
+> **Design reference — not the roadmap.** The single roadmap / source of
+> truth is [`docs/ROADMAP.md`](ROADMAP.md). This document is kept for
+> architecture & decision rationale only.
+
 > Author: senior integrations architect, ArchHub · 2026-05-15
 > Mandate (founder, verbatim): *"FULL. EVERYTHING. Do what it takes to finish it.
 > Utilize an agent for each. Use local agents. Orchestrate. DEEPLY RESEARCH AND

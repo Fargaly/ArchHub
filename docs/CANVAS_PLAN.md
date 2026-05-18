@@ -1,5 +1,9 @@
 # ArchHub Visual Canvas — Architecture (shipped v1.4)
 
+> **Design reference — not the roadmap.** The single roadmap / source of
+> truth is [`docs/ROADMAP.md`](ROADMAP.md). This document is kept for
+> architecture & decision rationale only.
+
 _Last update: 2026-05-14. Sections marked **HISTORICAL** describe the
 v0.18 NodeGraphQt plan that was superseded by the v1.0 JSX rewrite.
 Sections marked **CURRENT** describe what actually ships in v1.4._

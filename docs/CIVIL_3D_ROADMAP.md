@@ -1,5 +1,9 @@
 # Civil 3D connector roadmap
 
+> **Design reference — not the roadmap.** The single roadmap / source of
+> truth is [`docs/ROADMAP.md`](ROADMAP.md); the Civil 3D line lives in
+> its LATER section. This document is the deferred-feature design memo.
+
 **Status:** scaffold deferred to v1.2. Architecture documented here so the work is unblocked the moment we can compile against the Civil 3D SDK.
 
 ## Why deferred

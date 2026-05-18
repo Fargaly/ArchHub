@@ -1,36 +1,64 @@
-# ArchHub roadmap (autonomous-loop source)
+# ArchHub Roadmap — single source of truth
 
-> Machine-readable seed for `agents/roadmap_source.py`.
-> Each `- [ ]` item is an OPEN backlog item the dispatcher will pick up.
-> Tag with `#P0` / `#P1` / `#P2` for priority. Department hints in
-> parentheses route the item to the right dept (`eng`, `qa`, `docs`,
-> `ops`, `rnd`).
+> **This is the one roadmap.** It is also the machine-readable seed for
+> the autonomous loop (`agents/roadmap_source.py`). Each `- [ ]` line is
+> an OPEN backlog item the dispatcher picks up; `- [x]` is shipped.
+> Tag priority `#P0` / `#P1` / `#P2`. Department hint in parentheses
+> routes the item — `eng`, `qa`, `docs`, `ops`, `rnd`.
 >
-> When an item ships, MOVE it to "Done — last 7 days" and the loop will
-> mark its hash in `agents/state/completed_roadmap_ids.txt` on the next
-> tick.
+> When an item ships, MOVE it to "Done — last 7 days"; the loop records
+> its hash in `agents/state/completed_roadmap_ids.txt` on the next tick.
+>
+> Consolidated 2026-05-18 from 6 scattered docs. The product-version
+> history (the old root `ROADMAP.md`) is folded into "Shipped" below.
+> The four design/architecture memos are NOT roadmaps — they are listed
+> under "Design references" and kept for rationale only.
+
+## Shipped — milestone arc
+
+| Milestone | What |
+|---|---|
+| v0.25–v0.27 | Connector self-heal · Outlook COM · Studio 3-pane shell · brand v0.1 · Revit multi-session broker |
+| v0.28–v0.33 | Add-Host wizard · workflow node canvas · marketplace · ⌘K palette · parameters sidebar |
+| v0.34.x | Voice · telemetry KPIs · reasoning surfacing · multi-host polish (15 point releases) |
+| graph-first pivot | WorkspaceShell replaces the page-based shell; Session = Graph; canvas is the primary surface (`studio-lm.jsx`) |
+| connectors | 16 host/office/broker connectors on a uniform base contract |
+| cloud backend | companies / multi-seat · admin dashboard · welcome email · per-company quota · invite email-match |
+| release artifacts | Windows installer · macOS `.icns` + `.dmg` · Linux AppImage |
+| repo hygiene | domain canonicalized to archhub.io · roadmap docs consolidated · 1323 tests green |
+
+Per-version detail: `CHANGELOG.md` and git history.
 
 ## NEXT 7 DAYS
 
-- [x] #P0 Frontend invite acceptance page — `GET /invite` in cloud_backend/main.py, magic-link PKCE → accept (eng) — shipped 2026-05-17
-- [x] #P0 Per-company quota enforcement in `proxy.chat_completions` (eng) — already shipped v1.3.3 (quota_remaining_for_actor / increment_usage_for_actor, test_company_quota.py); confirmed 2026-05-17
-- [x] #P0 Desktop UI captures profile fields on first run (firm, role, discipline) (eng) — shipped 2026-05-17
-- [x] #P1 Owner-transfer flow in companies endpoints (eng) — POST /v1/companies/{cid}/transfer-ownership, shipped 2026-05-17
-- [x] #P1 `marketplace_panel.py` rewire to call `marketplace_client` (cloud-backed) (eng) — _load_catalog/_pack_to_item + cloud install path, local seed fallback; shipped 2026-05-17
+- [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot) is unverified and inert until the default branch is pushed (ops)
+- [ ] #P1 archhub.io go-live — DNS records, Fly deploy, Resend domain verification, `PUBLIC_URL` secret (ops)
+- [ ] #P2 SessionCard host pills + last-message preview — `bridge.get_sessions` does not emit `host` / `last`; the card renders them conditionally so they stay blank (eng)
+- [ ] #P2 Home filter chips `scheduled` / `workflows` filter on `s.schedule` / `s.node_count`, fields the bridge never sends — wire the fields or remove the chips (eng)
 
 ## NEXT 30 DAYS
 
-- [x] #P1 Frontend Trust Center page (mirror `docs/TRUST_CENTER.md`) (docs) — landing/security.html, linked from index footer; shipped 2026-05-17
-- [x] #P2 archhub.icns + Linux AppImage release artifacts (ops) — `scripts/build_icon.py` packs PNG-payload `.icns` (ic07–ic14, 32–1024px) + verifies; `build-linux.yml` rewired AppDir→appimagetool `.AppImage`; `packaging/linux/{AppRun,ArchHub.desktop}`; shipped 2026-05-17
-- [x] #P2 Welcome email sequence (Resend templates) (docs) — send_welcome_email + _wrap shell, fires on new-account register; shipped 2026-05-17
-- [x] #P2 Customer admin dashboard (eng) — GET /dashboard, magic-link auth → account/plan/quota + companies + team roster; shipped 2026-05-17
+- [ ] #P2 `/dashboard` authed-roster test — current tests only assert the page renders, not the authenticated company/team render (qa)
+- [ ] #P2 First-run profile capture — zero automated coverage on the `get_profile` / `save_profile` bridge slots + `FirstRunProfile` (qa)
+- [ ] #P1 Cloud Pro / Studio paid tiers — auth + Stripe phase per `docs/CLOUD_REVIVAL_PLAN.md` (eng)
 
 ## LATER
 
-- [ ] #P2 Civil 3D connector (blocked on Autodesk licence funding) (rnd)
-- [x] #P2 Email-match tightening on invite acceptance (require matching user email) (eng) — `accept_invite` returns `403 invite_email_mismatch` unless the signed-in user's email equals the invited address (both normalized); `/invite` page surfaces a clear message; +2 tests (mismatch rejected, case-insensitive match); shipped 2026-05-17
-- [ ] #P2 SOC 2 Type I audit (triggered by first enterprise prospect with budget) (ops)
+- [ ] #P2 Civil 3D connector — blocked on Autodesk licence funding; design memo `docs/CIVIL_3D_ROADMAP.md` (rnd)
+- [ ] #P2 SOC 2 Type I audit — triggered by first enterprise prospect with budget (ops)
+- [ ] #P2 Canvas v2 power-user features — multi-select align, copy/paste subgraph, mini-map; spec `docs/CANVAS_PLAN.md` §7 (eng)
+- [ ] #P2 Connector depth pass — bring all 18 host families to genuine parity; spec `docs/CONNECTOR_MASTER_PLAN_2026-05-15.md` (eng)
 
 ## Done — last 7 days
 
 <!-- autopopulated by agents/roadmap_dispatcher.py — do not edit by hand -->
+
+## Design references
+
+Not roadmaps — architecture / decision memos, kept for rationale. Anything
+actionable from these is tracked as a backlog item in the sections above.
+
+- `docs/CANVAS_PLAN.md` — visual-canvas architecture (NodeGraphQt history + current JSX)
+- `docs/CONNECTOR_MASTER_PLAN_2026-05-15.md` — 18-host connector build spec
+- `docs/CLOUD_REVIVAL_PLAN.md` — cloud architecture decision (Cloudflare / Neon proposal)
+- `docs/CIVIL_3D_ROADMAP.md` — Civil 3D connector design memo (deferred feature)

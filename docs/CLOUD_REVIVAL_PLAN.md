@@ -1,5 +1,9 @@
 # ArchHub — Cloud Revival Plan
 
+> **Design reference — not the roadmap.** The single roadmap / source of
+> truth is [`docs/ROADMAP.md`](ROADMAP.md). This document is kept for
+> architecture & decision rationale only.
+
 > 2026-05-15 · Decision document for Ahmed Fargaly. Supersedes the Fly stack destroyed 2026-05-13.
 
 ## Executive summary

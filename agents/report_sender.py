@@ -13,7 +13,7 @@ Env contract:
   ARCHHUB_REPORT_DIGEST_HOURS  when set, buffer reports for N hours
                                and send a single digest at the end of
                                the window (rate-limit friendly).
-  ARCHHUB_REPORT_FROM_EMAIL    default noreply@archhub.app
+  ARCHHUB_REPORT_FROM_EMAIL    default noreply@archhub.io
   ARCHHUB_REPORT_DRY_RUN       any value disables the actual HTTP POST
 
 The send-state machine is dead simple:
@@ -42,7 +42,7 @@ from typing import Callable, Optional
 # ---------------------------------------------------------------------------
 RESEND_URL = "https://api.resend.com/emails"
 DEFAULT_RECIPIENT = "ahmed.fargaly98@gmail.com"
-DEFAULT_FROM = "noreply@archhub.app"
+DEFAULT_FROM = "noreply@archhub.io"
 DEFAULT_INTERVAL_MIN = 60  # see CLOUD_DEPLOY.md re Resend 100/day cap
 
 

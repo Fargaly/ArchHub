@@ -1,17 +1,19 @@
 name: Build Linux
 
-# Builds a Linux distribution of ArchHub on every `v*.*.*` tag push.
+# Builds a Linux AppImage of ArchHub on every `v*.*.*` tag push.
 #
-# Strategy: PyInstaller `--onedir` output, then tar.gz it. This is the
-# pragmatic floor — works reliably across distros without dealing with
-# appimage-builder's apt-key + AppDir quirks. AppImage upgrade path
-# (TODO): once we have a stable PyQt6 bundle, swap the tar step for
-# `linuxdeploy` + `appimagetool`. Until then a tarball + a one-line
-# install script gets the binary onto user machines.
+# Strategy: PyInstaller `--onedir` output, staged into an AppDir
+# (AppRun + .desktop + icon from packaging/linux/), then folded by
+# `appimagetool` into a single self-contained `.AppImage`. AppImage is
+# the de-facto Linux desktop-app format — one file, no install step,
+# runs across distros.
 #
-# Best-effort: PyQt6 on Linux occasionally needs system `libxcb-*`
-# libraries at runtime. We install the minimal Qt platform deps via
-# apt so the PyInstaller bundle has the .so files it expects.
+# Build-host quirks handled here:
+#   - GitHub's ubuntu runner ships no FUSE, so appimagetool (itself an
+#     AppImage) is invoked with APPIMAGE_EXTRACT_AND_RUN=1.
+#   - PyQt6 on Linux needs system `libxcb-*` + EGL libs at runtime; we
+#     apt-install the minimal Qt platform deps so the PyInstaller
+#     bundle has the .so files it expects.
 
 on:
   push:
@@ -75,26 +77,53 @@ jobs:
             --collect-all PyQt6 \
             app/main.py
 
-      # Tarball the --onedir output. Users extract anywhere and run
-      # ./ArchHub/ArchHub. We pick gzip over xz for portability; the
-      # bundle is mostly already-compressed Python bytecode anyway.
-      - name: Package as tar.gz
+      # Stage the PyInstaller --onedir bundle into an AppDir, then let
+      # appimagetool fold it into a single .AppImage. AppRun + the
+      # .desktop entry live in packaging/linux/ as committed files, so
+      # this step is a plain copy — no fragile heredocs in YAML.
+      - name: Build AppImage
         run: |
-          cd dist
-          tar -czf "ArchHub-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz" ArchHub/
-          ls -lh *.tar.gz
+          VERSION="${{ steps.version.outputs.version }}"
+          APPDIR="dist/ArchHub.AppDir"
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin"
+
+          # The --onedir bundle: the ArchHub launcher + its _internal/
+          # sibling. Copy the whole tree under usr/bin so the launcher
+          # still finds _internal next to it.
+          cp -r dist/ArchHub/. "$APPDIR/usr/bin/"
+
+          cp packaging/linux/AppRun "$APPDIR/AppRun"
+          cp packaging/linux/ArchHub.desktop "$APPDIR/ArchHub.desktop"
+          chmod +x "$APPDIR/AppRun"
+
+          # appimagetool wants <Icon>.png at the AppDir root, plus a
+          # .DirIcon for file managers. archhub.png is the 256-px
+          # ArchMark rendered by scripts/build_icon.py.
+          cp app/assets/archhub.png "$APPDIR/archhub.png"
+          cp app/assets/archhub.png "$APPDIR/.DirIcon"
+
+          # appimagetool ships as an AppImage; the runner has no FUSE,
+          # so extract-and-run it rather than mounting.
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          export APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64
+          ./appimagetool "$APPDIR" \
+            "dist/ArchHub-${VERSION}-linux-x86_64.AppImage"
+          ls -lh dist/*.AppImage
 
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ArchHub-Linux-tarball
-          path: dist/ArchHub-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+          name: ArchHub-Linux-AppImage
+          path: dist/ArchHub-${{ steps.version.outputs.version }}-linux-x86_64.AppImage
           if-no-files-found: error
 
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/ArchHub-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+          files: dist/ArchHub-${{ steps.version.outputs.version }}-linux-x86_64.AppImage
           draft: false
           prerelease: false

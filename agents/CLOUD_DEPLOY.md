@@ -151,7 +151,7 @@ contained — a Resend hiccup never crashes the agent loop.
 | --- | ------- | ------- |
 | `RESEND_API_KEY` | unset | Required for live send. When absent, the sender logs to stdout + `agents/logs/reports.log` and returns ok. |
 | `ARCHHUB_REPORT_RECIPIENT` | `ahmed.fargaly98@gmail.com` | Address the digest goes to. |
-| `ARCHHUB_REPORT_FROM_EMAIL` | `noreply@archhub.app` | `from` header. Must be a verified Resend sender. |
+| `ARCHHUB_REPORT_FROM_EMAIL` | `noreply@archhub.io` | `from` header. Must be a verified Resend sender. |
 | `ARCHHUB_REPORT_INTERVAL_MIN` | `60` | Minutes between sends. `0` disables the feature. |
 | `ARCHHUB_REPORT_DIGEST_HOURS` | unset (off) | Buffers reports for N hours and sends one combined email — rate-limit-friendly. |
 | `ARCHHUB_REPORT_DRY_RUN` | unset | Any truthy value forces stdout-only (useful for staging). |
@@ -163,7 +163,7 @@ Change live (no redeploy required):
 
 ```bash
 flyctl secrets set ARCHHUB_REPORT_INTERVAL_MIN=30 -a archhub-agents
-flyctl secrets set ARCHHUB_REPORT_RECIPIENT=ops@archhub.app -a archhub-agents
+flyctl secrets set ARCHHUB_REPORT_RECIPIENT=ops@archhub.io -a archhub-agents
 ```
 
 ### Resend free-tier reality — read this first

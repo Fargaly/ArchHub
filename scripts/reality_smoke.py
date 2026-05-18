@@ -26,7 +26,7 @@ Usage:
     python scripts/reality_smoke.py --json
     python scripts/reality_smoke.py --quiet --retry 3
     python scripts/reality_smoke.py --stripe-check --llm-check
-    python scripts/reality_smoke.py --cloud-url https://cloud.archhub.app
+    python scripts/reality_smoke.py --cloud-url https://cloud.archhub.io
 """
 from __future__ import annotations
 
@@ -231,7 +231,7 @@ def check_cloud_register(args: argparse.Namespace) -> CheckResult:
     # Salt the email so repeated runs don't reuse the same DB row.
     salt = str(int(time.time()))
     body = json.dumps({
-        "email": f"reality+smoketest{salt}@archhub.app",
+        "email": f"reality+smoketest{salt}@archhub.io",
         # code_challenge must be 20-200 chars per the pydantic model.
         "code_challenge": "smoketest_pkce_challenge_" + salt,
         "redirect": "",

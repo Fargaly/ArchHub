@@ -11,7 +11,7 @@
 
 #define MyAppName       "ArchHub"
 #define MyAppPublisher  "Fargool"
-#define MyAppURL        "https://archhub.app"
+#define MyAppURL        "https://archhub.io"
 
 ; Read version string from the VERSION file at compile time
 #define MyAppVersion Trim(FileRead(FileOpen(SourcePath + "..\VERSION")))

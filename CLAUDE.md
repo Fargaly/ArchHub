@@ -14,6 +14,21 @@ Every problem → dive to the ROOT. No quick patches. No stitching.
 - The founder is a CEO, not a QA tester. Ship working solutions, not
   iterations that need his testing.
 
+## ROADMAP MANDATE (founder, 2026-05-18 — non-negotiable)
+
+ONE roadmap. `docs/ROADMAP.md` is the single source of truth for every
+plan, backlog item, and milestone.
+
+- Never create a second roadmap / plan / backlog file. New plans get
+  appended into `docs/ROADMAP.md` — never spun off into their own doc.
+- `docs/ROADMAP.md` is also the autonomous-loop seed: keep the section
+  headers + `- [ ]` item format intact (parser: `agents/roadmap_source.py`).
+- Architecture / design memos in `docs/` are reference only. Each
+  carries a "design reference — not the roadmap" banner pointing back
+  to `docs/ROADMAP.md`. Don't let them drift into parallel roadmaps.
+- Root `ROADMAP.md` is a redirect stub — leave it pointing at
+  `docs/ROADMAP.md`.
+
 ## What ArchHub is
 
 PyQt6 + QtWebEngine desktop AI workspace for AEC professionals. Graph-first
@@ -49,4 +64,5 @@ talks to Python via a QWebChannel bridge (`app/bridge.py`).
 - `app/tool_engine.py` — `ToolEngine` + `TOOLS`; the LLM's real tool surface
 - `app/host_detector.py` — host reachability probes
 - `app/workflows/` — graph, runner (lazy/dirty/cached cook), triggers
-- `docs/` — R&D + plan documents (cloud revival, node R&D, UX principles)
+- `docs/ROADMAP.md` — THE roadmap: single source of truth + loop seed
+- `docs/*_PLAN.md`, `docs/*_RND_*.md` — design references only (banner-marked)

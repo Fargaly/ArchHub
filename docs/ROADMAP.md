@@ -1,8 +1,11 @@
 # ArchHub Roadmap — single source of truth
 
-> **This is the one roadmap.** It is also the machine-readable seed for
-> the autonomous loop (`agents/roadmap_source.py`). Each `- [ ]` line is
-> an OPEN backlog item the dispatcher picks up; `- [x]` is shipped.
+> **This is the one roadmap — and per founder mandate (2026-05-18) it
+> stays the only one.** Every plan, backlog item and milestone lives
+> here; no parallel roadmap or plan file may be created. It is also the
+> machine-readable seed for the autonomous loop
+> (`agents/roadmap_source.py`). Each `- [ ]` line is an OPEN backlog
+> item the dispatcher picks up; `- [x]` is shipped.
 > Tag priority `#P0` / `#P1` / `#P2`. Department hint in parentheses
 > routes the item — `eng`, `qa`, `docs`, `ops`, `rnd`.
 >

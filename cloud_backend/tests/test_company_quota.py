@@ -9,7 +9,8 @@ Tests:
   - quota_remaining_for_actor returns company quota when company_id set
   - increment_usage_for_actor bumps the right bucket
   - Stale company_id falls back to user quota (no lock-out)
-  - update_company_quota seeds msg_limit from plan
+  - a plan change re-derives company msg_limit (create + update)
+  - billing.py routes company subscription events to the company row
   - Proxy 402 includes `actor` field
 """
 from __future__ import annotations
@@ -58,7 +59,7 @@ class TestActorResolution:
         # Burn some company quota.
         db.increment_usage_for_actor(u, 7)
         remaining = db.quota_remaining_for_actor(u)
-        # Company default msg_limit = 2000 per ALTER seed.
+        # Studio company: msg_limit = config.PLAN_QUOTAS["studio"] = 2000.
         assert remaining == 2000 - 7
 
     def test_stale_company_id_falls_back_to_user_quota(self):
@@ -95,23 +96,99 @@ class TestIncrementUsage:
         assert u_after["msg_used"] == 3
 
 
-class TestCompanyQuotaSeed:
-    def test_update_quota_seeds_msg_limit_from_plan(self):
+class TestCompanyPlanQuotaInvariant:
+    """A company's plan ALWAYS implies its msg_limit (config.PLAN_QUOTAS).
+    Regression guard for the Firm-tier revenue bug: a Firm company was
+    stuck at the 2000 `msg_limit` column default — 99.8% of quota lost —
+    because nothing re-derived msg_limit when the plan was set. The
+    invariant now lives in db.create_company + db.update_company, so the
+    Stripe webhook (which calls update_company) can't leave it stale."""
+
+    def test_create_firm_company_seeds_firm_quota(self):
         import db, config
-        c = _make_company("CompanyC")
-        # Seed Firm-plan limits.
-        db.update_company_quota(c["id"], plan="firm")
+        u = db.get_or_create_user("firm-create@example.com")
+        c = db.create_company(name="FirmCo", owner_user_id=u["id"],
+                              plan="firm", billing_email=u["email"])
+        assert c["plan"] == "firm"
+        assert c["msg_limit"] == config.PLAN_QUOTAS["firm"]   # 1_000_000
+        assert c["seat_limit"] == config.PLAN_SEATS["firm"]   # 25
+
+    def test_create_studio_company_seeds_studio_quota(self):
+        import db, config
+        u = db.get_or_create_user("studio-create@example.com")
+        c = db.create_company(name="StudioCo", owner_user_id=u["id"],
+                              plan="studio", billing_email=u["email"])
+        assert c["msg_limit"] == config.PLAN_QUOTAS["studio"]
+        assert c["seat_limit"] == config.PLAN_SEATS["studio"]
+
+    def test_update_to_firm_re_derives_msg_limit(self):
+        import db, config
+        c = _make_company("UpgradeCo")            # created as studio
+        assert c["msg_limit"] == config.PLAN_QUOTAS["studio"]
+        # The Studio->Firm upgrade path — billing.py webhook calls this.
+        db.update_company(c["id"], plan="firm")
         c_row = db.get_company(c["id"])
         assert c_row["plan"] == "firm"
         assert c_row["msg_limit"] == config.PLAN_QUOTAS["firm"]
         assert c_row["msg_used"] == 0
 
-    def test_update_quota_unknown_plan_falls_back_to_trial(self):
+    def test_update_plan_resets_msg_used(self):
+        import db
+        c = _make_company("BurnCo")
+        with db.connect() as con:
+            con.execute("UPDATE companies SET msg_used = 1234 WHERE id = ?",
+                        (c["id"],))
+        db.update_company(c["id"], plan="firm")
+        assert db.get_company(c["id"])["msg_used"] == 0
+
+    def test_update_unknown_plan_falls_back_to_trial(self):
         import db, config
-        c = _make_company("CompanyD")
-        db.update_company_quota(c["id"], plan="enterprise")  # not in PLAN_QUOTAS
-        c_row = db.get_company(c["id"])
-        assert c_row["msg_limit"] == config.PLAN_QUOTAS["trial"]
+        c = _make_company("WeirdCo")
+        db.update_company(c["id"], plan="enterprise")  # not in PLAN_QUOTAS
+        row = db.get_company(c["id"])
+        assert row["msg_limit"] == config.PLAN_QUOTAS["trial"]
+
+    def test_update_without_plan_leaves_msg_limit_untouched(self):
+        import db
+        c = _make_company("RenameCo")
+        before = db.get_company(c["id"])["msg_limit"]
+        db.update_company(c["id"], name="RenameCo v2")
+        after = db.get_company(c["id"])
+        assert after["name"] == "RenameCo v2"
+        assert after["msg_limit"] == before    # no plan change -> untouched
+
+
+class TestBillingCompanyRouting:
+    """billing.py must route company subscription events to the company
+    row. Before the fix, customer.subscription.updated / .deleted only
+    ever resolved a user — a company's Studio->Firm upgrade or its
+    cancellation silently never reached the company quota."""
+
+    def test_company_resolves_from_stripe_customer(self):
+        import db, billing
+        c = _make_company("StripeCo")
+        db.update_company(c["id"], stripe_customer_id="cus_test123")
+        resolved = billing._company_from_subscription(
+            {"customer": "cus_test123"})
+        assert resolved is not None
+        assert resolved["id"] == c["id"]
+
+    def test_unknown_customer_resolves_to_none(self):
+        import billing
+        assert billing._company_from_subscription(
+            {"customer": "cus_nope"}) is None
+        assert billing._company_from_subscription({}) is None
+
+    def test_tier_from_subscription_maps_price_id(self, monkeypatch):
+        import billing, config
+        monkeypatch.setitem(config.PLAN_PRICE_IDS, "firm", "price_firm_x")
+        obj = {"items": {"data": [{"price": {"id": "price_firm_x"}}]}}
+        assert billing._tier_from_subscription(obj) == "firm"
+
+    def test_tier_from_subscription_unknown_price_is_none(self):
+        import billing
+        obj = {"items": {"data": [{"price": {"id": "price_unknown"}}]}}
+        assert billing._tier_from_subscription(obj) is None
 
 
 class TestProxyActorReporting:

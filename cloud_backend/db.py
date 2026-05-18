@@ -542,23 +542,6 @@ def increment_usage_for_actor(user: dict, n: int = 1) -> int:
     return increment_usage(user["id"], n)
 
 
-def update_company_quota(company_id: str, *, plan: str) -> None:
-    """Seed company.msg_limit from plan + reset msg_used.
-
-    Called by the Stripe webhook on `checkout.session.completed` /
-    `customer.subscription.updated` when `metadata.kind == "company"`.
-    Mirrors `update_user_plan` shape so the per-plan quotas are kept
-    in one source of truth (config.PLAN_QUOTAS).
-    """
-    msg_limit = config.PLAN_QUOTAS.get(plan, config.PLAN_QUOTAS["trial"])
-    with connect() as con:
-        con.execute(
-            "UPDATE companies SET plan = ?, msg_limit = ?, msg_used = 0"
-            " WHERE id = ?",
-            (plan, msg_limit, company_id),
-        )
-
-
 def quota_remaining(user_id: str) -> int:
     with connect() as con:
         r = con.execute(
@@ -1057,18 +1040,20 @@ def create_company(*, name: str, owner_user_id: str,
     now = int(time.time())
     raw_slug = slug.strip() if slug else _slugify(name)
     final_slug = _unique_slug(_slugify(raw_slug))
-    # Default seat counts mirror config.PLAN_SEATS — but config imports db
-    # via the router, so we don't reach back here. Caller passes the
-    # explicit number when they have one.
+    # Seat + message limits both DERIVE from the plan. config is the
+    # single source of truth (config.PLAN_SEATS / config.PLAN_QUOTAS) —
+    # never hardcode a mirror here, it drifts. config imports only
+    # os+pathlib, so there is no circular import (db imports config).
     if seat_limit is None:
-        seat_limit = {"studio": 5, "firm": 25}.get(plan, 5)
+        seat_limit = config.PLAN_SEATS.get(plan, 5)
+    msg_limit = config.PLAN_QUOTAS.get(plan, config.PLAN_QUOTAS["trial"])
     with connect() as con:
         con.execute(
             "INSERT INTO companies (id, name, slug, owner_user_id, plan,"
-            " seat_limit, billing_email, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " seat_limit, msg_limit, billing_email, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (cid, name, final_slug, owner_user_id, plan,
-             seat_limit, billing_email, now),
+             seat_limit, msg_limit, billing_email, now),
         )
         con.execute(
             "INSERT INTO company_members (company_id, user_id, role,"
@@ -1104,7 +1089,17 @@ def get_company_by_stripe_customer(customer_id: str) -> Optional[dict]:
 
 
 def update_company(company_id: str, **fields) -> None:
-    """Whitelisted update for company rows."""
+    """Whitelisted update for company rows.
+
+    Invariant: a company's `plan` always implies its `msg_limit` (from
+    config.PLAN_QUOTAS). Whenever `plan` is updated — the Stripe / Polar
+    webhook on a tier change is the live caller — `msg_limit` is
+    re-derived and `msg_used` reset for the new billing period. A caller
+    CANNOT set a new plan and leave a stale quota: the two move
+    together, always. (Mirrors `update_user_plan` for the per-seat
+    path. This is why the Firm tier's 1,000,000-message quota actually
+    reaches the customer instead of being stuck at the 2000 default.)
+    """
     allowed = {
         "name", "billing_email", "plan", "seat_limit",
         "stripe_customer_id", "stripe_subscription_id", "period_end",
@@ -1116,6 +1111,14 @@ def update_company(company_id: str, **fields) -> None:
             continue
         sets.append(f"{k} = ?")
         vals.append(v)
+    if "plan" in fields:
+        # msg_limit is DERIVED from plan, never passed in by the caller.
+        # msg_used resets to 0: a tier change opens a fresh billing
+        # period (same rule as update_user_plan).
+        plan = fields["plan"]
+        sets.append("msg_limit = ?")
+        vals.append(config.PLAN_QUOTAS.get(plan, config.PLAN_QUOTAS["trial"]))
+        sets.append("msg_used = 0")
     if not sets:
         return
     vals.append(company_id)

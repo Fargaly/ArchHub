@@ -142,6 +142,33 @@ def _user_id_from_event(event: dict) -> Optional[str]:
     return None
 
 
+def _company_from_subscription(obj: dict) -> Optional[dict]:
+    """Resolve the company behind a `customer.subscription.*` event.
+
+    The subscription object carries the Stripe customer id; the company
+    row stores it (`stripe_customer_id`, stamped at checkout). A given
+    Stripe customer is either a company or a single user — never both —
+    so a hit here unambiguously means a company event. Returns None for
+    per-user (Solo) subscriptions, which fall through to the user path.
+    """
+    customer = obj.get("customer") or ""
+    if not customer:
+        return None
+    return db.get_company_by_stripe_customer(customer)
+
+
+def _tier_from_subscription(obj: dict) -> Optional[str]:
+    """Map a subscription's active price id back to a plan tier."""
+    try:
+        price_id = obj["items"]["data"][0]["price"]["id"]
+    except Exception:
+        return None
+    for tier, pid in config.PLAN_PRICE_IDS.items():
+        if pid == price_id:
+            return tier
+    return None
+
+
 def handle_webhook(*, payload: bytes, signature: str) -> dict:
     """Verify + dispatch a Stripe webhook. Returns a small status dict."""
     if not _ensure_stripe():
@@ -205,18 +232,25 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
                 "tier": tier}
 
     if etype == "customer.subscription.updated":
-        uid = _user_id_from_event(event)
-        # Plan name lives in items.data[0].price metadata or price id.
-        tier = "solo"
-        try:
-            price_id = (obj["items"]["data"][0]["price"]["id"])
-            for k, v in config.PLAN_PRICE_IDS.items():
-                if v == price_id:
-                    tier = k
-                    break
-        except Exception:
-            pass
         period_end = int(obj.get("current_period_end") or 0)
+        # Company subscription? Route to the company row first — a
+        # Stripe customer is either a company or a user, never both.
+        # Without this branch a Studio->Firm upgrade (which arrives as
+        # subscription.updated, not checkout.completed) never reaches
+        # the company quota.
+        company = _company_from_subscription(obj)
+        if company is not None:
+            tier = _tier_from_subscription(obj) or company["plan"]
+            db.update_company(
+                company["id"], plan=tier,
+                seat_limit=config.PLAN_SEATS.get(tier,
+                                                 company["seat_limit"]),
+                period_end=period_end,
+            )
+            return {"ok": True, "handled": etype,
+                    "company_id": company["id"], "tier": tier}
+        uid = _user_id_from_event(event)
+        tier = _tier_from_subscription(obj) or "solo"
         if uid:
             db.update_user_plan(uid, plan=tier,
                                   period_end=period_end)
@@ -224,6 +258,13 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
                 "tier": tier}
 
     if etype == "customer.subscription.deleted":
+        # Cancelled subscription — drop the actor back to trial quota.
+        company = _company_from_subscription(obj)
+        if company is not None:
+            db.update_company(company["id"], plan="trial",
+                              period_end=None)
+            return {"ok": True, "handled": etype,
+                    "company_id": company["id"]}
         uid = _user_id_from_event(event)
         if uid:
             db.update_user_plan(uid, plan="trial", period_end=None)

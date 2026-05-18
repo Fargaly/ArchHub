@@ -2674,14 +2674,11 @@ const NodeLibItem = ({ it, cat, onAdd, draggable = true, pinned = false, onPin =
 };
 
 // ─── Skills panel — saved templates the user has accrued ───
-const LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS || [
-  { id:'dim_walls',   name:'Dimension walls in active view',  runs:14, args:'scale, min_length', when:'2 days ago' },
-  { id:'door_qa',     name:'Door schedule QA',                runs:38, args:'level',             when:'today' },
-  { id:'mass_extract',name:'Sketch \u2192 mass',              runs:6,  args:'floor_count, height',when:'last week' },
-  { id:'pdf_set',     name:'Publish sheet set to Dropbox',    runs:21, args:'sheets, destination',when:'today' },
-  { id:'panel_study', name:'Facade panel variations',         runs:3,  args:'count, seed',       when:'2 weeks ago' },
-  { id:'morning',     name:'Morning Outlook triage',          runs:42, args:'\u2014',             when:'daily' },
-];
+// Source: bridge.get_saved_skills, prefetched into this window var by
+// index.html (and refreshed on the `skills_changed` signal). The
+// fallback is EMPTY, never demo data \u2014 a failed prefetch shows an
+// honest empty panel, not fabricated skills (founder, 2026-05-18).
+const LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS || [];
 
 const SkillsPanel = () => {
   // Real wiring: click to spawn the skill onto the active canvas via the

@@ -334,10 +334,10 @@ def test_new_slots_present_on_bridge(name):
 
 
 def test_load_skill_round_trips_a_saved_skill():
-    """save_as_skill writes a skill JSON; load_skill must read its
-    graph back. Founder bug 2026-05-18: load_skill was called by the
-    Skills panel but never existed — spawning a saved skill silently
-    no-op'd. This pins the round-trip."""
+    """save_as_skill writes a canvas skill; load_skill reads its graph
+    back. Founder bug 2026-05-18: the panel listed one store while
+    load_skill globbed another, so spawning a saved skill no-op'd.
+    This pins the save -> load round-trip on ONE store."""
     import json
     from pathlib import Path
     b = _bridge_module.ArchHubBridge()
@@ -346,15 +346,53 @@ def test_load_skill_round_trips_a_saved_skill():
     saved = json.loads(b.save_as_skill("Bridge Slot Test Skill", payload))
     slug = saved.get("slug")
     assert slug, saved
-    skill_file = (Path(_bridge_module.__file__).resolve().parent
-                  / "skills" / f"{slug}.archhub-skill.json")
-    try:
-        loaded = json.loads(b.load_skill(slug))
+    # save_as_skill writes the writable user store (%LOCALAPPDATA%),
+    # never the source tree — verify the path lands there.
+    assert Path(saved["path"]).parent == _bridge_module._user_skills_dir()
+    loaded = json.loads(b.load_skill(slug))
+    assert isinstance(loaded.get("nodes"), list)
+    assert loaded["nodes"] and loaded["nodes"][0]["id"] == "n1"
+    assert loaded.get("wires") == []
+    # Unknown skill -> honest error, never a fabricated graph.
+    missing = json.loads(b.load_skill("no-such-skill-xyz"))
+    assert "error" in missing
+
+
+def test_get_saved_skills_lists_only_loadable_skills():
+    """THE drift guard. Every skill get_saved_skills returns MUST be
+    loadable by load_skill — list + loader share one resolver
+    (_scan_canvas_skills), so they cannot point at different stores
+    again. Structural fix for the 'empty & not working' Skills panel
+    (founder, 2026-05-18): the list read skills.library while the
+    loader globbed app/skills/, so every panel click 404'd."""
+    import json
+    b = _bridge_module.ArchHubBridge()
+    # Seed one canvas skill into the writable store.
+    b.save_as_skill("Drift Guard Skill",
+                    json.dumps({"nodes": [{"id": "g1", "cat": "ai"}],
+                                "wires": []}))
+    listed = json.loads(b.get_saved_skills())
+    assert isinstance(listed, list), listed
+    assert listed, "expected at least the seeded skill"
+    for entry in listed:
+        assert entry.get("id"), entry
+        loaded = json.loads(b.load_skill(entry["id"]))
+        assert "error" not in loaded, (
+            f"listed skill {entry['id']!r} is not loadable: {loaded}")
         assert isinstance(loaded.get("nodes"), list)
-        assert loaded["nodes"] and loaded["nodes"][0]["id"] == "n1"
-        assert loaded.get("wires") == []
-        # Unknown skill -> honest error, never a fabricated graph.
-        missing = json.loads(b.load_skill("no-such-skill-xyz"))
-        assert "error" in missing
-    finally:
-        skill_file.unlink(missing_ok=True)
+
+
+def test_shipped_canvas_skills_are_loadable():
+    """Skills shipped in app/skills/*.archhub-skill.json must parse +
+    load — they are the panel's built-in starter skills."""
+    import json
+    b = _bridge_module.ArchHubBridge()
+    shipped = _bridge_module._shipped_skills_dir()
+    files = list(shipped.glob("*.archhub-skill.json"))
+    assert files, "no shipped canvas skills found in app/skills/"
+    for f in files:
+        env = json.loads(f.read_text(encoding="utf-8"))
+        slug = env.get("slug") or f.stem.replace(".archhub-skill", "")
+        loaded = json.loads(b.load_skill(slug))
+        assert "error" not in loaded, (loaded, slug)
+        assert isinstance(loaded.get("nodes"), list)

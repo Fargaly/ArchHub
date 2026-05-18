@@ -285,6 +285,76 @@ def _list_host_documents_impl(family: str, session_id: str) -> list[dict]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# Canvas-skill store. A "skill" in the Skills panel is a saved canvas
+# fragment ({nodes, wires}) the user can splice back onto any canvas.
+#
+# ONE store, ONE format, ONE resolver — get_saved_skills (the panel's
+# list) and load_skill (the panel's click) BOTH go through
+# _scan_canvas_skills(), so the list can never again point at a
+# different place than the loader. Founder bug 2026-05-18: the list
+# read the engine-format skills.library while load_skill globbed the
+# source-tree app/skills/ dir — every listed skill 404'd on click.
+# ---------------------------------------------------------------------------
+def _user_skills_dir() -> "Path":
+    """Writable canvas-skill store — %LOCALAPPDATA%/ArchHub/skills/.
+
+    The location get_storage_stats / export / import already treat as
+    the skills store; save_as_skill now writes here too. It used to
+    write the source tree (app/skills/), which is wiped on every app
+    update and never matched the panel's list."""
+    import os as _os
+    from pathlib import Path
+    d = (Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
+         / "ArchHub" / "skills")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _shipped_skills_dir() -> "Path":
+    """Read-only canvas skills shipped in the app tree
+    (app/skills/*.archhub-skill.json) — scanned alongside the user
+    store so built-in starter skills appear with no first-run copy."""
+    from pathlib import Path
+    return Path(__file__).resolve().parent / "skills"
+
+
+def _scan_canvas_skills() -> list:
+    """Every canvas-format skill — shipped seeds + the user store —
+    deduped by slug (a user save overrides a shipped seed of the same
+    slug). The single resolver behind get_saved_skills + load_skill."""
+    out: dict[str, dict] = {}
+    # Shipped first so a same-slug user save wins the dedup below.
+    for root in (_shipped_skills_dir(), _user_skills_dir()):
+        try:
+            if not root.exists():
+                continue
+            files = sorted(root.glob("*.archhub-skill.json"))
+        except Exception:
+            continue
+        for f in files:
+            try:
+                env = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(env, dict):
+                continue
+            slug = (env.get("slug")
+                    or f.stem.replace(".archhub-skill", "")
+                    or f.stem)
+            graph = env.get("graph")
+            if not isinstance(graph, dict):
+                # Older files may store {nodes,wires} at top level.
+                graph = env if ("nodes" in env or "wires" in env) else {}
+            out[slug] = {
+                "slug":  slug,
+                "name":  env.get("name") or slug,
+                "path":  str(f),
+                "graph": graph,
+            }
+    return list(out.values())
+
+
 class ArchHubBridge(QObject):
     """Bridge object registered on QWebChannel under the name `archhub`."""
 
@@ -1137,19 +1207,28 @@ class ArchHubBridge(QObject):
             return _safe_json({"nodes": [], "wires": [],
                                 "error": str(ex)})
 
-    # ─── Saved skills ──────────────────────────────────────────
+    # ─── Saved skills (canvas-format store) ────────────────────
     @pyqtSlot(result=str)
     def get_saved_skills(self) -> str:
+        """List canvas-format skills — the Skills panel's source.
+
+        Reads the SAME store load_skill loads from
+        (_scan_canvas_skills: shipped seeds + the user store, canvas
+        format), so every skill the panel shows is actually spawnable.
+        Founder bug 2026-05-18: this listed the engine-format
+        skills.library while load_skill globbed app/skills/ — list and
+        loader pointed at different stores, so every click 404'd
+        ('empty & not working')."""
         try:
-            import skills
             out = []
-            for s in (skills.list_skills() or []):
+            for s in _scan_canvas_skills():
+                graph = s.get("graph") or {}
                 out.append({
-                    "id":    s.get("id") or s.get("slug") or "",
-                    "name":  s.get("name", ""),
-                    "runs":  s.get("run_count", 0),
-                    "args":  s.get("args", "") or "",
-                    "when":  str(s.get("updated_at") or s.get("created_at") or ""),
+                    "id":         s["slug"],
+                    "name":       s["name"],
+                    "args":       "",
+                    "when":       "",
+                    "node_count": len(graph.get("nodes") or []),
                 })
             return _safe_json(out)
         except Exception as ex:
@@ -1159,53 +1238,32 @@ class ArchHubBridge(QObject):
     def load_skill(self, skill_id: str) -> str:
         """Load a saved skill's graph for splicing onto the canvas.
 
-        Reads `app/skills/<slug>.archhub-skill.json` (written by
-        `save_as_skill`) and returns its graph — `{nodes, wires}` — so
-        the JSX `onSpawnSkill` handler can offset + insert the nodes.
-        `skill_id` is resolved against the file slug, the file stem, or
-        the envelope's `slug`/`name`. Returns an `{error: ...}`
-        envelope when the skill cannot be found.
+        Resolves `skill_id` (slug or name) against the SAME store
+        get_saved_skills lists — _scan_canvas_skills() — and returns
+        the canvas graph `{nodes, wires, name}` the JSX `onSpawnSkill`
+        handler offsets + inserts. Returns an `{error: ...}` envelope
+        when the skill cannot be found.
 
-        Founder bug 2026-05-18: the Skills panel called `load_skill`
-        but no such slot existed — spawning a saved skill silently
-        no-op'd. This is that slot."""
+        Founder bug 2026-05-18: the panel listed skills.library but
+        load_skill globbed app/skills/ — a different store — so
+        spawning ANY listed skill failed. List + load now share one
+        resolver (_scan_canvas_skills), so the two cannot drift."""
         try:
-            import json as _json
-            from pathlib import Path
             sid = (skill_id or "").strip()
             if not sid:
                 return _safe_json({"error": "skill_id is required"})
-            skills_dir = Path(__file__).resolve().parent / "skills"
-            # Direct slug match first; then scan by stem / envelope.
-            cand = skills_dir / f"{sid}.archhub-skill.json"
-            if not cand.exists():
-                cand = None
-                for f in skills_dir.glob("*.archhub-skill.json"):
-                    if f.stem.replace(".archhub-skill", "") == sid:
-                        cand = f
-                        break
-                    try:
-                        env = _json.loads(f.read_text(encoding="utf-8"))
-                    except Exception:
-                        continue
-                    if (isinstance(env, dict)
-                            and (env.get("slug") == sid
-                                 or env.get("name") == sid)):
-                        cand = f
-                        break
-            if cand is None or not cand.exists():
+            match = next(
+                (s for s in _scan_canvas_skills()
+                 if s["slug"] == sid or s["name"] == sid),
+                None,
+            )
+            if match is None:
                 return _safe_json({"error": f"skill not found: {sid}"})
-            envelope = _json.loads(cand.read_text(encoding="utf-8"))
-            graph = (envelope.get("graph")
-                     if isinstance(envelope, dict) else None)
-            if not isinstance(graph, dict):
-                # Older skill files may store the graph at top level.
-                graph = envelope if isinstance(envelope, dict) else {}
+            graph = match.get("graph") or {}
             return _safe_json({
                 "nodes": list(graph.get("nodes") or []),
                 "wires": list(graph.get("wires") or []),
-                "name": (envelope.get("name")
-                         if isinstance(envelope, dict) else "") or sid,
+                "name":  match.get("name") or sid,
             })
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -1761,18 +1819,18 @@ class ArchHubBridge(QObject):
     # +30/+30 px offset so the JSX can splice it cleanly into LM_GRAPH.
     @pyqtSlot(str, str, result=str)
     def save_as_skill(self, name: str, payload_json: str) -> str:
-        """Persist a graph subset as a skill JSON under app/skills/.
+        """Persist a graph subset as a canvas skill JSON.
 
         `payload_json` is the JSON-serialised graph subset (the node + its
         reachable downstream nodes + the connecting wires) emitted by
         the JSX side. We write it as
-        `app/skills/<slug>.archhub-skill.json` and return the absolute
-        path (or an error envelope on failure).
+        `%LOCALAPPDATA%/ArchHub/skills/<slug>.archhub-skill.json` — the
+        writable user store get_saved_skills + load_skill read — and
+        return the absolute path (or an error envelope on failure).
         """
         try:
             import json as _json
             import re
-            from pathlib import Path
             try:
                 payload = _json.loads(payload_json) if payload_json else {}
             except Exception as ex:
@@ -1783,9 +1841,7 @@ class ArchHubBridge(QObject):
                         or "untitled-skill")
             slug = re.sub(r"[^a-z0-9]+", "-",
                           str(slug_src).lower()).strip("-") or "untitled-skill"
-            skills_dir = Path(__file__).resolve().parent / "skills"
-            skills_dir.mkdir(parents=True, exist_ok=True)
-            out_path = skills_dir / f"{slug}.archhub-skill.json"
+            out_path = _user_skills_dir() / f"{slug}.archhub-skill.json"
             # Wrap with a tiny envelope so loaders can distinguish a
             # skill JSON from a raw graph dump.
             envelope = {

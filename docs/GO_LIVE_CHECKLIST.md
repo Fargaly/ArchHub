@@ -107,10 +107,10 @@ Fly auto-restarts the app to pick up the new secret. ~10s.
 
 ## Phase 4 — DNS (you, in your DNS provider)
 
-If you want to publish under `cloud.archhub.app` instead of `archhub-cloud.fly.dev`:
+If you want to publish under `cloud.archhub.io` instead of `archhub-cloud.fly.dev`:
 
 ```powershell
-flyctl certs add cloud.archhub.app -a archhub-cloud
+flyctl certs add cloud.archhub.io -a archhub-cloud
 flyctl ips list -a archhub-cloud      # copy v4 + v6
 ```
 
@@ -118,8 +118,8 @@ Then in your DNS dashboard add:
 
 | Type | Host | Value |
 |---|---|---|
-| A | cloud.archhub.app | <v4 from flyctl ips> |
-| AAAA | cloud.archhub.app | <v6 from flyctl ips> |
+| A | cloud.archhub.io | <v4 from flyctl ips> |
+| AAAA | cloud.archhub.io | <v6 from flyctl ips> |
 
 DNS propagates in 5-30 min. Fly's TLS cert auto-issues once propagation completes.
 

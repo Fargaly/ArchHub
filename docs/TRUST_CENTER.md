@@ -1,6 +1,6 @@
 # ArchHub Trust Center — source content
 
-**Purpose:** content that mirrors what publishes at <https://archhub.app/security>. Lists every security control we have so prospects can answer their own "is ArchHub secure?" question without us getting on a call.
+**Purpose:** content that mirrors what publishes at <https://archhub.io/security>. Lists every security control we have so prospects can answer their own "is ArchHub secure?" question without us getting on a call.
 
 Updated whenever a real control changes. Reviewed quarterly.
 
@@ -50,7 +50,7 @@ Redaction happens at the source — `app/pii_redactor.py` in this repo is the im
 
 ## What our cloud touches
 
-For users on Cloud or Solo/Studio tiers, the cloud backend at `api.archhub.app` (Fly.io) stores:
+For users on Cloud or Solo/Studio tiers, the cloud backend at `cloud.archhub.io` (Fly.io) stores:
 
 - Email address (sign-in identifier)
 - Stripe customer + subscription IDs (for billing only — full PAN never touches us)
@@ -115,7 +115,7 @@ Anyone on the **BYO Key** tier never touches our cloud at all.
 
 ## Reporting a security issue
 
-Email **security@archhub.app** with as much detail as you can. We respond within 24h. We do not yet run a paid bug bounty, but credited disclosures get a hat tip in the release notes.
+Email **security@archhub.io** with as much detail as you can. We respond within 24h. We do not yet run a paid bug bounty, but credited disclosures get a hat tip in the release notes.
 
 ## Public commitments
 
@@ -125,7 +125,7 @@ Email **security@archhub.app** with as much detail as you can. We respond within
 
 ## Questions?
 
-This page covers the most common procurement questions. For anything not covered, email **security@archhub.app** or ask in <https://discord.gg/archhub>.
+This page covers the most common procurement questions. For anything not covered, email **security@archhub.io** or ask in <https://discord.gg/archhub>.
 
 ---
 

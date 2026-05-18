@@ -1,7 +1,7 @@
 # ArchHub Cloud — Backend Spec
 
 This document is the contract the desktop client (this repo) assumes
-the `cloud.archhub.app` backend implements. The backend lives in a
+the `cloud.archhub.io` backend implements. The backend lives in a
 **separate repo** (not yet built); this file is what the next person
 to build it needs to ship.
 
@@ -204,7 +204,7 @@ A "message" = one completed conversation turn (user msg → final assistant msg 
 - Bearer tokens are 256-bit URL-safe random; never sent in URLs (Authorization header only).
 - PKCE protects the exchange step against intercepted codes.
 - Webhooks verify Stripe signature.
-- Magic-link emails include `Reply-To: noreply@archhub.app` and a clear "didn't request this?" link that revokes any pending code for the address.
+- Magic-link emails include `Reply-To: noreply@archhub.io` and a clear "didn't request this?" link that revokes any pending code for the address.
 - No provider API keys ever leave the backend.
 
 ## Acceptance criteria

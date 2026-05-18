@@ -74,7 +74,7 @@ we don't yet make.
    Sentry, PostHog, GitHub. For each: DPA status, data shared, region.
 5. **Annual security review log** — `docs/SECURITY_REVIEW_LOG.md`.
    Self-attest yearly: "Reviewed all controls 2026-05-13. No changes."
-6. **Customer-facing security page** at `archhub.app/security`. Lists
+6. **Customer-facing security page** at `archhub.io/security`. Lists
    what we have. Builds buyer trust ahead of the audit.
 
 ## Phase B — Policies the auditor will ask for

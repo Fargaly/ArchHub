@@ -107,7 +107,7 @@ community already trusts the pattern.
 ### Year-1 funnel
 
 ```
-                ┌────── direct site (archhub.app) ─┐
+                ┌────── direct site (archhub.io) ─┐
                 │                                   ▼
    AEC          │      ┌────► Free download ──► Onboarding wizard
    community ───┼──────┤                              ▼
@@ -157,7 +157,7 @@ community already trusts the pattern.
 
 | Item | One-time | Monthly | Annual |
 |---|---:|---:|---:|
-| Domain `archhub.app` | $25 | — | $25 |
+| Domain `archhub.io` | $25 | — | $25 |
 | Microsoft Trusted Signing (installer) | — | $10 | $120 |
 | Stripe (no fixed; only takes %) | — | — | $0 |
 | GitHub Pages (landing) | — | — | $0 |
@@ -212,7 +212,7 @@ first quarter.
 ## Brand
 
 - **Name**: ArchHub (keep — testing well, no trademark conflicts found)
-- **Domain**: archhub.app (.app forces HTTPS, signals modern dev tool)
+- **Domain**: archhub.io (established tech-product TLD; HTTPS enforced via HSTS at the edge — `.io` is not on the preload list, so set the header)
 - **Logo / icon**: current PNG/ICO is a placeholder; redesign in Q2
 - **Voice**: terse, technical, no fluff (matches the architect / dev
   customer; avoids the "AI marketing-slop" voice that's losing trust in

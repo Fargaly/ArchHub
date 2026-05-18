@@ -61,7 +61,7 @@ This doc is the canonical pre-filled answer set. When a buyer sends their versio
 |---|---|---|
 | DSP-01 | Do you have a data classification policy? | **In draft.** Public / Internal / Confidential tiers, formal doc Q3 2026. |
 | DSP-02 | Do you have data retention policies? | **Yes.** Chat history kept only while user account active. Telemetry: 90 days. Backups: 30 days. |
-| DSP-03 | Do you support data deletion on request? | **Yes.** GDPR / CCPA compliant. Email `privacy@archhub.app` → 30-day deletion SLA. |
+| DSP-03 | Do you support data deletion on request? | **Yes.** GDPR / CCPA compliant. Email `privacy@archhub.io` → 30-day deletion SLA. |
 | DSP-04 | Do you use customer data for AI training? | **No, never** unless customer explicitly opts in. Default is OFF and we have no plan to make it ON. |
 
 ## GRC — Governance, Risk & Compliance
@@ -146,7 +146,7 @@ This doc is the canonical pre-filled answer set. When a buyer sends their versio
 
 **Effective date:** 2026-05-13
 **Next review:** 2026-08-13 (quarterly)
-**Contact for security questions:** security@archhub.app
-**Contact for privacy questions:** privacy@archhub.app
+**Contact for security questions:** security@archhub.io
+**Contact for privacy questions:** privacy@archhub.io
 
 When a buyer's procurement form differs from CAIQ-Lite v3.1 numbering, map their questions to the closest answer here. The substance is the same; the labels move around.

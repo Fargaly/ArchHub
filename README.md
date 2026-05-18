@@ -1,8 +1,12 @@
-# ArchHub
+# ArchHub (v1.4.0-alpha)
 
-**Talk to your AEC stack. Drive Revit, Blender, AutoCAD, 3ds Max, and
-Speckle from one chat. Save what works as a Skill — copy-paste shareable
-JSON your firm owns.**
+**A graph-first AI workspace for AEC.** Every entity — a host (Revit,
+AutoCAD, 3ds Max, Blender, Rhino, Speckle, Outlook, Teams, Notion,
+LM Studio, Antigravity, Photoshop, Illustrator, InDesign, Word,
+Excel, PowerPoint, Dropbox — **18 host families**), a conversation
+with Claude, a document, a tool call — lives as a **typed node** on
+a **canvas**. Wire them together with typed bridges. Save the canvas
+as a **Skill** — copy-paste shareable JSON your firm owns.
 
 [![Release](https://img.shields.io/github/v/release/Fargaly/ArchHub?include_prereleases)](https://github.com/Fargaly/ArchHub/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -10,29 +14,35 @@ JSON your firm owns.**
 
 ---
 
-## What it does
+## What it does (v1.4)
 
-- **Type, don't script.** "Dimension all walls in the active view" runs
-  in Revit. "Build this sketch as a 6 m gabled mass" runs in Blender.
-  ArchHub generates the API code, executes it live, shows you the
-  result.
-- **Vision input.** Paste a hand sketch into chat. Claude / GPT-4o /
-  Gemini reads it and drives the modelling tools to build it.
-- **Skills.** Save any useful conversation as a reusable Skill —
-  intent-tagged JSON the matcher finds next time you ask for the same
-  thing. Skills are copy-paste shareable, like ComfyUI workflows.
-- **End-to-end pipeline.** The flagship `Sketch to production` Skill
-  chains six LLM stages: extract mass → push to Speckle → set up
-  Revit project → build walls → place doors and windows → generate
-  production sheets. One click; six tools coordinated.
+- **Canvas, don't script.** Drag a Revit host, a "list_walls" reader,
+  a "where exterior" filter, and a "create_dimensions" annotator onto
+  the canvas. Wire them. Press ▶. The wall list flows through the
+  filter, dimensions land in Revit. 80 node types across 10
+  categories — host / read / filter / transform / annotate /
+  compose / logic / AI / output / trigger (see
+  [`docs/NODE_LIBRARY_v2.md`](docs/NODE_LIBRARY_v2.md)).
+- **AI-agent composer.** Type "ping outlook" in free text and the
+  agent spawns the Outlook host + a conversation node and wires them
+  for you. Seven tools (`spawn_host` / `spawn_node` / `wire` /
+  `focus` / `rename` / `delete` / `run`) lifted from natural
+  language. You confirm per-chip; nothing mutates without consent.
+- **Vision input.** Paste a hand sketch onto a `vision` node. Claude
+  / GPT-4o / Gemini reads it and drives the modelling tools to build
+  it downstream.
+- **Skills are subgraphs.** Cmd-G compresses a selection into a
+  composite. Right-click → Save as Skill. It drops onto any other
+  canvas as a single composite node. The matcher finds it by intent
+  for chat-style invocation.
 - **Multi-LLM, BYO-key.** OpenRouter (real OAuth, ~300 models),
-  Anthropic, OpenAI, Google, or local Ollama. Your choice; your keys;
-  your data.
-- **Cloud-synced Skills.** A private GitHub repo (auto-created by
-  ArchHub) syncs your Skill library across devices. Save on laptop,
-  open on workstation.
+  Anthropic, OpenAI, Google, or local LM Studio. Your choice; your
+  keys; your data. Native PyQt SettingsDialog → Providers tab.
+- **Native session storage.** Each session is one JSON file in
+  `%LOCALAPPDATA%\ArchHub\sessions\`. Autosaved on every change.
+  Optional firm sync via OneDrive symlink or a self-hosted relay.
 - **Click-only setup.** No terminal. Run the installer; sign in via
-  browser; pick a Skill.
+  browser; the host-pill row tells you which apps are live.
 
 ---
 
@@ -82,16 +92,22 @@ pip install -r app/requirements.txt
 python app/main.py
 ```
 
-### First Skill to try
+### First canvas to try
 
-In chat, type:
+Type into the composer:
 
 ```
-Dimension all the walls in the active view
+list walls in the active view, then dimension the exterior ones
 ```
 
-ArchHub matches the saved `Dimension walls in active view` Skill,
-proposes it, and runs it through Revit. ~5 seconds end-to-end.
+The agent composer spawns four nodes and wires them — `h_revit`,
+`r_walls`, `f_pred` (`is_exterior`), `a_dims`. Confirm the chip
+chain, press **▶ Run Workflow**. Dimensions land in Revit; the saved
+canvas is your first Skill candidate.
+
+Cmd-G the four nodes → right-click composite → **Save as Skill** →
+fill name / intent / keywords. Next time you type "dimension exterior
+walls" the matcher proposes the saved Skill.
 
 ---
 
@@ -115,42 +131,53 @@ anything we haven't shipped.
 
 ---
 
-## Architecture
+## Architecture (v1.4)
 
 ```
-                ┌──────────────────────────┐
-                │   ArchHub desktop (PyQt6) │
-                │   - chat                  │
-                │   - Skill library         │
-                │   - parametric sidebar    │
-                └──────────┬───────────────┘
+                ┌────────────────────────────────────────┐
+                │   ArchHub desktop (PyQt6 + QWebEngine) │
+                │                                        │
+                │   web_ui/studio-lm.jsx  (React canvas) │
+                │     ▲                                  │
+                │     │  QWebChannel · 115+ slots        │
+                │     ▼                                  │
+                │   app/bridge.py  (PyQt6 QObject)       │
+                │     sessions · graph · wires · agent   │
+                │     hosts · skills · memory · mcp      │
+                └──────────┬─────────────────────────────┘
                            │
-              ┌────────────▼────────────┐
+              ┌────────────▼─────────────┐
               │     LLMRouter            │
               │  Anthropic · OpenAI ·    │
               │  Google · OpenRouter ·   │
-              │  Ollama · firm relay     │
-              └────────────┬────────────┘
+              │  LM Studio · firm relay  │
+              └────────────┬─────────────┘
                            │
-              ┌────────────▼────────────┐
+              ┌────────────▼─────────────┐
               │     ToolEngine           │
               │  exposes connectors as   │
               │  schema'd tools          │
-              └────────────┬────────────┘
+              └────────────┬─────────────┘
                            │
-   ┌───────────┬───────────┼───────────┬───────────┐
-   ▼           ▼           ▼           ▼           ▼
- :48884     :48885     :48886       :9876     Speckle GraphQL
- RevitMCP   AcadMCP    3ds Max      Blender   (cloud or self-host)
+   ┌─────────────┬─────────┴──────┬─────────────────┬─────────────┐
+   ▼             ▼                ▼                 ▼             ▼
+ :48884       :48885           :48886           runners       Graph APIs
+ RevitMCP     AcadMCP          3ds Max MCP      Blender,      Speckle,
+ (2020,                                          Rhino,        Outlook,
+  2023,                                          Procore       Teams,
+  2024,                                                        Notion,
+  2025)                                                        Dropbox
 ```
 
-Skills live as JSON files in a private GitHub repo synced from
-`%LOCALAPPDATA%\ArchHub\data_repo\`. Each Skill is a workflow graph:
-input → template → llm.complete_with_tools → output. Multi-stage Skills
-chain those nodes. The actual API code (Revit C#, Blender Python, etc.)
-is generated fresh per project by the LLM at run time — Skills carry
-intent and constraints, not implementation, so smarter models make
-Skills more valuable, not less.
+Hosts surface as the canvas **host-pill row** — `app/host_detector.py`
+probes 18 families (process / COM / HTTP / token) and the JSX re-polls
+`bridge.get_all_hosts` every 25 s.
+
+Sessions live as JSON files in `%LOCALAPPDATA%\ArchHub\sessions\<slug>.archhub-session.json`.
+Each session is one canvas. Each canvas can be saved as a Skill —
+intent-tagged JSON synced via OneDrive symlink or a firm-shared
+network path. Skills carry intent and constraints, not implementation
+— so smarter models make Skills more valuable, not less.
 
 ---
 
@@ -184,6 +211,10 @@ Six commitments built into the product — none of them optional.
 Source of truth in this repo:
 
 - **[STRATEGY.md](STRATEGY.md)** — pricing, GTM, moats, financial model.
+- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — v1.4 user-facing walkthrough.
+- **[docs/AUDIT_2026-05-14.md](docs/AUDIT_2026-05-14.md)** — current state audit, surface-by-surface.
+- **[docs/NODE_LIBRARY_v2.md](docs/NODE_LIBRARY_v2.md)** — 80-node canvas taxonomy.
+- **[docs/CANVAS_PLAN.md](docs/CANVAS_PLAN.md)** — canvas architecture (current v1.4 + historical v0.18 plan).
 - **[docs/SKILLS.md](docs/SKILLS.md)** — Skill architecture: metadata, matcher, capture, sharing.
 - **[docs/MULTI_DEVICE.md](docs/MULTI_DEVICE.md)** — running ArchHub on multiple machines.
 - **[SECURITY.md](SECURITY.md)** — threat model + responsible disclosure.

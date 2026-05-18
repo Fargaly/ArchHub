@@ -29,7 +29,7 @@ Including:
 The following components are **separate, closed-source projects**
 operated by ArchHub (Fargool):
 
-- `cloud.archhub.app` — managed AI proxy. Subscribers get an
+- `cloud.archhub.io` — managed AI proxy. Subscribers get an
   OpenAI-compatible API endpoint that routes their chat traffic to
   Claude / GPT / Gemini without ever exposing provider keys.
 - The Stripe billing integration that backs the Solo / Studio / Firm

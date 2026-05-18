@@ -186,7 +186,7 @@ Founder feedback: Stripe direct requires KYC + business entity (10-30 min
   Both `/v1/webhooks/stripe` + `/v1/webhooks/polar` routes co-exist.
 - `cloud_backend/config.py` — `BILLING_PROVIDER`, `POLAR_ACCESS_TOKEN`,
   `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_SOLO/STUDIO/FIRM` env vars.
-- **`PUBLIC_URL` default flipped** from `https://cloud.archhub.app`
+- **`PUBLIC_URL` default flipped** from `https://cloud.archhub.io`
   (never bought/built) → `https://archhub-cloud.fly.dev` (Fly's
   default subdomain) so backend deploys WITHOUT requiring a custom
   domain first.
@@ -336,13 +336,13 @@ failures → 0.
 
 ### Notes on what's actually deployed
 
-- `cloud-archhub.fly.dev` — **still NOT deployed**. Code complete +
+- `archhub-cloud.fly.dev` — **still NOT deployed**. Code complete +
   tested + deploy.ps1 ready. Founder runs `cloud_backend/deploy.ps1`
   to flip the switch.
-- `cloud.archhub.app` — DNS record still doesn't exist. `archhub.app`
+- `cloud.archhub.io` — DNS record still doesn't exist. `archhub.io`
   domain IS registered at Namecheap (verified via DNS lookup). When
   founder wants the custom subdomain, add one A record + run
-  `flyctl certs add cloud.archhub.app`.
+  `flyctl certs add cloud.archhub.io`.
 - `archhub-agents.fly.dev` — agents 24/7 cloud is code-ready, not yet
   deployed. `agents/deploy.ps1` is the one-command path.
 - All UI fixes ship in the desktop installer. Restart ArchHub after
@@ -441,7 +441,7 @@ customer + revenue plumbing.
   customer-facing backend. Installs flyctl, creates the app + volume,
   prompts for each Stripe / Anthropic / OpenAI / Google / Resend / JWT
   secret, deploys, hits `/healthz`, optional `--DnsAttach` for
-  `cloud.archhub.app`.
+  `cloud.archhub.io`.
 - **`docs/GO_LIVE_CHECKLIST.md`** — 5-phase walkthrough from blank
   Stripe account → real $19 charge. Phase 1 Stripe setup (10 min),
   Phase 2 backend deploy (5 min), Phase 3 webhook registration (3 min),
@@ -517,7 +517,7 @@ with a real budget asks for it.
   the user does manually in the Azure portal; everything else is
   automated.
 - **`docs/TRUST_CENTER.md`** — source content for the public
-  <https://archhub.app/security> page. Covers data handling,
+  <https://archhub.io/security> page. Covers data handling,
   sub-processors with DPA status, security practices, compliance
   roadmap, incident reporting. Replaces "where's your SOC 2?" with
   a credible answer mid-market buyers accept.
@@ -1041,5 +1041,5 @@ Initial public release. Open-core architecture.
   Firm ($299+seat).
 - Inno Setup installer script at `installer/setup.iss`.
 
-[1.0.1]: https://github.com/archhub/archhub/releases/tag/v1.0.1
-[1.0.0]: https://github.com/archhub/archhub/releases/tag/v1.0.0
+[1.0.1]: https://github.com/Fargaly/ArchHub/releases/tag/v1.0.1
+[1.0.0]: https://github.com/Fargaly/ArchHub/releases/tag/v1.0.0

@@ -78,7 +78,7 @@ The `/v1/billing/plans` endpoint does not yet exist in `cloud_backend/main.py`. 
 The `/v1/auth/register` route is up, but `RESEND_API_KEY` is missing or the sending domain isn't verified.
 
 - `flyctl secrets list -a archhub-cloud` and check `RESEND_API_KEY` exists.
-- Resend dashboard → Domains → verify `archhub.app`.
+- Resend dashboard → Domains → verify `archhub.io`.
 
 ### `agents.healthz` — FAIL heartbeat stale (N min old)
 

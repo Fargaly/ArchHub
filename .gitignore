@@ -5,6 +5,9 @@ dist-staging/
 *.egg-info/
 *.spec
 
+# ==== Node / web tooling ====
+node_modules/
+
 # ==== Bundled runtime (downloaded by installer\build.bat) ====
 python/
 
@@ -71,6 +74,9 @@ payload/max/
 
 # ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
 **/skill_usage.json
+# User-saved skills/sessions are runtime artefacts, not source.
+app/skills/*.archhub-skill.json
+**/*.archhub-session.json
 
 # ==== Claude Code per-machine state ====
 # IDE settings + transcripts written by Claude Code; never commit.

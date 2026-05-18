@@ -62,7 +62,7 @@ nationwide protection on, plus the right to:
       - WIPO Global Brand Database: [branddb.wipo.int](https://branddb.wipo.int/)
       - EUIPO (EU): [euipo.europa.eu](https://euipo.europa.eu/)
       - UAE Ministry of Economy (for our home market)
-- [ ] Confirm domain ownership: archhub.app, archhub.com,
+- [ ] Confirm domain ownership: archhub.io, archhub.com,
       archhub.io, archhub.dev — register any defensive ones now
 - [ ] Confirm USPTO.gov account is set up (free, 10-min signup at
       [tmep.uspto.gov](https://my.uspto.gov))
@@ -138,7 +138,7 @@ custom function string above. Verify the entry is still listed at
 | Basis | 1(a) — Use in commerce |
 | First use anywhere | 2026-05-13 (v1.0.0 ship date) |
 | First use in commerce | 2026-05-13 |
-| Specimen — Class 009 | Screenshot of installer-download page on archhub.app showing the mark + "Download" button; OR screenshot of the running app's About dialog with the mark + version |
+| Specimen — Class 009 | Screenshot of installer-download page on archhub.io showing the mark + "Download" button; OR screenshot of the running app's About dialog with the mark + version |
 | Specimen — Class 042 | Screenshot of the SaaS sign-up flow / Stripe checkout page where the mark appears + "Subscribe" button |
 
 > If you haven't yet sold a paid SaaS subscription, file Class 042

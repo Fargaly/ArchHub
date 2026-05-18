@@ -99,6 +99,7 @@ class TestEngineTypeResolution:
         assert ng.engine_type("ai", {"action": "classify"}) == "llm.classify"
         assert ng.engine_type("logic", {"kind": "if"}) == "control.if"
         assert ng.engine_type("logic", {"kind": "foreach"}) == "control.foreach"
+        assert ng.engine_type("logic", {"kind": "switch"}) == "control.switch"
 
     def test_unknown_selector_value_is_none(self):
         assert ng.engine_type("ai", {"action": "telepathy"}) is None

@@ -97,3 +97,37 @@ register(
     ),
     _foreach_executor,
 )
+
+
+# ---------------------------------------------------------------------------
+def _switch_executor(config: dict, inputs: dict, ctx) -> dict:
+    """Route `value` to `match` when it equals `case` (wired input, else
+    config), otherwise to `default`. A value-equality router — distinct
+    from control.if, which branches on a boolean condition."""
+    value = inputs.get("value")
+    case = inputs.get("case")
+    if case is None:
+        case = (config or {}).get("case")
+    matched = value == case or str(value) == str(case)
+    if matched:
+        return {"match": value, "default": None, "taken": "match"}
+    return {"match": None, "default": value, "taken": "default"}
+
+
+register(
+    NodeSpec(
+        type="control.switch",
+        category="control",
+        display_name="Switch",
+        description="Route `value` to `match` when it equals `case`, "
+                    "else to `default`.",
+        inputs=[Port(name="value", type=PortType.ANY, required=True),
+                Port(name="case",  type=PortType.ANY)],
+        outputs=[Port(name="match",   type=PortType.ANY),
+                 Port(name="default", type=PortType.ANY),
+                 Port(name="taken",   type=PortType.STRING)],
+        config_schema={"case": {}},
+        icon="⎇",
+    ),
+    _switch_executor,
+)

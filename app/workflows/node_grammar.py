@@ -110,8 +110,9 @@ PRIMITIVES: list[Primitive] = [
             "if": "control.if",
             "merge": "control.merge",
             "foreach": "control.foreach",
+            "switch": "control.switch",
         }, READY,
-        "branch / flow; `switch` is a slice-5 follow-up",
+        "branch / flow — if / merge / foreach / switch",
         params=({"k": "kind", "v": "if", "type": "text"},),
     ),
     Primitive(

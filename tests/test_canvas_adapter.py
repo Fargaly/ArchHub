@@ -111,6 +111,18 @@ def test_normalize_does_not_mutate_input():
     assert "type" not in graph["nodes"][0]    # original untouched
 
 
+def test_switch_executor_routes_by_equality():
+    """control.switch — the `logic` primitive's switch op: routes value
+    to `match` on equality with `case`, else `default`."""
+    from workflows.nodes.control import _switch_executor
+    m = _switch_executor({"case": "wall"}, {"value": "wall"}, None)
+    assert m["match"] == "wall" and m["default"] is None and m["taken"] == "match"
+    d = _switch_executor({"case": "wall"}, {"value": "door"}, None)
+    assert d["match"] is None and d["default"] == "door" and d["taken"] == "default"
+    # registered + grammar-resolvable
+    assert workflows.get("control.switch") is not None
+
+
 def test_params_to_config_handles_list_and_dict():
     assert ng._params_to_config(
         [{"k": "a", "v": 1}, {"k": "b", "v": 2}]) == {"a": 1, "b": 2}

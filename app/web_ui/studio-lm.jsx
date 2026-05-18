@@ -777,7 +777,7 @@ const StudioLM = () => {
         k: pp.k, v: pp.v, type: pp.type || 'text' }));
       const gnode = {
         id: gid, kind: g.kind, cat: g.cat || 'node', x, y, w:220, h:112,
-        title: g.display || g.kind, sub: g.note || g.kind,
+        title: g.display || g.kind, sub: g.blurb || g.kind,
         ins:  ((g.ports && g.ports.in)  || []).map(gport),
         outs: ((g.ports && g.ports.out) || []).map(gport),
         params: gparams, _user: true,
@@ -2527,7 +2527,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
                   const it = {
                     id: 'ng:' + p.kind,
                     title: p.display || p.kind,
-                    sub: p.note || p.kind,
+                    sub: p.blurb || p.kind,
                     _grammar: p,
                   };
                   return (

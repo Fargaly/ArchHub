@@ -125,9 +125,20 @@ class TestGrammarPayload:
         json.dumps(payload)  # must not raise
         for entry in payload:
             assert {"kind", "display", "cat", "selector", "engine_types",
-                    "status", "note", "ports", "params"} <= entry.keys()
+                    "status", "note", "ports", "params",
+                    "blurb"} <= entry.keys()
             assert {"in", "out"} <= entry["ports"].keys()
             assert isinstance(entry["params"], list)
+            # `blurb` is the user-facing palette subtitle — short + plain,
+            # NEVER engineering jargon (that lives in `note`). Guards the
+            # regression where the dev note got dumped into the palette.
+            assert entry["blurb"], f"{entry['kind']} has no blurb"
+            assert len(entry["blurb"]) <= 48, (entry["kind"], entry["blurb"])
+            low = entry["blurb"].lower()
+            for jargon in ("executor", "run_op", "subgraph", "slice",
+                           "registry", ".parameter"):
+                assert jargon not in low, (
+                    f"{entry['kind']} blurb has dev jargon: {entry['blurb']!r}")
         by_kind = {e["kind"]: e for e in payload}
         # the master nodes land with their selector/host/op param rows
         assert {"host", "op"} <= {p["k"] for p in by_kind["connector"]["params"]}

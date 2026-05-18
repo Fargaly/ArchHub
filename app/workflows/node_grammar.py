@@ -51,8 +51,9 @@ class Primitive:
     engine_types: dict[str, str]  # selector-value -> REGISTERED engine type
                                   # ("" key = the fixed type when selector is "")
     status: str        # READY | NEEDS_EXECUTOR | UX_ONLY
-    note: str = ""
-    params: tuple = ()  # default {k,v,type} rows a placed node lands with
+    note: str = ""        # engineering note (internal — NOT a UI string)
+    params: tuple = ()    # default {k,v,type} rows a placed node lands with
+    blurb: str = ""       # short, plain, user-facing line — the palette subtitle
 
     def engine_type_for(self, params: dict | None) -> str | None:
         """The registry type this node dispatches on, given its params.
@@ -71,26 +72,26 @@ PRIMITIVES: list[Primitive] = [
     Primitive(
         "input", "Input", "input", "",
         {"": "input.parameter"}, READY,
-        "graph input; value/file/host-pick are input-UX variants over "
-        "the one input.parameter executor",
+        "input.parameter — value/file/host-pick are input-UX variants",
         params=({"k": "name", "v": "input", "type": "text"},
                 {"k": "default", "v": "", "type": "text"}),
+        blurb="A value you feed into the graph",
     ),
     Primitive(
         "constant", "Constant", "input", "",
         {"": "data.constant"}, READY,
-        "a literal typed value",
+        "data.constant — a literal typed value",
         params=({"k": "value", "v": "", "type": "text"},),
+        blurb="A fixed value",
     ),
     Primitive(
         "connector", "Connector", "connector", "",
         {"": "connector.run"}, READY,
-        "MASTER host node — one per host. `host` + `op` config select "
-        "the operation; the op's ConnectorOp.inputs render in the right "
-        "panel. Runs the connector contract through the `connector.run` "
-        "engine executor (folds the run_op path into the runner).",
+        "connector.run — `host`+`op` select the op; folds the run_op "
+        "path into the runner",
         params=({"k": "host", "v": "", "type": "text"},
                 {"k": "op", "v": "", "type": "text"}),
+        blurb="Run any app — Revit, Excel, Outlook…",
     ),
     Primitive(
         "ai", "AI", "ai", "action",
@@ -100,9 +101,10 @@ PRIMITIVES: list[Primitive] = [
             "tools": "llm.complete_with_tools",
             "classify": "llm.classify",
         }, READY,
-        "MASTER AI node — `action` picks the engine type. vision / "
-        "extract / embed actions are added when their executors ship.",
+        "`action` picks the engine type; vision/extract/embed land "
+        "when their executors ship",
         params=({"k": "action", "v": "chat", "type": "text"},),
+        blurb="Ask Claude — chat, complete, classify",
     ),
     Primitive(
         "logic", "Logic", "logic", "kind",
@@ -112,55 +114,63 @@ PRIMITIVES: list[Primitive] = [
             "foreach": "control.foreach",
             "switch": "control.switch",
         }, READY,
-        "branch / flow — if / merge / foreach / switch",
+        "control.* — if / merge / foreach / switch",
         params=({"k": "kind", "v": "if", "type": "text"},),
+        blurb="Branch, merge, or loop",
     ),
     Primitive(
         "output", "Output", "output", "",
         {"": "output.parameter"}, READY,
-        "graph output / sink",
+        "output.parameter — graph sink",
         params=({"k": "name", "v": "result", "type": "text"},),
+        blurb="The graph's result",
     ),
     Primitive(
         "skill", "Skill", "skill", "",
         {"": "subgraph.user"}, READY,
-        "a saved Skill graph placed as ONE node (recursive — "
-        "save-as-Skill, then reuse; subgraph reference semantics)",
+        "subgraph.user — a saved Skill graph placed as ONE node "
+        "(recursive; subgraph reference semantics)",
+        blurb="A saved skill, reused as one node",
     ),
     Primitive(
         "filter", "Filter", "shape", "",
         {"": "filter.apply"}, READY,
-        "keep / drop list items by a `field` / `op` / `match` predicate",
+        "filter.apply — keep/drop list items by a field/op/match "
+        "predicate",
         params=({"k": "field", "v": "", "type": "text"},
                 {"k": "op", "v": "truthy", "type": "text"},
                 {"k": "match", "v": "", "type": "text"}),
+        blurb="Keep only the items you want",
     ),
     Primitive(
         "transform", "Transform", "shape", "",
         {"": "transform.apply"}, READY,
-        "map / reshape data — `op`: count / pick / first / last / "
-        "unique / sort / flatten / identity",
+        "transform.apply — count/pick/first/last/unique/sort/flatten",
         params=({"k": "op", "v": "identity", "type": "text"},
                 {"k": "field", "v": "", "type": "text"}),
+        blurb="Reshape or summarise data",
     ),
     Primitive(
         "watch", "Watch", "watch", "",
         {"": "watch.preview"}, READY,
-        "watcher — passes data through + emits a preview; `as` "
-        "(list / table / json / ...) is the JSX render hint",
+        "watch.preview — passthrough + a preview; `as` is the render "
+        "hint",
         params=({"k": "as", "v": "json", "type": "text"},),
+        blurb="Preview data as it flows",
     ),
     Primitive(
         "trigger", "Trigger", "watch", "",
         {"": "trigger.emit"}, READY,
-        "graph entry point — emits a fire event (`on`: manual / "
-        "schedule / file / host-event) + passes `value` through",
+        "trigger.emit — emits a fire event (`on`) + passes `value` "
+        "through",
         params=({"k": "on", "v": "manual", "type": "text"},),
+        blurb="Start the graph",
     ),
     Primitive(
         "note", "Note", "note", "",
         {}, UX_ONLY,
-        "comment / sticky — never executes",
+        "never executes",
+        blurb="A sticky note",
     ),
 ]
 
@@ -225,7 +235,7 @@ def grammar_payload() -> list[dict]:
         out.append({
             "kind": p.kind, "display": p.display, "cat": p.cat,
             "selector": p.selector, "engine_types": dict(p.engine_types),
-            "status": p.status, "note": p.note,
+            "status": p.status, "note": p.note, "blurb": p.blurb,
             "ports": _ports_for(rep),
             "params": [dict(x) for x in p.params],
         })

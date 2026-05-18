@@ -44,6 +44,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P2 `/dashboard` authed-roster test — current tests only assert the page renders, not the authenticated company/team render (qa)
 - [ ] #P2 First-run profile capture — zero automated coverage on the `get_profile` / `save_profile` bridge slots + `FirstRunProfile` (qa)
 - [ ] #P1 Cloud Pro / Studio paid tiers — auth + Stripe phase per `docs/CLOUD_REVIVAL_PLAN.md` (eng)
+- [ ] #P2 Deploy the 3ds Max host add-in — `payload/max/` does not exist; the connector is code-complete but `probe()` honestly reports `missing` until the add-in ships. Build + deploy from `payload/sources/max_mcp/` (ops)
 
 ## LATER
 

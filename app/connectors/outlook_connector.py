@@ -262,6 +262,33 @@ def _from_execute(res: Any, noun: str) -> OpResult:
     )
 
 
+def _execute_python(code: str = "") -> OpResult:
+    """Run an arbitrary Python snippet inside Outlook over COM.
+
+    The ESCAPE HATCH for anything the named ops don't cover — clearing
+    or setting categories, rules, moving / deleting mail, bulk edits.
+    The runner puts `outlook` (the Application) and `ns` (the MAPI
+    namespace) in scope; the snippet assigns `result` to return a
+    value. Policy-gated to "ask" in `ai_behaviour` (the `outlook`
+    family already maps `execute_python` → "ask"), so every call is
+    user-confirmed before it touches the mailbox.
+    """
+    snippet = (code or "").strip()
+    if not snippet:
+        return OpResult.fail("code is required")
+    res = _runner.execute_python(code=snippet)
+    if not isinstance(res, dict):
+        return OpResult.fail("Outlook returned an unexpected shape")
+    if res.get("status") != "ok":
+        return OpResult.fail(res.get("error", "Outlook script failed"))
+    value = res.get("result")
+    return OpResult(
+        ok=True,
+        value=value if value is not None else {"ok": True},
+        value_preview="script ran",
+    )
+
+
 # ── connector ────────────────────────────────────────────────────────
 class OutlookConnector(Connector):
     """Classic Outlook, driven over COM via `outlook_runner`."""
@@ -418,6 +445,29 @@ class OutlookConnector(Connector):
                 output_type="email",
                 destructive=True,
                 fn=_mark_read,
+            ),
+            ConnectorOp(
+                op_id="outlook.execute_python", host="outlook",
+                kind="action", label="Run Python (escape hatch)",
+                description="Run an arbitrary Python snippet inside "
+                            "Outlook over COM — the escape hatch for "
+                            "anything the named ops don't cover: "
+                            "clearing/setting categories, rules, "
+                            "moving or deleting mail, bulk edits. "
+                            "`outlook` (Application) and `ns` (MAPI "
+                            "namespace) are in scope; assign `result` "
+                            "to return a value. User-confirmed on "
+                            "every call.",
+                inputs=[
+                    ParamSpec("code", "Python code", "text",
+                              required=True,
+                              help="Python with `outlook` + `ns` COM "
+                                   "objects in scope. Assign `result` "
+                                   "to return data."),
+                ],
+                output_type="json",
+                destructive=True,
+                fn=_execute_python,
             ),
         ]
 

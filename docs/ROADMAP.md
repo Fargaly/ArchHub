@@ -36,6 +36,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot) is unverified and inert until the default branch is pushed (ops)
 - [ ] #P1 archhub.io go-live — DNS records, Fly deploy, Resend domain verification, `PUBLIC_URL` secret (ops)
+- [ ] #P1 Audit the `tool_policies` override store — every dangerous op (Revit/AutoCAD/Blender/Max code-exec + `outlook_execute_python` + Outlook mail mutation) is overridden to "allow", bypassing the "ask" defaults in `ai_behaviour.py`. Confirm founder-intended vs test-polluted; if a test writes the real `secrets_store`, fix the test isolation (qa)
 - [x] #P2 SessionCard host pills + last-message preview — `get_sessions` now emits `host` / `last` / `node_count` / `messages` via `session_io.list_sessions_rich`; the JSX card already had the render slots; shipped 2026-05-18 (eng)
 - [ ] #P2 Home filter chip `scheduled` is dead — no session-schedule model exists; remove the chip. (The `workflows` chip now works — `get_sessions` emits `node_count`.) (eng)
 
@@ -45,6 +46,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P2 First-run profile capture — zero automated coverage on the `get_profile` / `save_profile` bridge slots + `FirstRunProfile` (qa)
 - [ ] #P1 Cloud Pro / Studio paid tiers — auth + Stripe phase per `docs/CLOUD_REVIVAL_PLAN.md` (eng)
 - [ ] #P2 Deploy the 3ds Max host add-in — `payload/max/` does not exist; the connector is code-complete but `probe()` honestly reports `missing` until the add-in ships. Build + deploy from `payload/sources/max_mcp/` (ops)
+- [ ] #P2 Outlook connector op gap — it ships 8 named ops, but `ai_behaviour.py` + `outlook_runner` were built for ~15 (`set_categories`, `set_categories_by_filter`, `auto_categorize_by_*`, `search_threads`, `list_folders`, `move_to_folder`, `flag_for_followup`, ...). The `execute_python` escape hatch was wired 2026-05-18; wire the named category/folder ops too (eng)
 
 ## LATER
 

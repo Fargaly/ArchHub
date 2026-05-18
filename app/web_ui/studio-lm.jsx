@@ -4972,8 +4972,45 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
     case 'output':       return <OutputBody n={n}/>;
     case 'connector_op': return <ConnectorOpBody n={n}/>;
     case 'custom':       return <CustomBody n={n}/>;
-    default:             return null;
+    default:             return <GrammarBody n={n}/>;
   }
+};
+
+// ─── Grammar-node body — the redesigned ~12-primitive nodes
+// (docs/NODE_GRAMMAR.md). Shows the node's param rows compactly; the
+// full editor is the right-side inspector. One body for every grammar
+// cat the switch above does not special-case (input, connector, shape,
+// watch, skill, note) — before this they rendered an empty body.
+const GrammarBody = ({ n }) => {
+  const params = n.params || [];
+  return (
+    <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:3 }}>
+      {params.length === 0 && (
+        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkDim }}>
+          no params
+        </span>
+      )}
+      {params.slice(0, 5).map((p, i) => (
+        <div key={i} style={{ display:'flex', alignItems:'center', gap:6,
+          fontFamily:LM.mono, fontSize:9.5 }}>
+          <span style={{ color:LM.inkMuted, width:74, flexShrink:0,
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {p.k}
+          </span>
+          <span style={{ flex:1, color:LM.ink, background:LM.bg,
+            border:`1px solid ${LM.lineSoft}`, borderRadius:3, padding:'2px 6px',
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {p.v === '' || p.v == null ? '—' : String(p.v)}
+          </span>
+        </div>
+      ))}
+      {params.length > 5 && (
+        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkDim }}>
+          +{params.length - 5} more in inspector
+        </span>
+      )}
+    </div>
+  );
 };
 
 // ─── Custom-node body — an AI-minted node type. Shows the typed I/O

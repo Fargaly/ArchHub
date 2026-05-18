@@ -119,20 +119,20 @@ PRIMITIVES: list[Primitive] = [
     ),
     Primitive(
         "filter", "Filter", "shape", "",
-        {}, NEEDS_EXECUTOR,
-        "keep / drop items by a predicate — executor built in ROADMAP "
-        "slice 7",
+        {"": "filter.apply"}, READY,
+        "keep / drop list items by a `field` / `op` / `match` predicate",
     ),
     Primitive(
         "transform", "Transform", "shape", "",
-        {}, NEEDS_EXECUTOR,
-        "map / reshape data — executor built in ROADMAP slice 7",
+        {"": "transform.apply"}, READY,
+        "map / reshape data — `op`: count / pick / first / last / "
+        "unique / sort / flatten / identity",
     ),
     Primitive(
-        "watch", "Watch", "watch", "as",
-        {}, NEEDS_EXECUTOR,
-        "watcher / preview (list / table / view / model / image / json) "
-        "— executor built in ROADMAP slice 6",
+        "watch", "Watch", "watch", "",
+        {"": "watch.preview"}, READY,
+        "watcher — passes data through + emits a preview; `as` "
+        "(list / table / json / ...) is the JSX render hint",
     ),
     Primitive(
         "trigger", "Trigger", "watch", "on",

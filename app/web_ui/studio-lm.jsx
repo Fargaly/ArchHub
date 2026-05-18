@@ -1281,6 +1281,23 @@ const StudioLM = () => {
         bumpGraph();
       }
     };
+    // Workflow / node cook result. run_workflow emits workflow_done(
+    // kind, req_id, result_json); result.results maps nodeId -> that
+    // node's cooked outputs. Stash on node.cooked so node bodies (the
+    // watch node especially) can render what cooked. Before this the
+    // JSX never listened — a Run produced a result nothing displayed.
+    const onWorkflowDone = (kind, reqId, resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { return; }
+      const results = (res && res.results) || {};
+      let touched = false;
+      for (const nid of Object.keys(results)) {
+        const node = (LM_GRAPH.nodes || []).find(n => n.id === nid);
+        if (node) { node.cooked = results[nid]; touched = true; }
+      }
+      if (touched) saveCurrentGraph();
+      bumpGraph();
+    };
     wire('chat_chunk',     onChunk);
     wire('chat_reasoning', onReasoning);
     wire('chat_done',      onDone);
@@ -1290,6 +1307,7 @@ const StudioLM = () => {
     wire('connector_op_done', onConnectorOpDone);
     wire('param_options_ready', onParamOptions);
     wire('node_created',   onNodeCreated);
+    wire('workflow_done',  onWorkflowDone);
     return () => { for (const off of wires) { try { off(); } catch (e) {} } };
   }, [bumpGraph, focusId]);
 
@@ -5008,6 +5026,18 @@ const GrammarBody = ({ n }) => {
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkDim }}>
           +{params.length - 5} more in inspector
         </span>
+      )}
+      {n.cooked != null && (
+        <div style={{ marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.ink,
+          background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:3,
+          padding:'3px 6px', maxHeight:72, overflow:'auto', whiteSpace:'pre-wrap' }}>
+          {(() => {
+            const c = n.cooked;
+            if (c && c.preview != null) return String(c.preview);
+            try { return JSON.stringify(c && c.value !== undefined ? c.value : c); }
+            catch (e) { return String(c); }
+          })()}
+        </div>
       )}
     </div>
   );

@@ -30,7 +30,12 @@ import email_sender
 async def register_via_email(*, email: str, code_challenge: str,
                               redirect: str = "") -> bool:
     """Create / load the user and email them a sign-in link.
-    Returns True on accepted email."""
+    Returns True on accepted email.
+
+    A brand-new account also gets the one-time welcome email (roadmap
+    #P2 onboarding sequence) — detected BEFORE get_or_create_user
+    creates the row, sent best-effort so it can never break sign-in."""
+    is_new_user = db.get_user_by_email(email) is None
     user = db.get_or_create_user(email)
     code = db.issue_code(user["id"], code_challenge)
     # Build the sign-in link the user clicks. Loops back to their
@@ -44,7 +49,13 @@ async def register_via_email(*, email: str, code_challenge: str,
         f"{config.PUBLIC_URL.rstrip('/')}/auth/return?"
         + urllib.parse.urlencode(link_params)
     )
-    return await email_sender.send_magic_link(to=email, link=link)
+    ok = await email_sender.send_magic_link(to=email, link=link)
+    if is_new_user:
+        try:
+            await email_sender.send_welcome_email(to=email)
+        except Exception:
+            pass   # welcome is best-effort — never fails the sign-in
+    return ok
 
 
 def exchange_code(*, code: str, code_verifier: str

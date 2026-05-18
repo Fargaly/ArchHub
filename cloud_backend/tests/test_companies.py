@@ -235,8 +235,11 @@ class TestAcceptInvite:
     def test_accept_creates_membership(
             self, client, owner_token, other_token, monkeypatch):
         import db
-        cid, tok = self._new_company_with_invite(client, owner_token,
-                                                    monkeypatch)
+        # The invite must be addressed to the accepting user — email
+        # match is enforced (roadmap #P2). other_token = teammate@.
+        cid, tok = self._new_company_with_invite(
+            client, owner_token, monkeypatch,
+            invite_email="teammate@studio.com")
         other_user, t_other = other_token
         r = client.post("/v1/companies/invites/accept",
                           json={"invite_token": tok},
@@ -248,8 +251,9 @@ class TestAcceptInvite:
 
     def test_accept_already_used_rejected(
             self, client, owner_token, other_token, monkeypatch):
-        cid, tok = self._new_company_with_invite(client, owner_token,
-                                                    monkeypatch)
+        cid, tok = self._new_company_with_invite(
+            client, owner_token, monkeypatch,
+            invite_email="teammate@studio.com")
         _, t_other = other_token
         client.post("/v1/companies/invites/accept",
                       json={"invite_token": tok}, headers=_hdr(t_other))
@@ -263,6 +267,41 @@ class TestAcceptInvite:
                           json={"invite_token": "x" * 30},
                           headers=_hdr(t))
         assert r.status_code == 404
+
+    def test_accept_email_mismatch_rejected(
+            self, client, owner_token, other_token, monkeypatch):
+        """Invite bound to one address, accepted by a user signed in
+        with a different address → 403, NO membership, invite stays
+        unused. Token possession alone must not buy a seat (#P2)."""
+        import db
+        cid, tok = self._new_company_with_invite(
+            client, owner_token, monkeypatch,
+            invite_email="someone-else@studio.com")
+        other_user, t_other = other_token   # teammate@studio.com
+        r = client.post("/v1/companies/invites/accept",
+                          json={"invite_token": tok},
+                          headers=_hdr(t_other))
+        assert r.status_code == 403
+        assert r.json()["detail"] == "invite_email_mismatch"
+        # The seat must NOT have been granted...
+        assert db.get_membership(cid, other_user["id"]) is None
+        # ...and the invite stays open for the right person to accept.
+        assert db.get_company_invite(tok)["accepted_at"] is None
+
+    def test_accept_email_match_is_case_insensitive(
+            self, client, owner_token, other_token, monkeypatch):
+        """Invite typed with mixed-case capitals still matches a user
+        whose address is stored lower-cased — both sides normalise."""
+        import db
+        cid, tok = self._new_company_with_invite(
+            client, owner_token, monkeypatch,
+            invite_email="TeamMate@Studio.com")
+        other_user, t_other = other_token
+        r = client.post("/v1/companies/invites/accept",
+                          json={"invite_token": tok},
+                          headers=_hdr(t_other))
+        assert r.status_code == 200, r.text
+        assert db.get_membership(cid, other_user["id"]) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +418,90 @@ class TestDetailAndPatch:
         r = client.patch(f"/v1/companies/{cid}",
                            json={"name": "Hijacked"}, headers=_hdr(t_other))
         assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Invite acceptance page — GET /invite (roadmap #P0)
+# ---------------------------------------------------------------------------
+class TestInvitePage:
+    def test_invite_page_renders_with_token(self, client):
+        r = client.get("/invite?token=abc123XYZ")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        # The invite token is injected into the page JS.
+        assert 'INVITE = "abc123XYZ"' in r.text
+        # The page drives the existing accept API.
+        assert "/v1/companies/invites/accept" in r.text
+
+    def test_invite_page_sanitizes_token(self, client):
+        # A token carrying HTML/JS metacharacters must not break out of
+        # the JS string — only [A-Za-z0-9_-] survive.
+        r = client.get('/invite?token=x"><script>alert(1)</script>')
+        assert r.status_code == 200
+        assert "<script>alert(1)" not in r.text
+        assert 'INVITE = "xscriptalert1script"' in r.text
+
+    def test_invite_page_without_token_still_renders(self, client):
+        r = client.get("/invite")
+        assert r.status_code == 200
+        assert 'INVITE = ""' in r.text
+
+
+# ---------------------------------------------------------------------------
+# Owner-transfer flow — POST /v1/companies/{cid}/transfer-ownership (#P1)
+# ---------------------------------------------------------------------------
+class TestTransferOwnership:
+    def _company(self, client, token, name):
+        return client.post("/v1/companies",
+                            json={"name": name, "plan": "studio"},
+                            headers=_hdr(token)).json()["id"]
+
+    def test_owner_transfers_to_member(self, client, owner_token,
+                                        other_token):
+        import db
+        owner_user, t_owner = owner_token
+        other_user, _ = other_token
+        cid = self._company(client, t_owner, "Transfer Co")
+        db.add_company_member(company_id=cid, user_id=other_user["id"],
+                              role="member")
+        r = client.post(f"/v1/companies/{cid}/transfer-ownership",
+                         json={"new_owner_user_id": other_user["id"]},
+                         headers=_hdr(t_owner))
+        assert r.status_code == 200, r.text
+        assert r.json()["owner_user_id"] == other_user["id"]
+        # New owner promoted; previous owner demoted to admin (not orphaned).
+        assert db.get_membership(cid, other_user["id"])["role"] == "owner"
+        assert db.get_membership(cid, owner_user["id"])["role"] == "admin"
+        # The company row's owner pointer moved too.
+        assert db.get_company(cid)["owner_user_id"] == other_user["id"]
+
+    def test_non_owner_cannot_transfer(self, client, owner_token,
+                                        other_token):
+        import db
+        owner_user, t_owner = owner_token
+        other_user, t_other = other_token
+        cid = self._company(client, t_owner, "Transfer Co 2")
+        db.add_company_member(company_id=cid, user_id=other_user["id"],
+                              role="member")
+        r = client.post(f"/v1/companies/{cid}/transfer-ownership",
+                         json={"new_owner_user_id": owner_user["id"]},
+                         headers=_hdr(t_other))
+        assert r.status_code == 403
+
+    def test_transfer_to_non_member_rejected(self, client, owner_token,
+                                              third_token):
+        _, t_owner = owner_token
+        third_user, _ = third_token
+        cid = self._company(client, t_owner, "Transfer Co 3")
+        r = client.post(f"/v1/companies/{cid}/transfer-ownership",
+                         json={"new_owner_user_id": third_user["id"]},
+                         headers=_hdr(t_owner))
+        assert r.status_code == 404
+
+    def test_transfer_to_self_rejected(self, client, owner_token):
+        owner_user, t_owner = owner_token
+        cid = self._company(client, t_owner, "Transfer Co 4")
+        r = client.post(f"/v1/companies/{cid}/transfer-ownership",
+                         json={"new_owner_user_id": owner_user["id"]},
+                         headers=_hdr(t_owner))
+        assert r.status_code == 400

@@ -144,13 +144,13 @@ try {
 
 # ----- 8. DNS attach (optional) -----------------------------------------
 if ($DnsAttach) {
-    Step 8 "Attaching custom domain cloud.archhub.app"
-    flyctl certs add cloud.archhub.app -a $AppName 2>&1
+    Step 8 "Attaching custom domain cloud.archhub.io"
+    flyctl certs add cloud.archhub.io -a $AppName 2>&1
     Write-Host "    Add these DNS records at your DNS provider:"
     flyctl ips list -a $AppName
     Write-Host ""
-    Write-Host "    Add an A record: cloud.archhub.app  →  <v4 from above>"
-    Write-Host "    Add an AAAA record: cloud.archhub.app  →  <v6 from above>"
+    Write-Host "    Add an A record: cloud.archhub.io  →  <v4 from above>"
+    Write-Host "    Add an AAAA record: cloud.archhub.io  →  <v6 from above>"
 }
 
 # ----- 9. Stripe webhook reminder ----------------------------------------

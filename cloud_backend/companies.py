@@ -101,6 +101,10 @@ class AcceptInviteReq(BaseModel):
     invite_token: str = Field(min_length=10, max_length=200)
 
 
+class TransferOwnershipReq(BaseModel):
+    new_owner_user_id: str = Field(min_length=1, max_length=200)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -252,10 +256,19 @@ def accept_invite(req: AcceptInviteReq,
         raise HTTPException(status_code=400, detail="invite_already_used")
     if int(invite["expires_at"]) < int(time.time()):
         raise HTTPException(status_code=400, detail="invite_expired")
-    # Email match is best-effort: the invite is bound to an address but
-    # the user has already proven ownership of *some* address via the
-    # magic-link sign-in flow. If they don't match, we accept anyway —
-    # the firm owner trusts the link recipient. Strictness is Phase 2.
+    # Email match (roadmap #P2). An invite is bound to the address the
+    # owner typed. Token possession alone must NOT grant a seat — a
+    # forwarded link, a screenshot, or a leaked log would otherwise let
+    # a stranger join the firm and burn a paid seat. Require the signed-
+    # in user's address to equal the invited address. Both sides are
+    # stored .strip().lower()-normalized (db.get_or_create_user /
+    # db.create_company_invite); we re-normalize here so the gate holds
+    # even for rows a future caller might write un-normalized.
+    invited_email = (invite.get("email") or "").strip().lower()
+    user_email = (user.get("email") or "").strip().lower()
+    if not invited_email or invited_email != user_email:
+        raise HTTPException(status_code=403,
+                            detail="invite_email_mismatch")
     db.add_company_member(
         company_id=invite["company_id"],
         user_id=user["id"],
@@ -283,6 +296,28 @@ def remove_member(company_id: str, user_id: str,
         raise HTTPException(status_code=404, detail="member_not_found")
     db.remove_company_member(company_id, user_id)
     return {"ok": True}
+
+
+@router.post("/v1/companies/{company_id}/transfer-ownership")
+def transfer_ownership(company_id: str, req: TransferOwnershipReq,
+                       authorization: str | None = Header(None)) -> dict:
+    """Hand the company to another member (roadmap #P1). Only the
+    current owner may transfer. The new owner must already be a
+    member; the previous owner stays on as 'admin' (never orphaned).
+    Unblocks owner-leave: transfer first, then remove yourself."""
+    actor = _require_user(authorization)
+    _require_membership(company_id, actor["id"], roles=("owner",))
+    if req.new_owner_user_id == actor["id"]:
+        raise HTTPException(status_code=400, detail="already_owner")
+    if db.get_membership(company_id, req.new_owner_user_id) is None:
+        raise HTTPException(status_code=404, detail="member_not_found")
+    db.transfer_company_ownership(company_id, actor["id"],
+                                  req.new_owner_user_id)
+    return {
+        "ok": True,
+        "company_id": company_id,
+        "owner_user_id": req.new_owner_user_id,
+    }
 
 
 @router.post("/v1/companies/{company_id}/switch")

@@ -54,10 +54,10 @@ app = FastAPI(
 
 # Only the desktop client + the public website need to call this
 # backend. CORS-allow our own origin so the public dashboard at
-# archhub.app can fetch /v1/me from the browser.
+# archhub.io can fetch /v1/me from the browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://archhub.app", "http://localhost:5173",
+    allow_origins=["https://archhub.io", "http://localhost:5173",
                     "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -642,6 +642,346 @@ def auth_return(code: str = "", redirect: str = "") -> HTMLResponse:
     )
 
 
+@app.get("/invite", response_class=HTMLResponse)
+def invite_landing(token: str = "") -> HTMLResponse:
+    """Invite acceptance page (roadmap #P0). A teammate clicks the
+    invite email's {PUBLIC_URL}/invite?token=... link and lands here.
+
+    Self-contained — all client-side JS, no new API. It runs the
+    existing magic-link PKCE flow (register → /auth/return → exchange)
+    then POSTs /v1/companies/invites/accept with the bearer. On return
+    from the magic-link the URL carries ?code=... and the JS finishes
+    automatically."""
+    safe_token = "".join(c for c in token if c.isalnum() or c in "-_")
+    html = f"""<!doctype html><html><head><title>Accept invite — ArchHub</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style>
+  :root {{ --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
+           --soft:#9b938a; --line:#26262d; --accent:#d97757; }}
+  body {{ margin:0; padding:60px 24px; background:var(--bg);
+          color:var(--ink); font-family:system-ui,-apple-system,
+          'Segoe UI',sans-serif; }}
+  .card {{ max-width:480px; margin:0 auto; padding:36px;
+           background:var(--raised); border:1px solid var(--line);
+           border-radius:14px; }}
+  h1 {{ margin:0 0 8px; font-family:Georgia,serif; font-style:italic;
+        font-size:30px; letter-spacing:-0.02em; }}
+  p {{ color:var(--soft); line-height:1.55; font-size:14px; }}
+  input {{ width:100%; padding:14px 16px; border-radius:10px;
+           border:1px solid var(--line); background:var(--bg);
+           color:var(--ink); font-size:15px; margin-top:18px;
+           box-sizing:border-box; }}
+  input:focus {{ outline:none; border-color:var(--accent); }}
+  button {{ width:100%; padding:14px; margin-top:14px;
+            background:var(--accent); color:white; border:none;
+            border-radius:10px; font-size:15px; font-weight:500;
+            cursor:pointer; }}
+  button:hover {{ background:#a04832; }}
+  button:disabled {{ opacity:0.5; cursor:default; }}
+  .ok {{ margin-top:18px; padding:14px; background:rgba(126,193,142,0.1);
+         border:1px solid #7ec18e; border-radius:10px; color:#7ec18e; }}
+  .err {{ margin-top:18px; padding:14px; background:rgba(229,178,90,0.1);
+          border:1px solid #e5b25a; border-radius:10px; color:#e5b25a; }}
+</style></head><body>
+<div class='card'>
+  <h1>Join your team on ArchHub</h1>
+  <p id='lead'>You've been invited to a company workspace. Sign in with
+     your email to accept — we'll send a one-time magic-link.</p>
+  <form id='f' onsubmit='return submitEmail(event)'>
+    <input id='email' type='email' placeholder='you@studio.com'
+            required autofocus>
+    <button type='submit' id='b'>Email me the sign-in link</button>
+  </form>
+  <div id='out'></div>
+</div>
+<script>
+const INVITE = "{safe_token}";
+const b64url = (buf) => btoa(String.fromCharCode.apply(null,
+  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
+  .replace(/=+$/,'');
+async function pkce() {{
+  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
+  const h = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(v));
+  return {{ verifier:v, challenge:b64url(h) }};
+}}
+function show(cls, msg) {{
+  document.getElementById('out').innerHTML =
+    '<div class="' + cls + '">' + msg + '</div>';
+}}
+async function submitEmail(ev) {{
+  ev.preventDefault();
+  if (!INVITE) {{ show('err','This invite link is missing its token.');
+                  return false; }}
+  const email = document.getElementById('email').value.trim();
+  const btn = document.getElementById('b');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {{
+    const p = await pkce();
+    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
+    const r = await fetch('/v1/auth/register', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{ email, code_challenge:p.challenge,
+        redirect:'/invite?token=' + encodeURIComponent(INVITE) }}),
+    }});
+    if (r.ok) {{
+      show('ok','Check your inbox — click the magic-link and your '
+        + 'invite is accepted automatically.');
+    }} else {{
+      const d = await r.json().catch(() => ({{detail:'unknown'}}));
+      show('err','Could not send the link: ' + (d.detail||'error'));
+      btn.disabled = false;
+      btn.textContent = 'Email me the sign-in link';
+    }}
+  }} catch(e) {{
+    show('err','Network error: ' + e);
+    btn.disabled = false;
+    btn.textContent = 'Email me the sign-in link';
+  }}
+  return false;
+}}
+async function completeAccept() {{
+  const code = new URLSearchParams(location.search).get('code');
+  if (!code) return;
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('lead').textContent =
+    'Finishing up — accepting your invite…';
+  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
+  if (!verifier) {{
+    show('err','Sign-in session was lost. Re-open the invite link '
+      + 'from your email.');
+    return;
+  }}
+  try {{
+    const ex = await fetch('/v1/auth/exchange', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{ code, code_verifier:verifier }}),
+    }});
+    if (!ex.ok) {{
+      show('err','Sign-in failed — the magic-link may have expired. '
+        + 'Re-open the invite link.');
+      return;
+    }}
+    const tok = (await ex.json()).token;
+    const ac = await fetch('/v1/companies/invites/accept', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json',
+                'Authorization':'Bearer ' + tok}},
+      body: JSON.stringify({{ invite_token:INVITE }}),
+    }});
+    if (ac.ok) {{
+      const d = await ac.json();
+      show('ok','You have joined the team as <b>'
+        + (d.role||'member') + '</b>. Open ArchHub on your desktop — '
+        + 'your shared workspace is ready.');
+    }} else {{
+      const d = await ac.json().catch(() => ({{detail:'unknown'}}));
+      const msg = {{
+        invite_not_found:'This invite no longer exists.',
+        invite_already_used:'This invite was already accepted.',
+        invite_expired:'This invite has expired — ask for a new one.',
+        invite_email_mismatch:'This invite was sent to a different '
+          + 'email address. Sign in with the exact address it was '
+          + 'sent to, then re-open the invite link.',
+      }};
+      show('err', msg[d.detail] || ('Could not accept the invite: '
+        + (d.detail||'error')));
+    }}
+  }} catch(e) {{
+    show('err','Network error: ' + e);
+  }}
+  sessionStorage.removeItem('archhub_pkce_verifier');
+}}
+completeAccept();
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_landing() -> HTMLResponse:
+    """Customer admin dashboard (roadmap #P2). A signed-in user sees
+    their account — plan, message quota — plus every company they
+    belong to and, for the active one, the team roster.
+
+    Self-contained, like /invite: client-side magic-link PKCE
+    (register → /auth/return → exchange), then it reads the existing
+    /v1/me + /v1/companies endpoints with the bearer and renders. No
+    new API."""
+    html = """<!doctype html><html><head>
+<title>Account — ArchHub</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style>
+  :root { --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
+          --soft:#9b938a; --line:#26262d; --accent:#d97757;
+          --ok:#7ec18e; }
+  body { margin:0; padding:48px 24px; background:var(--bg);
+         color:var(--ink); font-family:system-ui,-apple-system,
+         'Segoe UI',sans-serif; }
+  .wrap { max-width:680px; margin:0 auto; }
+  h1 { margin:0 0 6px; font-family:Georgia,serif; font-style:italic;
+       font-size:30px; letter-spacing:-0.02em; }
+  .lead { color:var(--soft); font-size:14px; line-height:1.55;
+          margin:0 0 24px; }
+  .card { background:var(--raised); border:1px solid var(--line);
+          border-radius:12px; padding:20px 22px; margin-bottom:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; letter-spacing:0.12em;
+             text-transform:uppercase; color:var(--soft); }
+  .row { display:flex; justify-content:space-between; padding:7px 0;
+         border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--soft); }
+  .row .v { color:var(--ink); font-weight:500; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px;
+          font-size:11px; background:var(--accent); color:#fff;
+          letter-spacing:0.04em; }
+  .pill.muted { background:var(--line); color:var(--soft); }
+  input { width:100%; padding:13px 15px; border-radius:10px;
+          border:1px solid var(--line); background:var(--bg);
+          color:var(--ink); font-size:15px; margin-top:16px;
+          box-sizing:border-box; }
+  button { width:100%; padding:13px; margin-top:12px;
+           background:var(--accent); color:#fff; border:none;
+           border-radius:10px; font-size:15px; font-weight:500;
+           cursor:pointer; }
+  .err { margin-top:16px; padding:13px; border-radius:10px;
+         background:rgba(229,178,90,0.1); border:1px solid #e5b25a;
+         color:#e5b25a; font-size:13px; }
+  a { color:var(--accent); }
+</style></head><body>
+<div class='wrap'>
+  <h1>Your ArchHub account</h1>
+  <p class='lead' id='lead'>Sign in with your email — we'll send a
+     magic-link.</p>
+  <form id='f' onsubmit='return submitEmail(event)'>
+    <input id='email' type='email' placeholder='you@studio.com'
+            required autofocus>
+    <button type='submit' id='b'>Email me the sign-in link</button>
+  </form>
+  <div id='out'></div>
+  <div id='dash'></div>
+</div>
+<script>
+const b64url = (buf) => btoa(String.fromCharCode.apply(null,
+  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
+  .replace(/=+$/,'');
+async function pkce() {
+  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
+  const h = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(v));
+  return { verifier:v, challenge:b64url(h) };
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function showErr(msg) {
+  document.getElementById('out').innerHTML =
+    '<div class="err">' + esc(msg) + '</div>';
+}
+async function submitEmail(ev) {
+  ev.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const btn = document.getElementById('b');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const p = await pkce();
+    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
+    const r = await fetch('/v1/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, code_challenge:p.challenge,
+        redirect:'/dashboard' }),
+    });
+    if (r.ok) {
+      document.getElementById('out').innerHTML =
+        '<div class="err" style="background:rgba(126,193,142,0.1);'
+        + 'border-color:#7ec18e;color:#7ec18e;">Check your inbox — '
+        + 'click the magic-link to open your dashboard.</div>';
+    } else {
+      showErr('Could not send the link.');
+      btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+    }
+  } catch(e) {
+    showErr('Network error: ' + e);
+    btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+  }
+  return false;
+}
+function card(title, rows) {
+  return '<div class="card"><h2>' + esc(title) + '</h2>'
+    + rows.map(r => '<div class="row"><span class="k">' + esc(r[0])
+        + '</span><span class="v">' + (r[2] ? r[1] : esc(r[1]))
+        + '</span></div>').join('') + '</div>';
+}
+async function loadDashboard(token) {
+  const H = { 'Authorization':'Bearer ' + token };
+  const dash = document.getElementById('dash');
+  try {
+    const me = await (await fetch('/v1/me', {headers:H})).json();
+    const mine = await (await fetch('/v1/companies/mine',
+      {headers:H})).json();
+    let html = card('Account', [
+      ['Email', esc(me.email)],
+      ['Plan', '<span class="pill">' + esc(me.plan) + '</span>', true],
+      ['Messages remaining', String(me.remaining_messages)],
+    ]);
+    const companies = (mine.companies || []);
+    if (companies.length) {
+      html += '<div class="card"><h2>Companies</h2>'
+        + companies.map(c => '<div class="row"><span class="k">'
+            + esc(c.name) + (c.is_current
+              ? ' <span class="pill">current</span>' : '')
+            + '</span><span class="v">' + esc(c.role) + ' · '
+            + esc(c.plan) + ' · ' + esc(c.seat_limit)
+            + ' seats</span></div>').join('') + '</div>';
+      const cur = companies.find(c => c.is_current) || companies[0];
+      const detail = await (await fetch('/v1/companies/' + cur.id,
+        {headers:H})).json();
+      if (detail && detail.members) {
+        html += '<div class="card"><h2>' + esc(cur.name)
+          + ' — team (' + detail.members.length + ')</h2>'
+          + detail.members.map(m => '<div class="row"><span class="k">'
+              + esc(m.full_name || m.email) + '</span>'
+              + '<span class="v">' + esc(m.role) + '</span></div>')
+              .join('') + '</div>';
+      }
+    } else {
+      html += card('Companies',
+        [['No companies', 'Solo account', false]]);
+    }
+    dash.innerHTML = html;
+  } catch(e) {
+    showErr('Could not load your dashboard: ' + e);
+  }
+}
+async function init() {
+  const code = new URLSearchParams(location.search).get('code');
+  if (!code) return;
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('lead').textContent = 'Loading your account…';
+  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
+  if (!verifier) {
+    showErr('Sign-in session lost — reload /dashboard to retry.');
+    return;
+  }
+  try {
+    const ex = await fetch('/v1/auth/exchange', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code, code_verifier:verifier }),
+    });
+    if (!ex.ok) { showErr('Sign-in failed — the link may have expired.');
+                  return; }
+    const tok = (await ex.json()).token;
+    sessionStorage.removeItem('archhub_pkce_verifier');
+    document.getElementById('lead').textContent =
+      'Signed in. Here is your account.';
+    await loadDashboard(tok);
+  } catch(e) { showErr('Network error: ' + e); }
+}
+init();
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+
 # Stripe Customer-Portal / Checkout return landing pages — minimal.
 @app.get("/billing/success")
 def billing_success() -> HTMLResponse:
@@ -671,7 +1011,7 @@ def billing_portal_return() -> HTMLResponse:
 
 
 # ---------------------------------------------------------------------------
-# Top-level redirect: archhub.app/upgrade?tier=studio etc → checkout
+# Top-level redirect: archhub.io/upgrade?tier=studio etc → checkout
 # requires the user is already signed in (we don't accept anonymous
 # checkout flows). Send them to /signin if not.
 @app.get("/upgrade")

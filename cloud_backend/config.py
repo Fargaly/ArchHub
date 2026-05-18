@@ -66,14 +66,14 @@ GOOGLE_API_KEY    = _req("GOOGLE_API_KEY")
 RESEND_API_KEY = _req("RESEND_API_KEY")
 # PUBLIC_URL defaults to the Fly.io subdomain so the backend works
 # WITHOUT requiring a custom domain to be purchased/configured first.
-# Override via `flyctl secrets set PUBLIC_URL=https://cloud.archhub.app`
+# Override via `flyctl secrets set PUBLIC_URL=https://cloud.archhub.io`
 # once the user's own DNS is wired up.
 PUBLIC_URL     = _req("PUBLIC_URL", "https://archhub-cloud.fly.dev")
 # FROM_EMAIL — Resend will reject sends from unverified domains. Fly's
 # *.fly.dev subdomain isn't verifiable on Resend, so we keep the
 # branded sender BUT require the user verify ownership of the parent
 # domain in Resend's dashboard before live email goes out.
-FROM_EMAIL     = _req("FROM_EMAIL", "noreply@archhub.app")
+FROM_EMAIL     = _req("FROM_EMAIL", "noreply@archhub.io")
 
 # Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
 # they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).

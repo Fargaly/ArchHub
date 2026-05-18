@@ -194,3 +194,21 @@ class TestAuthReturn:
         r = client.get("/auth/return?code=test_code")
         assert r.status_code == 200
         assert "signed in" in r.text.lower()
+
+
+class TestDashboardPage:
+    """Customer admin dashboard — GET /dashboard (roadmap #P2)."""
+
+    def test_dashboard_renders(self, client):
+        r = client.get("/dashboard")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "Your ArchHub account" in r.text
+
+    def test_dashboard_reads_account_endpoints(self, client):
+        # The page is self-contained — it drives the existing account
+        # APIs client-side rather than adding new ones.
+        r = client.get("/dashboard")
+        for endpoint in ("/v1/auth/exchange", "/v1/me",
+                          "/v1/companies/mine"):
+            assert endpoint in r.text

@@ -1193,6 +1193,32 @@ def remove_company_member(company_id: str, user_id: str) -> None:
         )
 
 
+def transfer_company_ownership(company_id: str, old_owner_id: str,
+                                new_owner_id: str) -> None:
+    """Atomically hand a company to a new owner. Roadmap #P1.
+
+    Three writes in one transaction: point `companies.owner_user_id`
+    at the new owner, promote the new owner's membership row to
+    'owner', and demote the previous owner to 'admin' — kept as a
+    member, never orphaned, so they can still manage the team or be
+    removed normally afterward."""
+    with connect() as con:
+        con.execute(
+            "UPDATE companies SET owner_user_id = ? WHERE id = ?",
+            (new_owner_id, company_id),
+        )
+        con.execute(
+            "UPDATE company_members SET role = 'owner'"
+            " WHERE company_id = ? AND user_id = ?",
+            (company_id, new_owner_id),
+        )
+        con.execute(
+            "UPDATE company_members SET role = 'admin'"
+            " WHERE company_id = ? AND user_id = ?",
+            (company_id, old_owner_id),
+        )
+
+
 def set_current_company(user_id: str, company_id: Optional[str]) -> None:
     with connect() as con:
         con.execute(

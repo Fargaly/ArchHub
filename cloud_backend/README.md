@@ -81,10 +81,10 @@ After deploy:
 ```bash
 # Point the production domain at the Fly IP
 flyctl ips list
-# (Add an A record at your DNS for cloud.archhub.app pointing to the v4)
+# (Add an A record at your DNS for cloud.archhub.io pointing to the v4)
 
 # Add the Stripe webhook destination in the Stripe dashboard:
-#   https://cloud.archhub.app/v1/webhooks/stripe
+#   https://cloud.archhub.io/v1/webhooks/stripe
 # Copy the signing secret back into Fly via:
 flyctl secrets set STRIPE_WEBHOOK_SECRET=whsec_...
 ```

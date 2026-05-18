@@ -1,0 +1,46 @@
+name: Dependabot auto-merge
+
+# Keeps the repo maintained with zero manual toil: when Dependabot opens
+# a dependency-update PR, approve it and enable auto-merge for patch +
+# minor bumps. GitHub then merges it on its own once the required status
+# checks (test.yml / codeql.yml) go green. MAJOR bumps are deliberately
+# left for a human — a major can break an API and deserves a changelog
+# read.
+#
+# Prerequisites on GitHub (one-time, repo Settings):
+#   - General -> "Allow auto-merge" enabled
+#   - a branch-protection rule on `main` with required status checks
+# Without those, this workflow still approves but the merge waits.
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only ever act on Dependabot's own PRs.
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve the PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Patch + minor only. A major version bump can break a public API
+      # — those wait for a human.
+      - name: Enable auto-merge (patch + minor)
+        if: ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor' }}
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

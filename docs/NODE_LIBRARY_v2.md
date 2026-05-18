@@ -1,5 +1,10 @@
 # Node Library v2 — Grasshopper / Dynamo / Speckle informed taxonomy
 
+> **SUPERSEDED 2026-05-18 by `docs/NODE_GRAMMAR.md`.** This is the
+> 80-node aspirational catalogue the engine never caught up to — 0 of
+> its 80 nodes ever ran. The redesign replaces enumeration with a
+> ~12-primitive grammar. Kept for history only; do not build from it.
+
 > Author: Research agent · 2026-05-14 · Source: `studio-lm.jsx` prototype +
 > Grasshopper / Dynamo / Speckle node taxonomies + live host detector
 > (`app/host_detector.py` PROBERS) + Revit/AutoCAD/Max broker runners.

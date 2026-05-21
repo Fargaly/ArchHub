@@ -142,9 +142,17 @@ class TestOpSets:
             "revit.get_selection", "revit.list_warnings",
             "revit.create_dimensions", "revit.place_tags",
             "revit.set_parameter",
+            # AgDR-0017 (M2-Python): Revit ↔ Speckle ops. `send` is
+            # kind="read" (does not mutate Revit — ships upstream
+            # through SpeckleWire); `receive` is kind="action" +
+            # destructive (creates native elements).
+            "revit.send_to_speckle", "revit.receive_from_speckle",
+            # AgDR-0018 (Batch 2): excel-param flow — action +
+            # destructive (mutates existing element parameters).
+            "revit.batch_set_parameters",
         }
         assert ids == expected
-        assert len(c.ops()) == 13
+        assert len(c.ops()) == 16
 
     def test_autocad_op_ids(self):
         c = autocad_connector.AutoCADConnector()
@@ -155,9 +163,11 @@ class TestOpSets:
             "autocad.list_entities", "autocad.list_layouts",
             "autocad.get_selection", "autocad.list_xrefs",
             "autocad.run_command", "autocad.set_layer",
+            # AgDR-0017 send-pattern parity — kind=read (does not mutate AutoCAD).
+            "autocad.send_to_speckle",
         }
         assert ids == expected
-        assert len(c.ops()) == 9
+        assert len(c.ops()) == 10
 
     def test_max_op_ids(self):
         c = max_connector.MaxConnector()
@@ -166,9 +176,11 @@ class TestOpSets:
             "max.scene_info", "max.list_objects", "max.list_cameras",
             "max.list_lights", "max.list_materials", "max.get_selection",
             "max.run_maxscript",
+            # AgDR-0017 send-pattern parity — kind=read.
+            "max.send_to_speckle",
         }
         assert ids == expected
-        assert len(c.ops()) == 7
+        assert len(c.ops()) == 8
 
 
 # ===========================================================================
@@ -194,6 +206,10 @@ class TestOpMetadata:
         assert destructive == {
             "revit.create_dimensions", "revit.place_tags",
             "revit.set_parameter",
+            # AgDR-0017: receive creates native elements → destructive.
+            "revit.receive_from_speckle",
+            # AgDR-0018: batch_set mutates existing elements.
+            "revit.batch_set_parameters",
         }
 
     def test_autocad_destructive_set(self):

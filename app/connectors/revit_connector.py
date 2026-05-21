@@ -124,6 +124,18 @@ def _exec(op_id: str, code: str, *, instance: Optional[str] = None,
     if not isinstance(resp, dict):
         return OpResult.fail("Revit add-in returned a non-JSON response.", op_id)
     if resp.get("status") == "error":
+        # AgDR-0023 — RevitMCP on the subprocess-csc path returns
+        # `error_code: "csc_missing"` when no C# compiler is found
+        # in the standard probe locations. Surface a TYPED OpResult
+        # with a clear remediation pointer so the JSX UI can show
+        # the Build Tools install link instead of a raw error.
+        ecode = str(resp.get("error_code") or "").lower().strip()
+        if ecode == "csc_missing":
+            return OpResult.fail(
+                "C# compiler (csc.exe) not found. Install .NET "
+                "Framework 4 SDK or Visual Studio Build Tools, "
+                "then restart Revit. See docs/RUN-REVIT.md.",
+                op_id)
         return OpResult.fail(
             f"Revit add-in error: {resp.get('error', 'unknown error')}", op_id)
     # Success shape from RevitEventHandler.RunCSharpScript:
@@ -560,6 +572,84 @@ else {{
                       f"{data.get('value', value)}")
 
 
+# ── M2-Python (AgDR-0017) — Speckle ops wrappers ───────────────────
+def _send_to_speckle_op(instance: str = "", value: Any = None,
+                         model_name: str = "revit",
+                         server_push: bool = False,
+                         server_url: str = "") -> OpResult:
+    """`revit.send_to_speckle` thin wrapper into
+    `revit_speckle_ops.send_to_speckle`. `instance` is unused — the
+    op does not touch live Revit (it ships the value through
+    SpeckleWire). Kept for API symmetry with every other Revit op
+    and so a downstream `revit.receive_from_speckle` lands in the
+    same session selector."""
+    from connectors.revit_speckle_ops import send_to_speckle
+    result = send_to_speckle(
+        value=value, model_name=model_name,
+        server_push=bool(server_push), server_url=server_url)
+    if result.get("status") == "error":
+        return OpResult.fail(result.get("error", ""),
+                              "revit.send_to_speckle")
+    return OpResult(ok=True, value=result,
+                     op_id="revit.send_to_speckle",
+                     value_preview=f"{result.get('url', '')} "
+                                   f"({result.get('item_count', 0)} items)")
+
+
+def _receive_from_speckle_op(instance: str = "",
+                              source_url: str = "") -> OpResult:
+    """`revit.receive_from_speckle` thin wrapper that POSTs the
+    annotation-driven create script through `/exec`."""
+    if not source_url:
+        return OpResult.fail("source_url is required",
+                              "revit.receive_from_speckle")
+    from connectors.revit_speckle_ops import receive_from_speckle
+    # First-class broker-offline check — honest "Revit not running".
+    if revit_broker is not None:
+        try:
+            running = revit_broker.is_any_alive()
+        except Exception:
+            running = False
+        if not running:
+            return _broker_offline_result("revit.receive_from_speckle")
+    result = receive_from_speckle(source_url=source_url,
+                                    instance=instance or None)
+    if result.get("status") == "error":
+        return OpResult.fail(result.get("error", ""),
+                              "revit.receive_from_speckle")
+    return OpResult(ok=True, value=result,
+                     op_id="revit.receive_from_speckle",
+                     value_preview=f"created={(result.get('result') or {}).get('created_count', 0)} "
+                                   f"errors={(result.get('result') or {}).get('error_count', 0)}")
+
+
+def _batch_set_parameters_op(instance: str = "",
+                               source_url: str = "") -> OpResult:
+    """`revit.batch_set_parameters` thin wrapper (AgDR-0018). Reads
+    `{revit_element_id, revit_parameters}` items from a Speckle URL
+    and pushes the parameter values onto each existing element."""
+    if not source_url:
+        return OpResult.fail("source_url is required",
+                              "revit.batch_set_parameters")
+    if revit_broker is not None:
+        try:
+            running = revit_broker.is_any_alive()
+        except Exception:
+            running = False
+        if not running:
+            return _broker_offline_result("revit.batch_set_parameters")
+    from connectors.revit_speckle_ops import batch_set_parameters
+    result = batch_set_parameters(source_url=source_url,
+                                    instance=instance or None)
+    if result.get("status") == "error":
+        return OpResult.fail(result.get("error", ""),
+                              "revit.batch_set_parameters")
+    return OpResult(ok=True, value=result,
+                     op_id="revit.batch_set_parameters",
+                     value_preview=f"updated={(result.get('result') or {}).get('updated_count', 0)} "
+                                   f"errors={(result.get('result') or {}).get('error_count', 0)}")
+
+
 # ── connector ───────────────────────────────────────────────────────
 class RevitConnector(Connector):
     """Autodesk Revit — drives the host through the multi-session broker."""
@@ -765,6 +855,82 @@ class RevitConnector(Connector):
                 ],
                 output_type="any", destructive=True,
                 fn=_set_parameter,
+            ),
+            # ── M2-Python (AgDR-0017) — Revit ↔ Speckle ────────
+            # NB: send_to_speckle is kind="read" because it does
+            # NOT mutate Revit state — it ships an upstream value
+            # through SpeckleWire. The connector-op `kind`
+            # describes the op's effect on the HOST. receive does
+            # create native Revit elements → kind="action",
+            # destructive=True.
+            ConnectorOp(
+                op_id="revit.send_to_speckle", host="revit",
+                kind="read",
+                label="Send to Speckle",
+                description="Wrap upstream value + write through "
+                            "SpeckleWire. Optional push to a "
+                            "Speckle Server. Does not mutate Revit.",
+                inputs=[
+                    inst,
+                    ParamSpec(id="value", label="Value", type="any",
+                              default=None,
+                              help="The upstream value to send. List, "
+                                   "dict or scalar — shape preserved."),
+                    ParamSpec(id="model_name", label="Model name",
+                              type="text", default="revit",
+                              help="The model name stamped on the "
+                                   "Speckle commit."),
+                    ParamSpec(id="server_push", label="Push to server",
+                              type="boolean", default=False,
+                              help="If true, also push to the configured "
+                                   "Speckle Server."),
+                    ParamSpec(id="server_url", label="Server URL",
+                              type="text", default="",
+                              help="Speckle Server URL "
+                                   "(http://localhost:3000 for local)."),
+                ],
+                output_type="any", destructive=False,
+                fn=_send_to_speckle_op,
+            ),
+            ConnectorOp(
+                op_id="revit.receive_from_speckle", host="revit",
+                kind="action",
+                label="Receive from Speckle",
+                description="Pull a Speckle model + create native "
+                            "Revit elements per ADAPTER annotations "
+                            "(Walls / DirectShapes / FamilyInstances / "
+                            "Beams / DetailLines).",
+                inputs=[
+                    inst,
+                    ParamSpec(id="source_url", label="Source URL",
+                              type="text", default="",
+                              required=True,
+                              help="speckle://local/<hash> or a remote "
+                                   "Speckle model URL."),
+                ],
+                output_type="any", destructive=True,
+                fn=_receive_from_speckle_op,
+            ),
+            # ── AgDR-0018 batch-2: parameter batch update ──────
+            ConnectorOp(
+                op_id="revit.batch_set_parameters", host="revit",
+                kind="action",
+                label="Batch set parameters",
+                description="For each {revit_element_id, "
+                            "revit_parameters} dict pulled from a "
+                            "Speckle commit, push the parameters "
+                            "onto the existing element.",
+                inputs=[
+                    inst,
+                    ParamSpec(id="source_url", label="Source URL",
+                              type="text", default="",
+                              required=True,
+                              help="speckle://local/<hash> from "
+                                   "adapter.excel_to_revit_params + "
+                                   "share.publish chain."),
+                ],
+                output_type="any", destructive=True,
+                fn=_batch_set_parameters_op,
             ),
         ]
 

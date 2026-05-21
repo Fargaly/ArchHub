@@ -56,8 +56,20 @@
                       PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- AgDR-0025 — shared subprocess csc.exe wrapper.  Linked from
+       payload/sources/shared so the same Roslyn-isolation impl powers
+       every .NET connector. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.11.0" />
+    <Compile Include="..\shared\ScriptCompiler.cs"
+             Link="ScriptCompiler.cs" />
+  </ItemGroup>
+
+  <!-- AgDR-0025 — Microsoft.CodeAnalysis* package reference REMOVED.
+       Compilation now happens out-of-process via csc.exe (see
+       ScriptCompiler.cs).  Eliminates the whole class of "AutoCAD
+       add-in pinned Roslyn vX, we want vY → FileLoadException".
+       System.Text.Json kept — /info still serializes JSON. -->
+  <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 

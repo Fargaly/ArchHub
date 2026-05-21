@@ -11,15 +11,81 @@
 (() => {
 
 const LM = {
+  // ── Color tokens ──────────────────────────────────────────────────
   bg:'#0e0e11', bgPanel:'#15151a', bgSoft:'#1c1c23', bgHover:'#22222a',
   bgDeep:'#0a0a0d', bgCanvas:'#101015', bgInk:'#18181e',
   ink:'#ece8e0', inkSoft:'#9b938a', inkMuted:'#5e574f', inkDim:'#3a3530',
   line:'#26262e', lineSoft:'#1e1e24', lineHair:'#1a1a20',
   accent:'#d97757', accentSoft:'#3a2018', accentDim:'#2a1812', accentHi:'#e8896a',
   ok:'#7ec18e', warn:'#e5b25a', err:'#e6705f', cyan:'#5fb3b3', purple:'#a98cd6', blue:'#7898d6',
+  // ── Typography family tokens ──────────────────────────────────────
   serif:"'Instrument Serif', Georgia, serif",
   sans:"'Inter', system-ui, sans-serif",
   mono:"'JetBrains Mono', ui-monospace, monospace",
+
+  // ─── AgDR-0015 Phase 1 — additive scale tokens (Phase 1) ────────────
+  // Phase 1 ADDS tokens; existing inline magic numbers remain unchanged.
+  // ReactFlow scaffold (M1.a) consumes them from day 1; Phase 3 sweeps
+  // legacy inline styles. See docs/agdr/AgDR-0015-visual-ui-design-system.md.
+
+  // Spacing scale — 4-px base. Maps every existing padding/margin
+  // magic number to the nearest step. (223 inline values surveyed.)
+  size: {
+    0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 28, 7: 40,
+  },
+
+  // Type scale — 6 steps. 15+ existing font-size values (including
+  // blurry half-pixel 8.5/9.5/10.5/11.5/12.5) round up to this scale.
+  font: {
+    xs: 10, sm: 11, base: 13, md: 15, lg: 18, xl: 22,
+  },
+
+  // Border-radius scale — 6 steps including pill.
+  radius: {
+    none: 0, xs: 3, sm: 5, md: 8, lg: 12, pill: 999,
+  },
+
+  // Elevation scale — 5 tiers (none + 4 elevations). Replaces 30 ad-hoc
+  // boxShadow strings.
+  shadow: {
+    none: 'none',
+    s1: '0 1px 2px rgba(0,0,0,0.3)',
+    s2: '0 4px 12px rgba(0,0,0,0.4)',
+    s3: '0 8px 24px rgba(0,0,0,0.5)',
+    s4: '0 16px 48px rgba(0,0,0,0.6)',
+  },
+
+  // Motion vocab — 4 named tokens replace 9 ad-hoc transitions.
+  // Cubic-bezier matches Material's `standard` easing for fast/base/slow;
+  // `spring` overshoots for emphasis pops (composer streaming hint).
+  motion: {
+    fast:  '120ms cubic-bezier(0.4, 0.0, 0.2, 1)',
+    base:  '200ms cubic-bezier(0.4, 0.0, 0.2, 1)',
+    slow:  '320ms cubic-bezier(0.4, 0.0, 0.2, 1)',
+    spring:'380ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+  },
+
+  // Host-brand identity — was 20 inline hex literals scattered through
+  // host pickers. Centralised so light-mode variants can be added later.
+  brand: {
+    speckle:    '#3a6acc',
+    autocad:    '#E87D0D',
+    revit:      '#0696D7',
+    max3ds:     '#0078D4',
+    rhino:      '#b8b4ab',
+    blender:    '#E87D0D',
+    dropbox:    '#0061ff',
+    word:       '#2B579A',
+    excel:      '#107C41',
+    powerpoint: '#B7472A',
+    outlook:    '#5b8def',
+    teams:      '#5b5fc7',
+    notion:     '#ece8e0',  // greyscale brand — uses LM.ink value (Token fork 3)
+    photoshop:  '#31A8FF',
+    illustrator:'#FF9A00',
+    indesign:   '#FF3366',
+    anthropic:  '#cc785c',
+  },
 };
 
 // ─── Categories — each is a node type with color + icon + role ───
@@ -38,26 +104,53 @@ const CAT = {
   custom:    { col:LM.blue,    icon:'⊕', label:'CUSTOM',    role:'AI-minted custom node' },
 };
 
-// ─── Pipeline super-sections — the library's organising logic.
-// Founder demand 2026-05-17: don't dump 10 flat categories; group them
-// by WHERE a node sits in a graph's left-to-right flow. SOURCES bring
-// data in, SHAPE processes it, AI reasons, SEND publishes. Each abstract
-// CAT key maps into exactly one pipeline stage.
-const PIPELINE = [
-  { id:'sources', label:'SOURCES', hint:'bring data in',
-    cats:['host', 'read', 'trigger'] },
-  { id:'shape',   label:'SHAPE',   hint:'filter · modify',
-    cats:['filter', 'transform', 'logic', 'annotate', 'compose'] },
-  { id:'ai',      label:'AI',      hint:'reason · match',
-    cats:['ai'] },
-  { id:'send',    label:'SEND',    hint:'publish · save',
-    cats:['output'] },
-];
-
+// SLICE D (AgDR-0007): wire colours per engine PortType (lowercased
+// to match `socket.t` storage). Existing app-specific keys kept for
+// back-compat with legacy graphs. The canvas vocab will narrow to the
+// engine enum over time; the duplicates here are intentional.
 const WIRE = {
-  view:LM.cyan, selection:LM.cyan, walls:LM.accent, doors:LM.accent, sheets:LM.accent,
-  intent:LM.purple, prediction:LM.purple, trace:LM.inkSoft, dims:LM.ok, file:LM.ok, any:LM.inkSoft,
-  event:LM.warn, completion:LM.purple,
+  // Primitives
+  any:        LM.inkSoft,            // dashed (see strokeDasharray in wire render)
+  string:     LM.inkSoft,
+  text:       LM.inkSoft,
+  number:     '#e3b950',             // yellow
+  boolean:    LM.ok,                 // green
+  list:       '#6a9bcc',             // blue (brand secondary)
+  object:     LM.inkSoft,
+  // Geometry / AEC
+  geometry:   LM.accent,             // orange
+  walls:      LM.accent,             // legacy alias
+  doors:      LM.accent,             // legacy
+  sheets:     LM.accent,             // legacy
+  dims:       LM.ok,                 // legacy
+  // Elements / selections
+  element:    '#9b59b6',             // purple
+  selection:  '#9b59b6',
+  view:       '#9b59b6',
+  'revit-element': '#9b59b6',
+  // AI / conversation
+  prompt:     LM.purple,
+  message:    LM.purple,
+  completion: LM.purple,
+  conversation: LM.purple,
+  intent:     LM.purple,
+  prediction: LM.purple,
+  tool_result: LM.purple,
+  // Files
+  file:       LM.cyan,
+  path:       LM.cyan,
+  image:      LM.cyan,
+  ifc:        LM.cyan,
+  csv:        LM.cyan,
+  // Bridge / host
+  host:       LM.warn,
+  document:   LM.warn,
+  model:      LM.warn,
+  project:    LM.warn,
+  // Control flow
+  exec:       LM.warn,
+  event:      LM.warn,
+  trace:      LM.inkSoft,             // legacy
 };
 
 // ──────────────────────── DATA ────────────────────────
@@ -228,9 +321,311 @@ const saveCurrentGraph = () => {
     const merged = {
       nodes: [...(LM_GRAPH.nodes || []), ...extra.filter(n => n && !((LM_GRAPH.nodes || []).find(x => x.id === n.id)))],
       wires: LM_GRAPH.wires || [],
+      // SLICE C (AgDR-0004): groups round-trip through the same blob.
+      // The bridge's `save_graph` slot stores arbitrary `session.graph`
+      // fields, so no Python change is needed.
+      groups: LM_GRAPH.groups || [],
     };
     bridgeCall('save_graph', currentSid(), JSON.stringify(merged));
   } catch (e) {}
+};
+
+// SLICE C (AgDR-0004): six predefined Group Styles. Names serialise
+// with the graph; colours live here so themes can change without
+// rewriting saved graphs.
+const GROUP_STYLE_COLORS = {
+  input:     '#e29bb5',   // pink
+  connector: '#d97757',   // accent orange
+  ai:        '#9b59b6',   // purple
+  transform: '#5fb3b3',   // cyan (LM.cyan)
+  output:    '#7fae65',   // green
+  note:      '#9b9690',   // grey
+};
+const GROUP_STYLES = Object.keys(GROUP_STYLE_COLORS);
+
+// AgDR-0015 Phase 4 — modal a11y hook. Each modal that uses this
+// gets: (a) initial focus on the first focusable child, (b) Tab
+// cycle trapped inside the modal, (c) Escape closes via onCancel.
+// Returns a ref the modal's inner panel must attach.
+const _useModalA11y = (onCancel) => {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const root = ref.current;
+    if (!root) return undefined;
+    const sel = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const items = () => Array.from(root.querySelectorAll(sel))
+      .filter(el => !el.disabled && el.offsetParent !== null);
+    const first = items()[0];
+    if (first) first.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof onCancel === 'function') onCancel();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = items();
+      if (!list.length) return;
+      const head = list[0], tail = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === head) {
+        e.preventDefault();
+        tail.focus();
+      } else if (!e.shiftKey && document.activeElement === tail) {
+        e.preventDefault();
+        head.focus();
+      }
+    };
+    root.addEventListener('keydown', onKey);
+    return () => root.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  return ref;
+};
+
+// SLICE C (AgDR-0004): the Group creation dialog. Centred modal over
+// the canvas. Title input + style picker pill row + Create/Cancel.
+const GroupDialog = ({ initial, onCancel, onCreate }) => {
+  const [title, setTitle] = React.useState((initial && initial.title) || 'Group');
+  const [style, setStyle] = React.useState((initial && initial.style) || 'transform');
+  const submit = () => onCreate(title, style);
+  const modalRef = _useModalA11y(onCancel);
+  return (
+    <div onClick={onCancel} style={{
+      position:'absolute', inset:0, background:'rgba(0,0,0,.42)',
+      zIndex:80, display:'grid', placeItems:'center',
+    }}>
+      <div ref={modalRef} onClick={e => e.stopPropagation()} data-no-pan
+        role="dialog" aria-modal="true"
+        aria-labelledby="lm-group-dialog-title"
+        style={{
+        width:360, background:LM.bgPanel, border:`1px solid ${LM.line}`,
+        borderRadius:10, padding:'18px 20px',
+        boxShadow:'0 24px 60px rgba(0,0,0,.55)',
+        display:'flex', flexDirection:'column', gap:14,
+        fontFamily:LM.sans,
+      }}>
+        <div id="lm-group-dialog-title"
+          style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.015em' }}>
+          New group
+        </div>
+        <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+          letterSpacing:'0.06em' }}>
+          {(initial && initial.ids ? initial.ids.length : 0)} nodes in selection
+        </div>
+        <div>
+          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>TITLE</div>
+          <input autoFocus value={title}
+            onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') submit();
+              if (e.key === 'Escape') onCancel();
+            }}
+            style={{
+              width:'100%', padding:'7px 10px', borderRadius:5,
+              background:LM.bg, border:`1px solid ${LM.line}`,
+              color:LM.ink, fontFamily:LM.sans, fontSize:13, outline:'none',
+              boxSizing:'border-box',
+            }}/>
+        </div>
+        <div>
+          <div id="lm-group-style-label" style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>STYLE</div>
+          <div role="radiogroup" aria-labelledby="lm-group-style-label"
+            style={{ display:'flex', gap:5, flexWrap:'wrap' }}
+            onKeyDown={(e) => {
+              // AgDR-0015 Phase 4 dropdown-nav: arrow keys move
+              // between pills + select on landing (matches native
+              // radio-group keyboard semantics).
+              if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key)) return;
+              e.preventDefault();
+              const idx = GROUP_STYLES.indexOf(style);
+              let next = idx;
+              if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + GROUP_STYLES.length) % GROUP_STYLES.length;
+              else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % GROUP_STYLES.length;
+              else if (e.key === 'Home') next = 0;
+              else if (e.key === 'End') next = GROUP_STYLES.length - 1;
+              setStyle(GROUP_STYLES[next]);
+              // Move focus to the new pill so screen reader announces.
+              const btns = e.currentTarget.querySelectorAll('[role="radio"]');
+              if (btns[next]) btns[next].focus();
+            }}>
+            {GROUP_STYLES.map(s => {
+              const c = GROUP_STYLE_COLORS[s];
+              const active = s === style;
+              return (
+                <button key={s} onClick={() => setStyle(s)}
+                  role="radio" aria-checked={active}
+                  tabIndex={active ? 0 : -1}
+                  aria-label={s + ' group style'}
+                  style={{
+                  padding:'5px 11px', borderRadius:14,
+                  background: active ? c + '33' : 'transparent',
+                  border:`1px solid ${active ? c : LM.line}`,
+                  color: active ? c : LM.inkSoft,
+                  fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.1em',
+                  cursor:'pointer',
+                }}>{s.toUpperCase()}</button>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:4 }}>
+          <button onClick={onCancel} style={{
+            padding:'6px 14px', borderRadius:5,
+            background:'transparent', border:`1px solid ${LM.line}`,
+            color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer',
+          }}>Cancel</button>
+          <button onClick={submit} style={{
+            padding:'6px 14px', borderRadius:5,
+            background:LM.accent, border:`1px solid ${LM.accent}`,
+            color:'#fff', fontFamily:LM.mono, fontSize:11, fontWeight:600,
+            cursor:'pointer',
+          }}>Create</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// SLICE G (AgDR-0010): Save-as-Skill dialog. Name + description +
+// category + Mode (Shared / Private). Mode drives spawn-time
+// semantics: Shared → reference (one .archskill file, every placement
+// updates on edit); Private → snapshot (each placement is independent).
+const SaveSkillDialog = ({ initial, onCancel, onSave }) => {
+  const [name, setName] = React.useState((initial && initial.defaultName) || 'untitled skill');
+  const [description, setDescription] = React.useState('');
+  const [category, setCategory] = React.useState('');
+  const [mode, setMode] = React.useState('shared');
+  const submit = () => onSave({ name, description, category, mode });
+  const modalRef = _useModalA11y(onCancel);
+  return (
+    <div onClick={onCancel} style={{
+      position:'absolute', inset:0, background:'rgba(0,0,0,.42)',
+      zIndex:80, display:'grid', placeItems:'center',
+    }}>
+      <div ref={modalRef} onClick={e => e.stopPropagation()} data-no-pan
+        role="dialog" aria-modal="true"
+        aria-labelledby="lm-save-skill-dialog-title"
+        style={{
+        width:420, background:LM.bgPanel, border:`1px solid ${LM.line}`,
+        borderRadius:10, padding:'18px 20px',
+        boxShadow:'0 24px 60px rgba(0,0,0,.55)',
+        display:'flex', flexDirection:'column', gap:12,
+        fontFamily:LM.sans,
+      }}>
+        <div id="lm-save-skill-dialog-title"
+          style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.015em' }}>
+          Save as Skill
+        </div>
+        <div>
+          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>NAME</div>
+          <input autoFocus value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submit();
+                              if (e.key === 'Escape') onCancel(); }}
+            style={{
+              width:'100%', padding:'7px 10px', borderRadius:5,
+              background:LM.bg, border:`1px solid ${LM.line}`,
+              color:LM.ink, fontFamily:LM.sans, fontSize:13, outline:'none',
+              boxSizing:'border-box',
+            }}/>
+        </div>
+        <div>
+          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>DESCRIPTION</div>
+          <textarea value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="What does this skill do?"
+            style={{
+              width:'100%', minHeight:54, padding:'6px 10px', borderRadius:5,
+              background:LM.bg, border:`1px solid ${LM.line}`,
+              color:LM.ink, fontFamily:LM.sans, fontSize:12, outline:'none',
+              boxSizing:'border-box', resize:'vertical',
+            }}/>
+        </div>
+        <div>
+          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>CATEGORY</div>
+          <input value={category}
+            onChange={e => setCategory(e.target.value)}
+            placeholder="e.g. revit, takeoff, qa"
+            style={{
+              width:'100%', padding:'6px 10px', borderRadius:5,
+              background:LM.bg, border:`1px solid ${LM.line}`,
+              color:LM.ink, fontFamily:LM.sans, fontSize:12, outline:'none',
+              boxSizing:'border-box',
+            }}/>
+        </div>
+        <div>
+          <div id="lm-save-skill-mode-label" style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+            letterSpacing:'0.18em', marginBottom:6 }}>MODE</div>
+          {(() => {
+            const MODE_OPTS = [
+              { v:'shared',  label:'Shared (reference)',
+                hint:'Edit once, every placement updates.' },
+              { v:'private', label:'Private (copy)',
+                hint:'A snapshot stamped at save time.' },
+            ];
+            return (
+              <div role="radiogroup" aria-labelledby="lm-save-skill-mode-label"
+                style={{ display:'flex', gap:8 }}
+                onKeyDown={(e) => {
+                  if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key)) return;
+                  e.preventDefault();
+                  const idx = MODE_OPTS.findIndex(o => o.v === mode);
+                  let next = idx;
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + MODE_OPTS.length) % MODE_OPTS.length;
+                  else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % MODE_OPTS.length;
+                  else if (e.key === 'Home') next = 0;
+                  else if (e.key === 'End') next = MODE_OPTS.length - 1;
+                  setMode(MODE_OPTS[next].v);
+                  const btns = e.currentTarget.querySelectorAll('[role="radio"]');
+                  if (btns[next]) btns[next].focus();
+                }}>
+                {MODE_OPTS.map(opt => {
+                  const active = mode === opt.v;
+                  return (
+                    <button key={opt.v} onClick={() => setMode(opt.v)}
+                      role="radio" aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      aria-label={opt.label + ' — ' + opt.hint}
+                      style={{
+                        flex:1, textAlign:'left', padding:'8px 12px',
+                        borderRadius:6, cursor:'pointer',
+                        background: active ? LM.accent + '22' : LM.bg,
+                        border:`1px solid ${active ? LM.accent : LM.line}`,
+                        color: active ? LM.ink : LM.inkSoft,
+                        fontFamily:LM.sans, fontSize:12,
+                        display:'flex', flexDirection:'column', gap:3,
+                      }}>
+                      <span style={{ fontWeight:600 }}>{opt.label}</span>
+                      <span style={{ fontSize:10.5, color:LM.inkMuted,
+                        lineHeight:1.4 }}>{opt.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:4 }}>
+          <button onClick={onCancel} style={{
+            padding:'6px 14px', borderRadius:5,
+            background:'transparent', border:`1px solid ${LM.line}`,
+            color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer',
+          }}>Cancel</button>
+          <button onClick={submit} style={{
+            padding:'6px 14px', borderRadius:5,
+            background:LM.accent, border:`1px solid ${LM.accent}`,
+            color:'#fff', fontFamily:LM.mono, fontSize:11, fontWeight:600,
+            cursor:'pointer',
+          }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ─── The active graph — typed AEC nodes.
@@ -242,7 +637,22 @@ const saveCurrentGraph = () => {
 // from disk via bridge.load_session(id) which splices into LM_GRAPH.
 // Empty graph by default — user sees a blank canvas until they spawn
 // nodes via composer / right-click / node library.
-const LM_GRAPH = window.__archhub_LM_GRAPH = window.__archhub_LM_GRAPH || { nodes: [], wires: [] };
+const LM_GRAPH = window.__archhub_LM_GRAPH = window.__archhub_LM_GRAPH || { nodes: [], wires: [], groups: [] };
+// Defensive: older saved graphs may lack `groups`. Seed it once.
+if (!Array.isArray(LM_GRAPH.groups)) LM_GRAPH.groups = [];
+
+// Slice K follow-up: ID-collision fix for rapid node placement.
+// Date.now().toString(36).slice(-4) alone collides within the same
+// millisecond (founder saw it during slice B2 burst-placement).
+// Add a session-monotonic counter + a small random nibble so two
+// nodes placed in the same ms still get distinct ids.
+window.__archhub_uid_counter = window.__archhub_uid_counter || 0;
+const _lm_uid = () => {
+  window.__archhub_uid_counter = (window.__archhub_uid_counter + 1) % 0xFFFF;
+  return Date.now().toString(36).slice(-4)
+       + window.__archhub_uid_counter.toString(36).padStart(2, '0')
+       + Math.floor(Math.random() * 36).toString(36);
+};
 const _LM_GRAPH_DEMO_DEAD = { nodes: [
     { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
       title:'Revit 2025', sub:'Tower-A_central.rvt · L03',
@@ -418,147 +828,14 @@ const _LM_GRAPH_DEMO_DEAD = { nodes: [
   ],
 };
 
-// ─── Library of nodes that can be inserted — Grasshopper/Dynamo style
-// LM_LIBRARY v2 · 80 nodes / 10 categories · informed by Grasshopper /
-// Dynamo / Speckle taxonomies + live host_detector.py PROBERS.
-// Source spec: docs/NODE_LIBRARY_v2.md
-const LM_LIBRARY = window.__archhub_LM_LIBRARY = window.__archhub_LM_LIBRARY || [
-  // ──────── HOST · 18 families ────────
-  { cat:'host', items:[
-    { id:'h_revit',       title:'Revit',         sub:'open document, view, selection · broker @ :48884' },
-    { id:'h_autocad',     title:'AutoCAD',       sub:'drawing, modelspace, layout · broker @ :48885' },
-    { id:'h_max',         title:'3ds Max',       sub:'scene, viewport, render · broker @ :48886' },
-    { id:'h_blender',     title:'Blender',       sub:'mesh, sketch, render · runner' },
-    { id:'h_rhino',       title:'Rhino',         sub:'curves, meshes, layers · grasshopper bridge' },
-    { id:'h_speckle',     title:'Speckle',       sub:'commit, stream, branch · GraphQL' },
-    { id:'h_outlook',     title:'Outlook',       sub:'inbox, calendar, draft · COM' },
-    { id:'h_teams',       title:'Microsoft Teams', sub:'channels, messages, mentions · Graph token' },
-    { id:'h_notion',      title:'Notion',        sub:'pages, databases, blocks · internal token' },
-    { id:'h_lmstudio',    title:'LM Studio',     sub:'local LLM @ 127.0.0.1:1234' },
-    { id:'h_antigravity', title:'Antigravity',   sub:'desktop coding agent · process probe' },
-    { id:'h_photoshop',   title:'Photoshop',     sub:'document, layers, actions · COM' },
-    { id:'h_illustrator', title:'Illustrator',   sub:'document, artboards · COM' },
-    { id:'h_indesign',    title:'InDesign',      sub:'document, spreads, frames · COM' },
-    { id:'h_word',        title:'Word',          sub:'document, paragraphs, styles · COM' },
-    { id:'h_excel',       title:'Excel',         sub:'workbook, sheet, range · COM' },
-    { id:'h_powerpoint',  title:'PowerPoint',    sub:'presentation, slides, shapes · COM' },
-    { id:'h_dropbox',     title:'Dropbox',       sub:'folder watch, upload, share link' },
-  ]},
-  // ──────── READ · pull data from a host ────────
-  { cat:'read', items:[
-    { id:'r_walls',     title:'list_walls',       sub:'pull walls from active Revit view' },
-    { id:'r_doors',     title:'list_doors',       sub:'pull doors + swings + marks' },
-    { id:'r_windows',   title:'list_windows',     sub:'pull windows + types' },
-    { id:'r_rooms',     title:'list_rooms',       sub:'rooms with boundaries + names' },
-    { id:'r_sheets',    title:'list_sheets',      sub:'enumerate sheets in set' },
-    { id:'r_views',     title:'list_views',       sub:'plans, sections, schedules, 3D' },
-    { id:'r_levels',    title:'list_levels',      sub:'levels + elevations + datums' },
-    { id:'r_grids',     title:'list_grids',       sub:'gridlines · X / Y / radial' },
-    { id:'r_families',  title:'list_families',    sub:'loaded family + type catalogue' },
-    { id:'r_selection', title:'get_selection',    sub:'whatever is selected in host' },
-    { id:'r_warnings',  title:'list_warnings',    sub:'host warnings · by severity' },
-    { id:'r_emails',    title:'list_emails',      sub:'Outlook inbox · filter, sort' },
-    { id:'r_files',     title:'list_files',       sub:'Dropbox / OneDrive · path glob' },
-    { id:'r_pages',     title:'list_pages',       sub:'Notion db rows · filter, sort' },
-    { id:'r_layers',    title:'list_layers',      sub:'CAD/PS/AI layers · visible only' },
-    { id:'r_range',     title:'read_range',       sub:'Excel range → 2D array' },
-  ]},
-  // ──────── FILTER · predicate streams ────────
-  { cat:'filter', items:[
-    { id:'f_type',     title:'where type',         sub:'by family/type name' },
-    { id:'f_cat',      title:'where category',     sub:'by Revit category id' },
-    { id:'f_level',    title:'where level',        sub:'by level reference' },
-    { id:'f_param',    title:'where parameter',    sub:'predicate on a parameter value' },
-    { id:'f_phase',    title:'where phase',        sub:'by construction phase' },
-    { id:'f_workset',  title:'where workset',      sub:'by workset assignment' },
-    { id:'f_name',     title:'where name matches', sub:'glob / regex on element name' },
-    { id:'f_pred',     title:'where custom',       sub:'arbitrary JS predicate' },
-  ]},
-  // ──────── TRANSFORM · mutate / reshape streams ────────
-  { cat:'transform', items:[
-    { id:'t_setp',     title:'set parameter',   sub:'mutates parameter values' },
-    { id:'t_settype',  title:'set type',        sub:'change family type on each element' },
-    { id:'t_move',     title:'move',            sub:'translation vector' },
-    { id:'t_rot',      title:'rotate',          sub:'angle about axis' },
-    { id:'t_scale',    title:'scale',           sub:'uniform / per-axis' },
-    { id:'t_group',    title:'group by',        sub:'key → list of lists' },
-    { id:'t_sort',     title:'sort by',         sub:'asc / desc on key' },
-    { id:'t_dedupe',   title:'dedupe',          sub:'unique by identity or key' },
-    { id:'t_paint',    title:'paint',           sub:'override colour / line / fill' },
-    { id:'t_rename',   title:'rename',          sub:'pattern → new name' },
-  ]},
-  // ──────── ANNOTATE · markup-only ────────
-  { cat:'annotate', items:[
-    { id:'a_dims',     title:'create_dimensions', sub:'aligned, parallel, baseline' },
-    { id:'a_tags',     title:'place_tags',        sub:'tag per element + leader' },
-    { id:'a_text',     title:'add_text',          sub:'text note · positioned' },
-    { id:'a_rooms',    title:'tag_rooms',         sub:'room boundaries + names' },
-    { id:'a_cloud',    title:'revision_cloud',    sub:'cloud around dirty region' },
-    { id:'a_grid',     title:'place_grid',        sub:'gridline + bubble' },
-    { id:'a_level',    title:'place_level',       sub:'level + elevation bubble' },
-  ]},
-  // ──────── COMPOSE · build artefacts ────────
-  { cat:'compose', items:[
-    { id:'c_sched',    title:'build_schedule',    sub:'table from a stream' },
-    { id:'c_sheet',    title:'place_on_sheet',    sub:'lay views onto a sheet' },
-    { id:'c_legend',   title:'make_legend',       sub:'symbol legend block' },
-    { id:'c_keynote',  title:'make_keynote',      sub:'keynote table + leaders' },
-    { id:'c_index',    title:'drawing_index',     sub:'sheet list → cover page' },
-  ]},
-  // ──────── LOGIC · control flow ────────
-  { cat:'logic', items:[
-    { id:'l_if',       title:'if',                sub:'predicate → true / false branches' },
-    { id:'l_switch',   title:'switch',            sub:'multi-branch on a key' },
-    { id:'l_loop',     title:'loop',              sub:'iterate over a list' },
-    { id:'l_foreach',  title:'foreach',           sub:'apply subgraph per item' },
-    { id:'l_merge',    title:'merge',             sub:'concat / dedupe streams' },
-    { id:'l_split',    title:'split',             sub:'partition by predicate' },
-    { id:'l_delay',    title:'delay',             sub:'wait N ms before downstream' },
-    { id:'l_throttle', title:'throttle',          sub:'rate-limit downstream' },
-  ]},
-  // ──────── AI · LLM-driven nodes ────────
-  { cat:'ai', items:[
-    { id:'i_conv',     title:'Conversation',      sub:'streaming chat node · system + history',
-      ins:[{ id:'ctx', label:'context', t:'any' }],
-      outs:[{ id:'response', label:'response', t:'completion' }] },
-    { id:'i_think',    title:'think',             sub:'Claude reasoning · sonnet / opus / haiku' },
-    { id:'i_vis',      title:'vision',            sub:'parse a sketch / screenshot' },
-    { id:'i_embed',    title:'embed',             sub:'vectorize · similarity search' },
-    { id:'i_match',    title:'match_skill',       sub:'find best saved skill for intent' },
-    { id:'i_sum',      title:'summarise',         sub:'long text → bullet brief' },
-    { id:'i_class',    title:'classify',          sub:'free text → enum label' },
-    { id:'i_intent',   title:'extract_intent',    sub:'composer prompt → action plan' },
-  ]},
-  // ──────── OUTPUT · publish / save / notify ────────
-  { cat:'output', items:[
-    { id:'o_skill',    title:'save_skill',        sub:'template this run as a Skill' },
-    { id:'o_pdf',      title:'publish_pdf',       sub:'sheets → PDF set' },
-    { id:'o_spk',      title:'push_speckle',      sub:'commit to a branch' },
-    { id:'o_email',    title:'send_email',        sub:'draft + send via Outlook' },
-    { id:'o_notify',   title:'notify',            sub:'desktop / Teams ping' },
-    { id:'o_csv',      title:'write_csv',         sub:'stream → .csv on disk' },
-    { id:'o_xlsx',     title:'write_xlsx',        sub:'stream → workbook / sheet' },
-    { id:'o_teams',    title:'post_teams',        sub:'channel message · markdown' },
-    { id:'o_notion',   title:'create_notion_page',sub:'new page under parent' },
-  ]},
-  // ──────── TRIGGER · event-sourced graph entry ────────
-  { cat:'trigger', items:[
-    { id:'g_save',     title:'on_file_save',      sub:'fires when a host doc is saved' },
-    { id:'g_email',    title:'on_email_arrive',   sub:'inbox watcher · sender / subject filter' },
-    { id:'g_sched',    title:'on_schedule',       sub:'cron · every N min / hour / day' },
-    { id:'g_revit',    title:'on_revit_event',    sub:'doc_opened / view_changed / sync_done' },
-    { id:'g_warning',  title:'on_warning',        sub:'new host warning above threshold' },
-  ]},
-];
-
 // ─── Connector op catalogue — hydrated from bridge.get_connectors().
 // Each entry: { host, display_name, mechanism, ops:[{op_id,host,kind,
 // label,description,inputs,output_type,destructive}] }. The node library
 // reads this to surface all 116 connector operations as spawnable nodes.
 const LM_CONNECTORS = window.__archhub_LM_CONNECTORS = window.__archhub_LM_CONNECTORS || [];
 // The node grammar — bridge.get_node_grammar(), the ~12-primitive set
-// the redesigned palette is built from (docs/NODE_GRAMMAR.md). ONE
-// source; this replaces the 80-node LM_LIBRARY in the next slice.
+// the node palette is built from (docs/NODE_GRAMMAR.md). The ONE
+// source — it replaced the old 80-node enumerated library entirely.
 const LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR || [];
 // User-minted custom nodes — AI-designed via Node Smith or hand-built.
 const LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES || [];
@@ -614,6 +891,18 @@ const StudioLM = () => {
   // Bump counter to force rerender after we mutate LM_GRAPH.wires/nodes in place.
   const [graphBump, setGraphBump] = React.useState(0);
   const bumpGraph = React.useCallback(() => setGraphBump(b => b + 1), []);
+  // ─── AgDR-0024 — expose bumpGraph so external mutators (CDP demos,
+  // test harnesses, future bridge slots) can force the canvas to
+  // re-render after splicing into `window.LM_GRAPH` directly. Safe
+  // because bumpGraph is referentially stable + has no side effects.
+  React.useEffect(() => {
+    window.__archhubBumpGraph = bumpGraph;
+    return () => {
+      if (window.__archhubBumpGraph === bumpGraph) {
+        try { delete window.__archhubBumpGraph; } catch (e) {}
+      }
+    };
+  }, [bumpGraph]);
 
   const session = openId ? (LM_SESSIONS || []).find(s => s.id === openId) : null;
 
@@ -628,7 +917,7 @@ const StudioLM = () => {
     setOpenId(id);
     window.__archhub_session_id = id;
     // Reset to empty immediately so stale graph doesn't flash while we wait.
-    LM_GRAPH.nodes = []; LM_GRAPH.wires = [];
+    LM_GRAPH.nodes = []; LM_GRAPH.wires = []; LM_GRAPH.groups = [];
     setUserNodes([]); setFocusId(null);
     bumpGraph();
     // QWebChannel slots are async — use bridgeAsync, never sync bridgeJson.
@@ -637,6 +926,8 @@ const StudioLM = () => {
       const g = (blob.graph && typeof blob.graph === 'object') ? blob.graph : blob;
       LM_GRAPH.nodes = Array.isArray(g.nodes) ? g.nodes : [];
       LM_GRAPH.wires = Array.isArray(g.wires) ? g.wires : [];
+      // SLICE C (AgDR-0004): groups round-trip too. Default to [].
+      LM_GRAPH.groups = Array.isArray(g.groups) ? g.groups : [];
       const ai = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai');
       setFocusId(ai ? ai.id : (LM_GRAPH.nodes[0] && LM_GRAPH.nodes[0].id) || null);
       bumpGraph();
@@ -703,34 +994,6 @@ const StudioLM = () => {
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
   const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
     const cat = libItem.cat;
-    // ── Connector-op node: a real host operation (revit.list_walls,
-    // excel.read_range, …). Carries op_id + typed inputs so the canvas
-    // can run it via bridge.run_connector_op. Founder demand 2026-05-15.
-    if (libItem._connector_op) {
-      const op = libItem._connector_op;
-      const id = `op_${(op.op_id || 'op').replace(/[^a-z0-9]+/gi, '_')}_${Date.now().toString(36).slice(-4)}`;
-      const params = (op.inputs || []).map(p => ({
-        k: p.id, v: p.default != null ? p.default : '',
-        type: p.type || 'text', label: p.label || p.id,
-        options: p.options || [], required: !!p.required, help: p.help || '',
-        options_source: p.options_source || '',   // dynamic dropdown source op
-        _by: 'default',                            // provenance: default|you|ai|host
-      }));
-      const opNode = {
-        id, cat:'connector_op', x, y, w:248, h:128,
-        title: op.label || op.op_id, sub: op.host + ' · ' + (op.kind || 'op'),
-        op_id: op.op_id, host: op.host, op_kind: op.kind || 'read',
-        destructive: !!op.destructive,
-        ins: [{ id:'in', label:'in', t:'any' }],
-        outs: [{ id:'out', label:'result', t: op.output_type || 'any' }],
-        params, _user: true,
-      };
-      LM_GRAPH.nodes.push(opNode);
-      setFocusId(id);
-      saveCurrentGraph();
-      bumpGraph();
-      return opNode;
-    }
     // ── Custom node: an AI-minted (or hand-built) node type registered
     // server-side in the workflow registry. Carries `custom_type` (the
     // registered type id) + typed sockets straight off the spec, so it's
@@ -743,7 +1006,7 @@ const StudioLM = () => {
         const nm = (p && p.name) || `${dir}${i}`;
         return { id: nm, label: nm, t: (p && p.type) || 'any' };
       };
-      const id = `cn_${String(spec.type || 'custom').replace(/[^a-z0-9]+/gi,'_')}_${Date.now().toString(36).slice(-4)}`;
+      const id = `cn_${String(spec.type || 'custom').replace(/[^a-z0-9]+/gi,'_')}_${_lm_uid()}`;
       const node = {
         id, cat:'custom', x, y, w:232, h:120,
         title: spec.title || spec.display_name || spec.type || 'Custom node',
@@ -764,24 +1027,60 @@ const StudioLM = () => {
     // (docs/NODE_GRAMMAR.md). Carries `kind` so normalize_canvas_graph
     // resolves it to a real engine `type`, and ports straight off the
     // grammar payload (engine-sourced — wire ids match port names).
+    // SLICE A (AgDR-0001): if libItem._host is set, this is a
+    // per-host specialisation of the `connector` primitive — host
+    // is LOCKED on the node and the template host/op param rows are
+    // dropped (ConnectorRail picks op + fills typed params).
     if (libItem._grammar) {
       const g = libItem._grammar;
-      const gid = `${g.kind}_${Date.now().toString(36).slice(-4)}`;
+      const gid = `${g.kind}_${_lm_uid()}`;
       const gport = (p) => ({ id: p.id, label: p.id,
         t: String(p.type || 'any').toLowerCase() });
+      const hostLock = libItem._host || '';
       // Default param rows come from the grammar (node_grammar declares
       // each primitive's params — ONE source). A placed connector / ai /
       // logic master node lands with its host+op / action / kind rows
       // ready, so it resolves an engine type + cooks immediately.
-      const gparams = (g.params || []).map(pp => ({
-        k: pp.k, v: pp.v, type: pp.type || 'text' }));
+      // BUT: per-host connector entries skip the template rows entirely
+      // — `host` is locked on the node, params get populated from the
+      // op's typed inputs when the user picks an op.
+      const gparams = hostLock
+        ? []
+        : (g.params || []).map(pp => ({
+            k: pp.k, v: pp.v, type: pp.type || 'text' }));
       const gnode = {
         id: gid, kind: g.kind, cat: g.cat || 'node', x, y, w:220, h:112,
-        title: g.display || g.kind, sub: g.blurb || g.kind,
+        title: libItem.title || g.display || g.kind,
+        sub:   libItem.sub   || g.blurb   || g.kind,
         ins:  ((g.ports && g.ports.in)  || []).map(gport),
         outs: ((g.ports && g.ports.out) || []).map(gport),
         params: gparams, _user: true,
       };
+      // AgDR-0019: AI Chat needs `messages: []` to surface the
+      // conversation rail. Non-chat AI typed nodes (ai_complete /
+      // ai_classify / ai_tools) do NOT — they render the generic
+      // param rail. Legacy `ai` master is hidden from palette and
+      // can't be placed anew, but if a saved graph still has one
+      // it carries `messages` and renders the chat UI as before.
+      if (g.kind === 'ai_chat') {
+        gnode.messages = [];
+      }
+      if (hostLock) {
+        gnode.host = hostLock;
+        gnode.config = { host: hostLock, op: '' };
+      }
+      // SLICE F (AgDR-0009): prefix-grammar prefills. e.g. `~hello`
+      // → Note with text:'hello'; `"foo"` → Constant with value:'foo'.
+      if (libItem._prefillParams) {
+        gnode.params = gnode.params || [];
+        Object.entries(libItem._prefillParams).forEach(([k, v]) => {
+          const row = gnode.params.find(p => p.k === k);
+          if (row) row.v = v;
+          else gnode.params.push({ k, v,
+            type: typeof v === 'number' ? 'number' : 'text' });
+        });
+        gnode.config = { ...(gnode.config || {}), ...libItem._prefillParams };
+      }
       LM_GRAPH.nodes.push(gnode);
       setFocusId(gid);
       saveCurrentGraph();
@@ -789,7 +1088,7 @@ const StudioLM = () => {
       return gnode;
     }
     const tmpl = LM_NODE_TEMPLATES[libItem.id] || LM_NODE_TEMPLATES[`__cat_${cat}`] || {};
-    const id = `${libItem.id || cat}_${Date.now().toString(36).slice(-4)}`;
+    const id = `${libItem.id || cat}_${_lm_uid()}`;
     const newNode = {
       id, cat, x, y, w: tmpl.w || libItem.w || 220, h: tmpl.h || libItem.h || 110,
       title: libItem.title, sub: libItem.sub,
@@ -1311,6 +1610,28 @@ const StudioLM = () => {
     return () => { for (const off of wires) { try { off(); } catch (e) {} } };
   }, [bumpGraph, focusId]);
 
+  // ─── SLICE F (AgDR-0009): global Tab key opens the Add-Node search
+  // overlay at the viewport centre. Ignored when focus is in a form
+  // input so editing in the inspector / dialogs is not hijacked.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          || (e.target && e.target.isContentEditable)) return;
+      e.preventDefault();
+      try {
+        window.dispatchEvent(new CustomEvent('lm-wire-promote', {
+          detail: { x: window.innerWidth/2, y: window.innerHeight/2,
+                    from: null },
+        }));
+      } catch (err) {}
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   // ─── Founder demand 2026-05-15: run a connector-op node. The node's
   // ConnectorOpBody fires `lm-run-connector-op` with the node id; we
   // serialise its params, call the threaded bridge slot, and queue the
@@ -1321,6 +1642,27 @@ const StudioLM = () => {
       if (!nodeId) return;
       const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeId);
       if (!node || !node.op_id) return;
+      // SLICE B (AgDR-0002): the four disable verbs short-circuit the
+      // per-node Run path before hitting the host. Bypass = no-op.
+      // Pinned = return the snapshot. Frozen = return cached value.
+      if (node.bypass) {
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'bypass: node skipped', kind:'info' } })); } catch (e) {}
+        return;
+      }
+      if (node.pinned && node.pinned_value !== undefined && node.pinned_value !== null) {
+        node.op_result = { ok:true, elapsed_ms:0,
+          value: node.pinned_value,
+          value_preview: 'pinned snapshot @ ' + new Date(node.pinned_at || 0).toLocaleTimeString() };
+        bumpGraph();
+        return;
+      }
+      if (node.frozen && node.cooked && node.cooked.value != null) {
+        node.op_result = { ok:true, elapsed_ms:0,
+          value: node.cooked.value, value_preview: 'frozen (cached)' };
+        bumpGraph();
+        return;
+      }
       const params = {};
       (node.params || []).forEach(p => {
         if (p && p.k != null && p.v !== '' && p.v != null) params[p.k] = p.v;
@@ -1344,6 +1686,77 @@ const StudioLM = () => {
     return () => window.removeEventListener('lm-run-connector-op', onRunOp);
   }, [bumpGraph]);
 
+  // ─── SLICE B (AgDR-0002): disable-verb keybindings on the focused
+  // canvas node. Ctrl+B = bypass; Ctrl+F = freeze; Ctrl+Shift+P =
+  // preview-off; P = pin (snapshot from cooked.value). Independent
+  // booleans on the node, composable. Engine effect via
+  // normalize_canvas_graph graph rewriting.
+  React.useEffect(() => {
+    const onVerbKey = (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          || (e.target && e.target.isContentEditable)) return;
+      if (!focusId) return;
+      const node = (LM_GRAPH.nodes || []).find(n => n.id === focusId);
+      if (!node) return;
+      const cm = e.ctrlKey || e.metaKey;
+      const sh = e.shiftKey;
+      const k = (e.key || '').toLowerCase();
+      const toast = (msg, kind='info') => {
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg, kind } })); } catch (err) {}
+      };
+      if (cm && !sh && k === 'b') {
+        node.bypass = !node.bypass;
+        saveCurrentGraph(); bumpGraph();
+        e.preventDefault();
+        toast('bypass ' + (node.bypass ? 'on' : 'off'));
+        return;
+      }
+      if (cm && !sh && k === 'f') {
+        node.frozen = !node.frozen;
+        saveCurrentGraph(); bumpGraph();
+        e.preventDefault();
+        toast('freeze ' + (node.frozen ? 'on' : 'off')
+          + (node.frozen && !(node.cooked && node.cooked.value != null)
+              ? ' — no cooked value yet, runs normally until first cook' : ''));
+        return;
+      }
+      if (cm && sh && k === 'p') {
+        node.preview_off = !node.preview_off;
+        saveCurrentGraph(); bumpGraph();
+        e.preventDefault();
+        toast('preview ' + (node.preview_off ? 'off' : 'on'));
+        return;
+      }
+      if (!cm && !sh && k === 'p') {
+        if (node.pinned) {
+          node.pinned = false;
+          delete node.pinned_value;
+          delete node.pinned_at;
+          saveCurrentGraph(); bumpGraph();
+          e.preventDefault();
+          toast('pin off');
+          return;
+        }
+        const v = node.cooked && node.cooked.value;
+        if (v === undefined || v === null) {
+          e.preventDefault();
+          toast('pin: nothing to snapshot — run the node first', 'err');
+          return;
+        }
+        node.pinned = true;
+        node.pinned_value = v;
+        node.pinned_at = Date.now();
+        saveCurrentGraph(); bumpGraph();
+        e.preventDefault();
+        toast('pinned snapshot @ ' + new Date(node.pinned_at).toLocaleTimeString());
+      }
+    };
+    document.addEventListener('keydown', onVerbKey);
+    return () => document.removeEventListener('keydown', onVerbKey);
+  }, [focusId, bumpGraph]);
+
   // ─── Founder demand #4: clicking gear opens the NATIVE PyQt SettingsDialog.
   // The in-React Settings overlay is only a fallback when the bridge isn't wired.
   const openSettingsResolved = React.useCallback(() => {
@@ -1361,23 +1774,50 @@ const StudioLM = () => {
       const skill = ev && ev.detail;
       if (!skill) return;
       // Load the skill's graph (saved as JSON via save_as_skill).
-      // bridgeAsync — QWebChannel slots resolve async; the old sync
-      // bridgeJson always returned null here, so spawning a skill
-      // silently no-op'd (founder bug 2026-05-18).
-      const blob = await bridgeAsync('load_skill', skill.id || skill.name);
-      if (blob && Array.isArray(blob.nodes)) {
-        const offset = (LM_GRAPH.nodes || []).length * 6;
-        blob.nodes.forEach(n => {
-          n.x = (n.x || 0) + 40 + offset;
-          n.y = (n.y || 0) + 40 + offset;
-          n._user = true;
-        });
-        setUserNodes(ns => [...ns, ...blob.nodes]);
-        if (Array.isArray(blob.wires)) {
-          LM_GRAPH.wires = [...(LM_GRAPH.wires || []), ...blob.wires];
-        }
+      // bridgeAsync — QWebChannel slots resolve async.
+      const blob = await bridgeAsync('load_skill', skill.id || skill.slug || skill.name);
+      if (!blob || !Array.isArray(blob.nodes)) return;
+      const mode = blob.meta && blob.meta.mode;
+      // SLICE G (AgDR-0010): hybrid spawn.
+      // Shared mode → place ONE `skill` node referencing the file;
+      // engine `subgraph.user` resolves it. Edit propagates.
+      // Private mode (default) → inline-expand the subgraph.
+      if (mode === 'shared') {
+        const slug = blob.slug || skill.id || skill.slug || skill.name;
+        const gid = 'skill_' + (slug || 'ref').replace(/[^a-z0-9]+/gi, '_')
+                  + '_' + _lm_uid();
+        const cx = 180 + (LM_GRAPH.nodes || []).length * 6;
+        const cy = 120 + (LM_GRAPH.nodes || []).length * 6;
+        const sn = {
+          id: gid, kind:'skill', cat:'skill',
+          x:cx, y:cy, w:220, h:96,
+          title: blob.name || skill.name || slug,
+          sub: 'shared · ' + slug,
+          skill_id: slug, skill_name: blob.name || slug,
+          skill_mode: 'shared',
+          config: { skill_id: slug },
+          ins:[{ id:'in', label:'in', t:'any' }],
+          outs:[{ id:'out', label:'out', t:'any' }],
+          params: [], _user: true,
+        };
+        LM_GRAPH.nodes.push(sn);
         saveCurrentGraph(); bumpGraph();
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'★ shared skill placed', kind:'info' } })); } catch (e) {}
+        return;
       }
+      // Private (default) — inline-expand the subgraph.
+      const offset = (LM_GRAPH.nodes || []).length * 6;
+      blob.nodes.forEach(n => {
+        n.x = (n.x || 0) + 40 + offset;
+        n.y = (n.y || 0) + 40 + offset;
+        n._user = true;
+      });
+      setUserNodes(ns => [...ns, ...blob.nodes]);
+      if (Array.isArray(blob.wires)) {
+        LM_GRAPH.wires = [...(LM_GRAPH.wires || []), ...blob.wires];
+      }
+      saveCurrentGraph(); bumpGraph();
     };
     const onShareCanvas = () => {
       const sid = openId;
@@ -1389,7 +1829,9 @@ const StudioLM = () => {
     };
     const onWirePromote = (ev) => {
       const d = ev && ev.detail;
-      if (!d || !d.from) return;
+      if (!d) return;
+      // SLICE F (AgDR-0009): the same overlay handles Tab + double-
+      // click invocations (no `from`) AND wire-drop (with `from`).
       setWirePromote(d);
     };
     // Founder demand 2026-05-16: "+ new node" in the node library opens
@@ -1533,10 +1975,14 @@ const CreateNodeModal = ({ spec, onClose }) => {
     bridgeJson('create_node_type', JSON.stringify(payload));
     onClose();
   };
+  const modalRef = _useModalA11y(onClose);
   return (
     <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60, display:'grid', placeItems:'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width:460, background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:10, padding:22, boxShadow:'0 30px 80px rgba(0,0,0,.6)' }}>
-        <div style={{ fontFamily:LM.serif, fontSize:20, marginBottom:14 }}>Create custom node</div>
+      <div ref={modalRef} onClick={e => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        aria-labelledby="lm-create-node-modal-title"
+        style={{ width:460, background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:10, padding:22, boxShadow:'0 30px 80px rgba(0,0,0,.6)' }}>
+        <div id="lm-create-node-modal-title" style={{ fontFamily:LM.serif, fontSize:20, marginBottom:14 }}>Create custom node</div>
         <SField label="Type ID"  value={type}    /><input value={type}    onChange={e=>setType(e.target.value)}    placeholder="my.filter"        style={modalInput()}/>
         <SField label="Category" value={cat}     /><input value={cat}     onChange={e=>setCat(e.target.value)}     placeholder="filter"           style={modalInput()}/>
         <SField label="Inputs (comma)"  value={inputs}/><input value={inputs}  onChange={e=>setInputs(e.target.value)}  placeholder="walls, view"      style={modalInput()}/>
@@ -1627,19 +2073,29 @@ const AINodeModal = ({ onClose, addNodeFromLibrary }) => {
   };
   const reset = () => { reqRef.current = ''; setPhase('idle'); setResult(null); setErr(''); };
 
+  // Close-guard for AINodeModal: while `phase === 'working'`, Escape
+  // shouldn't close (the LLM call is in flight). The hook still arms
+  // tab-trap; we feed it a no-op cancel during work.
+  const guardedClose = React.useCallback(() => {
+    if (phase !== 'working') onClose();
+  }, [phase, onClose]);
+  const modalRef = _useModalA11y(guardedClose);
   return (
     <div onClick={() => phase !== 'working' && onClose()} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.6)', zIndex:62,
       display:'grid', placeItems:'center',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div ref={modalRef} onClick={e => e.stopPropagation()}
+        role="dialog" aria-modal="true"
+        aria-labelledby="lm-ai-node-modal-title"
+        style={{
         width:520, maxWidth:'94%', background:LM.bgPanel,
         border:`1px solid ${LM.line}`, borderRadius:10, padding:'20px 22px',
         boxShadow:'0 30px 80px rgba(0,0,0,.6)',
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:4 }}>
           <span style={{ color:LM.blue, fontSize:16 }}>⊕</span>
-          <span style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.01em' }}>Create a node with AI</span>
+          <span id="lm-ai-node-modal-title" style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.01em' }}>Create a node with AI</span>
           <div style={{ flex:1 }}/>
           <button onClick={onClose} disabled={phase==='working'} style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`,
@@ -1835,28 +2291,148 @@ const FirstRunProfile = ({ onClose }) => {
   );
 };
 
-// ─── Wire-promote palette ─────────────────────────────────────────────
-// Fired when a wire is dropped on empty canvas (lm-wire-promote). Shows the
-// nodes from LM_LIBRARY whose first declared input accepts the dragged
-// output's type. Picking one spawns + auto-wires the connection.
+// ─── SLICE F (AgDR-0009): unified Add-Node Search overlay ───────────
+// Invoked from: (1) double-click empty canvas, (2) global `Tab` key,
+// (3) drag-wire-into-empty (`lm-wire-promote` event w/ from), (4) the
+// "+ add node" toolbar button. ONE overlay, ONE prefix grammar, ONE
+// ranking algorithm. Replaces the legacy WirePromotePalette.
+const _RECENT_KEY = '__archhub_recent_node_use';
+const _getRecent = () => {
+  try { return JSON.parse(localStorage.getItem(_RECENT_KEY) || '{}'); }
+  catch (e) { return {}; }
+};
+const _bumpRecent = (id) => {
+  try {
+    const r = _getRecent(); r[id] = (r[id] || 0) + 1;
+    localStorage.setItem(_RECENT_KEY, JSON.stringify(r));
+  } catch (e) {}
+};
 const WirePromotePalette = ({ detail, onClose, onPick }) => {
-  const fromType = (detail && detail.from && detail.from.type) || '';
-  // Use LM_NODE_TEMPLATES to peek at each library item's first input type.
-  const candidates = [];
-  (LM_LIBRARY || []).forEach(group => {
-    (group.items || []).forEach(it => {
-      const tmpl = (typeof LM_NODE_TEMPLATES !== 'undefined' && LM_NODE_TEMPLATES[it.id]) || {};
-      const firstIn = (it.ins || tmpl.ins || [])[0];
-      if (!firstIn) return;
-      if (!fromType || firstIn.t === fromType || firstIn.t === 'any' || fromType === 'any') {
-        candidates.push({ ...it, cat: group.cat });
+  const fromType = String((detail && detail.from && detail.from.type) || '').toLowerCase();
+  const [q, setQ] = React.useState('');
+  const [hi, setHi] = React.useState(0);   // highlighted result index
+  const recent = React.useMemo(() => _getRecent(), []);
+
+  // Build candidate set: grammar primitives + per-host connector
+  // specialisations + saved skills.
+  const all = React.useMemo(() => {
+    const out = [];
+    (LM_NODE_GRAMMAR || []).forEach(p => {
+      if (p.kind === 'connector') {
+        // Expand connector into 16 per-host entries.
+        (LM_CONNECTORS || []).forEach(c => {
+          out.push({
+            id: 'ng:connector:' + c.host,
+            title: c.display_name || c.host,
+            sub: 'Run ' + (c.display_name || c.host) + ' operations',
+            cat: 'connector', kind: 'connector',
+            _grammar: p, _host: c.host,
+            firstInType: 'any',
+          });
+        });
+      } else {
+        const firstIn = ((p.ports && p.ports.in) || [])[0];
+        out.push({
+          id: 'ng:' + p.kind, title: p.display || p.kind,
+          sub: p.blurb || p.kind, cat: p.cat || 'node', kind: p.kind,
+          _grammar: p,
+          firstInType: firstIn ? String(firstIn.type || 'any').toLowerCase() : null,
+        });
       }
     });
-  });
-  // Position the palette near the drop coord, clamped to the viewport.
-  const W = 280, H = 320;
-  const px = Math.min(window.innerWidth - W - 12, Math.max(8, (detail.x || 200) - W/2));
-  const py = Math.min(window.innerHeight - H - 12, Math.max(8, (detail.y || 200) + 8));
+    (LM_SAVED_SKILLS || []).forEach(s => {
+      out.push({
+        id: 'sk:' + (s.id || s.name),
+        title: '★ ' + (s.name || s.id),
+        sub: s.args || 'saved skill',
+        cat: 'skill', kind: 'skill', _skill: s, firstInType: 'any',
+      });
+    });
+    return out;
+  }, []);
+
+  // Filter + rank.
+  const results = React.useMemo(() => {
+    const ql = q.toLowerCase().trim();
+    const scored = all.map(it => {
+      let score = 0;
+      // Type-compat boost vs from.type
+      if (fromType) {
+        if (!it.firstInType) return null; // no input → can't accept wire
+        if (it.firstInType === fromType || it.firstInType === 'any'
+            || fromType === 'any') score += 100;
+        else return null; // strict reject
+      }
+      // Recent-use boost (capped)
+      score += Math.min(20, (recent[it.id] || 0) * 3);
+      // Query match
+      if (ql) {
+        const hay = (it.title + ' ' + it.sub + ' ' + it.kind).toLowerCase();
+        const idx = hay.indexOf(ql);
+        if (idx < 0) return null;
+        score += 50 - Math.min(50, idx);   // earlier match = higher
+      }
+      return { ...it, score };
+    }).filter(Boolean);
+    scored.sort((a, b) => b.score - a.score
+      || a.title.localeCompare(b.title));
+    return scored.slice(0, 12);
+  }, [q, all, recent, fromType]);
+
+  // Prefix grammar (parsed on Enter, beats result list).
+  const parsePrefix = (text) => {
+    const t = text.trim();
+    let m;
+    if ((m = t.match(/^~\s*(.+)$/))) {
+      const prim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'note');
+      if (!prim) return null;
+      return { _grammar: prim,
+        id:'ng:note', title:'Note', sub:m[1],
+        _prefillParams: { text: m[1] } };
+    }
+    if ((m = t.match(/^=\s*(.+)$/))) {
+      const prim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'constant');
+      if (!prim) return null;
+      return { _grammar: prim,
+        id:'ng:constant', title:'Constant', sub:m[1],
+        _prefillParams: { value: m[1] } };
+    }
+    if ((m = t.match(/^"(.+)"$/)) || (m = t.match(/^'(.+)'$/))) {
+      const prim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'constant');
+      if (!prim) return null;
+      return { _grammar: prim,
+        id:'ng:constant', title:'Constant', sub:JSON.stringify(m[1]),
+        _prefillParams: { value: m[1] } };
+    }
+    if ((m = t.match(/^(\d+)\s*<\s*(\d+)\s*<\s*(\d+)$/))) {
+      const prim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'input');
+      if (!prim) return null;
+      return { _grammar: prim,
+        id:'ng:input', title:'Input',
+        sub:`range ${m[1]}…${m[3]}, default ${m[2]}`,
+        _prefillParams: { name:'input', default:Number(m[2]) } };
+    }
+    return null;
+  };
+
+  const submit = () => {
+    const prefix = parsePrefix(q);
+    if (prefix) {
+      _bumpRecent(prefix.id);
+      onPick(prefix);
+      return;
+    }
+    const r = results[hi] || results[0];
+    if (r) { _bumpRecent(r.id); onPick(r); }
+  };
+
+  // Position near the drop / fire point, clamped to viewport.
+  const W = 320, H = 380;
+  const px = Math.min(window.innerWidth  - W - 12,
+                     Math.max(8, (detail.x || 200) - W/2));
+  const py = Math.min(window.innerHeight - H - 12,
+                     Math.max(8, (detail.y || 200) + 8));
+
   return (
     <div onClick={onClose} style={{
       position:'fixed', inset:0, background:'transparent', zIndex:70,
@@ -1864,30 +2440,75 @@ const WirePromotePalette = ({ detail, onClose, onPick }) => {
       <div onClick={e => e.stopPropagation()} data-no-pan style={{
         position:'absolute', left:px, top:py, width:W, maxHeight:H,
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:8,
-        boxShadow:'0 20px 50px rgba(0,0,0,.55)', display:'flex', flexDirection:'column',
-        overflow:'hidden', animation:'lmSlideIn .12s ease-out',
+        boxShadow:'0 20px 50px rgba(0,0,0,.55)',
+        display:'flex', flexDirection:'column', overflow:'hidden',
+        animation:'lmSlideIn .12s ease-out',
       }}>
-        <div style={{ padding:'8px 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:9, letterSpacing:'0.12em', color:LM.inkMuted }}>
-          PROMOTE WIRE → {fromType || 'any'}
+        <div style={{ padding:'8px 10px', borderBottom:`1px solid ${LM.lineSoft}`,
+          fontFamily:LM.mono, fontSize:9, letterSpacing:'0.12em', color:LM.inkMuted,
+          display:'flex', alignItems:'center', gap:8 }}>
+          <span>{fromType ? `PROMOTE → ${fromType}` : 'ADD NODE'}</span>
+          <div style={{ flex:1 }}/>
+          <span style={{ color:LM.inkDim, fontSize:8.5 }}>↵ pick · esc close</span>
         </div>
-        <div className="ah-scroll" style={{ overflow:'auto', padding:'4px 4px 6px', flex:1 }}>
-          {candidates.length === 0 ? (
-            <div style={{ padding:'18px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:12, color:LM.inkMuted }}>
-              No compatible nodes for {fromType || 'any'}.
-            </div>
-          ) : candidates.map((c, i) => (
-            <button key={i} onClick={() => onPick(c)} style={{
-              width:'100%', display:'flex', alignItems:'center', gap:8, padding:'6px 10px',
-              background:'transparent', border:0, borderRadius:5, cursor:'pointer',
-              color:LM.ink, fontFamily:LM.sans, fontSize:12, textAlign:'left',
+        <div style={{ padding:'6px 8px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+          <input autoFocus value={q}
+            onChange={(e) => { setQ(e.target.value); setHi(0); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { onClose(); return; }
+              if (e.key === 'Enter')  { e.preventDefault(); submit(); return; }
+              if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(results.length-1, h+1)); }
+              if (e.key === 'ArrowUp')   { e.preventDefault(); setHi(h => Math.max(0, h-1)); }
             }}
-            onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              <span style={{ width:5, height:5, borderRadius:'50%', background:(catMeta(c.cat) || {}).col || LM.inkSoft, flexShrink:0 }}/>
-              <span style={{ flex:1, fontFamily:LM.mono, fontSize:11.5 }}>{c.title}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>{c.cat}</span>
+            placeholder={fromType
+              ? 'filter…  (~note, "text", =expr, 0<5<10)'
+              : 'add node…  (~note, "text", =expr, 0<5<10)'}
+            style={{
+              width:'100%', padding:'6px 9px', borderRadius:5,
+              background:LM.bg, border:`1px solid ${LM.line}`, color:LM.ink,
+              fontFamily:LM.mono, fontSize:11.5, outline:'none', boxSizing:'border-box',
+            }}/>
+        </div>
+        <div className="ah-scroll" style={{
+          overflow:'auto', padding:'4px 4px 6px', flex:1 }}>
+          {results.length === 0 ? (
+            <div style={{ padding:'18px 12px', fontFamily:LM.serif,
+              fontStyle:'italic', fontSize:12, color:LM.inkMuted }}>
+              {fromType
+                ? `No compatible nodes for ${fromType}.`
+                : 'No matches — try a different query.'}
+            </div>
+          ) : results.map((r, i) => (
+            <button key={r.id} onClick={() => { _bumpRecent(r.id); onPick(r); }}
+              onMouseEnter={() => setHi(i)}
+              style={{
+                width:'100%', display:'flex', alignItems:'center', gap:8,
+                padding:'5px 9px', borderRadius:5, cursor:'pointer',
+                background: i === hi ? LM.bgHover : 'transparent',
+                border:0, color:LM.ink, fontFamily:LM.sans, fontSize:12,
+                textAlign:'left',
+              }}>
+              <span style={{ width:5, height:5, borderRadius:'50%',
+                background:(catMeta(r.cat) || {}).col || LM.inkSoft, flexShrink:0 }}/>
+              <span style={{ flex:1, display:'flex', flexDirection:'column',
+                minWidth:0, lineHeight:1.25 }}>
+                <span style={{ fontFamily:LM.mono, fontSize:11.5,
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  {r.title}
+                </span>
+                <span style={{ fontFamily:LM.sans, fontSize:10, color:LM.inkMuted,
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  {r.sub}
+                </span>
+              </span>
+              <span style={{ fontFamily:LM.mono, fontSize:9,
+                color:LM.inkMuted, letterSpacing:'0.04em' }}>{r.cat}</span>
             </button>
           ))}
+        </div>
+        <div style={{ padding:'5px 10px', borderTop:`1px solid ${LM.lineSoft}`,
+          fontFamily:LM.mono, fontSize:8.5, color:LM.inkDim, letterSpacing:'0.04em' }}>
+          prefixes: ~note · "text" · =expr · 0&lt;5&lt;10
         </div>
       </div>
     </div>
@@ -2102,10 +2723,10 @@ const ChatsPanel = ({ openId, onOpen }) => {
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
         <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
         <div style={{ flex:1 }}/>
-        <button title="More" onClick={() => setMenuFor(m => m && m.type === 'panel' ? null : { sid: openId, type:'panel' })} style={panelIconBtn()}>
+        <button title="More" aria-label="More" onClick={() => setMenuFor(m => m && m.type === 'panel' ? null : { sid: openId, type:'panel' })} style={panelIconBtn()}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
         </button>
-        <button title="New chat" onClick={onNewChat} style={panelIconBtn()}>
+        <button title="New chat" aria-label="New chat" onClick={onNewChat} style={panelIconBtn()}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
         </button>
       </div>
@@ -2147,7 +2768,7 @@ const ChatsPanel = ({ openId, onOpen }) => {
                 }}/>
                 <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight: a ? 500 : 400 }}>{s.title}</span>
               </button>
-              <button title="More"
+              <button title="More" aria-label="More"
                 onClick={(e) => { e.stopPropagation(); setMenuFor(m => m && m.sid === s.id ? null : { sid: s.id, type:'item' }); }}
                 style={{
                   width:22, padding:0, border:0, background:'transparent',
@@ -2274,6 +2895,13 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
   // shows". Pin any node to a ★ PINNED section at the top. Persisted in
   // localStorage; window-cached so it survives StudioLM remounts.
   const [custTick, setCustTick] = React.useState(0);
+  // G2 (slice K): listen for skill list refresh so promote-to-shared
+  // re-renders the panel with the flipped badge immediately.
+  React.useEffect(() => {
+    const onRefresh = () => setCustTick(t => t + 1);
+    window.addEventListener('lm-skills-refresh', onRefresh);
+    return () => window.removeEventListener('lm-skills-refresh', onRefresh);
+  }, []);
   if (!window.__archhub_node_pins) {
     try { window.__archhub_node_pins = JSON.parse(localStorage.getItem('archhub_node_pins') || '[]') || []; }
     catch { window.__archhub_node_pins = []; }
@@ -2314,22 +2942,6 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
   const [sortMode, setSortMode] = React.useState('default'); // 'default' | 'az'
   const collapseAll = () => setOpenCats({});
   const expandAll = () => setOpenCats(Object.fromEntries(Object.keys(CAT).map(k => [k, true])));
-  const recordUse = (item, cat) => {
-    try {
-      usage[item.id] = (usage[item.id] || 0) + 1;
-      localStorage.setItem('archhub_node_usage', JSON.stringify(usage));
-    } catch (e) {}
-    addNodeFromLibrary({ ...item, cat });
-  };
-  // Top-5 most-used items across all categories.
-  const mostUsed = React.useMemo(() => {
-    const rows = [];
-    (LM_LIBRARY || []).forEach(group => (group.items || []).forEach(it => {
-      const n = usage[it.id] || 0;
-      if (n > 0) rows.push({ it, cat: group.cat, count: n });
-    }));
-    return rows.sort((a, b) => b.count - a.count).slice(0, 5);
-  }, [q, openCats]);
   return (
     <div onContextMenu={onPanelContextMenu}
       style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
@@ -2344,42 +2956,130 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
             canvas toolbar → NodeLibrary modal → "Create with AI"). One
             entry point for adding nodes, not a scatter of buttons. */}
       </div>
-      {ctxMenu && (
-        <div data-no-pan onClick={e => e.stopPropagation()} style={{
-          position:'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 200,
-          background: LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius: 6,
-          boxShadow: '0 12px 30px rgba(0,0,0,.5)', padding: 4, minWidth: 180,
-          fontFamily: LM.sans, fontSize: 12.5,
-        }}>
-          {[
-            { label:'Expand all',   fn: () => { expandAll(); setCtxMenu(null); } },
-            { label:'Collapse all', fn: () => { collapseAll(); setCtxMenu(null); } },
-            ...(hidden.length > 0 ? [
-              { sep:true },
-              { label:`Show ${hidden.length} hidden categor${hidden.length === 1 ? 'y' : 'ies'}`,
-                fn: () => { showAllHidden(); setCtxMenu(null); } },
-            ] : []),
-            { sep:true },
-            { label:'Clear most-used', fn: () => {
-                try { localStorage.removeItem('archhub_node_usage'); } catch (e) {}
-                window.__archhub_node_usage = {};
-                setCtxMenu(null);
-              } },
-          ].map((it, i) => it.sep
-            ? <div key={i} style={{ height:1, background: LM.line, margin:'4px 0' }}/>
-            : (
-              <button key={i} onClick={it.fn} style={{
-                width:'100%', textAlign:'left', padding:'7px 10px', border:0,
-                background:'transparent', color: LM.ink, cursor:'pointer',
-                fontFamily: LM.sans, fontSize: 12.5, borderRadius: 4,
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                {it.label}
-              </button>
-            ))}
-        </div>
-      )}
+      {ctxMenu && (() => {
+        // AgDR-0028 — context menu dispatches on `ctxMenu.kind`:
+        //   undefined          → panel menu (categories, filters, bulk)
+        //   'custom-node'      → per-custom-node actions (Delete)
+        //   'saved-skill'      → per-saved-skill actions (Delete)
+        // The item-row's onContextMenu sets `kind` + `payload`.
+        const close = () => setCtxMenu(null);
+        const items = [];
+        if (ctxMenu.kind === 'custom-node') {
+          const c = ctxMenu.payload || {};
+          items.push({ label:'Header', header: c.title || c.type || 'Custom node' });
+          items.push({ label:'Pin / unpin', fn: () => {
+            const it = { id:'cn:' + c.type, title: c.title || c.type,
+              sub: c.description || c.type, _custom_node: c };
+            togglePin(it, { col:LM.blue, icon:'⊕', label:'custom' }, 'custom');
+            close();
+          } });
+          items.push({ sep:true });
+          items.push({ label:'Delete custom node…', danger:true, fn: async () => {
+            if (!confirm('Delete custom node "' + (c.title || c.type) + '"?\n'
+                       + 'This removes its spec file + unregisters the type.')) {
+              close(); return;
+            }
+            try {
+              const res = await bridgeJson('delete_custom_node', c.type);
+              if (!res || !res.ok) flashToast('Delete failed: ' + (res && res.error || 'unknown'), 'err');
+              else flashToast('Custom node deleted');
+            } catch (e) { flashToast('Delete failed: ' + e.message, 'err'); }
+            close();
+          } });
+        } else if (ctxMenu.kind === 'saved-skill') {
+          const s = ctxMenu.payload || {};
+          items.push({ label:'Header', header: s.name || s.id || 'Saved skill' });
+          items.push({ sep:true });
+          items.push({ label:'Delete saved skill…', danger:true, fn: async () => {
+            if (!confirm('Delete saved skill "' + (s.name || s.id) + '"?\n'
+                       + 'This removes the file from your skills folder.')) {
+              close(); return;
+            }
+            try {
+              const res = await bridgeJson('delete_saved_skill', s.id);
+              if (!res || !res.ok) flashToast('Delete failed: ' + (res && res.error || 'unknown'), 'err');
+              else flashToast('Skill deleted');
+            } catch (e) { flashToast('Delete failed: ' + e.message, 'err'); }
+            close();
+          } });
+        } else {
+          // ── Panel-level menu ────────────────────────────────
+          items.push({ label:'Expand all',   fn: () => { expandAll(); close(); } });
+          items.push({ label:'Collapse all', fn: () => { collapseAll(); close(); } });
+          if (hidden.length > 0) {
+            items.push({ sep:true });
+            items.push({
+              label: `Show ${hidden.length} hidden categor${hidden.length === 1 ? 'y' : 'ies'}`,
+              fn: () => { showAllHidden(); close(); },
+            });
+          }
+          items.push({ sep:true });
+          items.push({ label:'Clear most-used', fn: () => {
+              try { localStorage.removeItem('archhub_node_usage'); } catch (e) {}
+              window.__archhub_node_usage = {};
+              close();
+            } });
+          items.push({ sep:true });
+          // AgDR-0028 — bulk wipes for the two user-owned collections.
+          items.push({ label:'Clear all custom nodes…', danger:true, fn: async () => {
+            const n = ((LM_CUSTOM_NODES || []).length) || 0;
+            if (n === 0) { flashToast('No custom nodes to clear'); close(); return; }
+            if (!confirm('Delete ALL ' + n + ' custom node' + (n===1?'':'s')
+                       + '? This cannot be undone.')) { close(); return; }
+            try {
+              const res = await bridgeJson('clear_all_custom_nodes');
+              if (!res || !res.ok) flashToast('Failed: ' + (res && res.error || 'unknown'), 'err');
+              else flashToast('Cleared ' + (res.removed || 0) + ' custom nodes');
+            } catch (e) { flashToast('Failed: ' + e.message, 'err'); }
+            close();
+          } });
+          items.push({ label:'Clear all saved skills…', danger:true, fn: async () => {
+            const n = ((LM_SAVED_SKILLS || []).length) || 0;
+            if (n === 0) { flashToast('No saved skills to clear'); close(); return; }
+            if (!confirm('Delete ALL ' + n + ' saved skill' + (n===1?'':'s')
+                       + '? Shipped skills are protected and won\'t be touched.')) {
+              close(); return;
+            }
+            try {
+              const res = await bridgeJson('clear_all_saved_skills');
+              if (!res || !res.ok) flashToast('Failed: ' + (res && res.error || 'unknown'), 'err');
+              else flashToast('Cleared ' + (res.removed || 0) + ' saved skills');
+            } catch (e) { flashToast('Failed: ' + e.message, 'err'); }
+            close();
+          } });
+        }
+        return (
+          <div data-no-pan onClick={e => e.stopPropagation()} style={{
+            position:'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 200,
+            background: LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius: 6,
+            boxShadow: '0 12px 30px rgba(0,0,0,.5)', padding: 4, minWidth: 200,
+            fontFamily: LM.sans, fontSize: 12.5,
+          }}>
+            {items.map((it, i) => {
+              if (it.sep) return <div key={i} style={{ height:1, background: LM.line, margin:'4px 0' }}/>;
+              if (it.header) return (
+                <div key={i} style={{
+                  padding:'6px 10px 4px', fontFamily:LM.mono, fontSize:9.5,
+                  color:LM.inkMuted, letterSpacing:'0.10em',
+                  borderBottom:`1px solid ${LM.lineSoft}`, marginBottom:2,
+                }}>{it.header}</div>
+              );
+              return (
+                <button key={i} onClick={it.fn} style={{
+                  width:'100%', textAlign:'left', padding:'7px 10px', border:0,
+                  background:'transparent', color: it.danger ? LM.err : LM.ink,
+                  cursor:'pointer',
+                  fontFamily: LM.sans, fontSize: 12.5, borderRadius: 4,
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       <div style={{ padding:'0 10px 8px' }}>
         <div style={{
@@ -2454,17 +3154,25 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
                     _custom_node: c,
                   };
                   return (
-                    <NodeLibItem key={c.type} it={it}
-                      cat={{ col:LM.blue, icon:'⊕', label:'custom' }}
-                      pinned={isPinned(it.id)}
-                      onPin={() => togglePin(it, { col:LM.blue, icon:'⊕', label:'custom' }, 'custom')}
-                      onAdd={() => {
-                        try {
-                          usage[it.id] = (usage[it.id] || 0) + 1;
-                          localStorage.setItem('archhub_node_usage', JSON.stringify(usage));
-                        } catch (e) {}
-                        addNodeFromLibrary({ ...it, cat:'custom' });
-                      }}/>
+                    // AgDR-0028 — right-click on a custom node row opens
+                    // the per-item context menu (Delete, Pin/unpin).
+                    <div key={c.type} onContextMenu={(e) => {
+                      e.preventDefault(); e.stopPropagation();
+                      setCtxMenu({ x: e.clientX, y: e.clientY,
+                                    kind:'custom-node', payload: c });
+                    }}>
+                      <NodeLibItem it={it}
+                        cat={{ col:LM.blue, icon:'⊕', label:'custom' }}
+                        pinned={isPinned(it.id)}
+                        onPin={() => togglePin(it, { col:LM.blue, icon:'⊕', label:'custom' }, 'custom')}
+                        onAdd={() => {
+                          try {
+                            usage[it.id] = (usage[it.id] || 0) + 1;
+                            localStorage.setItem('archhub_node_usage', JSON.stringify(usage));
+                          } catch (e) {}
+                          addNodeFromLibrary({ ...it, cat:'custom' });
+                        }}/>
+                    </div>
                   );
                 })}
               </div>
@@ -2486,141 +3194,177 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
               }}>★ SKILLS · {skills.length}</div>
               <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
                 {skills.map(s => {
+                  // G2 (slice K): mode badge — 1 letter, muted-mono chrome.
+                  // S = shared (reference; edits propagate). P = private
+                  // (inline expand; each placement independent).
+                  const mode = (s.mode || 'private').toLowerCase();
+                  const isShared = mode === 'shared';
+                  const badge = isShared ? 'S' : 'P';
                   const it = {
                     id: 'sk:' + s.id,
-                    title: s.name || s.id || 'skill',
+                    title: (s.name || s.id || 'skill'),
                     sub: (s.args ? s.args + ' · ' : '')
-                       + ((s.runs ? s.runs + ' runs' : 'saved template')),
+                       + ((s.runs ? s.runs + ' runs' : 'saved template'))
+                       + ' · ' + (isShared ? 'shared' : 'private'),
+                  };
+                  // Promote handler — only shown for Private skills.
+                  const onPromote = isShared ? null : (ev) => {
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    bridgeCall('promote_skill_to_shared', s.id);
+                    // Refresh the skill list so the badge flips.
+                    if (window.archhub && window.archhub.get_saved_skills) {
+                      window.archhub.get_saved_skills((raw) => {
+                        try {
+                          const items = JSON.parse(raw);
+                          if (Array.isArray(items)) {
+                            window.__archhub_LM_SAVED_SKILLS = items;
+                            window.dispatchEvent(new CustomEvent('lm-skills-refresh'));
+                          }
+                        } catch (e) {}
+                      });
+                    }
                   };
                   return (
-                    <NodeLibItem key={s.id} it={it} draggable={false}
-                      cat={{ col:LM.warn, icon:'★', label:'skill' }}
-                      onAdd={() => {
-                        try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); }
-                        catch (e) {}
-                      }}/>
+                    <div key={s.id} style={{ display:'flex', alignItems:'center', gap:6 }}
+                      // AgDR-0028 — right-click opens Delete saved skill.
+                      onContextMenu={(e) => {
+                        e.preventDefault(); e.stopPropagation();
+                        setCtxMenu({ x: e.clientX, y: e.clientY,
+                                      kind:'saved-skill', payload: s });
+                      }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <NodeLibItem it={it} draggable={false}
+                          cat={{ col: (isShared ? LM.accent : LM.warn),
+                                  icon:'★', label:'skill' }}
+                          onAdd={() => {
+                            try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); }
+                            catch (e) {}
+                          }}/>
+                      </div>
+                      <span title={isShared ? 'Shared — edits propagate'
+                                            : 'Private — inline expand on spawn'}
+                        style={{
+                          display:'inline-flex', alignItems:'center', justifyContent:'center',
+                          width:16, height:16, borderRadius:3,
+                          fontFamily:LM.mono, fontSize:9, fontWeight:600,
+                          color: (isShared ? LM.accent : LM.inkMuted),
+                          border:`1px solid ${isShared ? LM.accent : LM.lineSoft}`,
+                          background: (isShared ? LM.accentDim : LM.bgSoft),
+                          flexShrink:0,
+                        }}>{badge}</span>
+                      {onPromote && (
+                        <span onClick={onPromote}
+                          title="Promote to Shared (edits propagate)"
+                          style={{
+                            fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+                            padding:'1px 4px', cursor:'pointer', flexShrink:0,
+                            border:`1px solid ${LM.lineSoft}`, borderRadius:3,
+                          }}>↑</span>
+                      )}
+                    </div>
                   );
                 })}
               </div>
             </div>
           );
         })()}
-        {/* ── NODES — the redesigned ~12-primitive grammar palette
-            (docs/NODE_GRAMMAR.md). Replaces the 80-node LM_LIBRARY when
-            the grammar is hydrated; the old pipeline palette below is
-            the offline fallback only. ── */}
+        {/* ── NODES — the ~12-primitive grammar palette, the ONE node
+            system every placeable node comes from (docs/NODE_GRAMMAR.md). ── */}
         {(() => {
+          // SLICE A (AgDR-0001): the `connector` primitive expands into
+          // 16 per-host master nodes (Revit / Excel / AutoCAD / …) by
+          // pre-locking `host` per palette entry. ONE primitive,
+          // ONE engine path (connector.run), 16 named palette entries.
+          // Same mechanism will power Skills (one `skill` primitive,
+          // N entries pre-locking `skill_id`).
           const prims = q
             ? (LM_NODE_GRAMMAR || []).filter(p =>
                 ((p.display || '') + ' ' + (p.kind || '') + ' ' + (p.note || ''))
                   .toLowerCase().includes(q.toLowerCase()))
             : (LM_NODE_GRAMMAR || []);
           if (prims.length === 0) return null;
-          return (
-            <div style={{ marginBottom:6 }}>
-              <div style={{
-                padding:'5px 7px', color:LM.inkSoft, fontFamily:LM.mono,
-                fontSize:9.5, letterSpacing:'0.14em',
-              }}>◆ NODES · {prims.length}</div>
-              <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-                {prims.map(p => {
-                  const it = {
-                    id: 'ng:' + p.kind,
+          const expand = (p) => {
+            if (p.kind === 'connector' && (LM_CONNECTORS || []).length > 0) {
+              const hostFiltered = (LM_CONNECTORS || []).filter(c => {
+                if (!q) return true;
+                const hay = ((c.display_name || '') + ' ' + (c.host || '')
+                            + ' ' + (p.display || '') + ' connector').toLowerCase();
+                return hay.includes(q.toLowerCase());
+              });
+              return hostFiltered.map(c => ({
+                key: 'connector:' + c.host,
+                it: {
+                  id: 'ng:connector:' + c.host,
+                  title: c.display_name || c.host,
+                  sub: 'Run ' + (c.display_name || c.host) + ' operations',
+                  _grammar: p,
+                  _host: c.host,
+                },
+                cat: { col: (CONNECTOR_COLORS[c.host] || LM.blue),
+                       icon: '◆', label: 'connector' },
+              }));
+            }
+            return [{
+              key: p.kind,
+              it: { id: 'ng:' + p.kind,
                     title: p.display || p.kind,
                     sub: p.blurb || p.kind,
-                    _grammar: p,
-                  };
-                  return (
-                    <NodeLibItem key={p.kind} it={it} draggable={false}
-                      cat={{ col:LM.blue, icon:'◆', label:(p.cat || 'node') }}
-                      onAdd={() => addNodeFromLibrary(it)}/>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-        {/* Most-used section — top 5 across all categories. Hidden until
-            the user actually adds a node from the library. Persisted in
-            localStorage so it survives relaunches. */}
-        {!q && mostUsed.length > 0 && (
-          <div style={{ marginBottom:8 }}>
-            <div style={{
-              padding:'5px 7px', color:LM.inkSoft, fontFamily:LM.mono,
-              fontSize:9.5, letterSpacing:'0.14em',
-            }}>
-              ★ MOST USED · {mostUsed.length}
-            </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-              {mostUsed.map(({ it, cat, count }) => (
-                <NodeLibItem key={'mu-'+it.id} it={{ ...it, sub:`${it.sub} · used ${count}×` }}
-                  cat={catMeta(cat)} onAdd={() => recordUse(it, cat)}/>
-              ))}
-            </div>
-          </div>
-        )}
-        {/* ── Pipeline super-sections — SOURCES → SHAPE → AI → SEND.
-            Founder demand 2026-05-17: the library's organising logic is
-            graph flow, not a flat 10-category dump. Each stage holds its
-            collapsible categories. ── */}
-        {/* Old 80-node LM_LIBRARY palette — rendered ONLY as the
-            offline fallback when the node grammar didn't hydrate. */}
-        {(LM_NODE_GRAMMAR || []).length === 0 && PIPELINE.map(pipe => {
-          const stage = pipe.cats
-            .map(cat => (LM_LIBRARY || []).find(g => g.cat === cat))
-            .filter(Boolean)
-            // Hidden categories drop out entirely (restore via the panel
-            // right-click menu). A search query overrides hide.
-            .filter(group => q || !isHidden(group.cat))
-            .map(group => {
-              let items = q
-                ? (group.items || []).filter(i =>
-                    (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase()))
-                : (group.items || []);
-              if (sortMode === 'az') {
-                items = [...items].sort((a, b) =>
-                  (a.title || '').localeCompare(b.title || ''));
-              }
-              return { group, items };
-            })
-            .filter(x => x.items.length > 0);
-          if (stage.length === 0) return null;
+                    _grammar: p },
+              cat: { col: LM.blue, icon: '◆',
+                     label: (p.cat || 'node') },
+            }];
+          };
+          const entries = prims.flatMap(expand);
+          if (entries.length === 0) return null;
+          // Group entries by the grammar primitive's `cat` field so the
+          // palette is browsable by category (Input · Connector · AI · …).
+          // Same header style as the previous "◆ NODES · N" line — one
+          // header per category. Each header uses the existing inkSoft
+          // mono chrome — no new visual language.
+          const grouped = new Map();
+          for (const e of entries) {
+            const c = (e.it._grammar && e.it._grammar.cat) || 'node';
+            if (!grouped.has(c)) grouped.set(c, []);
+            grouped.get(c).push(e);
+          }
+          // Stable section order (matches the grammar declaration order
+          // in app/workflows/node_grammar.py); unknown cats fall through.
+          const order = ['input','connector','ai','logic','math','text',
+                         'shape','adapter','output','share','skill',
+                         'watch','trigger','note'];
+          const sections = order
+            .filter(c => grouped.has(c))
+            .concat([...grouped.keys()].filter(c => !order.includes(c)));
+          // Collapsible per category — click the header to toggle open
+          // state (reuses the existing `openCats` map; default closed
+          // per founder's "ALL collapsed by default" intent at line 2725).
+          // Same header chrome — added a ▾ / ▸ chevron + cursor:pointer.
           return (
-            <div key={pipe.id} style={{ marginBottom:2 }}>
-              <div style={{ display:'flex', alignItems:'center', gap:8, padding:'9px 7px 3px' }}>
-                <span style={{ fontFamily:LM.mono, fontSize:10, fontWeight:600,
-                  color:LM.ink, letterSpacing:'0.18em' }}>{pipe.label}</span>
-                <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
-                  letterSpacing:'0.06em' }}>{pipe.hint}</span>
-                <div style={{ flex:1, height:1, background:LM.line }}/>
-              </div>
-              {stage.map(({ group, items }) => {
-                const c = catMeta(group.cat);
-                const open = q ? true : !!openCats[group.cat];
+            <div style={{ marginBottom:6 }}>
+              {sections.map((c) => {
+                const items = grouped.get(c);
+                const open = !!openCats[c];
+                const toggle = () => setOpenCats(prev => ({
+                  ...prev, [c]: !prev[c],
+                }));
                 return (
-                  <div key={group.cat} style={{ marginBottom:4 }}>
-                    <button onClick={() => setOpenCats(o => ({ ...o, [group.cat]: !o[group.cat] }))}
-                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation();
-                        toggleHidden(group.cat); }}
-                      title="Click to expand · right-click to hide this category" style={{
-                      width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
-                      background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-                      color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.14em',
-                      textAlign:'left',
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                      <span style={{ width:9, color:LM.inkMuted, transition:'transform .12s', display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
-                      <span style={{ color: c.col, fontSize:10 }}>{c.icon}</span>
-                      <span style={{ flex:1, color:c.col }}>{c.label}</span>
-                      <span style={{ color:LM.inkMuted, fontSize:9 }}>{items.length}</span>
-                    </button>
+                  <div key={c} style={{ marginBottom:4 }}>
+                    <div onClick={toggle} title={open ? 'Collapse' : 'Expand'}
+                      style={{
+                        padding:'5px 7px', color:LM.inkSoft, fontFamily:LM.mono,
+                        fontSize:9.5, letterSpacing:'0.14em',
+                        cursor:'pointer', userSelect:'none',
+                      }}>
+                      {open ? '▾' : '▸'} {c.toUpperCase()} · {items.length}
+                    </div>
                     {open && (
                       <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-                        {items.map(it => <NodeLibItem key={it.id} it={it} cat={c}
-                          pinned={isPinned(it.id)}
-                          onPin={() => togglePin(it, c, group.cat)}
-                          onAdd={() => recordUse(it, group.cat)}/>)}
+                        {items.map(({ key, it, cat }) => (
+                          <NodeLibItem key={key} it={it} draggable={false}
+                            cat={cat}
+                            onAdd={() => addNodeFromLibrary(it)}/>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -2628,75 +3372,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
               })}
             </div>
           );
-        })}
-
-        {/* ── Connector operations — all 116 ops across 16 hosts, grouped
-            by host. Hydrated from bridge.get_connectors(). Each op is a
-            spawnable node carrying its typed inputs + op_id. ── */}
-        {(LM_CONNECTORS || []).length > 0 && (
-          <div style={{ marginTop:10, marginBottom:4 }}>
-            <div style={{
-              padding:'5px 7px', color:LM.inkSoft, fontFamily:LM.mono,
-              fontSize:9.5, letterSpacing:'0.14em',
-            }}>⚡ CONNECTORS · {(LM_CONNECTORS || []).length} hosts</div>
-            {(LM_CONNECTORS || []).map(conn => {
-              const col = CONNECTOR_COLORS[conn.host] || LM.cyan;
-              const ops = q
-                ? (conn.ops || []).filter(o =>
-                    ((o.label || '') + ' ' + (o.op_id || '') + ' ' + (o.description || ''))
-                      .toLowerCase().includes(q.toLowerCase()))
-                : (conn.ops || []);
-              if (ops.length === 0) return null;
-              const open = q ? true : !!openConn[conn.host];
-              return (
-                <div key={conn.host} style={{ marginBottom:4 }}>
-                  <button onClick={() => setOpenConn(o => ({ ...o, [conn.host]: !o[conn.host] }))} style={{
-                    width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
-                    background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-                    color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.1em',
-                    textAlign:'left',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <span style={{ width:9, color:LM.inkMuted, transition:'transform .12s', display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
-                    <span style={{ width:6, height:6, borderRadius:2, background:col }}/>
-                    <span style={{ flex:1, color:col }}>{(conn.display_name || conn.host).toUpperCase()}</span>
-                    <span style={{ color:LM.inkMuted, fontSize:9 }}>{ops.length}</span>
-                  </button>
-                  {open && (
-                    <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-                      {ops.map(op => {
-                        const it = {
-                          id: 'op:' + op.op_id,
-                          title: op.label || op.op_id,
-                          sub: (op.kind === 'action' ? '◆ ' : '◇ ') + (op.description || op.op_id),
-                          _connector_op: op,
-                        };
-                        return (
-                          <NodeLibItem key={op.op_id} it={it}
-                            cat={{ col, icon: op.kind === 'action' ? '◆' : '◇',
-                                    label: conn.host }}
-                            pinned={isPinned(it.id)}
-                            onPin={() => togglePin(it,
-                              { col, icon: op.kind === 'action' ? '◆' : '◇', label: conn.host },
-                              op.kind === 'action' ? 'output' : 'read')}
-                            onAdd={() => {
-                              try {
-                                usage[it.id] = (usage[it.id] || 0) + 1;
-                                localStorage.setItem('archhub_node_usage', JSON.stringify(usage));
-                              } catch (e) {}
-                              addNodeFromLibrary({ ...it, cat: op.kind === 'action' ? 'output' : 'read' });
-                            }}/>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
+        })()}
       </div>
 
       <div style={{
@@ -2794,7 +3470,7 @@ const SkillsPanel = () => {
         <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
         <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{(LM_SAVED_SKILLS || []).length} SAVED</span>
         <div style={{ flex:1 }}/>
-        <button title="New skill" onClick={onNewSkill} style={panelIconBtn()}>
+        <button title="New skill" aria-label="New skill" onClick={onNewSkill} style={panelIconBtn()}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </div>
@@ -3266,7 +3942,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
               flex:1, border:0, background:'transparent', color:LM.ink, fontSize:14,
               fontFamily:LM.sans, outline:'none',
             }}/>
-          <button type="button" title="Attach file or image"
+          <button type="button" title="Attach file or image" aria-label="Attach file or image"
             onClick={(e) => { e.stopPropagation(); fileInputRef.current && fileInputRef.current.click(); }}
             style={{ padding:'3px 9px', background:'transparent',
                       border:`1px solid ${LM.line}`, borderRadius:5,
@@ -3367,7 +4043,7 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
     onMouseLeave={e => { setHover(false); e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.transform='none'; }}>
       {/* Session actions — rename / fork / duplicate / delete. Hidden
           until card hover so the grid stays calm. */}
-      <button title="Session actions"
+      <button title="Session actions" aria-label="Session actions"
         onClick={e => { e.stopPropagation(); setMenu(m => !m); }}
         style={{
           position:'absolute', top:5, right:5, width:22, height:22,
@@ -3512,7 +4188,7 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
       borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
       padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:6, minWidth:0,
     }}>
-      <button onClick={onHome} title="All sessions" style={{
+      <button onClick={onHome} title="All sessions" aria-label="All sessions" style={{
         width:26, height:26, padding:0, border:0, borderRadius:5,
         background:'transparent', color:LM.inkMuted, cursor:'pointer',
         display:'grid', placeItems:'center', flexShrink:0,
@@ -3601,7 +4277,7 @@ const WsTab = ({ s, a, onClick, onClose }) => {
           maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
         }}>{s.title}</span>
       )}
-      <button onClick={onClose} title="Close tab" style={{
+      <button onClick={onClose} title="Close tab" aria-label="Close tab" style={{
         width:14, height:14, padding:0, border:0, borderRadius:3,
         background:'transparent', color:LM.inkMuted, cursor:'pointer',
         display: a || h ? 'grid' : 'none', placeItems:'center',
@@ -3688,6 +4364,110 @@ const SOCKET_STEP = SNAP_R + SOCKET_R + 3;   // = 36px
 
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
 
+// SLICE C3 (AgDR-0006): recursive expansion of a group's member set
+// across the `childGroupIds` tree. Cycle-safe via visited-set + 16-
+// level depth cap. Pure mirror of `node_grammar.expand_group_members`.
+const expandedMembersJS = (groupId, allGroups, _visited, _depth = 0) => {
+  _visited = _visited || new Set();
+  if (_visited.has(groupId) || _depth > 16) return new Set();
+  const visited = new Set(_visited); visited.add(groupId);
+  const g = (allGroups || []).find(x => x.id === groupId);
+  if (!g) return new Set();
+  const out = new Set(g.nodeIds || []);
+  for (const cid of (g.childGroupIds || [])) {
+    for (const m of expandedMembersJS(cid, allGroups, visited, _depth + 1)) {
+      out.add(m);
+    }
+  }
+  return out;
+};
+
+// SLICE C3 (AgDR-0006): cycle guard. Mirror of
+// `node_grammar.would_create_cycle`.
+const wouldCreateCycleJS = (parentId, candidateId, allGroups) => {
+  if (parentId === candidateId) return true;
+  const seen = new Set();
+  const stack = [candidateId];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    if (cur === parentId) return true;
+    const g = (allGroups || []).find(x => x.id === cur);
+    if (!g) continue;
+    for (const cid of (g.childGroupIds || [])) stack.push(cid);
+  }
+  return false;
+};
+
+// SLICE C2 (AgDR-0005): boundary-port auto-promotion for a collapsed
+// group. Pure mirror of `app/workflows/node_grammar._promoted_ports_for`
+// — see that module for the contract. Returns
+// `{ins, outs}` of `{groupSocket, memberId, portName, portType}`.
+//
+// SLICE C3 (AgDR-0006): when `allGroups` is passed AND the group
+// has `childGroupIds`, the member-set becomes recursive across the
+// child-group tree. Wires INTERNAL to the recursive subtree do not
+// promote.
+const promotedPortsForGroup = (group, allNodes, allWires, allGroups) => {
+  const gid = (group && group.id) || '';
+  const declaredIds = (group && group.nodeIds) || [];
+  let memberIds, memberSet;
+  if (allGroups && ((group && group.childGroupIds) || []).length > 0) {
+    memberSet = expandedMembersJS(gid, allGroups);
+    const ordered = [];
+    for (const nid of declaredIds) {
+      if (memberSet.has(nid) && !ordered.includes(nid)) ordered.push(nid);
+    }
+    const extras = Array.from(memberSet).filter(x => !ordered.includes(x))
+      .sort();
+    memberIds = ordered.concat(extras);
+  } else {
+    memberIds = declaredIds;
+    memberSet = new Set(memberIds);
+  }
+  const byId = Object.fromEntries((allNodes || []).map(n => [n.id, n]));
+  const ins = []; const outs = [];
+  for (const mid of memberIds) {
+    const node = byId[mid]; if (!node) continue;
+    for (const prt of (node.ins || [])) {
+      const incoming = (allWires || []).filter(
+        w => w.to && w.to[0] === mid && w.to[1] === prt.id);
+      const external = (incoming.length === 0)
+        || incoming.some(w => !memberSet.has(w.from && w.from[0]));
+      if (external) {
+        ins.push({
+          groupSocket: `${gid}:in:${ins.length}`,
+          memberId: mid, portName: prt.id,
+          portType: prt.t || 'any',
+        });
+      }
+    }
+    for (const prt of (node.outs || [])) {
+      const outgoing = (allWires || []).filter(
+        w => w.from && w.from[0] === mid && w.from[1] === prt.id);
+      const external = (outgoing.length === 0)
+        || outgoing.some(w => !memberSet.has(w.to && w.to[0]));
+      if (external) {
+        outs.push({
+          groupSocket: `${gid}:out:${outs.length}`,
+          memberId: mid, portName: prt.id,
+          portType: prt.t || 'any',
+        });
+      }
+    }
+  }
+  return { ins, outs };
+};
+
+// Size of the visual collapsed-group node. Sockets pinned along the
+// vertical centre line using `socketY`.
+const COLLAPSED_GROUP_W = 240;
+const COLLAPSED_GROUP_HDR = 28;
+const collapsedGroupHeight = (promoted) =>
+  Math.max(112, 28 + SOCKET_STEP *
+    Math.max((promoted.ins || []).length, (promoted.outs || []).length, 1));
+
 const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, bumpGraph, graphBump = 0, removeUserNode }) => {
   // Combine demo graph + user-added nodes. graphBump is the COUNTER (not the
   // callback) — recomputes whenever LM_GRAPH mutates in place. Previously
@@ -3723,6 +4503,20 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [wireFieldPicker, setWireFieldPicker] = React.useState(null); // {wireIdx, side, paths}
   const [toast, setToast] = React.useState(null);
   const [snapToGrid, setSnapToGrid] = React.useState(false);
+  // SLICE B2 (AgDR-0003): multi-select state. `selectedIds` is the
+  // current selection set (drives multi-drag, group, copy-all).
+  // focusId stays the primary (drives the rail) and is always a
+  // member of selectedIds when selection is non-empty.
+  // `bandRect` carries the rubber-band rectangle in canvas coords
+  // while a band drag is active (mode='band').
+  const [selectedIds, setSelectedIds] = React.useState(() => new Set());
+  const [bandRect, setBandRect] = React.useState(null); // {x0,y0,x1,y1} canvas-space
+  // SLICE C (AgDR-0004): Ctrl+G opens a small dialog over the canvas
+  // to name + style + create a Group containing the current selection.
+  const [groupDialog, setGroupDialog] = React.useState(null);
+  // SLICE G (AgDR-0010): Save-as-Skill dialog with Mode (Shared/Private)
+  // + description + category. Opened from the node menu.
+  const [saveSkillDialog, setSaveSkillDialog] = React.useState(null);
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
 
@@ -3781,6 +4575,20 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       setWireDrag(null);
     }
     setCtxMenu(null); setNodeMenu(null); setWireMenu(null); setSelectedWire(null);
+    // SLICE B2 (AgDR-0003): Shift+empty-canvas-drag → rubber-band
+    // select. Plain empty-canvas-drag → pan (existing). Plain click
+    // (no shift, no movement) → clear selection.
+    if (e.shiftKey) {
+      const c = toCanvasCoords(e.clientX, e.clientY);
+      dragRef.current = { mode:'band', sx:e.clientX, sy:e.clientY,
+        x0:c.x, y0:c.y, additive: true };
+      setBandRect({ x0:c.x, y0:c.y, x1:c.x, y1:c.y });
+      return;
+    }
+    // Clear selection on plain empty-canvas mousedown (a drag will
+    // become a pan; a click without movement will leave selection
+    // empty — matches Figma/most editors).
+    if (selectedIds.size > 0) setSelectedIds(new Set());
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
   };
 
@@ -3795,9 +4603,68 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
-    const pos = positions[id] || { x: 0, y: 0 };
-    dragRef.current = { mode:'node', id, sx:e.clientX, sy:e.clientY, nx:pos.x, ny:pos.y };
+    // SLICE B2 (AgDR-0003): shift/ctrl-click toggles the node in
+    // selectedIds without starting a drag. Plain click: if already
+    // in selection (with siblings) → multi-drag; else replace
+    // selection with this id and single-drag.
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      setSelectedIds(s => {
+        const n = new Set(s);
+        if (n.has(id)) n.delete(id); else n.add(id);
+        return n;
+      });
+      setFocusId(id);
+      dragRef.current = null;
+      return;
+    }
+    let dragIds;
+    if (selectedIds.has(id) && selectedIds.size > 1) {
+      dragIds = Array.from(selectedIds);
+    } else {
+      dragIds = [id];
+      setSelectedIds(new Set([id]));
+    }
+    const starts = {};
+    dragIds.forEach(nid => {
+      starts[nid] = positions[nid] || { x: 0, y: 0 };
+    });
+    dragRef.current = { mode:'node', ids:dragIds, starts,
+      sx:e.clientX, sy:e.clientY, alt:e.altKey,
+      // Legacy single-id fields so existing onUp persist path still works
+      id, nx: starts[id].x, ny: starts[id].y };
     setFocusId(id);
+  };
+
+  // SLICE C (AgDR-0004): drag a group's header → multi-drag all members.
+  // Reuses the multi-drag infrastructure from slice B2 by stuffing the
+  // group's nodeIds into dragRef.current.ids.
+  const onGroupDragStart = (groupId) => (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const grp = (LM_GRAPH.groups || []).find(g => g.id === groupId);
+    if (!grp) return;
+    // SLICE C3: drag cascades through nested groups → recursive leaf
+    // node-set. Falls back to direct nodeIds when no nesting.
+    const allGroupsForDrag = LM_GRAPH.groups || [];
+    const recursive = ((grp.childGroupIds || []).length > 0)
+      ? expandedMembersJS(groupId, allGroupsForDrag)
+      : new Set(grp.nodeIds || []);
+    if (recursive.size === 0) return;
+    const dragIds = Array.from(recursive)
+      .filter(id => positions[id] !== undefined);
+    if (dragIds.length === 0) return;
+    const starts = {};
+    dragIds.forEach(nid => {
+      starts[nid] = positions[nid] || { x: 0, y: 0 };
+    });
+    const first = dragIds[0];
+    dragRef.current = { mode:'node', ids:dragIds, starts,
+      sx:e.clientX, sy:e.clientY, alt:e.altKey,
+      id:first, nx:starts[first].x, ny:starts[first].y };
+    // Select all members so the rail can show one of them.
+    setSelectedIds(new Set(dragIds));
+    setFocusId(first);
   };
 
   // Founder demand #8: right-click node opens NodeMenu.
@@ -3957,8 +4824,54 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const dy = e.clientY - d.sy;
       if (d.mode === 'pan') {
         setPan({ x: d.px + dx, y: d.py + dy });
-      } else {
-        setPositions(p => ({ ...p, [d.id]: { x: d.nx + dx / zoom, y: d.ny + dy / zoom } }));
+      } else if (d.mode === 'band') {
+        // SLICE B2: rubber-band — update the band rect to the
+        // current cursor in canvas coords.
+        const c = toCanvasCoords(e.clientX, e.clientY);
+        setBandRect({ x0:d.x0, y0:d.y0, x1:c.x, y1:c.y });
+      } else if (d.mode === 'node') {
+        // SLICE B2: multi-drag. Apply the cursor delta (canvas
+        // coords) to EVERY id in d.ids. Plus Alt-push-neighbours:
+        // any non-dragged node whose bbox overlaps a dragged
+        // node's new bbox gets shoved aside in the drag direction.
+        const ddx = dx / zoom, ddy = dy / zoom;
+        const alt = e.altKey;
+        setPositions(p => {
+          const next = { ...p };
+          (d.ids || [d.id]).forEach(id => {
+            const s = (d.starts && d.starts[id])
+              || { x: d.nx, y: d.ny };
+            next[id] = { x: s.x + ddx, y: s.y + ddy };
+          });
+          if (alt) {
+            const dragSet = new Set(d.ids || [d.id]);
+            (d.ids || [d.id]).forEach(id => {
+              const node = (allNodes || []).find(x => x.id === id);
+              if (!node) return;
+              const np = next[id];
+              const w = node.w || 220, h = node.h || 110;
+              (allNodes || []).forEach(other => {
+                if (dragSet.has(other.id)) return;
+                const op = next[other.id] || { x: other.x, y: other.y };
+                const ow = other.w || 220, oh = other.h || 110;
+                const overlaps = (np.x < op.x + ow && np.x + w > op.x
+                              && np.y < op.y + oh && np.y + h > op.y);
+                if (!overlaps) return;
+                const gap = 12;
+                let nx = op.x, ny = op.y;
+                if (Math.abs(ddx) >= Math.abs(ddy)) {
+                  if (ddx > 0) nx = np.x + w + gap;
+                  else nx = np.x - ow - gap;
+                } else {
+                  if (ddy > 0) ny = np.y + h + gap;
+                  else ny = np.y - oh - gap;
+                }
+                next[other.id] = { x: nx, y: ny };
+              });
+            });
+          }
+          return next;
+        });
       }
     };
     const onUp = (e) => {
@@ -4023,31 +4936,123 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         }
         setWireDrag(null);
       }
-      // ─── Persist final node position on drag-end (autosave) ────────
+      // ─── Persist final positions on drag-end (autosave) ────────
       if (dragRef.current && dragRef.current.mode === 'node') {
-        const id = dragRef.current.id;
-        let p = positions[id];
-        if (p) {
-          // Snap to 20px grid if the user enabled it from the canvas menu.
-          if (snapToGrid) {
-            const snapped = { x: Math.round(p.x / 20) * 20, y: Math.round(p.y / 20) * 20 };
-            if (snapped.x !== p.x || snapped.y !== p.y) {
-              setPositions(prev => ({ ...prev, [id]: snapped }));
-              p = snapped;
-            }
-          }
-          const node = (LM_GRAPH.nodes || []).find(n => n.id === id);
-          if (node) { node.x = p.x; node.y = p.y; }
-          saveCurrentGraph();
+        const ids = dragRef.current.ids || [dragRef.current.id];
+        // Snap each to a 20px grid if enabled.
+        if (snapToGrid) {
+          setPositions(prev => {
+            const next = { ...prev };
+            ids.forEach(id => {
+              const p = next[id];
+              if (p) next[id] = { x: Math.round(p.x / 20) * 20,
+                                   y: Math.round(p.y / 20) * 20 };
+            });
+            return next;
+          });
         }
+        ids.forEach(id => {
+          const p = positions[id];
+          if (!p) return;
+          const finalP = snapToGrid
+            ? { x: Math.round(p.x / 20) * 20, y: Math.round(p.y / 20) * 20 }
+            : p;
+          const node = (LM_GRAPH.nodes || []).find(n => n.id === id);
+          if (node) { node.x = finalP.x; node.y = finalP.y; }
+        });
+        saveCurrentGraph();
+      } else if (dragRef.current && dragRef.current.mode === 'band') {
+        // SLICE B2: band commit — every node whose bbox intersects
+        // the band rect joins selectedIds (additive on shift).
+        const br = bandRect;
+        if (br) {
+          const x0 = Math.min(br.x0, br.x1), x1 = Math.max(br.x0, br.x1);
+          const y0 = Math.min(br.y0, br.y1), y1 = Math.max(br.y0, br.y1);
+          const hit = (allNodes || []).filter(n => {
+            const p = positions[n.id] || { x: n.x, y: n.y };
+            const w = n.w || 220, h = n.h || 110;
+            return p.x < x1 && p.x + w > x0
+                && p.y < y1 && p.y + h > y0;
+          }).map(n => n.id);
+          setSelectedIds(s => {
+            if (dragRef.current && dragRef.current.additive) {
+              const next = new Set(s);
+              hit.forEach(id => next.add(id));
+              return next;
+            }
+            return new Set(hit);
+          });
+        }
+        setBandRect(null);
       }
       dragRef.current = null;
     };
-    // ESC cancels a pending click-to-wire (visible rubber-band line).
+    // ESC cancels a pending click-to-wire AND clears the selection.
+    // Ctrl+Shift+U / Ctrl+Shift+D expand the selection one hop
+    // upstream / downstream along LM_GRAPH.wires (AgDR-0003).
     const onKey = (e) => {
-      if (e.key === 'Escape' && wireDrag) {
-        if (wrapRef.current) wrapRef.current.querySelectorAll('[data-wire-hover]').forEach(n => n.removeAttribute('data-wire-hover'));
-        setWireDrag(null);
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          || (e.target && e.target.isContentEditable)) return;
+      if (e.key === 'Escape') {
+        if (wireDrag) {
+          if (wrapRef.current) wrapRef.current.querySelectorAll('[data-wire-hover]').forEach(n => n.removeAttribute('data-wire-hover'));
+          setWireDrag(null);
+        }
+        if (selectedIds.size > 0) setSelectedIds(new Set());
+        return;
+      }
+      const cm = e.ctrlKey || e.metaKey;
+      const sh = e.shiftKey;
+      const k = (e.key || '').toLowerCase();
+      if (cm && sh && (k === 'u' || k === 'd')) {
+        if (selectedIds.size === 0) return;
+        const wires = LM_GRAPH.wires || [];
+        const _src = w => (w.from ? w.from[0] : w.src_node);
+        const _dst = w => (w.to   ? w.to[0]   : w.dst_node);
+        setSelectedIds(s => {
+          const next = new Set(s);
+          if (k === 'u') {
+            wires.forEach(w => { if (next.has(_dst(w))) next.add(_src(w)); });
+          } else {
+            wires.forEach(w => { if (next.has(_src(w))) next.add(_dst(w)); });
+          }
+          return next;
+        });
+        e.preventDefault();
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg: 'select ' + (k === 'u' ? 'upstream' : 'downstream'),
+                     kind:'info' } })); } catch (err) {}
+        return;
+      }
+      // SLICE C (AgDR-0004): Ctrl+G groups the current selection.
+      if (cm && !sh && k === 'g') {
+        e.preventDefault();
+        if (selectedIds.size === 0) {
+          flashToast('Ctrl+G: select nodes first');
+          return;
+        }
+        setGroupDialog({ open: true, title: 'Group', style: 'transform',
+          ids: Array.from(selectedIds) });
+      }
+      // SLICE C2 (AgDR-0005): Ctrl+Shift+G toggles collapse on the
+      // focused-node's containing group (or any selected group).
+      if (cm && sh && k === 'g') {
+        e.preventDefault();
+        const groups = LM_GRAPH.groups || [];
+        // Find target group: contains focusId OR any selectedId.
+        const targetSet = new Set([focusId, ...Array.from(selectedIds || [])]);
+        const target = groups.find(gr =>
+          (gr.nodeIds || []).some(id => targetSet.has(id)));
+        if (!target) {
+          flashToast('Ctrl+Shift+G: focus a grouped node');
+          return;
+        }
+        LM_GRAPH.groups = groups.map(x =>
+          x.id === target.id ? { ...x, collapsed: !x.collapsed } : x);
+        saveCurrentGraph(); bumpGraph && bumpGraph();
+        flashToast((target.collapsed ? 'Expanded ' : 'Collapsed ') +
+                   (target.title || 'group'));
       }
     };
     document.addEventListener('mousemove', onMove);
@@ -4058,7 +5063,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       document.removeEventListener('mouseup', onUp);
       document.removeEventListener('keydown', onKey);
     };
-  }, [zoom, wireDrag, positions, snapToGrid]);
+  }, [zoom, wireDrag, positions, snapToGrid, selectedIds, bandRect, allNodes]);
 
   const onWheel = (e) => {
     // Guard: never zoom when the wheel happens inside any data-no-pan
@@ -4104,26 +5109,125 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     (allNodes || []).map(n => [n.id, { ...n, x: positions[n.id]?.x ?? n.x, y: positions[n.id]?.y ?? n.y }])
   );
 
+  // SLICE C2 (AgDR-0005): collapsed-group view-state. For every
+  // group whose `collapsed === true`, compute its collapsed-node
+  // bbox + promoted-port map. Build:
+  //   - hiddenMemberIds: nodes to SKIP in the per-node renderer
+  //   - groupViews[gid]: {anchor:{x,y}, w, h, promoted:{ins,outs}}
+  //   - memberAlias[`${memberId}:${portId}:in|out`]: {gid, side, idx, x, y, t}
+  //   - groupSocketAlias[groupSocketId]: {gid, side, idx, x, y, t}
+  //
+  // Anchored at the topleft of the original member bbox; size
+  // 240 × max(112, port-rows). Sockets along the vertical pitch
+  // via socketY().
+  const groupsArr = LM_GRAPH.groups || [];
+  const hiddenMemberIds = new Set();
+  const hiddenGroupIds = new Set();
+  const groupViews = {};
+  const memberAlias = {};
+  const groupSocketAlias = {};
+  const allWiresRaw = LM_GRAPH.wires || [];
+  for (const g of groupsArr) {
+    if (!g || !g.collapsed) continue;
+    // SLICE C3: collapse cascades down the child-group tree.
+    // Recursive member-set = every leaf node id under this group's
+    // subtree; recursive child-group-set = every descendant group
+    // (hidden in the per-group render below).
+    const recursiveMembers = ((g.childGroupIds || []).length > 0)
+      ? expandedMembersJS(g.id, groupsArr)
+      : new Set(g.nodeIds || []);
+    const memberCoords = Array.from(recursiveMembers)
+      .map(id => nodeById[id]).filter(Boolean);
+    if (memberCoords.length === 0) continue;
+    const x0 = Math.min(...memberCoords.map(m => m.x));
+    const y0 = Math.min(...memberCoords.map(m => m.y));
+    const promoted = promotedPortsForGroup(g, allNodes, allWiresRaw, groupsArr);
+    const w = COLLAPSED_GROUP_W;
+    const h = collapsedGroupHeight(promoted);
+    groupViews[g.id] = {
+      anchor: { x: x0, y: y0 }, w, h, promoted, group: g,
+    };
+    recursiveMembers.forEach(id => hiddenMemberIds.add(id));
+    // Mark every DESCENDANT group as hidden too (so the group-render
+    // loop below skips them — the parent's collapsed-node covers
+    // the whole subtree).
+    const stack = [...(g.childGroupIds || [])];
+    while (stack.length) {
+      const cid = stack.pop();
+      if (hiddenGroupIds.has(cid)) continue;
+      hiddenGroupIds.add(cid);
+      const child = groupsArr.find(x => x.id === cid);
+      if (child) for (const c2 of (child.childGroupIds || [])) stack.push(c2);
+    }
+    promoted.ins.forEach((p, i) => {
+      const ax = x0;
+      const ay = y0 + socketY(i);
+      memberAlias[`${p.memberId}:${p.portName}:in`] = {
+        gid: g.id, side: 'in', idx: i,
+        x: ax, y: ay, t: p.portType, port: p.portName,
+      };
+      groupSocketAlias[p.groupSocket] = {
+        gid: g.id, side: 'in', idx: i,
+        x: ax, y: ay, t: p.portType, port: p.portName,
+      };
+    });
+    promoted.outs.forEach((p, i) => {
+      const ax = x0 + w;
+      const ay = y0 + socketY(i);
+      memberAlias[`${p.memberId}:${p.portName}:out`] = {
+        gid: g.id, side: 'out', idx: i,
+        x: ax, y: ay, t: p.portType, port: p.portName,
+      };
+      groupSocketAlias[p.groupSocket] = {
+        gid: g.id, side: 'out', idx: i,
+        x: ax, y: ay, t: p.portType, port: p.portName,
+      };
+    });
+  }
+
   const connectedIds = new Set([focusId]);
   (LM_GRAPH.wires || []).forEach(w => {
     if (w.from[0] === focusId) connectedIds.add(w.to[0]);
     if (w.to[0]   === focusId) connectedIds.add(w.from[0]);
   });
 
+  // Resolve a wire endpoint to a screen coordinate, handling:
+  //   1) Regular node — use socket-Y on the node bbox.
+  //   2) Hidden collapsed-group member — re-anchor to the group's
+  //      promoted socket position.
+  //   3) Group-socket id literal (e.g. `g1:in:0`) authored after
+  //      the group was collapsed — resolve via groupSocketAlias.
+  const resolveEndpoint = (nodeId, portId, side /* 'in'|'out' */) => {
+    if (groupSocketAlias[nodeId]) {
+      const a = groupSocketAlias[nodeId];
+      return { x: a.x, y: a.y, t: a.t };
+    }
+    const aliasKey = `${nodeId}:${portId}:${side}`;
+    if (memberAlias[aliasKey]) {
+      const a = memberAlias[aliasKey];
+      return { x: a.x, y: a.y, t: a.t };
+    }
+    const node = nodeById[nodeId];
+    if (!node) return null;
+    const portsList = side === 'in' ? (node.ins || []) : (node.outs || []);
+    const idx = portsList.findIndex(o => o.id === portId);
+    if (idx < 0) return null;
+    const x = side === 'out' ? (node.x + node.w) : node.x;
+    return { x, y: node.y + socketY(idx), t: portsList[idx]?.t };
+  };
+
   const wires = (LM_GRAPH.wires || []).map((w, i) => {
+    const from = resolveEndpoint(w.from[0], w.from[1], 'out');
+    const to   = resolveEndpoint(w.to[0],   w.to[1],   'in');
+    if (!from || !to) return null;
     const fromNode = nodeById[w.from[0]];
     const toNode   = nodeById[w.to[0]];
-    if (!fromNode || !toNode) return null;
-    const fromIdx  = (fromNode.outs || []).findIndex(o => o.id === w.from[1]);
-    const toIdx    = (toNode.ins   || []).findIndex(o => o.id === w.to[1]);
-    if (fromIdx < 0 || toIdx < 0) return null;
-    const x1 = fromNode.x + fromNode.w, y1 = fromNode.y + socketY(fromIdx);
-    const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
     const touches = w.from[0] === focusId || w.to[0] === focusId;
     return {
-      i, x1, y1, x2, y2, raw: w,
-      t: (fromNode.outs || [])[fromIdx]?.t,
-      animated: fromNode.state === 'running' || toNode.state === 'running',
+      i, x1: from.x, y1: from.y, x2: to.x, y2: to.y, raw: w,
+      t: from.t,
+      animated: (fromNode && fromNode.state === 'running') ||
+                (toNode && toNode.state === 'running'),
       focused: touches,
     };
   }).filter(Boolean);
@@ -4147,22 +5251,29 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         setSelectedWire(null);
         saveCurrentGraph(); bumpGraph && bumpGraph();
         flashToast('Wire deleted');
-      } else if (focusId) {
-        // v1.4 nodes live in LM_GRAPH.nodes. The userNodes parallel state
-        // was deprecated — every node is deletable now. Founder bug:
-        // 'why can't i delete the node named node?' — root cause this
-        // branch returning silently when focusId wasn't in legacy state.
+      } else {
+        // SLICE B2: delete every selected node, with fallback to
+        // focusId if no multi-selection.
+        const toDelete = new Set(
+          selectedIds.size > 0 ? Array.from(selectedIds)
+          : (focusId ? [focusId] : [])
+        );
+        if (toDelete.size === 0) return;
         const before = (LM_GRAPH.nodes || []).length;
-        const filtered = (LM_GRAPH.nodes || []).filter(n => n.id !== focusId);
-        if (filtered.length !== before) {
-          e.preventDefault();
-          LM_GRAPH.nodes = filtered;
-          LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(w => w.from[0] !== focusId && w.to[0] !== focusId);
-          if (typeof removeUserNode === 'function') removeUserNode(focusId);
-          setFocusId(null);
-          saveCurrentGraph(); bumpGraph && bumpGraph();
-          flashToast('Node deleted');
-        }
+        const filtered = (LM_GRAPH.nodes || []).filter(n => !toDelete.has(n.id));
+        if (filtered.length === before) return;
+        e.preventDefault();
+        LM_GRAPH.nodes = filtered;
+        LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(
+          w => !toDelete.has(w.from[0]) && !toDelete.has(w.to[0]));
+        toDelete.forEach(id => {
+          if (typeof removeUserNode === 'function') removeUserNode(id);
+        });
+        setFocusId(null);
+        setSelectedIds(new Set());
+        saveCurrentGraph(); bumpGraph && bumpGraph();
+        flashToast(toDelete.size === 1
+          ? 'Node deleted' : `${toDelete.size} nodes deleted`);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -4171,7 +5282,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       window.removeEventListener('keydown', onKey, true);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [focusId, selectedWire, userNodes]);
+  }, [focusId, selectedWire, userNodes, selectedIds]);
 
   // ─── Founder demand #11: run the workflow on demand. Wire it up to keyboard
   // shortcut (Cmd/Ctrl+Enter) — the button on the rail also calls into here.
@@ -4209,6 +5320,19 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onDoubleClick={(e) => {
+        // SLICE F (AgDR-0009): double-click empty canvas → Add-Node
+        // search overlay at the cursor. Ignore double-clicks on nodes,
+        // sockets, groups, or any [data-no-pan] surface.
+        if (e.target.closest('.lm-node')) return;
+        if (e.target.closest('[data-no-pan]')) return;
+        if (e.target.closest('[data-lm-socket]')) return;
+        try {
+          window.dispatchEvent(new CustomEvent('lm-wire-promote', {
+            detail: { x: e.clientX, y: e.clientY, from: null },
+          }));
+        } catch (err) {}
+      }}
       style={{
         gridColumn:'1', gridRow:'2', position:'relative', overflow:'hidden',
         background:LM.bgCanvas,
@@ -4236,7 +5360,24 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
             const color = WIRE[w.t] || LM.inkSoft;
             const isSel = selectedWire === w.i;
-            const strokeW = isSel ? 3.2 : (w.focused ? 2.4 : 1.4);
+            // SLICE D (AgDR-0007): fancy-wire shape encoding — read the
+            // source node's `cooked.value` to derive a Grasshopper-style
+            // data-shape: scalar (thin) / list (thick) / tree (thick
+            // dashed). Falls back to thin when nothing cooked yet.
+            const srcId = w.raw && w.raw.from && w.raw.from[0];
+            const src = srcId && (allNodes || []).find(n => n.id === srcId);
+            const cv = src && src.cooked && src.cooked.value;
+            let shape = 'scalar';
+            if (Array.isArray(cv)) {
+              shape = (cv.length > 0 && Array.isArray(cv[0])) ? 'tree' : 'list';
+            }
+            const shapeW = shape === 'tree' ? 3.6
+                         : shape === 'list' ? 2.8 : 1.6;
+            const strokeW = isSel ? 3.6
+                         : (w.focused ? Math.max(shapeW, 2.6) : shapeW);
+            // any-typed wires render dashed regardless of shape (AgDR-0001).
+            const shapeDash = (shape === 'tree' || w.t === 'any')
+                            ? '8 5' : null;
             const op = isSel ? 1 : (w.focused ? 1 : 0.5);
             return (
               <g key={w.i}>
@@ -4251,6 +5392,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                     setWireMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, idx: w.i, wire: w.raw });
                   }}/>
                 <path d={d} stroke={color} strokeWidth={strokeW} fill="none" opacity={op}
+                  strokeDasharray={shapeDash || undefined}
                   filter={(w.focused || isSel) ? "url(#lm-wire-glow)" : undefined}
                   style={{ pointerEvents:'none' }}/>
                 {w.animated && (
@@ -4283,13 +5425,204 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           })()}
         </svg>
 
+        {/* SLICE C (AgDR-0004) + SLICE C2 (AgDR-0005): Groups.
+            When expanded: dashed-region wrapper at the members' bbox.
+            When collapsed: oversize node at the original topleft with
+            promoted sockets + chevron to re-expand. Members are
+            hidden in the per-node renderer above. */}
+        {(LM_GRAPH.groups || []).map(g => {
+          // SLICE C3: skip groups hidden inside a collapsed ancestor.
+          if (hiddenGroupIds.has(g.id)) return null;
+          const col = GROUP_STYLE_COLORS[g.style] || LM.inkSoft;
+          // ── Collapsed branch (SLICE C2)
+          if (g.collapsed && groupViews[g.id]) {
+            const v = groupViews[g.id];
+            const { x, y } = v.anchor;
+            const w = v.w, h = v.h;
+            const promoted = v.promoted;
+            const toggleCollapse = (e) => {
+              e.stopPropagation();
+              LM_GRAPH.groups = (LM_GRAPH.groups || []).map(x =>
+                x.id === g.id ? { ...x, collapsed: false } : x);
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+              flashToast('Expanded ' + (g.title || 'group'));
+            };
+            return (
+              <div key={g.id} style={{
+                position:'absolute', left:x, top:y, width:w, height:h,
+                background: LM.paper,
+                border:`1.5px solid ${col}`,
+                borderRadius:8,
+                boxShadow:`0 2px 6px ${col}33`,
+                pointerEvents:'auto', zIndex:2,
+              }}
+              onClick={(e) => {
+                if (e.target !== e.currentTarget) return;
+                setSelectedIds(new Set(g.nodeIds || []));
+              }}>
+                <div onMouseDown={onGroupDragStart(g.id)}
+                  style={{
+                    height: COLLAPSED_GROUP_HDR, padding:'0 8px',
+                    display:'flex', alignItems:'center', gap:6,
+                    cursor:'move', userSelect:'none',
+                    background: col + '22',
+                    borderBottom:`1px solid ${col}55`,
+                    borderTopLeftRadius:7, borderTopRightRadius:7,
+                  }}>
+                  <button onClick={toggleCollapse} title="Expand group" aria-label="Expand group"
+                    style={{ border:0, background:'transparent',
+                      color:col, cursor:'pointer', fontSize:13,
+                      padding:'0 2px', lineHeight:1 }}>▾</button>
+                  <span style={{ width:6, height:6, borderRadius:2, background:col }}/>
+                  <span style={{ fontFamily:LM.mono, fontSize:9, color:col,
+                    letterSpacing:'0.16em' }}>{(g.style || 'note').toUpperCase()}</span>
+                  <span style={{ fontFamily:LM.serif, fontStyle:'italic',
+                    fontSize:12, color:LM.ink, marginLeft:2,
+                    whiteSpace:'nowrap', overflow:'hidden',
+                    textOverflow:'ellipsis' }}>
+                    {g.title || 'Group'}
+                  </span>
+                  <div style={{ flex:1 }}/>
+                  <span style={{ fontFamily:LM.mono, fontSize:9,
+                    color:LM.inkMuted, letterSpacing:'0.08em' }}>
+                    {(g.nodeIds || []).length}n
+                  </span>
+                </div>
+                {/* Body: promoted-port labels on left + right.
+                    Sockets are rendered as small dots aligned with
+                    socketY(idx). */}
+                <div style={{ position:'relative', height: h - COLLAPSED_GROUP_HDR,
+                  fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
+                  {promoted.ins.map((p, i) => (
+                    <div key={`in-${i}`} style={{
+                      position:'absolute', left:8,
+                      top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
+                      display:'flex', alignItems:'center', gap:6,
+                    }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
+                      <span style={{
+                        width:8, height:8, borderRadius:8,
+                        background: WIRE[p.portType] || LM.inkSoft,
+                        border:`1.5px solid ${LM.paper}`,
+                        position:'absolute', left:-12,
+                      }}/>
+                      <span>{p.portName}</span>
+                    </div>
+                  ))}
+                  {promoted.outs.map((p, i) => (
+                    <div key={`out-${i}`} style={{
+                      position:'absolute', right:8,
+                      top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
+                      display:'flex', alignItems:'center', gap:6,
+                    }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
+                      <span>{p.portName}</span>
+                      <span style={{
+                        width:8, height:8, borderRadius:8,
+                        background: WIRE[p.portType] || LM.inkSoft,
+                        border:`1.5px solid ${LM.paper}`,
+                        position:'absolute', right:-12,
+                      }}/>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+          // ── Expanded branch (SLICE C original + C3 recursive bbox)
+          const PAD = 16, HDR = 28;
+          // SLICE C3: include the recursive leaf node-set in the
+          // bbox so a parent group's rect wraps every nested member.
+          const directNodeIds = new Set(g.nodeIds || []);
+          const recursiveLeafSet = ((g.childGroupIds || []).length > 0)
+            ? expandedMembersJS(g.id, groupsArr)
+            : directNodeIds;
+          const members = Array.from(recursiveLeafSet).map(id => {
+            const node = (allNodes || []).find(x => x.id === id);
+            if (!node) return null;
+            const p = positions[id] || { x: node.x, y: node.y };
+            return { x:p.x, y:p.y, w:node.w || 220, h:node.h || 110 };
+          }).filter(Boolean);
+          // Also include nested-group collapsed-node bboxes (when a
+          // child group is collapsed inside an expanded parent —
+          // edge case; the parent rect wraps the child collapsed-node).
+          for (const cid of (g.childGroupIds || [])) {
+            const cv = groupViews[cid];
+            if (cv) members.push({
+              x: cv.anchor.x, y: cv.anchor.y, w: cv.w, h: cv.h,
+            });
+          }
+          if (members.length === 0) return null;
+          const x0 = Math.min(...members.map(m => m.x)) - PAD;
+          const y0 = Math.min(...members.map(m => m.y)) - PAD - HDR;
+          const x1 = Math.max(...members.map(m => m.x + m.w)) + PAD;
+          const y1 = Math.max(...members.map(m => m.y + m.h)) + PAD;
+          const toggleCollapse = (e) => {
+            e.stopPropagation();
+            LM_GRAPH.groups = (LM_GRAPH.groups || []).map(x =>
+              x.id === g.id ? { ...x, collapsed: true } : x);
+            saveCurrentGraph(); bumpGraph && bumpGraph();
+            flashToast('Collapsed ' + (g.title || 'group'));
+          };
+          return (
+            <div key={g.id} style={{
+              position:'absolute', left:x0, top:y0,
+              width:x1 - x0, height:y1 - y0,
+              background: col + '0d',
+              border:`1px dashed ${col}55`, borderRadius:8,
+              pointerEvents:'auto',
+            }}
+            onClick={(e) => {
+              if (e.target !== e.currentTarget) return;
+              setSelectedIds(new Set(g.nodeIds || []));
+              if (g.nodeIds && g.nodeIds[0]) setFocusId(g.nodeIds[0]);
+            }}>
+              <div onMouseDown={onGroupDragStart(g.id)}
+                style={{
+                  height: HDR, padding:'0 10px',
+                  display:'flex', alignItems:'center', gap:8,
+                  cursor:'move', userSelect:'none',
+                  background: col + '22',
+                  borderBottom:`1px solid ${col}55`,
+                  borderTopLeftRadius:7, borderTopRightRadius:7,
+                }}>
+                <button onClick={toggleCollapse} title="Collapse group" aria-label="Collapse group"
+                  style={{ border:0, background:'transparent',
+                    color:col, cursor:'pointer', fontSize:13,
+                    padding:'0 2px', lineHeight:1 }}>▸</button>
+                <span style={{ width:6, height:6, borderRadius:2, background:col }}/>
+                <span style={{ fontFamily:LM.mono, fontSize:9, color:col,
+                  letterSpacing:'0.16em' }}>{(g.style || 'note').toUpperCase()}</span>
+                <span style={{ fontFamily:LM.serif, fontStyle:'italic',
+                  fontSize:13, color:LM.ink, marginLeft:4 }}>{g.title || 'Group'}</span>
+                <div style={{ flex:1 }}/>
+                <span style={{ fontFamily:LM.mono, fontSize:9,
+                  color:LM.inkMuted, letterSpacing:'0.08em' }}>
+                  {(g.nodeIds || []).length} nodes
+                </span>
+                <button onClick={(e) => {
+                  e.stopPropagation();
+                  if (!confirm('Ungroup ' + (g.title || 'this group') + '?')) return;
+                  LM_GRAPH.groups = (LM_GRAPH.groups || []).filter(x => x.id !== g.id);
+                  saveCurrentGraph(); bumpGraph && bumpGraph();
+                  flashToast('Ungrouped');
+                }} title="Ungroup" style={{
+                  border:0, background:'transparent', color:LM.inkMuted,
+                  cursor:'pointer', fontSize:13, padding:'0 4px',
+                }}>✕</button>
+              </div>
+            </div>
+          );
+        })}
         {(allNodes || []).map(n => {
+          // SLICE C2: skip members of collapsed groups — the collapsed-
+          // group node renders in their place above.
+          if (hiddenMemberIds.has(n.id)) return null;
           const pos = positions[n.id] || { x: n.x, y: n.y };
           return (
             <NodeRenderer
               key={n.id}
               n={{ ...n, x: pos.x, y: pos.y }}
               focused={n.id === focusId}
+              selected={selectedIds.has(n.id)}
               dimmed={!connectedIds.has(n.id) && focusId !== n.id && !n._user}
               expanded={!!expanded[n.id]}
               onToggleExpand={() => toggleExpanded(n.id)}
@@ -4301,6 +5634,22 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             />
           );
         })}
+        {/* SLICE B2 (AgDR-0003): rubber-band selection rectangle. */}
+        {bandRect && (() => {
+          const x = Math.min(bandRect.x0, bandRect.x1);
+          const y = Math.min(bandRect.y0, bandRect.y1);
+          const w = Math.abs(bandRect.x1 - bandRect.x0);
+          const h = Math.abs(bandRect.y1 - bandRect.y0);
+          return (
+            <div style={{
+              position:'absolute', left:x, top:y, width:w, height:h,
+              pointerEvents:'none',
+              border:`1px dashed ${LM.accent}`,
+              background: LM.accent + '14',
+              borderRadius:2, zIndex:50,
+            }}/>
+          );
+        })()}
       </div>
 
       {/* Drop-target ghost */}
@@ -4312,6 +5661,60 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           borderRadius:6, display:'grid', placeItems:'center',
           fontFamily:LM.mono, fontSize:10.5, color:LM.accent, letterSpacing:'0.06em',
         }}>＋ DROP TO ADD NODE</div>
+      )}
+
+      {/* SLICE C (AgDR-0004): Group creation dialog. Centred over
+          the canvas; backdrop click cancels. */}
+      {groupDialog && (
+        <GroupDialog initial={groupDialog}
+          onCancel={() => setGroupDialog(null)}
+          onCreate={(title, style) => {
+            const id = 'group_' + Date.now().toString(36)
+                       + Math.random().toString(36).slice(2, 4);
+            const grp = { id, title: title || 'Group',
+              description: '', style: style || 'transform',
+              nodeIds: groupDialog.ids || [] };
+            LM_GRAPH.groups = [...(LM_GRAPH.groups || []), grp];
+            saveCurrentGraph(); bumpGraph && bumpGraph();
+            setGroupDialog(null);
+            flashToast('Grouped ' + grp.nodeIds.length + ' nodes');
+          }}/>
+      )}
+
+      {/* SLICE G (AgDR-0010): Save-as-Skill dialog with Mode toggle. */}
+      {saveSkillDialog && (
+        <SaveSkillDialog initial={saveSkillDialog}
+          onCancel={() => setSaveSkillDialog(null)}
+          onSave={({ name, description, category, mode }) => {
+            const sourceId = saveSkillDialog.sourceNodeId;
+            const node = (LM_GRAPH.nodes || []).find(n => n.id === sourceId)
+                       || (userNodes || []).find(n => n.id === sourceId);
+            if (!node) { flashToast('Source node missing', 'err');
+              setSaveSkillDialog(null); return; }
+            // Build the subgraph: the focused node + every node reachable
+            // downstream + the connecting wires (a future iteration can
+            // expand upstream too; the MVP is downstream-reachable).
+            const wires = LM_GRAPH.wires || [];
+            const reach = new Set([node.id]);
+            let grew = true;
+            while (grew) {
+              grew = false;
+              for (const w of wires) {
+                const src = w.from && w.from[0], dst = w.to && w.to[0];
+                if (reach.has(src) && dst && !reach.has(dst)) {
+                  reach.add(dst); grew = true;
+                }
+              }
+            }
+            const nodes = (LM_GRAPH.nodes || []).filter(n => reach.has(n.id));
+            const subWires = wires.filter(w =>
+              reach.has(w.from && w.from[0]) && reach.has(w.to && w.to[0]));
+            const payload = { nodes, wires: subWires,
+              meta: { mode, description, category } };
+            bridgeCall('save_as_skill', name, JSON.stringify(payload));
+            flashToast('Skill saved (' + mode + ')');
+            setSaveSkillDialog(null);
+          }}/>
       )}
 
       <CanvasToolbar zoom={zoom} setZoom={(updater) => {
@@ -4342,7 +5745,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const offset = 24 + ((LM_GRAPH.nodes || []).length * 4);
             const idMap = {};
             const newNodes = parsed.nodes.map(n => {
-              const newId = (n.id || 'node') + '_' + Date.now().toString(36).slice(-4) + Math.floor(Math.random()*100);
+              const newId = (n.id || 'node') + '_' + _lm_uid();
               idMap[n.id] = newId;
               return { ...n, id: newId, x: (n.x || 0) + offset, y: (n.y || 0) + offset, _user: true };
             });
@@ -4437,6 +5840,26 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         }}/>}
       {nodeMenu && (
         <NodeMenu x={nodeMenu.x} y={nodeMenu.y} nodeId={nodeMenu.id}
+          selectedIds={selectedIds}
+          onFlattenToCode={() => {
+            // SLICE L (AgDR-0020 follow-up): collapse selection to one code node.
+            const ids = Array.from(selectedIds || []);
+            if (ids.length < 2) { flashToast('Select ≥2 nodes to flatten', 'info'); return; }
+            const result = bridgeJson('flatten_chain_to_code',
+              JSON.stringify(LM_GRAPH), JSON.stringify(ids));
+            if (result && result.error) {
+              flashToast(`Flatten failed: ${result.error}`, 'err');
+              return;
+            }
+            if (result && result.graph) {
+              LM_GRAPH.nodes = result.graph.nodes || [];
+              LM_GRAPH.wires = result.graph.wires || [];
+              setSelectedIds(new Set());
+              setFocusId(result.new_node_id || null);
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+              flashToast(`Flattened ${ids.length} → 1 (${result.expression})`);
+            }
+          }}
           onClose={() => setNodeMenu(null)}
           onRun={() => { bridgeCall('run_node', currentSid(), nodeMenu.id, JSON.stringify(LM_GRAPH)); flashToast('Running node…'); }}
           onFreeze={() => {
@@ -4478,16 +5901,14 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           }}
           onProperties={() => { setFocusId(nodeMenu.id); }}
           onSaveSkill={() => {
-            // Bridge slot is `save_as_skill(name, payload_json)` — there is no
-            // `save_node_as_skill`. Build a tiny single-node subgraph payload
-            // (the focused node only). A richer reachable-subgraph build can
-            // come later; this at least persists the skill.
+            // SLICE G (AgDR-0010): open the Save-as-Skill dialog with
+            // Mode (Shared/Private) + description + category. The
+            // dialog calls `save_as_skill` with the meta-tagged payload.
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id)
                        || (userNodes || []).find(n => n.id === nodeMenu.id);
             if (!node) { flashToast('Node not found', 'err'); return; }
-            const payload = JSON.stringify({ nodes:[node], wires:[] });
-            bridgeCall('save_as_skill', node.title || node.id, payload);
-            flashToast('Saved as skill');
+            setSaveSkillDialog({ open: true, sourceNodeId: node.id,
+              defaultName: node.title || node.id });
           }}
           onExpand={() => {
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
@@ -4501,6 +5922,40 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             } else if (result && result.error) {
               flashToast(`Expand failed: ${result.error}`, 'err');
             }
+          }}
+          onDisentangle={async () => {
+            // SLICE G (AgDR-0010): Disentangle a Shared skill into an
+            // inline Private snapshot. Loads the source skill, expands
+            // its graph at the wrapper node's position, deletes wrapper.
+            const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
+            if (!node || node.kind !== 'skill' || node.skill_mode !== 'shared') {
+              flashToast('Not a Shared skill', 'info'); return;
+            }
+            const blob = await bridgeAsync('load_skill', node.skill_id);
+            if (!blob || !Array.isArray(blob.nodes)) {
+              flashToast('Skill load failed', 'err'); return;
+            }
+            // Reposition the loaded nodes around the wrapper's location.
+            const baseX = node.x || 200, baseY = node.y || 200;
+            const minX = Math.min(...blob.nodes.map(n => n.x || 0), 0);
+            const minY = Math.min(...blob.nodes.map(n => n.y || 0), 0);
+            const fresh = blob.nodes.map(n => ({
+              ...n,
+              x: (n.x || 0) - minX + baseX,
+              y: (n.y || 0) - minY + baseY,
+              _user: true,
+            }));
+            // Drop the wrapper + any wires touching it.
+            LM_GRAPH.nodes = (LM_GRAPH.nodes || []).filter(n => n.id !== node.id);
+            LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(
+              w => w.from[0] !== node.id && w.to[0] !== node.id);
+            // Splice the inline graph.
+            LM_GRAPH.nodes = [...LM_GRAPH.nodes, ...fresh];
+            if (Array.isArray(blob.wires))
+              LM_GRAPH.wires = [...LM_GRAPH.wires, ...blob.wires];
+            setFocusId(null);
+            saveCurrentGraph(); bumpGraph && bumpGraph();
+            flashToast('Disentangled — ' + fresh.length + ' nodes inlined');
           }}/>
       )}
       {wireMenu && (
@@ -4568,7 +6023,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
 };
 
 // ─── Right-click on node → action menu (founder demand #8) ─────────
-const NodeMenu = ({ x, y, nodeId, onRun, onFreeze, onRename, onDuplicate, onDisconnect, onDelete, onProperties, onSaveSkill, onExpand, onClose }) => {
+const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onRename, onDuplicate, onDisconnect, onDelete, onProperties, onSaveSkill, onExpand, onDisentangle, onFlattenToCode, onClose }) => {
   React.useEffect(() => {
     const dismiss = () => onClose();
     document.addEventListener('click', dismiss);
@@ -4580,13 +6035,34 @@ const NodeMenu = ({ x, y, nodeId, onRun, onFreeze, onRename, onDuplicate, onDisc
     };
   }, [onClose]);
   const isSubgraph = !!(LM_GRAPH.nodes || []).find(n => n.id === nodeId && n.cat === 'subgraph.user');
+  // SLICE G (AgDR-0010): Disentangle is offered when the focused node
+  // is a Shared skill — converts the reference into an inline Private copy.
+  const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeId);
+  const isSharedSkill = node && node.kind === 'skill' && node.skill_mode === 'shared';
+  // SLICE L (AgDR-0020): Flatten-to-code is offered when 2+ nodes
+  // are selected AND every selected node is a flattenable type
+  // (math.op / text.op / data.constant / data.passthrough).
+  const FLATTENABLE = new Set(['math.op','text.op','data.constant','data.passthrough']);
+  const _selSize = (selectedIds && selectedIds.size) || 0;
+  const _selFlattenable = _selSize >= 2 && Array.from(selectedIds || []).every(id => {
+    const n = (LM_GRAPH.nodes || []).find(x => x.id === id);
+    if (!n) return false;
+    // Resolve type if not stamped — fall back to engine_type via kind
+    // mapping. The bridge slot will also validate.
+    if (n.type && FLATTENABLE.has(n.type)) return true;
+    // Can't flatten a code node (it IS the flattened form).
+    if (n.kind === 'code' || n.kind === 'code_expr' || n.kind === 'code_py') return false;
+    return ['number','add','sub','mul','div','mod','pow','round','floor','ceil','abs','neg','eq','neq','gt','lt','gte','lte','and','or','not','xor','concat','split','replace','format','match','upper','lower','trim','length'].includes(n.kind);
+  });
   const items = [
     { i:'▶', t:'Run',             on:onRun },
     { i:'❄', t:'Freeze / unfreeze', on:onFreeze },
     { i:'✎', t:'Rename',          on:onRename },
     { i:'⎘', t:'Duplicate',       on:onDuplicate },
     { i:'★', t:'Save as Skill',   on:onSaveSkill },
+    _selFlattenable && { i:'∑', t:`Flatten ${_selSize} nodes to Code`, on:onFlattenToCode },
     isSubgraph && { i:'⤢', t:'Expand subgraph', on:onExpand },
+    isSharedSkill && { i:'⇲', t:'Disentangle (snapshot)', on:onDisentangle },
     { sep:true },
     { i:'⊝', t:'Disconnect all',  on:onDisconnect },
     { i:'ⓘ', t:'Properties',      on:onProperties },
@@ -4724,6 +6200,123 @@ const _injectWireStyles = (() => {
   document.head.appendChild(s);
 })();
 
+// AgDR-0015 Phase 4 — accessibility focus floor.
+// Every focusable element gets a 2px LM.accent outline when reached
+// via keyboard (Tab / Shift-Tab). `:focus-visible` distinguishes
+// from mouse focus, so the ring shows ONLY for keyboard users —
+// no visual noise on click.
+const _LM_A11Y_STYLES = `
+:focus { outline: none; }
+button:focus-visible, [role="button"]:focus-visible,
+a:focus-visible, input:focus-visible, textarea:focus-visible,
+select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid ${LM.accent} !important;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+`;
+const _injectA11yStyles = (() => {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('lm-a11y-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'lm-a11y-styles';
+  s.textContent = _LM_A11Y_STYLES;
+  document.head.appendChild(s);
+})();
+
+// ─── AgDR-0022 — ReactFlow scaffold P2.a (groundwork) ─────────────
+// Feature-flag reader. `localStorage.archhub.canvas` picks which
+// canvas substrate to render: `custom` (today's NodeCanvas) or
+// `reactflow` (the AgDR-0012 migration target). Default `custom`
+// until P2.a-P2.d sub-slices reach parity. Toggle is INSTANT —
+// no app restart needed (the next React render reads the flag).
+//
+// Read at module load + memoised; mutation lives in
+// `_setCanvasFlavor(name)` which the Settings panel calls.
+const _readCanvasFlavor = () => {
+  try {
+    const v = (localStorage.getItem('archhub.canvas') || '').toLowerCase();
+    return v === 'reactflow' ? 'reactflow' : 'custom';
+  } catch (e) {
+    return 'custom';
+  }
+};
+const _setCanvasFlavor = (name) => {
+  const v = (name || '').toLowerCase() === 'reactflow' ? 'reactflow' : 'custom';
+  try { localStorage.setItem('archhub.canvas', v); } catch (e) {}
+  // Fire a custom event so the canvas mount can re-read without a
+  // page refresh.
+  try { window.dispatchEvent(new CustomEvent('archhub-canvas-flavor', { detail: v })); } catch (e) {}
+  return v;
+};
+window.__archhubCanvasFlavor = _readCanvasFlavor;
+window.__archhubSetCanvasFlavor = _setCanvasFlavor;
+
+// ─── AgDR-0024 — Host node v2 feature flag (S1: REST) ───────────────
+// localStorage.archhub.host_node_v2 = 'on' | 'off' (default 'off').
+// When ON, connector master nodes render via HostNodeV2Body — the
+// Direction A + ComfyUI op grid. When OFF, existing ConnectorOpBody
+// renders (today's UX, unchanged). Flip is instant; the next render
+// reads the flag. Founder signed off the design 2026-05-21 on
+// `host-node-direction-a-comfyui-v2-ecosystem.html`.
+const _readHostNodeV2 = () => {
+  try {
+    return (localStorage.getItem('archhub.host_node_v2') || '').toLowerCase() === 'on';
+  } catch (e) { return false; }
+};
+const _setHostNodeV2 = (on) => {
+  const v = !!on;
+  try { localStorage.setItem('archhub.host_node_v2', v ? 'on' : 'off'); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent('archhub-host-node-v2', { detail: v })); } catch (e) {}
+  return v;
+};
+window.__archhubHostNodeV2 = _readHostNodeV2;
+window.__archhubSetHostNodeV2 = _setHostNodeV2;
+
+// Stub component — renders a placeholder when the user flips to
+// `reactflow` BEFORE the P2.b sub-slice lands the library + nodes.
+// Tells the founder exactly what's missing + the "back to custom"
+// flip path.
+const NodeCanvasRF_Stub = ({ onSwitchBack }) => {
+  return (
+    <div data-testid="reactflow-canvas-stub" style={{
+      position:'absolute', inset:0,
+      background: LM.bgCanvas, color: LM.ink,
+      display:'grid', placeItems:'center',
+      fontFamily: LM.serif, fontSize: 18,
+    }}>
+      <div style={{ maxWidth: 460, textAlign:'center',
+        padding: '24px 28px', background: LM.bgPanel,
+        border: `1px solid ${LM.line}`,
+        borderRadius: 10,
+        boxShadow: '0 12px 36px rgba(0,0,0,.5)' }}>
+        <div style={{ fontFamily:LM.mono, fontSize:10,
+          color:LM.accent, letterSpacing:'0.18em',
+          marginBottom:10 }}>REACTFLOW CANVAS — PREVIEW</div>
+        <div style={{ marginBottom:14 }}>
+          Migration ships across P2.a → P2.d sub-slices (AgDR-0022).
+        </div>
+        <div style={{ fontFamily:LM.sans, fontSize:12,
+          color:LM.inkSoft, marginBottom:18, lineHeight:1.5 }}>
+          The custom canvas remains the default until parity ships.
+          You can flip back any time — no app restart.
+        </div>
+        <button onClick={onSwitchBack} style={{
+          padding:'7px 18px',
+          background: LM.accent, color: '#fff',
+          border: `1px solid ${LM.accent}`,
+          borderRadius: 5,
+          fontFamily: LM.mono, fontSize: 11,
+          cursor:'pointer',
+        }} aria-label="Switch back to custom canvas">← Back to custom canvas</button>
+      </div>
+    </div>
+  );
+};
+
 // Hint strip — sits above composer, auto-fades after first interaction or 6s
 // One-time per session: once dismissed, never returns.
 const CanvasHint = () => {
@@ -4829,7 +6422,7 @@ const CanvasMenu = ({ x, y, onAddNode, onFit, onClose, onClearAll, onPaste, onZo
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocketDown, onSocketContextMenu, onNodeContextMenu }) => {
+const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocketDown, onSocketContextMenu, onNodeContextMenu }) => {
   // Founder demand #15: spread defaults so a graph from disk with missing
   // arrays (older sessions, hand-edited JSON) doesn't crash the renderer.
   n = { ins:[], outs:[], messages:[], params:[], ...n };
@@ -4850,6 +6443,62 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
     } catch (e) {}
     return () => { try { bridgeCall('unregister_node_mcp', n.id); } catch (e) {} };
   }, [n.id]);
+
+  // SLICE D (AgDR-0007): reroute is a wire-organising 24×24 dot — no
+  // title bar, no body, just two sockets at vertical centre. Sockets
+  // carry the standard data-* attributes so findSnapTarget picks them
+  // up exactly like a normal node's sockets.
+  if (n.kind === 'reroute') {
+    const SR = 6;
+    const dotCol = (WIRE && WIRE.any) || LM.inkSoft;
+    return (
+      <div className="lm-node" data-node-id={n.id} onClick={onFocus}
+        onContextMenu={onNodeContextMenu && ((e) => onNodeContextMenu(e, n.id))}
+        onMouseDown={onDragStart}
+        style={{
+          position:'absolute', left:n.x, top:n.y, width:24, height:24,
+          background: cat.col || LM.inkSoft, borderRadius:'50%',
+          border: focused ? `2px solid ${LM.accent}` :
+                  selected ? `2px solid ${LM.accent}aa` : `1px solid ${LM.line}`,
+          boxShadow: focused
+            ? `0 0 0 3px ${LM.accentDim}, 0 4px 12px rgba(0,0,0,.4)`
+            : (selected
+                ? `0 0 0 2px ${LM.accent}aa, 0 1px 4px rgba(0,0,0,.4)`
+                : '0 1px 4px rgba(0,0,0,.4)'),
+          cursor:'move', opacity: dimmed ? 0.42 : 1,
+        }}>
+        <div data-lm-socket={`in:${n.id}:value`}
+          data-side="in" data-node={n.id} data-pin="value" data-type="any"
+          onMouseDown={onSocketDown && ((e) => onSocketDown(e, n.id, 'value', 'in', 'any'))}
+          onContextMenu={onSocketContextMenu && ((e) => onSocketContextMenu(e, n.id, 'value', 'in'))}
+          style={{
+            position:'absolute', left:-SR, top:12-SR,
+            width:SR*2, height:SR*2, cursor:'crosshair', pointerEvents:'auto',
+          }}>
+          <span data-lm-socket-dot="1" style={{
+            display:'block', width:SR*2, height:SR*2, borderRadius:'50%',
+            background:LM.bgPanel, border:`1.5px solid ${dotCol}`,
+            boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
+          }}/>
+        </div>
+        <div data-lm-socket={`out:${n.id}:value`}
+          data-side="out" data-node={n.id} data-pin="value" data-type="any"
+          onMouseDown={onSocketDown && ((e) => onSocketDown(e, n.id, 'value', 'out', 'any'))}
+          onContextMenu={onSocketContextMenu && ((e) => onSocketContextMenu(e, n.id, 'value', 'out'))}
+          style={{
+            position:'absolute', right:-SR, top:12-SR,
+            width:SR*2, height:SR*2, cursor:'crosshair', pointerEvents:'auto',
+          }}>
+          <span data-lm-socket-dot="1" style={{
+            display:'block', width:SR*2, height:SR*2, borderRadius:'50%',
+            background:dotCol, border:`1.5px solid ${dotCol}`,
+            boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
+          }}/>
+        </div>
+      </div>
+    );
+  }
+
   // AI nodes can expand horizontally for full conversation + search
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
@@ -4865,17 +6514,21 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
       onContextMenu={onNodeContextMenu && ((e) => onNodeContextMenu(e, n.id))}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:minH,
-        background:LM.bgPanel,
-        borderStyle:'solid',
+        // SLICE B (AgDR-0002): frozen tint + dashed bypass border +
+        // preview-off opacity dim. Each verb composes independently.
+        background: n.frozen ? (LM.cyan + '14') : LM.bgPanel,
+        borderStyle: n.bypass ? 'dashed' : 'solid',
         borderWidth:'2px 1px 1px 1px',
         borderColor: `${cat.col} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line}`,
         borderRadius:9, color:LM.ink, fontFamily:LM.sans,
         boxShadow: focused
           ? `0 0 0 3px ${LM.accentDim}, 0 8px 24px rgba(0,0,0,.4)`
-          : '0 2px 8px rgba(0,0,0,.35)',
+          : (selected
+              ? `0 0 0 2px ${LM.accent}aa, 0 2px 8px rgba(0,0,0,.35)`
+              : '0 2px 8px rgba(0,0,0,.35)'),
         cursor: 'default',
-        opacity: dimmed ? 0.42 : 1,
-        transition:'border-color .12s, box-shadow .12s, opacity .15s, width .15s',
+        opacity: (dimmed ? 0.42 : 1) * (n.preview_off ? 0.55 : 1),
+        transition:'border-color .12s, box-shadow .12s, opacity .15s, width .15s, background .15s',
       }}>
       {/* Title bar — drag handle */}
       <div onMouseDown={onDragStart}
@@ -4889,6 +6542,23 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         <span style={{ width:14, height:14, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.mono, fontSize:11 }}>{cat.icon}</span>
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         <div style={{ flex:1 }}/>
+        {/* SLICE B (AgDR-0002): disable-verb state indicators. */}
+        {(n.bypass || n.frozen || n.preview_off || n.pinned) && (
+          <span style={{ display:'flex', alignItems:'center', gap:5,
+            fontFamily:LM.mono, fontSize:11, marginRight:4 }}>
+            {n.bypass && <span title="Bypass (Ctrl+B) — pass-through" style={{ color:LM.inkSoft }}>↦</span>}
+            {n.frozen && <span title="Frozen (Ctrl+F) — cached value" style={{ color:LM.cyan }}>❄</span>}
+            {n.preview_off && <span title="Preview-off (Ctrl+Shift+P) — render suppressed" style={{ color:LM.inkSoft }}>⊘</span>}
+            {n.pinned && (
+              <span title={'Pinned @ ' + new Date(n.pinned_at || 0).toLocaleString()}
+                style={{ background:'#9b59b6', color:'#fff',
+                  padding:'1px 5px', borderRadius:3, fontSize:8.5,
+                  letterSpacing:'0.04em' }}>
+                📌 {new Date(n.pinned_at || 0).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+              </span>
+            )}
+          </span>
+        )}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
         {isAi && (
@@ -4977,7 +6647,33 @@ const Socket = ({ side, i, t, label, nodeId, sockId, onMouseDown, onContextMenu 
 };
 
 // ─── per-category body content ───
+// Typed grammar primitives (slices H/I/J/K) — these are the new
+// catalogue post-split. They render via GrammarBody regardless of
+// their `cat`, because the old per-cat bodies (LogicBody, FilterBody,
+// TransformBody) expect the OLD primitive shapes (e.g. `n.sub` with
+// a "predicate" suffix) and produce wrong text for the typed kinds.
+const _TYPED_KINDS = new Set([
+  // INPUT
+  'number','text','boolean','file','color','parameter',
+  // LOGIC (typed split)
+  'if','foreach','switch','merge',
+  // SHAPE (typed split — Filter still uses FilterBody for back-compat)
+  'sort','unique','pluck','count','flatten','first','last',
+  // MATH
+  'add','subtract','multiply','divide','modulo','round','equal',
+  'greater','less','and_op','or_op','not_op',
+  // TEXT
+  'concat','split','replace','format','match',
+  // OUTPUT (typed split — Result still uses OutputBody for back-compat)
+  'file_save','console','display',
+  // TRIGGER
+  'manual_run','schedule','webhook','file_watch',
+  // WATCH (typed split — uses dedicated WatchBody by cat='watch')
+]);
+
 const NodeBody = ({ n, expanded, onToggleExpand }) => {
+  // Typed primitives route to GrammarBody regardless of legacy `cat`.
+  if (_TYPED_KINDS.has(n.kind)) return <GrammarBody n={n}/>;
   switch (n.cat) {
     case 'host':         return <HostBody n={n}/>;
     case 'ai':           return <AIBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>;
@@ -4988,10 +6684,507 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
     case 'compose':      return <ComposeBody n={n}/>;
     case 'annotate':     return <AnnotateBody n={n}/>;
     case 'output':       return <OutputBody n={n}/>;
-    case 'connector_op': return <ConnectorOpBody n={n}/>;
+    case 'connector':
+    case 'connector_op':
+      // AgDR-0024 S1 (REST) — host node v2 op-grid behind feature flag.
+      // When `localStorage.archhub.host_node_v2 = 'on'`, render the
+      // Direction A op grid + active-tile-expand. Otherwise the
+      // existing ConnectorOpBody is unchanged.
+      if (_readHostNodeV2()) return <HostNodeV2Body n={n}/>;
+      return <ConnectorOpBody n={n}/>;
     case 'custom':       return <CustomBody n={n}/>;
+    // SLICE E (AgDR-0008): dedicated bodies for the two annotation
+    // primitives. `watch` dispatches on `config.as`; `note` renders
+    // a small markdown subset with double-click-to-edit.
+    case 'watch':        return <WatchBody n={n}/>;
+    case 'note':         return <NoteBody n={n}/>;
     default:             return <GrammarBody n={n}/>;
   }
+};
+
+
+// ─── AgDR-0024 S1 — HostNodeV2Body (REST stage) ─────────────────────
+// Direction A op grid + active-tile-expand + MAIN INPUTS rows.
+//   - NO hover-promote markers (S2 ships those).
+//   - NO ADVANCED INPUTS section (S2).
+//   - NO OUTPUT PLUCK section (S3).
+//   - NO floating disable-verbs bar (S2).
+// Renders only when `localStorage.archhub.host_node_v2 = 'on'`.
+// Reads ops from `LM_CONNECTORS` (Slice A per-host master list).
+const _PER_HOST_BRAND = {
+  revit:   '#d97757', autocad: '#e6705f', max:     '#a98cd6',
+  rhino:   '#7ec18e', excel:   '#5fb3b3', word:    '#7898d6',
+  outlook: '#7898d6', notion:  '#9b938a', dropbox: '#7898d6',
+  speckle: '#e3b950',
+};
+const _opShortName = (op_id) =>
+  String(op_id || '').split('.').pop() || op_id || '';
+const _opSinceCooked = (cookedAt) => {
+  if (!cookedAt) return 'never';
+  const dt = Date.now() - cookedAt;
+  if (dt < 60_000) return Math.floor(dt / 1000) + 's';
+  if (dt < 3_600_000) return Math.floor(dt / 60_000) + 'm';
+  return Math.floor(dt / 3_600_000) + 'h';
+};
+
+const HostNodeV2Body = ({ n }) => {
+  const host = (n.host || n.config?.host || '').toLowerCase();
+  const brand = _PER_HOST_BRAND[host] || LM.accent;
+  const conn = (LM_CONNECTORS || []).find(c => c.host === host);
+  const ops = (conn && conn.ops) || [];
+  // Active op = currently configured op_id, OR first op as default.
+  const activeOpId = n.op_id
+    || (n.config && n.config.op
+        ? (host && !n.config.op.includes('.') ? `${host}.${n.config.op}` : n.config.op)
+        : '')
+    || (ops[0] && ops[0].op_id) || '';
+  // Cook state for each op (when available). Falls back to "never" when
+  // the node hasn't run yet.
+  const cooked = (n.cooked_ops_at && typeof n.cooked_ops_at === 'object')
+    ? n.cooked_ops_at : {};
+
+  // Inputs of the active op — used to render MAIN params section.
+  const activeOp = ops.find(o => o.op_id === activeOpId) || ops[0] || null;
+  const activeInputs = ((activeOp && activeOp.inputs) || [])
+    .filter(i => i.id !== 'instance');  // hide the host's instance picker
+  // Pull current values from node.config (slot-resolved) so the tile
+  // shows what's actually wired / set.
+  const cfg = (n.config && typeof n.config === 'object') ? n.config : {};
+  const valueFor = (id) => {
+    const v = cfg[id];
+    if (v == null || v === '') return '(unset)';
+    if (typeof v === 'object') return JSON.stringify(v).slice(0, 40);
+    return String(v).slice(0, 40);
+  };
+
+  // Pill status per tile. cfg means "has at least one non-default
+  // param"; done means "cooked since last input change".
+  const tileStatus = (op) => {
+    if (op.op_id === activeOpId && cfg && cfg.op) return 'cfg';
+    if (cooked[op.op_id]) return 'done';
+    return 'idle';
+  };
+
+  return (
+    <div data-host-node-v2="s1" style={{ marginTop:8 }}>
+      <div style={{
+        display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:5,
+      }}>
+        {ops.map((op) => {
+          const isActive = op.op_id === activeOpId;
+          const status = tileStatus(op);
+          const pillCol = status === 'done' ? LM.ok
+                        : status === 'cfg'  ? LM.blue
+                        : status === 'run'  ? LM.warn
+                        : status === 'err'  ? LM.err
+                        : LM.inkDim;
+          if (isActive) {
+            return (
+              <div key={op.op_id} data-active-tile="1" style={{
+                gridColumn: 'span 4',
+                background: LM.bgHover,
+                border: `1px solid ${brand}`,
+                borderRadius: 4, padding: '8px 10px',
+              }}>
+                <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                  <span style={{
+                    width:6, height:6, borderRadius:'50%',
+                    background: pillCol,
+                  }}/>
+                  <span style={{
+                    fontFamily: LM.mono, fontSize:10.5, color:LM.ink,
+                  }}>{_opShortName(op.op_id)}</span>
+                  <span style={{ flex:1 }}/>
+                  <span style={{
+                    fontFamily: LM.mono, fontSize:8.5,
+                    color: status === 'done' ? LM.ok : LM.inkMuted,
+                    letterSpacing:'0.04em',
+                  }}>
+                    {status === 'done' ? `AUTO · ${_opSinceCooked(cooked[op.op_id])}` : 'idle'}
+                  </span>
+                </div>
+                <div style={{
+                  marginTop:8, paddingTop:6,
+                  borderTop:`1px solid ${LM.lineSoft}`,
+                }}>
+                  <div style={{
+                    fontFamily: LM.mono, fontSize:8.5, color:brand,
+                    letterSpacing:'0.18em', marginBottom:4,
+                  }}>MAIN INPUTS · {activeInputs.length}</div>
+                  {activeInputs.length === 0 ? (
+                    <div style={{
+                      fontFamily: LM.serif, fontStyle:'italic',
+                      fontSize:11, color:LM.inkMuted,
+                    }}>this op takes no inputs</div>
+                  ) : (
+                    <div style={{
+                      display:'flex', flexDirection:'column', gap:3,
+                    }}>
+                      {activeInputs.map(inp => (
+                        <div key={inp.id} style={{
+                          display:'grid',
+                          gridTemplateColumns:'110px 1fr',
+                          alignItems:'center', gap:6,
+                          fontFamily:LM.mono, fontSize:10,
+                        }}>
+                          <span style={{ color:LM.inkMuted }}>{inp.id}</span>
+                          <span style={{
+                            background: LM.bg,
+                            border:`1px solid ${LM.lineSoft}`,
+                            borderRadius:3, padding:'2px 7px',
+                            color:LM.ink,
+                            overflow:'hidden', textOverflow:'ellipsis',
+                            whiteSpace:'nowrap',
+                          }}>{valueFor(inp.id)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={op.op_id} style={{
+              background: LM.bgSoft,
+              border:`1px solid ${LM.lineSoft}`,
+              borderRadius:4, padding:'6px 7px',
+              fontFamily:LM.mono, fontSize:9.5, lineHeight:1.3,
+              color:LM.inkSoft, cursor:'pointer',
+              position:'relative',
+            }}>
+              <div>
+                <span style={{
+                  display:'inline-block', width:6, height:6,
+                  borderRadius:'50%', background:pillCol,
+                  marginRight:5, verticalAlign:'middle',
+                }}/>
+                <span style={{ color:LM.ink, fontSize:10 }}>
+                  {_opShortName(op.op_id)}
+                </span>
+              </div>
+              <div style={{
+                color:LM.inkMuted, fontSize:8.5, marginTop:2,
+              }}>{cooked[op.op_id] ? _opSinceCooked(cooked[op.op_id]) + ' ago' : 'never'}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ─── SLICE E (AgDR-0008): WatchBody — receives the wire AND shows
+// the value. Renderer chosen by `config.as`: list / table / json /
+// image / view / model. Defaults to json. Truncates long values.
+const WatchBody = ({ n }) => {
+  const as = (n.config && n.config.as)
+          || (n.params || []).find(p => p.k === 'as')?.v
+          || 'json';
+  const v = n.cooked && n.cooked.value;
+  const empty = v === undefined || v === null;
+  if (empty) {
+    return (
+      <div style={{ marginTop:8, fontFamily:LM.serif, fontStyle:'italic',
+        fontSize:11, color:LM.inkMuted }}>
+        no data yet — wire a node to me
+      </div>
+    );
+  }
+  // — list —
+  if (as === 'list') {
+    const items = Array.isArray(v) ? v : [v];
+    return (
+      <ul style={{ marginTop:6, marginBottom:0, paddingLeft:18,
+        fontFamily:LM.mono, fontSize:10, color:LM.ink,
+        maxHeight:160, overflow:'auto' }}>
+        {items.slice(0, 50).map((it, i) => {
+          const s = (() => { try { return typeof it === 'string'
+            ? it : JSON.stringify(it); } catch (e) { return String(it); } })();
+          const trunc = s.length > 120 ? s.slice(0, 120) + '…' : s;
+          return <li key={i} title={s}>{trunc}</li>;
+        })}
+        {items.length > 50 && (
+          <li style={{ color:LM.inkMuted, listStyle:'none' }}>
+            …+{items.length - 50} more
+          </li>
+        )}
+      </ul>
+    );
+  }
+  // — table —
+  if (as === 'table') {
+    let cols = [], rows = [];
+    if (Array.isArray(v) && v.length > 0) {
+      const first = v[0];
+      if (first && typeof first === 'object' && !Array.isArray(first)) {
+        const keys = new Set();
+        v.forEach(r => Object.keys(r || {}).forEach(k => keys.add(k)));
+        cols = [...keys];
+        rows = v.slice(0, 30).map(r => cols.map(k => r && r[k]));
+      } else if (Array.isArray(first)) {
+        const maxLen = v.reduce((m, r) => Math.max(m, (r||[]).length), 0);
+        cols = Array.from({length:maxLen}, (_, i) => String(i));
+        rows = v.slice(0, 30).map(r => cols.map((_, i) => (r||[])[i]));
+      } else {
+        cols = ['value'];
+        rows = v.slice(0, 30).map(r => [r]);
+      }
+    } else {
+      cols = ['value'];
+      rows = [[v]];
+    }
+    return (
+      <div style={{ marginTop:6, maxHeight:200, overflow:'auto',
+        border:`1px solid ${LM.lineSoft}`, borderRadius:4 }}>
+        <table style={{ borderCollapse:'collapse', fontFamily:LM.mono,
+          fontSize:9.5, color:LM.ink, width:'100%' }}>
+          <thead><tr>
+            {cols.map(c => (
+              <th key={c} style={{ padding:'3px 6px', borderBottom:`1px solid ${LM.line}`,
+                background:LM.bgSoft, color:LM.inkMuted, textAlign:'left',
+                letterSpacing:'0.04em', fontWeight:600 }}>{c}</th>
+            ))}
+          </tr></thead>
+          <tbody>{rows.map((r, ri) => (
+            <tr key={ri}>{r.map((cell, ci) => {
+              const s = (() => { try { return typeof cell === 'string'
+                ? cell : JSON.stringify(cell); } catch (e) { return String(cell); } })();
+              const trunc = s.length > 60 ? s.slice(0, 60) + '…' : s;
+              return (
+                <td key={ci} title={s} style={{ padding:'2px 6px',
+                  borderBottom:`1px solid ${LM.lineSoft}`,
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                  maxWidth:160 }}>{trunc}</td>
+              );
+            })}</tr>
+          ))}</tbody>
+        </table>
+        {Array.isArray(v) && v.length > 30 && (
+          <div style={{ padding:'4px 6px', fontFamily:LM.mono,
+            fontSize:9, color:LM.inkMuted }}>
+            +{v.length - 30} more rows
+          </div>
+        )}
+      </div>
+    );
+  }
+  // — image —
+  if (as === 'image') {
+    const s = typeof v === 'string' ? v : '';
+    const ok = /^https?:\/\/.+\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(s)
+            || /^data:image\//.test(s);
+    if (ok) {
+      return (
+        <div style={{ marginTop:6, textAlign:'center' }}>
+          <img src={s} alt="watch" style={{
+            maxWidth:'100%', maxHeight:220, borderRadius:4,
+            border:`1px solid ${LM.line}`,
+          }}/>
+        </div>
+      );
+    }
+    // fall through to json if value isn't an image URL/data URI.
+  }
+  // — view / model — placeholder until a real 3D viewer ships
+  if (as === 'view' || as === 'model') {
+    return (
+      <div style={{ marginTop:6 }}>
+        <div style={{ fontFamily:LM.mono, fontSize:8.5,
+          color:LM.inkMuted, letterSpacing:'0.16em', marginBottom:4 }}>
+          3D VIEWER — COMING SOON
+        </div>
+        <pre style={{ margin:0, fontFamily:LM.mono, fontSize:9.5,
+          color:LM.ink, background:LM.bg, border:`1px solid ${LM.lineSoft}`,
+          borderRadius:3, padding:'5px 7px', maxHeight:140, overflow:'auto',
+          whiteSpace:'pre-wrap' }}>
+          {(() => { try { return JSON.stringify(v, null, 2).slice(0, 800); }
+            catch (e) { return String(v); } })()}
+        </pre>
+      </div>
+    );
+  }
+  // — json (default) —
+  return (
+    <pre style={{ marginTop:6, marginBottom:0, fontFamily:LM.mono,
+      fontSize:9.5, color:LM.ink, background:LM.bg,
+      border:`1px solid ${LM.lineSoft}`, borderRadius:3,
+      padding:'5px 7px', maxHeight:200, overflow:'auto',
+      whiteSpace:'pre-wrap' }}>
+      {(() => { try {
+        const s = JSON.stringify(v, null, 2);
+        return s.length > 2000 ? s.slice(0, 2000) + '\n…' : s;
+      } catch (e) { return String(v); } })()}
+    </pre>
+  );
+};
+
+// ─── SLICE E (AgDR-0008): a tiny in-house markdown parser. Returns
+// React elements (no innerHTML, no XSS surface). Subset:
+//   #, ##, ### headers · **bold** · _italic_ · `code` ·
+//   [text](url) · ![alt](url) · `- ` bullet lists.
+// URLs are filtered to http(s): and data:image/ schemes.
+const _MD_URL_SAFE = (u) => typeof u === 'string'
+  && (/^https?:\/\//i.test(u) || /^data:image\//i.test(u));
+const _renderInlineMd = (text) => {
+  // Tokenise inline patterns. Order matters: image before link,
+  // code before bold/italic.
+  const out = [];
+  let rest = text;
+  let key = 0;
+  const RE_IMG  = /!\[([^\]]*)\]\(([^)]+)\)/;
+  const RE_LINK = /\[([^\]]+)\]\(([^)]+)\)/;
+  const RE_CODE = /`([^`]+)`/;
+  const RE_BOLD = /\*\*([^*]+)\*\*/;
+  const RE_EM   = /_([^_]+)_/;
+  const pickFirst = (s) => {
+    const tests = [
+      { re: RE_IMG,  kind:'img'  },
+      { re: RE_LINK, kind:'link' },
+      { re: RE_CODE, kind:'code' },
+      { re: RE_BOLD, kind:'bold' },
+      { re: RE_EM,   kind:'em'   },
+    ];
+    let earliest = null;
+    tests.forEach(t => {
+      const m = s.match(t.re);
+      if (m && (earliest === null || m.index < earliest.m.index)) {
+        earliest = { kind: t.kind, m };
+      }
+    });
+    return earliest;
+  };
+  while (rest.length > 0) {
+    const hit = pickFirst(rest);
+    if (!hit) { out.push(rest); break; }
+    const { kind, m } = hit;
+    if (m.index > 0) out.push(rest.slice(0, m.index));
+    if (kind === 'img') {
+      const alt = m[1], url = m[2];
+      if (_MD_URL_SAFE(url)) {
+        out.push(<img key={'i'+(key++)} alt={alt} src={url}
+          style={{ maxWidth:'100%', maxHeight:160, borderRadius:3,
+            margin:'4px 0', verticalAlign:'middle' }}/>);
+      } else {
+        out.push('![' + alt + '](unsafe url omitted)');
+      }
+    } else if (kind === 'link') {
+      const txt = m[1], url = m[2];
+      if (_MD_URL_SAFE(url)) {
+        out.push(<a key={'a'+(key++)} href={url}
+          target="_blank" rel="noopener noreferrer"
+          style={{ color:LM.cyan, textDecoration:'underline' }}>{txt}</a>);
+      } else {
+        out.push(txt);
+      }
+    } else if (kind === 'code') {
+      out.push(<code key={'c'+(key++)} style={{
+        background:LM.bg, padding:'1px 5px', borderRadius:3,
+        fontFamily:LM.mono, fontSize:'0.92em' }}>{m[1]}</code>);
+    } else if (kind === 'bold') {
+      out.push(<strong key={'b'+(key++)}>{m[1]}</strong>);
+    } else if (kind === 'em') {
+      out.push(<em key={'e'+(key++)}>{m[1]}</em>);
+    }
+    rest = rest.slice(m.index + m[0].length);
+  }
+  return out;
+};
+const _renderMarkdown = (text) => {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  let bulletBuf = null;
+  let key = 0;
+  const flushBullets = () => {
+    if (bulletBuf && bulletBuf.length > 0) {
+      out.push(<ul key={'u'+(key++)} style={{
+        margin:'4px 0', paddingLeft:18 }}>
+        {bulletBuf.map((b, i) => <li key={i}>{_renderInlineMd(b)}</li>)}
+      </ul>);
+    }
+    bulletBuf = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (/^### /.test(ln)) {
+      flushBullets();
+      out.push(<h3 key={'h'+(key++)} style={{
+        margin:'6px 0 2px', fontFamily:LM.serif, fontSize:14, fontWeight:600 }}>
+        {_renderInlineMd(ln.replace(/^### /, ''))}</h3>);
+    } else if (/^## /.test(ln)) {
+      flushBullets();
+      out.push(<h2 key={'h'+(key++)} style={{
+        margin:'7px 0 3px', fontFamily:LM.serif, fontSize:16, fontWeight:600 }}>
+        {_renderInlineMd(ln.replace(/^## /, ''))}</h2>);
+    } else if (/^# /.test(ln)) {
+      flushBullets();
+      out.push(<h1 key={'h'+(key++)} style={{
+        margin:'8px 0 4px', fontFamily:LM.serif, fontSize:18, fontWeight:600 }}>
+        {_renderInlineMd(ln.replace(/^# /, ''))}</h1>);
+    } else if (/^[-*] /.test(ln)) {
+      if (!bulletBuf) bulletBuf = [];
+      bulletBuf.push(ln.replace(/^[-*] /, ''));
+    } else if (ln.trim() === '') {
+      flushBullets();
+      // blank line — paragraph break
+    } else {
+      flushBullets();
+      out.push(<p key={'p'+(key++)} style={{
+        margin:'3px 0', lineHeight:1.45 }}>
+        {_renderInlineMd(ln)}</p>);
+    }
+  }
+  flushBullets();
+  return out;
+};
+
+// ─── SLICE E (AgDR-0008): NoteBody — pure markdown, no I/O.
+// Double-click to edit; blur or Escape commits. The text lives in
+// the `text` param, round-trips through saveCurrentGraph.
+const NoteBody = ({ n }) => {
+  const [editing, setEditing] = React.useState(false);
+  const initialText = (n.config && n.config.text)
+                   || (n.params || []).find(p => p.k === 'text')?.v
+                   || '_Note — double-click to edit_';
+  const [draft, setDraft] = React.useState(initialText);
+  React.useEffect(() => { setDraft(initialText); }, [initialText]);
+  const commit = () => {
+    const row = (n.params || []).find(p => p.k === 'text');
+    if (row) row.v = draft;
+    else (n.params = n.params || []).push({ k:'text', v:draft, type:'markdown' });
+    n.config = { ...(n.config || {}), text: draft };
+    setEditing(false);
+    saveCurrentGraph();
+    try { window.dispatchEvent(new CustomEvent('lm-canvas-bump')); } catch (e) {}
+  };
+  if (editing) {
+    return (
+      <textarea autoFocus value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { setDraft(initialText); setEditing(false); }
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commit();
+        }}
+        onMouseDown={e => e.stopPropagation()}
+        style={{
+          width:'100%', minHeight:80, marginTop:6,
+          background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
+          borderRadius:4, padding:'6px 8px',
+          fontFamily:LM.mono, fontSize:11, lineHeight:1.5,
+          resize:'vertical', outline:'none', boxSizing:'border-box',
+        }}/>
+    );
+  }
+  return (
+    <div onDoubleClick={() => setEditing(true)}
+      style={{
+        marginTop:6, fontFamily:LM.serif, fontSize:12, color:LM.ink,
+        lineHeight:1.5, cursor:'text', userSelect:'text',
+      }}>
+      {_renderMarkdown(initialText)}
+    </div>
+  );
 };
 
 // ─── Grammar-node body — the redesigned ~12-primitive nodes
@@ -5000,7 +7193,49 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
 // cat the switch above does not special-case (input, connector, shape,
 // watch, skill, note) — before this they rendered an empty body.
 const GrammarBody = ({ n }) => {
-  const params = n.params || [];
+  // Hide internal type-identity params from the canvas body — they
+  // are pre-set by the typed primitive (value_type / op / as / on)
+  // and are part of the node's identity, not user-editable config.
+  // The inspector still shows them for debug. Result: a Number node
+  // body shows `value: 42` not `value: 42 · value_type: number`.
+  const _INTERNAL_KEYS = new Set(['value_type', 'op', 'as', 'on']);
+  const params = (n.params || []).filter(p => !_INTERNAL_KEYS.has(p.k));
+  // SLICE K (G2-followup): typed-value indicators for the primary
+  // value param. Same param row chrome — adds a small typed glyph
+  // before the read-only value:
+  //   color  → 10×10 hex swatch
+  //   bool   → ✓ (true) / ✕ (false), accent or muted
+  // Read-only — editing still goes through the inspector. Just makes
+  // the typed nature of the node visible at-a-glance on the canvas.
+  const kind = (n.kind || '').toLowerCase();
+  // Read value_type from the FULL params list (not the filtered one)
+  // so we can detect boolean-typed nodes for the ✓/✕ indicator even
+  // though `value_type` is hidden from the body display.
+  const valueTypeRow = (n.params || []).find(p => p.k === 'value_type');
+  const valueType = (valueTypeRow && String(valueTypeRow.v || '').toLowerCase()) || '';
+  const indicator = (p) => {
+    if (p.k !== 'value') return null;
+    // Color: swatch + hex
+    if (kind === 'color' || /^#[0-9a-f]{3,8}$/i.test(String(p.v || ''))) {
+      const hex = String(p.v || '').trim() || '#000';
+      return (
+        <span title={hex} style={{ width:10, height:10, borderRadius:2,
+          background:hex, border:`1px solid ${LM.lineSoft}`, flexShrink:0 }}/>
+      );
+    }
+    // Boolean: ✓ / ✕
+    if (kind === 'boolean' || valueType === 'boolean'
+        || typeof p.v === 'boolean') {
+      const truthy = (p.v === true || String(p.v).toLowerCase() === 'true');
+      return (
+        <span style={{ color: truthy ? LM.ok : LM.inkMuted,
+          fontSize:11, lineHeight:1, flexShrink:0 }}>
+          {truthy ? '✓' : '✕'}
+        </span>
+      );
+    }
+    return null;
+  };
   return (
     <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:3 }}>
       {params.length === 0 && (
@@ -5008,20 +7243,28 @@ const GrammarBody = ({ n }) => {
           no params
         </span>
       )}
-      {params.slice(0, 5).map((p, i) => (
-        <div key={i} style={{ display:'flex', alignItems:'center', gap:6,
-          fontFamily:LM.mono, fontSize:9.5 }}>
-          <span style={{ color:LM.inkMuted, width:74, flexShrink:0,
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            {p.k}
-          </span>
-          <span style={{ flex:1, color:LM.ink, background:LM.bg,
-            border:`1px solid ${LM.lineSoft}`, borderRadius:3, padding:'2px 6px',
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            {p.v === '' || p.v == null ? '—' : String(p.v)}
-          </span>
-        </div>
-      ))}
+      {params.slice(0, 5).map((p, i) => {
+        const ind = indicator(p);
+        return (
+          <div key={i} style={{ display:'flex', alignItems:'center', gap:6,
+            fontFamily:LM.mono, fontSize:9.5 }}>
+            <span style={{ color:LM.inkMuted, width:74, flexShrink:0,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+              {p.k}
+            </span>
+            <span style={{ flex:1, display:'flex', alignItems:'center', gap:5,
+              color:LM.ink, background:LM.bg,
+              border:`1px solid ${LM.lineSoft}`, borderRadius:3, padding:'2px 6px',
+              overflow:'hidden' }}>
+              {ind}
+              <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis',
+                whiteSpace:'nowrap' }}>
+                {p.v === '' || p.v == null ? '—' : String(p.v)}
+              </span>
+            </span>
+          </div>
+        );
+      })}
       {params.length > 5 && (
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkDim }}>
           +{params.length - 5} more in inspector
@@ -5087,6 +7330,27 @@ const ConnectorOpBody = ({ n }) => {
   const running = !!n.op_running;
   const res = n.op_result;   // {ok, value_preview, error, elapsed_ms}
   const col = CONNECTOR_COLORS[n.host] || LM.cyan;
+  // Unconfigured connector master node — no operation chosen yet.
+  // Same muted mono chrome as before — just useful content. Show the
+  // first 3 op short-names so the user sees what this host CAN do
+  // without leaving the node. Inspector remains the deep-config surface.
+  if (!n.op_id) {
+    const conn = (LM_CONNECTORS || []).find(c => c.host === n.host);
+    const sample = ((conn && conn.ops) || []).slice(0, 3)
+      .map(o => (o.op_id || '').split('.').pop())
+      .filter(Boolean);
+    return (
+      <div style={{ marginTop:8, fontFamily:LM.mono, fontSize:9.5,
+        color:LM.inkMuted, lineHeight:1.6 }}>
+        no op chosen
+        {sample.length > 0 && (
+          <div style={{ marginTop:2, color:LM.inkDim }}>
+            try: {sample.join(' · ')}
+          </div>
+        )}
+      </div>
+    );
+  }
   const onRun = (e) => {
     e.stopPropagation();
     try {
@@ -5582,16 +7846,16 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen, onRun }) => (
     <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" style={toolBtn()}>⟲</button>
+    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" aria-label="Reset view" style={toolBtn()}>⟲</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" style={{
+    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
       color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
       display:'flex', alignItems:'center', gap:4,
     }}>＋ add node</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {/* Founder demand #11: ▶ RUN WORKFLOW — calls bridge.run_workflow (M2 threaded). */}
-    <button onClick={(e) => { e.stopPropagation(); onRun && onRun(); }} title="Run entire workflow (⌘↵)" style={{
+    <button onClick={(e) => { e.stopPropagation(); onRun && onRun(); }} title="Run entire workflow (⌘↵)" aria-label="Run entire workflow (⌘↵)" style={{
       padding:'0 10px', height:22, border:0, background:LM.accent, cursor:'pointer',
       color:'#fff', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em', borderRadius:4,
       display:'flex', alignItems:'center', gap:4, fontWeight:600,
@@ -6082,7 +8346,22 @@ const MiniMap = ({ pan, zoom, positions, allNodes, wrapRef, setPan }) => {
 const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
-  const groups = filter === 'all' ? (LM_LIBRARY || []) : (LM_LIBRARY || []).filter(g => g.cat === filter);
+  // The one node system — the modal is built from the node grammar
+  // (docs/NODE_GRAMMAR.md), the SAME ~12 primitives the canvas palette
+  // uses. No second catalogue that can drift out of sync.
+  const _allGroups = React.useMemo(() => {
+    const byCat = {};
+    (LM_NODE_GRAMMAR || []).forEach(p => {
+      const c = p.cat || 'node';
+      (byCat[c] = byCat[c] || []).push({
+        id: 'ng:' + p.kind, title: p.display || p.kind,
+        sub: p.blurb || p.kind, _grammar: p,
+      });
+    });
+    return Object.keys(byCat).map(cat => ({ cat, items: byCat[cat] }));
+  }, []);
+  const groups = filter === 'all' ? _allGroups
+               : _allGroups.filter(g => g.cat === filter);
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
@@ -6097,7 +8376,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
-            {(LM_LIBRARY || []).reduce((n, g) => n + ((g.items || []).length), 0)} NODES · CLICK TO ADD
+            {(LM_NODE_GRAMMAR || []).length} NODES · CLICK TO ADD
           </span>
           <div style={{ flex:1 }}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
@@ -6113,9 +8392,11 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
         {/* Categories */}
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
           <LibCatBtn id="all" label="All categories" active={filter==='all'} onSelect={setFilter}/>
-          {Object.entries(CAT).map(([id, c]) => (
-            <LibCatBtn key={id} id={id} label={c.label.toLowerCase()} icon={c.icon} col={c.col} active={filter===id} onSelect={setFilter}/>
-          ))}
+          {_allGroups.map(({ cat }) => {
+            const c = catMeta(cat);
+            return <LibCatBtn key={cat} id={cat} label={c.label || cat}
+              icon={c.icon} col={c.col} active={filter===cat} onSelect={setFilter}/>;
+          })}
         </div>
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
@@ -6390,20 +8671,72 @@ const ParamField = ({ p, onChange, siblings }) => {
   );
 };
 
-// ─── Connector-op property rail — the deep host-node UI. When a
-// connector-op node is focused, the NodeRail shows: op identity, a
-// tabbed/grouped editable parameter panel (type-aware ParamField per
-// input), Run, and the live result. Founder demand 2026-05-15.
-const ConnectorOpRail = ({ node, bumpGraph }) => {
-  const col = CONNECTOR_COLORS[node.host] || LM.cyan;
+// ─── Connector property rail — the master connector node UI. Pick a
+// host, pick one of its operations, fill the op's typed parameters,
+// Run. ONE node subsumes every host operation — the old 116-op
+// `⚡ CONNECTORS` palette is gone (docs/NODE_GRAMMAR.md, the one-node-
+// system redesign). Also drives legacy `connector_op` nodes, which
+// land with their host/op already chosen.
+const ConnectorRail = ({ node, bumpGraph }) => {
+  // NodeRail hands rails a shallow COPY of the node (its default-spread).
+  // Resolve the REAL node in LM_GRAPH so writes to scalar fields
+  // (host, op_id, the reassigned params array) actually persist.
+  node = (LM_GRAPH.nodes || []).find(n => n.id === node.id) || node;
+  const conns = LM_CONNECTORS || [];
+  const host = node.host || '';
+  const conn = conns.find(c => c.host === host) || null;
+  const ops = (conn && conn.ops) || [];
+  const op = ops.find(o => o.op_id === node.op_id) || null;
+  const col = CONNECTOR_COLORS[host] || LM.cyan;
   const params = node.params || [];
   const [tab, setTab] = React.useState(null);
+
+  // Re-fold the engine `config` so a whole-graph Run (connector.run)
+  // dispatches with the same host/op/args the per-node Run uses.
+  const syncConfig = () => {
+    const cfg = { host: node.host || '', op: node.op_id || '' };
+    (node.params || []).forEach(p => {
+      if (p && p.k != null && p.v !== '' && p.v != null) cfg[p.k] = p.v;
+    });
+    node.config = cfg;
+  };
+  const pickHost = (h) => {
+    if (h === node.host) return;
+    node.host = h;
+    node.op_id = ''; node.op_kind = ''; node.destructive = false;
+    node.params = []; node.op_result = null; node.cooked = null;
+    node.title = (conns.find(c => c.host === h) || {}).display_name || h || 'Connector';
+    node.sub = h ? 'pick an operation' : 'run any app';
+    syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
+  };
+  const pickOp = (opId) => {
+    const o = ops.find(x => x.op_id === opId);
+    if (!o) return;
+    node.op_id = o.op_id;
+    node.op_kind = o.kind || 'read';
+    node.destructive = !!o.destructive;
+    node.title = o.label || o.op_id;
+    node.sub = host + ' · ' + (o.kind || 'op');
+    node.ins  = [{ id:'in',  label:'in',     t:'any' }];
+    node.outs = [{ id:'out', label:'result', t: o.output_type || 'any' }];
+    // Typed param rows straight off the op spec (the op's declared
+    // inputs only — NOT host/op, which live on the node directly so
+    // the per-node Run sends a clean kwargs dict to run_connector_op).
+    node.params = (o.inputs || []).map(p => ({
+      k: p.id, v: p.default != null ? p.default : '',
+      type: p.type || 'text', label: p.label || p.id,
+      options: p.options || [], required: !!p.required, help: p.help || '',
+      options_source: p.options_source || '', _by: 'default',
+    }));
+    node.op_result = null; node.cooked = null;
+    syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
+  };
   const setParam = (k, v) => {
     const p = (node.params || []).find(x => x.k === k);
     if (p) {
       p.v = v;
       p._by = 'you';   // provenance — the architect set this
-      saveCurrentGraph(); bumpGraph && bumpGraph();
+      syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
     }
   };
   // Group params by their `group` field (if connectors supply one).
@@ -6416,6 +8749,11 @@ const ConnectorOpRail = ({ node, bumpGraph }) => {
   const activeTab = tab && groups[tab] ? tab : groupNames[0];
   const res = node.op_result;
   const running = !!node.op_running;
+  const selStyle = {
+    width:'100%', padding:'6px 9px', borderRadius:5,
+    background:LM.bg, border:`1px solid ${LM.line}`, color:LM.ink,
+    fontFamily:LM.mono, fontSize:11, outline:'none', cursor:'pointer',
+  };
   return (
     <aside className="ah-scroll" style={{
       gridColumn:'2', gridRow:'2', background:LM.bgPanel,
@@ -6427,21 +8765,95 @@ const ConnectorOpRail = ({ node, bumpGraph }) => {
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
           <span style={{ width:7, height:7, borderRadius:2, background:col }}/>
           <span style={{ fontFamily:LM.mono, fontSize:9, color:col, letterSpacing:'0.16em' }}>
-            {(node.host || '').toUpperCase()} · {node.op_kind === 'action' ? 'ACTION' : 'READ'}
+            {host
+              ? ((conn && conn.display_name || host).toUpperCase()
+                  + (op ? ' · ' + (node.op_kind === 'action' ? 'ACTION' : 'READ') : ''))
+              : 'CONNECTOR'}
           </span>
         </div>
         <div style={{ fontFamily:LM.serif, fontSize:20, letterSpacing:'-0.015em',
-          marginTop:5, lineHeight:1.1 }}>{node.title}</div>
+          marginTop:5, lineHeight:1.1 }}>{node.title || 'Connector'}</div>
         <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
-          marginTop:4, letterSpacing:'0.04em' }}>{node.op_id}</div>
-        {node.destructive && (
-          <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.warn,
-            letterSpacing:'0.04em' }}>⚠ mutates the host — runs only on explicit click</div>
+          marginTop:4, letterSpacing:'0.04em' }}>
+          {op
+            ? node.op_id
+            : (host
+                ? 'pick an operation below'
+                : 'one node — every host, every operation')}
+        </div>
+      </div>
+
+      {/* host (locked) + operation picker — per-host master node:
+          host is set at palette time and shown as a read-only badge.
+          The legacy "pick a host" dropdown is kept ONLY for unconfigured
+          nodes (e.g. from saved graphs that pre-date SLICE A). */}
+      <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
+        {!host ? (
+          <div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+              letterSpacing:'0.16em', marginBottom:5 }}>HOST</div>
+            <select value={host} style={selStyle}
+              onChange={(e) => pickHost(e.target.value)}>
+              <option value="">— pick a host —</option>
+              {conns.map(c => (
+                <option key={c.host} value={c.host}>
+                  {c.display_name || c.host}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+              letterSpacing:'0.16em', marginBottom:5 }}>HOST</div>
+            <div style={{
+              display:'flex', alignItems:'center', gap:8,
+              padding:'7px 10px', borderRadius:5, background:LM.bg,
+              border:`1px solid ${LM.line}`, borderLeft:`3px solid ${col}`,
+              fontFamily:LM.mono, fontSize:11, color:LM.ink,
+            }}>
+              <span style={{ width:6, height:6, borderRadius:'50%', background:col }}/>
+              <span style={{ flex:1 }}>{(conn && conn.display_name) || host}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
+                letterSpacing:'0.08em' }}>{conn && conn.mechanism ? conn.mechanism.toUpperCase() : 'LOCKED'}</span>
+            </div>
+          </div>
+        )}
+        {host && (
+          <div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+              letterSpacing:'0.16em', marginBottom:5 }}>OPERATION</div>
+            <select value={node.op_id || ''} style={selStyle}
+              onChange={(e) => pickOp(e.target.value)}>
+              <option value="">— pick an operation ({ops.length}) —</option>
+              {ops.map(o => (
+                <option key={o.op_id} value={o.op_id}>
+                  {(o.kind === 'action' ? '◆ ' : '◇ ') + (o.label || o.op_id)}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
 
+      {op && op.description && (
+        <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft,
+          lineHeight:1.5 }}>{op.description}</div>
+      )}
+      {node.destructive && (
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.warn,
+          letterSpacing:'0.04em' }}>⚠ mutates the host — runs only on explicit click</div>
+      )}
+      {!host && (
+        <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:12,
+          color:LM.inkMuted, lineHeight:1.55 }}>
+          Pick a host to see its operations. One Connector node runs any
+          operation on any connected app — Revit, Excel, Outlook, and more.
+        </div>
+      )}
+
       {/* tabbed params */}
-      {params.length > 0 ? (
+      {op && (params.length > 0 ? (
         <div>
           {groupNames.length > 1 && (
             <div style={{ display:'flex', gap:3, marginBottom:10, flexWrap:'wrap' }}>
@@ -6471,9 +8883,10 @@ const ConnectorOpRail = ({ node, bumpGraph }) => {
         <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>
           No parameters — this op takes its input from a wired upstream node.
         </div>
-      )}
+      ))}
 
       {/* run + result */}
+      {op && (
       <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
         <button disabled={running}
           onClick={() => {
@@ -6503,6 +8916,7 @@ const ConnectorOpRail = ({ node, bumpGraph }) => {
           </div>
         )}
       </div>
+      )}
 
       {/* connections */}
       {(node.ins?.length > 0 || node.outs?.length > 0) && (
@@ -6526,8 +8940,10 @@ const NodeRail = ({ node, bumpGraph }) => {
   node = { ins:[], outs:[], messages:[], params:[], ...node };
   // AI node gets a dedicated conversation rail — full scrollback + composer
   if (node.cat === 'ai') return <ConversationRail node={node} bumpGraph={bumpGraph}/>;
-  // Connector-op node gets the deep tabbed property panel.
-  if (node.cat === 'connector_op') return <ConnectorOpRail node={node} bumpGraph={bumpGraph}/>;
+  // The connector master node — and legacy connector-op nodes — get the
+  // host → operation → typed-params property panel.
+  if (node.cat === 'connector' || node.cat === 'connector_op')
+    return <ConnectorRail node={node} bumpGraph={bumpGraph}/>;
   const cat = catMeta(node.cat);
 
   // Founder demand #10: writing a param updates node.config + saves graph.
@@ -6613,7 +9029,7 @@ const NodeRail = ({ node, bumpGraph }) => {
             newId = result.new_id || result.id;
           } else {
             // Fallback: copy in place.
-            newId = (sourceNode.id || 'node') + '_copy_' + Date.now().toString(36).slice(-4);
+            newId = (sourceNode.id || 'node') + '_copy_' + _lm_uid();
             const copy = JSON.parse(JSON.stringify(sourceNode));
             copy.id = newId;
             copy.x = (sourceNode.x || 0) + 280;
@@ -6689,7 +9105,7 @@ const ConversationRail = ({ node, bumpGraph }) => {
       // Spawn a fresh conversation node with the conversation up to this turn,
       // wire it from the same context input as the parent.
       const contextMessages = msgs.slice(0, ix + 1).map(m => ({ ...m }));
-      const newId = node.id + '_branch_' + Date.now().toString(36).slice(-4);
+      const newId = node.id + '_branch_' + _lm_uid();
       const newNode = {
         id: newId, cat:'ai', x: (node.x || 0) + 360, y: (node.y || 0) + 40,
         w: node.w || 300, h: node.h || 188,

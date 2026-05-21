@@ -1,196 +1,238 @@
-# ArchHub Node Grammar — design memo
+# ArchHub Node Grammar — typed-node catalogue
 
 > **Design reference — NOT the roadmap.** `docs/ROADMAP.md` is the single
-> source of truth for plans, backlog, and milestones. This memo is the
-> rationale + detailed design behind the `#P0 NODE-SYSTEM REDESIGN`
-> roadmap item. Build slices are tracked as `- [ ]` lines in the
-> roadmap, never here.
+> source of truth for plans, backlog, and milestones.
 >
-> Seeded 2026-05-18 from founder intent + research into ComfyUI, n8n,
-> Grasshopper, and Dynamo. Supersedes `docs/NODE_LIBRARY_v2.md`.
+> Revised 2026-05-21 — replaces the category-named-as-node grammar with
+> typed nodes per category. Founder mandate: "categories hold MULTIPLE
+> typed nodes; the category name is never the node name." See conversation
+> log + the host-node + composer-speckle prototypes for the source intent.
 
-## 1. Why — the current node system is broken
+## The principle
 
-Investigation 2026-05-18 (against the real code):
+> Every placeable node is a **typed**, **modular**, **specific** thing.
+> Category names (Input, Output, Watch, Logic, Shape, …) are CONTAINERS
+> in the palette — never node names. A node called "Input" with no type,
+> no shape, no I/O is undefined and decorative.
 
-- `LM_LIBRARY` (`studio-lm.jsx:425`) ships **80 node types in 10 categories**.
-- Canvas nodes carry `cat` (`"filter"`, `"read"`, …). `WorkflowRunner`
-  dispatches on `node.type` (`runner.py:425`). `run_workflow` passes the
-  raw canvas graph to the runner with **zero translation**.
-- Result: **0 of 80 library nodes run.** Every one resolves to
-  `type → undefined → "no executor for ''"`. Drag, wire, Run → error.
-- The only nodes that work are the ~118 connector ops — and those are
-  spawned **one node per op**, scattered, on a separate code path
-  (`run_connector_op`), not in `LM_LIBRARY` at all.
-- The engine is **healthy**: ~39 real dotted-type executors
-  (`input.parameter`, `llm.*`, `control.if/merge/foreach`,
-  `conversation.chat`, `aec.*`, `subgraph.*`, …), a working lazy/dirty/
-  cached cook, typed wires.
+What changed from the prior grammar: `input`, `constant`, `output`,
+`watch`, `trigger`, `logic`, `filter`, `transform`, `note` were grammar
+primitives. They are now CATEGORIES. Each holds typed nodes (Number,
+Text, File, Table watcher, Schedule trigger, If/Else, Filter, …).
 
-Two failures, one class: (a) the canvas and the engine are **two
-disconnected node systems** with two port-type vocabularies and two
-param shapes; (b) `LM_LIBRARY` / `NODE_LIBRARY_v2.md` is an
-**aspirational catalogue** — 80 nodes enumerated before the executors
-existed. Decorative by construction.
+What stayed: `connector` (16 per-host masters — already typed), `ai`
+(ONE master with action picker — per founder's earlier intent), `skill`
+(user composition wrapper), `reroute` (wire-routing dot).
 
-## 2. Principle — a grammar, not a catalogue
+## The catalogue
 
-A **grammar**: a small set of primitive node *kinds*, each heavily
-parameterized, that **compose**. Users build everything from primitives
-+ skills. We never again enumerate 80 nodes the engine must chase.
+Status legend: ✓ ships in slice H · ☐ ships in later slices · ⚙ ships
+when its engine executor exists.
 
-Rules:
-- **Every node that can be placed can run.** No decorative nodes. If a
-  kind has no executor, it does not ship.
-- **One node model.** The thing the canvas renders *is* the thing the
-  engine executes — same object, same `type`, same ports, same params.
-- **The library is ~12 kinds, not 80.** Specialization is by parameter,
-  not by a new node type.
-- **Skills are how the library grows.** A user composes primitives,
-  saves the group as a Skill, and the Skill is itself a placeable node.
-  The library expands by use, not by us pre-enumerating it.
+### INPUT — typed value sources
 
-## 3. The one node model
+Outputs a typed value. Has a `value` config (the design-time default).
+Bound at run-time if upstream wires in.
 
-A node is one object, canvas-side and engine-side identical:
+| Node | Engine `type` | Output port type | Config | Status |
+|---|---|---|---|---|
+| Number      | data.constant | number  | value, min, max, step | ✓ |
+| Text        | data.constant | string  | value, multiline      | ✓ |
+| Boolean     | data.constant | boolean | value                 | ✓ |
+| File        | data.constant | string  | value, extensions     | ✓ |
+| Color       | data.constant | string  | value (hex)           | ✓ |
+| Date        | data.constant | string  | value (ISO)           | ☐ |
+| Folder      | data.constant | string  | value                 | ☐ |
+| Range       | data.constant | object  | min, max, step        | ☐ |
+| List        | data.constant | list    | items                 | ☐ |
+| JSON        | data.constant | object  | value                 | ☐ |
+| Parameter (run-time bound) | input.parameter | any | name, type, description, default | ✓ |
 
-```
-{
-  id:     "n_ab12",            # unique in graph
-  type:   "connector",         # THE registry key — dispatch + render
-  pos:    {x, y},
-  params: { host:"revit", op:"list_walls", level:"L2" },
-  ports:  { in:[...], out:[...] }   # DERIVED from type+params, see below
-}
-```
+### OUTPUT — typed sinks
 
-- `type` is the single identity. The canvas `cat` (display grouping,
-  colour) is **derived** from `type`, never stored as a parallel id.
-- `params` is one flat dict — the same dict the engine reads as
-  `config`. No `{k,v}`-vs-`config` split.
-- **Ports are derived, not hand-authored.** A node kind declares a
-  `ports(params) → {in,out}` function. A `connector` node with
-  `op=list_walls` exposes the ports `list_walls` declares; change `op`
-  and the ports change. This is the ComfyUI/n8n "node morphs to its
-  config" pattern and it is what lets ~12 kinds cover everything.
-- **One port-type vocabulary** — the engine `PortType` enum
-  (`graph.py`). The canvas's invented vocab (`t:'walls'`, `t:'dims'`)
-  is deleted. Typed connections, enforced at drag time.
+Captures upstream value and writes / displays / sends.
 
-## 4. The primitives
+| Node | Engine `type` | Input port | Config | Status |
+|---|---|---|---|---|
+| Result      | output.parameter | any    | name (result key) | ✓ |
+| File Save   | output.file      | any    | path, format, overwrite | ⚙ |
+| Console     | output.console   | any    | label             | ⚙ |
+| Email Send  | output.email     | string | to, subject, via  | ⚙ via Outlook connector |
+| Display     | output.display   | any    | none              | ⚙ |
 
-~12 kinds. Each row is real — it maps to an executor that **exists** or
-is explicitly marked to build. Nothing aspirational ships.
+### WATCH — passthrough viewers
 
-| Kind | Role | Key params | Ports | Engine executor | Status |
-|---|---|---|---|---|---|
-| `input` | a graph input / source | `kind`: value·file·pick | out: 1 (typed) | `input.parameter` | exists |
-| `constant` | a literal typed value | `value`, `type` | out: 1 | `data.constant` | exists |
-| `connector` | **master host node** — one per host | `host`, `op`, + op's params | derived from `op` | connector `run_op` | exists |
-| `ai` | **master AI node** — one per graph need | `action`: chat·complete·classify·extract·vision·embed·tools | derived from `action` | `llm.*` / `conversation.chat` | exists |
-| `logic` | branch / flow | `kind`: if·merge·foreach·switch | derived from `kind` | `control.if/merge/foreach` | exists; `switch` to build |
-| `filter` | keep / drop items by predicate | `predicate` | in 1, out 1 | **build** (1 executor) | to build |
-| `transform` | map / reshape data | `op` | in 1, out 1 | **build** (1 executor) | to build |
-| `watch` | watcher / preview | `as`: list·table·view·model·image·json | in 1, out 1 (passthru) | **build** (light) | to build |
-| `trigger` | fire the graph | `on`: manual·schedule·file·host-event | out: event | `workflows/` triggers | exists; wire as node |
-| `output` | a graph output / sink | `kind`: result·write·preview | in 1 | `output.parameter` | exists |
-| `skill` | a saved Skill graph as one node | `skill_id` | promoted ports | `subgraph.*` | exists |
-| `note` | comment / sticky — never executes | `text` | none | n/a (UX only) | trivial |
+Renders the incoming value AND passes it through unchanged. Sits
+mid-graph for inspection. Body renderer = slice E (already shipped).
 
-**`connector` collapses 18 host nodes + 118 op-nodes into one node.**
-You drop a Connector, pick `host` (Revit/AutoCAD/Outlook/…), pick `op`
-from that host's operations; the right panel renders that op's
-parameters from its existing `ConnectorOp.inputs` ParamSpecs. The
-connector contract already carries everything needed (`kind`,
-`destructive`, typed `inputs`, `output_type`). No new model — just one
-node surfacing it.
+| Node | Engine `type` | Render `as` | Status |
+|---|---|---|---|
+| Table     | watch.preview | table | ✓ |
+| List      | watch.preview | list  | ✓ |
+| JSON      | watch.preview | json  | ✓ |
+| Image     | watch.preview | image | ✓ |
+| 3D Viewer | watch.preview | view  | ⚙ M2 Speckle viewer |
+| Chart     | watch.preview | chart | ☐ |
+| Log       | watch.preview | log   | ☐ |
 
-**`ai` collapses the 8 `ai` nodes into one.** Pick `action`; the right
-panel shows that action's params (model, system prompt, schema for
-`classify`/`extract`, tool set for `tools`).
+### TRIGGER — typed event sources
 
-Everything else a user wants is **composed** from these + saved as a
-Skill.
+Start the graph. Each typed trigger emits a specific event shape.
 
-## 5. Skill-as-node (the recursion)
+| Node | Engine `type` | Emits | Status |
+|---|---|---|---|
+| Manual Run    | trigger.emit | on=manual    | ✓ |
+| Schedule      | trigger.emit | on=schedule  | ⚙ |
+| Webhook       | trigger.emit | on=webhook   | ⚙ |
+| File Watch    | trigger.emit | on=file      | ⚙ |
+| Host Event    | trigger.emit | on=host      | ⚙ M2 Speckle subscription |
+| Email Received| trigger.emit | on=email     | ⚙ via Outlook |
 
-A Skill is a saved subgraph that is itself a placeable node — the
-ComfyUI subgraph / Dynamo `.dyf` pattern, adapted.
+### LOGIC — control flow
 
-- **Save:** select nodes → *Save as Skill*. Unconnected inputs become
-  the Skill's input ports; unconnected outputs become its output ports
-  (auto-promoted; the user can rename/retype them).
-- **Place:** a Skill node (`type:"skill"`, `skill_id`) shows those
-  promoted ports. Double-click → open the subgraph to view/edit.
-- **Reference semantics** (Dynamo `.dyf`, *not* Grasshopper clusters):
-  a Skill node is a *reference* to the skill, not a splice-copy. Edit
-  the Skill once → every instance updates. (Today's `save_as_skill`
-  splices a copy — the redesign makes it a reference via the engine's
-  `subgraph.*` executor.)
-- This is how the library grows without us enumerating it.
+| Node | Engine `type` | Inputs → Outputs | Status |
+|---|---|---|---|
+| If/Else     | control.if      | value, condition → true_out, false_out | ✓ |
+| For Each    | control.foreach | items, body → results                  | ✓ |
+| Switch      | control.switch  | value, key → case_n                    | ✓ |
+| Merge       | control.merge   | a, b → value (first non-null)          | ✓ |
+| Sequence    | control.sequence| a, b → out (a then b)                  | ☐ |
+| Wait        | control.wait    | value, ms → value                      | ☐ |
+| Retry       | control.retry   | value, body → result                   | ☐ |
 
-## 6. Type system
+### SHAPE — typed data transforms
 
-- One vocabulary: the engine `PortType` enum. Delete the canvas vocab.
-- Typed sockets, **colour-coded** (ComfyUI). A connection is rejected
-  at drag time if the types don't match — errors never reach Run.
-- A `*`/`any` wildcard for genuinely generic ports.
-- After a run, a wire shows a **type-coloured preview chip** of the
-  value that flowed (Dynamo preview-bubble idea — cheap, high signal).
+Pure transforms — no side effects.
 
-## 7. UI / UX — ComfyUI/n8n/Grasshopper-grade
+| Node | Engine `type` | Op | Status |
+|---|---|---|---|
+| Filter   | filter.apply    | predicate keep / drop  | ✓ |
+| Map      | transform.apply | per-item expression    | ✓ |
+| Sort     | transform.apply | by field, asc/desc     | ✓ |
+| Group By | transform.apply | by field               | ✓ |
+| Unique   | transform.apply | dedupe                 | ✓ |
+| Pluck    | transform.apply | extract field          | ✓ |
+| Count    | transform.apply | length                 | ✓ |
+| Slice    | transform.apply | first N / last N       | ✓ |
+| Flatten  | transform.apply | nested → flat          | ✓ |
+| Concat   | transform.apply | join lists             | ✓ |
 
-- **Right-side panel = the node's parameters.** The panel already
-  exists (`NodeRail` / `ConnectorOpRail` / `ConversationRail`).
-  `ConnectorOpRail` is already the deepest, best UI — tabbed, typed
-  `ParamField`s, a Run button, live results. **Generalise that one
-  pattern to every node kind.** One inspector, type-aware.
-- **Inline on the node:** only the 1–2 defining params (e.g. the
-  `connector`'s `host`+`op`, the `ai`'s `action`). Everything else
-  lives in the panel — keeps the canvas clean (n8n), keeps the common
-  case fast (ComfyUI).
-- **Add a node:** double-click the canvas → fuzzy search (Grasshopper).
-  Drag a wire into empty space → search filtered to compatible types
-  (ComfyUI).
-- **Run feedback on the node:** idle / running (spinner) / done (green)
-  / error (red + message) — drawn from the executor's real status, not
-  the fake `result`/`progress` strings the demo graph fakes today.
-- **Watchers** render inline: `watch as=list` → a list; `as=model` →
-  a 3D preview; `as=image` → the image. Dynamo's Watch/Watch3D.
-- Smooth pan/zoom, snapping, reroute dots, a mini-map.
+### MATH — arithmetic + comparison
 
-## 8. What dies
+| Node | Engine `type` | Op | Status |
+|---|---|---|---|
+| Add        | math.binary | a + b              | ⚙ |
+| Subtract   | math.binary | a − b              | ⚙ |
+| Multiply   | math.binary | a × b              | ⚙ |
+| Divide     | math.binary | a ÷ b              | ⚙ |
+| Modulo     | math.binary | a % b              | ⚙ |
+| Round      | math.unary  | round(a)           | ⚙ |
+| Equal      | math.compare| a == b → boolean   | ⚙ |
+| Compare    | math.compare| a > b / < b / ≥ b  | ⚙ |
+| And / Or / Not | math.logic | boolean ops    | ⚙ |
 
-- The 80-entry `LM_LIBRARY` + `LM_NODE_TEMPLATES` (`studio-lm.jsx`).
-- The canvas-invented port-type vocab.
-- One-node-per-connector-op spawning.
-- `docs/NODE_LIBRARY_v2.md` — superseded by this memo.
-- The dead `_LM_GRAPH_DEMO_DEAD` fake-result demo graph.
+### TEXT — string ops
 
-## 9. Build plan (→ roadmap slices)
+| Node | Engine `type` | Op | Status |
+|---|---|---|---|
+| Concat   | text.op | join two strings | ⚙ |
+| Split    | text.op | delimiter        | ⚙ |
+| Replace  | text.op | pattern → new    | ⚙ |
+| Format   | text.op | template + args  | ⚙ |
+| Match    | text.op | regex → boolean  | ⚙ |
 
-Ordered. Each slice ends with placeable nodes that **actually run** —
-no slice ships decoration.
+### AI — one master, action picker
 
-1. **One node model** — canvas nodes carry registry `type`; one
-   port-type vocab; `params`≡`config`; `run_workflow` cooks a real
-   graph end-to-end. (Folds in the old canvas-Run `#P0`.)
-2. **`connector` master node** — collapse 18 host + 118 op nodes into
-   one host node; `op` param; dynamic right-panel params.
-3. **`ai` master node** — one node, `action` param.
-4. **`input` / `constant` / `output`** — wire to the existing engine
-   executors; promotion + the typed inspector.
-5. **`logic`** — if/merge/foreach surfaced as one parameterised node;
-   build `switch`.
-6. **`watch` + `trigger`** — build the `watch` executor + inline
-   renderers; wire `trigger` as a node.
-7. **`filter` + `transform`** — build the two executors.
-8. **Skill-as-node** — subgraph reference semantics, promoted ports,
-   double-click-to-edit.
-9. **UI/UX pass** — typed-socket colours + drag enforcement, add-node
-   search, run-state feedback, mini-map.
-10. **Delete** the old `LM_LIBRARY` / `LM_NODE_TEMPLATES` /
-    `NODE_LIBRARY_v2.md` / dead demo graph.
+ONE node. Action param picks the concrete LLM op. Inputs + outputs
+shape to the action.
 
-A slice is "done" only when its nodes can be dragged, wired, and Run
-with a real result against the running app.
+| Action | Engine `type` | Inputs → Outputs |
+|---|---|---|
+| chat       | conversation.chat        | prompt, history → response, history |
+| complete   | llm.complete             | prompt → text                       |
+| classify   | llm.classify             | value → label, confidence           |
+| with_tools | llm.complete_with_tools  | prompt → text, tool_calls           |
+| vision     | llm.vision               | image, prompt → text                | (⚙)
+| embed      | llm.embed                | text → vector                       | (⚙)
+| plan       | ai.plan                  | goal → plan, history                | (⚙ M4)
+
+### CONNECTOR — 16 host masters
+
+ONE node per host. Host locked at palette time (slice A pattern).
+The op picker is the primary surface on the node body — typed I/O
+shapes to the selected op. Parameter widgets render inline; deep
+config goes to the inspector.
+
+revit · autocad · max · blender · rhino · excel · word · powerpoint ·
+outlook · teams · notion · dropbox · photoshop · illustrator ·
+indesign · speckle
+
+### SKILL — user composition
+
+Each saved skill becomes a typed node. Inputs + outputs promoted from
+the wrapped subgraph's open ports. Modes: shared (reference) /
+private (inline expand) — slice G locked.
+
+### NOTE — annotation
+
+| Node | Type | Status |
+|---|---|---|
+| Sticky Note | note    | ✓ |
+| Reroute     | reroute | ✓ |
+
+### GLUE — cross-host fallback
+
+For the rare gap Speckle can't carry. Typed by intent, not by host.
+
+| Node | Engine `type` | Status |
+|---|---|---|
+| Glue Script | glue.script | ⚙ (M3+) |
+
+### ADAPTER — typed bridges
+
+For unit conversion + port-type coercion when typed wiring needs
+explicit reshaping.
+
+| Node | Engine `type` | Status |
+|---|---|---|
+| Units      | adapter.units      | ⚙ |
+| Reshape    | adapter.reshape    | ⚙ |
+
+## Engine wiring rules
+
+1. **One executor per engine `type`** — already enforced by the registry.
+2. **Multiple grammar entries can share one engine type** — Number /
+   Text / Boolean / File all map to `data.constant` with a different
+   `value_type` pre-set. The grammar entry is the USER-FACING node;
+   the engine type is the IMPLEMENTATION.
+3. **`NEEDS_EXECUTOR`** marks grammar entries whose engine type isn't
+   built yet. The palette can SHOW the node but placing it surfaces
+   an honest "not yet implemented" error — never silent-fail.
+
+## Library taxonomy (palette grouping)
+
+Per AgDR-0014, the palette groups by category. Section order:
+
+INPUT · CONNECTOR · AI · LOGIC · OUTPUT · SKILL · SHAPE · MATH · TEXT
+· WATCH · TRIGGER · NOTE · GLUE · ADAPTER
+
+## What this fixes vs. the prior grammar
+
+| Prior | Now |
+|---|---|
+| "Input" node — no type, no shape | INPUT category holds Number, Text, Boolean, File, Color, … |
+| "Output" node — no sink type | OUTPUT category holds File Save, Email Send, Display, Result |
+| "Watch" node — no render mode | WATCH category holds Table, List, JSON, Image, 3D, Chart |
+| "Trigger" node — no event type | TRIGGER category holds Manual Run, Schedule, Webhook, File Watch |
+| "Logic" node with `kind` param | LOGIC category holds If/Else, For Each, Switch, Merge as distinct nodes |
+| "Filter" / "Transform" as primitive | SHAPE category holds Filter, Map, Sort, Group, Unique, Pluck, … |
+| Math + Text folded into "Transform" | MATH + TEXT as own categories with typed nodes |
+| AI as primitive | AI as ONE master with action picker (per founder intent) |
+| Connector as primitive | CONNECTOR as 16 per-host masters (slice A unchanged) |
+
+## Build slices
+
+Tracked in `docs/ROADMAP.md`. The first ship under this grammar is
+**Slice H** — typed INPUT category (5 nodes: Number, Text, Boolean,
+File, Color) replacing the bare `input` + `constant` primitives.
+Subsequent slices roll out the remaining categories.

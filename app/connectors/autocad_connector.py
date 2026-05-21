@@ -599,7 +599,60 @@ class AutoCADConnector(Connector):
                 output_type="any", destructive=True,
                 fn=_set_layer,
             ),
+            # ── M5 parity (AgDR-0017 send-pattern, AutoCAD symmetric)
+            # send is kind=read because it does NOT mutate AutoCAD —
+            # it ships an upstream value through SpeckleWire.
+            ConnectorOp(
+                op_id="autocad.send_to_speckle", host="autocad",
+                kind="read",
+                label="Send to Speckle",
+                description="Wrap upstream value + write through "
+                            "SpeckleWire. Optional push to a Speckle "
+                            "Server. Does not mutate AutoCAD.",
+                inputs=[
+                    inst,
+                    ParamSpec(id="value", label="Value", type="any",
+                              default=None,
+                              help="The upstream value to send. List, "
+                                   "dict or scalar — shape preserved."),
+                    ParamSpec(id="model_name", label="Model name",
+                              type="text", default="autocad",
+                              help="The model name stamped on the "
+                                   "Speckle commit."),
+                    ParamSpec(id="server_push", label="Push to server",
+                              type="boolean", default=False,
+                              help="If true, also push to the configured "
+                                   "Speckle Server."),
+                    ParamSpec(id="server_url", label="Server URL",
+                              type="text", default="",
+                              help="Speckle Server URL "
+                                   "(http://localhost:3000 for local)."),
+                ],
+                output_type="any", destructive=False,
+                fn=_acad_send_to_speckle_op,
+            ),
         ]
+
+
+def _acad_send_to_speckle_op(instance: str = "", value: Any = None,
+                               model_name: str = "autocad",
+                               server_push: bool = False,
+                               server_url: str = "") -> OpResult:
+    """`autocad.send_to_speckle` thin wrapper. Reuses the canonical
+    `send_to_speckle` in `revit_speckle_ops` with `source_host='autocad'`
+    so the Speckle commit carries `archhub_source: 'autocad'`."""
+    from connectors.revit_speckle_ops import send_to_speckle
+    result = send_to_speckle(
+        value=value, model_name=model_name,
+        server_push=bool(server_push), server_url=server_url,
+        source_host="autocad")
+    if result.get("status") == "error":
+        return OpResult.fail(result.get("error", ""),
+                              "autocad.send_to_speckle")
+    return OpResult(ok=True, value=result,
+                     op_id="autocad.send_to_speckle",
+                     value_preview=f"{result.get('url', '')} "
+                                   f"({result.get('item_count', 0)} items)")
 
 
 register(AutoCADConnector())

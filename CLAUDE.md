@@ -29,6 +29,76 @@ plan, backlog item, and milestone.
 - Root `ROADMAP.md` is a redirect stub — leave it pointing at
   `docs/ROADMAP.md`.
 
+## AGDR MANDATE (founder, 2026-05-20 — non-negotiable)
+
+Architecture-shaped work requires an **AgDR** (Agent Decision Record) in
+`docs/agdr/` BEFORE any code. Adopted from apexyard's workflow-gates rule
+(`github.com/me2resh/apexyard`).
+
+- Any decision that locks an architecture, an interface, a node-kind /
+  primitive, a data model, a wire / type contract, or the shape of a
+  user-facing surface → write `docs/agdr/AgDR-NNNN-<slug>.md` first.
+- Template: see `docs/agdr/AgDR-0001-node-system-redesign.md` —
+  YAML frontmatter (id, timestamp, status, category) + Context +
+  Options Considered (table) + Decision + Consequences + Artifacts.
+- Surface contradictions and open forks in the AgDR — never resolve
+  silently. If two existing docs disagree, the AgDR names the conflict
+  and picks one, with rationale.
+- Founder confirms key forks via discussion (chat / AskUserQuestion)
+  before the AgDR ships executed. Status flips from `proposed` to
+  `executed` only after founder sign-off.
+- AgDR lives forever; supersede with another AgDR (`status:
+  superseded by AgDR-NNNN`), never delete or rewrite history.
+- The autonomous `/loop` "pick a slice and build" is GATED on an
+  active AgDR for the slice's design class. No AgDR → no code.
+- Bug fixes, tests, doc tidies, refactors that don't change
+  architecture do NOT need an AgDR.
+
+## ARCHITECTURE LOCK (founder, 2026-05-20 — non-negotiable)
+
+Direction X is locked. See `docs/agdr/AgDR-0012-architecture-direction-x.md`.
+
+- **Composer is the primary IDE.** Chat drives + edits + runs the graph.
+  Canvas is the materialised execution + inspection surface.
+- **Every wire is a Speckle `Operations.send/receive` segment.** Default
+  `DiskTransport` at `.speckle/<project>/`. No server, no Docker, no
+  account, fully offline. Cloud Speckle is opt-in collaboration.
+- **`ai.plan` is a real canvas node** that persists each Composer turn
+  as auditable + replayable artefact. Composer ≡ `ai.plan` engine; two
+  surfaces.
+- **ReactFlow is the canvas substrate** (committed earlier in session).
+
+## LIBRARY-FIRST MANDATE (founder, 2026-05-20 — non-negotiable)
+
+The library is the user's living inventory of every placeable +
+composable artefact. The agent obeys these rules:
+
+- **`library.search` is called BEFORE `library.create_node_type`.**
+  Enforced via system prompt + Anthropic `strict: true` tool use.
+- If a match is found (≥0.75 similarity on intent + I/O schema), USE
+  the existing node. No silent duplicates.
+- New nodes the agent mints MUST be MODULAR: typed inputs, typed
+  outputs, `config_schema` (parameterised — no hard-coded literals in
+  the body), `description`, and `examples` for future similarity
+  matching. The library validator rejects non-modular specs.
+- New nodes are registered to the library on creation, not on save.
+  Library grows by use.
+
+## USER-AGENCY MANDATE (founder, 2026-05-20 — non-negotiable)
+
+- **Library is always browsable.** Cmd-K opens it. Side-panel library
+  tab stays. Composer NEVER replaces these — it complements them.
+- **Canvas is always directly editable.** Right-click, drag-rewire,
+  inline param edits, multi-select / group / Alt-drag from slices
+  B2/C — all stay.
+- **Every AI write to a host is approval-gated by default.** Composer
+  has three modes: **Plan** (default, gated on writes), **Auto** (auto
+  reads, gated writes), **YOLO** (auto everything, opt-in, reversible).
+- **Every action is reversible.** Speckle Versions are immutable
+  content-addressed; undo = receive previous Version.
+- **Approval surfaces are typed errors with named recoveries**, not
+  freeform retry prompts.
+
 ## What ArchHub is
 
 PyQt6 + QtWebEngine desktop AI workspace for AEC professionals. Graph-first

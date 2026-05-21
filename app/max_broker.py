@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,12 @@ STALE_AFTER_SECONDS = 30.0
 PORT_FIRST = 48886
 PORT_LAST = 48899
 LEGACY_PORT = 48886
+
+# Service identifier returned by max_mcp_startup.py's /max-mcp/ping
+# endpoint. Verified before accepting a session as live to defeat port
+# collision (Revit on 48886) showing a phantom max-legacy entry.
+_EXPECTED_SERVICE = "max-mcp"
+_PING_PATH = "/max-mcp/ping"
 
 
 @dataclass
@@ -78,11 +86,70 @@ def _seconds_since(iso: str) -> float:
 
 
 def _probe(port: int, *, timeout: float = 0.4) -> bool:
+    """Cheap TCP-only liveness — see `_probe_service` for identity-aware."""
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def _probe_service(port: int, *, timeout: float = 0.5) -> bool:
+    return _ping_service(port, timeout=timeout) is not None
+
+
+def _ping_service(port: int, *, timeout: float = 0.5) -> Optional[dict]:
+    """GET /max-mcp/ping. Returns the payload dict if `service` matches
+    max-mcp, else None. Drives port-range discovery."""
+    try:
+        with urllib.request.urlopen(
+                f"http://localhost:{port}{_PING_PATH}", timeout=timeout) as r:
+            if r.status >= 400:
+                return None
+            try:
+                data = json.loads(r.read().decode("utf-8") or "{}")
+            except Exception:
+                return None
+            if str(data.get("service") or "").lower() != _EXPECTED_SERVICE:
+                return None
+            return data
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _discover_in_port_range(known_ports: set,
+                              *, timeout: float = 0.4) -> list[Session]:
+    """Parallel port-range probe for MaxMCP. Catches instances missing
+    a session file (older add-in, scrubbed file, MCP rebind)."""
+    import concurrent.futures as _cf
+
+    candidates = [p for p in range(PORT_FIRST, PORT_LAST + 1)
+                  if p not in known_ports]
+    if not candidates:
+        return []
+    found: list[Session] = []
+    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(
+            lambda p: (p, _ping_service(p, timeout=timeout)),
+            candidates,
+        ))
+    for port, payload in results:
+        if not payload:
+            continue
+        found.append(Session(
+            session_id=f"max-{payload.get('pid') or port}",
+            family="max",
+            pid=int(payload.get("pid") or 0),
+            port=port,
+            version=str(payload.get("version") or ""),
+            doc_title=str(payload.get("doc_title") or ""),
+            started_at="",
+            last_heartbeat="",
+            file_path=None,
+            legacy=False,
+            healthy=True,
+        ))
+    return found
 
 
 def list_sessions(*, prune: bool = True) -> list[Session]:
@@ -93,7 +160,7 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
             if s is None:
                 continue
             silent = _seconds_since(s.last_heartbeat)
-            alive = _probe(s.port, timeout=0.3)
+            alive = _probe_service(s.port, timeout=0.4)
             s.healthy = alive
             if not alive and silent > STALE_AFTER_SECONDS:
                 if prune:
@@ -103,8 +170,13 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
                         pass
                 continue
             out.append(s)
+    # Port-range discovery — covers MaxMCP instances that didn't
+    # write a session file. Parallel probe with service verification.
+    known_ports = {s.port for s in out}
+    out.extend(_discover_in_port_range(known_ports, timeout=0.4))
+
     if not any(s.port == LEGACY_PORT for s in out):
-        if _probe(LEGACY_PORT, timeout=0.3):
+        if _probe_service(LEGACY_PORT, timeout=0.4):
             out.append(Session(
                 session_id="max-legacy", family="max",
                 pid=0, port=LEGACY_PORT, version="legacy",

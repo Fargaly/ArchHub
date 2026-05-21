@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Composer + Library-First + Multi-LLM (Direction X+)</title>
+<style>
+  :root {
+    --bg:#15151a; --bgPanel:#1d1d24; --bgSoft:#23232c; --bgHover:#2a2a35;
+    --line:#3a3a47; --lineSoft:#2a2a35;
+    --ink:#e8e6dc; --inkSoft:#a8a5a0; --inkMuted:#6e6b66; --inkDim:#4a4844;
+    --accent:#d97757; --accentDim:#2a1812;
+    --cyan:#5fb3b3; --ok:#7fae65; --warn:#e29bb5; --err:#d96a6a; --blue:#6a9bcc;
+    --purple:#9b59b6; --yellow:#e3b950; --grey:#9b9690;
+    --speckle:#3a6acc; --speckle-bg:#1a2138;
+    --anthropic:#cc785c; --openai:#10a37f; --gemini:#4285f4;
+    --ollama:#bb9b54; --lmstudio:#7e57c2;
+    --mono: 'SF Mono','Menlo','Consolas','Roboto Mono',monospace;
+    --serif:'Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+         font-size:13px; line-height:1.55; padding:24px 32px; }
+  h1 { font-family:var(--serif); font-size:26px; font-weight:600;
+       letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:20px; font-weight:600;
+       letter-spacing:-0.01em; margin:32px 0 8px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em; margin:14px 0 6px 0; }
+  p { color:var(--inkSoft); max-width:84ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; }
+  .brief { background:var(--bgPanel); border:1px solid var(--line);
+            border-left:3px solid var(--accent); border-radius:8px;
+            padding:14px 18px; margin:18px 0; max-width:920px; }
+  .brief strong { color:var(--ink); }
+  .legend { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+             padding:10px 14px; background:var(--bgSoft);
+             border:1px dashed var(--line); border-radius:5px;
+             display:flex; flex-wrap:wrap; gap:14px; margin:14px 0; }
+  .legend .sw { width:11px; height:11px; border-radius:3px;
+                 display:inline-block; vertical-align:middle; margin-right:4px; }
+
+  /* multi-LLM strip */
+  .llm-strip { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0; }
+  .llm-pill { padding:6px 12px; border:1px solid var(--line); border-radius:6px;
+               font-family:var(--mono); font-size:10.5px; color:var(--inkSoft);
+               background:var(--bgPanel); display:flex; gap:6px; align-items:center; }
+  .llm-pill .dot { width:8px; height:8px; border-radius:50%; }
+  .llm-pill.active { color:var(--ink); border-color:var(--accent); background:#2a1c14; }
+  .llm-pill.anthropic .dot { background:var(--anthropic); }
+  .llm-pill.openai .dot    { background:var(--openai); }
+  .llm-pill.gemini .dot    { background:var(--gemini); }
+  .llm-pill.ollama .dot    { background:var(--ollama); }
+  .llm-pill.lmstudio .dot  { background:var(--lmstudio); }
+  .llm-pill .feat { font-size:9px; color:var(--inkMuted); margin-left:auto; padding-left:8px;
+                     letter-spacing:0.04em; }
+  .llm-pill.active .feat { color:var(--accent); }
+
+  /* router diagram */
+  .router-diagram {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:8px;
+    padding:18px; margin:14px 0; max-width:1000px;
+    font-family:var(--mono); font-size:11px;
+  }
+  .router-diagram .layer { padding:9px 14px; border-radius:6px; margin:6px 0;
+                            border:1px solid var(--lineSoft); }
+  .router-diagram .layer .name { color:var(--accent); font-weight:600;
+                                  letter-spacing:0.06em; }
+  .router-diagram .layer .desc { color:var(--inkSoft); margin-top:3px;
+                                  font-size:10.5px; line-height:1.5; }
+  .router-diagram .layer.prompt   { background:#1a1f24; border-left:3px solid var(--blue); }
+  .router-diagram .layer.schema   { background:#1f1a24; border-left:3px solid var(--purple); }
+  .router-diagram .layer.gate     { background:#231a14; border-left:3px solid var(--accent); }
+  .router-diagram .layer.validate { background:#1a241a; border-left:3px solid var(--ok); }
+  .router-diagram .arrow { text-align:center; color:var(--inkDim); font-size:14px; }
+
+  /* main layout */
+  .app {
+    background:#0e0e12; border:1px solid var(--line); border-radius:10px;
+    margin:20px 0; height:840px;
+    display:grid; grid-template-columns:380px 1fr 320px;
+    overflow:hidden;
+  }
+
+  /* COMPOSER */
+  .composer { background:var(--bgPanel); border-right:1px solid var(--line);
+              display:flex; flex-direction:column; }
+  .composer-head { padding:10px 14px; border-bottom:1px solid var(--lineSoft);
+                    display:flex; align-items:center; gap:8px; }
+  .composer-head .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+  .composer-head .label { font-family:var(--mono); font-size:9.5px;
+                            color:var(--accent); letter-spacing:0.18em; }
+  .composer-head .model-pill {
+    margin-left:auto; padding:3px 9px; border-radius:4px;
+    background:#1f1a14; border:1px solid var(--anthropic); color:var(--anthropic);
+    font-family:var(--mono); font-size:9.5px; cursor:pointer;
+    display:flex; gap:5px; align-items:center;
+  }
+  .composer-head .model-pill .d { width:6px; height:6px; border-radius:50%; background:var(--anthropic); }
+  .composer-body { flex:1; overflow:auto; padding:14px; }
+  .turn { margin-bottom:14px; }
+  .turn .who { font-family:var(--mono); font-size:9px; letter-spacing:0.18em;
+                margin-bottom:5px; }
+  .turn.user .who { color:var(--accent); }
+  .turn.assistant .who { color:var(--blue); display:flex; align-items:center; gap:6px; }
+  .turn.assistant .who .model { font-size:8.5px; color:var(--inkMuted);
+                                  letter-spacing:0.04em; }
+  .turn .msg { background:var(--bgSoft); border-radius:7px;
+                padding:9px 11px; font-size:12.5px; line-height:1.55;
+                color:var(--ink); }
+  .turn.user .msg { background:#2a2018; border-left:2px solid var(--accent); }
+  .tool-block { margin-top:6px; padding:8px 10px; border-radius:5px;
+                 background:#0f0f14; border:1px solid var(--lineSoft);
+                 font-family:var(--mono); font-size:10.5px; }
+  .tool-name { color:var(--cyan); }
+  .tool-name.search { color:var(--ok); }
+  .tool-name.reject { color:var(--err); }
+  .tool-name.use { color:var(--blue); }
+  .tool-args { color:var(--inkSoft); margin-top:3px; white-space:pre-wrap; font-size:10px; }
+  .tool-result { margin-top:3px; padding-top:3px; border-top:1px dashed var(--lineSoft);
+                  color:var(--ok); font-size:10px; }
+  .tool-result.err { color:var(--err); }
+  .tool-result.use { color:var(--blue); }
+  .tool-result.warn { color:var(--warn); }
+  .composer-input { border-top:1px solid var(--lineSoft); padding:10px 12px;
+                     background:var(--bg); }
+  .composer-input .field {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:6px;
+    padding:8px 10px; font-family:var(--sans); font-size:12.5px;
+    color:var(--ink); min-height:54px;
+    display:flex; align-items:flex-start; gap:6px;
+  }
+  .composer-input .field .caret { color:var(--accent); font-weight:600; }
+  .composer-input .ctl { display:flex; gap:6px; margin-top:8px; align-items:center;
+                          font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                          letter-spacing:0.04em; }
+  .composer-input .ctl .btn { padding:3px 8px; border-radius:3px; cursor:pointer;
+                               border:1px solid var(--line); background:transparent; }
+  .composer-input .ctl .btn.mode-plan { color:var(--blue); border-color:var(--blue); background:#1a2233; }
+  .composer-input .ctl .btn.mode-auto { color:var(--yellow); border-color:var(--yellow); background:#231d14; }
+  .composer-input .ctl .btn.mode-yolo { color:var(--err); border-color:var(--err); background:#231414; }
+  .composer-input .ctl .btn.go { color:#fff; background:var(--accent);
+                                  border-color:var(--accent); margin-left:auto; }
+
+  /* CANVAS (middle) */
+  .canvas {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    position:relative; overflow:hidden;
+  }
+  .canvas-head { position:absolute; top:0; left:0; right:0; z-index:2;
+                  padding:10px 14px; display:flex; align-items:center; gap:10px;
+                  background:linear-gradient(180deg, rgba(14,14,18,0.92), rgba(14,14,18,0)); }
+  .canvas-head .title { font-family:var(--serif); font-size:16px; letter-spacing:-0.01em; }
+  .canvas-head .badge { font-family:var(--mono); font-size:9px; color:var(--speckle);
+                         padding:2px 7px; background:var(--speckle-bg);
+                         border:1px solid var(--speckle); border-radius:3px;
+                         letter-spacing:0.08em; }
+  .canvas-head .lib-link { margin-left:auto; font-family:var(--mono); font-size:9px;
+                            color:var(--inkSoft); padding:3px 8px;
+                            border:1px solid var(--line); border-radius:3px;
+                            cursor:pointer; letter-spacing:0.08em; }
+
+  .node { position:absolute; background:var(--bgPanel); border-radius:8px;
+           border-top:2px solid var(--accent); border-left:1px solid var(--line);
+           border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+           box-shadow:0 6px 16px rgba(0,0,0,.35); min-width:160px;
+           font-family:var(--sans); font-size:11.5px; }
+  .node.host-autocad { border-top-color:#C66C0A; }
+  .node.host-revit   { border-top-color:#E87D0D; }
+  .node.transform    { border-top-color:var(--cyan); }
+  .node.ai           { border-top-color:var(--blue);
+                        box-shadow:0 6px 16px rgba(106,155,204,.18), 0 6px 16px rgba(0,0,0,.35); }
+  .node-title { padding:6px 10px; border-bottom:1px solid var(--lineSoft);
+                 display:flex; align-items:center; gap:6px;
+                 background:var(--bgSoft); border-top-left-radius:6px;
+                 border-top-right-radius:6px;
+                 font-family:var(--mono); font-size:8.5px; letter-spacing:0.14em;
+                 color:var(--inkSoft); }
+  .host-autocad .node-title { color:#C66C0A; }
+  .host-revit   .node-title { color:#E87D0D; }
+  .transform    .node-title { color:var(--cyan); }
+  .ai           .node-title { color:var(--blue); }
+  .node-body { padding:7px 11px; font-family:var(--mono); font-size:10px; }
+  .node-row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+  .node-row .k { color:var(--inkMuted); flex-shrink:0; min-width:64px; }
+  .node-row .v { background:var(--bg); border:1px solid var(--lineSoft);
+                  border-radius:3px; padding:1px 7px; flex:1;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .node-row .v.spk { border-color:var(--speckle); color:var(--speckle); }
+  .node-row .v.ok { border-color:var(--ok); color:var(--ok); }
+  .node-row .v.reused { border-color:var(--blue); color:var(--blue); }
+  .sock { position:absolute; width:10px; height:10px; border-radius:50%;
+           background:var(--bgPanel); border:1.5px solid var(--inkSoft);
+           box-shadow:0 0 0 2px #0e0e12; }
+  .sock.out { background:var(--inkSoft); }
+  .sock.spk { border-color:var(--speckle); }
+  .sock.spk.out { background:var(--speckle); }
+  .spk-wire-label { position:absolute; font-family:var(--mono); font-size:9px;
+                     color:var(--speckle); padding:2px 7px;
+                     background:rgba(58,106,204,0.1);
+                     border:1px solid var(--speckle); border-radius:3px;
+                     letter-spacing:0.04em; white-space:nowrap; }
+  .reused-badge {
+    position:absolute; padding:1px 6px; font-family:var(--mono); font-size:8.5px;
+    color:var(--blue); background:#1a2233; border:1px solid var(--blue);
+    border-radius:3px; letter-spacing:0.06em;
+  }
+
+  /* RIGHT (Library + Inspector toggle) */
+  .right { background:var(--bgPanel); border-left:1px solid var(--line);
+            display:flex; flex-direction:column; overflow:hidden; }
+  .right-tabs { display:flex; border-bottom:1px solid var(--lineSoft); }
+  .right-tab { flex:1; padding:8px 10px; font-family:var(--mono); font-size:9.5px;
+                color:var(--inkMuted); text-align:center; cursor:pointer;
+                letter-spacing:0.12em; }
+  .right-tab.active { color:var(--accent); border-bottom:2px solid var(--accent);
+                       background:var(--bgSoft); }
+  .right-body { flex:1; overflow:auto; }
+  .right-section { font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                    letter-spacing:0.18em; padding:10px 14px 4px;
+                    background:var(--bgSoft); border-bottom:1px solid var(--lineSoft);
+                    border-top:1px solid var(--lineSoft); }
+  .lib-search { margin:10px 14px; padding:7px 10px; background:var(--bg);
+                 border:1px solid var(--line); border-radius:5px;
+                 font-family:var(--mono); font-size:11px; color:var(--ink);
+                 display:flex; align-items:center; gap:6px; }
+  .lib-search .icon { color:var(--inkMuted); }
+  .lib-row { display:flex; align-items:center; padding:7px 14px; gap:8px;
+              border-bottom:1px solid var(--lineSoft); cursor:pointer; }
+  .lib-row:hover { background:var(--bgHover); }
+  .lib-row .swatch { width:6px; height:6px; border-radius:50%; }
+  .lib-row .name { font-family:var(--mono); font-size:11px; color:var(--ink); }
+  .lib-row .meta { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                    letter-spacing:0.04em; }
+  .lib-row .score { margin-left:auto; font-family:var(--mono); font-size:9.5px;
+                     color:var(--ok); }
+  .lib-row .score.bad { color:var(--inkMuted); }
+  .lib-row.matched { background:#1a2233; border-left:2px solid var(--blue); }
+
+  /* mandate matrix */
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; }
+  th, td { padding:8px 12px; border:1px solid var(--lineSoft);
+            text-align:left; vertical-align:top; }
+  th { background:var(--bgSoft); font-family:var(--mono); font-size:10px;
+        color:var(--accent); letter-spacing:0.1em; font-weight:600; }
+  td .ok { color:var(--ok); }
+  td .no { color:var(--err); }
+  td .meh { color:var(--warn); }
+  .mode-badge { display:inline-block; padding:2px 7px; border-radius:3px;
+                 font-family:var(--mono); font-size:9px; letter-spacing:0.08em; }
+  .mode-badge.plan { background:#1a2233; border:1px solid var(--blue); color:var(--blue); }
+  .mode-badge.auto { background:#231d14; border:1px solid var(--yellow); color:var(--yellow); }
+  .mode-badge.yolo { background:#231414; border:1px solid var(--err); color:var(--err); }
+
+  /* validator block */
+  .validator {
+    background:#1a1f24; border:1px solid var(--ok); border-radius:6px;
+    padding:14px 18px; margin:14px 0; font-family:var(--mono); font-size:11px;
+    color:var(--inkSoft);
+  }
+  .validator .head { color:var(--ok); font-weight:600; letter-spacing:0.06em;
+                      margin-bottom:8px; }
+  .validator .row { display:grid; grid-template-columns:160px 24px 1fr;
+                     padding:3px 0; gap:6px; }
+  .validator .row .pass { color:var(--ok); text-align:center; }
+  .validator .row .fail { color:var(--err); text-align:center; }
+  .validator .row .field { color:var(--inkMuted); }
+  .validator .row .val { color:var(--ink); }
+
+  .verdict { background:linear-gradient(180deg,#1f1f28 0%, var(--bgPanel) 100%);
+              border:1px solid var(--accent); border-radius:8px;
+              padding:16px 20px; margin-top:32px; max-width:920px; }
+</style>
+</head>
+<body>
+
+<h1>Composer · Library-first · Multi-LLM enforcement</h1>
+<p style="margin-top:2px">
+  Direction X with the founder's two refinement mandates baked in. Same
+  prototype shows: model router (5 providers), library-first agent behaviour
+  (search-before-create), modularity validator, user-always-in-control
+  surfaces (library always browsable, canvas editable, Plan/Auto/YOLO modes).
+</p>
+
+<div class="brief">
+  <strong>The key insight on multi-LLM enforcement.</strong> Anthropic's
+  <code>strict:true</code> is one tool. ArchHub talks to many models. The
+  enforcement must hold for all — so the bulletproof layer is the
+  <strong>router-level pre-execute gate</strong>, not a per-SDK flag. The
+  per-SDK strict mode is added defence-in-depth where each provider supports
+  it. The system prompt is the same across providers.
+</div>
+
+<h2>Multi-LLM router · which models speak which dialect</h2>
+
+<div class="llm-strip">
+  <div class="llm-pill anthropic active">
+    <span class="dot"></span> Anthropic · sonnet 4.7
+    <span class="feat">native tool_use · strict:true · streaming deltas</span>
+  </div>
+  <div class="llm-pill openai">
+    <span class="dot"></span> OpenAI · gpt-4o / o4
+    <span class="feat">function calling · strict:true · parallel tools</span>
+  </div>
+  <div class="llm-pill gemini">
+    <span class="dot"></span> Google · gemini 2.5
+    <span class="feat">function_declarations · MODE: ANY</span>
+  </div>
+  <div class="llm-pill ollama">
+    <span class="dot"></span> Ollama · llama3.1 / qwen2.5
+    <span class="feat">tool support varies by model · prompt fallback</span>
+  </div>
+  <div class="llm-pill lmstudio">
+    <span class="dot"></span> LM Studio · local
+    <span class="feat">OpenAI-compatible · per-model tool support</span>
+  </div>
+</div>
+
+<h2>The three-layer enforcement</h2>
+<p>Same constraint, three layers — each provider hits as many as it supports.
+   The router-level gate is the guaranteed floor.</p>
+
+<div class="router-diagram">
+  <div class="layer prompt">
+    <div class="name">LAYER 1 · SYSTEM PROMPT (works for every model)</div>
+    <div class="desc">
+      "Before composing a new node, you MUST call <code>library.search</code>
+      with the intent + input/output schemas. If any match scores ≥ 0.75,
+      use the existing node. Only call <code>library.create_node_type</code>
+      when search returned no usable match. Every new node MUST declare
+      typed inputs, typed outputs, parameterised <code>config_schema</code>,
+      <code>description</code>, and <code>examples</code>. The validator
+      rejects non-modular specs."
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer schema">
+    <div class="name">LAYER 2 · PROVIDER STRICT MODE (where supported)</div>
+    <div class="desc">
+      Anthropic: <code>tool_choice:{type:"any"}</code> +
+      <code>strict:true</code> on the tool input schema · forbids
+      hallucinated keys.
+      OpenAI: <code>strict:true</code> on the function JSON schema (post-2024
+      structured-outputs API).
+      Gemini: <code>tool_config: { function_calling_config: { mode: "ANY" } }</code>.
+      Ollama / LM Studio: defence-in-depth via prompt + post-validation only
+      (most local models don't have a strict-mode wire format).
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer gate">
+    <div class="name">LAYER 3 · ROUTER PRE-EXECUTE GATE (bulletproof, model-agnostic)</div>
+    <div class="desc">
+      Every tool call passes through ArchHub's router before it executes.
+      The router maintains per-turn state: which tools were called this turn?
+      If <code>library.create_node_type</code> arrives BEFORE
+      <code>library.search</code> on the same turn → REJECTED with a typed
+      <code>tool_result</code> error: <code>{ error: "library.search must
+      precede library.create_node_type", retry: "call library.search first" }</code>.
+      The agent re-plans. This works whether the LLM is Anthropic, OpenAI,
+      Gemini, llama3.1, or anything else — the gate is in OUR code, not the
+      provider's.
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer validate">
+    <div class="name">LAYER 4 · SPEC VALIDATOR (server-side, language-agnostic)</div>
+    <div class="desc">
+      <code>library.create_node_type(spec)</code> validates the spec for
+      modularity: typed inputs ≥ 1, typed outputs ≥ 1, <code>config_schema</code>
+      non-trivial (rejects bare or all-literal configs), <code>description</code>
+      ≥ 20 chars, <code>examples</code> ≥ 1. Any miss → REJECT, return
+      named error, agent rewrites. Same gate for the user's
+      <code>save_as_skill</code> + the agent's mint path.
+    </div>
+  </div>
+</div>
+
+<h2>Live prototype — library-first behaviour visible</h2>
+
+<div class="legend">
+  <span><span class="sw" style="background:var(--accent)"></span>user turn</span>
+  <span><span class="sw" style="background:var(--blue)"></span>ai turn</span>
+  <span><span class="sw" style="background:var(--ok)"></span>library.search call</span>
+  <span><span class="sw" style="background:var(--blue)"></span>library REUSED (no new node minted)</span>
+  <span><span class="sw" style="background:var(--err)"></span>router gate REJECTED a call</span>
+  <span><span class="sw" style="background:var(--speckle)"></span>Speckle wire</span>
+  <span><span class="sw" style="background:var(--anthropic)"></span>Anthropic</span>
+  <span><span class="sw" style="background:var(--openai)"></span>OpenAI</span>
+  <span><span class="sw" style="background:var(--gemini)"></span>Gemini</span>
+  <span><span class="sw" style="background:var(--ollama)"></span>Ollama</span>
+  <span><span class="sw" style="background:var(--lmstudio)"></span>LM Studio</span>
+</div>
+
+<div class="app">
+
+  <!-- COMPOSER -->
+  <div class="composer">
+    <div class="composer-head">
+      <span class="dot"></span>
+      <span class="label">COMPOSER · session 7c4f</span>
+      <span class="model-pill">
+        <span class="d"></span>sonnet 4.7 ▾
+      </span>
+    </div>
+
+    <div class="composer-body">
+
+      <div class="turn user">
+        <div class="who">YOU</div>
+        <div class="msg">Pull walls from Drawing.dwg (A-WALL layer), convert mm→m, push to Revit Level 1 as detail lines.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB <span class="model">· anthropic / sonnet 4.7</span></div>
+        <div class="msg">
+          I'll search the library first — never compose what's already there.
+          <div class="tool-block">
+            <div class="tool-name search">library.search(intent="read AutoCAD layer entities, send to Speckle")</div>
+            <div class="tool-result use">→ autocad.send_to_speckle · score 0.94 · MATCH
+→ autocad.read_layer_entities · score 0.71 · partial</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name search">library.search(intent="receive Speckle, write Revit detail lines on view")</div>
+            <div class="tool-result use">→ revit.receive_from_speckle · score 0.91 · MATCH
+→ revit.create_detail_lines · score 0.66 · low</div>
+          </div>
+          Both endpoints exist in your library. Building a 2-node graph,
+          no minting needed.
+        </div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB <span class="model">· anthropic / sonnet 4.7</span></div>
+        <div class="msg">
+          <div class="tool-block">
+            <div class="tool-name use">graph.create_node(type="autocad.send_to_speckle", at=[60, 220])</div>
+            <div class="tool-args">{ doc: "Drawing.dwg", layer: "A-WALL",
+  filter: "LINE+LWPOLYLINE", units: "auto" }</div>
+            <div class="tool-result use">→ <code>n_8a2c</code> · library node REUSED</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name use">graph.create_node(type="revit.receive_from_speckle", at=[420, 220])</div>
+            <div class="tool-args">{ target_view: "Level 1", as_kind: "detail_lines",
+  basepoint: "Survey", units: "auto" }</div>
+            <div class="tool-result use">→ <code>n_b71e</code> · library node REUSED</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name">graph.connect(src="n_8a2c.out", dst="n_b71e.in")</div>
+            <div class="tool-result">→ wire kind: <span style="color:var(--speckle)">speckle</span> · Model <code>cad-walls@archhub-7c4f</code></div>
+          </div>
+          Plan ready. <strong>Zero new nodes minted</strong> — entire pipeline
+          uses library primitives. Approve to run?
+        </div>
+      </div>
+
+      <div class="turn user">
+        <div class="who">YOU</div>
+        <div class="msg">also tag each wall with its room name. add a "tag_by_room" node if you need to.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB <span class="model">· anthropic / sonnet 4.7</span></div>
+        <div class="msg">
+          Searching first.
+          <div class="tool-block">
+            <div class="tool-name search">library.search(intent="annotate wall objects with their room name")</div>
+            <div class="tool-result">→ revit.tag_element · score 0.58 · related but wrong shape
+→ data.set_property · score 0.41 · low
+→ <em>no match ≥ 0.75</em></div>
+          </div>
+          No library match. I'll mint a new modular node — typed I/O,
+          parameterised, registered for reuse.
+          <div class="tool-block">
+            <div class="tool-name reject">library.create_node_type(spec=<em>BAD attempt — bare config</em>)</div>
+            <div class="tool-args">{ inputs:["walls"], outputs:["tagged"],
+  config_schema:{},  // empty
+  description:"tags walls",  // 12 chars, &lt; 20
+  examples:[] }</div>
+            <div class="tool-result err">❌ REJECTED by validator
+  → config_schema is bare (no parameterised fields)
+  → description &lt; 20 chars
+  → examples array is empty
+  rewrite required</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name">library.create_node_type(spec=<em>retry, modular</em>)</div>
+            <div class="tool-args">{
+  type: "revit.tag_by_room",
+  display_name: "Tag elements by room",
+  inputs: [{ name:"elements", schema:"Base[Revit.Element]" }],
+  outputs: [{ name:"tagged", schema:"Base[Revit.Element]" }],
+  config_schema: {
+    tag_property: { type:"string", default:"Room Name" },
+    fall_back_to: { type:"string", enum:["UNROOM","SKIP","BLANK"], default:"UNROOM" },
+    case: { type:"string", enum:["upper","title","none"], default:"title" }
+  },
+  description: "For every element with location inside a Revit room, copy the room's name onto a configurable property of the element. Configurable fallback for elements outside any room.",
+  examples: [{
+    input: { elements: [{id:"wall-001", room:{name:"Lobby"}}] },
+    output: { tagged: [{id:"wall-001", "Room Name":"Lobby"}] }
+  }]
+}</div>
+            <div class="tool-result">✓ Validator passed · registered as
+<code>revit.tag_by_room</code> · category "annotate" · visible in Library</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name">graph.create_node(type="revit.tag_by_room", at=[240, 380])</div>
+            <div class="tool-result">→ <code>n_d3f1</code> placed</div>
+          </div>
+          New node minted — modular, parameterised, reusable. Any future
+          graph (or any other user) can <code>library.search "room name tag"</code>
+          and find it.
+        </div>
+      </div>
+
+    </div>
+
+    <div class="composer-input">
+      <div class="field">
+        <span class="caret">▸</span>
+        <span style="color:var(--inkMuted)">approve, run downstream</span>
+      </div>
+      <div class="ctl">
+        <span class="btn mode-plan">PLAN</span>
+        <span class="btn">AUTO</span>
+        <span class="btn">YOLO</span>
+        <span style="color:var(--inkDim); padding:0 4px">·</span>
+        <span class="btn">@node</span>
+        <span class="btn">@host</span>
+        <span class="btn">@file</span>
+        <span class="btn">@lib</span>
+        <span class="btn go">SEND ↵</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CANVAS -->
+  <div class="canvas">
+    <div class="canvas-head">
+      <span class="title">cad-walls · with room tags</span>
+      <span class="badge">SPECKLE local · SQLite</span>
+      <span class="lib-link">📚 LIBRARY (Cmd-K)</span>
+    </div>
+
+    <!-- AutoCAD Send -->
+    <div class="node host-autocad" style="left:42px; top:220px; width:200px;">
+      <div class="node-title"><span>◇</span><span>AUTOCAD · SEND_TO_SPECKLE</span></div>
+      <div class="node-body">
+        <div class="node-row"><span class="k">doc</span><span class="v">Drawing.dwg</span></div>
+        <div class="node-row"><span class="k">layer</span><span class="v">A-WALL</span></div>
+        <div class="node-row"><span class="k">$INSUNITS</span><span class="v ok">mm · auto</span></div>
+      </div>
+      <div class="reused-badge" style="top:8px; right:-6px">REUSED</div>
+      <div class="sock spk out" style="right:-5px; top:32px;"></div>
+    </div>
+
+    <!-- Tag by room (newly minted modular node) -->
+    <div class="node transform" style="left:280px; top:380px; width:220px;">
+      <div class="node-title"><span>◆</span><span>REVIT · TAG_BY_ROOM</span></div>
+      <div class="node-body">
+        <div class="node-row"><span class="k">tag_property</span><span class="v">Room Name</span></div>
+        <div class="node-row"><span class="k">fall_back_to</span><span class="v">UNROOM</span></div>
+        <div class="node-row"><span class="k">case</span><span class="v">title</span></div>
+        <div class="node-row"><span class="k">status</span><span class="v ok">minted · modular ✓</span></div>
+      </div>
+      <div class="reused-badge" style="top:-9px; left:6px; background:#1d2417; border-color:var(--ok); color:var(--ok)">NEW · MODULAR</div>
+      <div class="sock spk" style="left:-5px; top:32px;"></div>
+      <div class="sock spk out" style="right:-5px; top:32px;"></div>
+    </div>
+
+    <!-- Revit Receive -->
+    <div class="node host-revit" style="left:540px; top:220px; width:200px;">
+      <div class="node-title"><span>◆</span><span>REVIT · RECEIVE_FROM_SPECKLE</span></div>
+      <div class="node-body">
+        <div class="node-row"><span class="k">view</span><span class="v">Level 1</span></div>
+        <div class="node-row"><span class="k">as_kind</span><span class="v">detail_lines</span></div>
+        <div class="node-row"><span class="k">basepoint</span><span class="v">Survey</span></div>
+        <div class="node-row"><span class="k">status</span><span class="v" style="color:var(--warn)">awaiting approval</span></div>
+      </div>
+      <div class="reused-badge" style="top:8px; left:-6px">REUSED</div>
+      <div class="sock spk" style="left:-5px; top:32px;"></div>
+    </div>
+
+    <!-- wires -->
+    <svg style="position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none">
+      <defs>
+        <marker id="arr-spk" viewBox="0 0 10 10" refX="8" refY="5"
+                markerUnits="strokeWidth" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#3a6acc"/>
+        </marker>
+      </defs>
+      <!-- send → tag_by_room -->
+      <path d="M 248 262 C 280 262, 280 400, 280 412"
+            stroke="#3a6acc" stroke-width="3" fill="none" opacity="0.9"/>
+      <!-- tag_by_room → receive -->
+      <path d="M 506 412 C 540 412, 540 262, 540 262"
+            stroke="#3a6acc" stroke-width="3" fill="none" opacity="0.9"
+            marker-end="url(#arr-spk)"/>
+    </svg>
+    <div class="spk-wire-label" style="left:300px; top:300px;">⇌ Speckle · Base[Wall]×217</div>
+    <div class="spk-wire-label" style="left:380px; top:300px;">⇌ Speckle · Base[Wall + Room Name]</div>
+  </div>
+
+  <!-- RIGHT: Library + Inspector -->
+  <div class="right">
+    <div class="right-tabs">
+      <div class="right-tab active">📚 LIBRARY</div>
+      <div class="right-tab">⚙ INSPECTOR</div>
+      <div class="right-tab">⇌ WIRE</div>
+    </div>
+    <div class="right-body">
+
+      <div class="lib-search">
+        <span class="icon">🔍</span>
+        <span style="color:var(--inkSoft)">room name tag</span>
+      </div>
+
+      <div class="right-section">MATCHES · LIBRARY-SEARCH RESULTS</div>
+
+      <div class="lib-row matched">
+        <span class="swatch" style="background:var(--ok)"></span>
+        <div>
+          <div class="name">revit.tag_by_room</div>
+          <div class="meta">NEW · minted 12s ago · annotate</div>
+        </div>
+        <span class="score">★ 1.00</span>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:#E87D0D"></span>
+        <div>
+          <div class="name">revit.tag_element</div>
+          <div class="meta">core · annotate</div>
+        </div>
+        <span class="score">0.58</span>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:var(--cyan)"></span>
+        <div>
+          <div class="name">data.set_property</div>
+          <div class="meta">core · transform</div>
+        </div>
+        <span class="score bad">0.41</span>
+      </div>
+
+      <div class="right-section">LIBRARY · ALL · 14 CATEGORIES · 73 NODES</div>
+      <div class="lib-row">
+        <span class="swatch" style="background:#C66C0A"></span>
+        <div>
+          <div class="name">autocad.send_to_speckle</div>
+          <div class="meta">connector · ships with ArchHub</div>
+        </div>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:#E87D0D"></span>
+        <div>
+          <div class="name">revit.receive_from_speckle</div>
+          <div class="meta">connector · ships with ArchHub</div>
+        </div>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:var(--cyan)"></span>
+        <div>
+          <div class="name">transform.apply</div>
+          <div class="meta">core · transform</div>
+        </div>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:var(--purple)"></span>
+        <div>
+          <div class="name">★ skill · ping-outlook</div>
+          <div class="meta">user-saved · shared · 14 placements</div>
+        </div>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:var(--ok)"></span>
+        <div>
+          <div class="name">★ skill · cad-walls-to-revit</div>
+          <div class="meta">user-saved · private · 1 placement</div>
+        </div>
+      </div>
+      <div class="lib-row">
+        <span class="swatch" style="background:var(--blue)"></span>
+        <div>
+          <div class="name">ai.plan (turn 7c4f)</div>
+          <div class="meta">composer · this session</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>The validator — what makes a node "modular"</h2>
+
+<div class="validator">
+  <div class="head">library.create_node_type(spec) — validation gate</div>
+  <div class="row"><div class="field">type</div><div class="pass">✓</div><div class="val">non-empty · dotted · unique</div></div>
+  <div class="row"><div class="field">display_name</div><div class="pass">✓</div><div class="val">≥ 3 chars</div></div>
+  <div class="row"><div class="field">inputs[]</div><div class="pass">✓</div><div class="val">≥ 1 typed input (Base schema or PortType primitive)</div></div>
+  <div class="row"><div class="field">outputs[]</div><div class="pass">✓</div><div class="val">≥ 1 typed output</div></div>
+  <div class="row"><div class="field">config_schema</div><div class="pass">✓</div><div class="val">≥ 1 parameterised field · NO bare/all-literal configs</div></div>
+  <div class="row"><div class="field">description</div><div class="pass">✓</div><div class="val">≥ 20 chars · intent in plain language</div></div>
+  <div class="row"><div class="field">examples[]</div><div class="pass">✓</div><div class="val">≥ 1 {input, output} pair · powers future library.search similarity</div></div>
+  <div class="row"><div class="field">side effects</div><div class="pass">✓</div><div class="val">declared (read-only · host-write · network) · drives approval gate</div></div>
+  <div class="row" style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--lineSoft)">
+    <div class="field" style="color:var(--err)">FAIL CONSEQUENCES</div>
+    <div class="fail">❌</div>
+    <div class="val">REJECTED · typed tool_result error returned to agent · agent rewrites · no registration · no canvas placement · library unaltered</div>
+  </div>
+</div>
+
+<h2>User-agency surfaces</h2>
+
+<table>
+  <thead>
+    <tr><th>Surface</th><th>Always available?</th><th>How</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Library browser</td>
+      <td><span class="ok">YES</span></td>
+      <td>Cmd-K · side-panel tab · WirePromotePalette (Tab key + double-click canvas + wire-drop-on-empty) · 📚 link in canvas header</td>
+    </tr>
+    <tr>
+      <td>Canvas direct manipulation</td>
+      <td><span class="ok">YES</span></td>
+      <td>Right-click node · drag-rewire · multi-select (slice B2) · groups (slice C) · Disable/Bypass/Freeze/Pin (slice B) · Disentangle (slice G)</td>
+    </tr>
+    <tr>
+      <td>Approval before host write</td>
+      <td><span class="ok">YES (default)</span></td>
+      <td><span class="mode-badge plan">PLAN</span> default — every write gated · <span class="mode-badge auto">AUTO</span> — reads auto, writes gated · <span class="mode-badge yolo">YOLO</span> — opt-in, reversible</td>
+    </tr>
+    <tr>
+      <td>Undo</td>
+      <td><span class="ok">YES</span></td>
+      <td>Every wire fire = new Speckle Version (content-addressed, immutable). Undo = receive previous Version. Composer turns are checkpointed; revert restores prior state.</td>
+    </tr>
+    <tr>
+      <td>Reject AI suggestion</td>
+      <td><span class="ok">YES</span></td>
+      <td>"Edit" in composer · disconnect on canvas · delete node · refuse approval. Agent never auto-commits without an "Approve" click in Plan mode.</td>
+    </tr>
+    <tr>
+      <td>Override model choice</td>
+      <td><span class="ok">YES</span></td>
+      <td>Model picker pill in composer header · per-tool model override (use Sonnet for plan, Haiku for sub-calls) · local Ollama for offline</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="verdict">
+  <h2>What this prototype proves</h2>
+  <ol>
+    <li>The composer streams tool calls to the canvas across ANY model — the visualisation is identical for Anthropic / OpenAI / Gemini / local — because the canvas reads the router-level event stream, not the SDK directly.</li>
+    <li>The router gate (layer 3) is the single point that enforces library-first across all models. <code>library.create_node_type</code> without a prior <code>library.search</code> in the same turn = REJECTED, regardless of which LLM emitted the call.</li>
+    <li>The validator (layer 4) enforces modularity at registration time. A non-modular spec is REJECTED with a typed error explaining what's missing — the agent rewrites.</li>
+    <li>The library is co-equal with the composer as a user entry point. Cmd-K opens it. Search exists. Saved Skills + AI-minted nodes + core primitives + ai.plan turns all live there together.</li>
+    <li>Plan / Auto / YOLO modes are visible in the composer footer. Mode change is per-session, never persisted silently.</li>
+    <li>Reusing existing library nodes is the AGENT'S DEFAULT BEHAVIOUR, visible as <code>REUSED</code> badges on the canvas. New nodes get a <code>NEW · MODULAR</code> badge so the user sees what was minted.</li>
+  </ol>
+</div>
+
+</body>
+</html>

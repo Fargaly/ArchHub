@@ -79,9 +79,28 @@ def _session_to_dict(s: Any, family: str) -> dict:
     }
 
 
+# ROADMAP P2 fix — family-name aliases.
+# Founder saw "AutoCAD MCP not reading sessions" because the bridge
+# dispatch map only knows "autocad" / "max" but various JSX + tool
+# callsites pass "acad" / "max3ds" / "3dsmax". Normalise here so EVERY
+# caller hits the right broker regardless of name flavour.
+_FAMILY_ALIASES = {
+    "acad":    "autocad",
+    "3dsmax":  "max",
+    "max3ds":  "max",
+    "rhino3d": "rhino",
+}
+
+
+def _normalize_family(family: str) -> str:
+    f = (family or "").strip().lower()
+    return _FAMILY_ALIASES.get(f, f)
+
+
 def _list_host_sessions_impl(family: str) -> list[dict]:
     """Family-dispatched list of running host sessions. Pure helper —
     no Qt, callable from tests + the QObject slot above."""
+    family = _normalize_family(family)
     if family in ("revit", "autocad", "max"):
         mod_map = {"revit": "revit_broker",
                     "autocad": "acad_broker",
@@ -171,7 +190,7 @@ def _list_host_documents_impl(family: str, session_id: str) -> list[dict]:
     backed hosts we POST to /list_docs (falling back to /info for the
     single open doc). For runner-backed hosts we call list_files()/
     info(). For Outlook we list folders."""
-    family = (family or "").strip().lower()
+    family = _normalize_family(family)
     session_id = (session_id or "").strip()
 
     if family in ("revit", "autocad", "max"):
@@ -346,11 +365,21 @@ def _scan_canvas_skills() -> list:
             if not isinstance(graph, dict):
                 # Older files may store {nodes,wires} at top level.
                 graph = env if ("nodes" in env or "wires" in env) else {}
+            # SLICE G (AgDR-0010): surface the envelope's `meta` so
+            # callers (load_skill, get_saved_skills) can branch on
+            # `mode` (shared vs private). Older files lack meta —
+            # default to private.
+            _m = env.get("meta") if isinstance(env.get("meta"), dict) else {}
             out[slug] = {
                 "slug":  slug,
                 "name":  env.get("name") or slug,
                 "path":  str(f),
                 "graph": graph,
+                "meta":  {
+                    "mode":        str(_m.get("mode", "private")),
+                    "description": str(_m.get("description") or ""),
+                    "category":    str(_m.get("category") or ""),
+                },
             }
     return list(out.values())
 
@@ -1222,6 +1251,259 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── M4 (AgDR-0021) — Plan history surface ─────────────────
+    @pyqtSlot(str, int, result=str)
+    def get_plan_history(self, project_dir: str = "",
+                          limit: int = 50) -> str:
+        """List the most-recent `limit` AI-plan records persisted by
+        `ai.plan` cooks under `<project_dir>/.archhub/plans/`.
+
+        Empty project_dir → use the default SpeckleWire project dir
+        (the canonical `%LOCALAPPDATA%/ArchHub/projects/default`).
+
+        Returns JSON: `{records:[…], count:N}` or `{error:"…"}`.
+        Each record carries `plan_id`, `prompt`, `model`, `plan`,
+        `result`, `status`, `error`, `ts` — JSX renders these in
+        the Composer history panel (M4 phase 2).
+        """
+        try:
+            from plan_history import PlanHistory
+            pdir = (project_dir or "").strip()
+            if not pdir:
+                from speckle_wire import default_project_dir
+                pdir = str(default_project_dir())
+            history = PlanHistory(pdir)
+            records = history.list_records(limit=max(1, int(limit)))
+            return _safe_json({"records": records,
+                                "count": len(records),
+                                "project_dir": pdir})
+        except Exception as ex:
+            return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(str, str, result=str)
+    def get_plan_record(self, plan_id: str,
+                         project_dir: str = "") -> str:
+        """Load one plan record by id. Returns the record JSON or
+        `{error:"not_found"}`."""
+        try:
+            from plan_history import PlanHistory
+            pdir = (project_dir or "").strip()
+            if not pdir:
+                from speckle_wire import default_project_dir
+                pdir = str(default_project_dir())
+            history = PlanHistory(pdir)
+            rec = history.load((plan_id or "").strip())
+            if rec is None:
+                return _safe_json({"error": "not_found"})
+            return _safe_json(rec)
+        except Exception as ex:
+            return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(str, str, result=str)
+    def delete_plan_record(self, plan_id: str,
+                            project_dir: str = "") -> str:
+        """Drop one record from disk. Returns `{ok:true}` or
+        `{ok:false, error:"…"}`."""
+        try:
+            from plan_history import PlanHistory
+            pdir = (project_dir or "").strip()
+            if not pdir:
+                from speckle_wire import default_project_dir
+                pdir = str(default_project_dir())
+            history = PlanHistory(pdir)
+            ok = history.delete((plan_id or "").strip())
+            return _safe_json({"ok": bool(ok)})
+        except Exception as ex:
+            return _safe_json({"ok": False,
+                                "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(str, str, result=str)
+    def flatten_chain_to_code(self, graph_json: str,
+                                node_ids_json: str) -> str:
+        """SLICE L (AgDR-0020 follow-up). Replace the selected chain
+        with one `code.expression` node carrying the equivalent
+        Python expression.
+
+        Args:
+          graph_json — the current LM_GRAPH JSON.
+          node_ids_json — JSON array of the selected node ids.
+
+        Returns JSON with either:
+          {graph, new_node_id, expression}  — rewrite successful, JSX
+              should replace LM_GRAPH with `graph` + focus `new_node_id`
+          {error: "..."}                    — chain not flattenable;
+              JSX shows the error in a toast
+        """
+        try:
+            import json as _json
+            from workflows.flatten_to_code import flatten_chain
+            graph = _json.loads(graph_json or "{}")
+            node_ids = _json.loads(node_ids_json or "[]")
+            if not isinstance(graph, dict):
+                return _safe_json({"error": "graph_json must be an object"})
+            if not isinstance(node_ids, list):
+                return _safe_json({"error": "node_ids_json must be an array"})
+            result = flatten_chain(graph, node_ids)
+            return _safe_json(result)
+        except Exception as ex:
+            return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
+
+    # ─── Library (LIBRARY-FIRST mandate — AgDR-0013/0014) ──────
+    # Five slots back the Composer panel + the JSX library browser:
+    # search, list_node_types, inspect, create_node_type, delete_node_type.
+    # They reuse the same in-process registry the LLM tool layer uses
+    # (`app/library.py`); the JSX side reads from disk via these slots,
+    # the LLM side reads via ToolEngine — both surfaces hit one source
+    # of truth.
+
+    @pyqtSlot(str, str, int, result=str)
+    def library_search(self, intent: str, category: str = "",
+                        limit: int = 8) -> str:
+        """Search the in-process library for matches to an intent string.
+
+        Returns `{results: [...], count: N}` or `{error: ...}`.
+        Search algorithm + thresholds locked in AgDR-0014 (Token-based
+        ranking + ≥30 match threshold).
+        """
+        try:
+            self._library_bootstrap()
+            import library as _lib
+            results = _lib.search(
+                intent=intent or "",
+                category=(category or None),
+                limit=int(limit or 8),
+            )
+            return _safe_json({"results": results, "count": len(results)})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def library_list_node_types(self, category: str = "") -> str:
+        """List every registered node-type, optionally filtered by
+        category. Backs the JSX Library browser tab.
+        """
+        try:
+            self._library_bootstrap()
+            import library as _lib
+            items = _lib.list_node_types(category=(category or None))
+            return _safe_json({"items": items, "count": len(items)})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def library_inspect(self, node_type: str) -> str:
+        """Return the full ModularNodeSpec for one registered type.
+
+        On unknown type: `{error: <reason>, code: 'unknown_type'}`.
+        """
+        try:
+            self._library_bootstrap()
+            import library as _lib
+            spec = _lib.inspect((node_type or "").strip())
+            return _safe_json({"spec": spec})
+        except Exception as ex:
+            from library import UnknownTypeError
+            if isinstance(ex, UnknownTypeError):
+                return _safe_json({"error": str(ex), "code": "unknown_type"})
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def library_create_node_type(self, spec_json: str) -> str:
+        """Register a new modular node-type. `spec_json` is the
+        serialised ModularNodeSpec dict.
+
+        On validator failure: `{error: <reason>, violations: [...]}` so
+        the JSX caller can surface every gap in one form-validation
+        round-trip (mirrors the LLM Layer-3 gate's behaviour).
+        """
+        try:
+            self._library_bootstrap()
+            spec = json.loads(spec_json) if isinstance(spec_json, str) else {}
+            if not isinstance(spec, dict):
+                return _safe_json({
+                    "error": "spec_json must be a JSON object",
+                })
+            import library as _lib
+            result = _lib.create_node_type(spec)
+            # Auto-persist so the JSX-created node survives a restart.
+            try:
+                _lib.save_to_disk()
+            except Exception:
+                # Persistence failure is non-fatal — registration succeeded
+                # in-process. Surface a warning in the response.
+                pass
+            return _safe_json({**result, "ok": True})
+        except Exception as ex:
+            from library import (
+                DuplicateTypeError,
+                RegistrationError,
+            )
+            if isinstance(ex, RegistrationError):
+                return _safe_json({
+                    "error": str(ex),
+                    "violations": ex.violations,
+                })
+            if isinstance(ex, DuplicateTypeError):
+                return _safe_json({
+                    "error": str(ex),
+                    "code": "duplicate_type",
+                })
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def library_delete_node_type(self, node_type: str) -> str:
+        """Delete a registered node-type. JSX side surfaces a
+        confirmation dialog before invoking this.
+
+        On unknown type: `{error: ..., code: 'unknown_type'}`.
+        """
+        try:
+            self._library_bootstrap()
+            import library as _lib
+            result = _lib.delete_node_type((node_type or "").strip())
+            try:
+                _lib.save_to_disk()
+            except Exception:
+                pass
+            return _safe_json({**result})
+        except Exception as ex:
+            from library import UnknownTypeError
+            if isinstance(ex, UnknownTypeError):
+                return _safe_json({"error": str(ex), "code": "unknown_type"})
+            return _safe_json({"error": str(ex)})
+
+    def _library_bootstrap(self) -> None:
+        """One-shot library bootstrap on first access.
+
+        - Load registry from disk if it exists.
+        - Otherwise seed with the AgDR-0014 modular primitives.
+        Idempotent — subsequent calls are no-ops.
+        """
+        if getattr(self, "_lib_booted", False):
+            return
+        try:
+            import library as _lib
+            import library_persistence as _lp
+
+            loaded = 0
+            try:
+                if _lp.default_registry_path().exists():
+                    loaded = _lib.load_from_disk()
+            except Exception:
+                loaded = 0
+
+            if loaded == 0:
+                # First run — seed with the AgDR-0014 modular primitives.
+                from library_seeds import seed_library
+                seed_library()
+                try:
+                    _lib.save_to_disk()
+                except Exception:
+                    # Seed survived in-process even if disk write failed.
+                    pass
+        finally:
+            self._lib_booted = True
+
     # ─── Saved skills (canvas-format store) ────────────────────
     @pyqtSlot(result=str)
     def get_saved_skills(self) -> str:
@@ -1238,14 +1520,55 @@ class ArchHubBridge(QObject):
             out = []
             for s in _scan_canvas_skills():
                 graph = s.get("graph") or {}
+                meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+                # G2 (slice K): surface mode + description + category so the
+                # JSX panel can render a mode badge AND the Promote
+                # Private→Shared action knows what to re-save with.
                 out.append({
-                    "id":         s["slug"],
-                    "name":       s["name"],
-                    "args":       "",
-                    "when":       "",
-                    "node_count": len(graph.get("nodes") or []),
+                    "id":          s["slug"],
+                    "name":        s["name"],
+                    "args":        "",
+                    "when":        "",
+                    "node_count":  len(graph.get("nodes") or []),
+                    "mode":        meta.get("mode") or "private",
+                    "description": meta.get("description") or "",
+                    "category":    meta.get("category") or "",
                 })
             return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def promote_skill_to_shared(self, skill_id: str) -> str:
+        """G2 (slice K) — flip a Private skill's mode to Shared.
+
+        Loads the existing skill envelope, re-saves with `meta.mode='shared'`
+        so future spawns use the subgraph-reference semantics (edits
+        propagate). Returns `{ok:true, id}` on success or `{error:...}`.
+        """
+        try:
+            sid = (skill_id or "").strip()
+            if not sid:
+                return _safe_json({"error": "skill_id is required"})
+            match = next(
+                (s for s in _scan_canvas_skills()
+                 if s["slug"] == sid or s["name"] == sid),
+                None,
+            )
+            if match is None:
+                return _safe_json({"error": f"skill not found: {sid}"})
+            graph = match.get("graph") or {}
+            meta = match.get("meta") if isinstance(match.get("meta"), dict) else {}
+            new_meta = {**meta, "mode": "shared"}
+            payload = {
+                "nodes": list(graph.get("nodes") or []),
+                "wires": list(graph.get("wires") or []),
+                "meta":  new_meta,
+            }
+            # save_as_skill re-writes the envelope with the new meta
+            # (and existing meta.mode is replaced by the payload's).
+            self.save_as_skill(match["name"], json.dumps(payload))
+            return _safe_json({"ok": True, "id": sid, "mode": "shared"})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -1275,10 +1598,19 @@ class ArchHubBridge(QObject):
             if match is None:
                 return _safe_json({"error": f"skill not found: {sid}"})
             graph = match.get("graph") or {}
+            # SLICE G (AgDR-0010): surface the envelope's `meta` so the
+            # JSX spawn handler can branch on `mode` (shared vs private).
+            _meta = match.get("meta") if isinstance(match.get("meta"), dict) else {}
             return _safe_json({
                 "nodes": list(graph.get("nodes") or []),
                 "wires": list(graph.get("wires") or []),
                 "name":  match.get("name") or sid,
+                "slug":  match.get("slug") or sid,
+                "meta":  {
+                    "mode":        str(_meta.get("mode", "private")),
+                    "description": str(_meta.get("description") or ""),
+                    "category":    str(_meta.get("category") or ""),
+                },
             })
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -1867,13 +2199,33 @@ class ArchHubBridge(QObject):
             slug = re.sub(r"[^a-z0-9]+", "-",
                           str(slug_src).lower()).strip("-") or "untitled-skill"
             out_path = _user_skills_dir() / f"{slug}.archhub-skill.json"
+            # SLICE G (AgDR-0010): the hybrid skill-as-node contract.
+            # `payload.meta` carries `mode` (`shared`|`private`) +
+            # optional `description` + `category` from the SaveSkillDialog.
+            # Default mode is `private` so older callers stay safe.
+            _meta_in = payload.get("meta") if isinstance(payload, dict) else None
+            if not isinstance(_meta_in, dict):
+                _meta_in = {}
+            _mode = _meta_in.get("mode", "private")
+            if _mode not in ("shared", "private"):
+                _mode = "private"
+            envelope_meta = {
+                "mode":        _mode,
+                "description": str(_meta_in.get("description") or ""),
+                "category":    str(_meta_in.get("category") or ""),
+            }
+            # Strip meta from the stored graph so the runtime graph
+            # dict is clean; metadata lives at the envelope level.
+            graph_only = {k: v for k, v in payload.items() if k != "meta"} \
+                if isinstance(payload, dict) else payload
             # Wrap with a tiny envelope so loaders can distinguish a
             # skill JSON from a raw graph dump.
             envelope = {
                 "kind": "archhub.skill",
                 "name": str(name or slug_src),
                 "slug": slug,
-                "graph": payload,
+                "meta": envelope_meta,
+                "graph": graph_only,
             }
             out_path.write_text(_json.dumps(envelope, indent=2,
                                               ensure_ascii=False),
@@ -2156,6 +2508,86 @@ class ArchHubBridge(QObject):
             return _safe_json(out)
         except Exception as ex:
             return _safe_json({"error": str(ex)})
+
+    # ─── AgDR-0028 — library item actions (delete + bulk clear) ─────
+
+    @pyqtSlot(str, result=str)
+    def delete_saved_skill(self, skill_id: str) -> str:
+        """AgDR-0028 — delete a saved skill by id.  Removes the JSON
+        file from %APPDATA%/ArchHub/skills + emits skills_changed so
+        the JSX library refreshes.  Returns
+            {"ok": true,  "id": "..."}
+          or
+            {"ok": false, "error": "..."} ."""
+        try:
+            from skills.library import delete_skill
+            ok = bool(delete_skill(skill_id))
+            if ok:
+                try: self.skills_changed.emit()
+                except Exception: pass
+            return _safe_json({"ok": ok, "id": skill_id,
+                               "error": "" if ok else "not_found"})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def delete_custom_node(self, type_id: str) -> str:
+        """AgDR-0028 — delete a custom node by type id.  Unregisters
+        from the live registry + removes the spec file."""
+        try:
+            from workflows.custom_nodes import delete_spec
+            ok = bool(delete_spec(type_id))
+            if ok:
+                try: self.skills_changed.emit()
+                except Exception: pass
+            return _safe_json({"ok": ok, "type": type_id,
+                               "error": "" if ok else "not_found"})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def clear_all_custom_nodes(self) -> str:
+        """AgDR-0028 — wipe every saved custom-node spec.  Confirmation
+        happens in the JSX modal — the bridge call is the point of no
+        return."""
+        try:
+            from workflows.custom_nodes import list_specs, delete_spec
+            removed = 0
+            for spec in (list_specs() or []):
+                t = (spec or {}).get("type") if isinstance(spec, dict) else None
+                if t and delete_spec(t):
+                    removed += 1
+            if removed:
+                try: self.skills_changed.emit()
+                except Exception: pass
+            return _safe_json({"ok": True, "removed": removed})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def clear_all_saved_skills(self) -> str:
+        """AgDR-0028 — wipe every saved skill.  Same confirm-in-UI
+        contract as clear_all_custom_nodes."""
+        try:
+            from skills.library import delete_skill
+            removed = 0
+            # Re-discover via the same scan get_saved_skills uses so we
+            # only touch user-writable entries.
+            for skill in (json.loads(self.get_saved_skills()) or []):
+                if not isinstance(skill, dict): continue
+                sid = skill.get("id")
+                if not sid: continue
+                # Only user-store skills are deletable; shipped skills
+                # carry `read_only:true` and delete_skill returns False
+                # for those.
+                if delete_skill(sid):
+                    removed += 1
+            if removed:
+                try: self.skills_changed.emit()
+                except Exception: pass
+            return _safe_json({"ok": True, "removed": removed})
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": str(ex)})
 
     @pyqtSlot(str, str, result=str)
     def ai_create_node(self, req_id: str, description: str) -> str:

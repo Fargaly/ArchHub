@@ -152,6 +152,27 @@ def register_spec(spec: dict) -> NodeSpec:
     return node_spec
 
 
+def delete_spec(type_id: str) -> bool:
+    """AgDR-0028 — delete a custom node by type id.  Unregisters from
+    the live registry AND removes the spec file on disk.  Returns True
+    if a file was actually removed.
+
+    Founder demand 2026-05-21: library actions must include "delete
+    custom node" — leaving an orphan registered (but unfile'd) would
+    mean the node returns on next launch."""
+    if not type_id:
+        return False
+    _REGISTRY.pop(type_id, None)
+    path = custom_nodes_dir() / f"{type_id}.json"
+    if path.exists():
+        try:
+            path.unlink()
+            return True
+        except Exception:
+            return False
+    return False
+
+
 def load_all() -> list[str]:
     """Scan the custom_nodes dir and register every spec we find.
 

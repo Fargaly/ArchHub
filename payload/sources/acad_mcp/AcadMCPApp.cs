@@ -11,8 +11,11 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
-using Microsoft.CodeAnalysis.CSharp.Scripting;
-using Microsoft.CodeAnalysis.Scripting;
+// AgDR-0025 — zero in-process Roslyn.  Compilation goes through
+// ArchHub.Shared.ScriptCompiler (subprocess csc.exe).
+using ArchHub.Shared;
+using System.Collections.Generic;
+using System.Reflection;
 
 [assembly: ExtensionApplication(typeof(AcadMCP.AcadMCPApp))]
 
@@ -121,7 +124,17 @@ namespace AcadMCP
             {
                 case "/":
                 case "/ping":
-                    return Task.FromResult("{\"status\":\"ok\",\"service\":\"acad-mcp\",\"version\":\"0.2.0\"}");
+                    {
+                        // AgDR-0025 — broadcast subprocess_csc + csc probe state
+                        // so the broker logs which compiler we use.
+                        var cscPath = ScriptCompiler.ProbeCsc();
+                        var cscStatus = cscPath != null ? "ok" : "missing";
+                        return Task.FromResult(
+                            "{\"status\":\"ok\",\"service\":\"acad-mcp\",\"version\":\"0.3.0\","
+                            + "\"compiler\":\"subprocess_csc\","
+                            + "\"csc_status\":\"" + cscStatus + "\","
+                            + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\"}");
+                    }
 
                 case "/info":
                     return EnqueueAsync(WorkKind.Info, null, null);
@@ -193,6 +206,11 @@ namespace AcadMCP
             return sb.ToString();
         }
 
+        // AgDR-0025 — subprocess csc.exe (zero in-process Roslyn).
+        // Previously CSharpScript.RunAsync collided with any other AutoCAD
+        // add-in (or ObjectARX product) that loaded a different Roslyn
+        // version first.  Now compilation runs out-of-process; the AcadMCP
+        // AppDomain stays clean.
         private string RunCSharpScript(WorkItem item)
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -203,36 +221,66 @@ namespace AcadMCP
             {
                 var ctx = new AcadScriptContext { Doc = doc, Db = doc.Database, Ed = doc.Editor };
 
-                var options = ScriptOptions.Default
-                    .WithReferences(
-                        typeof(Application).Assembly,                 // acmgd
-                        typeof(DBObject).Assembly,                    // acdbmgd
-                        typeof(System.Linq.Enumerable).Assembly)
-                    .WithImports(
-                        "System",
-                        "System.Collections.Generic",
-                        "System.Linq",
-                        "Autodesk.AutoCAD.ApplicationServices",
-                        "Autodesk.AutoCAD.DatabaseServices",
-                        "Autodesk.AutoCAD.EditorInput",
-                        "Autodesk.AutoCAD.Geometry",
-                        "Autodesk.AutoCAD.Runtime");
+                // Build references list — every host DLL plus minimum BCL.
+                var acmgd  = typeof(Application).Assembly.Location;     // acmgd
+                var acdbmgd = typeof(DBObject).Assembly.Location;        // acdbmgd
+                var thisAsm = typeof(AcadMCPApp).Assembly.Location;
+                var sysCore = typeof(System.Linq.Enumerable).Assembly.Location;
+                var sysColl = typeof(System.Collections.Generic.List<>).Assembly.Location;
+                var mscorlib = typeof(object).Assembly.Location;
 
+                var refs = new List<string> {
+                    acmgd, acdbmgd, thisAsm,
+                    mscorlib, sysCore, sysColl,
+                };
+                refs = refs.Where(File.Exists)
+                           .Distinct(System.StringComparer.OrdinalIgnoreCase)
+                           .ToList();
+
+                var usings = new[] {
+                    "System",
+                    "System.Collections.Generic",
+                    "System.Linq",
+                    "Autodesk.AutoCAD.ApplicationServices",
+                    "Autodesk.AutoCAD.DatabaseServices",
+                    "Autodesk.AutoCAD.EditorInput",
+                    "Autodesk.AutoCAD.Geometry",
+                    "Autodesk.AutoCAD.Runtime",
+                };
+
+                ScriptResult sr;
                 try
                 {
-                    var task = CSharpScript.RunAsync(item.Code, options, ctx);
-                    task.Wait();
-                    tr.Commit();
-
-                    var resultJson = SerializeResult(ctx.result);
-                    return "{\"status\":\"ok\",\"result\":" + resultJson + "}";
+                    sr = ScriptCompiler.CompileAndRun(
+                        userCode: item.Code,
+                        ctx: ctx,
+                        scriptContextFullName: "global::AcadMCP.AcadScriptContext",
+                        references: refs,
+                        usings: usings,
+                        langVersion: "7.3");
                 }
                 catch (System.Exception ex)
                 {
                     try { tr.Abort(); } catch { }
-                    var inner = ex.InnerException?.Message ?? ex.Message;
-                    return JsonError("Script error: " + inner);
+                    return JsonError("ScriptCompiler crash: " + ex.Message);
                 }
+
+                if (sr.Status == "ok")
+                {
+                    tr.Commit();
+                    var resultJson = SerializeResult(ctx.result ?? sr.Result);
+                    var sb = new StringBuilder();
+                    sb.Append("{\"status\":\"ok\",\"result\":").Append(resultJson);
+                    sb.Append(",\"compiler\":\"subprocess_csc\"");
+                    sb.Append(",\"cache_hit\":").Append(sr.CacheHit ? "true" : "false");
+                    sb.Append('}');
+                    return sb.ToString();
+                }
+
+                try { tr.Abort(); } catch { }
+                return "{\"status\":\"error\",\"error_code\":\"" + sr.Status
+                     + "\",\"error\":\"" + JsonEscape(sr.Error ?? "unknown")
+                     + "\"}";
             }
         }
 

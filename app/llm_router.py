@@ -1260,6 +1260,22 @@ class LLMRouter:
         # turns (system messages were folded into system_prompt above).
         messages = [m for m in convo_history]
 
+        # AgDR-0013 Layer 3 — LIBRARY-FIRST gate state.
+        # Fresh TurnState per LLM completion. Tracks whether
+        # `library_search` (or alias) was called this turn so the gate
+        # can deny premature `library_create_node_type` calls.
+        try:
+            from library_gate import LibraryGate, TurnState
+            _lib_gate = LibraryGate()
+            _lib_turn_state = TurnState()
+        except Exception:
+            # Library gate module not available — fall through, no
+            # enforcement. Honest fallback: the LLM can still call
+            # library_create_node_type but skips the LIBRARY-FIRST
+            # check. Better than failing the entire chat turn.
+            _lib_gate = None
+            _lib_turn_state = None
+
         max_iters = self._max_iterations(model_name)
         # Diagnostic log — captures every iteration of the tool-use
         # loop to %LOCALAPPDATA%/ArchHub/logs/llm_trace.log so we can
@@ -1382,6 +1398,43 @@ class LLMRouter:
                 )
                 all_invocations.append(inv)
                 on_tool_invocation(inv)
+
+                # AgDR-0013 Layer 3 — LIBRARY-FIRST gate.
+                # Insert BEFORE ToolEngine.invoke for library_* calls.
+                # The gate denies `library_create_node_type` when
+                # `library_search` hasn't run this turn, OR when the
+                # spec fails the Layer-4 validator. Translates a
+                # GateDecision(allow=False) into a tool_result with
+                # status:error + retry_hint so the LLM can fix in the
+                # next iteration without aborting the turn.
+                if _lib_gate is not None and _lib_gate.is_library_tool(
+                        inv.tool_name):
+                    try:
+                        decision = _lib_gate.check(inv.tool_name,
+                                                    inv.arguments,
+                                                    _lib_turn_state)
+                    except Exception as gate_ex:
+                        # Gate errored — log + degrade gracefully (let
+                        # the call through; treating the gate as
+                        # advisory under failure beats blocking the turn).
+                        _trace(f"library_gate exception: {gate_ex}")
+                        decision = None
+                    if decision is not None and not decision.allow:
+                        inv.result = {
+                            "status": "error",
+                            "error":  decision.reason,
+                            "retry_hint": decision.retry_hint,
+                            "code":   "library_first_blocked",
+                        }
+                        inv.status = "error"
+                        on_tool_invocation(inv)
+                        tool_results.append({
+                            "tool_use_id": inv.id,
+                            "name":         inv.tool_name,
+                            "content":      inv.result,
+                        })
+                        continue   # skip ToolEngine.invoke — gate denied
+
                 try:
                     result = self.tools.invoke(inv.tool_name, inv.arguments,
                                                 session_pin=session_pin)

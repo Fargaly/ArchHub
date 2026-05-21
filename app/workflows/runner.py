@@ -294,6 +294,19 @@ class WorkflowRunner:
         self._on_wire_state: Optional[Callable[[str, str, str], None]] = None
         # Re-entrancy guard for auto-rerun loops.
         self._visiting: set[str] = set()
+        # AgDR-0017 + M6 partial — per-graph `auto_publish` opts.
+        # Shape: {"enabled": bool, "server_url": str, "model_name": str,
+        #         "project_dir": str|None}. When `enabled=True`, every
+        # successful sink in `run_all` is shipped through SpeckleWire
+        # (+ optional server push) automatically, no `share.publish`
+        # node required. The user sets this per-graph at save time.
+        ap = graph.get("auto_publish") or {}
+        self.auto_publish: dict = {
+            "enabled":    bool(ap.get("enabled", False)),
+            "server_url": str(ap.get("server_url", "") or ""),
+            "model_name": str(ap.get("model_name", "") or "default"),
+            "project_dir": ap.get("project_dir"),
+        }
 
     # ── observation ─────────────────────────────────────────────────
     def on_wire_state(self,
@@ -509,7 +522,13 @@ class WorkflowRunner:
     def run_all(self) -> dict:
         """Cook every sink node in the graph (nodes with no downstream
         edges). Pulls cascade upstream automatically via `pull`. Frozen
-        nodes are skipped. Returns a per-node result map."""
+        nodes are skipped. Returns a per-node result map.
+
+        AgDR-0017 + M6 partial: if `graph.auto_publish.enabled=True`,
+        each sink's value is shipped through SpeckleWire automatically
+        after the cook (+ optional server push). Failure to publish
+        does NOT taint the cook — `published` list includes both
+        successes and failures honestly."""
         downstream_targets = {e["src_node"] for e in self.edges}
         sinks = [nid for nid in self.nodes_by_id
                   if nid not in downstream_targets]
@@ -524,13 +543,80 @@ class WorkflowRunner:
                 out[nid] = self.pull(nid)
             except CycleDetected as ex:
                 out[nid] = {"status": "error", "error": str(ex)}
-        return {"status": "ok",
-                "sinks": sinks,
-                "results": out,
-                "edges_state": [
-                    {"id": e["id"], "state": e.get("state", "idle")}
-                    for e in self.edges
-                ]}
+        published = self._maybe_auto_publish_sinks(out) \
+            if self.auto_publish.get("enabled") else None
+        result = {"status": "ok",
+                   "sinks": sinks,
+                   "results": out,
+                   "edges_state": [
+                       {"id": e["id"], "state": e.get("state", "idle")}
+                       for e in self.edges
+                   ]}
+        if published is not None:
+            result["auto_publish"] = published
+        return result
+
+    def _maybe_auto_publish_sinks(self, sink_results: dict) -> list:
+        """Ship every successful sink's value through SpeckleWire +
+        optionally push to the configured server. Returns a list of
+        per-sink outcomes — always honest, never raises."""
+        published: list[dict] = []
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            APP = _Path(__file__).resolve().parents[1]
+            if str(APP) not in _sys.path:
+                _sys.path.insert(0, str(APP))
+            from speckle_wire import SpeckleWire, default_project_dir
+        except Exception as ex:
+            return [{"status": "error",
+                      "error": f"SpeckleWire unavailable: {ex}"}]
+        ap = self.auto_publish
+        pdir = ap.get("project_dir") or default_project_dir()
+        try:
+            wire = SpeckleWire(pdir)
+        except Exception as ex:
+            return [{"status": "error",
+                      "error": f"SpeckleWire init failed: {ex}"}]
+        try:
+            for sink_id, sink_out in (sink_results or {}).items():
+                if not isinstance(sink_out, dict):
+                    continue
+                value = sink_out.get("value")
+                if value is None:
+                    published.append({"sink_id": sink_id,
+                                       "status": "skipped",
+                                       "reason": "no value"})
+                    continue
+                try:
+                    hash_id = wire.send(value)
+                except Exception as ex:
+                    published.append({"sink_id": sink_id,
+                                       "status": "error",
+                                       "error": f"send failed: {ex}"})
+                    continue
+                entry = {"sink_id": sink_id, "status": "ok",
+                          "hash": hash_id,
+                          "url": f"speckle://local/{hash_id}",
+                          "mode": "disk"}
+                # Optional server push.
+                if ap.get("server_url"):
+                    try:
+                        from speckle_server import push_to_server
+                        url = push_to_server(
+                            value, ap["server_url"],
+                            ap.get("model_name") or "default")
+                        entry["url"] = url
+                        entry["mode"] = "server"
+                    except Exception as ex:
+                        entry["mode"] = "disk_only_after_server_fail"
+                        entry["server_error"] = (
+                            f"{type(ex).__name__}: {ex}")
+                published.append(entry)
+        finally:
+            try: wire.close()
+            except Exception: pass
+        return published
 
     # ── observability ───────────────────────────────────────────────
     def wire_state(self, edge_id: str) -> str:

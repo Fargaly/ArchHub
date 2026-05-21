@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- AgDR-0027 — hot-reloadable RevitMCP implementation DLL.  The
+       shim (RevitMCP.dll) loads this into a COLLECTIBLE ALC on net8,
+       or via Assembly.LoadFrom on net48 (no hot-unload there). -->
+  <PropertyGroup>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net8.0-windows</TargetFramework>
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <AssemblyName>RevitMCPCore</AssemblyName>
+    <RootNamespace>RevitMCPCore</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <!-- Shared infra linked into BOTH shim and core.  ScriptCompiler is
+       the subprocess csc wrapper (AgDR-0025).  ICoreEntryPoint +
+       CoreLoader are the hot-reload contract (AgDR-0027). -->
+  <ItemGroup>
+    <Compile Include="..\shared\ScriptCompiler.cs"  Link="ScriptCompiler.cs"/>
+    <Compile Include="..\shared\ICoreEntryPoint.cs" Link="ICoreEntryPoint.cs"/>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
+    <RevitYear Condition="'$(RevitYear)' == ''">2025</RevitYear>
+    <UseLocalRevitApi Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</UseLocalRevitApi>
+    <UseLocalRevitApi Condition="'$(UseLocalRevitApi)' == ''">false</UseLocalRevitApi>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseLocalRevitApi)' == 'true'">
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalRevitApi)' == 'false'">
+    <PackageReference Include="Revit_All_Main_Versions_API_x64"
+                      Version="$(RevitYear).0.0"
+                      ExcludeAssets="runtime"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net47" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48' Or '$(TargetFramework)' == 'net47'">
+    <PackageReference Include="System.Text.Json" Version="6.0.10" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+  </ItemGroup>
+
+</Project>

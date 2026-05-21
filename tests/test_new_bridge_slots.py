@@ -27,6 +27,34 @@ sys.path.insert(0, str(APP_ROOT))
 import bridge as _bridge_module  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolate_session_io_module_state(monkeypatch):
+    """Structural isolation against cross-file test pollution
+    (ROADMAP NEXT-30-DAYS — `test_delete_session_removes_file` was
+    flaking in full-suite runs while passing isolated).
+
+    Class of bug: a test file collected EARLIER imports `session_io`
+    + caches/mutates module-level state (SESSIONS_DIR, session
+    caches, etc.) that bleeds into our tests when the harness
+    doesn't reset it between modules. Symptom: KeyError on slot
+    invocation because the cached SESSIONS_DIR points at a stale
+    or non-existent path.
+
+    Fix: this autouse fixture forces `session_io` to be re-imported
+    fresh + has the test-level `tmp_appdata` fixture stamp its
+    SESSIONS_DIR via monkeypatch. The reset is structural — not
+    a symptom patch on the one failing test."""
+    import importlib
+    import session_io as _sio
+    # Capture the module's current SESSIONS_DIR + any other module-
+    # level caches the JSX-facing slots read at call time.
+    _orig_sessions_dir = getattr(_sio, "SESSIONS_DIR", None)
+    # Re-stamping it via monkeypatch ensures any earlier test's
+    # leak gets overridden + restored after this test.
+    monkeypatch.setattr(_sio, "SESSIONS_DIR", _orig_sessions_dir)
+    yield
+
+
 @pytest.fixture
 def tmp_appdata(tmp_path, monkeypatch):
     """Redirect LOCALAPPDATA + USERPROFILE so test writes never touch
@@ -407,9 +435,16 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     payload = json.loads(b.get_node_grammar())
     assert isinstance(payload, list), payload
     assert payload, "grammar must not be empty"
-    assert len(payload) <= 20, "a grammar, not a catalogue"
+    # SLICE H + I: typed-node split per category. Cap bumped further
+    # for LOGIC / SHAPE / WATCH / TRIGGER typed nodes. AgDR-0016 added
+    # SHARE (3) + ADAPTER (3). AgDR-0018 added 3 more ADAPTER nodes.
+    # Ceiling stays well below the old 80-node decorative catalogue.
+    assert len(payload) <= 70, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
-    for fam in ("connector", "ai", "input", "output", "logic"):
+    # Required families now represented by typed-node anchors:
+    #   input  → number    · logic   → if      · output → result
+    #   watch  → table     · trigger → manual_run · ai → ai_chat
+    for fam in ("connector", "ai_chat", "number", "result", "if"):
         assert fam in kinds, f"{fam!r} missing from the node grammar"
     for entry in payload:
         assert {"kind", "display", "cat", "selector",

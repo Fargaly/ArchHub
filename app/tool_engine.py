@@ -928,6 +928,128 @@ TOOLS: list[dict] = [
         "endpoint": ("_local", "list_connectors"),
     },
 
+    # ─── Library tools (AgDR-0013 §"Composer tool surface") ──────────
+    # LIBRARY-FIRST mandate: the Composer agent searches the library
+    # BEFORE composing a new node. Layer 3 (library_gate) enforces the
+    # ordering structurally; Layer 4 (library_validator) enforces
+    # MODULARITY on every new spec.
+    {
+        "name": "library_search",
+        "family": "_local",
+        "description": (
+            "Search the ArchHub library for an existing node-type that "
+            "matches the caller's intent. CALL THIS BEFORE library_create_node_type. "
+            "Returns matches sorted by similarity score (>=30 = match)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "description": "What the new node should do, in natural language.",
+                },
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "input", "connector", "ai", "logic", "output",
+                        "skill", "shape", "watch", "note", "glue", "adapter",
+                    ],
+                    "description": "Optional category filter.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 8,
+                    "description": "Max results to return.",
+                },
+            },
+            "required": ["intent"],
+        },
+        "endpoint": ("_local", "library_search"),
+    },
+    {
+        "name": "library_list_node_types",
+        "family": "_local",
+        "description": (
+            "List every registered node-type, optionally filtered by "
+            "category. Use this for an inventory; use library_search "
+            "to find a match for an intent."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Optional category filter.",
+                },
+            },
+            "required": [],
+        },
+        "endpoint": ("_local", "library_list_node_types"),
+    },
+    {
+        "name": "library_inspect",
+        "family": "_local",
+        "description": (
+            "Return the full ModularNodeSpec for one registered "
+            "node-type (typed inputs, outputs, config_schema, "
+            "description, examples, side_effects)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_type": {
+                    "type": "string",
+                    "description": "Canonical type name, e.g. 'revit.tag_by_room'.",
+                },
+            },
+            "required": ["node_type"],
+        },
+        "endpoint": ("_local", "library_inspect"),
+    },
+    {
+        "name": "library_create_node_type",
+        "family": "_local",
+        "description": (
+            "Register a new modular node-type in the library. MUST be "
+            "preceded by library_search this turn (LIBRARY-FIRST "
+            "mandate). The `spec` must satisfy ModularNodeSpec — typed "
+            "inputs + outputs, parameterised config_schema, description "
+            "(>=80 chars), examples (>=1 for pure, >=2 for host_write / "
+            "network)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "spec": {
+                    "type": "object",
+                    "description": "ModularNodeSpec JSON object — see AgDR-0014 §Token 1+ for the contract.",
+                },
+            },
+            "required": ["spec"],
+        },
+        "endpoint": ("_local", "library_create_node_type"),
+    },
+    {
+        "name": "library_delete_node_type",
+        "family": "_local",
+        "description": (
+            "Remove a registered node-type from the library. "
+            "User-confirmation is required (the bridge surfaces a "
+            "dialog before this fires)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_type": {
+                    "type": "string",
+                    "description": "Canonical type name to delete.",
+                },
+            },
+            "required": ["node_type"],
+        },
+        "endpoint": ("_local", "library_delete_node_type"),
+    },
+
     # AI-as-tool — call other models from inside a chat turn. The
     # primary LLM can delegate to ChatGPT for code, Gemini for vision /
     # long context, or LM Studio for offline / privacy-bound work.
@@ -1433,6 +1555,12 @@ class ToolEngine:
                     {"id": e.id, "name": e.display_name, "state": e.state.name}
                     for e in self.manager.entries
                 ]}
+            # Library handlers (AgDR-0013 §"Composer tool surface").
+            # These dispatch to the in-process library module. The
+            # LIBRARY-FIRST gate (Layer 3) runs BEFORE this point in the
+            # router; we never see denied calls here.
+            if handler.startswith("library_"):
+                return self._invoke_library_handler(handler, args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
         # speckle family
@@ -1571,6 +1699,78 @@ class ToolEngine:
         if arg_keys:
             body = {k: args[k] for k in arg_keys if k in args}
         return self._http(family, method, path, body, session_pin=session_pin)
+
+    # ---- library tool dispatch -------------------------------------------
+
+    def _invoke_library_handler(self, handler: str, args: dict) -> dict:
+        """Dispatch one of the five library_* tools to app/library.py.
+
+        The five tools (AgDR-0013 §"Composer tool surface"):
+          library_search          -> library.search(intent, ...)
+          library_list_node_types -> library.list_node_types(category?)
+          library_inspect         -> library.inspect(node_type)
+          library_create_node_type-> library.create_node_type(spec)
+          library_delete_node_type-> library.delete_node_type(node_type)
+
+        Returns a dict with `status: ok|error`. Validator violations from
+        `library.create_node_type` come back as `status:error` with a
+        `violations` list — the LLM can correct in one retry.
+        """
+        try:
+            import library as _lib
+        except Exception as ex:
+            return {
+                "status": "error",
+                "error": f"library module import failed: {ex}",
+            }
+
+        try:
+            if handler == "library_search":
+                results = _lib.search(
+                    intent=args.get("intent", ""),
+                    input_schema=args.get("input_schema"),
+                    output_schema=args.get("output_schema"),
+                    category=args.get("category"),
+                    limit=int(args.get("limit", 8)),
+                )
+                return {"status": "ok", "results": results,
+                        "count": len(results)}
+
+            if handler == "library_list_node_types":
+                items = _lib.list_node_types(category=args.get("category"))
+                return {"status": "ok", "items": items, "count": len(items)}
+
+            if handler == "library_inspect":
+                spec = _lib.inspect(args.get("node_type", ""))
+                return {"status": "ok", "spec": spec}
+
+            if handler == "library_create_node_type":
+                result = _lib.create_node_type(args.get("spec") or {})
+                return {"status": "ok", **result}
+
+            if handler == "library_delete_node_type":
+                result = _lib.delete_node_type(args.get("node_type", ""))
+                return {"status": "ok", **result}
+
+            return {"status": "error",
+                    "error": f"Unknown library handler: {handler}"}
+
+        except _lib.RegistrationError as ex:
+            # The validator rejected the spec. Surface the violations so
+            # the LLM can correct in one retry (the layer-3 gate would
+            # already have caught this if the router is wired; this is
+            # belt-and-braces for direct calls / tests).
+            return {"status": "error", "error": str(ex),
+                    "violations": ex.violations}
+        except _lib.DuplicateTypeError as ex:
+            return {"status": "error", "error": str(ex),
+                    "code": "duplicate_type"}
+        except _lib.UnknownTypeError as ex:
+            return {"status": "error", "error": str(ex),
+                    "code": "unknown_type"}
+        except Exception as ex:
+            return {"status": "error",
+                    "error": f"{type(ex).__name__}: {ex}"}
 
     # Family → (broker module, default-fallback URL). Broker is consulted
     # first so multi-instance hosts pick the right session; URL fallback

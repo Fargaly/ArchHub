@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Composer + Speckle wires (Direction X)</title>
+<style>
+  :root {
+    --bg:#15151a; --bgPanel:#1d1d24; --bgSoft:#23232c; --bgHover:#2a2a35;
+    --line:#3a3a47; --lineSoft:#2a2a35;
+    --ink:#e8e6dc; --inkSoft:#a8a5a0; --inkMuted:#6e6b66; --inkDim:#4a4844;
+    --accent:#d97757; --accentDim:#2a1812;
+    --cyan:#5fb3b3; --ok:#7fae65; --warn:#e29bb5; --err:#d96a6a; --blue:#6a9bcc;
+    --purple:#9b59b6; --yellow:#e3b950; --grey:#9b9690;
+    --speckle:#3a6acc;       /* speckle brand-ish blue */
+    --speckle-bg:#1a2138;
+    --mono: 'SF Mono','Menlo','Consolas','Roboto Mono',monospace;
+    --serif:'Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+         font-size:13px; line-height:1.55; padding:24px 32px; }
+  h1 { font-family:var(--serif); font-size:26px; font-weight:600;
+       letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:20px; font-weight:600;
+       letter-spacing:-0.01em; margin:32px 0 8px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em; margin:14px 0 6px 0; }
+  p { color:var(--inkSoft); max-width:84ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; }
+  .brief { background:var(--bgPanel); border:1px solid var(--line);
+            border-left:3px solid var(--accent); border-radius:8px;
+            padding:14px 18px; margin:18px 0; max-width:920px; }
+  .brief strong { color:var(--ink); }
+  .key-facts {
+    background:#0e0e12; border:1px solid var(--line); border-radius:8px;
+    padding:14px 18px; max-width:920px; margin:12px 0;
+    font-family:var(--mono); font-size:12px; color:var(--inkSoft);
+  }
+  .key-facts .row { padding:3px 0; display:flex; gap:14px; }
+  .key-facts .k { color:var(--speckle); min-width:160px; flex-shrink:0; }
+  .key-facts .v { color:var(--ink); }
+
+  /* main layout simulation */
+  .app {
+    background:#0e0e12; border:1px solid var(--line); border-radius:10px;
+    margin:24px 0; height:780px;
+    display:grid; grid-template-columns:380px 1fr 320px;
+    overflow:hidden;
+  }
+
+  /* COMPOSER (left) */
+  .composer {
+    background:var(--bgPanel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column;
+  }
+  .composer-head {
+    padding:12px 14px; border-bottom:1px solid var(--lineSoft);
+    display:flex; align-items:center; gap:8px;
+  }
+  .composer-head .dot { width:8px; height:8px; border-radius:50%;
+                         background:var(--accent); }
+  .composer-head .label { font-family:var(--mono); font-size:9.5px;
+                           color:var(--accent); letter-spacing:0.18em; }
+  .composer-head .mode { margin-left:auto; font-family:var(--mono); font-size:9px;
+                          color:var(--blue); padding:2px 7px;
+                          background:#1a2233; border-radius:3px;
+                          letter-spacing:0.08em; }
+  .composer-body { flex:1; overflow:auto; padding:14px; }
+  .turn { margin-bottom:14px; }
+  .turn.user { }
+  .turn.user .who { color:var(--accent); }
+  .turn.assistant .who { color:var(--blue); }
+  .turn .who { font-family:var(--mono); font-size:9px; letter-spacing:0.18em;
+                margin-bottom:5px; }
+  .turn .msg { background:var(--bgSoft); border-radius:7px;
+                padding:9px 11px; font-size:12.5px; line-height:1.55;
+                color:var(--ink); }
+  .turn.user .msg { background:#2a2018; border-left:2px solid var(--accent); }
+  .turn.assistant .msg { background:var(--bgSoft); }
+  .tool-block {
+    margin-top:6px; padding:8px 10px; border-radius:5px;
+    background:#0f0f14; border:1px solid var(--lineSoft);
+    font-family:var(--mono); font-size:10.5px;
+  }
+  .tool-name { color:var(--cyan); }
+  .tool-args { color:var(--inkSoft); margin-top:3px;
+                white-space:pre-wrap; font-size:10px; }
+  .tool-result { margin-top:3px; padding-top:3px; border-top:1px dashed var(--lineSoft);
+                  color:var(--ok); font-size:10px; }
+  .tool-result.err { color:var(--err); }
+  .tool-streaming::after {
+    content:''; display:inline-block; width:7px; height:7px;
+    background:var(--accent); border-radius:50%; margin-left:6px;
+    animation:pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity:.3 } }
+  .composer-input {
+    border-top:1px solid var(--lineSoft); padding:10px 12px;
+    background:var(--bg);
+  }
+  .composer-input .field {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:6px;
+    padding:8px 10px; font-family:var(--sans); font-size:12.5px;
+    color:var(--ink); min-height:54px;
+    display:flex; align-items:flex-start; gap:6px;
+  }
+  .composer-input .field .caret { color:var(--accent); font-weight:600; }
+  .composer-input .ctl {
+    display:flex; gap:6px; margin-top:8px; align-items:center;
+    font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+    letter-spacing:0.04em;
+  }
+  .composer-input .ctl .btn {
+    padding:3px 8px; border-radius:3px; cursor:pointer;
+    border:1px solid var(--line); background:transparent;
+  }
+  .composer-input .ctl .btn.active { color:var(--blue); border-color:var(--blue); background:#1a2233;}
+  .composer-input .ctl .btn.go { color:#fff; background:var(--accent); border-color:var(--accent); margin-left:auto; }
+
+  /* CANVAS (middle) */
+  .canvas {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    position:relative; overflow:hidden;
+  }
+  .canvas-head {
+    position:absolute; top:0; left:0; right:0; z-index:2;
+    padding:10px 14px; display:flex; align-items:center; gap:10px;
+    background:linear-gradient(180deg, rgba(14,14,18,0.92), rgba(14,14,18,0));
+  }
+  .canvas-head .title { font-family:var(--serif); font-size:16px;
+                         letter-spacing:-0.01em; }
+  .canvas-head .badge { font-family:var(--mono); font-size:9px;
+                         color:var(--speckle); padding:2px 7px;
+                         background:var(--speckle-bg);
+                         border:1px solid var(--speckle); border-radius:3px;
+                         letter-spacing:0.08em; }
+  .canvas-head .status { margin-left:auto; font-family:var(--mono); font-size:9.5px;
+                          color:var(--inkMuted); letter-spacing:0.04em; }
+
+  /* node visual on canvas */
+  .node {
+    position:absolute; background:var(--bgPanel); border-radius:8px;
+    border-top:2px solid var(--accent); border-left:1px solid var(--line);
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    box-shadow:0 6px 16px rgba(0,0,0,.35); min-width:160px;
+    font-family:var(--sans); font-size:11.5px;
+  }
+  .node.host-autocad { border-top-color:#C66C0A; }
+  .node.host-revit   { border-top-color:#E87D0D; }
+  .node.ai           { border-top-color:var(--blue);
+                       box-shadow:0 6px 16px rgba(106,155,204,.18), 0 6px 16px rgba(0,0,0,.35); }
+  .node.tentative {
+    opacity:0.55; border-style:dashed;
+    animation:tentativeFade 1.2s ease-in-out infinite;
+  }
+  @keyframes tentativeFade { 50% { opacity:0.85 } }
+  .node-title {
+    padding:6px 10px; border-bottom:1px solid var(--lineSoft);
+    display:flex; align-items:center; gap:6px;
+    background:var(--bgSoft); border-top-left-radius:6px; border-top-right-radius:6px;
+    font-family:var(--mono); font-size:8.5px; letter-spacing:0.14em;
+    color:var(--inkSoft);
+  }
+  .host-autocad .node-title { color:#C66C0A; }
+  .host-revit   .node-title { color:#E87D0D; }
+  .ai           .node-title { color:var(--blue); }
+  .node-body { padding:7px 11px; font-family:var(--mono); font-size:10px; }
+  .node-row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+  .node-row .k { color:var(--inkMuted); flex-shrink:0; min-width:60px; }
+  .node-row .v { background:var(--bg); border:1px solid var(--lineSoft);
+                  border-radius:3px; padding:1px 7px; flex:1;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .node-row .v.spk { border-color:var(--speckle); color:var(--speckle); }
+  .node-row .v.ok { border-color:var(--ok); color:var(--ok); }
+  /* sockets */
+  .sock { position:absolute; width:10px; height:10px; border-radius:50%;
+           background:var(--bgPanel); border:1.5px solid var(--inkSoft);
+           box-shadow:0 0 0 2px #0e0e12; }
+  .sock.out { background:var(--inkSoft); }
+  .sock.spk { border-color:var(--speckle); background:var(--bgPanel); }
+  .sock.spk.out { background:var(--speckle); }
+
+  /* speckle wire label */
+  .spk-wire-label {
+    position:absolute; font-family:var(--mono); font-size:9px;
+    color:var(--speckle); padding:2px 7px; background:rgba(58,106,204,0.1);
+    border:1px solid var(--speckle); border-radius:3px;
+    letter-spacing:0.04em; white-space:nowrap;
+  }
+  /* materialising "flash" highlight */
+  .just-built {
+    box-shadow: 0 0 0 2px var(--blue), 0 6px 16px rgba(106,155,204,.25);
+  }
+
+  /* INSPECTOR (right) */
+  .inspector {
+    background:var(--bgPanel); border-left:1px solid var(--line);
+    display:flex; flex-direction:column; overflow:auto;
+  }
+  .insp-head { padding:11px 14px; border-bottom:1px solid var(--lineSoft); }
+  .insp-host-line { display:flex; align-items:center; gap:8px; }
+  .insp-host-line .dot { width:7px; height:7px; border-radius:2px; background:var(--speckle); }
+  .insp-host-line .lbl { font-family:var(--mono); font-size:9px; color:var(--speckle);
+                          letter-spacing:0.16em; }
+  .insp-title { font-family:var(--serif); font-size:18px; margin-top:5px;
+                 letter-spacing:-0.01em; }
+  .insp-sub { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+               margin-top:3px; letter-spacing:0.04em; }
+  .insp-section { font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                   letter-spacing:0.18em; padding:10px 14px 4px;
+                   background:var(--bgSoft); border-bottom:1px solid var(--lineSoft);
+                   border-top:1px solid var(--lineSoft); }
+  .insp-row { display:flex; align-items:center; padding:5px 14px;
+               font-family:var(--mono); font-size:10px; gap:7px; }
+  .insp-row .k { color:var(--inkMuted); min-width:88px; flex-shrink:0; }
+  .insp-row .v { flex:1; background:var(--bgSoft); border:1px solid var(--lineSoft);
+                  border-radius:3px; padding:2px 7px;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .insp-row .v.spk { border-color:var(--speckle); color:var(--speckle); background:var(--speckle-bg); }
+  .insp-row .v.ok { border-color:var(--ok); color:var(--ok); }
+  .insp-viewer {
+    margin:10px 14px; background:#0e0e12; border:1px solid var(--lineSoft);
+    border-radius:5px; height:140px;
+    background:
+      linear-gradient(180deg, transparent 80%, rgba(58,106,204,.1) 100%),
+      repeating-linear-gradient(45deg, transparent 0 12px,
+        rgba(106,155,204,0.1) 12px 13px),
+      #0e0e12;
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+  }
+  .insp-cta { padding:10px 14px; border-top:1px solid var(--lineSoft);
+               display:flex; gap:6px; }
+  .insp-cta .btn { padding:5px 11px; border-radius:4px; cursor:pointer;
+                    font-family:var(--mono); font-size:10px; letter-spacing:0.06em; }
+  .insp-cta .btn.primary { background:var(--accent); color:#fff; font-weight:600; border:0; }
+  .insp-cta .btn.ghost { background:transparent; color:var(--inkSoft);
+                          border:1px solid var(--line); }
+
+  /* legend + tables */
+  .legend { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+             padding:10px 14px; background:var(--bgSoft);
+             border:1px dashed var(--line); border-radius:5px;
+             display:flex; flex-wrap:wrap; gap:14px; margin:14px 0; }
+  .legend .sw { width:11px; height:11px; border-radius:3px;
+                 display:inline-block; vertical-align:middle; margin-right:4px; }
+
+  .verdict {
+    background:linear-gradient(180deg,#1f1f28 0%, var(--bgPanel) 100%);
+    border:1px solid var(--accent); border-radius:8px;
+    padding:16px 20px; margin-top:32px; max-width:920px;
+  }
+  .verdict h2 { margin:0 0 8px 0; }
+  .verdict ol { margin:8px 0 0 22px; color:var(--inkSoft); }
+  .verdict li { margin:5px 0; }
+
+  table { width:100%; border-collapse:collapse; margin:10px 0;
+           font-size:12px; }
+  th, td { padding:8px 12px; border:1px solid var(--lineSoft);
+           text-align:left; vertical-align:top; }
+  th { background:var(--bgSoft); font-family:var(--mono); font-size:10px;
+        color:var(--accent); letter-spacing:0.1em; font-weight:600; }
+  td .ok { color:var(--ok); }
+  td .no { color:var(--err); }
+  td .meh { color:var(--warn); }
+</style>
+</head>
+<body>
+
+<h1>Composer + Speckle wires — the recommended architecture</h1>
+<p style="margin-top:2px">
+  Grounded prototype of Direction X (with one Direction-Y concession):
+  Composer is the primary IDE, canvas is the execution + inspection surface,
+  every wire is a Speckle <code>Model/Version</code> segment via local
+  <code>SQLiteTransport</code>. <code>ai.plan</code> survives as a real canvas
+  node so chat turns persist as auditable artefacts.
+</p>
+
+<div class="brief">
+  <strong>The hard facts that make this work.</strong> Speckle is Apache-2.0.
+  <code>specklepy</code> ships <code>MemoryTransport</code> + <code>SQLiteTransport</code> +
+  <code>Operations.send/receive</code> — meaning the wire works with ZERO
+  servers, ZERO Docker, ZERO accounts. The full Base graph, units conversion,
+  decomposition, chunking, content-addressing — all client-side. Speckle Server
+  becomes an OPTIONAL remote transport for collaboration.
+</div>
+
+<div class="key-facts">
+  <div class="row"><span class="k">SDK · python</span><span class="v">specklepy v3.2.6 · Python 3.10+ · Apache-2.0</span></div>
+  <div class="row"><span class="k">default transport</span><span class="v">SQLiteTransport @ %APPDATA%\Speckle\Objects.db (per-user) OR .speckle/ project-local DiskTransport</span></div>
+  <div class="row"><span class="k">wire payload</span><span class="v">Base subtree → Operations.send(...) → content-hash string</span></div>
+  <div class="row"><span class="k">downstream node</span><span class="v">Operations.receive(hash, transport) → Base</span></div>
+  <div class="row"><span class="k">cross-host</span><span class="v">Speckle Revit/AutoCAD/Rhino/ArchiCAD/Tekla/Blender/SketchUp connectors handle ConvertToSpeckle / ConvertToNative</span></div>
+  <div class="row"><span class="k">units</span><span class="v">every Base has .units; ScalingServiceToSpeckle rescales — mm→m solved at protocol layer</span></div>
+  <div class="row"><span class="k">offline</span><span class="v">YES — local SQLite is the default; Speckle Server is opt-in</span></div>
+</div>
+
+<div class="legend">
+  <span><span class="sw" style="background:var(--accent)"></span>user turn</span>
+  <span><span class="sw" style="background:var(--blue)"></span>ai turn / ai.plan node</span>
+  <span><span class="sw" style="background:var(--cyan)"></span>tool call (graph mutation)</span>
+  <span><span class="sw" style="background:#C66C0A"></span>autocad connector</span>
+  <span><span class="sw" style="background:#E87D0D"></span>revit connector</span>
+  <span><span class="sw" style="background:var(--speckle)"></span>speckle wire (Base / Version hash)</span>
+  <span><span class="sw" style="background:var(--inkSoft); opacity:0.6; border:1px dashed var(--inkSoft)"></span>tentative — model is still streaming</span>
+</div>
+
+<h2>Live prototype — chat-driven graph build</h2>
+<p>Same litmus scenario as before, executed via the Composer. Each
+   tool call streams to the canvas; nodes materialise as they're emitted;
+   wires light up as Speckle Versions on Send.</p>
+
+<div class="app">
+
+  <!-- ───────────────── COMPOSER (LEFT) ───────────────── -->
+  <div class="composer">
+    <div class="composer-head">
+      <span class="dot"></span>
+      <span class="label">COMPOSER · session 7c4f</span>
+      <span class="mode">PLAN ▸ EXECUTE</span>
+    </div>
+    <div class="composer-body">
+
+      <div class="turn user">
+        <div class="who">YOU</div>
+        <div class="msg">Stream the A-WALL layer from <code>Drawing.dwg</code> into Revit floor plan <em>Level 1</em> as detail lines.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB · sonnet 4.7</div>
+        <div class="msg">
+          I'll build a 4-node graph using Speckle as the wire. Plan first; nothing
+          touches Revit until you approve.
+          <div class="tool-block">
+            <div class="tool-name">graph.list_node_types(host=["autocad","revit","ai"])</div>
+            <div class="tool-result">→ 14 nodes available · revit.create_detail_lines exists ✓</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name">graph.create_node(type="autocad.send_to_speckle", at=[40,80])</div>
+            <div class="tool-args">{ doc: "Drawing.dwg", layer: "A-WALL", filter: "LINE+LWPOLYLINE" }</div>
+            <div class="tool-result">→ node id <code>n_8a2c</code> placed</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name">graph.create_node(type="revit.receive_from_speckle", at=[360,80])</div>
+            <div class="tool-args">{ target_view: "Level 1", as_kind: "detail_lines",
+       basepoint: "Internal", units: "auto" }</div>
+            <div class="tool-result">→ node id <code>n_b71e</code> placed</div>
+          </div>
+          <div class="tool-block">
+            <div class="tool-name tool-streaming">graph.connect(src="n_8a2c.out", dst="n_b71e.in")</div>
+            <div class="tool-args">wire kind: speckle (Model: archhub-7c4f/cad-walls)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="turn user">
+        <div class="who">YOU</div>
+        <div class="msg">good, but use the project Survey basepoint not Internal.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB</div>
+        <div class="msg">
+          <div class="tool-block">
+            <div class="tool-name">graph.set_param(node="n_b71e", key="basepoint", value="Survey")</div>
+            <div class="tool-result">→ updated · dry-run still ✓ planar</div>
+          </div>
+          Plan ready — 1 wire, 0 host writes until approved. Want to run?
+        </div>
+      </div>
+
+      <div class="turn user">
+        <div class="who">YOU</div>
+        <div class="msg">run it.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">ARCHHUB</div>
+        <div class="msg">
+          <div class="tool-block">
+            <div class="tool-name">graph.run(scope="downstream", from="n_8a2c")</div>
+            <div class="tool-args">approval_required = true (writes to Revit)</div>
+            <div class="tool-result">→ <code>n_8a2c</code> · Operations.send → Base hash <code>9f4a…</code> (217 entities, mm units, SQLite cached)</div>
+            <div class="tool-result">→ <code>n_b71e</code> · awaiting approval (writes 217 detail lines to Level 1)</div>
+          </div>
+          <div style="margin-top:6px; color:var(--warn)">⚠ Approve write to Revit? <strong style="color:var(--ink)">[Approve] [Edit] [Cancel]</strong></div>
+        </div>
+      </div>
+
+    </div>
+    <div class="composer-input">
+      <div class="field">
+        <span class="caret">▸</span>
+        <span style="color:var(--inkMuted)">approve. then save graph as Skill "cad-to-revit-walls"</span>
+      </div>
+      <div class="ctl">
+        <span class="btn active">PLAN</span>
+        <span class="btn">AUTO</span>
+        <span class="btn">YOLO</span>
+        <span style="color:var(--inkDim); padding:0 4px">·</span>
+        <span class="btn">@node</span>
+        <span class="btn">@host</span>
+        <span class="btn">@file</span>
+        <span class="btn go">SEND ↵</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────── CANVAS (MIDDLE) ───────────────── -->
+  <div class="canvas">
+    <div class="canvas-head">
+      <span class="title">ping outlook · cad-to-revit</span>
+      <span class="badge">SPECKLE local · SQLite</span>
+      <span class="status">2 nodes · 1 wire · v3 (last 12s ago)</span>
+    </div>
+
+    <!-- ai.plan source node -->
+    <div class="node ai" style="left:24px; top:62px; width:200px;">
+      <div class="node-title"><span>◆</span><span>AI · PLAN (this session)</span></div>
+      <div class="node-body">
+        <div style="color:var(--ink); font-family:var(--sans); font-size:11px; line-height:1.4; margin-bottom:5px">
+          Stream A-WALL from <em>Drawing.dwg</em> → Revit Level 1 as detail lines.
+        </div>
+        <div class="node-row"><span class="k">turns</span><span class="v">3</span></div>
+        <div class="node-row"><span class="k">model</span><span class="v">sonnet 4.7</span></div>
+        <div class="node-row"><span class="k">status</span><span class="v ok">plan ready</span></div>
+      </div>
+    </div>
+
+    <!-- AutoCAD Send node -->
+    <div class="node host-autocad just-built" style="left:264px; top:180px; width:200px;">
+      <div class="node-title"><span>◇</span><span>AUTOCAD · SEND_TO_SPECKLE</span></div>
+      <div class="node-body">
+        <div class="node-row"><span class="k">doc</span><span class="v">Drawing.dwg</span></div>
+        <div class="node-row"><span class="k">layer</span><span class="v">A-WALL</span></div>
+        <div class="node-row"><span class="k">filter</span><span class="v">LINE+LWPOLYLINE</span></div>
+        <div class="node-row"><span class="k">$INSUNITS</span><span class="v ok">mm · auto</span></div>
+        <div class="node-row"><span class="k">last fire</span><span class="v spk">→ 9f4a… · 217</span></div>
+      </div>
+      <div class="sock spk out" style="right:-5px; top:32px;"></div>
+    </div>
+
+    <!-- Speckle wire -->
+    <svg style="position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none">
+      <defs>
+        <marker id="arr-spk" viewBox="0 0 10 10" refX="8" refY="5"
+                markerUnits="strokeWidth" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#3a6acc"/>
+        </marker>
+      </defs>
+      <!-- ai.plan → AutoCAD (dotted blue, meta) -->
+      <path d="M 224 132 C 244 132, 244 200, 264 222"
+            stroke="#6a9bcc" stroke-width="2" stroke-dasharray="3 4" fill="none" opacity="0.5"/>
+      <!-- AutoCAD → Revit (Speckle wire, thick brand blue) -->
+      <path d="M 470 222 C 540 222, 540 220, 612 222"
+            stroke="#3a6acc" stroke-width="3.2" fill="none" opacity="0.95"
+            marker-end="url(#arr-spk)"/>
+    </svg>
+
+    <!-- Speckle wire label -->
+    <div class="spk-wire-label" style="left:495px; top:202px;">
+      ⇌ Speckle Version · Base[Line]×217 · m
+    </div>
+
+    <!-- Revit Receive node (awaiting approval) -->
+    <div class="node host-revit just-built" style="left:612px; top:180px; width:200px;">
+      <div class="node-title"><span>◆</span><span>REVIT · RECEIVE_FROM_SPECKLE</span></div>
+      <div class="node-body">
+        <div class="node-row"><span class="k">view</span><span class="v">Level 1</span></div>
+        <div class="node-row"><span class="k">as_kind</span><span class="v">detail_lines</span></div>
+        <div class="node-row"><span class="k">basepoint</span><span class="v">Survey</span></div>
+        <div class="node-row"><span class="k">units</span><span class="v ok">m · auto</span></div>
+        <div class="node-row"><span class="k">status</span><span class="v" style="color:var(--warn)">awaiting approval</span></div>
+      </div>
+      <div class="sock spk" style="left:-5px; top:32px;"></div>
+    </div>
+
+    <!-- canvas footer hints -->
+    <div style="position:absolute; bottom:10px; left:14px; right:14px;
+                 font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                 letter-spacing:0.04em; display:flex; gap:14px;">
+      <span>nodes materialise as composer streams tool_use deltas</span>
+      <span style="margin-left:auto">▶ Run · ⌥-click node = inspect · right-click = local edit</span>
+    </div>
+  </div>
+
+  <!-- ───────────────── INSPECTOR (RIGHT) ───────────────── -->
+  <div class="inspector">
+    <div class="insp-head">
+      <div class="insp-host-line"><span class="dot"></span><span class="lbl">SPECKLE WIRE · v3</span></div>
+      <div class="insp-title">cad-walls @ archhub-7c4f</div>
+      <div class="insp-sub">Model · Project archhub-7c4f · 12s ago · 217 objects</div>
+    </div>
+
+    <div class="insp-section">VERSION</div>
+    <div class="insp-row"><span class="k">hash</span><span class="v spk">9f4a85b2c8e1f6…</span></div>
+    <div class="insp-row"><span class="k">objects</span><span class="v">217</span></div>
+    <div class="insp-row"><span class="k">units</span><span class="v">m (rescaled from mm)</span></div>
+    <div class="insp-row"><span class="k">bbox</span><span class="v">(0,0)→(42.8, 18.6) m</span></div>
+    <div class="insp-row"><span class="k">transport</span><span class="v">SQLite · local</span></div>
+
+    <div class="insp-section">BASE SCHEMA</div>
+    <div class="insp-row"><span class="k">speckle_type</span><span class="v">Objects.Geometry.Line</span></div>
+    <div class="insp-row"><span class="k">applicationId</span><span class="v">dwg::A-WALL::1..217</span></div>
+    <div class="insp-row"><span class="k">@displayValue</span><span class="v">Mesh + Polyline</span></div>
+
+    <div class="insp-section">PREVIEW (speckle viewer)</div>
+    <div class="insp-viewer">three.js · 217 Lines in Z=0 plane</div>
+
+    <div class="insp-section">PUBLISH (opt-in)</div>
+    <div class="insp-row"><span class="k">remote</span><span class="v">none (local-only)</span></div>
+    <div class="insp-row"><span class="k">cloud sync</span><span class="v">disabled</span></div>
+
+    <div class="insp-cta">
+      <span class="btn ghost">Inspect Base</span>
+      <span class="btn ghost">Publish ↗</span>
+      <span class="btn primary">Approve write ▶</span>
+    </div>
+  </div>
+
+</div>
+
+<h2>Why this satisfies the founder's framing</h2>
+
+<table>
+  <thead>
+    <tr><th>Founder ask</th><th>How Direction X delivers</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>"wire IS a Speckle stream segment"</td>
+      <td>Every wire is <code>Operations.send → hash → Operations.receive</code>. Default <code>SQLiteTransport</code>. Speckle Server is opt-in only.</td>
+    </tr>
+    <tr>
+      <td>"composer is the primary IDE"</td>
+      <td>Composer panel left, full height. Tool-use deltas stream nodes onto the canvas. Plan / Auto / YOLO modes. Canvas remains as audit/inspection.</td>
+    </tr>
+    <tr>
+      <td>"all three previously-discussed paths"</td>
+      <td>P1 → composer turns are first-class; <code>ai.plan</code> node persists each turn. P3 → adapter ops collapse into per-host <code>send_to_speckle</code> / <code>receive_from_speckle</code> nodes. P2 → <code>glue.script</code> survives as the explicit "Speckle can't carry this" escape.</td>
+    </tr>
+    <tr>
+      <td>"AI should compose ops, build new ones"</td>
+      <td>Composer streams <code>graph.create_node</code> / <code>graph.connect</code> / <code>graph.set_param</code> tool calls. <code>node_smith</code> + <code>custom_nodes</code> (already in repo) materialise new ops as typed Python on demand.</td>
+    </tr>
+    <tr>
+      <td>"can I stream CAD lines to Revit using THESE ops?"</td>
+      <td><strong>Yes — through Speckle.</strong> The Revit + AutoCAD Speckle connectors already implement ConvertToSpeckle / ConvertToNative. ArchHub bundles them; the cross-host glue is the protocol, not the user's problem.</td>
+    </tr>
+    <tr>
+      <td>"don't build from scratch"</td>
+      <td>ReactFlow for canvas. Speckle for wire format + serialization + host connectors. Anthropic SDK for tool-use loop. ArchHub builds the binding layer + UX, not the substrate.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>What collapses (and that's a win)</h2>
+
+<table>
+  <thead>
+    <tr><th>Was</th><th>Becomes</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>geometry.cad_to_revit</code> adapter op</td><td><code>autocad.send_to_speckle</code> + Speckle wire + <code>revit.receive_from_speckle</code></td><td>Conversion = host connector's job (already Speckle's). Wire is the carrier.</td></tr>
+    <tr><td>ArchHub <code>PortType</code> enum (~25 types)</td><td>Speckle <code>speckle_type</code> (e.g. <code>Objects.Geometry.Line</code>, <code>Objects.Data.DataObject</code>)</td><td>Stop maintaining a parallel type system. Drag-time validation = does producer's <code>speckle_type</code> satisfy consumer's?</td></tr>
+    <tr><td><code>glue.script</code> as cross-host adapter</td><td><code>glue.script</code> as fallback Python node (rare)</td><td>Speckle handles units, basepoint, schema. Script is for what Speckle can't carry (e.g. custom AEC analytics).</td></tr>
+    <tr><td>Add-node search modal</td><td>Composer Cmd-K · type intent · agent picks node</td><td>Discoverability via natural language beats palette navigation.</td></tr>
+    <tr><td>"Save as Skill" dialog</td><td>"@chat: save this graph as Skill X" · agent does it</td><td>Saving is just another tool call.</td></tr>
+  </tbody>
+</table>
+
+<div class="verdict">
+  <h2>Recommendation + order</h2>
+  <p>Direction X with the <code>ai.plan</code> concession. Total 12-16 weeks of focused work.</p>
+  <ol>
+    <li><strong>M1 — Speckle as local wire (1–2 wks).</strong> Embed <code>specklepy</code>. Replace ArchHub wire serialization with <code>Operations.send/receive</code>. Default <code>SQLiteTransport</code>.</li>
+    <li><strong>M2 — First host connector (3–5 wks).</strong> Revit first (biggest user base). Bundle Speckle Revit connector or IPC. Two nodes: <code>revit.send_to_speckle</code> + <code>revit.receive_from_speckle</code>.</li>
+    <li><strong>M3 — Composer v1 (6–8 wks).</strong> Qt panel left. Anthropic tool-use loop. Tools: <code>graph.*</code>, <code>speckle.*</code>, <code>node.inspect</code>. Stream <code>input_json_delta</code> events to canvas. Plan / Auto / YOLO modes. Per-project <code>ARCHHUB.md</code> as persistent memory.</li>
+    <li><strong>M4 — <code>ai.plan</code> canvas node (9–10 wks).</strong> Real node carrying prompt + model. Outputs are typed Bases the agent emitted as <code>tool_use</code> results.</li>
+    <li><strong>M5 — Cross-host wire AutoCAD → Revit (11–12 wks).</strong> Validate units, layer mapping, DirectShape fallback. Document the lossiness on hover.</li>
+    <li><strong>M6 — Optional ServerTransport (13–14 wks).</strong> Cloud Speckle as collaborator. "Publish this wire" makes a remote Model. Speckle Automate webhooks for live cross-machine wires.</li>
+  </ol>
+  <p style="margin-top:14px"><strong>First valuable shippable: M1 + M2 (5 wks).</strong> Closes the litmus scenario end-to-end with a single human-driven canvas + Speckle wires. The Composer comes after.</p>
+</div>
+
+<h2>Risks (honest)</h2>
+<ul style="color:var(--inkSoft); max-width:84ch">
+  <li><strong>DirectShape fallback erodes Revit roundtrip fidelity.</strong> Speckle-documented, unfixable without re-implementing parametric semantics. Mitigate: "Receive Blocks as Families" setting; document loss on hover.</li>
+  <li><strong>Speckle's Object model evolves under us</strong> (Stream→Project rename happened in 2024). Pin <code>specklepy</code> and connector minor versions; track upstream in CI.</li>
+  <li><strong>Composer is slow on long graphs.</strong> Stream is fine for 5 nodes, perceptibly slow at 100. Use Anthropic parallel tool calls + <code>graph.batch_create_nodes</code> + prompt-caching for project context.</li>
+  <li><strong>Local SQLite cache grows shared across Speckle apps.</strong> Ship a <code>.speckle/</code> project-local DiskTransport so cache is scoped per project, not globally.</li>
+  <li><strong>Composer hallucinates node types.</strong> Bias the system prompt toward calling <code>graph.list_node_types()</code> first. Use Anthropic <code>strict: true</code> tool use.</li>
+  <li><strong>No single-binary Speckle Server</strong> if a user opts in to self-host. Lean on <code>app.speckle.systems</code> for 95%; ship a self-host doc page.</li>
+</ul>
+
+</body>
+</html>

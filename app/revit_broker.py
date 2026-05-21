@@ -136,6 +136,114 @@ def _probe_http(port: int, *, timeout: float = 0.6) -> bool:
         return False
 
 
+_EXPECTED_SERVICE = "revit-mcp"
+
+
+def _probe_service(port: int, *, timeout: float = 0.5) -> bool:
+    """GET /ping + verify service==revit-mcp. Prevents port-collision
+    phantom sessions (Acad / Max binding the same port range)."""
+    return _ping_service(port, timeout=timeout) is not None
+
+
+def _ping_service(port: int, *, timeout: float = 0.5) -> Optional[dict]:
+    """GET /ping. Returns the full response dict if `service` matches
+    the expected RevitMCP id, else None. Used by port-range discovery
+    to learn pid / revit_version without needing a session file.
+
+    AgDR-0023: payload may carry a `compiler` field — values:
+      • `subprocess_csc` — modern path, no Roslyn in AppDomain
+      • `in_process_roslyn` — legacy path, conflicts with other addins
+      • absent → treated as `unknown` (pre-AgDR-0023 RevitMCP build)
+    `_warn_legacy_compiler_once(port, compiler)` logs a one-time
+    deprecation when the legacy path is detected."""
+    try:
+        with urllib.request.urlopen(
+                f"http://localhost:{port}/ping", timeout=timeout) as r:
+            if r.status >= 400:
+                return None
+            try:
+                data = json.loads(r.read().decode("utf-8") or "{}")
+            except Exception:
+                return None
+            if str(data.get("service") or "").lower() != _EXPECTED_SERVICE:
+                return None
+            _warn_legacy_compiler_once(port, data.get("compiler"))
+            return data
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+# AgDR-0023 — RevitMCP Roslyn isolation. Track the (port, compiler)
+# pairs we've already warned about so the deprecation message fires
+# ONCE per port + lifetime of the process. Class-of-bug: in-process
+# Roslyn collides with pyRevit / Speckle Roslyn — fix is subprocess
+# csc.exe inside RevitMCP. ArchHub Python-side surfaces the warning
+# upfront so the founder isn't surprised mid-cook.
+_LEGACY_COMPILER_WARNED: set = set()
+
+
+def _warn_legacy_compiler_once(port: int, compiler) -> None:
+    if not compiler:
+        return  # absent field — pre-AgDR-0023 RevitMCP; silent.
+    compiler = str(compiler).lower().strip()
+    if compiler != "in_process_roslyn":
+        return
+    key = (int(port), compiler)
+    if key in _LEGACY_COMPILER_WARNED:
+        return
+    _LEGACY_COMPILER_WARNED.add(key)
+    import logging
+    logging.getLogger("revit_broker").warning(
+        "RevitMCP on port %d uses in-process Roslyn (deprecated per "
+        "AgDR-0023) — conflicts with pyRevit / Speckle when their "
+        "Roslyn versions differ. Update RevitMCP to the subprocess_csc "
+        "build to coexist with every add-in. See docs/RUN-REVIT.md.",
+        port)
+
+
+def _discover_in_port_range(known_ports: set,
+                              *, timeout: float = 0.4) -> list[Session]:
+    """Parallel-probe the configured port range for any responding
+    RevitMCP instance. Built so ArchHub can attach to Revit even when:
+      • the in-Revit DLL never wrote a session file (older v0.2 DLL)
+      • the session file was deleted / scrubbed
+      • RevitMCP rebound to a different port at runtime
+    Synthesises a Session entry from /ping payload (pid + version).
+    Excludes ports already covered by session files (`known_ports`).
+    """
+    import concurrent.futures as _cf
+
+    candidates = [p for p in range(PORT_FIRST, PORT_LAST + 1)
+                  if p not in known_ports]
+    if not candidates:
+        return []
+    found: list[Session] = []
+    # Parallel probe — 16 ports × 0.4s timeout serial = 6.4s worst-case;
+    # parallel collapses to ~0.4s + overhead.
+    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(
+            lambda p: (p, _ping_service(p, timeout=timeout)),
+            candidates,
+        ))
+    for port, payload in results:
+        if not payload:
+            continue
+        found.append(Session(
+            session_id=f"revit-{payload.get('pid') or port}",
+            family="revit",
+            pid=int(payload.get("pid") or 0),
+            port=port,
+            version=str(payload.get("revit_version") or ""),
+            doc_title=str(payload.get("doc_title") or ""),
+            started_at="",
+            last_heartbeat="",
+            file_path=None,
+            legacy=False,
+            healthy=True,
+        ))
+    return found
+
+
 # ---------------------------------------------------------------------------
 def list_sessions(*, prune: bool = True) -> list[Session]:
     """Return all known Revit sessions, newest-heartbeat first.
@@ -149,7 +257,9 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
             if s is None:
                 continue
             silent_for = _seconds_since(s.last_heartbeat)
-            alive = _probe(s.port, timeout=0.3)
+            # Identity-aware probe — verifies port owner is RevitMCP
+            # (not AcadMCP or MaxMCP that happens to be on the port).
+            alive = _probe_service(s.port, timeout=0.4)
             s.healthy = alive
             if not alive and silent_for > STALE_AFTER_SECONDS:
                 if prune:
@@ -160,10 +270,17 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
                 continue
             out.append(s)
 
+    # Port-range discovery — finds RevitMCP instances that did NOT
+    # write a session file (older DLL, scrubbed file, race after MCP
+    # already bound). Probes the configured port range in parallel.
+    # Dedup against session-file ports above.
+    known_ports = {s.port for s in out}
+    out.extend(_discover_in_port_range(known_ports, timeout=0.4))
+
     # Legacy v0.2.0 DLL fallback — single hardcoded port, no session file.
-    # Only add if no v0.3.0+ session is already present on that port.
+    # Service-verified probe so a wrong host on 48884 can't impersonate.
     if not any(s.port == LEGACY_PORT for s in out):
-        if _probe(LEGACY_PORT, timeout=0.3):
+        if _probe_service(LEGACY_PORT, timeout=0.4):
             out.append(Session(
                 session_id="revit-legacy",
                 family="revit",

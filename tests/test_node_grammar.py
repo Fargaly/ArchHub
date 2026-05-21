@@ -82,9 +82,13 @@ class TestGrammarShape:
         assert len(kinds) == len(set(kinds))
 
     def test_grammar_is_small_a_grammar_not_a_catalogue(self):
-        # If this ever climbs back toward the old 80, the redesign has
-        # regressed into a catalogue.
-        assert len(ng.PRIMITIVES) <= 20
+        # SLICE H + I + M1.5 SHARE: typed-node split per category +
+        # 3 SHARE primitives. ADAPTER batch 1 + 2 → +6; AgDR-0019
+        # typed AI split → +4 (with `ai` master hidden); AgDR-0020
+        # SLICE L → +1 (`code`); AgDR-0021 M4 foundation → +1
+        # (`ai_plan`). Cap raised to 80 (still under the 80-node
+        # decorative catalogue ceiling).
+        assert len(ng.PRIMITIVES) <= 80
 
 
 class TestEngineTypeResolution:
@@ -121,7 +125,11 @@ class TestGrammarPayload:
     def test_payload_is_serialisable_and_complete(self):
         import json
         payload = ng.grammar_payload()
-        assert len(payload) == len(ng.PRIMITIVES)
+        # SLICE H: `input` + `constant` primitives are hidden in the
+        # palette (still in PRIMITIVES for legacy engine resolution).
+        # The payload count excludes hidden ones.
+        non_hidden = [p for p in ng.PRIMITIVES if not p.hidden]
+        assert len(payload) == len(non_hidden)
         json.dumps(payload)  # must not raise
         for entry in payload:
             assert {"kind", "display", "cat", "selector", "engine_types",
@@ -142,14 +150,34 @@ class TestGrammarPayload:
         by_kind = {e["kind"]: e for e in payload}
         # the master nodes land with their selector/host/op param rows
         assert {"host", "op"} <= {p["k"] for p in by_kind["connector"]["params"]}
-        assert by_kind["ai"]["params"][0]["k"] == "action"
-        assert by_kind["logic"]["params"][0]["k"] == "kind"
-        assert {"value"} <= {p["k"] for p in by_kind["constant"]["params"]}
+        # AgDR-0019: the `ai` master is now hidden; verify the typed AI
+        # nodes are in the payload + each declares its action-relevant
+        # params on the rail.
+        assert "ai" not in by_kind  # legacy master hidden
+        assert by_kind["ai_chat"]["params"][0]["k"] == "model"
+        assert {"model", "prompt"} <= {
+            p["k"] for p in by_kind["ai_complete"]["params"]}
+        assert {"model", "options"} <= {
+            p["k"] for p in by_kind["ai_classify"]["params"]}
+        assert {"model", "prompt", "allowed_tools"} <= {
+            p["k"] for p in by_kind["ai_tools"]["params"]}
+        # SLICE I: `logic` primitive split into typed If / For Each /
+        # Switch / Merge — sanity-check at least the `if` typed node
+        # resolves and lands without selector params.
+        assert "if" in by_kind
+        assert by_kind["if"]["engine_types"][""] == "control.if"
+        # SLICE H: typed INPUT nodes replaced the bare `constant` primitive
+        # in the palette. Number / Text / Boolean / File / Color all map
+        # to `data.constant` engine via the `value_type` config. Sanity-check
+        # one of them carries a `value` param row.
+        assert {"value"} <= {p["k"] for p in by_kind["number"]["params"]}
         assert {"field", "op", "match"} <= {p["k"] for p in by_kind["filter"]["params"]}
-        # every READY primitive (except `skill`, configured on placement)
-        # lands with at least one editable param row — no bare nodes.
+        # every READY primitive (except `skill` configured on placement,
+        # and `reroute` which is an identity wire-organising dot whose
+        # whole point is having no config — AgDR-0007) lands with at
+        # least one editable param row — no bare nodes.
         for e in payload:
-            if e["status"] == "ready" and e["kind"] != "skill":
+            if e["status"] == "ready" and e["kind"] not in ("skill", "reroute"):
                 assert e["params"], f"{e['kind']} has no param rows"
 
     def test_registry_primitives_carry_engine_ports(self):
@@ -157,7 +185,13 @@ class TestGrammarPayload:
         ports — the canvas sources ports from the engine, never invents
         them (canvas wire ids must match engine port names)."""
         by_kind = {e["kind"]: e for e in ng.grammar_payload()}
-        out_ids = [p["id"] for p in by_kind["constant"]["ports"]["out"]]
+        # SLICE H: a typed INPUT node (e.g. `number`) maps to data.constant
+        # and surfaces its `value` output port.
+        out_ids = [p["id"] for p in by_kind["number"]["ports"]["out"]]
         assert "value" in out_ids                 # data.constant -> `value`
-        in_ids = [p["id"] for p in by_kind["output"]["ports"]["in"]]
+        # SLICE I OUTPUT split: `output` primitive renamed `result`,
+        # joined by typed File Save / Console / Display siblings. All
+        # of them carry a `value` input port from their respective
+        # output.* engine.
+        in_ids = [p["id"] for p in by_kind["result"]["ports"]["in"]]
         assert "value" in in_ids                  # output.parameter <- `value`

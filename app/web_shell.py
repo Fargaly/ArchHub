@@ -80,8 +80,33 @@ class WebShell(QMainWindow):
 
         # ── QtWebEngine view loads the bundled prototype ──────
         from PyQt6.QtWebEngineWidgets import QWebEngineView
-        from PyQt6.QtWebEngineCore import QWebEngineSettings
+        from PyQt6.QtWebEngineCore import (
+            QWebEngineSettings, QWebEngineProfile, QWebEnginePage,
+        )
+
+        # AgDR-0026 Phase 2 — persistent QWebEngineProfile so the JSX
+        # cache (localStorage 'jsx_cache_v1_*') survives across launches.
+        # Default profile is off-the-record → localStorage cleared on
+        # every restart → Babel re-transpiles the 9 675-line studio-lm.jsx
+        # every cold start (~5-6 s wasted).  Naming the profile + setting
+        # a persistent storage path under %LOCALAPPDATA% gives us
+        # disk-backed storage.
+        import os
+        storage_root = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "ArchHub", "webengine")
+        os.makedirs(storage_root, exist_ok=True)
+        self._wprofile = QWebEngineProfile("archhub", self)
+        self._wprofile.setPersistentStoragePath(storage_root)
+        self._wprofile.setCachePath(storage_root)
+        self._wprofile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies)
+
         self.view = QWebEngineView()
+        # Bind the persistent profile to this view by replacing the
+        # default off-the-record page with a profile-backed one.
+        _page = QWebEnginePage(self._wprofile, self.view)
+        self.view.setPage(_page)
         # Suppress QtWebEngine's native browser context menu (Back / Forward /
         # Reload / Save page / View source). ArchHub is a desktop app — the
         # React canvas owns right-click via DOM 'contextmenu' events

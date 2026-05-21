@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +27,12 @@ STALE_AFTER_SECONDS = 30.0
 PORT_FIRST = 48885
 PORT_LAST = 48899
 LEGACY_PORT = 48885
+
+# Service identifier returned by AcadMCP.dll's /ping endpoint. The
+# phantom-legacy bug — Revit hijacked port 48885 (range collision) but
+# the old TCP-only probe couldn't tell — is closed by verifying the
+# /ping payload's `service` field before accepting a session as live.
+_EXPECTED_SERVICE = "acad-mcp"
 
 
 @dataclass
@@ -79,11 +87,74 @@ def _silent(iso: str) -> float:
 
 
 def _probe(port: int, *, timeout: float = 0.4) -> bool:
+    """Cheap TCP-only liveness — port is open or closed. Use
+    `_probe_service` instead when the answer "wrong service is on this
+    port" matters (legacy-port detection, phantom-session prevention)."""
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def _probe_service(port: int, *, timeout: float = 0.5) -> bool:
+    return _ping_service(port, timeout=timeout) is not None
+
+
+def _ping_service(port: int, *, timeout: float = 0.5) -> Optional[dict]:
+    """GET /ping. Returns the full payload dict if the response's
+    `service` field matches AcadMCP, else None. Used by port-range
+    discovery to populate Session metadata without a session file."""
+    try:
+        with urllib.request.urlopen(
+                f"http://localhost:{port}/ping", timeout=timeout) as r:
+            if r.status >= 400:
+                return None
+            try:
+                data = json.loads(r.read().decode("utf-8") or "{}")
+            except Exception:
+                return None
+            if str(data.get("service") or "").lower() != _EXPECTED_SERVICE:
+                return None
+            return data
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _discover_in_port_range(known_ports: set,
+                              *, timeout: float = 0.4) -> list[Session]:
+    """Parallel port-range probe — finds AcadMCP instances that the
+    session-file scan missed (older DLL, scrubbed file, MCP rebind).
+    See revit_broker._discover_in_port_range for rationale."""
+    import concurrent.futures as _cf
+
+    candidates = [p for p in range(PORT_FIRST, PORT_LAST + 1)
+                  if p not in known_ports]
+    if not candidates:
+        return []
+    found: list[Session] = []
+    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(
+            lambda p: (p, _ping_service(p, timeout=timeout)),
+            candidates,
+        ))
+    for port, payload in results:
+        if not payload:
+            continue
+        found.append(Session(
+            session_id=f"autocad-{payload.get('pid') or port}",
+            family="autocad",
+            pid=int(payload.get("pid") or 0),
+            port=port,
+            version=str(payload.get("version") or ""),
+            doc_title=str(payload.get("doc_title") or ""),
+            started_at="",
+            last_heartbeat="",
+            file_path=None,
+            legacy=False,
+            healthy=True,
+        ))
+    return found
 
 
 def list_sessions(*, prune: bool = True) -> list[Session]:
@@ -94,7 +165,10 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
             if s is None:
                 continue
             silent = _silent(s.last_heartbeat)
-            alive = _probe(s.port, timeout=0.3)
+            # Verify the port's responding service IS AcadMCP — port
+            # reuse / collision (Revit on 48885) would otherwise mark a
+            # dead session as alive.
+            alive = _probe_service(s.port, timeout=0.4)
             s.healthy = alive
             if not alive and silent > STALE_AFTER_SECONDS:
                 if prune:
@@ -104,8 +178,15 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
                         pass
                 continue
             out.append(s)
+    # Port-range discovery — covers AcadMCP instances that didn't
+    # write a session file. Parallel probe with service verification.
+    known_ports = {s.port for s in out}
+    out.extend(_discover_in_port_range(known_ports, timeout=0.4))
+
     if not any(s.port == LEGACY_PORT for s in out):
-        if _probe(LEGACY_PORT, timeout=0.3):
+        # Legacy fallback fires only when the right service is on the
+        # port — never on a port hijacked by another host.
+        if _probe_service(LEGACY_PORT, timeout=0.4):
             out.append(Session(
                 session_id="autocad-legacy", family="autocad",
                 pid=0, port=LEGACY_PORT, version="legacy",

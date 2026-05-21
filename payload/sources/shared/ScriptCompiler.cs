@@ -422,13 +422,27 @@ namespace ArchHub.Shared
                 // Spawn csc — direct csc.exe, or `dotnet exec csc.dll`
                 // when ProbeCscDetailed picked an SDK Roslyn (AgDR-0030
                 // Fork A1 step 3).
-                var cscArgs = new StringBuilder();
-                cscArgs.Append("/nologo /target:library /platform:anycpu /optimize+ ");
-                cscArgs.Append("/langversion:").Append(langVersion).Append(' ');
-                cscArgs.Append("/out:\"").Append(dllPath).Append("\" ");
+                //
+                // AgDR-0031 — all options + every /reference: go into a csc
+                // response file (`@<path>`).  AppDomain.GetAssemblies() can
+                // hand us hundreds of refs which blow past Windows' 32 K
+                // command-line limit when expanded inline.  csc reads the
+                // response file fine — same effect, no length cap.
+                var rspBody = new StringBuilder();
+                rspBody.Append("/nologo /target:library /platform:anycpu /optimize+ ");
+                rspBody.Append("/langversion:").Append(langVersion).Append(' ');
+                rspBody.Append("/out:\"").Append(dllPath).Append("\"\r\n");
                 foreach (var rf in references)
-                    cscArgs.Append("/reference:\"").Append(rf).Append("\" ");
-                cscArgs.Append("\"").Append(srcPath).Append("\"");
+                    rspBody.Append("/reference:\"").Append(rf).Append("\"\r\n");
+                rspBody.Append("\"").Append(srcPath).Append("\"\r\n");
+                var rspPath = Path.Combine(CacheRoot(), hash + ".rsp");
+                try { File.WriteAllText(rspPath, rspBody.ToString(), Encoding.UTF8); }
+                catch (Exception ex)
+                {
+                    r.Status = "runtime_error";
+                    r.Error  = "Cannot write response file: " + ex.Message;
+                    return r;
+                }
 
                 ProcessStartInfo psi;
                 if (needsDotnetExec)
@@ -436,7 +450,7 @@ namespace ArchHub.Shared
                     psi = new ProcessStartInfo
                     {
                         FileName = "dotnet",
-                        Arguments = "exec \"" + csc + "\" " + cscArgs.ToString(),
+                        Arguments = "exec \"" + csc + "\" @\"" + rspPath + "\"",
                     };
                 }
                 else
@@ -444,7 +458,7 @@ namespace ArchHub.Shared
                     psi = new ProcessStartInfo
                     {
                         FileName = csc,
-                        Arguments = cscArgs.ToString(),
+                        Arguments = "@\"" + rspPath + "\"",
                     };
                 }
                 psi.UseShellExecute = false;
@@ -485,10 +499,22 @@ namespace ArchHub.Shared
                 }
             }
 
-            // Load + invoke.
+            // Load + invoke.  Use Core's ALC so the generated DLL's
+            // /reference: to RevitMCPCore-hotfix* resolves against the
+            // SAME assembly identity Core lives under.  Default ALC
+            // can't see types in a collectible ALC → FileLoadException
+            // 0x80131515 ("Operation is not supported").
             try
             {
+#if NET8_0_OR_GREATER
+                System.Reflection.Assembly asm;
+                var coreAlc = System.Runtime.Loader.AssemblyLoadContext
+                                  .GetLoadContext(ctx.GetType().Assembly);
+                if (coreAlc != null) asm = coreAlc.LoadFromAssemblyPath(dllPath);
+                else                  asm = Assembly.LoadFile(dllPath);
+#else
                 var asm = Assembly.LoadFile(dllPath);
+#endif
                 var t = asm.GetType(ns + ".Entry", throwOnError: true);
                 var m = t.GetMethod("Run", BindingFlags.Public | BindingFlags.Static);
                 if (m == null)

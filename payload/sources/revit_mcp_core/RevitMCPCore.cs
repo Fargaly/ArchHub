@@ -281,15 +281,35 @@ namespace RevitMCPCore
             };
             if (ctx.Doc == null) return JsonError("No active document.");
 
+            // AgDR-0031 — pass EVERY loaded assembly as a reference, not a
+            // hardcoded 6-entry list.  On .NET 8 (Revit 2025+) csc enforces
+            // the reference-assembly model: `typeof(object).Assembly.Location`
+            // returns `System.Private.CoreLib.dll` which does NOT satisfy
+            // `System.Runtime`/`netstandard` facade requirements.  The whole
+            // BCL has to be in the /r list.  AppDomain.CurrentDomain
+            // .GetAssemblies() gives us every assembly Revit already loaded
+            // — which on a live Revit process is the full BCL + RevitAPI +
+            // every add-in.  Class of bug killed: any future runtime split
+            // (net9, net10, etc.) doesn't break refs.
             var revitDllDir = Path.GetDirectoryName(typeof(Document).Assembly.Location);
-            var revitApi   = Path.Combine(revitDllDir, "RevitAPI.dll");
-            var revitApiUi = Path.Combine(revitDllDir, "RevitAPIUI.dll");
-            var thisAsm    = typeof(ScriptContext).Assembly.Location;
-            var sysCore    = typeof(System.Linq.Enumerable).Assembly.Location;
-            var sysColl    = typeof(List<>).Assembly.Location;
-            var mscorlib   = typeof(object).Assembly.Location;
-
-            var refs = new[] { revitApi, revitApiUi, thisAsm, mscorlib, sysCore, sysColl }
+            var extraRefs = new[] {
+                Path.Combine(revitDllDir, "RevitAPI.dll"),
+                Path.Combine(revitDllDir, "RevitAPIUI.dll"),
+                typeof(ScriptContext).Assembly.Location,
+            };
+            // Filter out other RevitMCPCore* assemblies — after a /reload the
+            // previous Core ALC may still be live in the domain (collectible
+            // ALC unload is GC-deferred).  Letting csc see both copies trips
+            // CS0433 ambiguous-ScriptContext.  The CURRENT Core is added
+            // explicitly via typeof(ScriptContext) in extraRefs above.
+            var selfAsm = typeof(ScriptContext).Assembly;
+            var domainRefs = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => !a.IsDynamic && a != selfAsm
+                            && !(a.FullName ?? "").StartsWith("RevitMCPCore",
+                                StringComparison.Ordinal))
+                .Select(a => { try { return a.Location; } catch { return null; } })
+                .Where(p => !string.IsNullOrEmpty(p));
+            var refs = extraRefs.Concat(domainRefs)
                        .Where(File.Exists)
                        .Distinct(StringComparer.OrdinalIgnoreCase)
                        .ToList();

@@ -891,18 +891,37 @@ const StudioLM = () => {
   // Bump counter to force rerender after we mutate LM_GRAPH.wires/nodes in place.
   const [graphBump, setGraphBump] = React.useState(0);
   const bumpGraph = React.useCallback(() => setGraphBump(b => b + 1), []);
+  // AgDR-0032 — rAF-coalesced bump.  Streaming chat used to call
+  // bumpGraph() on every chunk → ~50 full canvas re-renders per
+  // assistant response → Composer lag.  Coalesce: if a bump is
+  // already pending in this animation frame, drop the duplicate.
+  // Falls through to a plain bumpGraph for callers that need a
+  // synchronous re-render (drag-end, modal close, etc.).
+  const bumpPendingRef = React.useRef(false);
+  const bumpGraphRaf = React.useCallback(() => {
+    if (bumpPendingRef.current) return;
+    bumpPendingRef.current = true;
+    requestAnimationFrame(() => {
+      bumpPendingRef.current = false;
+      setGraphBump(b => b + 1);
+    });
+  }, []);
   // ─── AgDR-0024 — expose bumpGraph so external mutators (CDP demos,
   // test harnesses, future bridge slots) can force the canvas to
   // re-render after splicing into `window.LM_GRAPH` directly. Safe
   // because bumpGraph is referentially stable + has no side effects.
   React.useEffect(() => {
     window.__archhubBumpGraph = bumpGraph;
+    window.__archhubBumpGraphRaf = bumpGraphRaf;
     return () => {
       if (window.__archhubBumpGraph === bumpGraph) {
         try { delete window.__archhubBumpGraph; } catch (e) {}
       }
+      if (window.__archhubBumpGraphRaf === bumpGraphRaf) {
+        try { delete window.__archhubBumpGraphRaf; } catch (e) {}
+      }
     };
-  }, [bumpGraph]);
+  }, [bumpGraph, bumpGraphRaf]);
 
   const session = openId ? (LM_SESSIONS || []).find(s => s.id === openId) : null;
 
@@ -1426,7 +1445,9 @@ const StudioLM = () => {
       } else {
         msgs.push({ me:false, text:piece, streaming:true, time:new Date().toISOString().slice(11,16) });
       }
-      bumpGraph();
+      // AgDR-0032 — coalesce chunk-driven re-renders to one per
+      // animation frame (was: full canvas re-render per chunk = lag).
+      bumpGraphRaf();
     };
     const onDone = (sid) => {
       (LM_GRAPH.nodes || []).forEach(n => {
@@ -1459,7 +1480,8 @@ const StudioLM = () => {
         r.push(step);
         msgs[lastIx] = { ...cur, reasoning: r };
       }
-      bumpGraph();
+      // AgDR-0032 — coalesce reasoning-step bumps too.
+      bumpGraphRaf();
     };
     const wires = [];
     const wire = (name, fn) => {

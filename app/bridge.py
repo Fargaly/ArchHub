@@ -2513,22 +2513,73 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def delete_saved_skill(self, skill_id: str) -> str:
-        """AgDR-0028 — delete a saved skill by id.  Removes the JSON
-        file from %APPDATA%/ArchHub/skills + emits skills_changed so
-        the JSX library refreshes.  Returns
+        """AgDR-0028 — delete a saved skill by slug.
+
+        Founder bug 2026-05-21 ("attempted deletion... but nothing
+        happened"): v1 of this slot called skills.library.delete_skill
+        which scans engine-format `.skill.json` files in a DIFFERENT
+        store.  get_saved_skills lists CANVAS-format
+        `.archhub-skill.json` files via _scan_canvas_skills(), keyed
+        by slug.  The two stores never matched → every delete
+        returned `not_found`.
+
+        Fix: resolve via the SAME store get_saved_skills + load_skill
+        use (_scan_canvas_skills), then unlink the file IF it's in
+        the writable user store.  Shipped (read-only) skills surface
+        a typed `read_only` error so the JSX UI can explain why.
+
+        Returns
             {"ok": true,  "id": "..."}
           or
-            {"ok": false, "error": "..."} ."""
+            {"ok": false, "id": "...", "error_code": "...", "error": "..."}.
+        """
         try:
-            from skills.library import delete_skill
-            ok = bool(delete_skill(skill_id))
-            if ok:
-                try: self.skills_changed.emit()
-                except Exception: pass
-            return _safe_json({"ok": ok, "id": skill_id,
-                               "error": "" if ok else "not_found"})
+            sid = (skill_id or "").strip()
+            if not sid:
+                return _safe_json({"ok": False, "id": "",
+                                    "error_code": "bad_args",
+                                    "error": "skill_id is required"})
+            match = next(
+                (s for s in _scan_canvas_skills()
+                 if s.get("slug") == sid or s.get("name") == sid),
+                None,
+            )
+            if match is None:
+                return _safe_json({"ok": False, "id": sid,
+                                    "error_code": "not_found",
+                                    "error": f"skill {sid!r} not found"})
+            from pathlib import Path as _Path
+            target = _Path(match["path"])
+            user_dir = _user_skills_dir().resolve()
+            if user_dir not in target.resolve().parents:
+                # Shipped / marketplace / cloud skill — protect it.
+                return _safe_json({"ok": False, "id": sid,
+                                    "error_code": "read_only",
+                                    "error": (f"{sid!r} ships with ArchHub "
+                                              "and cannot be deleted.")})
+            try:
+                target.unlink(missing_ok=True)
+            except Exception as ex:
+                return _safe_json({"ok": False, "id": sid,
+                                    "error_code": "unlink_failed",
+                                    "error": str(ex)})
+            # Cloud-sync push happens off-thread so the bridge slot returns fast.
+            try:
+                import cloud_sync, threading
+                threading.Thread(
+                    target=cloud_sync.push,
+                    args=(f"Delete Skill: {match.get('name', sid)}",),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
+            try: self.skills_changed.emit()
+            except Exception: pass
+            return _safe_json({"ok": True, "id": sid})
         except Exception as ex:
-            return _safe_json({"ok": False, "error": str(ex)})
+            return _safe_json({"ok": False, "id": skill_id,
+                                "error_code": "exception",
+                                "error": str(ex)})
 
     @pyqtSlot(str, result=str)
     def delete_custom_node(self, type_id: str) -> str:
@@ -2566,22 +2617,25 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(result=str)
     def clear_all_saved_skills(self) -> str:
-        """AgDR-0028 — wipe every saved skill.  Same confirm-in-UI
-        contract as clear_all_custom_nodes."""
+        """AgDR-0028 — wipe every USER saved skill.  Shipped skills
+        survive (the user-dir gate in `delete_saved_skill` rejects
+        anything not under `_user_skills_dir()`)."""
         try:
-            from skills.library import delete_skill
+            from pathlib import Path as _Path
+            user_dir = _user_skills_dir().resolve()
             removed = 0
-            # Re-discover via the same scan get_saved_skills uses so we
-            # only touch user-writable entries.
-            for skill in (json.loads(self.get_saved_skills()) or []):
-                if not isinstance(skill, dict): continue
-                sid = skill.get("id")
-                if not sid: continue
-                # Only user-store skills are deletable; shipped skills
-                # carry `read_only:true` and delete_skill returns False
-                # for those.
-                if delete_skill(sid):
+            for s in _scan_canvas_skills():
+                try:
+                    target = _Path(s.get("path") or "").resolve()
+                except Exception:
+                    continue
+                if user_dir not in target.parents:
+                    continue   # protect shipped/marketplace/cloud
+                try:
+                    target.unlink(missing_ok=True)
                     removed += 1
+                except Exception:
+                    continue
             if removed:
                 try: self.skills_changed.emit()
                 except Exception: pass

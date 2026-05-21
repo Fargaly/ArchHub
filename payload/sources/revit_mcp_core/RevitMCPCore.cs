@@ -113,6 +113,17 @@ namespace RevitMCPCore
                     "no free port in [" + PortFirst + ".." + PortLast + "]");
             _log("Core HTTP listening on " + _port);
 
+            // AgDR-0030 Fork C3 — eager probe at Core boot so /ping
+            // reports `csc_status` accurately before any /exec call,
+            // AND the first /exec doesn't absorb probe latency.
+            try
+            {
+                var (cscPath, _) = ScriptCompiler.ProbeCscDetailed();
+                _log("Eager csc probe: "
+                     + (cscPath != null ? cscPath : "(none — /exec will return csc_missing)"));
+            }
+            catch (Exception ex) { _log("Eager csc probe failed: " + ex.Message); }
+
             // Session registry.
             try
             {

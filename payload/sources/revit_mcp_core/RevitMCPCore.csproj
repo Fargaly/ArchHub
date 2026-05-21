@@ -13,6 +13,9 @@
     <RootNamespace>RevitMCPCore</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
+    <!-- AgDR-0029 — deterministic build for SHA-256 manifest gate. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
   </PropertyGroup>
 
   <!-- Shared infra linked into BOTH shim and core.  ScriptCompiler is

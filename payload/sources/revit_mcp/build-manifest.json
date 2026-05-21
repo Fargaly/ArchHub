@@ -1,0 +1,17 @@
+{
+  "$comment": "AgDR-0029 \u2014 RevitMCP shim build manifest. Aggregated with revit_mcp_core/build-manifest.json by auto_build._verify_build_output. Both lists merge into the expected-artifacts set for payload/revit/<year>/.",
+  "host": "revit",
+  "role": "shim",
+  "expected_artifacts": [
+    "RevitMCP.dll",
+    "RevitMCP.deps.json"
+  ],
+  "addin_manifests": [
+    "RevitMCP.addin"
+  ],
+  "record_shas_on_build": true,
+  "sha256": {
+    "RevitMCP.dll": "8ac089734e6b795d52776c27452535cf0e590fab93833b0c48863873fc597798",
+    "RevitMCP.deps.json": "705e37ff27fe577e9580a231b687fc6a6ed55cffb686eb1cbd2e5bb4e2cbd6f2"
+  }
+}

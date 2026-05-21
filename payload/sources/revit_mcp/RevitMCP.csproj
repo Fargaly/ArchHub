@@ -13,6 +13,10 @@
     <Nullable>disable</Nullable>
     <NoWarn>$(NoWarn);CS0436</NoWarn>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <!-- AgDR-0029 — deterministic build so SHA-256 manifest gate is
+         meaningful across machines (same source bytes → same DLL bytes). -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
   </PropertyGroup>
 
   <!-- AgDR-0027 — shim links the hot-reload contract + loader.

@@ -47,7 +47,8 @@ namespace ArchHub.Shared
         public string Status;
         public object Result;
         public string Error;
-        public string CompilerPath;   // which csc.exe was used (telemetry)
+        public string CompilerPath;   // which csc.exe / csc.dll was used (telemetry)
+        public bool   CompilerNeedsDotnetExec;  // true if invocation needs `dotnet exec`
         public bool   CacheHit;       // true if we skipped the compile
     }
 
@@ -58,44 +59,84 @@ namespace ArchHub.Shared
     /// </summary>
     public static class ScriptCompiler
     {
-        // ─── csc probe ─────────────────────────────────────────────
+        // ─── csc probe (AgDR-0030) ─────────────────────────────────
+        //
+        // Probe order (Fork A1 — signed 2026-05-21):
+        //   0. ARCHHUB_CSC_PATH env override.
+        //   1. Bundled `%LOCALAPPDATA%\ArchHub\bin\csc\csc.exe`
+        //      (Fork B3 — auto_build drops a pinned Roslyn here).
+        //   2. VS BuildTools 2022 well-known paths.
+        //   3. .NET SDK `csc.dll` invoked via `dotnet exec`.
+        //   4. Framework64 `csc.exe` — GATED by /langversion:? probe.
+        //      Caps at C# 5 on .NET 4.8.1 boxes → CS1617 on /langversion:7.3.
+        //      Only accepted if it advertises ≥7.3.
+        //
+        // Every candidate (including bundled, BuildTools, SDK) is run
+        // through `_AcceptsLangVersion73` so a future bad bundle can't
+        // re-introduce the original bug.
+        //
+        // `ProbeCsc` is the legacy entrypoint that returns just the path
+        // (for backward-compat with /ping JSON).  `ProbeCscDetailed`
+        // returns the (path, dotnetExec) pair the CompileAndRun pipeline
+        // needs to know whether to prepend `dotnet exec`.
 
         private static readonly object _probeLock = new object();
         private static string _probedCsc;
+        private static bool   _probedDotnetExec;
         private static bool   _probed;
 
-        /// <summary>
-        /// Returns the path of the csc.exe we'll use, or null if none
-        /// found. Result cached for the life of the process.
-        /// </summary>
+        /// <summary>Reset cached probe state — used by callers that
+        /// know the environment changed (e.g. ARCHHUB_CSC_PATH set
+        /// after start, bundled csc just downloaded).</summary>
+        public static void ResetProbe()
+        {
+            lock (_probeLock) { _probed = false; _probedCsc = null;
+                                 _probedDotnetExec = false; }
+        }
+
+        /// <summary>Returns the path of the csc we'll use, or null if
+        /// none accepts /langversion:7.3.  Result cached.</summary>
         public static string ProbeCsc()
         {
-            if (_probed) return _probedCsc;
+            string p; bool _;
+            (p, _) = ProbeCscDetailed();
+            return p;
+        }
+
+        public static (string path, bool needsDotnetExec) ProbeCscDetailed()
+        {
+            if (_probed) return (_probedCsc, _probedDotnetExec);
             lock (_probeLock)
             {
-                if (_probed) return _probedCsc;
-                _probedCsc = _ProbeOnce();
+                if (_probed) return (_probedCsc, _probedDotnetExec);
+                var (p, dx) = _ProbeOnce();
+                _probedCsc = p;
+                _probedDotnetExec = dx;
                 _probed = true;
-                return _probedCsc;
+                return (_probedCsc, _probedDotnetExec);
             }
         }
 
-        private static string _ProbeOnce()
+        private static (string path, bool needsDotnetExec) _ProbeOnce()
         {
-            // 1. Explicit override.
+            // 0. Explicit override — still gated by the langversion check.
             var env = Environment.GetEnvironmentVariable("ARCHHUB_CSC_PATH");
-            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
+            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+            {
+                var dx = env.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+                if (_AcceptsLangVersion73(env, dx)) return (env, dx);
+            }
 
-            // 2. .NET Framework 4.0 csc (single-file Roslyn 1.x — still
-            //    handles C# 7.3 with /langversion:7.3). Always present on
-            //    any Windows with .NET 4.x installed.
-            var sysRoot = Environment.GetFolderPath(Environment.SpecialFolder.System);
-            var fxCsc = Path.Combine(sysRoot, "..", "Microsoft.NET",
-                                     "Framework64", "v4.0.30319", "csc.exe");
-            try { fxCsc = Path.GetFullPath(fxCsc); } catch { }
-            if (File.Exists(fxCsc)) return fxCsc;
+            // 1. Bundled csc — `%LOCALAPPDATA%\ArchHub\bin\csc\csc.exe`.
+            //    auto_build downloads a pinned Roslyn here on first run.
+            var bundleDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ArchHub", "bin", "csc");
+            var bundled = Path.Combine(bundleDir, "csc.exe");
+            if (File.Exists(bundled) && _AcceptsLangVersion73(bundled, false))
+                return (bundled, false);
 
-            // 3. VS BuildTools well-known locations — modern Roslyn 4.x.
+            // 2. VS BuildTools 2022 well-known paths (modern Roslyn).
             var vsRoots = new[] {
                 @"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools",
                 @"C:\Program Files\Microsoft Visual Studio\2022\BuildTools",
@@ -106,14 +147,133 @@ namespace ArchHub.Shared
             foreach (var root in vsRoots)
             {
                 var p = Path.Combine(root, "MSBuild", "Current", "Bin", "Roslyn", "csc.exe");
-                if (File.Exists(p)) return p;
+                if (File.Exists(p) && _AcceptsLangVersion73(p, false))
+                    return (p, false);
             }
 
-            // 4. .NET SDK csc.dll (less common — needs `dotnet exec`).
-            //    Skipped here because spawning `dotnet exec csc.dll` adds
-            //    JIT overhead; users who only have dotnet SDK can set
-            //    ARCHHUB_CSC_PATH explicitly.
-            return null;
+            // 3. .NET SDK csc.dll via `dotnet exec`.
+            var sdk = _FindSdkCsc();
+            if (sdk != null && _AcceptsLangVersion73(sdk, true))
+                return (sdk, true);
+
+            // 4. Framework64 csc — last resort, gated.  On .NET 4.8.1 +
+            //    earlier this caps at C# 5; the gate rejects it.  Some
+            //    boxes have Roslyn patched into this path so we still
+            //    try it before giving up.
+            var sysRoot = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var fxCsc = Path.Combine(sysRoot, "..", "Microsoft.NET",
+                                     "Framework64", "v4.0.30319", "csc.exe");
+            try { fxCsc = Path.GetFullPath(fxCsc); } catch { }
+            if (File.Exists(fxCsc) && _AcceptsLangVersion73(fxCsc, false))
+                return (fxCsc, false);
+
+            return (null, false);
+        }
+
+        /// <summary>Run `csc /langversion:?` (or `dotnet exec csc.dll
+        /// /langversion:?`) and decide if it supports C# 7.3+.  The
+        /// AgDR-0025 wrapper compiles with /langversion:7.3 — anything
+        /// that caps at C# 5 fails with CS1617.  This gate prevents
+        /// that case from ever being picked.</summary>
+        private static bool _AcceptsLangVersion73(string cscPath, bool dotnetExec)
+        {
+            try
+            {
+                ProcessStartInfo psi;
+                if (dotnetExec)
+                {
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = "dotnet",
+                        Arguments = "exec \"" + cscPath + "\" /langversion:?",
+                    };
+                }
+                else
+                {
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = cscPath,
+                        Arguments = "/langversion:?",
+                    };
+                }
+                psi.UseShellExecute = false;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError  = true;
+                psi.CreateNoWindow = true;
+
+                using (var p = Process.Start(psi))
+                {
+                    var stdout = p.StandardOutput.ReadToEnd();
+                    var stderr = p.StandardError.ReadToEnd();
+                    if (!p.WaitForExit(5000))
+                    {
+                        try { p.Kill(); } catch { }
+                        return false;
+                    }
+                    var all = (stdout + "\n" + stderr).ToLowerInvariant();
+                    // Reject the .NET 4.8.1 single-file csc that caps at C# 5.
+                    if (all.Contains("only supports language versions up to c# 5")
+                     || all.Contains("up to c# 5")
+                     || all.Contains("up to c#5"))
+                        return false;
+                    // Accept if it advertises 7.3 / 8+ / latest.
+                    return all.Contains("7.3")
+                        || all.Contains(" 8.0") || all.Contains(" 9.0")
+                        || all.Contains(" 10.0") || all.Contains(" 11.0")
+                        || all.Contains(" 12.0") || all.Contains("latest");
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Locate the highest-versioned .NET SDK's csc.dll, or
+        /// null if no SDK is installed.</summary>
+        private static string _FindSdkCsc()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "dotnet",
+                    Arguments = "--list-sdks",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    CreateNoWindow = true,
+                };
+                string stdout;
+                using (var p = Process.Start(psi))
+                {
+                    stdout = p.StandardOutput.ReadToEnd();
+                    if (!p.WaitForExit(5000)) { try { p.Kill(); } catch { } return null; }
+                }
+                // Lines look like:  "8.0.405 [C:\Program Files\dotnet\sdk]"
+                string bestPath = null;
+                Version bestVer = null;
+                foreach (var raw in stdout.Split('\n'))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0) continue;
+                    var br = line.IndexOf('[');
+                    if (br < 0) continue;
+                    var verStr = line.Substring(0, br).Trim();
+                    var pathStr = line.Substring(br + 1).TrimEnd(']', ' ', '\r');
+                    // SDK version may have a "-rc.1" pre-release suffix.
+                    var verCore = verStr.Split('-')[0];
+                    Version v;
+                    if (!Version.TryParse(verCore, out v)) continue;
+                    if (bestVer == null || v > bestVer)
+                    {
+                        bestVer = v;
+                        bestPath = Path.Combine(pathStr, verStr, "Roslyn", "bincore", "csc.dll");
+                    }
+                }
+                return bestPath != null && File.Exists(bestPath) ? bestPath : null;
+            }
+            catch { return null; }
         }
 
         // ─── cache ────────────────────────────────────────────────
@@ -220,16 +380,23 @@ namespace ArchHub.Shared
             string langVersion = "7.3")
         {
             var r = new ScriptResult();
-            var csc = ProbeCsc();
+            // AgDR-0030 — detailed probe returns whether we need
+            // `dotnet exec csc.dll` instead of running csc.exe directly.
+            var (csc, needsDotnetExec) = ProbeCscDetailed();
             if (csc == null)
             {
                 r.Status = "csc_missing";
-                r.Error  = "csc.exe not found. Install .NET Framework 4 SDK or "
-                         + "Visual Studio Build Tools, or set ARCHHUB_CSC_PATH. "
-                         + "See https://aka.ms/vs/17/release/vs_BuildTools.exe";
+                r.Error  = "No C# compiler (csc) supporting C# 7.3+ found.  "
+                         + "Install the .NET 8 SDK (https://dot.net/8) or "
+                         + "Visual Studio Build Tools "
+                         + "(https://aka.ms/vs/17/release/vs_BuildTools.exe).  "
+                         + "ArchHub auto-bundles a pinned csc on first connector "
+                         + "build at %LOCALAPPDATA%\\ArchHub\\bin\\csc\\csc.exe; "
+                         + "delete that file or set ARCHHUB_CSC_PATH to override.";
                 return r;
             }
             r.CompilerPath = csc;
+            r.CompilerNeedsDotnetExec = needsDotnetExec;
 
             // Hash + cache lookup.
             var tfm = "net48";  // wrapper is langver 7.3 / net48 compat
@@ -252,24 +419,38 @@ namespace ArchHub.Shared
                     return r;
                 }
 
-                // Spawn csc.
-                var args = new StringBuilder();
-                args.Append("/nologo /target:library /platform:anycpu /optimize+ ");
-                args.Append("/langversion:").Append(langVersion).Append(' ');
-                args.Append("/out:\"").Append(dllPath).Append("\" ");
+                // Spawn csc — direct csc.exe, or `dotnet exec csc.dll`
+                // when ProbeCscDetailed picked an SDK Roslyn (AgDR-0030
+                // Fork A1 step 3).
+                var cscArgs = new StringBuilder();
+                cscArgs.Append("/nologo /target:library /platform:anycpu /optimize+ ");
+                cscArgs.Append("/langversion:").Append(langVersion).Append(' ');
+                cscArgs.Append("/out:\"").Append(dllPath).Append("\" ");
                 foreach (var rf in references)
-                    args.Append("/reference:\"").Append(rf).Append("\" ");
-                args.Append("\"").Append(srcPath).Append("\"");
+                    cscArgs.Append("/reference:\"").Append(rf).Append("\" ");
+                cscArgs.Append("\"").Append(srcPath).Append("\"");
 
-                var psi = new ProcessStartInfo
+                ProcessStartInfo psi;
+                if (needsDotnetExec)
                 {
-                    FileName = csc,
-                    Arguments = args.ToString(),
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError  = true,
-                    CreateNoWindow = true,
-                };
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = "dotnet",
+                        Arguments = "exec \"" + csc + "\" " + cscArgs.ToString(),
+                    };
+                }
+                else
+                {
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = csc,
+                        Arguments = cscArgs.ToString(),
+                    };
+                }
+                psi.UseShellExecute = false;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError  = true;
+                psi.CreateNoWindow = true;
                 string stdout = "", stderr = "";
                 int code = -1;
                 try

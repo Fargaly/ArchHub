@@ -1,5 +1,22 @@
 # ArchHub — working memory
 
+## SESSION-CLOSE MANDATE (founder, 2026-05-21 — non-negotiable)
+
+After EVERY signed-off piece of work, before reporting "done":
+
+1. **Commit** — every change committed (per the commit rules below);
+   working tree clean.
+2. **Document** — the AgDR (or, for a bug fix, the commit body)
+   records root cause + fix + verification. `docs/ROADMAP.md` stays
+   the single roadmap.
+3. **Restart** — relaunch ArchHub so the running app reflects the
+   committed code, and **CDP-verify the fix on the live app** — never
+   report "fixed" from tests alone. The founder is a CEO, not QA.
+
+A fix is not "done" until committed + documented + verified live.
+Claiming a fix works without a live restart + CDP check is the
+specific failure the founder called out 2026-05-21.
+
 ## ENGINEERING MANDATE (founder, 2026-05-15 — non-negotiable)
 
 Every problem → dive to the ROOT. No quick patches. No stitching.

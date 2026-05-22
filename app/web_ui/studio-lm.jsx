@@ -9376,7 +9376,14 @@ const ChatCodeBlock = ({ lang, code }) => {
   );
 };
 
-const ChatTurn = ({ m, ix, isLast, onAction }) => {
+// AgDR-0032 follow-up — ChatTurn is React.memo'd so a streaming
+// assistant reply only re-renders the ONE growing bubble, not all
+// 10+ prior messages.  onChunk replaces just the streaming message
+// object (msgs[lastIx] = {...}); every other `m` keeps its reference,
+// so the default shallow prop compare skips their ChatTurn entirely.
+// Without this, each rAF-coalesced bump (~60/s) re-ran
+// `_scrubToolMarkup` + markdown split on every message → Composer lag.
+const ChatTurn = React.memo(({ m, ix, isLast, onAction }) => {
   const [showReasoning, setShowReasoning] = React.useState(false);
   const isAssistant = !m.me;
   const aiColor = m.col || (m.model && m.model.col) || LM.accent;
@@ -9445,7 +9452,7 @@ const ChatTurn = ({ m, ix, isLast, onAction }) => {
       </div>
     </div>
   );
-};
+});
 
 const ChatAction = ({ children, onClick }) => (
   <button onClick={onClick || (e => e.stopPropagation())} style={{

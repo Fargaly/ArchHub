@@ -152,10 +152,14 @@ const SplashFader = () => {
   useEffect(() => {
     const s = document.getElementById('__archhub_splash');
     if (!s) return;
+    // The splash shows for as long as the boot actually takes — this
+    // component mounts only once the full JSX tree is up.  A 350ms
+    // floor so even an instant (cache-hit) boot reads as an
+    // intentional splash, not a flicker.  Then a 320ms opacity fade.
     const t = setTimeout(() => {
       s.classList.add('fade');
       setTimeout(() => { try { s.remove(); } catch (e) {} }, 320);
-    }, 120);
+    }, 350);
     return () => clearTimeout(t);
   }, []);
   return null;

@@ -1050,6 +1050,54 @@ TOOLS: list[dict] = [
         "endpoint": ("_local", "library_delete_node_type"),
     },
 
+    # AgDR-0038 — Composer Capability Node authoring. node_search finds
+    # an existing Capability Node to reuse (LIBRARY-FIRST); node_create
+    # mints a new one as data (typed I/O + an `impl` block) — the
+    # Composer designs node types without a developer hand-coding each.
+    {
+        "name": "node_search",
+        "family": "_local",
+        "description": (
+            "Search existing Capability Nodes for one matching an "
+            "intent. CALL THIS BEFORE node_create — reuse beats a "
+            "duplicate. Returns matches ranked by score."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "description": "What the node should do, in natural language.",
+                },
+                "limit": {"type": "integer", "default": 8},
+            },
+            "required": ["intent"],
+        },
+        "endpoint": ("_local", "node_search"),
+    },
+    {
+        "name": "node_create",
+        "family": "_local",
+        "description": (
+            "Mint a Capability Node from a data spec — typed inputs + "
+            "outputs + an `impl` block ({kind: python|connector|ai|"
+            "passthrough}). MUST be preceded by node_search this turn. "
+            "Registers the node so it is immediately executable + "
+            "placeable on the canvas. Returns {type, inputs, outputs}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "spec": {
+                    "type": "object",
+                    "description": "Capability spec — see AgDR-0038 §'Capability spec — canonical shape'.",
+                },
+            },
+            "required": ["spec"],
+        },
+        "endpoint": ("_local", "node_create"),
+    },
+
     # AI-as-tool — call other models from inside a chat turn. The
     # primary LLM can delegate to ChatGPT for code, Gemini for vision /
     # long context, or LM Studio for offline / privacy-bound work.
@@ -1561,6 +1609,9 @@ class ToolEngine:
             # router; we never see denied calls here.
             if handler.startswith("library_"):
                 return self._invoke_library_handler(handler, args or {})
+            # AgDR-0038 Capability Node tools (node_search / node_create).
+            if handler.startswith("node_"):
+                return self._invoke_node_handler(handler, args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
         # speckle family
@@ -1768,6 +1819,78 @@ class ToolEngine:
         except _lib.UnknownTypeError as ex:
             return {"status": "error", "error": str(ex),
                     "code": "unknown_type"}
+        except Exception as ex:
+            return {"status": "error",
+                    "error": f"{type(ex).__name__}: {ex}"}
+
+    # ---- AgDR-0038 — Capability Node tool dispatch -----------------------
+
+    def _invoke_node_handler(self, handler: str, args: dict) -> dict:
+        """Dispatch the Composer's Capability-Node tools (AgDR-0038).
+
+          node_search  -> rank persisted Capability specs by intent
+          node_create  -> register a Capability spec; it becomes an
+                          immediately executable + placeable node type
+
+        node_create is the O(1) replacement for hand-designing a node
+        type (grammar primitive + registry spec + executor + AgDR each).
+        """
+        import re as _re
+        try:
+            import workflows.custom_nodes as _cn
+        except Exception as ex:
+            return {"status": "error",
+                    "error": f"custom_nodes import failed: {ex}"}
+        try:
+            if handler == "node_search":
+                intent = str(args.get("intent", "") or "").lower().strip()
+                limit = int(args.get("limit", 8))
+                if not intent:
+                    return {"status": "ok", "results": [], "count": 0}
+                words = {w for w in _re.findall(r"[a-z0-9_]+", intent)
+                         if len(w) > 1}
+                ranked: list = []
+                for spec in _cn.list_specs():
+                    hay = " ".join(
+                        str(spec.get(k, "")) for k in
+                        ("type", "display_name", "description", "category")
+                    ).lower()
+                    score = 50 if intent in hay else 0
+                    score += 5 * sum(1 for w in words if w in hay)
+                    if score > 0:
+                        ranked.append((score, spec))
+                ranked.sort(key=lambda p: -p[0])
+                results = [
+                    {"type": s.get("type"),
+                     "display_name": s.get("display_name") or s.get("type"),
+                     "category": s.get("category"),
+                     "score": sc}
+                    for sc, s in ranked[:max(1, limit)]
+                ]
+                return {"status": "ok", "results": results,
+                        "count": len(results)}
+
+            if handler == "node_create":
+                spec = args.get("spec") or {}
+                if not isinstance(spec, dict) or not spec.get("type"):
+                    return {"status": "error",
+                            "error": "node_create needs a spec dict "
+                                     "carrying a `type`"}
+                node_spec = _cn.register_spec(spec)   # validates + registers
+                _cn.write_spec(spec)                  # persist to disk
+                return {
+                    "status": "ok",
+                    "type": node_spec.type,
+                    "inputs": [p.name for p in node_spec.inputs],
+                    "outputs": [p.name for p in node_spec.outputs],
+                }
+
+            return {"status": "error",
+                    "error": f"Unknown node handler: {handler}"}
+        except ValueError as ex:
+            # _spec_from_dict rejected a malformed spec — surface it so
+            # the LLM can correct in one retry.
+            return {"status": "error", "error": str(ex)}
         except Exception as ex:
             return {"status": "error",
                     "error": f"{type(ex).__name__}: {ex}"}

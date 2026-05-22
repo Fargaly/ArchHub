@@ -44,23 +44,27 @@ def test_delete_saved_skill_uses_scan_canvas_skills():
     assert "from skills.library import delete_skill" not in body
 
 
-def test_delete_saved_skill_protects_shipped_seeds():
+def test_delete_saved_skill_tombstones_shipped_seeds():
+    """AgDR-0033 — shipped seeds are tombstoned, not rejected."""
     src = _bridge_src()
     m = re.search(r"def delete_saved_skill\(self, skill_id: str\)[\s\S]+?"
-                  r"def clear_all_custom_nodes\b", src)
+                  r"def delete_custom_node\b", src)
     body = m.group(0)
-    # Read-only gate — only delete if file lives under _user_skills_dir.
     assert "_user_skills_dir" in body
-    assert "read_only" in body
+    # AgDR-0033 — shipped seed → tombstone, not read_only reject.
+    assert "_add_skill_tombstone" in body
+    assert "read_only" not in body, (
+        "AgDR-0033 retired the read_only rejection — shipped seeds "
+        "must tombstone, not reject")
 
 
 def test_delete_saved_skill_returns_typed_errors():
     src = _bridge_src()
     m = re.search(r"def delete_saved_skill\(self, skill_id: str\)[\s\S]+?"
-                  r"def clear_all_custom_nodes\b", src)
+                  r"def delete_custom_node\b", src)
     body = m.group(0)
-    # Typed errors so JSX can surface helpful UI.
-    for code in ("not_found", "read_only", "unlink_failed", "bad_args"):
+    # Typed errors for the genuine failure paths (read_only removed).
+    for code in ("not_found", "unlink_failed", "bad_args"):
         assert f'"{code}"' in body, f"missing typed error: {code}"
 
 
@@ -106,7 +110,9 @@ def test_user_dir_skill_deletes(monkeypatch, tmp_path):
     assert not skill_file.exists()
 
 
-def test_shipped_skill_rejects_read_only(monkeypatch, tmp_path):
+def test_shipped_skill_tombstoned_not_rejected(monkeypatch, tmp_path):
+    """AgDR-0033 — deleting a shipped seed tombstones its slug; the
+    seed file stays on disk but disappears from the listing."""
     import bridge
     user_dir = tmp_path / "user_skills"
     shipped_dir = tmp_path / "shipped_skills"
@@ -121,9 +127,27 @@ def test_shipped_skill_rejects_read_only(monkeypatch, tmp_path):
     inst = bridge.ArchHubBridge.__new__(bridge.ArchHubBridge)
     raw = inst.delete_saved_skill("starter")
     result = json.loads(raw)
-    assert result.get("ok") is False
-    assert result.get("error_code") == "read_only"
-    assert seed.exists()  # untouched
+    assert result.get("ok") is True
+    assert result.get("method") == "tombstoned"
+    # File untouched (app update would otherwise restore it anyway)…
+    assert seed.exists()
+    # …but it's filtered out of the listing.
+    listed = [s["slug"] for s in bridge._scan_canvas_skills()]
+    assert "starter" not in listed
+
+
+def test_resaving_clears_tombstone(monkeypatch, tmp_path):
+    """AgDR-0033 — a fresh save of a tombstoned slug un-hides it."""
+    import bridge
+    user_dir = tmp_path / "user_skills"
+    shipped_dir = tmp_path / "shipped_skills"
+    user_dir.mkdir(); shipped_dir.mkdir()
+    monkeypatch.setattr(bridge, "_user_skills_dir", lambda: user_dir)
+    monkeypatch.setattr(bridge, "_shipped_skills_dir", lambda: shipped_dir)
+    bridge._add_skill_tombstone("revivme")
+    assert "revivme" in bridge._load_skill_tombstones()
+    bridge._clear_skill_tombstone("revivme")
+    assert "revivme" not in bridge._load_skill_tombstones()
 
 
 def test_missing_skill_returns_not_found(monkeypatch, tmp_path):
@@ -149,8 +173,9 @@ def test_empty_skill_id_returns_bad_args(monkeypatch, tmp_path):
         assert result.get("error_code") == "bad_args"
 
 
-def test_clear_all_skips_shipped(monkeypatch, tmp_path):
-    """Founder rule: shipped seeds are protected from clear-all."""
+def test_clear_all_unlinks_user_tombstones_shipped(monkeypatch, tmp_path):
+    """AgDR-0033 — clear-all empties the panel: user files unlinked,
+    shipped seeds tombstoned.  The panel ends up empty."""
     import bridge
     user_dir = tmp_path / "u"; shipped_dir = tmp_path / "s"
     user_dir.mkdir(); shipped_dir.mkdir()
@@ -166,12 +191,15 @@ def test_clear_all_skips_shipped(monkeypatch, tmp_path):
     raw = inst.clear_all_saved_skills()
     result = json.loads(raw)
     assert result.get("ok") is True
-    assert result.get("removed") == 2
-    # Shipped seed survives.
-    assert (shipped_dir / "seed.archhub-skill.json").exists()
-    # User-store entries gone.
+    assert result.get("removed") == 3   # 2 user + 1 shipped
+    # User files unlinked.
     assert not (user_dir / "u1.archhub-skill.json").exists()
     assert not (user_dir / "u2.archhub-skill.json").exists()
+    # Shipped seed file survives on disk but is tombstoned.
+    assert (shipped_dir / "seed.archhub-skill.json").exists()
+    assert "seed" in bridge._load_skill_tombstones()
+    # Panel list ends up empty.
+    assert bridge._scan_canvas_skills() == []
 
 
 # ─── 3. AgDR-0032 doc ────────────────────────────────────────────────

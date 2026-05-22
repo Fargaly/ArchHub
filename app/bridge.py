@@ -338,11 +338,61 @@ def _shipped_skills_dir() -> "Path":
     return Path(__file__).resolve().parent / "skills"
 
 
+# ─── AgDR-0033 — skill tombstone list ────────────────────────────────
+# `app/skills/` serves double duty: genuine shipped starter seeds AND
+# user skills mis-saved there by the historical save_as_skill bug
+# (it used to write the source tree).  A shipped seed can't be unlinked
+# (an app update restores it; on a read-only install the unlink fails).
+# So "deleting" a shipped seed records its slug in a per-user tombstone
+# file; `_scan_canvas_skills` filters tombstoned slugs out.  User-store
+# skills are still unlinked outright.
+def _skill_tombstone_path() -> "Path":
+    return _user_skills_dir() / "_hidden-skills.json"
+
+
+def _load_skill_tombstones() -> set:
+    try:
+        p = _skill_tombstone_path()
+        if not p.exists():
+            return set()
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return set(data) if isinstance(data, list) else set()
+    except Exception:
+        return set()
+
+
+def _add_skill_tombstone(slug: str) -> None:
+    try:
+        tomb = _load_skill_tombstones()
+        tomb.add(slug)
+        _skill_tombstone_path().write_text(
+            json.dumps(sorted(tomb), indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _clear_skill_tombstone(slug: str) -> None:
+    """Used when a user re-saves a skill of a tombstoned slug — the new
+    save should be visible again."""
+    try:
+        tomb = _load_skill_tombstones()
+        if slug in tomb:
+            tomb.discard(slug)
+            _skill_tombstone_path().write_text(
+                json.dumps(sorted(tomb), indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _scan_canvas_skills() -> list:
     """Every canvas-format skill — shipped seeds + the user store —
     deduped by slug (a user save overrides a shipped seed of the same
-    slug). The single resolver behind get_saved_skills + load_skill."""
+    slug). The single resolver behind get_saved_skills + load_skill.
+
+    AgDR-0033: tombstoned slugs (user-deleted shipped seeds) are
+    filtered out."""
     out: dict[str, dict] = {}
+    tombstones = _load_skill_tombstones()
     # Shipped first so a same-slug user save wins the dedup below.
     for root in (_shipped_skills_dir(), _user_skills_dir()):
         try:
@@ -374,6 +424,9 @@ def _scan_canvas_skills() -> list:
                 "slug":  slug,
                 "name":  env.get("name") or slug,
                 "path":  str(f),
+                # AgDR-0033 — which store the file lives in, so
+                # delete_saved_skill knows whether to unlink or tombstone.
+                "shipped": (root == _shipped_skills_dir()),
                 "graph": graph,
                 "meta":  {
                     "mode":        str(_m.get("mode", "private")),
@@ -381,7 +434,8 @@ def _scan_canvas_skills() -> list:
                     "category":    str(_m.get("category") or ""),
                 },
             }
-    return list(out.values())
+    # AgDR-0033 — drop tombstoned slugs (user deleted a shipped seed).
+    return [v for k, v in out.items() if k not in tombstones]
 
 
 class ArchHubBridge(QObject):
@@ -2230,6 +2284,10 @@ class ArchHubBridge(QObject):
             out_path.write_text(_json.dumps(envelope, indent=2,
                                               ensure_ascii=False),
                                   encoding="utf-8")
+            # AgDR-0033 — if this slug was tombstoned (user had deleted
+            # a shipped seed of the same name), the fresh save should be
+            # visible again — clear the tombstone.
+            _clear_skill_tombstone(slug)
             # Notify the JSX side so the Skills panel refreshes without
             # a relaunch — skills are nodes, not files; the user should
             # see the new entry immediately.
@@ -2513,25 +2571,23 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def delete_saved_skill(self, skill_id: str) -> str:
-        """AgDR-0028 — delete a saved skill by slug.
+        """AgDR-0028/0032/0033 — delete a saved skill by slug.
 
-        Founder bug 2026-05-21 ("attempted deletion... but nothing
-        happened"): v1 of this slot called skills.library.delete_skill
-        which scans engine-format `.skill.json` files in a DIFFERENT
-        store.  get_saved_skills lists CANVAS-format
-        `.archhub-skill.json` files via _scan_canvas_skills(), keyed
-        by slug.  The two stores never matched → every delete
-        returned `not_found`.
+        Resolves via the SAME store get_saved_skills + load_skill use
+        (_scan_canvas_skills), keyed by slug.
 
-        Fix: resolve via the SAME store get_saved_skills + load_skill
-        use (_scan_canvas_skills), then unlink the file IF it's in
-        the writable user store.  Shipped (read-only) skills surface
-        a typed `read_only` error so the JSX UI can explain why.
+        AgDR-0033 — a user-store file is unlinked; a shipped seed is
+        tombstoned (its slug recorded in _hidden-skills.json) because
+        an app update would restore an unlinked seed and a read-only
+        install would fail the unlink.  `_scan_canvas_skills` filters
+        tombstoned slugs out, so the skill vanishes from the panel
+        either way.
 
         Returns
-            {"ok": true,  "id": "..."}
+            {"ok": true,  "id": "...", "method": "unlinked"|"tombstoned"}
           or
-            {"ok": false, "id": "...", "error_code": "...", "error": "..."}.
+            {"ok": false, "id": "...", "error_code": "...", "error": "..."}
+        Failure codes: not_found, unlink_failed, bad_args, exception.
         """
         try:
             sid = (skill_id or "").strip()
@@ -2551,18 +2607,26 @@ class ArchHubBridge(QObject):
             from pathlib import Path as _Path
             target = _Path(match["path"])
             user_dir = _user_skills_dir().resolve()
-            if user_dir not in target.resolve().parents:
-                # Shipped / marketplace / cloud skill — protect it.
-                return _safe_json({"ok": False, "id": sid,
-                                    "error_code": "read_only",
-                                    "error": (f"{sid!r} ships with ArchHub "
-                                              "and cannot be deleted.")})
-            try:
-                target.unlink(missing_ok=True)
-            except Exception as ex:
-                return _safe_json({"ok": False, "id": sid,
-                                    "error_code": "unlink_failed",
-                                    "error": str(ex)})
+            is_user_store = user_dir in target.resolve().parents
+
+            # AgDR-0033 — shipped seed: tombstone instead of reject.
+            # An app update would restore an unlinked seed, and a
+            # read-only install would fail the unlink — so we record
+            # the slug in a per-user tombstone file that
+            # `_scan_canvas_skills` filters out.  User-store files are
+            # unlinked outright.
+            if is_user_store:
+                try:
+                    target.unlink(missing_ok=True)
+                except Exception as ex:
+                    return _safe_json({"ok": False, "id": sid,
+                                        "error_code": "unlink_failed",
+                                        "error": str(ex)})
+                method = "unlinked"
+            else:
+                _add_skill_tombstone(sid)
+                method = "tombstoned"
+
             # Cloud-sync push happens off-thread so the bridge slot returns fast.
             try:
                 import cloud_sync, threading
@@ -2575,7 +2639,7 @@ class ArchHubBridge(QObject):
                 pass
             try: self.skills_changed.emit()
             except Exception: pass
-            return _safe_json({"ok": True, "id": sid})
+            return _safe_json({"ok": True, "id": sid, "method": method})
         except Exception as ex:
             return _safe_json({"ok": False, "id": skill_id,
                                 "error_code": "exception",
@@ -2617,25 +2681,29 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(result=str)
     def clear_all_saved_skills(self) -> str:
-        """AgDR-0028 — wipe every USER saved skill.  Shipped skills
-        survive (the user-dir gate in `delete_saved_skill` rejects
-        anything not under `_user_skills_dir()`)."""
+        """AgDR-0028 + AgDR-0033 — wipe every saved skill the panel
+        shows.  User-store files are unlinked; shipped seeds are
+        tombstoned so they don't reappear."""
         try:
             from pathlib import Path as _Path
             user_dir = _user_skills_dir().resolve()
             removed = 0
             for s in _scan_canvas_skills():
+                slug = s.get("slug")
                 try:
                     target = _Path(s.get("path") or "").resolve()
                 except Exception:
-                    continue
-                if user_dir not in target.parents:
-                    continue   # protect shipped/marketplace/cloud
-                try:
-                    target.unlink(missing_ok=True)
+                    target = None
+                if target is not None and user_dir in target.parents:
+                    try:
+                        target.unlink(missing_ok=True)
+                        removed += 1
+                    except Exception:
+                        continue
+                elif slug:
+                    # Shipped seed — tombstone it.
+                    _add_skill_tombstone(slug)
                     removed += 1
-                except Exception:
-                    continue
             if removed:
                 try: self.skills_changed.emit()
                 except Exception: pass

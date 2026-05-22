@@ -1,5 +1,23 @@
 # ArchHub — working memory
 
+## AUTOMATION MANDATE (founder, 2026-05-22 — non-negotiable)
+
+Never hand the founder a checklist of manual steps. The founder is a
+CEO, not a task-runner. "You do X, then Y" is a failure.
+
+- Anything doable from the machine — DO IT. Install + run the CLI
+  (`fly`, `gh`, `stripe`, `npm`, `dotnet`, …) via Bash/PowerShell;
+  drive apps via computer-use; script it. Execute, don't describe.
+- Anything that needs a repeatable external interaction — build an MCP
+  server for it and use it. Automate, don't delegate.
+- Before claiming something needs the founder, CHECK the machine: is
+  the CLI installed, is it already authenticated, is the key already
+  in `.env` / secrets? Assume nothing — verify.
+- The ONLY actions that may return to the founder are the hard safety
+  limits: creating an account, a purchase / entering card details,
+  typing a password. Even then — do everything up to that one step,
+  then name that single action. Never a list.
+
 ## SESSION-CLOSE MANDATE (founder, 2026-05-21 — non-negotiable)
 
 After EVERY signed-off piece of work, before reporting "done":

@@ -3,6 +3,6 @@
 # so security fixes flow without manual bumps.
 anthropic>=0.40
 httpx>=0.28
-pyyaml>=6
+pyyaml>=6.0.3
 fastapi>=0.110
 uvicorn[standard]>=0.30

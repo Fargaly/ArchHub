@@ -2,8 +2,13 @@ fastapi==0.118.0
 uvicorn[standard]==0.32.0
 stripe==11.5.0
 httpx==0.28.1
-pydantic==2.9.2
-pydantic[email]==2.9.2
+# pydantic relaxed from ==2.9.2: the Tests CI job co-installs this file
+# with app/requirements.txt into ONE env, and specklepy there pulls
+# pydantic-settings, which requires pydantic newer than 2.9.2 — the
+# hard pin produced pip ResolutionImpossible and broke the whole suite.
+# >=2.12.5 is the locally-proven floor (ships with specklepy 3.2.x);
+# <3 caps the major. The [email] extra also covers email-validator.
+pydantic[email]>=2.12.5,<3
 email-validator==2.2.0
 python-dotenv==1.2.2
 # v1.1.0 marketplace upload endpoint uses multipart/form-data.

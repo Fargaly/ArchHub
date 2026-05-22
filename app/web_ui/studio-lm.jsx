@@ -2885,6 +2885,18 @@ const panelIconBtn = () => ({
 // ─── Nodes panel — primary drag source ───
 const NodesPanel = ({ addNodeFromLibrary }) => {
   const [q, setQ] = React.useState('');
+  // Bug fix 2026-05-21: AgDR-0028's ctxMenu delete handlers called
+  // `flashToast`, which is defined in NodeCanvas's scope — NodesPanel
+  // can't see it → ReferenceError on every delete click ("attempted
+  // deletion... nothing happened").  NodeCanvas already listens for
+  // the `lm-canvas-toast` window event; dispatch that instead so the
+  // toast still renders, no cross-component scope needed.
+  const flashToast = (msg, kind = 'info') => {
+    try {
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail: { msg, kind } }));
+    } catch (e) {}
+  };
   // Founder direction: ALL collapsed by default. Most-used row shown
   // first; user expands a category only when they need it.
   const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(Object.keys(CAT).map(k => [k, false])));
@@ -3383,7 +3395,13 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
                     {open && (
                       <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
                         {items.map(({ key, it, cat }) => (
-                          <NodeLibItem key={key} it={it} draggable={false}
+                          // Stock grammar nodes MUST be drag-to-canvas.
+                          // Bug (commit eccfc2c): this row copy-pasted
+                          // the SKILLS row's `draggable={false}` — which
+                          // is correct for skills (spawn via double-click)
+                          // but killed drag-drop for every placeable
+                          // primitive.  NodeLibItem defaults draggable=true.
+                          <NodeLibItem key={key} it={it}
                             cat={cat}
                             onAdd={() => addNodeFromLibrary(it)}/>
                         ))}

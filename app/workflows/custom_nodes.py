@@ -213,6 +213,36 @@ def _ai_executor(impl: dict, output_names: list[str]):
     return _exec
 
 
+def _graph_executor(impl: dict, output_names: list[str]):
+    """impl.kind=graph (AgDR-0039) — a node whose logic IS a typed
+    sub-graph. The whole point: logic is composed from modular elements
+    (primitives, connector ops, other Capability Nodes), not a code blob.
+
+    Runs through the existing subgraph machinery — a nested
+    WorkflowRunner cooks the inner graph, outer inputs seed the inner
+    entry ports, the inner exit ports map back out.
+
+    impl keys:
+      graph          {nodes, wires} — the inner logic graph
+      inner_inputs   [{port, inner_node, inner_port, type}]  entry map
+      inner_outputs  [{port, inner_node, inner_port, type}]  exit map
+    """
+    sub_config = {
+        "inner_graph":   impl.get("graph") or impl.get("inner_graph") or {},
+        "inner_inputs":  impl.get("inner_inputs") or [],
+        "inner_outputs": impl.get("inner_outputs") or [],
+    }
+
+    def _exec(_config: dict, inputs: dict, ctx) -> dict:
+        try:
+            from .subgraph import _subgraph_executor
+        except Exception as ex:
+            return {"error": f"subgraph machinery unavailable: {ex}"}
+        return _subgraph_executor(sub_config, inputs or {}, ctx)
+
+    return _exec
+
+
 def _resolve_impl(spec_dict: dict) -> dict:
     """Normalise any spec to its `impl` block (AgDR-0038).
 
@@ -256,6 +286,9 @@ def _build_executor(spec_dict: dict, node_spec: NodeSpec):
 
     if kind == "passthrough":
         return _passthrough
+
+    if kind == "graph":
+        return _graph_executor(impl, output_names)
 
     if kind == "connector":
         return _connector_executor(impl, output_names)

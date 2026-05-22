@@ -58,16 +58,43 @@ _DOTNET_8_INSTALLER_URL = (
 )
 
 
+def _dotnet_exe() -> str:
+    """Resolve the dotnet executable path. PATH lookup first; common
+    install locations second. Necessary because pythonw subprocesses
+    sometimes inherit a stripped PATH that doesn't include
+    `C:\\Program Files\\dotnet\\`, which made `dotnet --list-sdks`
+    fail silently and the Add Host page show ".NET SDK · not detected"
+    on machines that DO have .NET installed."""
+    import shutil
+    found = shutil.which("dotnet")
+    if found:
+        return found
+    for guess in (
+        r"C:\Program Files\dotnet\dotnet.exe",
+        r"C:\Program Files (x86)\dotnet\dotnet.exe",
+    ):
+        if os.path.exists(guess):
+            return guess
+    return "dotnet"   # let subprocess raise FileNotFoundError
+
+
 def detect_dotnet_sdk() -> Optional[str]:
     """Return the highest installed .NET SDK version, or None."""
     try:
-        proc = subprocess.run(
-            ["dotnet", "--list-sdks"],
-            capture_output=True, text=True, timeout=10,
-        )
+        # CREATE_NO_WINDOW prevents a console flash when called from
+        # pythonw GUI contexts (e.g. the Add Host page on launch).
+        kw: dict = dict(capture_output=True, text=True, timeout=10)
+        if sys.platform == "win32":
+            kw["creationflags"] = getattr(
+                subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        proc = subprocess.run([_dotnet_exe(), "--list-sdks"], **kw)
         if proc.returncode != 0:
             return None
         # Each line looks like "8.0.405 [C:\Program Files\dotnet\sdk]"
+        # OR "10.0.100-rc.1.25451.107 [...]" for preview SDKs. Accept
+        # both — `line[0].isdigit()` already handles the prefix-digit
+        # check, and `line.split()[0]` keeps the full version string
+        # including the -rc suffix.
         versions = [line.split()[0] for line in proc.stdout.splitlines()
                     if line.strip() and line[0].isdigit()]
         return max(versions) if versions else None
@@ -219,7 +246,14 @@ def find_max_install(year: int) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 def _target_framework_for_revit(year: int) -> str:
-    return "net8.0-windows" if year >= 2025 else "net48"
+    # Revit 2025+   → .NET 8 (Revit's runtime)
+    # Revit 2023/24 → .NET Framework 4.8
+    # Revit 2020/21/22 → .NET Framework 4.7 (Revit ships the 4.7 runtime)
+    if year >= 2025:
+        return "net8.0-windows"
+    if year >= 2023:
+        return "net48"
+    return "net47"
 
 
 def _target_framework_for_acad(year: int) -> str:
@@ -279,9 +313,251 @@ def _run_dotnet_build(project_path: Path,
 
 
 # ---------------------------------------------------------------------------
+# ─── AgDR-0029 — data-driven multi-csproj build pipeline ──────────────
+#
+# Build glob + manifest gate (Fork A3) + SHA-256 verify (Fork B2).
+# Adding a new csproj under any `<host>_mcp*` source root is picked
+# up automatically; the manifest declares which DLLs MUST exist after
+# deploy so half-builds (shim-without-Core, etc.) fail loudly.
+
+import hashlib  # AgDR-0029 — manifest SHA-256
+
+
+def _load_build_manifest(connector_source_root: Path) -> dict:
+    """Read `<connector_source_root>/build-manifest.json` if present.
+    Falls back to a minimal manifest inferred from csproj filenames so
+    older connector roots without a manifest still get a deploy gate."""
+    p = connector_source_root / "build-manifest.json"
+    if p.exists():
+        try:
+            import json as _json
+            return _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    # Inferred fallback: each csproj's basename → expected .dll.
+    expected = []
+    for proj in connector_source_root.glob("*.csproj"):
+        expected.append(proj.stem + ".dll")
+    return {"expected_artifacts": expected, "addin_manifests": [],
+            "sha256": {}}
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_build_output(output_dir: Path, source_roots: list[Path],
+                         host_label: str) -> tuple[bool, str, list[str]]:
+    """Deploy gate.  Aggregates manifests across every source root for
+    a host (e.g. revit_mcp + revit_mcp_core), then verifies each
+    expected artifact exists in `output_dir`.  When SHA-256 entries are
+    present in any manifest, verifies them too.  Returns
+    (ok, error_message, missing_artifacts)."""
+    expected: set[str] = set()
+    sha_pins: dict[str, str] = {}
+    for root in source_roots:
+        m = _load_build_manifest(root)
+        for art in m.get("expected_artifacts", []) or []:
+            expected.add(art)
+        for art, sha in (m.get("sha256", {}) or {}).items():
+            if sha:
+                sha_pins[art] = sha
+    missing = [name for name in expected
+               if not (output_dir / name).is_file()]
+    if missing:
+        return (False,
+                f"incomplete_build: {host_label} missing " + ", ".join(missing),
+                missing)
+    # SHA-256 verify only when pins were declared.  Builds without
+    # `<Deterministic>true</Deterministic>` can't satisfy this — auto_build
+    # writes the sha back into the manifest on first successful build
+    # of the connector (`_record_build_shas`).
+    mismatches: list[str] = []
+    for name, expected_sha in sha_pins.items():
+        actual = _sha256_file(output_dir / name)
+        if actual.lower() != expected_sha.lower():
+            mismatches.append(name)
+    if mismatches:
+        return (False,
+                f"sha_mismatch: {host_label} bytes differ for "
+                + ", ".join(mismatches),
+                mismatches)
+    return (True, "", [])
+
+
+def _record_build_shas(output_dir: Path, source_roots: list[Path]) -> None:
+    """After a clean local build, write SHA-256 of each declared
+    artifact back into its own connector's manifest.  Skips entries
+    whose `sha256` key is `null` / missing.  Idempotent — running
+    twice yields the same content (Deterministic builds)."""
+    import json as _json
+    for root in source_roots:
+        manifest_path = root / "build-manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            m = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not m.get("record_shas_on_build", False):
+            continue
+        sha_map = m.get("sha256") or {}
+        changed = False
+        for art in m.get("expected_artifacts", []) or []:
+            dll_path = output_dir / art
+            if dll_path.is_file():
+                actual = _sha256_file(dll_path)
+                if sha_map.get(art) != actual:
+                    sha_map[art] = actual
+                    changed = True
+        if changed:
+            m["sha256"] = sha_map
+            manifest_path.write_text(
+                _json.dumps(m, indent=2) + "\n", encoding="utf-8")
+
+
+# ─── AgDR-0030 — bundled pinned Roslyn csc.exe ────────────────────────
+#
+# Fork B3 (signed 2026-05-21): bundle ONCE at
+# `%LOCALAPPDATA%\ArchHub\bin\csc\csc.exe`.  Every connector deploy
+# inherits it — no per-host duplication.  Downloaded on first connector
+# build if missing.  ScriptCompiler probes this path FIRST per Fork A1.
+
+_ROSLYN_TOOLSET_VERSION = "4.11.0"
+_ROSLYN_TOOLSET_NUPKG_URL = (
+    f"https://www.nuget.org/api/v2/package/"
+    f"Microsoft.Net.Compilers.Toolset/{_ROSLYN_TOOLSET_VERSION}"
+)
+
+
+def _bundled_csc_dir() -> Path:
+    return (Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+            / "ArchHub" / "bin" / "csc")
+
+
+def ensure_bundled_csc(on_progress=None) -> Path | None:
+    """Make sure a pinned modern Roslyn csc.exe sits at
+    `%LOCALAPPDATA%\\ArchHub\\bin\\csc\\csc.exe`.  Returns the path
+    (whether pre-existing or freshly downloaded) or None on failure.
+
+    Idempotent — does nothing if already present.  Called by every
+    `build_*_connector` so the deploy box always has at least ONE
+    usable csc, regardless of SDK/BuildTools state."""
+    on_progress = on_progress or (lambda *_a, **_kw: None)
+    dest_dir = _bundled_csc_dir()
+    dest_csc = dest_dir / "csc.exe"
+    if dest_csc.exists():
+        return dest_csc
+
+    on_progress("Bundling Roslyn csc", 5,
+                f"Downloading Microsoft.Net.Compilers.Toolset {_ROSLYN_TOOLSET_VERSION}")
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # nupkg = zip — grab + extract just `tasks/net472/csc.exe` (and its
+        # sibling DLLs).  net472 build has the standalone csc.exe; the
+        # net core build needs `dotnet exec`.
+        import io
+        import zipfile
+        nupkg_bytes = urllib.request.urlopen(
+            _ROSLYN_TOOLSET_NUPKG_URL, timeout=120).read()
+        with zipfile.ZipFile(io.BytesIO(nupkg_bytes)) as z:
+            prefix = "tasks/net472/"
+            members = [n for n in z.namelist() if n.startswith(prefix)
+                       and not n.endswith("/")]
+            for name in members:
+                rel = name[len(prefix):]
+                target = dest_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(name) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        if dest_csc.exists():
+            on_progress("Bundled csc ready", 10, str(dest_csc))
+            return dest_csc
+        on_progress("Bundle failed", 10, "csc.exe missing after extract")
+        return None
+    except Exception as ex:
+        on_progress("Bundle failed", 10, str(ex))
+        return None
+
+
+def _build_dotnet_connector(host_label: str, year: int,
+                            sources_glob: str, output_subdir: str,
+                            msbuild_props: dict, target_framework: str,
+                            on_progress: ProgressFn) -> BuildResult:
+    """Build EVERY *.csproj under SOURCES_DIR matching `sources_glob`
+    into ONE output dir.  Hard-fails on any individual csproj build
+    failure (no half-deploy).  Verifies the deploy manifest after build.
+
+    `sources_glob` example: 'revit_mcp*' (picks revit_mcp +
+    revit_mcp_core).  Note: matches DIRECTORIES, then we glob *.csproj
+    inside each.
+    """
+    source_roots = sorted(
+        p for p in SOURCES_DIR.glob(sources_glob) if p.is_dir())
+    if not source_roots:
+        return BuildResult(False,
+            f"no source roots match {sources_glob} under {SOURCES_DIR}", [])
+    csprojs: list[Path] = []
+    for root in source_roots:
+        csprojs.extend(sorted(root.glob("*.csproj")))
+    if not csprojs:
+        return BuildResult(False,
+            f"no csprojs found under {[str(r) for r in source_roots]}", [])
+
+    output_dir = PAYLOAD_DIR / output_subdir / str(year)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build every csproj into the SAME output_dir.  AgDR-0027 split
+    # forces RevitMCP.dll + RevitMCPCore.dll to land next to each other.
+    n = len(csprojs)
+    for i, proj in enumerate(csprojs):
+        stage_pct = 20 + int(60 * i / n)
+        on_progress(f"Building {proj.name}", stage_pct,
+                    f"({i + 1}/{n})")
+        ok, last = _run_dotnet_build(
+            project_path=proj,
+            target_framework=target_framework,
+            msbuild_props=msbuild_props,
+            output_dir=output_dir,
+            on_progress=on_progress,
+        )
+        if not ok:
+            return BuildResult(False,
+                f"{proj.name}: {last or 'build failed'}", [])
+
+    # Copy any .addin manifests sitting next to a csproj into the
+    # same output (Revit needs them paired with the DLL).
+    for root in source_roots:
+        for addin in root.glob("*.addin"):
+            try: shutil.copy2(addin, output_dir / addin.name)
+            except Exception: pass
+
+    # Deploy gate — verify expected artifacts + optional SHA-256.
+    ok, err, missing = _verify_build_output(output_dir, source_roots, host_label)
+    if not ok:
+        return BuildResult(False, err, [output_dir / m for m in missing])
+
+    # Record fresh SHA-256s for any manifest opting in.
+    _record_build_shas(output_dir, source_roots)
+
+    artifacts = [p for p in output_dir.iterdir() if p.is_file()]
+    on_progress("Done", 100, "{} files in {}".format(len(artifacts), output_dir))
+    return BuildResult(True, "Built {} files.".format(len(artifacts)), artifacts)
+
+
 def build_revit_connector(year: int,
                           on_progress=None) -> BuildResult:
-    """Build RevitMCP.dll for the given year and copy into payload/revit/<year>/."""
+    """Build RevitMCP.dll + RevitMCPCore.dll + any other csproj under
+    payload/sources/revit_mcp* into payload/revit/<year>/.
+
+    AgDR-0029 — the build is now data-driven: every csproj under
+    a `revit_mcp*` dir is built.  When AgDR-0027 split RevitMCP into
+    shim + core, this picks up the Core csproj automatically.
+    """
     on_progress = on_progress or (lambda *_a, **_kw: None)
 
     on_progress("Locating Revit", 5, "Searching for Revit {}...".format(year))
@@ -289,43 +565,30 @@ def build_revit_connector(year: int,
     if revit_dir is None:
         return BuildResult(False, "Revit {} not found in standard locations.".format(year), [])
 
-    src = SOURCES_DIR / "revit_mcp"
-    if not (src / "RevitMCP.csproj").exists():
-        return BuildResult(False, "Revit connector source not bundled at {}.".format(src), [])
-
     on_progress("Checking .NET SDK", 10, "")
     if detect_dotnet_sdk() is None:
         return BuildResult(False, "no_dotnet_sdk", [])
 
-    tf = _target_framework_for_revit(year)
+    # AgDR-0030 — make sure a usable Roslyn csc is on this box before
+    # we ship a Core that depends on /exec compiling at runtime.
+    # Best-effort: if the bundle fails we still build, but the user
+    # will get csc_missing on /exec until they install an SDK.
+    ensure_bundled_csc(on_progress=on_progress)
 
-    # For Revit 2023/2024 (net48): the csproj now uses Microsoft.NETFramework.ReferenceAssemblies
-    # NuGet package which provides reference assemblies without requiring the Developer Pack.
-    # No manual installation needed — dotnet restore pulls it automatically.
+    tf = _target_framework_for_revit(year)
     if tf == "net48":
         on_progress("Preparing net48 build", 15,
                     "Using NuGet reference assemblies (no Developer Pack needed)")
 
-    output_dir = PAYLOAD_DIR / "revit" / str(year)
-    success, last_line = _run_dotnet_build(
-        project_path=src / "RevitMCP.csproj",
-        target_framework=tf,
+    return _build_dotnet_connector(
+        host_label="revit",
+        year=year,
+        sources_glob="revit_mcp*",  # picks revit_mcp + revit_mcp_core
+        output_subdir="revit",
         msbuild_props={"RevitInstallDir": str(revit_dir)},
-        output_dir=output_dir,
+        target_framework=tf,
         on_progress=on_progress,
     )
-
-    if not success:
-        return BuildResult(False, last_line or "build failed", [])
-
-    # Copy the .addin manifest (Revit needs both DLL + manifest)
-    addin_src = src / "RevitMCP.addin"
-    if addin_src.exists():
-        shutil.copy2(addin_src, output_dir / "RevitMCP.addin")
-
-    artifacts = [p for p in output_dir.iterdir() if p.is_file()]
-    on_progress("Done", 100, "{} files in {}".format(len(artifacts), output_dir))
-    return BuildResult(True, "Built {} files.".format(len(artifacts)), artifacts)
 
 
 # ---------------------------------------------------------------------------
@@ -364,27 +627,39 @@ def build_acad_connector(year: int,
                 "Restart Windows and toggle the connector again.", [])
         on_progress("Developer Pack installed", 55, "")
 
-    output_dir = PAYLOAD_DIR / "autocad" / str(year)
-    success, last_line = _run_dotnet_build(
-        project_path=src / "AcadMCP.csproj",
-        target_framework=tf,
+    # AgDR-0030 — same bundled csc availability check for AcadMCP.
+    ensure_bundled_csc(on_progress=on_progress)
+
+    # AgDR-0029 — data-driven build picks up every csproj under
+    # acad_mcp* so a future shim+core split lands without script edits.
+    return _build_dotnet_connector(
+        host_label="acad",
+        year=year,
+        sources_glob="acad_mcp*",
+        output_subdir="autocad",
         msbuild_props={"AcadInstallDir": str(acad_dir)},
-        output_dir=output_dir,
+        target_framework=tf,
         on_progress=on_progress,
     )
-
-    if not success:
-        return BuildResult(False, last_line or "build failed", [])
-
-    artifacts = [p for p in output_dir.iterdir() if p.is_file()]
-    on_progress("Done", 100, "{} files in {}".format(len(artifacts), output_dir))
-    return BuildResult(True, "Built {} files.".format(len(artifacts)), artifacts)
 
 
 # ---------------------------------------------------------------------------
 def install_max_connector(year: int,
                           on_progress=None) -> BuildResult:
-    """3ds Max connector — no compile needed, just copy scripts into Max startup folder."""
+    """3ds Max connector — copy startup scripts into Max's PER-USER
+    startup folder (not the install dir).
+
+    3ds Max loads startup scripts from THREE locations on launch:
+      1. <install>\\scripts\\startup\\          (Program Files — admin only)
+      2. %LOCALAPPDATA%\\Autodesk\\3dsMax\\<year> - 64bit\\ENU\\scripts\\startup\\
+      3. %LOCALAPPDATA%\\Autodesk\\3dsMax\\<year> - 64bit\\ENU\\scripts\\Startup\\
+
+    The previous version wrote to (1), which on Windows requires admin
+    perms — silent failure when ArchHub runs as a normal user. (2) is
+    the right destination per Autodesk docs and per the comment at the
+    top of max_mcp_startup.py. We copy to (2) so non-admin installs
+    actually work.
+    """
     on_progress = on_progress or (lambda *_a, **_kw: None)
 
     on_progress("Locating 3ds Max", 5, "Searching for 3ds Max {}...".format(year))
@@ -396,7 +671,12 @@ def install_max_connector(year: int,
     if not src.exists():
         return BuildResult(False, "3ds Max connector source not bundled.", [])
 
-    startup_dir = max_dir / "scripts" / "startup"
+    # Per-user startup dir.
+    local_app = Path(os.environ.get("LOCALAPPDATA",
+                                     str(Path.home() / "AppData" / "Local")))
+    startup_dir = (local_app / "Autodesk" / "3dsMax"
+                   / f"{year} - 64bit" / "ENU" / "scripts" / "startup")
+    on_progress("Preparing startup dir", 20, str(startup_dir))
     startup_dir.mkdir(parents=True, exist_ok=True)
 
     copied = []
@@ -405,10 +685,84 @@ def install_max_connector(year: int,
             dst = startup_dir / f.name
             shutil.copy2(f, dst)
             copied.append(dst)
-            on_progress("Copying", 50, "{}".format(f.name))
+            on_progress("Copying", 60, f.name)
 
     if not copied:
         return BuildResult(False, "No Max scripts found in source.", [])
 
-    on_progress("Done", 100, "{} scripts installed".format(len(copied)))
-    return BuildResult(True, "Installed {} scripts.".format(len(copied)), copied)
+    # ALSO copy into the install-dir startup as a fallback (best-effort,
+    # silently skips when running as non-admin). Helps in shops where
+    # the per-user dir gets pruned by IT.
+    install_startup = max_dir / "scripts" / "startup"
+    try:
+        install_startup.mkdir(parents=True, exist_ok=True)
+        for f in src.iterdir():
+            if f.suffix in (".ms", ".py", ".mcr"):
+                shutil.copy2(f, install_startup / f.name)
+    except (PermissionError, OSError):
+        pass
+
+    on_progress("Done", 100,
+                "{} scripts at {}".format(len(copied), startup_dir))
+    return BuildResult(True,
+                       "Installed {} scripts to user startup dir.".format(len(copied)),
+                       copied)
+
+
+# ─── AgDR-0029 — CLI entry so batch scripts call one canonical path ──
+#
+# Replaces the inline `dotnet build` invocations in
+# FixAndTestRevit2025.bat / BuildRevit2023.bat with:
+#   py app/auto_build.py revit 2025
+# Single source of truth: the same code path the Connectors panel uses.
+#
+# Founder note 2026-05-21: "don't do shortcuts and ruin other work."
+# This CLI intentionally writes the SAME progress lines the panel sees,
+# so users running the bat get a familiar transcript, and the bat's
+# success/failure exit code is honest (0 on green, 1 on any failure).
+
+def _cli_progress(stage: str, pct: int, line: str) -> None:
+    msg = f"[{pct:3d}%] {stage}"
+    if line:
+        msg += f": {line}"
+    print(msg, flush=True)
+
+
+def main(argv=None) -> int:
+    import sys
+    argv = argv if argv is not None else sys.argv[1:]
+    if len(argv) < 2 or argv[0] in ("-h", "--help", "help"):
+        print("Usage: py app/auto_build.py <host> <year>")
+        print("  host = revit | acad | max")
+        return 2
+    host = argv[0].lower()
+    try:
+        year = int(argv[1])
+    except ValueError:
+        print(f"Year must be an integer; got {argv[1]!r}")
+        return 2
+    if host == "revit":
+        result = build_revit_connector(year, on_progress=_cli_progress)
+    elif host in ("acad", "autocad"):
+        result = build_acad_connector(year, on_progress=_cli_progress)
+    elif host in ("max", "3dsmax", "3ds_max"):
+        result = install_max_connector(year, on_progress=_cli_progress)
+    else:
+        print(f"Unknown host {host!r}; want revit | acad | max")
+        return 2
+
+    print()
+    if result.success:
+        print(f"SUCCESS: {result.detail}")
+        if result.artifacts:
+            # Windows console codepage may be cp1252 — stick to ASCII.
+            print(f"  -> {len(result.artifacts)} artifact(s) in "
+                  f"{result.artifacts[0].parent}")
+        return 0
+    print(f"FAILED: {result.detail}")
+    return 1
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

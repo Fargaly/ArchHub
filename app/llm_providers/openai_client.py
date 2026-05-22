@@ -49,7 +49,9 @@ class OpenAIClient:
         messages: list[dict],
         tools: list[dict],
         on_chunk: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> dict:
+        on_reasoning = on_reasoning or (lambda _: None)
         oa_messages: list[dict] = [{"role": "system", "content": system}]
         for m in messages:
             role = m["role"]
@@ -114,6 +116,17 @@ class OpenAIClient:
             if delta and delta.content:
                 text_accum.append(delta.content)
                 on_chunk(delta.content)
+            # OpenAI o1/o3/GPT-5 emit reasoning summaries on a separate
+            # delta field. Stream those to on_reasoning so the chat
+            # surface shows model thinking without polluting the answer.
+            if delta:
+                reasoning = getattr(delta, "reasoning", None)
+                if reasoning:
+                    try:
+                        on_reasoning(reasoning if isinstance(reasoning, str)
+                                     else getattr(reasoning, "content", "") or "")
+                    except Exception:
+                        pass
 
             if delta and getattr(delta, "tool_calls", None):
                 for tc_delta in delta.tool_calls:

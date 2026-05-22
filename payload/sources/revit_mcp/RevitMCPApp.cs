@@ -1,193 +1,137 @@
+// AgDR-0027 — RevitMCP SHIM.  Stable thin loader.  Reflection-only
+// ABI to Core (no shared interface types) — see CoreLoader.cs header.
+//
+// Owns the Revit lifecycle (IExternalApplication) + the UI-thread
+// work pump (IExternalEventHandler).  Boots the hot-reloadable
+// Core DLL via ArchHub.Shared.CoreLoader.  Updates to Core land
+// without restarting Revit (net8 ALC unload).
+
 using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Net;
-using System.Text;
-using System.Threading;
+using System.Reflection;
 using System.Threading.Tasks;
-using Autodesk.Revit.ApplicationServices;
-using Autodesk.Revit.Attributes;
-using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using ArchHub.Shared;
 
 namespace RevitMCP
 {
-    /// <summary>
-    /// External application that boots an HTTP server on Revit startup.
-    /// All API work is marshalled to the Revit UI thread via ExternalEvent.
-    /// </summary>
-    [Regeneration(RegenerationOption.Manual)]
     public class RevitMCPApp : IExternalApplication
     {
-        private const string ListenPrefix = "http://localhost:48884/";
-
-        private HttpListener _listener;
-        private CancellationTokenSource _cts;
         private RevitEventHandler _handler;
         private ExternalEvent _externalEvent;
+        private CoreLoader _loader;
+        private string _revitVersion = "";
+        private static bool _resolverInstalled;
+        private static readonly object _resolverLock = new object();
 
-        public Result OnStartup(UIControlledApplication application)
+        public Result OnStartup(UIControlledApplication app)
         {
             try
             {
+                try { _revitVersion = app.ControlledApplication.VersionNumber ?? ""; }
+                catch { _revitVersion = ""; }
+
+                InstallAssemblyResolver();
+                Log("Shim OnStartup begin; revit_version=" + _revitVersion);
+
                 _handler = new RevitEventHandler();
                 _externalEvent = ExternalEvent.Create(_handler);
                 _handler.AttachEvent(_externalEvent);
 
-                _cts = new CancellationTokenSource();
-                Task.Run(() => RunListenerAsync(_cts.Token));
-
-                Log("RevitMCP started. Listening on " + ListenPrefix);
+                var addinDir = Path.GetDirectoryName(typeof(RevitMCPApp).Assembly.Location);
+                var corePath = Path.Combine(addinDir, "RevitMCPCore.dll");
+                if (!File.Exists(corePath))
+                {
+                    Log("RevitMCPCore.dll missing at " + corePath);
+                    return Result.Failed;
+                }
+                _loader = new CoreLoader(Log);
+                LoadCoreInto(corePath);
+                Log("Shim OnStartup ok; port=" + _loader.BoundPort);
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
-                Log("RevitMCP startup failed: " + ex);
+                Log("RevitMCP shim startup failed: " + ex);
                 return Result.Failed;
             }
         }
 
-        public Result OnShutdown(UIControlledApplication application)
+        public Result OnShutdown(UIControlledApplication app)
         {
-            try { _cts?.Cancel(); } catch { }
-            try { _listener?.Stop(); } catch { }
+            try { _loader?.Unload(); } catch { }
             try { _externalEvent?.Dispose(); } catch { }
+            _loader = null;
             return Result.Succeeded;
         }
 
-        // ------------------------------------------------------------------
-
-        private async Task RunListenerAsync(CancellationToken ct)
+        private void LoadCoreInto(string corePath)
         {
-            try
+            var sha = CoreLoader.Sha256OfFile(corePath);
+            var hostInfo = new Dictionary<string, string>
             {
-                _listener = new HttpListener();
-                _listener.Prefixes.Add(ListenPrefix);
-                _listener.Start();
-            }
-            catch (Exception ex)
+                ["host_family"]  = "revit",
+                ["host_version"] = _revitVersion,
+                ["pid"]          = System.Diagnostics.Process.GetCurrentProcess().Id.ToString(),
+                ["core_path"]    = corePath,
+                ["core_sha"]     = sha,
+            };
+            // Reload trigger — Core stores this delegate so /reload can
+            // ask the shim to swap to a new Core DLL.
+            Action<string> reloadTrigger = (newPath) =>
             {
-                Log("HttpListener.Start failed: " + ex);
-                return;
-            }
-
-            while (!ct.IsCancellationRequested)
-            {
-                HttpListenerContext context;
                 try
                 {
-                    context = await _listener.GetContextAsync().ConfigureAwait(false);
+                    Log("Hot-reload triggered → " + newPath);
+                    _loader.Unload();
+                    LoadCoreInto(newPath);
                 }
-                catch (Exception)
-                {
-                    break;
-                }
-                _ = ProcessRequestAsync(context); // fire and forget
+                catch (Exception ex) { Log("Reload failed: " + ex); }
+            };
+
+            // Submit-to-UI delegate — Core hands us a Func<object,string>;
+            // we hand the live UIApplication on the UI thread.
+            Func<Func<object, string>, Task<string>> submit = fn => _handler.SubmitAsync(fn);
+
+            _loader.Load(corePath, submit, hostInfo, Log, reloadTrigger);
+        }
+
+        private static void InstallAssemblyResolver()
+        {
+            lock (_resolverLock)
+            {
+                if (_resolverInstalled) return;
+                AppDomain.CurrentDomain.AssemblyResolve += AddinDirResolver;
+                _resolverInstalled = true;
             }
         }
 
-        private async Task ProcessRequestAsync(HttpListenerContext context)
+        private static Assembly AddinDirResolver(object sender, ResolveEventArgs args)
         {
-            string responseJson;
             try
             {
-                var path = (context.Request.Url.AbsolutePath ?? "/").TrimEnd('/');
-                if (string.IsNullOrEmpty(path)) path = "/";
-                var method = context.Request.HttpMethod;
-
-                string body = string.Empty;
-                if (context.Request.HasEntityBody)
-                {
-                    using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding ?? Encoding.UTF8))
-                    {
-                        body = await reader.ReadToEndAsync().ConfigureAwait(false);
-                    }
-                }
-
-                responseJson = await RouteAsync(path, method, body).ConfigureAwait(false);
+                var requested = new AssemblyName(args.Name);
+                var addinDir = Path.GetDirectoryName(typeof(RevitMCPApp).Assembly.Location);
+                if (string.IsNullOrEmpty(addinDir)) return null;
+                var candidate = Path.Combine(addinDir, requested.Name + ".dll");
+                if (File.Exists(candidate)) return Assembly.LoadFrom(candidate);
+                candidate = Path.Combine(addinDir, requested.Name + ".resources.dll");
+                if (File.Exists(candidate)) return Assembly.LoadFrom(candidate);
             }
             catch (Exception ex)
             {
-                responseJson = JsonError("Unhandled server error: " + ex.Message);
-            }
-
-            try
-            {
-                var bytes = Encoding.UTF8.GetBytes(responseJson ?? "{}");
-                context.Response.ContentType = "application/json; charset=utf-8";
-                context.Response.ContentLength64 = bytes.Length;
-                context.Response.StatusCode = 200;
-                await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
-                context.Response.OutputStream.Close();
-            }
-            catch (Exception ex)
-            {
-                Log("Response write failed: " + ex);
-            }
-        }
-
-        private async Task<string> RouteAsync(string path, string method, string body)
-        {
-            switch (path)
-            {
-                case "/":
-                case "/ping":
-                    return "{\"status\":\"ok\",\"service\":\"revit-mcp\",\"version\":\"0.2.0\"}";
-
-                case "/info":
-                    return await _handler.RunOnRevitThreadAsync(ctx =>
-                    {
-                        var doc = ctx.UIApp.ActiveUIDocument?.Document;
-                        if (doc == null) return JsonError("No active document.");
-                        var view = ctx.UIApp.ActiveUIDocument.ActiveView;
-                        var sb = new StringBuilder();
-                        sb.Append("{\"status\":\"ok\"");
-                        sb.Append(",\"document_title\":\"").Append(JsonEscape(doc.Title)).Append('\"');
-                        sb.Append(",\"document_path\":\"").Append(JsonEscape(doc.PathName ?? "")).Append('\"');
-                        sb.Append(",\"is_workshared\":").Append(doc.IsWorkshared ? "true" : "false");
-                        sb.Append(",\"active_view\":\"").Append(JsonEscape(view?.Name ?? "")).Append('\"');
-                        sb.Append(",\"revit_version\":\"").Append(JsonEscape(ctx.UIApp.Application.VersionName)).Append('\"');
-                        sb.Append(",\"username\":\"").Append(JsonEscape(ctx.UIApp.Application.Username ?? "")).Append('\"');
-                        sb.Append('}');
-                        return sb.ToString();
-                    }).ConfigureAwait(false);
-
-                case "/exec":
-                    return await _handler.ExecuteCSharpAsync(body).ConfigureAwait(false);
-
-                case "/screenshot":
-                    return await _handler.ScreenshotAsync(body).ConfigureAwait(false);
-
-                default:
-                    return JsonError("Unknown route: " + path);
-            }
-        }
-
-        // ------------------------------------------------------------------
-
-        public static string JsonEscape(string s)
-        {
-            if (s == null) return string.Empty;
-            var sb = new StringBuilder(s.Length + 8);
-            foreach (var c in s)
-            {
-                switch (c)
+                try
                 {
-                    case '\\': sb.Append("\\\\"); break;
-                    case '\"': sb.Append("\\\""); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        if (c < 0x20) sb.AppendFormat("\\u{0:X4}", (int)c);
-                        else sb.Append(c);
-                        break;
+                    File.AppendAllText(
+                        Path.Combine(Path.GetTempPath(), "RevitMCP.AssemblyResolve.log"),
+                        DateTime.UtcNow.ToString("o") + "  " + args.Name + "  ERR: "
+                            + ex.Message + "\n");
                 }
+                catch { }
             }
-            return sb.ToString();
+            return null;
         }
-
-        public static string JsonError(string msg) =>
-            "{\"status\":\"error\",\"error\":\"" + JsonEscape(msg) + "\"}";
 
         public static void Log(string msg)
         {

@@ -149,6 +149,15 @@ class Session:
         self.created_at: float = time.time()
         self.parameters: dict[str, Parameter] = {}
         self.chain: list[ChainStep] = []
+        # ADR-003 Phase 2: dual-write a graph projection alongside the
+        # legacy chain. `graph` carries the Workflow.to_dict() shape from
+        # app.workflows.graph. Sessions without an explicit graph keep
+        # `graph=None` and behave as before; legacy chats migrate by
+        # wrapping their messages in a single `conversation.chat` node
+        # at save time (see session_graph_migrator.wrap_legacy_as_graph).
+        # We hold the dict shape (not the Workflow class) so session.py
+        # stays import-cheap and UI/engine-agnostic.
+        self.graph: Optional[dict] = None
 
         self.on_parameter_added:   Optional[Callable[[Parameter], None]] = None
         self.on_parameter_changed: Optional[Callable[[Parameter], None]] = None
@@ -241,11 +250,16 @@ class Session:
     # ---- serialization ----
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id, "created_at": self.created_at,
             "parameters": [p.to_dict() for p in self.parameters.values()],
             "chain": [s.to_dict() for s in self.chain],
         }
+        # ADR-003 Phase 2: dual-write graph projection when present.
+        # Older session files without `graph` round-trip unchanged.
+        if self.graph is not None:
+            d["graph"] = self.graph
+        return d
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, default=str)

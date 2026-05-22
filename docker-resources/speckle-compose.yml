@@ -1,0 +1,84 @@
+# ArchHub-bundled minimal Speckle Server.
+#
+# Used by `app/speckle_server.py.start_local()` when the user places a
+# SHARE node in their workflow. On first start, this file is copied to
+# `%LOCALAPPDATA%/ArchHub/speckle-server/docker-compose.yml` so the user
+# can edit it (add HTTPS / Tailscale / custom credentials / etc.)
+# without ArchHub clobbering changes on update.
+#
+# For a full production stack (frontend + preview-service + …) replace
+# with the official Speckle compose:
+# https://github.com/specklesystems/speckle-server/blob/main/docker-compose.yml
+#
+# DEFAULT CREDENTIALS — change before exposing to LAN / remote.
+services:
+  postgres:
+    image: postgres:14-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: speckle
+      POSTGRES_USER: speckle
+      POSTGRES_PASSWORD: speckle
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U speckle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: speckle
+      MINIO_ROOT_PASSWORD: speckle1234
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  speckle-server:
+    image: speckle/speckle-server:2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      POSTGRES_URL: "postgres:5432/speckle?user=speckle&password=speckle"
+      REDIS_URL: "redis://redis:6379"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_ACCESS_KEY: speckle
+      S3_SECRET_KEY: speckle1234
+      S3_BUCKET: speckle-server
+      S3_CREATE_BUCKET: "true"
+      CANONICAL_URL: "http://localhost:3000"
+      SESSION_SECRET: "archhub-local-dev-secret-replace-in-prod"
+      LOG_LEVEL: info
+      LOG_PRETTY: "true"
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

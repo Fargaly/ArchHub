@@ -28,6 +28,9 @@ from .library import (
 # Tool nodes are registered separately via register_tool_nodes() once
 # tool_engine.TOOLS is available.
 from . import nodes  # noqa: F401
+# Importing the subgraph module registers `subgraph.user` + the internal
+# `subgraph._seed` helper used during nested cooks.
+from . import subgraph  # noqa: F401
 
 __all__ = [
     "Workflow", "Node", "Edge", "Port", "PortType", "Trigger", "SCHEMA_VERSION",

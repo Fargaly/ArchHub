@@ -33,8 +33,23 @@ from pymxs import runtime as rt
 # Config
 # ---------------------------------------------------------------------------
 HOST = "127.0.0.1"
-PORT = 48886
+PORT_FIRST = 48886           # first-free in this range wins (multi-session)
+PORT_LAST  = 48899
 ROUTE_PREFIX = "/max-mcp"
+
+# Where session metadata lands so ArchHub's broker can route to a
+# specific 3ds Max instance. Mirrors Revit's session-file pattern.
+import os as _os
+import json as _json
+from pathlib import Path as _Path
+from datetime import datetime as _dt, timezone as _tz
+SESSIONS_DIR = (
+    _Path(_os.environ.get("LOCALAPPDATA",
+                           str(_Path.home() / "AppData" / "Local")))
+    / "ArchHub" / "sessions"
+)
+_SESSION_FILE: _Path | None = None
+_BOUND_PORT: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +210,111 @@ class _Handler(BaseHTTPRequestHandler):
         return self._reply({"status": "error", "error": f"Unknown route: {path}"})
 
 
+def _bind_first_free(host: str) -> "ThreadingHTTPServer | None":
+    """Try ports in [PORT_FIRST..PORT_LAST]. First successful bind wins.
+
+    Required for multi-session 3ds Max — without this, a second Max
+    instance silently fails to bind 48886 and stays invisible to
+    ArchHub. Mirrors Revit DLL's port-range bind from v0.27.5.
+    """
+    for p in range(PORT_FIRST, PORT_LAST + 1):
+        try:
+            srv = ThreadingHTTPServer((host, p), _Handler)
+        except OSError:
+            continue
+        global _BOUND_PORT
+        _BOUND_PORT = p
+        print(f"[MaxMCP] Listening on http://{host}:{p}{ROUTE_PREFIX}")
+        return srv
+    print(f"[MaxMCP] Could not bind any port in [{PORT_FIRST}..{PORT_LAST}]")
+    return None
+
+
 def _start_server() -> None:
-    server = ThreadingHTTPServer((HOST, PORT), _Handler)
-    print(f"[MaxMCP] Listening on http://{HOST}:{PORT}{ROUTE_PREFIX}")
-    server.serve_forever()
+    srv = _bind_first_free(HOST)
+    if srv is None:
+        return
+    _publish_session_file()
+    _start_heartbeat_thread()
+    srv.serve_forever()
+
+
+# ---------------------------------------------------------------------------
+# Session registry — ArchHub broker scans this directory.
+# ---------------------------------------------------------------------------
+def _scene_title() -> str:
+    try:
+        return f"{rt.maxFilePath}{rt.maxFileName}".strip()
+    except Exception:
+        return ""
+
+
+def _max_version() -> str:
+    try:
+        return str(rt.maxVersion()[0])
+    except Exception:
+        return ""
+
+
+def _publish_session_file() -> None:
+    global _SESSION_FILE
+    if _BOUND_PORT is None:
+        return
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    pid = _os.getpid()
+    path = SESSIONS_DIR / f"max-{pid}.json"
+    _write_session(path, pid, heartbeat=False)
+    _SESSION_FILE = path
+
+
+def _write_session(path: "_Path", pid: int, heartbeat: bool) -> None:
+    now = _dt.now(_tz.utc).isoformat()
+    payload = {
+        "session_id":     f"max-{pid}",
+        "family":         "max",
+        "pid":            pid,
+        "port":           _BOUND_PORT,
+        "version":        _max_version(),
+        "doc_title":      _scene_title(),
+        "started_at":     now,
+        "last_heartbeat": now,
+        "heartbeat":      heartbeat,
+    }
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(payload), encoding="utf-8")
+    try:
+        tmp.replace(path)
+    except Exception:
+        path.write_text(_json.dumps(payload), encoding="utf-8")
+
+
+def _start_heartbeat_thread() -> None:
+    pid = _os.getpid()
+
+    def _loop() -> None:
+        import time as _t
+        while True:
+            _t.sleep(10)
+            if _SESSION_FILE is None:
+                continue
+            try:
+                _write_session(_SESSION_FILE, pid, heartbeat=True)
+            except Exception:
+                pass
+    threading.Thread(target=_loop, name="MaxMCP-Heartbeat",
+                     daemon=True).start()
+
+
+def _cleanup_session_file() -> None:
+    if _SESSION_FILE is not None and _SESSION_FILE.exists():
+        try:
+            _SESSION_FILE.unlink()
+        except Exception:
+            pass
+
+
+import atexit as _atexit
+_atexit.register(_cleanup_session_file)
 
 
 # ---------------------------------------------------------------------------

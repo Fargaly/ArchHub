@@ -127,6 +127,19 @@ class TestTelemetryConsent:
 class TestTokenMeter:
     @pytest.fixture(autouse=True)
     def _redirect_meter(self, tmp_path, monkeypatch):
+        # Other tests prepend app/ to sys.path, which shadows the
+        # top-level agents/ package (app/agents/ has no token_meter).
+        # Force REPO_ROOT to the front of sys.path AND wipe any cached
+        # `agents.*` from the app variant so the import resolves
+        # against repo-root agents/.
+        import sys as _sys
+        repo = str(REPO_ROOT)
+        if repo in _sys.path:
+            _sys.path.remove(repo)
+        _sys.path.insert(0, repo)
+        for k in [k for k in list(_sys.modules.keys())
+                   if k == "agents" or k.startswith("agents.")]:
+            _sys.modules.pop(k, None)
         import agents.token_meter as tm
         monkeypatch.setattr(tm, "_METER_PATH", tmp_path / "meter.json")
         yield

@@ -248,22 +248,48 @@ class _AutoCADSpec:
 class _MaxSpec:
     family = "max"
 
-    def _target(self, entry: ConnectorEntry) -> Path:
-        return entry.detected_path / "max_mcp_startup.py"  # type: ignore[union-attr]
+    def _user_target(self, entry: ConnectorEntry) -> Path:
+        # Per-user startup dir — Max loads from here without admin
+        # rights. Was: install dir under Program Files (admin only).
+        year = entry.version or ""
+        local = Path(os.environ.get("LOCALAPPDATA",
+                                     str(Path.home() / "AppData" / "Local")))
+        return (local / "Autodesk" / "3dsMax"
+                / f"{year} - 64bit" / "ENU" / "scripts" / "startup"
+                / "max_mcp_startup.py")
+
+    def _src(self, payload_dir: Path) -> Path:
+        # Sources live under payload/sources/max_mcp/. Old code looked
+        # at payload/max/ which never existed — caused the
+        # "payload missing for 3ds Max" toggle failure.
+        return payload_dir / "sources" / "max_mcp" / "max_mcp_startup.py"
 
     def activate(self, entry: ConnectorEntry, payload_dir: Path) -> None:
-        src = payload_dir / "max" / "max_mcp_startup.py"
+        src = self._src(payload_dir)
         if not src.exists():
             raise RuntimeError("payload missing for 3ds Max")
-        shutil.copy2(src, self._target(entry))
+        target = self._user_target(entry)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+        # Best-effort secondary copy to install dir (admin machines).
+        try:
+            install_target = entry.detected_path / "scripts" / "startup" / "max_mcp_startup.py"
+            install_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, install_target)
+        except (PermissionError, OSError):
+            pass
 
     def deactivate(self, entry: ConnectorEntry) -> None:
-        t = self._target(entry)
-        if t.exists():
-            t.unlink()
+        for t in (self._user_target(entry),
+                  entry.detected_path / "scripts" / "startup" / "max_mcp_startup.py"):
+            try:
+                if t.exists():
+                    t.unlink()
+            except (PermissionError, OSError):
+                pass
 
     def is_active(self, entry: ConnectorEntry) -> bool:
-        return self._target(entry).exists()
+        return self._user_target(entry).exists()
 
 
 # ---------------------------------------------------------------------------

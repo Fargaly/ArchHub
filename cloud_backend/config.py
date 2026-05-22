@@ -1,0 +1,123 @@
+"""Cloud backend config — env-driven.
+
+All knobs read from environment variables. Local dev: drop a `.env`
+next to main.py and python-dotenv loads it on import. Production:
+inject via Fly.io secrets / Cloudflare env / Docker.
+
+Required for production:
+  STRIPE_SECRET_KEY        — sk_live_... or sk_test_...
+  STRIPE_WEBHOOK_SECRET    — whsec_...
+  STRIPE_PRICE_SOLO        — price_...  (Solo $19/mo Stripe price id)
+  STRIPE_PRICE_STUDIO      — price_...  (Studio $79/mo)
+  STRIPE_PRICE_FIRM        — price_...  (Firm $299/mo)
+  ANTHROPIC_API_KEY        — sk-ant-... (server's own; users don't have one)
+  OPENAI_API_KEY           — sk-... (server's own)
+  GOOGLE_API_KEY           — AIza... (server's own)
+  RESEND_API_KEY           — re_... (magic-link email sender)
+  FROM_EMAIL               — noreply@<your-domain> (default: archhub-cloud.fly.dev)
+  PUBLIC_URL               — https://<your-host> (default: archhub-cloud.fly.dev)
+  DESKTOP_REDIRECT_BASE    — http://127.0.0.1   (clients only ever use loopback)
+
+Optional:
+  DATABASE_URL             — sqlite path; defaults to ./archhub_cloud.db
+  TRIAL_MESSAGES           — 30
+  RATE_LIMIT_PER_MIN       — 30
+  BILLING_PROVIDER         — "stripe" (default) | "polar"
+  POLAR_ACCESS_TOKEN       — Polar.sh API key (when BILLING_PROVIDER=polar)
+  POLAR_WEBHOOK_SECRET     — Polar.sh webhook signing key
+  POLAR_PRODUCT_SOLO       — Polar.sh product UUID for Solo tier
+  POLAR_PRODUCT_STUDIO     — Polar.sh product UUID for Studio tier
+  POLAR_PRODUCT_FIRM       — Polar.sh product UUID for Firm tier
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except Exception:
+    pass
+
+
+def _req(name: str, default: str | None = None) -> str:
+    v = os.environ.get(name, default)
+    if v is None or v == "":
+        # In dev we tolerate missing keys (the relevant endpoint will
+        # 503 at call time). Production deploys should fail loudly —
+        # set ENV=production and the start-up check below raises.
+        if os.environ.get("ENV") == "production":
+            raise RuntimeError(f"env var {name} required in production")
+        return ""
+    return v
+
+
+STRIPE_SECRET_KEY     = _req("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = _req("STRIPE_WEBHOOK_SECRET")
+STRIPE_PRICE_SOLO     = _req("STRIPE_PRICE_SOLO")
+STRIPE_PRICE_STUDIO   = _req("STRIPE_PRICE_STUDIO")
+STRIPE_PRICE_FIRM     = _req("STRIPE_PRICE_FIRM")
+
+ANTHROPIC_API_KEY = _req("ANTHROPIC_API_KEY")
+OPENAI_API_KEY    = _req("OPENAI_API_KEY")
+GOOGLE_API_KEY    = _req("GOOGLE_API_KEY")
+
+RESEND_API_KEY = _req("RESEND_API_KEY")
+# PUBLIC_URL defaults to the Fly.io subdomain so the backend works
+# WITHOUT requiring a custom domain to be purchased/configured first.
+# Override via `flyctl secrets set PUBLIC_URL=https://cloud.archhub.io`
+# once the user's own DNS is wired up.
+PUBLIC_URL     = _req("PUBLIC_URL", "https://archhub-cloud.fly.dev")
+# FROM_EMAIL — Resend will reject sends from unverified domains. Fly's
+# *.fly.dev subdomain isn't verifiable on Resend, so we keep the
+# branded sender BUT require the user verify ownership of the parent
+# domain in Resend's dashboard before live email goes out.
+FROM_EMAIL     = _req("FROM_EMAIL", "noreply@archhub.io")
+
+# Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
+# they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).
+# Polar signup is ~10 min vs Stripe's 30-120 min KYC verification.
+BILLING_PROVIDER = _req("BILLING_PROVIDER", "stripe").lower().strip()
+POLAR_ACCESS_TOKEN   = _req("POLAR_ACCESS_TOKEN", "")
+POLAR_WEBHOOK_SECRET = _req("POLAR_WEBHOOK_SECRET", "")
+POLAR_PRODUCT_SOLO   = _req("POLAR_PRODUCT_SOLO", "")
+POLAR_PRODUCT_STUDIO = _req("POLAR_PRODUCT_STUDIO", "")
+POLAR_PRODUCT_FIRM   = _req("POLAR_PRODUCT_FIRM", "")
+
+DATABASE_URL      = _req("DATABASE_URL", "./archhub_cloud.db")
+TRIAL_MESSAGES    = int(_req("TRIAL_MESSAGES", "30"))
+RATE_LIMIT_PER_MIN = int(_req("RATE_LIMIT_PER_MIN", "30"))
+
+# Memory/training: number of approved samples before the Train stage
+# unlocks. Default 100 — below that we don't waste GPU minutes training
+# on too-small a dataset. Override per-deploy with TRAIN_READY_THRESHOLD.
+TRAIN_READY_THRESHOLD = int(_req("TRAIN_READY_THRESHOLD", "100"))
+
+# Quotas per plan. Keys match Stripe tier ids in /v1/billing/checkout.
+PLAN_QUOTAS: dict[str, int] = {
+    "trial":  TRIAL_MESSAGES,
+    "solo":   500,
+    "studio": 2000,
+    "firm":   1_000_000,    # fair-use; throttled by RATE_LIMIT_PER_MIN
+}
+
+PLAN_PRICE_IDS: dict[str, str] = {
+    "solo":   STRIPE_PRICE_SOLO,
+    "studio": STRIPE_PRICE_STUDIO,
+    "firm":   STRIPE_PRICE_FIRM,
+}
+
+# Polar.sh product UUID per tier — populated when BILLING_PROVIDER=polar.
+POLAR_PRODUCT_IDS: dict[str, str] = {
+    "solo":   POLAR_PRODUCT_SOLO,
+    "studio": POLAR_PRODUCT_STUDIO,
+    "firm":   POLAR_PRODUCT_FIRM,
+}
+
+# Seats per paid company plan. Studio = 5, Firm = 25. Companies created
+# on `solo` are rejected at the router (solo is a single-user plan).
+PLAN_SEATS: dict[str, int] = {
+    "studio": 5,
+    "firm":   25,
+}

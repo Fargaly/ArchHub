@@ -314,11 +314,13 @@ $installRoutine = {
 
         Set-Status "Recording version..." 96
         $manifest = [ordered]@{
-            version      = $NewVersion
-            previous     = $OldVersion
-            installed_at = (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz')
-            install_dir  = $InstallDir
-            python       = $python
+            version         = $NewVersion
+            previous        = $OldVersion
+            installed_at    = (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz')
+            install_dir     = $InstallDir
+            python          = $python
+            source_dir      = $SourceDir
+            dev_source_sync = (Test-Path (Join-Path $SourceDir '.git'))
         }
         $manifest | ConvertTo-Json | Set-Content -Path $VersionFile -Encoding UTF8
 

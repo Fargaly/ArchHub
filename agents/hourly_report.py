@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,10 +32,20 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _git(*args, default: str = "") -> str:
+    # Hidden console — `git` would otherwise flash a CMD box on every
+    # cron-fired report.
+    creationflags = 0
+    startupinfo = None
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
     try:
         out = subprocess.run(
             ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True,
             timeout=10,
+            creationflags=creationflags, startupinfo=startupinfo,
         )
         return (out.stdout or "").strip() or default
     except Exception:

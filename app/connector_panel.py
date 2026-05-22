@@ -108,9 +108,39 @@ class _Row(QFrame):
         self.toggle.toggled.connect(self._on)
         h.addWidget(self.toggle)
 
+    # Local listener probe ports per family. Used to differentiate
+    # 'Active in registry' (the lying status) from 'Listener actually
+    # responding' (the truth).
+    _PROBE_URL = {
+        "revit":   "http://localhost:48884/ping",
+        "autocad": "http://localhost:48885/ping",
+        "max":     "http://localhost:48886/ping",
+        "blender": "http://localhost:9876/ping",
+    }
+
+    def _listener_alive(self) -> bool:
+        family = (self.entry.family or "").lower()
+        if family not in self._PROBE_URL:
+            # Connectors without a listener (Speckle / Outlook) — treat
+            # ACTIVE registry state as truth.
+            return True
+        # Read from the central health daemon — never probes inline,
+        # never blocks the UI thread.
+        try:
+            from connector_health import instance as _health
+            return _health().state(family) == "live"
+        except Exception:
+            return False
+
     def _status_text(self) -> str:
         s = self.entry.state
-        if s == ConnectorState.ACTIVE:      return "Live · " + (self.entry.detail or "connected")
+        if s == ConnectorState.ACTIVE:
+            if self._listener_alive():
+                return "Live · " + (self.entry.detail or "connected")
+            # ACTIVE registry but listener dead = addin loaded once,
+            # process closed/restarted, or never auto-loaded. Tell the
+            # user the truth instead of lying 'Live'.
+            return "Loaded · waiting for host (open the app or run NETLOAD)"
         if s == ConnectorState.READY:       return "Detected · off"
         if s == ConnectorState.UNAVAILABLE: return "Not installed"
         if s == ConnectorState.ERROR:       return "Error · " + (self.entry.detail or "see settings")

@@ -28,6 +28,48 @@ _TOOL_CALL_TEXT_RE = re.compile(
 )
 
 
+def _split_think(delta: str, state: dict):
+    """Split a streaming chunk into (kind, piece) tuples where kind is
+    'text' (goes to on_chunk) or 'reason' (goes to on_reasoning).
+    Handles <think>...</think> tags that may straddle multiple chunks
+    via the persistent `state` dict (keys: in_think:bool, buf:str)."""
+    OPEN, CLOSE = "<think>", "</think>"
+    text = (state.get("buf") or "") + (delta or "")
+    state["buf"] = ""
+    while text:
+        if state["in_think"]:
+            i = text.find(CLOSE)
+            if i < 0:
+                if text.endswith("<") or text.endswith("</") or text.endswith("</think")[:len(text)]:
+                    state["buf"] = text
+                    return
+                yield "reason", text
+                return
+            yield "reason", text[:i]
+            text = text[i + len(CLOSE):]
+            state["in_think"] = False
+        else:
+            i = text.find(OPEN)
+            if i < 0:
+                # Could be a partial '<' / '<t' / '<th'... at end —
+                # buffer to avoid emitting raw tag characters.
+                tail = text[-len(OPEN):]
+                if any(OPEN.startswith(text[k:]) for k in
+                       range(max(0, len(text) - len(OPEN)), len(text))) and "<" in tail:
+                    cut = text.rfind("<")
+                    if cut >= 0 and cut > len(text) - len(OPEN):
+                        if text[:cut]:
+                            yield "text", text[:cut]
+                        state["buf"] = text[cut:]
+                        return
+                yield "text", text
+                return
+            if i > 0:
+                yield "text", text[:i]
+            text = text[i + len(OPEN):]
+            state["in_think"] = True
+
+
 def list_local_models() -> list[str]:
     """Return model names currently pulled in Ollama. Empty list if Ollama not running."""
     try:
@@ -51,7 +93,12 @@ class OllamaClient:
         model: str,
         tools: list[dict],
         on_chunk: Callable[[str], None],
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> tuple[str, list[dict]]:
+        on_reasoning = on_reasoning or (lambda _: None)
+        # Reasoning splitter state — kept across chunks so a <think>
+        # straddling two delta packets is still parsed correctly.
+        _think_state = {"in_think": False, "buf": ""}
         """
         Call Ollama chat API. Returns (full_text, tool_calls).
         tool_calls is a list of dicts with keys: id, name, input.
@@ -95,6 +142,22 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": True,
+            # Tool-use requires low temperature. The Ollama default
+            # (0.7-0.8) makes models "explore" — they write essays
+            # instead of calling tools. 0.15 is hot enough for
+            # natural language in answers but cold enough that the
+            # next-token distribution sharpens onto the tool-call
+            # tokens when one is needed.
+            #
+            # num_predict caps the generation so a procrastinating
+            # model can't burn 8K tokens of "let me think about
+            # this..." before giving up. 4096 is plenty for any
+            # AEC reply.
+            "options": {
+                "temperature": 0.15,
+                "num_predict": 4096,
+                "top_p": 0.9,
+            },
         }
         # Ollama supports tools for some models (llama3.1+, mistral-nemo, etc.)
         if tools:
@@ -125,8 +188,21 @@ class OllamaClient:
                     msg = chunk.get("message", {})
                     delta = msg.get("content", "")
                     if delta:
-                        full_text += delta
-                        on_chunk(delta)
+                        # Split <think>...</think> reasoning tags out of
+                        # the answer stream — DeepSeek R1 / qwen3-think
+                        # / etc. emit chain-of-thought inside these
+                        # tags. Route those to on_reasoning so the UI
+                        # renders them in the dim italic Reasoning
+                        # block instead of the answer body.
+                        for kind, piece in _split_think(delta, _think_state):
+                            if kind == "text":
+                                full_text += piece
+                                on_chunk(piece)
+                            else:
+                                try:
+                                    on_reasoning(piece)
+                                except Exception:
+                                    pass
 
                     # Tool calls (Ollama format — the well-behaved path)
                     for tc in msg.get("tool_calls", []):

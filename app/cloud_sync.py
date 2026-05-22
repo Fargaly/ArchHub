@@ -92,6 +92,9 @@ def _run(cmd: list[str], *, cwd: Optional[Path] = None,
          timeout: int = _GIT_TIMEOUT_SECONDS) -> tuple[int, str, str]:
     """Run a subprocess. Returns (rc, stdout, stderr). Never raises."""
     try:
+        # Hidden console — `git` / `gh` would otherwise flash a CMD box
+        # every time we call them on Windows.
+        from proc_utils import _hidden_kwargs
         result = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
@@ -99,6 +102,7 @@ def _run(cmd: list[str], *, cwd: Optional[Path] = None,
             text=True,
             timeout=timeout,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            **_hidden_kwargs(),
         )
         return (result.returncode,
                 (result.stdout or "").strip(),
@@ -174,9 +178,11 @@ def _gh_with_token(*args: str) -> tuple[int, str, str]:
     if token:
         env["GH_TOKEN"] = token
     try:
+        from proc_utils import _hidden_kwargs
         result = subprocess.run(
             ["gh", *args], capture_output=True, text=True,
             timeout=_GH_TIMEOUT_SECONDS, env=env,
+            **_hidden_kwargs(),
         )
         return (result.returncode,
                 (result.stdout or "").strip(),

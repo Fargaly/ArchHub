@@ -129,7 +129,7 @@ GitHub Actions on every `v*.*.*` tag. We rely on:
 | Dependency CVEs | Dependabot alerts + auto-update PRs. Weekly scans on pip / nuget / GitHub Actions. |
 | Static analysis | CodeQL on Python + JavaScript, security-extended query suite. |
 | Code-signing | SignPath.io Foundation (Authenticode) — application pending. |
-| HTTPS | Enforced on `fargaly.github.io/ArchHub/` and (future) `archhub.app`. |
+| HTTPS | Enforced on `fargaly.github.io/ArchHub/` and (future) `archhub.io`. |
 | Auth handling | Delegated to the user's `gh` CLI / OS keyring. ArchHub never persists tokens itself. |
 | LLM connectivity | Direct from the user's machine to the chosen provider — no ArchHub-operated middlebox in the BYO-key path. |
 | Cloud relay (Studio) | Rate-limited per-user; firm-scoped tokens; audit log retained 90 days; encrypted at rest. _Built once $5k MRR justifies it; not running yet._ |

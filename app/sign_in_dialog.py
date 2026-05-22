@@ -94,6 +94,21 @@ class SignInDialog(QDialog):
         self.action_btn.clicked.connect(self._on_action)
         bv.addWidget(self.action_btn)
 
+        # Manual-paste fallback. Always visible for OAuth providers
+        # (OpenRouter) so users hit by server-side 409 / rate-limit /
+        # "Failed to create or update app while creating auth code"
+        # have a clear path forward without restarting the dialog.
+        # For clipboard-only providers (Anthropic / OpenAI / Google)
+        # the primary button already does this — hide.
+        self.manual_btn: QPushButton | None = None
+        if self.use_oauth:
+            self.manual_btn = QPushButton(
+                "Or paste a key manually (skip browser auth)"
+            )
+            self.manual_btn.setObjectName("ghostButton")
+            self.manual_btn.clicked.connect(self._switch_to_manual)
+            bv.addWidget(self.manual_btn)
+
         if self.use_oauth:
             status_msg = (
                 f"You'll only do this once on this device. ArchHub will "
@@ -140,12 +155,64 @@ class SignInDialog(QDialog):
 
     def _build_footer(self) -> QFrame:
         f = QFrame(); f.setObjectName("panelFooter")
-        h = QHBoxLayout(f); h.setContentsMargins(20, 12, 20, 14); h.setSpacing(8)
+        v = QVBoxLayout(f); v.setContentsMargins(20, 8, 20, 14); v.setSpacing(8)
+
+        # Manual-paste fallback row — when clipboard auto-detect fails
+        # (browser quirks, key reformatted on paste, or user already had
+        # the key on clipboard before opening the dialog), this lets
+        # them just paste it directly. Always visible; auto-detect path
+        # is the fast track, this is the safety net.
+        from PyQt6.QtWidgets import QLineEdit
+        paste_row = QHBoxLayout()
+        paste_row.setSpacing(8)
+        self.paste_field = QLineEdit()
+        self.paste_field.setObjectName("inputField")
+        self.paste_field.setPlaceholderText(
+            f"Or paste your {self.plan.display_name} key here directly")
+        self.paste_field.setEchoMode(QLineEdit.EchoMode.Password)
+        self.paste_field.returnPressed.connect(self._on_paste_save)
+        paste_row.addWidget(self.paste_field, 1)
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("primaryButton")
+        save_btn.clicked.connect(self._on_paste_save)
+        paste_row.addWidget(save_btn)
+        v.addLayout(paste_row)
+
+        # Cancel row.
+        h = QHBoxLayout(); h.setSpacing(8)
         h.addStretch(1)
         cancel = QPushButton("Cancel"); cancel.setObjectName("ghostButton")
         cancel.clicked.connect(self.reject)
         h.addWidget(cancel)
+        v.addLayout(h)
         return f
+
+    def _on_paste_save(self) -> None:
+        """Save whatever the user pasted into the manual-paste field.
+        Permissive — accepts any non-empty trimmed value, then runs the
+        regex check for a non-blocking warning. Lets users with new /
+        unrecognised key formats still get past the dialog."""
+        text = (self.paste_field.text() or "").strip()
+        if not text:
+            self.status.setText("⚠️ Paste a key first.")
+            return
+        # Strip common copy artefacts (zero-width spaces, soft hyphens).
+        for ch in ("​", "‌", "‍", "﻿", "­"):
+            text = text.replace(ch, "")
+        text = text.strip()
+        self._captured_key = text
+        try:
+            from sign_in import looks_like_key
+            if not looks_like_key(self.plan.provider, text):
+                # Not a recognised format; warn but still save — OpenAI
+                # rolls new prefixes faster than we update regexes.
+                self.status.setText(
+                    f"⚠️ Key shape doesn't match {self.plan.sample_prefix}, "
+                    "saving anyway. Reload the dialog to retry."
+                )
+        except Exception:
+            pass
+        self._on_captured()
 
     # ---- entry point -----------------------------------------------------
 
@@ -276,7 +343,11 @@ class SignInDialog(QDialog):
         if self.use_oauth:
             self.status.setText(
                 f"No authorization came back from {self.plan.display_name} "
-                f"in 3 minutes. Click the button to try again, or cancel."
+                f"in 3 minutes. The provider may be rate-limiting "
+                f"(error 409 'Failed to create or update app while "
+                f"creating auth code' is common — wait 30 s then "
+                f"retry). Or click <b>Or paste a key manually</b> "
+                f"below to skip the browser flow."
             )
         else:
             self.status.setText(
@@ -285,6 +356,34 @@ class SignInDialog(QDialog):
             )
         self.action_btn.setText(self._action_label)
         self.action_btn.setEnabled(True)
+
+    def _switch_to_manual(self) -> None:
+        """Bail out of OAuth, open the provider's API-keys page, and
+        flip the dialog into clipboard-watch mode. Lets the user
+        recover from OpenRouter's 409 'Failed to create or update
+        app while creating auth code' without restarting the dialog."""
+        self._stop_timers()
+        if self._oauth is not None:
+            try:
+                self._oauth.stop()
+            except Exception:
+                pass
+            self._oauth = None
+        self.use_oauth = False
+        self._action_label = (
+            f"🌐  Open {self.plan.display_name} key page"
+        )
+        self.action_btn.setText(self._action_label)
+        self.action_btn.setEnabled(True)
+        if self.manual_btn is not None:
+            self.manual_btn.setVisible(False)
+        self.status.setText(
+            f"Switched to manual paste. Click the button to open "
+            f"{self.plan.display_name}'s keys page; after you click "
+            f"<i>Copy</i> on a new key (looks like "
+            f"<code>{self.plan.sample_prefix}</code>), ArchHub will "
+            f"save it automatically."
+        )
 
     def _fail(self, message: str) -> None:
         self._stop_timers()

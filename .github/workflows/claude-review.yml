@@ -1,0 +1,60 @@
+name: Claude PR review
+
+# Automatic AI code review on every pull request. Claude reads the repo
+# mandates (CLAUDE.md, docs/ROADMAP.md) and posts a review on the PR.
+#
+# This is ADVISORY. The hard merge gate is the Tests workflow (a required
+# status check via branch protection). If this workflow ever errors it
+# does NOT block merges — fix the YAML and it resumes. Fail-safe by design.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Claude review
+        # This review is ADVISORY (see the file header) — it never gates
+        # a merge. The claude-code-action @v1 build intermittently aborts
+        # with a bun "directory mismatch" internal error; continue-on-
+        # error keeps that upstream flake from painting every PR a false
+        # red X. The review still posts whenever the action runs clean.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} in this repository.
+            You are the automated reviewer for ArchHub.
+
+            First read CLAUDE.md and docs/ROADMAP.md — they carry the
+            non-negotiable mandates (AgDR-before-architecture, the single
+            ROADMAP, root-cause engineering, commit rules).
+
+            Review the diff for:
+              - correctness and test coverage
+              - security: no committed secrets/keys, no unsafe shell or
+                exec, no silently broadened permissions or workflow changes
+              - mandate compliance: an architecture-shaped change must
+                reference an AgDR in docs/agdr/
+
+            Post ONE concise review on the PR. Begin it with "APPROVE" if
+            it is safe to merge, or "REQUEST CHANGES" followed by a short
+            bullet list of what must be fixed. Be specific and brief.

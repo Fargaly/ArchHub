@@ -37,6 +37,24 @@ SHARED_LIBRARY = Path(
 ) / "ArchHub" / "skills"
 
 
+def _marketplace_skills_dir() -> Optional[Path]:
+    """Where marketplace_client.install_pack drops downloaded packs.
+
+    Honors ARCHHUB_MARKETPLACE_DIR so tests + advanced users can redirect.
+    Returns None when the directory hasn't been created yet — the loader
+    treats that as 'nothing installed' rather than walking an empty tree."""
+    override = os.environ.get("ARCHHUB_MARKETPLACE_DIR")
+    if override:
+        base = Path(override)
+    else:
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            base = Path(appdata) / "ArchHub" / "marketplace_skills"
+        else:
+            base = Path.home() / ".archhub" / "marketplace_skills"
+    return base if base.exists() else None
+
+
 def _cloud_skills_dir() -> Optional[Path]:
     """Return the cloud-cache skills directory if cloud sync is initialised,
     otherwise None. Imported lazily so the cloud_sync module is optional."""
@@ -54,13 +72,31 @@ def _cloud_skills_dir() -> Optional[Path]:
 def library_paths() -> list[Path]:
     """All library roots searched for Skills, in priority order. Cloud
     cache wins on id collision so a synced Skill overrides a stale local
-    copy with the same id."""
+    copy with the same id. The marketplace tree is appended last so a
+    user-edited copy of a marketplace Skill takes precedence over the
+    pristine installed version."""
     paths: list[Path] = []
     cloud = _cloud_skills_dir()
     if cloud is not None:
         paths.append(cloud)
     paths.extend([USER_LIBRARY, SHARED_LIBRARY])
+    mkt = _marketplace_skills_dir()
+    if mkt is not None:
+        paths.append(mkt)
     return paths
+
+
+def _read_pack_marker(pack_dir: Path) -> dict:
+    """Return the .archhub_pack.json marker that marketplace_client
+    drops into each install dir, or {} when missing/corrupt."""
+    marker = pack_dir / ".archhub_pack.json"
+    if not marker.exists():
+        return {}
+    try:
+        import json as _json
+        return _json.loads(marker.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def _ensure(path: Path) -> Path:
@@ -103,10 +139,18 @@ def list_skills() -> list[dict]:
     seen_ids: set[str] = set()
     out: list[dict] = []
     cloud = _cloud_skills_dir()
+    mkt = _marketplace_skills_dir()
     for root in library_paths():
         if not root.exists():
             continue
-        for f in sorted(root.glob(f"*{_FILE_SUFFIX}"),
+        # Marketplace packs land in subdirs (one per pack_id) so we walk
+        # recursively for that root only. Other libraries are flat — a
+        # shallow glob is faster and avoids surprising recursion.
+        if mkt is not None and root == mkt:
+            files_iter = root.rglob(f"*{_FILE_SUFFIX}")
+        else:
+            files_iter = root.glob(f"*{_FILE_SUFFIX}")
+        for f in sorted(files_iter,
                         key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 wf = Workflow.from_json(f.read_text(encoding="utf-8"))
@@ -118,13 +162,26 @@ def list_skills() -> list[dict]:
                 continue
             seen_ids.add(wf.id)
             meta = get_meta(wf)
-            if cloud is not None and root == cloud:
+            pack_id = ""
+            pack_marker: dict = {}
+            if mkt is not None and root == mkt:
+                source = "marketplace"
+                # The first path segment under the marketplace root is
+                # the pack_id (the dir marketplace_client created).
+                try:
+                    rel = f.relative_to(mkt)
+                    pack_id = rel.parts[0] if rel.parts else ""
+                except Exception:
+                    pack_id = ""
+                if pack_id:
+                    pack_marker = _read_pack_marker(mkt / pack_id)
+            elif cloud is not None and root == cloud:
                 source = "cloud"
             elif root == SHARED_LIBRARY:
                 source = "shared"
             else:
                 source = "user"
-            out.append({
+            entry = {
                 "id": wf.id,
                 "name": wf.name,
                 "intent": meta.intent if meta else "",
@@ -137,9 +194,16 @@ def list_skills() -> list[dict]:
                 "author": meta.author if meta else "",
                 "path": str(f),
                 "library": source,
+                "source": source,
                 "node_count": len(wf.nodes),
                 "updated_at": wf.updated_at,
-            })
+            }
+            if source == "marketplace":
+                entry["pack_id"] = pack_id
+                if pack_marker:
+                    entry["pack_version"] = pack_marker.get("version", "")
+                    entry["pack_title"] = pack_marker.get("title", "")
+            out.append(entry)
     out = _filter_by_feature_flags(out)
     _LIST_CACHE = (now, out)
     return out

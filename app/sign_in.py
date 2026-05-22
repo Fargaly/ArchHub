@@ -31,27 +31,36 @@ from dataclasses import dataclass
 
 # Provider key fingerprints. Each tuple: (regex, sample-prefix-for-display).
 # Anchored at the start so a stray copy of unrelated text doesn't match.
+# Order matters for `detect_provider`: more-specific prefixes first so
+# the broad OpenAI regex doesn't shadow Anthropic / OpenRouter / etc.
 _KEY_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
     "anthropic": (
         re.compile(r"^sk-ant-[A-Za-z0-9_\-]{20,}$"),
         "sk-ant-…",
     ),
-    "openai": (
-        # OpenAI keys: sk-..., sk-proj-..., sk-svcacct-... Roughly 40+ chars.
-        re.compile(r"^sk-(?:proj-|svcacct-)?[A-Za-z0-9_\-]{20,}$"),
-        "sk-…",
-    ),
-    "google": (
-        # Google AI Studio keys start with "AIza"; usually 39 chars total
-        # but the suffix length varies across project types. Accept anything
-        # in the realistic range so we don't reject legitimate keys.
-        re.compile(r"^AIza[A-Za-z0-9_\-]{30,60}$"),
-        "AIza…",
-    ),
     "openrouter": (
         # OpenRouter keys begin with "sk-or-" (followed by version + body).
         re.compile(r"^sk-or-[A-Za-z0-9_\-]{20,}$"),
         "sk-or-…",
+    ),
+    "google": (
+        # Google AI Studio keys start with "AIza"; usually 39 chars total
+        # but the suffix length varies across project types. Accept
+        # anything in the realistic range so we don't reject legitimate
+        # keys.
+        re.compile(r"^AIza[A-Za-z0-9_\-]{30,60}$"),
+        "AIza…",
+    ),
+    "openai": (
+        # OpenAI keys come in many flavours and OpenAI keeps rolling out
+        # new prefixes (sk-proj-, sk-svcacct-, sk-None-, sk-admin-, ...).
+        # Match anything starting with `sk-` followed by a body of
+        # at least 20 base64-ish chars — broad on purpose so we don't
+        # reject the next prefix OpenAI ships. Listed LAST so the
+        # specific prefixes above (sk-ant-, sk-or-) are tried first by
+        # detect_provider().
+        re.compile(r"^sk-[A-Za-z0-9_\-]{20,}$"),
+        "sk-…",
     ),
 }
 

@@ -57,9 +57,9 @@ class FetchResult:
 def _read_token() -> Optional[str]:
     """Try gh CLI's stored token (works for private-repo releases too)."""
     try:
-        import subprocess
-        out = subprocess.run(
-            ["gh", "auth", "token"], capture_output=True, text=True, timeout=5,
+        from proc_utils import run_hidden
+        out = run_hidden(
+            ["gh", "auth", "token"], capture_output=True, timeout=5,
         )
         if out.returncode == 0:
             tok = (out.stdout or "").strip()

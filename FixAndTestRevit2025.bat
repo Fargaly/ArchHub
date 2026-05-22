@@ -5,7 +5,12 @@ echo  ArchHub -- Fix + Build Revit 2025
 echo  ===================================
 echo.
 
-:: 1. Clear false Revit active state
+:: AgDR-0029 — single source of truth.  The Connectors panel + this
+:: bat + BuildRevit2023.bat all call app/auto_build.py through the
+:: same code path so a missing csproj can't slip past one entry
+:: point and break the other.
+
+:: 1. Clear false Revit active state.
 set STATE=%LOCALAPPDATA%\ArchHub\state.json
 echo  [1] State file: %STATE%
 if exist "%STATE%" (
@@ -14,58 +19,57 @@ if exist "%STATE%" (
     echo  No state.json found.
 )
 
-:: 2. Check dotnet
+:: 2. Check Python.  AgDR-0029 — bat delegates to auto_build.py so
+::    `py` must be on PATH.  Honest failure if not.
 echo.
-echo  [2] dotnet version:
+echo  [2] Checking py launcher...
+py -3 -c "import sys; print('  Python', sys.version.split()[0])" 2>nul
+if errorlevel 1 (
+    echo  ERROR: py launcher not found.
+    echo  Install Python 3.10+ from https://www.python.org/downloads/
+    pause ^& exit /b 1
+)
+
+:: 3. Check dotnet SDK.
+echo.
+echo  [3] dotnet version:
 dotnet --version
 if errorlevel 1 (
     echo  ERROR: dotnet SDK not found on PATH.
     echo  Install from: https://dot.net/8
-    pause & exit /b 1
+    pause ^& exit /b 1
 )
 
-:: 3. Find Revit 2025
+:: 4. Delegate to canonical builder.  Builds RevitMCP.dll +
+::    RevitMCPCore.dll into payload\revit\2025\, then verifies the
+::    deploy manifest.
 echo.
-echo  [3] Looking for Revit 2025...
-set REVITDIR=C:\Program Files\Autodesk\Revit 2025
-if not exist "%REVITDIR%\RevitAPI.dll" (
-    echo  Not at default path. Searching...
-    for /d %%D in ("C:\Program Files\Autodesk\Revit 2025*") do (
-        if exist "%%D\RevitAPI.dll" set REVITDIR=%%D
-    )
-)
-if not exist "%REVITDIR%\RevitAPI.dll" (
-    echo  ERROR: Cannot find RevitAPI.dll. Revit 2025 may not be installed.
-    pause & exit /b 1
-)
-echo  Found: %REVITDIR%
-
-:: 4. Build
-echo.
-echo  [4] Building RevitMCP.dll for Revit 2025 (net8.0-windows)...
+echo  [4] Building RevitMCP shim + Core for Revit 2025...
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-set CSPROJ=%ROOT%\payload\sources\revit_mcp\RevitMCP.csproj
-set OUTDIR=%ROOT%\payload\revit\2025
+pushd "%ROOT%\app" >nul
+py auto_build.py revit 2025
+set BUILD_RC=%ERRORLEVEL%
+popd >nul
 
-dotnet build "%CSPROJ%" -c Release -p:TargetFramework=net8.0-windows -p:RevitInstallDir="%REVITDIR%" -o "%OUTDIR%"
-
-if errorlevel 1 (
+if not "%BUILD_RC%"=="0" (
     echo.
-    echo  BUILD FAILED -- see above.
-    pause & exit /b 1
+    echo  BUILD FAILED -- exit code %BUILD_RC%.  See above.
+    pause ^& exit /b %BUILD_RC%
 )
 
 echo.
 echo  =====================================
 echo  BUILD SUCCEEDED
 echo  =====================================
-dir /b "%OUTDIR%"
+dir /b "%ROOT%\payload\revit\2025"
 echo.
 echo  Next steps:
 echo  1. Close this window
 echo  2. Close and restart ArchHub (Run.bat)
 echo  3. In Connectors panel, toggle Revit 2025 ON
-echo  4. Open Revit 2025 -- the add-in loads automatically
+echo  4. Open Revit 2025 -- the add-in loads automatically.
+echo     /reload supports hot-swap (AgDR-0027); no Revit restart for
+echo     future updates.
 echo.
 pause

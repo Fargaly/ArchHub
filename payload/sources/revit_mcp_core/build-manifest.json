@@ -1,0 +1,15 @@
+{
+  "$comment": "AgDR-0029 \u2014 RevitMCPCore (hot-reloadable impl) build manifest. Aggregated with revit_mcp/build-manifest.json by auto_build._verify_build_output.",
+  "host": "revit",
+  "role": "core",
+  "expected_artifacts": [
+    "RevitMCPCore.dll",
+    "RevitMCPCore.deps.json"
+  ],
+  "addin_manifests": [],
+  "record_shas_on_build": true,
+  "sha256": {
+    "RevitMCPCore.dll": "528ebdf51533c8b8d3c274ea5a91dfd3de1353bf27e4d9a28c5d5b3625b35319",
+    "RevitMCPCore.deps.json": "7487702cb6a650b446894ed657247bf0888667bf585b61c780328ec4a97c7ce9"
+  }
+}

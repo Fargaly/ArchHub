@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Direction A + ComfyUI hover-promote (host node, refined)</title>
+<style>
+  :root {
+    --bg:#0e0e12; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --bgDeep:#0a0a0d;
+    --line:#26262e; --lineSoft:#1e1e24; --lineHair:#1a1a20;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+    --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f;
+    --cyan:#5fb3b3; --purple:#a98cd6; --blue:#7898d6; --yellow:#e3b950;
+    --mono:'SF Mono','Menlo','Consolas',monospace;
+    --serif:'Instrument Serif','Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:13px; line-height:1.55;
+    padding:28px 36px; min-height:100vh;
+  }
+  h1 { font-family:var(--serif); font-size:30px; font-weight:600;
+       letter-spacing:-0.02em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:22px; font-weight:600;
+       letter-spacing:-0.01em; margin:36px 0 10px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em;
+       margin:22px 0 10px 0; text-transform:uppercase; }
+  p { color:var(--inkSoft); max-width:82ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; color:var(--ink); }
+  .brief {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:8px; padding:14px 18px; margin:18px 0; max-width:900px;
+  }
+  .brief strong { color:var(--ink); }
+  .stage-wrap { display:flex; flex-direction:column; gap:42px; margin-top:24px; }
+  .stage {
+    background:var(--bgDeep); border:1px solid var(--lineSoft);
+    border-radius:12px; padding:24px 28px; position:relative;
+    display:grid; grid-template-columns:1fr 400px; gap:22px;
+    min-height:560px;
+  }
+  .stage-tag {
+    position:absolute; top:-12px; left:24px;
+    background:var(--accent); color:#fff;
+    font-family:var(--mono); font-size:10px; font-weight:600;
+    letter-spacing:0.16em; padding:4px 12px; border-radius:4px;
+  }
+  .stage-title {
+    font-family:var(--serif); font-size:20px;
+    margin:0 0 4px 0;
+  }
+  .stage-sub {
+    color:var(--inkSoft); font-size:13px; margin:0 0 16px 0;
+  }
+  .canvas-zone {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    border-radius:8px; padding:24px; position:relative; overflow:hidden;
+    min-height:540px;
+  }
+  .panel-zone {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+
+  /* ─── HOST NODE — Direction A base ────────────────────────────── */
+  .host-node {
+    position:absolute; background:var(--bgPanel);
+    border-radius:10px;
+    border-top:2px solid var(--accent);
+    border-left:1px solid var(--line);
+    border-right:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    box-shadow:0 12px 36px rgba(0,0,0,.55);
+    font-family:var(--sans);
+  }
+  .host-node-title {
+    padding:8px 12px; display:flex; align-items:center; gap:8px;
+    background:var(--bgSoft); border-bottom:1px solid var(--lineSoft);
+    border-top-left-radius:8px; border-top-right-radius:8px;
+  }
+  .host-icon { font-family:var(--mono); font-size:14px; color:var(--accent); }
+  .host-cat {
+    font-family:var(--mono); font-size:9px; color:var(--accent);
+    letter-spacing:0.18em; font-weight:600;
+  }
+  .host-doc {
+    font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+    letter-spacing:0.04em;
+  }
+  .flag-bar { display:flex; gap:4px; margin-left:auto; }
+  .flag {
+    width:8px; height:8px; border-radius:50%;
+    border:1.5px solid var(--inkDim); background:transparent;
+    cursor:pointer;
+  }
+  .flag.on-blue   { background:var(--blue);   border-color:var(--blue);   }
+  .flag.on-red    { background:var(--err);    border-color:var(--err);    }
+  .flag.on-yellow { background:var(--yellow); border-color:var(--yellow); }
+  .flag.on-purple { background:var(--purple); border-color:var(--purple); }
+  .flag.on-green  { background:var(--ok);     border-color:var(--ok);     }
+
+  /* main sockets (ALWAYS visible — ComfyUI primary slot) */
+  .main-sock {
+    position:absolute; width:12px; height:12px; border-radius:50%;
+    background:var(--bgPanel); border:2px solid var(--inkSoft);
+    box-shadow:0 0 0 2px var(--bg);
+    z-index:5;
+  }
+  .main-sock.out { background:var(--inkSoft); }
+  .main-sock.any { border-color:var(--inkSoft); }
+  .main-sock.list { border-color:var(--blue); }
+  .main-sock.list.out { background:var(--blue); }
+  .main-sock-label {
+    position:absolute; font-family:var(--mono); font-size:9px;
+    color:var(--inkMuted); letter-spacing:0.04em;
+  }
+
+  /* Op grid (Direction A) */
+  .op-grid {
+    display:grid; grid-template-columns:repeat(4, 1fr); gap:5px;
+    padding:9px;
+  }
+  .op-tile {
+    background:var(--bgSoft); border:1px solid var(--lineSoft);
+    border-radius:4px; padding:6px 8px;
+    font-family:var(--mono); font-size:9.5px; line-height:1.3;
+    color:var(--inkSoft); cursor:pointer; position:relative;
+    transition:border .15s, background .15s;
+  }
+  .op-tile.cfg::before {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:2px;
+    background:var(--blue); border-radius:2px 0 0 2px;
+  }
+  .op-tile.locked::after {
+    content:''; position:absolute; right:5px; top:5px; width:5px; height:5px;
+    border-radius:50%; background:var(--err);
+  }
+  .op-tile.bypassed::after {
+    content:''; position:absolute; right:5px; top:5px; width:5px; height:5px;
+    border-radius:50%; background:var(--yellow);
+  }
+  .op-tile .pill {
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:var(--inkDim); margin-right:5px; vertical-align:middle;
+  }
+  .op-tile .pill.done { background:var(--ok); }
+  .op-tile .pill.run  { background:var(--yellow); }
+  .op-tile .pill.err  { background:var(--err); }
+  .op-tile .pill.cfg  { background:var(--blue); }
+  .op-tile .op-name { color:var(--ink); font-size:10px; }
+  .op-tile .op-time { color:var(--inkMuted); font-size:8.5px; margin-top:2px; }
+
+  .op-tile.active {
+    background:var(--bgHover); border-color:var(--accent);
+    color:var(--ink); grid-column:span 4;
+    padding:10px 12px 12px;
+  }
+  .op-tile.active .op-row-meta {
+    display:flex; align-items:center; gap:8px; margin-bottom:6px;
+  }
+  .op-tile.active .op-name { font-size:11.5px; font-weight:500; }
+  .op-tile.active .op-meta-tags {
+    margin-left:auto; font-family:var(--mono); font-size:8.5px;
+    color:var(--blue); letter-spacing:0.04em;
+  }
+
+  /* ─── PARAM ROW — the heart of the ComfyUI hover-promote pattern ─── */
+  .params-list { display:flex; flex-direction:column; gap:3px;
+                  position:relative; }
+  .param-row {
+    display:grid;
+    grid-template-columns: 20px 110px 1fr 20px;
+    align-items:center; gap:6px;
+    padding:3px 0;
+    font-family:var(--mono); font-size:10px;
+    position:relative;
+  }
+
+  /* HOVER ZONES — left + right of every row. They detect mouse-near-edge
+     and reveal a dashed socket marker, exactly like ComfyUI surfaces a
+     "convert to input" affordance. */
+  .hover-zone-l, .hover-zone-r {
+    position:absolute; top:-2px; bottom:-2px; width:24px;
+    /* invisible interaction target */
+  }
+  .hover-zone-l { left:-26px; }
+  .hover-zone-r { right:-26px; }
+
+  /* Socket markers — dashed (unwired, hover-revealed) or solid (promoted). */
+  .row-sock-l, .row-sock-r {
+    width:10px; height:10px; border-radius:50%;
+    border:1.5px dashed var(--inkMuted); background:transparent;
+    cursor:pointer; opacity:0; transition:opacity .12s ease;
+    box-shadow:0 0 0 2px var(--bg);
+  }
+  .row-sock-l { justify-self:end; }
+  .row-sock-r { justify-self:start; }
+  /* On parent-row hover OR active-edge proximity, show markers. */
+  .param-row.hover .row-sock-l,
+  .param-row.hover .row-sock-r { opacity:0.55; }
+  /* Promoted sockets — always solid, coloured by type. */
+  .param-row.wired-in  .row-sock-l { opacity:1; background:var(--purple); border:1.5px solid var(--purple); }
+  .param-row.wired-out .row-sock-r { opacity:1; background:var(--cyan);   border:1.5px solid var(--cyan); }
+
+  .param-key  { color:var(--inkMuted); }
+  .param-val  {
+    background:var(--bg); border:1px solid var(--lineSoft); border-radius:3px;
+    padding:3px 8px; color:var(--ink);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .param-row.wired-in  .param-val { border-color:var(--purple); background:#2c1a2e; }
+
+  /* Type swatch — shown when hover-promoted, communicates what wire colour
+     the new socket will draw. ComfyUI pattern: hover shows the type hint. */
+  .type-hint {
+    position:absolute; left:-44px; top:50%; transform:translateY(-50%);
+    font-family:var(--mono); font-size:8px;
+    color:var(--inkMuted); letter-spacing:0.04em;
+    opacity:0; transition:opacity .12s; pointer-events:none;
+  }
+  .param-row.hover .type-hint { opacity:0.7; }
+
+  /* ─── MAIN vs ADVANCED toggle (ComfyUI "advanced" pattern) ────── */
+  .advanced-tag {
+    display:inline-block;
+    padding:1px 6px; font-family:var(--mono); font-size:8px;
+    color:var(--cyan); background:#1e2c2c; border-radius:3px;
+    letter-spacing:0.06em; vertical-align:middle;
+  }
+  .main-section, .advanced-section {
+    padding:6px 12px 8px;
+    border-top:1px solid var(--lineSoft);
+  }
+  .section-head {
+    display:flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+    letter-spacing:0.18em; padding:6px 0;
+    cursor:pointer; user-select:none;
+  }
+  .section-head .chev {
+    width:9px; color:var(--inkMuted); font-size:9px;
+    transition:transform .12s;
+  }
+  .advanced-section.collapsed .section-body { display:none; }
+  .advanced-section.collapsed .chev { transform:rotate(-90deg); }
+  .advanced-section .section-head .count {
+    margin-left:auto; color:var(--inkDim);
+  }
+
+  /* ─── Left + Right rails (collected promoted sockets) ───────── */
+  .rail-sock {
+    position:absolute; width:12px; height:12px; border-radius:50%;
+    box-shadow:0 0 0 2px var(--bg);
+    z-index:6;
+  }
+  .rail-sock.l { left:-7px; }
+  .rail-sock.r { right:-7px; }
+  .rail-sock.in  { background:var(--purple); border:2px solid var(--purple); }
+  .rail-sock.out { background:var(--cyan);   border:2px solid var(--cyan); }
+  .rail-sock.list { background:var(--blue);  border:2px solid var(--blue); }
+  .rail-label {
+    position:absolute; font-family:var(--mono); font-size:8px;
+    letter-spacing:0.04em; color:var(--inkSoft); white-space:nowrap;
+  }
+  .rail-label.l { left:9px; }
+  .rail-label.r { right:9px; }
+
+  /* Wires */
+  .wire-layer { position:absolute; inset:0; pointer-events:none; z-index:1; }
+
+  /* ─── Right panel ───────────────────────────────────────── */
+  .panel-header {
+    padding:11px 14px; display:flex; align-items:center; gap:8px;
+    border-bottom:1px solid var(--lineSoft);
+  }
+  .panel-stripe { width:7px; height:7px; border-radius:2px; background:var(--accent); }
+  .panel-host-label {
+    font-family:var(--mono); font-size:9px; color:var(--accent);
+    letter-spacing:0.18em;
+  }
+  .panel-title {
+    font-family:var(--serif); font-size:18px;
+    padding:10px 14px 4px;
+    letter-spacing:-0.015em;
+  }
+  .panel-sub {
+    font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+    padding:0 14px 12px; letter-spacing:0.04em;
+  }
+  .panel-tabs {
+    display:flex; gap:1px; padding:6px 12px 0;
+    border-bottom:1px solid var(--lineSoft);
+  }
+  .panel-tab {
+    padding:5px 9px; font-family:var(--mono); font-size:9.5px;
+    color:var(--inkMuted); cursor:pointer; letter-spacing:0.06em;
+    border-radius:3px 3px 0 0;
+  }
+  .panel-tab.active { color:var(--ink); background:var(--bgSoft);
+                       border-bottom:2px solid var(--accent); }
+  .panel-search {
+    margin:10px 14px; padding:6px 9px;
+    background:var(--bg); border:1px solid var(--line); border-radius:5px;
+    font-family:var(--mono); font-size:11px; color:var(--ink);
+  }
+  .panel-group {
+    font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+    letter-spacing:0.18em; padding:12px 14px 4px;
+  }
+  .panel-row {
+    display:flex; align-items:center; padding:5px 14px;
+    font-family:var(--mono); font-size:10px; gap:8px;
+    position:relative;
+  }
+  .panel-row .row-sock-mini {
+    width:8px; height:8px; border-radius:50%;
+    border:1.5px dashed var(--inkMuted);
+    cursor:pointer;
+  }
+  .panel-row.wired .row-sock-mini { background:var(--purple); border:1.5px solid var(--purple); }
+  .panel-row .k { color:var(--inkMuted); flex-shrink:0; width:140px; }
+  .panel-row .v {
+    flex:1; background:var(--bgSoft); border-radius:3px;
+    padding:4px 8px; color:var(--ink); border:1px solid var(--lineSoft);
+  }
+  .panel-row.wired .v { border-color:var(--purple); background:#2c1a2e; }
+  .panel-row .promote-cta {
+    font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+    letter-spacing:0.04em; opacity:0; transition:opacity .12s;
+    cursor:pointer;
+  }
+  .panel-row:hover .promote-cta { opacity:0.8; }
+  .panel-row .promote-cta:hover { color:var(--accent); }
+
+  /* Slider widget (Houdini-ish) */
+  .panel-row .slider {
+    height:18px; position:relative; background:var(--bgSoft);
+    border-radius:3px; border:1px solid var(--lineSoft);
+  }
+  .panel-row .slider::after {
+    content:''; position:absolute; left:42%; top:2px; bottom:2px; width:16px;
+    background:var(--accent); border-radius:2px;
+  }
+
+  /* Annotation strip */
+  .annot {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-radius:7px; padding:12px 16px; margin-top:14px;
+    font-size:12.5px; color:var(--inkSoft);
+  }
+  .annot strong { color:var(--ink); }
+  .annot ul { margin:6px 0 0 18px; padding:0; }
+  .annot li { margin:3px 0; }
+  .annot .borrowed { color:var(--cyan); font-family:var(--mono); font-size:11px; }
+  .annot .gain { color:var(--ok); }
+  .annot .cost { color:var(--warn); }
+
+  /* Floating settings bar (per Direction A — no buttons on node body) */
+  .floating-bar {
+    position:absolute; top:-30px; left:50%; transform:translateX(-50%);
+    background:rgba(20,20,28,.96); border:1px solid var(--line);
+    border-radius:6px; padding:5px 9px; display:flex; gap:8px;
+    font-family:var(--mono); font-size:10px;
+    box-shadow:0 8px 22px rgba(0,0,0,.5); z-index:7;
+  }
+  .floating-bar .mode-btn {
+    padding:2px 7px; border-radius:3px; cursor:pointer;
+    color:var(--inkSoft);
+  }
+  .floating-bar .mode-btn.active { background:var(--accentDim); color:var(--accent); }
+  .floating-bar .sep { color:var(--inkDim); }
+
+  /* Legend */
+  .legend {
+    font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+    margin:14px 0 0 0; padding:10px 14px;
+    background:var(--bgSoft); border:1px dashed var(--line);
+    border-radius:5px; display:flex; flex-wrap:wrap; gap:18px;
+  }
+  .legend-item { display:inline-flex; align-items:center; gap:6px; }
+  .legend-sw {
+    width:11px; height:11px; border-radius:50%; display:inline-block;
+  }
+
+  /* Decision capture block */
+  .decision {
+    background:linear-gradient(180deg, #1f1f28 0%, var(--bgPanel) 100%);
+    border:1px solid var(--accent); border-radius:8px;
+    padding:18px 22px; margin:32px 0; max-width:900px;
+  }
+  .decision h2 { margin:0 0 10px 0; }
+  .decision ol { margin:8px 0 0 18px; color:var(--inkSoft); }
+  .decision li { margin:6px 0; }
+  .decision .key {
+    font-family:var(--mono); color:var(--accent); font-size:11px;
+    background:var(--accentDim); padding:1px 6px; border-radius:3px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Host node — Direction A base, ComfyUI hover-promote refinements</h1>
+<p style="margin-top:2px">
+  Founder's recall (2026-05-21): <em>"It will be Option A but consider ComfyUI's
+  approach of main sockets + advanced options. Every field can be wired in/out
+  per its type. Sockets toggle on hovering above the socket area. Like
+  ComfyUI."</em> This is the prototype that materialises those constraints —
+  no extrapolation, no wrapping, no shit. Three stages below show the same
+  host node in three live states: <strong>default</strong>,
+  <strong>hover</strong>, <strong>post-promotion</strong>.
+</p>
+
+<div class="brief">
+  <strong>What this refines from Direction A.</strong>
+  Direction A's op-grid + flags + active-tile-expand remain. ADDED: every
+  parameter row is wireable on hover (ComfyUI Convert-Widget-to-Input
+  mechanic) — left edge for inputs, right edge for outputs, dashed marker on
+  approach, solid coloured socket when promoted. Sections split into
+  <strong>MAIN</strong> (always-visible primary I/O — trigger / last_out)
+  and <strong>ADVANCED</strong> (collapsible — every parameter that can be
+  wired). The right panel mirrors the on-node experience for power users.
+</div>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-sw" style="background:var(--blue)"></span>auto-cook</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--err)"></span>locked / cached</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--yellow)"></span>bypassed</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--purple)"></span>wired input (promoted)</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--cyan)"></span>wired output (promoted)</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--ok)"></span>done</span>
+  <span class="legend-item"><span class="legend-sw" style="border:1.5px dashed var(--inkMuted); background:transparent"></span>hover marker (promotable, not yet wired)</span>
+</div>
+
+<div class="stage-wrap">
+
+<!-- ─────────────────────────── STAGE 1 — DEFAULT ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 1 · DEFAULT</div>
+  <div>
+    <div class="stage-title">Default rest state</div>
+    <div class="stage-sub">
+      Only MAIN sockets visible (trigger in · last_out out). Op grid shows all
+      13 ops. Active op (list_walls) inline-expanded with MAIN params only.
+      ADVANCED section collapsed. Right panel shows the active op's MAIN
+      params + a "+ promote" cta on hover.
+    </div>
+    <div class="canvas-zone">
+      <div class="host-node" style="left:50px; top:30px; width:360px;">
+        <div class="host-node-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· live-A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag on-blue"  title="auto-cook"></div>
+            <div class="flag on-red"   title="locked"></div>
+            <div class="flag" title="bypassed"></div>
+          </div>
+        </div>
+
+        <!-- MAIN sockets only -->
+        <div class="main-sock any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:9px; top:42px;">trigger</span>
+        <div class="main-sock list out" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="right:9px; top:42px; color:var(--blue)">last_out</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_views</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile cfg active">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">AUTO · 18s · 142 rows</span>
+            </div>
+            <div class="main-section" style="border-top:0; padding:4px 0 0">
+              <div class="params-list">
+                <div class="param-row">
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">view</span>
+                  <span class="param-val">Level 1</span>
+                  <div class="row-sock-r"></div>
+                </div>
+                <div class="param-row">
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">category</span>
+                  <span class="param-val">Walls</span>
+                  <div class="row-sock-r"></div>
+                </div>
+              </div>
+            </div>
+            <div class="advanced-section collapsed">
+              <div class="section-head">
+                <span class="chev">▾</span>
+                <span>ADVANCED</span>
+                <span class="count">+5 params</span>
+              </div>
+              <div class="section-body"></div>
+            </div>
+          </div>
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_doors</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_grids</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_sheets</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_schedules</span><div class="op-time">never</div></div>
+          <div class="op-tile bypassed"><span class="pill"></span><span class="op-name">place_family</span><div class="op-time">bypassed</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">update_param</span><div class="op-time">never</div></div>
+          <div class="op-tile locked"><span class="pill cfg"></span><span class="op-name">tag_element</span><div class="op-time">locked · 4h</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">link_dwg</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">export_view</span><div class="op-time">never</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe"></div>
+      <div class="panel-host-label">REVIT · list_walls</div>
+    </div>
+    <div class="panel-title">list_walls</div>
+    <div class="panel-sub">revit.list_walls · 142 rows · 18s ago</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">PARAMS</div>
+      <div class="panel-tab">SETTINGS</div>
+      <div class="panel-tab">OUTPUT</div>
+      <div class="panel-tab">DOCS</div>
+    </div>
+    <input class="panel-search" placeholder="search · 13 ops · 47 params"/>
+    <div class="panel-group">MAIN</div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">category</span>
+      <span class="v">Walls</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-group">ADVANCED · 5 PARAMS</div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">New Construction</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">workset</span>
+      <span class="v slider"></span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">include_demolished</span>
+      <span class="v">false</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view_filter_id</span>
+      <span class="v">(unset)</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">design_option</span>
+      <span class="v">(unset)</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+  </div>
+  <div class="annot" style="grid-column:1 / -1">
+    <div class="borrowed">ComfyUI parallel: primary slots stay visible; the "convert widget to input" affordance is the dashed marker that emerges on row hover.</div>
+    <strong class="gain">What this earns:</strong>
+    <ul>
+      <li>Newcomer's node face is clean — main I/O only, no socket spaghetti.</li>
+      <li>Power-user surface is one hover away — no menu dive.</li>
+      <li>The 13 ops stay always-visible (Direction A's "nothing hidden" mandate honoured).</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── STAGE 2 — HOVER ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 2 · HOVER (left edge)</div>
+  <div>
+    <div class="stage-title">User hovers the left socket area</div>
+    <div class="stage-sub">
+      Mouse approaches the left edge of <code>list_walls.view</code>. The
+      dashed marker materialises next to that row. A type hint
+      (<code>element</code>) shows so the user knows what wire would land.
+      ADVANCED section is now expanded — every param shows the same hover-
+      promote affordance. Click the marker → it locks into the LEFT RAIL as
+      a permanent input socket (Stage 3 shows the result).
+    </div>
+    <div class="canvas-zone">
+      <div class="host-node" style="left:50px; top:30px; width:360px;">
+        <div class="host-node-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· live-A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag on-blue"></div>
+            <div class="flag on-red"></div>
+            <div class="flag"></div>
+          </div>
+        </div>
+        <div class="main-sock any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:9px; top:42px;">trigger</span>
+        <div class="main-sock list out" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="right:9px; top:42px; color:var(--blue)">last_out</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_views</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile cfg active">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">AUTO · 18s · 142 rows</span>
+            </div>
+            <div class="main-section" style="border-top:0; padding:4px 0 0">
+              <div class="params-list">
+                <div class="param-row hover">
+                  <span class="type-hint">element</span>
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">view</span>
+                  <span class="param-val">Level 1</span>
+                  <div class="row-sock-r"></div>
+                </div>
+                <div class="param-row hover">
+                  <span class="type-hint">enum</span>
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">category</span>
+                  <span class="param-val">Walls</span>
+                  <div class="row-sock-r"></div>
+                </div>
+              </div>
+            </div>
+            <div class="advanced-section">
+              <div class="section-head">
+                <span class="chev">▾</span>
+                <span>ADVANCED</span>
+                <span class="count">5 params</span>
+              </div>
+              <div class="section-body">
+                <div class="params-list" style="padding-top:3px">
+                  <div class="param-row hover">
+                    <span class="type-hint">enum</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">phase</span>
+                    <span class="param-val">New Construction</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint">number</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">workset</span>
+                    <span class="param-val">All</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint">bool</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">include_demolished</span>
+                    <span class="param-val">false</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint">id</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view_filter_id</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint">id</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">design_option</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_doors</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_grids</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_sheets</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_schedules</span><div class="op-time">never</div></div>
+          <div class="op-tile bypassed"><span class="pill"></span><span class="op-name">place_family</span><div class="op-time">bypassed</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">update_param</span><div class="op-time">never</div></div>
+          <div class="op-tile locked"><span class="pill cfg"></span><span class="op-name">tag_element</span><div class="op-time">locked · 4h</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">link_dwg</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">export_view</span><div class="op-time">never</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe"></div>
+      <div class="panel-host-label">REVIT · list_walls</div>
+    </div>
+    <div class="panel-title">list_walls</div>
+    <div class="panel-sub">hover-promote active · 7 dashed markers visible</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">PARAMS</div>
+      <div class="panel-tab">SETTINGS</div>
+      <div class="panel-tab">OUTPUT</div>
+      <div class="panel-tab">DOCS</div>
+    </div>
+    <input class="panel-search" placeholder="search · 13 ops · 47 params"/>
+    <div class="panel-group" style="color:var(--cyan)">HOVER A ROW → DASHED SOCKET ON LEFT</div>
+    <div class="panel-row" style="background:#1a1a22">
+      <span class="row-sock-mini" style="opacity:0.7"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1</span>
+      <span class="promote-cta" style="opacity:1; color:var(--accent)">⤴ wire in · element</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">category</span>
+      <span class="v">Walls</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">New Construction</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">workset</span>
+      <span class="v slider"></span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">include_demolished</span>
+      <span class="v">false</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view_filter_id</span>
+      <span class="v">(unset)</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">design_option</span>
+      <span class="v">(unset)</span>
+    </div>
+  </div>
+  <div class="annot" style="grid-column:1 / -1">
+    <div class="borrowed">ComfyUI parallel: hovering a widget reveals the "convert to input" affordance; the type pill (<code>element</code> / <code>enum</code> / <code>number</code> / <code>bool</code> / <code>id</code>) tells the user what wire colour will draw + which upstream nodes are compatible. The right panel surfaces the same gesture textually for keyboard users.</div>
+    <strong class="gain">What this earns:</strong>
+    <ul>
+      <li>Promotion is one frame away — hover then click, no menu.</li>
+      <li>Type hint prevents mismatch (purple-bordered wires only land on type-compatible sockets — connector contract already validates this).</li>
+      <li>Right panel is the keyboard-driven version — same gesture, Tab + Enter friendly.</li>
+    </ul>
+    <strong class="cost">What this costs:</strong>
+    <ul>
+      <li>Hover detection on left/right of every row × 47 params requires careful pointer-events tuning so wiring doesn't break.</li>
+      <li>The dashed marker has to feel deterministic — appears at hover, disappears on leave, never flicker.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── STAGE 3 — POST-PROMOTION ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 3 · AFTER PROMOTION</div>
+  <div>
+    <div class="stage-title">User promoted view + phase + workset</div>
+    <div class="stage-sub">
+      Three params became permanent sockets. They migrated to the LEFT RAIL.
+      A fourth (<code>last_out.first_id</code>) was promoted to the RIGHT
+      RAIL as an output. Wires landed from upstream nodes. The param row now
+      shows the wired-input border + the rail socket has its solid coloured
+      dot. Re-clicking the rail socket demotes it back to a row marker
+      (symmetric gesture).
+    </div>
+    <div class="canvas-zone">
+      <!-- upstream nodes (faded — context only) -->
+      <div style="position:absolute; left:-10px; top:120px; width:60px; height:36px;
+                  border:1px solid var(--inkDim); border-radius:5px;
+                  background:var(--bgPanel); opacity:0.45;
+                  font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                  padding:5px 8px;">Phase<br>Filter</div>
+      <div style="position:absolute; left:-10px; top:166px; width:60px; height:36px;
+                  border:1px solid var(--inkDim); border-radius:5px;
+                  background:var(--bgPanel); opacity:0.45;
+                  font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                  padding:5px 8px;">View<br>picker</div>
+      <div style="position:absolute; left:-10px; top:212px; width:60px; height:36px;
+                  border:1px solid var(--inkDim); border-radius:5px;
+                  background:var(--bgPanel); opacity:0.45;
+                  font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                  padding:5px 8px;">Workset<br>Slider</div>
+      <div style="position:absolute; right:-20px; top:140px; width:90px; height:34px;
+                  border:1px solid var(--inkDim); border-radius:5px;
+                  background:var(--bgPanel); opacity:0.45;
+                  font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                  padding:5px 8px;">DirectShape<br>creator</div>
+
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <!-- promoted IN wires (purple) -->
+        <path d="M 50 138 C 80 138, 80 152, 110 152" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.9"/>
+        <path d="M 50 184 C 80 184, 80 178, 110 178" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.9"/>
+        <path d="M 50 230 C 80 230, 80 204, 110 204" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.9"/>
+        <!-- promoted OUT wire (cyan) -->
+        <path d="M 470 158 C 510 158, 510 158, 555 158" stroke="#5fb3b3" stroke-width="2.4" fill="none" opacity="0.9"/>
+      </svg>
+
+      <div class="host-node" style="left:110px; top:30px; width:360px;">
+        <div class="host-node-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· live-A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag on-blue"></div>
+            <div class="flag on-red"></div>
+            <div class="flag"></div>
+          </div>
+        </div>
+        <div class="main-sock any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:9px; top:42px;">trigger</span>
+        <div class="main-sock list out" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="right:9px; top:42px; color:var(--blue)">last_out</span>
+
+        <!-- promoted IN rail (3 sockets) -->
+        <div class="rail-sock l in" style="top:122px;"></div>
+        <span class="rail-label l" style="top:120px;">list_walls.view</span>
+        <div class="rail-sock l in" style="top:148px;"></div>
+        <span class="rail-label l" style="top:146px;">list_walls.phase</span>
+        <div class="rail-sock l in" style="top:174px;"></div>
+        <span class="rail-label l" style="top:172px;">list_walls.workset</span>
+
+        <!-- promoted OUT rail (1 socket — first wall id pluck) -->
+        <div class="rail-sock r out" style="top:128px;"></div>
+        <span class="rail-label r" style="top:126px;">list_walls[0].id</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_views</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile cfg active">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">AUTO · just now · 142 rows</span>
+            </div>
+            <div class="main-section" style="border-top:0; padding:4px 0 0">
+              <div class="params-list">
+                <div class="param-row wired-in">
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">view</span>
+                  <span class="param-val">Level 1 ↳ wired</span>
+                  <div class="row-sock-r"></div>
+                </div>
+                <div class="param-row">
+                  <div class="row-sock-l"></div>
+                  <span class="param-key">category</span>
+                  <span class="param-val">Walls</span>
+                  <div class="row-sock-r"></div>
+                </div>
+              </div>
+            </div>
+            <div class="advanced-section">
+              <div class="section-head">
+                <span class="chev">▾</span>
+                <span>ADVANCED</span>
+                <span class="count">5 params · 2 wired</span>
+              </div>
+              <div class="section-body">
+                <div class="params-list" style="padding-top:3px">
+                  <div class="param-row wired-in">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">phase</span>
+                    <span class="param-val">↳ Phase Filter</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row wired-in">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">workset</span>
+                    <span class="param-val">↳ Workset Slider</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">include_demolished</span>
+                    <span class="param-val">false</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view_filter_id</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">design_option</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_doors</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_grids</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_sheets</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_schedules</span><div class="op-time">never</div></div>
+          <div class="op-tile bypassed"><span class="pill"></span><span class="op-name">place_family</span><div class="op-time">bypassed</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">update_param</span><div class="op-time">never</div></div>
+          <div class="op-tile locked"><span class="pill cfg"></span><span class="op-name">tag_element</span><div class="op-time">locked · 4h</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">link_dwg</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">export_view</span><div class="op-time">never</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe"></div>
+      <div class="panel-host-label">REVIT · list_walls</div>
+    </div>
+    <div class="panel-title">list_walls</div>
+    <div class="panel-sub">3 inputs promoted · 1 output plucked · auto-cooking</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">PARAMS</div>
+      <div class="panel-tab">SETTINGS</div>
+      <div class="panel-tab">OUTPUT</div>
+      <div class="panel-tab">DOCS</div>
+    </div>
+    <input class="panel-search" placeholder="search · 13 ops · 47 params"/>
+    <div class="panel-group">MAIN</div>
+    <div class="panel-row wired">
+      <span class="row-sock-mini"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1 ↳ wired</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">category</span>
+      <span class="v">Walls</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-group">ADVANCED · 2 / 5 WIRED</div>
+    <div class="panel-row wired">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">↳ Phase Filter</span>
+    </div>
+    <div class="panel-row wired">
+      <span class="row-sock-mini"></span>
+      <span class="k">workset</span>
+      <span class="v">↳ Workset Slider</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">include_demolished</span>
+      <span class="v">false</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view_filter_id</span>
+      <span class="v">(unset)</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">design_option</span>
+      <span class="v">(unset)</span>
+      <span class="promote-cta">⤴ wire in</span>
+    </div>
+    <div class="panel-group" style="color:var(--cyan)">OUTPUT PLUCKS · 1 PROMOTED</div>
+    <div class="panel-row wired" style="--purple:var(--cyan)">
+      <span class="row-sock-mini" style="background:var(--cyan); border-color:var(--cyan)"></span>
+      <span class="k">list_walls[0].id</span>
+      <span class="v" style="border-color:var(--cyan); background:#1d2c2c">→ DirectShape creator</span>
+    </div>
+  </div>
+  <div class="annot" style="grid-column:1 / -1">
+    <div class="borrowed">ComfyUI parallel: promoted inputs migrate to the node's left edge as "slot" sockets — the original widget still works (constant fallback), but the slot now accepts wires of the matching type. Demotion is the inverse gesture. ArchHub adds the OUTPUT-pluck dimension on the right rail: any cooked field (e.g. <code>list_walls[0].id</code>) can be promoted as a typed output without changing the engine contract.</div>
+    <strong class="gain">What this earns:</strong>
+    <ul>
+      <li>The node face stays calm in the default + grows only where the user invested.</li>
+      <li>Rail labels make wire-target intent explicit — <code>list_walls.view</code> is unmistakable.</li>
+      <li>OUTPUT pluck removes the need for a downstream "extract field" node for common patterns.</li>
+    </ul>
+    <strong class="cost">What this costs:</strong>
+    <ul>
+      <li>The rail layout has to flex as the user promotes more — three sockets fit nicely; thirty would need scroll.</li>
+      <li>Wire colour rules: in = purple, out = cyan, typed-wire colour overlays per Slice-D palette inside the rail rendering.</li>
+    </ul>
+  </div>
+</div>
+
+</div>
+
+<div class="decision">
+  <h2>Decision capture</h2>
+  <p>This prototype is built from your direct constraints (recall above).
+  Before any JSX touch, confirm or steer:</p>
+  <ol>
+    <li><strong>Main sockets stay always-visible</strong> on the node face
+      (trigger in · last_out out). <span class="key">Y / N</span></li>
+    <li><strong>Each param row has a hover-revealed dashed marker</strong>
+      on its left edge for input promotion + right edge for output
+      pluck. <span class="key">Y / N</span></li>
+    <li><strong>Promoted sockets migrate to dedicated rails</strong>
+      (left for inputs, right for outputs) with labels like
+      <code>list_walls.view</code>. <span class="key">Y / N</span></li>
+    <li><strong>ADVANCED section</strong> collapses MAIN params from
+      defaults — expand to see + promote the rest. <span class="key">Y / N</span></li>
+    <li><strong>Type hint pill</strong> on hover (<code>element</code> /
+      <code>enum</code> / <code>number</code> / <code>bool</code> /
+      <code>id</code>) shown next to the dashed marker. <span class="key">Y / N</span></li>
+    <li><strong>Right panel mirrors</strong> the on-node experience for
+      keyboard users — same gesture, textual surface. <span class="key">Y / N</span></li>
+    <li><strong>Floating settings bar</strong> for run-mode +
+      pin / bypass / lock (per Direction A original — no buttons on the
+      node body). <span class="key">Y / N</span></li>
+  </ol>
+  <p style="margin-top:14px; color:var(--inkSoft)">Reply with the constraints
+  you accept + any refinements. I write the AgDR + start the JSX migration
+  only after your sign-off, slice by slice.</p>
+</div>
+
+</body>
+</html>

@@ -1,12 +1,43 @@
-# ArchHub Visual Canvas — Implementation Plan
+# ArchHub Visual Canvas — Architecture (shipped v1.4)
 
-_Engineering plan for v0.18-v0.20. Internal. Last update: 2026-05-06._
+> **Design reference — not the roadmap.** The single roadmap / source of
+> truth is [`docs/ROADMAP.md`](ROADMAP.md). This document is kept for
+> architecture & decision rationale only.
 
-## 0. TL;DR
+_Last update: 2026-05-14. Sections marked **HISTORICAL** describe the
+v0.18 NodeGraphQt plan that was superseded by the v1.0 JSX rewrite.
+Sections marked **CURRENT** describe what actually ships in v1.4._
 
-- Canvas is a **read+edit surface** over the existing `Workflow` JSON. It does not replace it, does not own state, and is opt-in. ComfyUI under the hood; chat on top.
-- Build it on **NodeGraphQt (jchanvfx)** — MIT, Qt6-supporting fork available, an order of magnitude less code than rolling our own QGraphicsScene, and fits the registry-driven palette pattern out of the box.
-- Phase it: v0.18 read+run+edit existing Skills; v0.19 build new Skills from scratch; v0.20+ multi-select / frames / search palette.
+## 0. TL;DR (CURRENT — v1.4)
+
+- Canvas is the **primary surface**. Chat is one node type among
+  many; conversations live as `i_conv` nodes on the same graph.
+- Built on **React + Babel + QtWebEngine** (`app/web_ui/studio-lm.jsx`,
+  ~5 k LOC). Python ↔ JSX talks via 115+ `@pyqtSlot` bridges on
+  `app/bridge.py`.
+- **Session = canvas.** One slug, one persistent autosaved graph,
+  one URL. Switching session swaps the workspace.
+- **80 node types across 10 categories** (host / read / filter /
+  transform / annotate / compose / logic / AI / output / trigger) —
+  see `docs/NODE_LIBRARY_v2.md`.
+- **18 host families** detected by `app/host_detector.py` + brokers,
+  surfaced as the canvas host-pill row.
+- **AI-agent composer** (`bridge.agent_step`) — NL intent → 7-tool
+  schema → graph mutation chips.
+
+## 0b. TL;DR (HISTORICAL — v0.18 plan)
+
+- Canvas was a **read+edit surface** over the existing `Workflow` JSON. It did not replace it, did not own state, and was opt-in. ComfyUI under the hood; chat on top.
+- Built on **NodeGraphQt (jchanvfx)** — MIT, Qt6-supporting fork available, an order of magnitude less code than rolling our own QGraphicsScene, and fits the registry-driven palette pattern out of the box.
+- Phased: v0.18 read+run+edit existing Skills; v0.19 build new Skills from scratch; v0.20+ multi-select / frames / search palette.
+
+**Why we replaced NodeGraphQt with JSX:** QtWebEngine + React lets one
+rendering pipeline cover both desktop and the future hosted web build,
+the design language ports cleanly from the prototype Figma JSX files,
+DevTools + hot-reload (F5) shortens iteration loops, and the wire
+layer (28 px snap, hover preview, body-drop, refusal toast) is
+substantially less code in pointer-events JS than `QGraphicsItem`
+hit-testing. The NodeGraphQt branch was archived, not deleted.
 
 ---
 
@@ -365,7 +396,7 @@ Tests:
 
 ---
 
-## Order of operations checklist
+## Order of operations checklist (HISTORICAL — v0.18 NodeGraphQt path)
 
 1. Pin and vendor NodeGraphQt fork. Smoke test PyQt6 import.
 2. Write `node_factory.py` — generate one BaseNode subclass per `NodeSpec`.
@@ -379,3 +410,124 @@ Tests:
 10. Cog menu entry (defer to v0.19 if shipping v0.18 separately).
 11. Tests.
 12. Cut v0.18 release.
+
+---
+
+## v1.4 architecture (CURRENT — JSX canvas)
+
+### Layered view
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  app/web_ui/studio-lm.jsx  (React, ~5k LOC)            │
+│    HostPillRow · CanvasView · NodeRenderer · WireLayer │
+│    Sidebar · NodeLibrary · FloatingComposer · NodeRail │
+│           ▲                                            │
+│           │ QWebChannel                               │
+└───────────┼──────────────────────────────────────────────┘
+            ▼
+   app/bridge.py  (PyQt6 QObject, 115+ @pyqtSlot)
+   ├── hosts: 18 families, broker + COM + HTTP + token probes
+   ├── sessions: CRUD + autosave + fork
+   ├── graph: save_graph · run_node · run_workflow
+   ├── wires: can_wire · would_create_cycle · wire_transform · list_wire_fields
+   ├── node-MCP: register · invoke · dispatch · list
+   ├── subgraph: compose · expand · save_as_skill · duplicate
+   ├── composer: parse_composer_command · apply_composer_command
+   └── agent: agent_step (7-tool schema · NL → graph mutation)
+            │
+            ▼
+   app/workflows/   (graph + runner + nodes + library)
+   app/connectors/  (revit · acad · max · blender · rhino · outlook
+                    teams · notion · speckle · dropbox · procore)
+   app/mcp/         (NodeMCPServer + MCPRegistry)
+```
+
+### Single source of truth
+
+The session JSON in `%LOCALAPPDATA%\ArchHub\sessions\<slug>.archhub-session.json`
+is canonical. JSX state is a view layer that round-trips through
+`bridge.save_graph(session_id, graph_json)`. The Python `Workflow`
+dataclass still exists for executor compatibility but the canvas
+**reads/writes the session JSON directly** — no adapter to keep in
+sync.
+
+### Wire engine (v1.4 specifics)
+
+| Property | Value |
+|---|---|
+| Snap radius | **28 px** (Houdini / UE5 magnet feel) |
+| Hover preview | green glow = will connect, red glow = refused |
+| Drop-on-node-body | auto-picks first unconnected compatible input |
+| Drop-on-empty-canvas | fires `lm-wire-promote` event (future palette) |
+| Refusal toast | banner with reason — incompatible types / would-cycle / dupe / self |
+| Wire data state | idle / flowing / cached / stale / error — painted on the bezier |
+| Field selector | `src_field` / `dst_field` plucked from `bridge.list_wire_fields` |
+| Cache invalidation | cache key includes selectors → field change invalidates |
+| Cycle prevention | edit-time via `bridge.would_create_cycle` |
+
+### Run model
+
+Press **▶ Run Workflow** on the toolbar:
+
+1. JSX serialises the canvas to graph JSON.
+2. `bridge.run_workflow(session_id, graph_json)` walks sinks first,
+   recursively cooks upstream dirty nodes, skips frozen (returns
+   cached output), respects host permissions (AUTO / ASK / BLOCK).
+3. Each node emits state transitions through QWebChannel signals;
+   JSX repaints node border colour (idle / running / done / failed).
+
+### Node-as-MCP
+
+Every node mounted in JSX calls `bridge.register_node_mcp(node_id,
+node_type, config_json)` in its `useEffect`. The Python registry
+hands the node a `NodeMCPServer` that exposes its tools via
+JSON-RPC 2.0. Other agents (Claude, an internal subgraph, an
+external tool) call `bridge.dispatch_node_mcp(node_id, method,
+params_json)` to invoke them. On unmount JSX calls
+`bridge.unregister_node_mcp(node_id)`.
+
+### Agent composer (`bridge.agent_step`)
+
+Distinct from the deterministic `/slash` parser. Used when the user
+types free text in the composer without a focused conversation node.
+
+```text
+user_msg → bridge.agent_step(user_msg, graph_json, model)
+        → LLM with 7-tool schema (spawn_host / spawn_node / wire /
+          focus / rename / delete / run)
+        → tool-call array → JSX renders as chips → user confirms
+          per-chip → apply_composer_command per applied chip
+        → graph mutates, autosaves
+```
+
+The agent has the current graph context so it can wire to existing
+nodes, not just spawn fresh ones.
+
+### v1.4 file map
+
+| Path | What it owns |
+|---|---|
+| `app/web_ui/index.html` | React + Babel CDN + ErrorBoundary |
+| `app/web_ui/studio-lm.jsx` | The canvas itself — DO NOT EDIT WHILE OTHER AGENT WORKING |
+| `app/bridge.py` | 115+ slot QObject — DO NOT EDIT WHILE OTHER AGENT WORKING |
+| `app/host_detector.py` | 18-family detector — DO NOT EDIT WHILE OTHER AGENT WORKING |
+| `app/web_shell.py` | QtWebEngine host + NoContextMenu |
+| `app/workflows/` | Graph + runner + registry + composer commands + subgraph |
+| `app/mcp/node_mcp.py` | NodeMCPServer + MCPRegistry |
+| `app/connectors/` | Per-host runners (Outlook, Teams, Notion, Blender, Rhino, Speckle, Procore) |
+| `app/connectors/<host>_broker.py` | Revit / AutoCAD / 3ds Max brokers (port-handshake) |
+| `app/settings_dialog.py` | Native PyQt 5-tab dialog |
+| `app/skills/` | Saved subgraph skills + matcher + capture |
+| `docs/NODE_LIBRARY_v2.md` | 80-node taxonomy reference |
+
+### Out of scope v1.4
+
+- Real-time collab on the same canvas.
+- Mobile / tablet canvas (it's a desktop app).
+- Cancel mid-run (deferred — `bridge.run_workflow` is synchronous-blocking).
+- Auto-generate graph from prompt without confirmation chips (the
+  agent composer always shows chips).
+- Custom node types authored in GUI (power users add to
+  `app/workflows/nodes/*.py` and call `register()` — see
+  `bridge.create_node_type` for runtime-registered types).

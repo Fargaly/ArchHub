@@ -1,0 +1,161 @@
+name: Reality smoke
+
+# Runs scripts/reality_smoke.py every 30 minutes against the deployed
+# cloud + agents Fly apps. On failure, opens / re-opens a single tracking
+# issue tagged `reality-down`. On the next green run that issue is auto-
+# closed. Manual triggering is supported via workflow_dispatch — use it
+# after a deploy to verify the smoke test sees the new build.
+
+on:
+  # 2026-05-13: cron re-enabled after Fly deploy went green (cloud +
+  # agents both return 200 on /healthz). Cadence stretched to 1h to
+  # avoid hammering the trial-tier shared-cpu-1x machines.
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      cloud_url:
+        description: "Override cloud backend URL (default archhub-cloud.fly.dev)"
+        required: false
+        default: ""
+      agents_url:
+        description: "Override agents URL (default archhub-agents.fly.dev)"
+        required: false
+        default: ""
+
+# One reality run at a time — overlapping runs would race on the issue
+# create / close calls and produce duplicate notifications.
+concurrency:
+  group: reality-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    name: Probe production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # No deps — the script uses stdlib HTTP only. Keeping this step
+      # documents the intent.
+      - name: Verify no extra deps needed
+        run: python -c "import urllib.request, json; print('stdlib only')"
+
+      - name: Run reality smoke (JSON output)
+        id: smoke
+        env:
+          # gh CLI is preinstalled on ubuntu-latest and inherits GITHUB_TOKEN.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CLOUD_URL="${{ inputs.cloud_url }}"
+          AGENTS_URL="${{ inputs.agents_url }}"
+          ARGS=()
+          if [ -n "$CLOUD_URL" ]; then ARGS+=(--cloud-url "$CLOUD_URL"); fi
+          if [ -n "$AGENTS_URL" ]; then ARGS+=(--agents-url "$AGENTS_URL"); fi
+          ARGS+=(--retry 2)
+
+          # Run twice: once human-readable (for the run log), once JSON
+          # (uploaded as artifact + parsed for the failure-issue body).
+          python scripts/reality_smoke.py "${ARGS[@]}" || true
+          python scripts/reality_smoke.py --json "${ARGS[@]}" > reality.json
+          RC=${PIPESTATUS[0]}
+          echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
+          # Always keep going so the issue-management steps run even on
+          # red — we surface the result via the exit code at the end.
+          exit 0
+
+      - name: Upload smoke output
+        uses: actions/upload-artifact@v7
+        with:
+          name: reality-smoke-${{ github.run_id }}
+          path: reality.json
+          retention-days: 7
+
+      - name: Open / re-open issue on failure
+        if: steps.smoke.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TITLE="Reality smoke FAILED — production unhealthy"
+          # Re-use one tracking issue keyed by the `reality-down` label.
+          EXISTING=$(gh issue list --label reality-down --state all \
+                       --limit 1 --json number,state \
+                       --jq '.[0]' 2>/dev/null || echo "")
+          BODY_FILE="$(mktemp)"
+          {
+            echo "Reality smoke failed at \`$(date -u +%FT%TZ)\` "
+            echo "for commit \`${{ github.sha }}\` "
+            echo "(run [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}))."
+            echo ""
+            echo "## Failed checks"
+            echo ""
+            python -c "
+          import json, sys
+          d = json.load(open('reality.json'))
+          fails = [c for c in d['checks'] if c['status'] == 'fail']
+          for c in fails:
+              print(f\"- \`{c['name']}\` ({c['category']}): {c['detail']}\")
+          if not fails:
+              print('(no specific failures — the run errored before checks executed)')
+          "
+            echo ""
+            echo "## Summary"
+            echo ""
+            python -c "
+          import json
+          d = json.load(open('reality.json'))
+          s = d['summary']
+          print(f\"- green: {s['green']}\")
+          print(f\"- failed: {s['failed']}\")
+          print(f\"- skipped: {s['skipped']}\")
+          "
+            echo ""
+            echo "Auto-opened by [.github/workflows/reality.yml](.github/workflows/reality.yml). "
+            echo "Closes automatically on the next green run."
+          } > "$BODY_FILE"
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create --title "$TITLE" --body-file "$BODY_FILE" \
+              --label reality-down
+          else
+            NUM=$(echo "$EXISTING" | python -c "import json,sys; print(json.load(sys.stdin)['number'])")
+            STATE=$(echo "$EXISTING" | python -c "import json,sys; print(json.load(sys.stdin)['state'])")
+            if [ "$STATE" = "CLOSED" ]; then
+              gh issue reopen "$NUM"
+            fi
+            gh issue edit "$NUM" --body-file "$BODY_FILE"
+            gh issue comment "$NUM" --body "Still failing — run ${{ github.run_id }}."
+          fi
+
+      - name: Auto-close issue when green
+        if: steps.smoke.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          OPEN=$(gh issue list --label reality-down --state open \
+                   --limit 1 --json number --jq '.[0].number' \
+                   2>/dev/null || echo "")
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --body "Reality smoke green at $(date -u +%FT%TZ) (run ${{ github.run_id }}). Auto-closing."
+            gh issue close "$OPEN"
+          fi
+
+      - name: Fail the workflow if smoke reported red
+        if: steps.smoke.outputs.exit_code != '0'
+        run: |
+          echo "Smoke exit code was ${{ steps.smoke.outputs.exit_code }}"
+          exit 1

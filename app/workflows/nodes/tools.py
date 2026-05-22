@@ -23,6 +23,15 @@ def _make_executor(tool_name: str):
         for k, v in inputs.items():
             if v is not None:
                 args[k] = v
+        # ctx may be None when the WorkflowRunner cooks nodes via
+        # `pull()` (runner.py passes ctx=None). Return a soft
+        # missing_dep envelope rather than crashing.
+        if ctx is None or not getattr(ctx, "tool_engine", None):
+            return {
+                "result": {"status": "missing_dep",
+                            "error": "tool_engine not available in this execution context"},
+                "ok": False,
+            }
         result = ctx.tool_engine.invoke(tool_name, args)
         return {
             "result": result,

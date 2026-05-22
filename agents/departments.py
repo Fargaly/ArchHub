@@ -77,7 +77,7 @@ class RnDAgent(Agent):
         "'per release notes')."
     )
     readable_globs = [
-        "app/**/*.py", "relay/**/*.ts", "docs/**/*.md",
+        "app/**/*.py", "cloud_backend/**/*.py", "docs/**/*.md",
         "STRATEGY.md", "DEVELOPMENT_LOG.md", "VISION.md",
     ]
 
@@ -104,7 +104,7 @@ class EngAgent(Agent):
         "intent, minimal inline comments where rationale matters."
     )
     readable_globs = [
-        "app/**/*.py", "relay/**/*.ts", "tests/**/*.py",
+        "app/**/*.py", "cloud_backend/**/*.py", "tests/**/*.py",
         "docs/**/*.md", "STRATEGY.md",
     ]
 

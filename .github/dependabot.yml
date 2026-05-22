@@ -1,12 +1,15 @@
 # Dependabot — automatic vulnerability + version-pin updates.
 #
 # Three ecosystems we depend on:
-#   - pip:        Python runtime deps for the desktop app
+#   - pip:        Python deps — desktop app, cloud backend, agents,
+#                 repo root
 #   - github-actions: pinned action versions in our workflows
 #   - nuget:      .NET / Roslyn deps inside the Revit MCP project
 #
 # Weekly cadence is enough; Dependabot still pushes immediate-fix PRs
 # the moment a high-severity advisory lands, regardless of schedule.
+# Patch + minor bumps auto-merge once CI is green — see
+# .github/workflows/dependabot-auto-merge.yml.
 
 version: 2
 updates:
@@ -34,6 +37,34 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "deps(py-root)"
+
+  # The cloud backend is a deployed FastAPI service — its deps face the
+  # internet, so keeping them patched matters more than the desktop's.
+  - package-ecosystem: "pip"
+    directory: "/cloud_backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cloud)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "cloud"
+
+  - package-ecosystem: "pip"
+    directory: "/agents"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(agents)"
+    labels:
+      - "dependencies"
 
   - package-ecosystem: "github-actions"
     directory: "/"

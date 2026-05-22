@@ -5,6 +5,9 @@ dist-staging/
 *.egg-info/
 *.spec
 
+# ==== Node / web tooling ====
+node_modules/
+
 # ==== Bundled runtime (downloaded by installer\build.bat) ====
 python/
 
@@ -71,3 +74,27 @@ payload/max/
 
 # ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
 **/skill_usage.json
+# User-saved skills/sessions are runtime artefacts, not source.
+app/skills/*.archhub-skill.json
+**/*.archhub-session.json
+
+# ==== Claude Code per-machine state ====
+# IDE settings + transcripts written by Claude Code; never commit.
+.claude/
+
+# ==== Autonomous agent runtime artefacts ====
+# Each headless agent writes task YAMLs + reports under agents/tasks/
+# during normal operation. These are per-machine runtime state, not
+# source. Keep agents/ scripts themselves tracked, only ignore the
+# dynamic runtime sub-trees.
+agents/tasks/
+agents/logs/
+agents/dashboard.html
+agents/_smoke/
+# Roadmap-dispatcher per-machine state (completed ids, lock, last
+# tick). Per-machine; never commit.
+agents/state/*
+!agents/state/.gitkeep
+
+# ==== Codex / temporary boot logs ====
+boot.log

@@ -1,12 +1,15 @@
-# Skills
+# Skills (v1.4)
 
-Skills are how ArchHub turns a useful chat into a reusable shortcut. They
-are the product surface of the workflow engine — the thing your team
-actually creates, runs, edits, and shares.
+Skills are how ArchHub turns a useful canvas into a reusable shortcut.
+They are the product surface of the workflow engine — the thing your
+team actually creates, runs, edits, and shares.
 
-ArchHub is not a new tool to learn. It is a chat that already knows how to
-drive Revit, AutoCAD, 3ds Max, Blender, and Speckle, and gets smarter the
-more your team uses it. Each Skill is one of those learned patterns.
+In v1.4 ArchHub is a **graph-first workspace**. Every entity (an
+18-family host, an LLM conversation, a CSV reader, a dimension placer)
+lives as a typed node on a **canvas**. Wire them together, save the
+canvas as a Skill, drop it back on any other canvas as a single
+composite node. Same JSON file format as v0.7, same matcher, same
+slash commands — just a richer authoring surface.
 
 ---
 
@@ -300,4 +303,34 @@ Want to extend the system without touching the engine?
 - v0.8: shared library sync (mechanism TBD), skill telemetry rollup,
   embeddings matcher.
 - v0.9: skill versioning + diff UI; team-edit history.
-- v1.0: visible canvas for power users (ComfyUI-style graph editor).
+- v1.0: visible canvas for power users (ComfyUI-style graph editor) — shipped.
+- v1.3: 18-host detector, host-pill row, native PyQt SettingsDialog,
+  node-as-MCP server registry, agent_step composer scaffold.
+- **v1.4 (current)**: canvas-saved Skills via Cmd-G subgraph compose,
+  rich right-click node menu (Run / Freeze / Rename / Duplicate /
+  Save-as-Skill / Disconnect-all / Delete / Properties), agent-mode
+  composer with 7-tool schema, Node Library with most-used row +
+  collapse-all / expand-all, session-as-canvas autosave, Revit add-in
+  deployed to 2020/2023/2024/2025. See `docs/NODE_LIBRARY_v2.md` for
+  the full 80-node taxonomy.
+
+## Canvas authoring path (v1.4)
+
+The fastest route to a new Skill in v1.4:
+
+1. Drag nodes from the **Node Library** rail (or let the agent
+   composer spawn them — type `"ping outlook"` and watch).
+2. Wire output ports → input ports. 28 px snap, hover preview, refusal
+   toast if the types don't match.
+3. Press **▶ Run Workflow** to cook every sink. Frozen nodes return
+   cached output.
+4. Shift-select the nodes you want to template (or `⌘A` for the whole
+   graph). Press **⌘ G** to compose into a `subgraph.user` composite.
+5. Right-click the composite → **Save as Skill**. Fill the metadata
+   form (intent / keywords / when_to_use / tags). The new Skill
+   appears in the Skills rail and is matchable by the chat matcher
+   immediately.
+
+Removing the `metadata.skill` block of any saved Skill JSON turns it
+back into a plain Workflow — runnable from the canvas but invisible to
+the matcher.

@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AgDR-0014 — Library Design System</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --bgDeep:#0a0a0d; --bgInk:#18181e;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+    --line:#26262e; --lineSoft:#1e1e24;
+    --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f; --cyan:#5fb3b3;
+    --purple:#a98cd6; --blue:#7898d6;
+    --pure:#7ec18e; --host:#e5b25a; --net:#7898d6;
+    --serif:"'Instrument Serif', Georgia, serif";
+    --sans:"'Inter', system-ui, sans-serif";
+    --mono:"'JetBrains Mono', ui-monospace, monospace";
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:'Inter',system-ui,sans-serif; font-size:13px;
+         line-height:1.55; padding:32px 40px; }
+  h1 { font-family:'Instrument Serif',Georgia,serif; font-size:30px;
+       font-weight:500; letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:'Instrument Serif',Georgia,serif; font-size:22px;
+       font-weight:500; letter-spacing:-0.01em; margin:36px 0 8px 0; }
+  h3 { font-family:'JetBrains Mono',ui-monospace,monospace; font-size:11px;
+       font-weight:600; color:var(--inkMuted); letter-spacing:0.18em;
+       margin:18px 0 8px 0; text-transform:uppercase; }
+  p { color:var(--inkSoft); max-width:88ch; }
+  p.sub { color:var(--inkMuted); font-size:12px; }
+  code { font-family:'JetBrains Mono',ui-monospace,monospace;
+         font-size:0.92em; background:var(--bgSoft); padding:1px 6px;
+         border-radius:3px; color:var(--ink); }
+
+  .lead { background:var(--bgPanel); border:1px solid var(--line);
+          border-left:3px solid var(--accent); border-radius:8px;
+          padding:16px 20px; margin:18px 0 28px 0; max-width:920px; }
+  .lead strong { color:var(--ink); }
+
+  .row { display:flex; flex-wrap:wrap; gap:14px; margin:14px 0; }
+  .card { background:var(--bgPanel); border:1px solid var(--line);
+          border-radius:8px; padding:14px 18px; min-width:240px; flex:1; }
+  .card .label { font-family:'JetBrains Mono',ui-monospace,monospace;
+                  font-size:9.5px; color:var(--inkMuted); letter-spacing:0.16em;
+                  text-transform:uppercase; margin-bottom:6px; }
+  .card .value { font-family:'Instrument Serif',Georgia,serif; font-size:30px;
+                  font-weight:500; color:var(--ink); }
+  .card .delta { font-family:'JetBrains Mono',ui-monospace,monospace;
+                  font-size:10.5px; margin-top:4px; }
+  .delta.up { color:var(--ok); }
+  .delta.down { color:var(--err); }
+  .delta.neutral { color:var(--inkMuted); }
+
+  table { border-collapse:collapse; margin:10px 0 20px 0; width:100%;
+          max-width:920px; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--lineSoft);
+            font-size:12.5px; vertical-align:top; }
+  th { color:var(--inkMuted); font-weight:500; font-size:11px;
+       text-transform:uppercase; letter-spacing:0.12em;
+       border-bottom:1px solid var(--line); }
+  td.mono { font-family:'JetBrains Mono',ui-monospace,monospace; font-size:11.5px; }
+  td.cat { font-family:'JetBrains Mono',ui-monospace,monospace; font-size:10.5px;
+            color:var(--accent); }
+
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px;
+          font-family:'JetBrains Mono',ui-monospace,monospace; font-size:10px;
+          letter-spacing:0.06em; border:1px solid var(--line); }
+  .pill.pure { color:var(--pure); border-color:var(--pure); background:#1a221b; }
+  .pill.host { color:var(--host); border-color:var(--host); background:#231f14; }
+  .pill.net  { color:var(--net);  border-color:var(--net);  background:#161d2a; }
+  .pill.cat  { color:var(--accent); border-color:var(--accent); background:#231510; }
+
+  .grid-tokens { display:grid; grid-template-columns:repeat(11, 1fr); gap:6px;
+                  margin:10px 0; max-width:920px; }
+  .tok-cat { background:var(--bgPanel); border:1px solid var(--line);
+              padding:10px 6px; border-radius:5px; text-align:center;
+              font-family:'JetBrains Mono',ui-monospace,monospace;
+              font-size:10.5px; color:var(--accent); }
+
+  /* Validator demo */
+  .vdemo { background:var(--bgPanel); border:1px solid var(--line);
+            border-radius:8px; padding:16px 20px; margin:16px 0;
+            max-width:980px; }
+  .vdemo .head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .vdemo .head .badge {
+    font-family:'JetBrains Mono',ui-monospace,monospace; font-size:9.5px;
+    color:var(--inkMuted); letter-spacing:0.16em; text-transform:uppercase;
+  }
+  .vdemo pre { background:var(--bgDeep); border:1px solid var(--lineSoft);
+                border-radius:5px; padding:12px 14px; overflow-x:auto;
+                font-family:'JetBrains Mono',ui-monospace,monospace;
+                font-size:11.5px; color:var(--ink); margin:6px 0; }
+  .vdemo .result { padding:10px 14px; border-radius:5px; margin-top:8px;
+                    font-family:'JetBrains Mono',ui-monospace,monospace;
+                    font-size:11px; }
+  .vdemo .result.reject { background:#2a1817; border:1px solid var(--err);
+                            color:var(--err); }
+  .vdemo .result.accept { background:#152419; border:1px solid var(--ok);
+                            color:var(--ok); }
+  .vdemo .result .head { color:var(--inkSoft); margin-bottom:6px; font-size:10.5px; }
+  .vdemo .result li { margin:3px 0 3px 18px; color:var(--ink); }
+
+  /* Fork resolution */
+  .fork { background:var(--bgPanel); border:1px solid var(--line);
+          border-left:3px solid var(--ok); border-radius:8px;
+          padding:14px 18px; margin:10px 0; max-width:920px; }
+  .fork .q { color:var(--inkSoft); margin-bottom:4px; font-size:13px; }
+  .fork .q span.tag { font-family:'JetBrains Mono',ui-monospace,monospace;
+                       font-size:9.5px; color:var(--inkMuted); margin-right:8px;
+                       letter-spacing:0.1em; }
+  .fork .a { color:var(--ink); font-size:13px; }
+  .fork .a span.tag { font-family:'JetBrains Mono',ui-monospace,monospace;
+                       font-size:9.5px; color:var(--ok); margin-right:8px;
+                       letter-spacing:0.1em; }
+  .fork .rationale { color:var(--inkMuted); font-size:11.5px; margin-top:6px;
+                      font-style:italic; }
+
+  /* Stats strip */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
+            margin:20px 0 30px 0; max-width:920px; }
+  .stat { background:var(--bgPanel); border:1px solid var(--line);
+           border-radius:6px; padding:14px; }
+  .stat .label { font-family:'JetBrains Mono',ui-monospace,monospace;
+                  font-size:9px; color:var(--inkMuted); letter-spacing:0.18em;
+                  text-transform:uppercase; }
+  .stat .value { font-family:'Instrument Serif',Georgia,serif;
+                  font-size:28px; font-weight:500; line-height:1.1; margin-top:4px; }
+  .stat .delta { font-family:'JetBrains Mono',ui-monospace,monospace;
+                  font-size:10px; color:var(--ok); margin-top:3px; }
+
+  /* Footer */
+  .footer { margin-top:48px; padding-top:24px; border-top:1px solid var(--line);
+             color:var(--inkMuted); font-size:11.5px; }
+</style>
+</head>
+<body>
+
+<h1>AgDR-0014 — Library Design System</h1>
+<p class="sub">Status: <strong>proposed</strong> · supersedes AgDR-0013 Forks 1–4 · Resolves the 4 enforcement forks by principle, not by picked numbers · Derives the validator contract from a coherent token system</p>
+
+<div class="lead">
+  Founder ran <code>/design-system</code> after seeing AgDR-0013's 4 open forks.
+  Reframed the task: <strong>"don't pick decimals — design the system."</strong>
+  AgDR-0014 audits the library as a design system (tokens · components · patterns),
+  then derives the AgDR-0013 fork answers from the design-system principles.
+</div>
+
+<h2>The audit at a glance</h2>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Categories — engine drift</div>
+    <div class="value">10 → 11</div>
+    <div class="delta">aligned with engine <code>cat</code> + 2 ext</div>
+  </div>
+  <div class="stat">
+    <div class="label">Description floor</div>
+    <div class="value">60 → 80</div>
+    <div class="delta">empirical · Speckle ~110 · ComfyUI ~95</div>
+  </div>
+  <div class="stat">
+    <div class="label">Examples min</div>
+    <div class="value">flat → tier</div>
+    <div class="delta">pure ≥1 · host_write ≥2 · network ≥2</div>
+  </div>
+  <div class="stat">
+    <div class="label">New design tokens</div>
+    <div class="value">+3</div>
+    <div class="delta">status · port-type resolver · host registry</div>
+  </div>
+</div>
+
+<h2>Token 1 — Category enum (11 values, aligned with engine)</h2>
+
+<p>AgDR-0013 invented 10 categories (<code>primitive·connector·ai·transform·filter·watch·output·skill·glue·adapter</code>) parallel to the existing engine <code>cat</code> field (9 values). Two parallel taxonomies = drift. Realigned:</p>
+
+<div class="grid-tokens">
+  <div class="tok-cat">input</div>
+  <div class="tok-cat">connector</div>
+  <div class="tok-cat">ai</div>
+  <div class="tok-cat">logic</div>
+  <div class="tok-cat">output</div>
+  <div class="tok-cat">skill</div>
+  <div class="tok-cat">shape</div>
+  <div class="tok-cat">watch</div>
+  <div class="tok-cat">note</div>
+  <div class="tok-cat">glue</div>
+  <div class="tok-cat">adapter</div>
+</div>
+
+<p class="sub">9 from engine <code>cat</code> (input · connector · ai · logic · output · skill · shape · watch · note) + 2 cross-host extensions (glue · adapter). Removed: <code>primitive</code> (axis collision with grammar <code>kind</code>). Collapsed: <code>transform</code> + <code>filter</code> → <code>shape</code> (matches engine).</p>
+
+<h2>Token 2 — Description floor (80 chars · empirical)</h2>
+
+<table>
+  <tr><th>Library</th><th>Avg description length</th><th>Notes</th></tr>
+  <tr><td>Speckle</td><td class="mono">~110 chars</td><td>1–2 sentences, what + key params</td></tr>
+  <tr><td>ComfyUI</td><td class="mono">~95 chars</td><td>1 sentence, behavior-focused</td></tr>
+  <tr><td>Houdini</td><td class="mono">~80–150 chars</td><td>terse but enough for search</td></tr>
+  <tr><td><strong>Floor (AgDR-0014)</strong></td><td class="mono"><strong>80 chars</strong></td><td>one full descriptive sentence</td></tr>
+  <tr><td><em>AgDR-0013 proposed</em></td><td class="mono">60 chars</td><td>guessed, too short for search match</td></tr>
+</table>
+
+<h2>Token 3 — Examples count (tiered by side_effects)</h2>
+
+<p>Components document <strong>states</strong>, not just success. State coverage scales with the side-effect class.</p>
+
+<table>
+  <tr><th>side_effects</th><th>Min examples</th><th>Why</th></tr>
+  <tr><td><span class="pill pure">pure</span></td><td class="mono">≥ 1</td><td>One happy path; no failure state</td></tr>
+  <tr><td><span class="pill host">host_write</span></td><td class="mono">≥ 2</td><td>Happy + offline-host / approval edge — USER-AGENCY demands the failure state be a documented contract</td></tr>
+  <tr><td><span class="pill net">network</span></td><td class="mono">≥ 2</td><td>Happy + failure mode (timeout, auth, quota)</td></tr>
+</table>
+
+<h2>Token 6 — Status lifecycle (NEW)</h2>
+
+<div class="row">
+  <div class="card">
+    <div class="label">registered</div>
+    <p>Currently in library; placeable. Default for new specs.</p>
+  </div>
+  <div class="card">
+    <div class="label">proposed</div>
+    <p>AI-minted in Plan mode — gated; awaits user approval.</p>
+  </div>
+  <div class="card">
+    <div class="label">superseded</div>
+    <p>Replaced by another node-type; references should migrate.</p>
+  </div>
+  <div class="card">
+    <div class="label">deprecated</div>
+    <p>Stays placeable for back-compat; flagged in palette.</p>
+  </div>
+</div>
+
+<h2>Token 8 — Port-type taxonomy resolver (NEW)</h2>
+
+<p><code>resolve_port_type(value) → (kind, canonical)</code> — never rejects, warns. Bridges the Speckle migration.</p>
+
+<table>
+  <tr><th>Input value</th><th>kind</th><th>canonical</th></tr>
+  <tr><td class="mono">Objects.BuiltElements.Wall</td><td><span class="pill cat">speckle</span></td><td class="mono">Objects.BuiltElements.Wall</td></tr>
+  <tr><td class="mono">walls</td><td><span class="pill cat">legacy</span></td><td class="mono">walls</td></tr>
+  <tr><td class="mono">Walls</td><td><span class="pill cat">legacy</span></td><td class="mono">walls <span style="color:var(--inkMuted)">(normalised)</span></td></tr>
+  <tr><td class="mono">unknown_special</td><td><span class="pill cat">free</span></td><td class="mono">unknown_special <span style="color:var(--warn)">(warn only)</span></td></tr>
+</table>
+
+<h2>AgDR-0013 forks resolved</h2>
+
+<div class="fork">
+  <div class="q"><span class="tag">F1</span> Auto-detect vs lock to tools-providers?</div>
+  <div class="a"><span class="tag">YES</span> Auto-detect with prompt-fallback (Layer 3 + 4 hold the contract regardless of provider)</div>
+  <div class="rationale">Principle: "Flexibility within constraints." Locking to tool-providers excludes Ollama / LM Studio without benefit — the structural backstop (router gate + validator) holds the LIBRARY-FIRST contract no matter what shape the provider speaks.</div>
+</div>
+
+<div class="fork">
+  <div class="q"><span class="tag">F2</span> Description floor = 60 chars OK?</div>
+  <div class="a"><span class="tag">NO → 80</span> One full descriptive sentence</div>
+  <div class="rationale">Empirical: Speckle ~110, ComfyUI ~95. 80 = floor a search-similarity match needs to discriminate. 60 = guessed; too short.</div>
+</div>
+
+<div class="fork">
+  <div class="q"><span class="tag">F3</span> examples ≥ 1 OK or ≥ 2?</div>
+  <div class="a"><span class="tag">TIER</span> pure ≥1 · host_write ≥2 · network ≥2</div>
+  <div class="rationale">Components document STATES. Pure ops have no failure state. host_write needs the offline-host edge (USER-AGENCY demands it). network needs the timeout/auth/quota edge.</div>
+</div>
+
+<div class="fork">
+  <div class="q"><span class="tag">F4</span> Hide <code>create_node_type</code> until <code>search</code> ran?</div>
+  <div class="a"><span class="tag">NO</span> Keep visible; enforce ordering via Layer 3 router gate</div>
+  <div class="rationale">Principle: "Consistency over creativity." Conditional tool surfaces are harder to reason about, harder to debug. Structural enforcement via the router gate is cleaner than visibility tricks.</div>
+</div>
+
+<h2>Validator in action — reject then accept</h2>
+
+<div class="vdemo">
+  <div class="head"><div class="badge">attempt 1 — bare spec</div></div>
+  <pre>{
+  "type": "revit.tag_walls"
+}</pre>
+  <div class="result reject">
+    <div class="head">VALIDATOR REJECTED — 7 violations</div>
+    <ul>
+      <li>display_name: Field required</li>
+      <li>category: Field required</li>
+      <li>outputs: Field required (≥ 1 typed output)</li>
+      <li>config_schema: Field required (must declare ≥ 1 parameter)</li>
+      <li>description: Field required (min 80 chars per AgDR-0014 token 2)</li>
+      <li>examples: Field required (≥ 1 for pure, ≥ 2 for host_write/network)</li>
+      <li>side_effects: defaults to "pure" — confirm category</li>
+    </ul>
+  </div>
+</div>
+
+<div class="vdemo">
+  <div class="head"><div class="badge">attempt 2 — modular spec retried with violations corrected</div></div>
+  <pre>{
+  "type": "revit.tag_walls",
+  "display_name": "Tag Walls by Room",
+  "category": "shape",
+  "inputs": [
+    {"name": "walls", "port_type": "Objects.BuiltElements.Wall", "required": true},
+    {"name": "rooms", "port_type": "Objects.BuiltElements.Room", "required": true}
+  ],
+  "outputs": [
+    {"name": "tags", "port_type": "Objects.BuiltElements.Revit.RevitTag"}
+  ],
+  "config_schema": {
+    "properties": {
+      "view_id":    {"type": "string"},
+      "tag_family": {"type": "string", "default": "M_Room Tag"}
+    }
+  },
+  "description": "Tags every wall in the input list with the room it belongs to. Uses the configured tag family. Skips walls that already have a tag.",
+  "examples": [
+    {"input": {"walls": "&lt;10&gt;", "rooms": "&lt;3&gt;"}, "output": {"tags": "&lt;10&gt;"},
+     "note": "Standard happy path."},
+    {"input": {"walls": "&lt;offline Revit&gt;"}, "output": {"status": "error", "error": "host_unreachable"},
+     "note": "Offline-host edge."}
+  ],
+  "side_effects": "host_write"
+}</pre>
+  <div class="result accept">
+    <div class="head">VALIDATOR ACCEPTED — registered with id <code>revit.tag_walls</code></div>
+    <div style="margin-top:6px;">
+      • 80+ char description ✓<br>
+      • host_write tier → 2 examples (happy + offline-host edge) ✓<br>
+      • Typed I/O via Speckle <code>speckle_type</code> ✓<br>
+      • <code>config_schema</code> parameterised — no hard-coded literals ✓
+    </div>
+  </div>
+</div>
+
+<h2>What ships</h2>
+
+<table>
+  <tr><th>Module</th><th>Lines</th><th>Tests</th><th>What</th></tr>
+  <tr><td><code>app/library_validator.py</code></td><td class="mono">~280</td><td class="mono">100</td><td>Pydantic ModularNodeSpec + validate() + schema_json() + resolve_port_type()</td></tr>
+  <tr><td><code>app/library_gate.py</code></td><td class="mono">~200</td><td class="mono">38</td><td>Layer 3 pre-execute gate + retry_hint + wire-format canonicalisation</td></tr>
+  <tr><td><code>app/library.py</code></td><td class="mono">~250</td><td class="mono">31</td><td>register/search/list/inspect/delete + deterministic ranking</td></tr>
+  <tr><td><code>app/library_persistence.py</code></td><td class="mono">~150</td><td class="mono">16</td><td>Atomic JSON at <code>%LOCALAPPDATA%/ArchHub/library/registry.json</code></td></tr>
+  <tr><td><code>app/library_seeds.py</code></td><td class="mono">~500</td><td class="mono">—</td><td>13 modular primitives</td></tr>
+  <tr><td><code>tool_engine.py</code> integration</td><td class="mono">+150</td><td class="mono">14</td><td>5 <code>library_*</code> tools for LLM</td></tr>
+  <tr><td><code>bridge.py</code> slots</td><td class="mono">+160</td><td class="mono">20</td><td>5 JSX-facing slots + bootstrap</td></tr>
+  <tr><td>End-to-end integration</td><td class="mono">—</td><td class="mono">7</td><td>Cross-surface invariants proven</td></tr>
+  <tr><td colspan="3" style="text-align:right; padding-top:14px;"><strong>Total tests</strong></td><td class="mono"><strong>226</strong></td></tr>
+</table>
+
+<p class="sub">Full ArchHub suite: 1447 passing · zero regressions from this AgDR.</p>
+
+<h2>Open forks for founder</h2>
+
+<div class="fork" style="border-left-color:var(--warn);">
+  <div class="q"><span class="tag" style="color:var(--warn);">F-A</span> Status lifecycle coverage</div>
+  <div class="a">4 values: <code>registered · proposed · superseded · deprecated</code>. Add <code>experimental</code> / <code>archived</code> / <code>draft</code>?</div>
+</div>
+
+<div class="fork" style="border-left-color:var(--warn);">
+  <div class="q"><span class="tag" style="color:var(--warn);">F-B</span> Host-name conflict — <code>acad</code> vs <code>autocad</code></div>
+  <div class="a">Lean <code>autocad</code> (full name, matches Speckle's connector). Confirm?</div>
+</div>
+
+<div class="footer">
+  See <code>docs/agdr/AgDR-0014-library-design-system.md</code> for the full text. This page is the visualisation.
+</div>
+
+</body>
+</html>

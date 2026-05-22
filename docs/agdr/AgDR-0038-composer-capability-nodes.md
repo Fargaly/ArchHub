@@ -1,7 +1,8 @@
 ---
 id: AgDR-0038
 timestamp: 2026-05-22
-status: proposed
+status: approved
+founder-signoff: 2026-05-22 — "Approve + build it" (PR #35 review)
 category: architecture
 supersedes: none
 builds-on: [AgDR-0013, AgDR-0019, AgDR-0020, AgDR-0021, AgDR-0028]
@@ -9,8 +10,10 @@ builds-on: [AgDR-0013, AgDR-0019, AgDR-0020, AgDR-0021, AgDR-0028]
 
 # AgDR-0038 — Composer-driven Capability Nodes
 
-> **Proposed.** Founder sign-off required before code (AgDR mandate).
-> Drop into `ArchHub/docs/agdr/` once reviewed.
+> **Approved 2026-05-22.** Founder reviewed PR #35 and signed off
+> ("approve + build it"). Build in progress — slice 1 (impl
+> discriminator + python sandbox) first. Flips to `executed` when all
+> four slices land.
 
 ## Context
 

@@ -1097,6 +1097,49 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "node_create"),
     },
+    {
+        "name": "node_place",
+        "family": "_local",
+        "description": (
+            "Place an instance of a registered node type on the canvas. "
+            "Returns an add_node delta — {node_id, type, resolved "
+            "inputs + outputs}. Use node_search / node_create first to "
+            "get a type."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string",
+                         "description": "Registered node type, e.g. 'pdf.extract_revisions'."},
+                "config": {"type": "object",
+                           "description": "Optional node config values."},
+                "x": {"type": "number", "description": "Canvas x (optional)."},
+                "y": {"type": "number", "description": "Canvas y (optional)."},
+            },
+            "required": ["type"],
+        },
+        "endpoint": ("_local", "node_place"),
+    },
+    {
+        "name": "graph_wire",
+        "family": "_local",
+        "description": (
+            "Wire one node's output port to another node's input port. "
+            "Returns an add_wire delta. Full port-type checking runs at "
+            "cook time via Workflow.validate()."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "src_node": {"type": "string"},
+                "src_port": {"type": "string"},
+                "dst_node": {"type": "string"},
+                "dst_port": {"type": "string"},
+            },
+            "required": ["src_node", "src_port", "dst_node", "dst_port"],
+        },
+        "endpoint": ("_local", "graph_wire"),
+    },
 
     # AI-as-tool — call other models from inside a chat turn. The
     # primary LLM can delegate to ChatGPT for code, Gemini for vision /
@@ -1609,8 +1652,9 @@ class ToolEngine:
             # router; we never see denied calls here.
             if handler.startswith("library_"):
                 return self._invoke_library_handler(handler, args or {})
-            # AgDR-0038 Capability Node tools (node_search / node_create).
-            if handler.startswith("node_"):
+            # AgDR-0038 Capability Node tools (node_search / node_create /
+            # node_place / graph_wire).
+            if handler.startswith("node_") or handler == "graph_wire":
                 return self._invoke_node_handler(handler, args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
@@ -1884,6 +1928,55 @@ class ToolEngine:
                     "inputs": [p.name for p in node_spec.inputs],
                     "outputs": [p.name for p in node_spec.outputs],
                 }
+
+            if handler == "node_place":
+                type_name = str(args.get("type", "") or "").strip()
+                if not type_name:
+                    return {"status": "error",
+                            "error": "node_place needs a `type`"}
+                import workflows.registry as _reg
+                hit = _reg.get(type_name)
+                if not hit:
+                    return {"status": "error",
+                            "error": f"type '{type_name}' is not registered "
+                                     f"— node_create it first"}
+                spec = hit[0]
+                import uuid as _uuid
+
+                def _port(p):
+                    return {"name": p.name,
+                            "type": getattr(p.type, "value", str(p.type))}
+
+                node_id = "n_" + _uuid.uuid4().hex[:8]
+                node = {
+                    "id": node_id,
+                    "type": type_name,
+                    "category": spec.category,
+                    "title": spec.display_name,
+                    "config": args.get("config") or {},
+                    "x": args.get("x", 200),
+                    "y": args.get("y", 200),
+                    "inputs": [_port(p) for p in spec.inputs],
+                    "outputs": [_port(p) for p in spec.outputs],
+                }
+                return {"status": "ok", "op": "add_node",
+                        "node_id": node_id, "node": node}
+
+            if handler == "graph_wire":
+                src_n = str(args.get("src_node", "") or "").strip()
+                src_p = str(args.get("src_port", "") or "").strip()
+                dst_n = str(args.get("dst_node", "") or "").strip()
+                dst_p = str(args.get("dst_port", "") or "").strip()
+                if not (src_n and src_p and dst_n and dst_p):
+                    return {"status": "error",
+                            "error": "graph_wire needs src_node, src_port, "
+                                     "dst_node, dst_port"}
+                if src_n == dst_n:
+                    return {"status": "error",
+                            "error": "cannot wire a node to itself"}
+                return {"status": "ok", "op": "add_wire",
+                        "wire": {"from": [src_n, src_p],
+                                 "to": [dst_n, dst_p]}}
 
             return {"status": "error",
                     "error": f"Unknown node handler: {handler}"}

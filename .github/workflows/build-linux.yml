@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # 3.13 because pydantic-core caps at Py 3.13 on its Rust
           # build. Bump alongside test.yml when PyO3 0.23+ lands in

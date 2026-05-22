@@ -31,6 +31,12 @@ jobs:
           fetch-depth: 0
 
       - name: Claude review
+        # This review is ADVISORY (see the file header) — it never gates
+        # a merge. The claude-code-action @v1 build intermittently aborts
+        # with a bun "directory mismatch" internal error; continue-on-
+        # error keeps that upstream flake from painting every PR a false
+        # red X. The review still posts whenever the action runs clean.
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

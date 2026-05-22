@@ -1,8 +1,8 @@
-PyQt6>=6.6,<7
+PyQt6>=6.11.0,<7
 anthropic>=0.40,<1
 openai>=1.50,<2
-google-generativeai>=0.8,<1
-keyring>=25,<27
+google-generativeai>=0.8.6,<1
+keyring>=25.7.0,<27
 requests>=2.31,<3
 # Telemetry + crash reporting (opt-in; clients are no-op until the
 # user grants consent in the first-run dialog).

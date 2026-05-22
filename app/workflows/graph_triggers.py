@@ -67,7 +67,14 @@ class GraphTriggerScheduler:
 
     # ── lifecycle ───────────────────────────────────────────────
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        # Bug fix 2026-05-22 — refuse to start a SECOND loop while the
+        # previous one is still alive.  `stop()` used to null `_thread`
+        # even when its 2 s join timed out (loop stuck in a slow
+        # Outlook-COM poll); the next `arm`→`start` then saw
+        # `_thread is None` and spawned a duplicate loop.  Over a long
+        # session that accumulated runaway trigger threads.  Guard on
+        # the live thread, not on `_thread is None`.
+        if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = Thread(target=self._loop,
@@ -76,9 +83,14 @@ class GraphTriggerScheduler:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
+        if self._thread is not None:
             self._thread.join(timeout=2.0)
-            self._thread = None
+            # If the join TIMED OUT the thread is still running — do NOT
+            # null the handle, or `start()` will spawn a duplicate.
+            # Keep the handle so the next `start()` sees it's alive and
+            # refuses; the daemon thread dies on process exit anyway.
+            if not self._thread.is_alive():
+                self._thread = None
 
     # ── main loop ───────────────────────────────────────────────
     def _loop(self) -> None:

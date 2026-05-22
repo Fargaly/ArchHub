@@ -188,18 +188,24 @@ class WebShell(QMainWindow):
     def _toggle_devtools(self) -> None:
         try:
             page = self.view.page()
-            # Two windows: main view + inspector. Inspector is created
-            # on first call and re-shown on subsequent calls.
             from PyQt6.QtWebEngineWidgets import QWebEngineView
-            if not hasattr(self, "_devtools"):
-                self._devtools = QWebEngineView()
-                self._devtools.setWindowTitle("ArchHub · DevTools")
-                self._devtools.resize(1000, 700)
-                page.setDevToolsPage(self._devtools.page())
-            if self._devtools.isVisible():
-                self._devtools.hide()
-            else:
-                self._devtools.show()
-                self._devtools.raise_()
+            if getattr(self, "_devtools", None) is not None \
+                    and self._devtools.isVisible():
+                # Hiding — fully dispose.  Bug fix 2026-05-22: the
+                # inspector was only hide()/show()n, never deleted, so
+                # each F12 session left a Chromium render process alive
+                # until app exit.  Detach + deleteLater frees it.
+                try: page.setDevToolsPage(None)
+                except Exception: pass
+                self._devtools.deleteLater()
+                self._devtools = None
+                return
+            # Showing — create fresh.
+            self._devtools = QWebEngineView()
+            self._devtools.setWindowTitle("ArchHub · DevTools")
+            self._devtools.resize(1000, 700)
+            page.setDevToolsPage(self._devtools.page())
+            self._devtools.show()
+            self._devtools.raise_()
         except Exception:
             pass

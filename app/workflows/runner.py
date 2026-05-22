@@ -294,6 +294,13 @@ class WorkflowRunner:
         self._on_wire_state: Optional[Callable[[str, str, str], None]] = None
         # Re-entrancy guard for auto-rerun loops.
         self._visiting: set[str] = set()
+        # AgDR-0034 deferred-audit fix (c) — serialise cook trees.
+        # pull() mutates _visiting + wire_bus; two threads pulling the
+        # same runner corrupt both. An RLock lets the recursive
+        # (same-thread) upstream pulls re-enter freely while a second
+        # thread blocks until the first cook tree finishes.
+        import threading as _threading
+        self._lock = _threading.RLock()
         # AgDR-0017 + M6 partial — per-graph `auto_publish` opts.
         # Shape: {"enabled": bool, "server_url": str, "model_name": str,
         #         "project_dir": str|None}. When `enabled=True`, every
@@ -416,6 +423,14 @@ class WorkflowRunner:
 
     # ── pull (lazy + cached) ────────────────────────────────────────
     def pull(self, node_id: str) -> dict:
+        """Thread-safe entry point — serialises a whole cook tree per
+        runner (AgDR-0034 audit fix c). The RLock lets a recursive
+        upstream pull on the SAME thread re-enter freely; a second
+        thread blocks until the first cook tree completes."""
+        with self._lock:
+            return self._pull(node_id)
+
+    def _pull(self, node_id: str) -> dict:
         """Cook this node (if dirty) + return its outputs dict.
 
         Recursively pulls upstream parents first. Caches results so a

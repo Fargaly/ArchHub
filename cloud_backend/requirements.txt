@@ -9,7 +9,7 @@ httpx==0.28.1
 # >=2.12.5 is the locally-proven floor (ships with specklepy 3.2.x);
 # <3 caps the major. The [email] extra also covers email-validator.
 pydantic[email]>=2.13.4,<3
-email-validator==2.2.0
+email-validator==2.3.0
 python-dotenv==1.2.2
 # v1.1.0 marketplace upload endpoint uses multipart/form-data.
 # FastAPI lazy-imports python-multipart on first Form()/File() touch;

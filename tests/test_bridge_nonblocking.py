@@ -152,7 +152,46 @@ def test_get_local_llms_slot_is_async(monkeypatch):
     assert time.time() - t0 < 0.5, "get_local_llms blocked"
 
 
-# ─── 3. AgDR docs ──────────────────────────────────────────────────
+# ─── 3. AgDR-0036 Phase 1 — leak-hardening helpers ─────────────────
+
+
+def test_bg_pool_is_bounded():
+    """The fire-and-forget pool caps OS threads (was: raw Thread per
+    call → unbounded under cascading dropdowns / rapid connector runs)."""
+    dummy = type("D", (), {})()
+    pool = bridge.ArchHubBridge._bg_pool(dummy)
+    assert pool is bridge.ArchHubBridge._bg_pool(dummy)   # cached
+    assert pool._max_workers == 8
+
+
+def test_cook_lock_serialises():
+    """run_workflow / run_node share one lock so two cooks can't
+    interleave on the host brokers."""
+    import threading
+    dummy = type("D", (), {})()
+    lk = bridge.ArchHubBridge._cook_lock(dummy)
+    assert lk is bridge.ArchHubBridge._cook_lock(dummy)   # cached
+    assert isinstance(lk, type(threading.Lock()))
+
+
+def test_run_slots_acquire_cook_lock():
+    """Source guard — both cook slots must hold _cook_lock around the
+    runner call."""
+    src = (APP / "bridge.py").read_text(encoding="utf-8")
+    assert "with self._cook_lock():" in src
+    assert src.count("with self._cook_lock():") >= 2   # run_workflow + run_node
+
+
+def test_init_defers_heavy_loads():
+    """__init__ must NOT call load_all_connectors / custom_nodes
+    load_all inline — they belong on the deferred-boot thread."""
+    src = (APP / "bridge.py").read_text(encoding="utf-8")
+    # The deferred-boot thread exists.
+    assert "archhub-deferred-boot" in src
+    assert "_deferred_boot" in src
+
+
+# ─── 4. AgDR docs ──────────────────────────────────────────────────
 
 
 def test_agdr_0035_and_0036_exist():

@@ -477,24 +477,33 @@ class ArchHubBridge(QObject):
         self.tools = tools
         self.chat_widget = chat_widget
         self._active_session_id: Optional[str] = None
-        # Register user-authored custom node types on boot so the canvas
-        # + runner pick them up without a relaunch. Failures must never
-        # bring the bridge down — a single bad spec on disk shouldn't
-        # block the rest of the app.
-        try:
-            from workflows.custom_nodes import load_all as _load_custom
-            _load_custom()
-        except Exception:
-            pass
-        # ── Founder demand 2026-05-15: ALL 18 host connectors. Import
-        # every connector module so each self-registers into the
-        # connectors.base registry. Best-effort — a connector whose host
-        # SDK is missing is skipped, never fatal.
-        try:
-            from connectors.base import load_all_connectors
-            load_all_connectors()
-        except Exception:
-            pass
+        # AgDR-0036 Phase 1 — custom-node + connector registration are
+        # the two heavy boot steps (custom_nodes.load_all scans disk;
+        # load_all_connectors imports 16 connector modules, each
+        # possibly importing a host SDK).  Run inline they delayed the
+        # window paint by seconds.  Deferred onto a daemon thread; when
+        # it finishes it emits `hosts_changed` so the JS side re-pulls
+        # get_connectors / get_custom_nodes and the palette populates a
+        # beat after first paint instead of blocking it.
+        import threading as _threading
+
+        def _deferred_boot():
+            try:
+                from workflows.custom_nodes import load_all as _load_custom
+                _load_custom()
+            except Exception:
+                pass
+            try:
+                from connectors.base import load_all_connectors
+                load_all_connectors()
+            except Exception:
+                pass
+            try:
+                self.hosts_changed.emit()
+            except Exception:
+                pass
+        _threading.Thread(target=_deferred_boot, daemon=True,
+                           name="archhub-deferred-boot").start()
         # ── Founder demand 2026-05-15: TRIGGER nodes go live. The
         # graph-trigger scheduler walks every session blob, finds in-graph
         # trigger nodes (cat='trigger'), and dispatches `trigger_fired`
@@ -577,6 +586,36 @@ class ArchHubBridge(QObject):
             }
             self._async_st = st
         return st
+
+    def _cook_lock(self):
+        """AgDR-0036 Phase 1 — one lock serialising graph cooks.
+        `run_workflow` / `run_node` each build a FRESH WorkflowRunner
+        (so there is no cross-call cache leak), but two cooks started
+        in quick succession would hit the same host brokers /
+        connectors concurrently with no coordination.  This lock makes
+        the second cook queue behind the first.  The slot still returns
+        its request_id instantly — only the background worker waits."""
+        lk = getattr(self, "_cook_lk", None)
+        if lk is None:
+            import threading
+            lk = threading.Lock()
+            self._cook_lk = lk
+        return lk
+
+    def _bg_pool(self):
+        """AgDR-0036 Phase 1 — one bounded pool for fire-and-forget
+        bridge ops (connector runs, param-option fetches).  Caps OS
+        threads at 8; extra work queues cheaply.  The old code did a
+        raw `Thread(...).start()` per call — cascading param dropdowns
+        + rapid connector runs could spawn unbounded threads and
+        exhaust handles."""
+        p = getattr(self, "_bg_pool_ex", None)
+        if p is None:
+            from concurrent.futures import ThreadPoolExecutor
+            p = ThreadPoolExecutor(max_workers=8,
+                                   thread_name_prefix="archhub-bg")
+            self._bg_pool_ex = p
+        return p
 
     def _cached_async(self, key: str, work, *, ttl: float = 30.0,
                       empty=None, signal_name: str = "hosts_changed"):
@@ -733,8 +772,8 @@ class ArchHubBridge(QObject):
             except Exception:
                 pass
 
-        threading.Thread(target=_runner, daemon=True,
-                          name="ArchHubConnectorOp").start()
+        # AgDR-0036 Phase 1 — bounded pool, not a raw thread per call.
+        self._bg_pool().submit(_runner)
         return _safe_json({"async": True, "op_id": op_id})
 
     @pyqtSlot(str, str, str, result=str)
@@ -801,8 +840,9 @@ class ArchHubBridge(QObject):
             except Exception:
                 pass
 
-        threading.Thread(target=_runner, daemon=True,
-                          name="ArchHubParamOptions").start()
+        # AgDR-0036 Phase 1 — bounded pool, not a raw thread per call.
+        # Cascading param dropdowns can fire many of these per second.
+        self._bg_pool().submit(_runner)
         return _safe_json({"async": True, "req_id": req_id})
 
     # ─── Sessions ───────────────────────────────────────────────
@@ -1994,7 +2034,9 @@ class ArchHubBridge(QObject):
                     try: self.wire_state_changed.emit(eid, state, preview)
                     except Exception: pass
                 runner.on_wire_state(_emit_wire_state)
-                result = runner.run_all()
+                # AgDR-0036 Phase 1 — serialise: a 2nd Run queues here.
+                with self._cook_lock():
+                    result = runner.run_all()
                 payload = _safe_json(result)
             except Exception as ex:
                 payload = _safe_json({"error": str(ex)})
@@ -2073,7 +2115,10 @@ class ArchHubBridge(QObject):
                     try: self.wire_state_changed.emit(eid, state, preview)
                     except Exception: pass
                 runner.on_wire_state(_emit_wire_state)
-                result = runner.pull(node_id)
+                # AgDR-0036 Phase 1 — serialise with run_workflow so two
+                # cooks never hit the same host brokers concurrently.
+                with self._cook_lock():
+                    result = runner.pull(node_id)
                 payload = _safe_json(result if isinstance(result, dict)
                                        else {"value": result})
             except Exception as ex:

@@ -213,6 +213,77 @@ def _ai_executor(impl: dict, output_names: list[str]):
     return _exec
 
 
+def _ports_of(node: dict, side: str) -> list[dict]:
+    """A node's ports as [{id, type}] — read from the node's own
+    ins/outs (canvas shape) or inputs/outputs (workflow shape), else
+    resolved from the registry NodeSpec by `type`."""
+    keys = ("ins", "inputs") if side == "in" else ("outs", "outputs")
+    for k in keys:
+        lst = node.get(k)
+        if isinstance(lst, list) and lst:
+            out: list[dict] = []
+            for p in lst:
+                if isinstance(p, dict):
+                    pid = p.get("id") or p.get("name")
+                    if pid:
+                        out.append({"id": pid,
+                                    "type": p.get("t") or p.get("type") or "any"})
+                elif isinstance(p, str):
+                    out.append({"id": p, "type": "any"})
+            return out
+    try:
+        from .registry import get as _rget
+        hit = _rget(str(node.get("type") or ""))
+        if hit:
+            spec = hit[0]
+            ports = spec.inputs if side == "in" else spec.outputs
+            return [{"id": p.name,
+                     "type": getattr(p.type, "value", str(p.type))}
+                    for p in ports]
+    except Exception:
+        pass
+    return []
+
+
+def _derive_graph_io(inner_graph: dict) -> tuple[list, list]:
+    """AgDR-0039 slice 3 — derive a composite node's typed I/O from its
+    inner graph's OPEN ports: an input port with no incoming wire is a
+    composite input; an output port with no outgoing wire is a
+    composite output. Port ids are bare when unique, node-qualified on
+    collision."""
+    nodes = inner_graph.get("nodes") or []
+    wires = inner_graph.get("wires") or inner_graph.get("edges") or []
+    wired_in: set = set()
+    wired_out: set = set()
+    for w in wires:
+        if "from" in w and "to" in w:
+            wired_out.add((w["from"][0], w["from"][1]))
+            wired_in.add((w["to"][0], w["to"][1]))
+        elif "src_node" in w:
+            wired_out.add((w["src_node"], w["src_port"]))
+            wired_in.add((w["dst_node"], w["dst_port"]))
+
+    def _collect(side: str, wired: set) -> list:
+        facade: list = []
+        taken: set = set()
+        for n in nodes:
+            nid = n.get("id")
+            if not nid:
+                continue
+            for p in _ports_of(n, side):
+                if (nid, p["id"]) in wired:
+                    continue
+                port_id = p["id"]
+                if port_id in taken:
+                    port_id = f"{nid}.{p['id']}"
+                taken.add(port_id)
+                facade.append({"port": port_id, "inner_node": nid,
+                               "inner_port": p["id"], "type": p["type"]})
+        return facade
+
+    return _collect("in", wired_in), _collect("out", wired_out)
+
+
 def _graph_executor(impl: dict, output_names: list[str]):
     """impl.kind=graph (AgDR-0039) — a node whose logic IS a typed
     sub-graph. The whole point: logic is composed from modular elements
@@ -227,10 +298,22 @@ def _graph_executor(impl: dict, output_names: list[str]):
       inner_inputs   [{port, inner_node, inner_port, type}]  entry map
       inner_outputs  [{port, inner_node, inner_port, type}]  exit map
     """
+    inner_graph = impl.get("graph") or impl.get("inner_graph") or {}
+    inner_inputs = impl.get("inner_inputs")
+    inner_outputs = impl.get("inner_outputs")
+    # AgDR-0039 slice 3 — when the I/O maps are absent, auto-derive them
+    # from the inner graph's open ports. Wire the inside; the outer
+    # contract appears. One source of truth.
+    if inner_inputs is None or inner_outputs is None:
+        d_in, d_out = _derive_graph_io(inner_graph)
+        if inner_inputs is None:
+            inner_inputs = d_in
+        if inner_outputs is None:
+            inner_outputs = d_out
     sub_config = {
-        "inner_graph":   impl.get("graph") or impl.get("inner_graph") or {},
-        "inner_inputs":  impl.get("inner_inputs") or [],
-        "inner_outputs": impl.get("inner_outputs") or [],
+        "inner_graph":   inner_graph,
+        "inner_inputs":  inner_inputs,
+        "inner_outputs": inner_outputs,
     }
 
     def _exec(_config: dict, inputs: dict, ctx) -> dict:

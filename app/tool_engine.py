@@ -1080,10 +1080,13 @@ TOOLS: list[dict] = [
         "family": "_local",
         "description": (
             "Mint a Capability Node from a data spec — typed inputs + "
-            "outputs + an `impl` block ({kind: python|connector|ai|"
-            "passthrough}). MUST be preceded by node_search this turn. "
-            "Registers the node so it is immediately executable + "
-            "placeable on the canvas. Returns {type, inputs, outputs}."
+            "outputs + an `impl` block. PREFER impl.kind=graph: compose "
+            "the logic from wired primitives (the AgDR-0039 modular "
+            "model). Other kinds: connector (one host op), ai (one LLM "
+            "call), passthrough. python is a LAST-RESORT sealed leaf — "
+            "use it only for a computation no primitive can express. "
+            "MUST be preceded by node_search this turn. Registers the "
+            "node executable + placeable. Returns {type, inputs, outputs}."
         ),
         "input_schema": {
             "type": "object",
@@ -1984,7 +1987,7 @@ class ToolEngine:
                 except Exception as ex:
                     promo_note = f"{type(ex).__name__}: {ex}"
 
-                return {
+                result = {
                     "status": "ok",
                     "type": node_spec.type,
                     "inputs": [p.name for p in node_spec.inputs],
@@ -1992,6 +1995,18 @@ class ToolEngine:
                     "library_promoted": promoted,
                     "library_note": promo_note,
                 }
+                # AgDR-0039 slice 4 — steer the Composer toward composed
+                # logic. A python node still mints (sealed leaf), but the
+                # result nudges graph for next time.
+                impl_kind = ((spec.get("impl") or {}).get("kind")
+                             or ("python" if spec.get("code") else ""))
+                if impl_kind == "python":
+                    result["hint"] = (
+                        "minted as impl.kind=python — a sealed leaf. If "
+                        "this logic can be expressed as wired primitives, "
+                        "prefer impl.kind=graph: inspectable, reusable, "
+                        "composable.")
+                return result
 
             if handler == "node_place":
                 type_name = str(args.get("type", "") or "").strip()

@@ -16,6 +16,7 @@ if str(APP) not in sys.path:
 
 from workflows.custom_nodes import (  # noqa: E402
     _build_executor,
+    _map_outputs,
     _resolve_impl,
     _spec_from_dict,
     register_spec,
@@ -150,23 +151,131 @@ def test_safe_mode_false_opts_out():
     assert _executor(spec)({}, {}, None) == {"value": True}
 
 
-# ─── 5. slice-2 kinds + unknown kinds — honest typed errors ─────────
+# ─── 5. slice 2 — connector kind ────────────────────────────────────
 
 
-def test_connector_kind_pending_slice_2():
-    spec = {
-        "type": "c.node", "outputs": ["value"],
-        "impl": {"kind": "connector", "host": "revit", "op": "exec"},
-    }
+def test_connector_executor_calls_run_op(monkeypatch):
+    """impl.kind=connector remaps inputs via arg_map and calls run_op."""
+    import connectors.base as cb
+    calls = {}
+
+    class _R:
+        ok = True
+        value = {"rows": 3}
+        value_preview = ""
+        error = ""
+
+    def _fake(op_id, **params):
+        calls["op_id"] = op_id
+        calls["params"] = params
+        return _R()
+
+    monkeypatch.setattr(cb, "run_op", _fake)
+    spec = {"type": "c.read", "outputs": ["value"],
+            "impl": {"kind": "connector", "host": "excel",
+                     "op": "read_range", "arg_map": {"range": "rng"}}}
+    out = _executor(spec)({}, {"rng": "A1:B2"}, None)
+    assert calls["op_id"] == "excel.read_range"
+    assert calls["params"] == {"range": "A1:B2"}
+    assert out == {"value": {"rows": 3}}
+
+
+def test_connector_executor_honest_error_when_host_offline(monkeypatch):
+    """An offline host -> honest typed error, never a fabricated value."""
+    import connectors.base as cb
+
+    class _R:
+        ok = False
+        value = None
+        error = "excel not running"
+        value_preview = ""
+
+    monkeypatch.setattr(cb, "run_op", lambda op_id, **k: _R())
+    spec = {"type": "c.off", "outputs": ["value"],
+            "impl": {"kind": "connector", "host": "excel", "op": "read_range"}}
     out = _executor(spec)({}, {}, None)
-    assert "error" in out and "slice 2" in out["error"]
+    assert out["error"] == "excel not running"
+    assert out["op_id"] == "excel.read_range"
 
 
-def test_ai_kind_pending_slice_2():
-    spec = {"type": "a.node", "outputs": ["value"],
-            "impl": {"kind": "ai", "model": "auto"}}
+def test_connector_executor_needs_host_and_op():
+    spec = {"type": "c.bad", "outputs": ["value"],
+            "impl": {"kind": "connector"}}
     out = _executor(spec)({}, {}, None)
-    assert "error" in out and "slice 2" in out["error"]
+    assert "error" in out and "host" in out["error"]
+
+
+# ─── 6. slice 2 — ai kind ───────────────────────────────────────────
+
+
+class _FakeResponse:
+    def __init__(self, text, model="auto"):
+        self.text = text
+        self.model = model
+
+
+class _FakeRouter:
+    def __init__(self, text):
+        self._text = text
+        self.calls = []
+
+    def complete(self, history, model, on_chunk=None, on_tool_invocation=None):
+        self.calls.append({"history": history, "model": model})
+        return _FakeResponse(self._text, model)
+
+
+class _FakeCtx:
+    def __init__(self, router):
+        self.router = router
+
+
+def test_ai_executor_missing_router_is_honest():
+    spec = {"type": "a.x", "outputs": ["text"],
+            "impl": {"kind": "ai", "prompt_template": "hi"}}
+    out = _executor(spec)({}, {}, None)
+    assert out["status"] == "missing_dep"
+
+
+def test_ai_executor_text_output_fills_template():
+    router = _FakeRouter("hello world")
+    spec = {"type": "a.t", "outputs": ["text"],
+            "impl": {"kind": "ai", "prompt_template": "say {word}"}}
+    out = _executor(spec)({}, {"word": "hi"}, _FakeCtx(router))
+    assert out == {"text": "hello world"}
+    assert router.calls[0]["history"][0]["content"] == "say hi"
+
+
+def test_ai_executor_json_parse():
+    router = _FakeRouter('{"answer": 42}')
+    spec = {"type": "a.j", "outputs": ["answer"],
+            "impl": {"kind": "ai", "prompt_template": "q",
+                     "output_parse": "json"}}
+    out = _executor(spec)({}, {}, _FakeCtx(router))
+    assert out == {"answer": 42}
+
+
+def test_ai_executor_json_parse_failure_is_typed_error():
+    router = _FakeRouter("not json at all")
+    spec = {"type": "a.jf", "outputs": ["answer"],
+            "impl": {"kind": "ai", "prompt_template": "q",
+                     "output_parse": "json"}}
+    out = _executor(spec)({}, {}, _FakeCtx(router))
+    assert "error" in out and "JSON" in out["error"]
+
+
+# ─── 7. _map_outputs + unknown kind ─────────────────────────────────
+
+
+def test_map_outputs_dict_passthrough():
+    assert _map_outputs({"a": 1}, ["a", "b"]) == {"a": 1}
+
+
+def test_map_outputs_single_output():
+    assert _map_outputs(7, ["only"]) == {"only": 7}
+
+
+def test_map_outputs_fallback_to_value():
+    assert _map_outputs([1, 2], ["x", "y"]) == {"value": [1, 2]}
 
 
 def test_unknown_kind_is_typed_error():

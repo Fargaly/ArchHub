@@ -349,3 +349,48 @@ def test_graph_impl_seeds_outer_input():
     }
     out = _executor(spec)({}, {"n": 5}, None)
     assert out.get("result") == 15
+
+
+# ─── AgDR-0039 slice 3 — auto-derived composite I/O ─────────────────
+
+
+def test_graph_impl_auto_derives_io():
+    """impl.kind=graph with NO explicit I/O maps — the composite's
+    ports are derived from the inner graph's open ends."""
+    spec = {
+        "type": "cap.autoio",
+        "outputs": [{"name": "value", "type": "any"}],
+        "impl": {
+            "kind": "graph",
+            "graph": {
+                "nodes": [{"id": "e1", "type": "code.expression",
+                           "config": {"expr": "a + 100"}}],
+                "wires": [],
+            },
+        },
+    }
+    out = _executor(spec)({}, {"a": 5}, None)
+    assert out.get("value") == 105
+
+
+def test_graph_impl_auto_io_excludes_wired_ports():
+    """A wired inner port is internal — never exposed on the composite
+    face. Only open ends become I/O."""
+    spec = {
+        "type": "cap.chain",
+        "outputs": [{"name": "value", "type": "any"}],
+        "impl": {
+            "kind": "graph",
+            "graph": {
+                "nodes": [
+                    {"id": "e1", "type": "code.expression",
+                     "config": {"expr": "10"}},
+                    {"id": "e2", "type": "code.expression",
+                     "config": {"expr": "a * 2"}},
+                ],
+                "wires": [{"from": ["e1", "value"], "to": ["e2", "a"]}],
+            },
+        },
+    }
+    out = _executor(spec)({}, {}, None)
+    assert out.get("value") == 20

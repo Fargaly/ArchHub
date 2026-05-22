@@ -236,3 +236,27 @@ def test_node_create_nonmodular_spec_still_works_unpromoted(engine):
         "node_create", {"spec": _cap_spec("c.thin")})
     assert out["status"] == "ok"
     assert out["library_promoted"] is False
+
+
+# ─── AgDR-0039 slice 4 — node_create steers toward graph ────────────
+
+
+def test_node_create_python_gets_graph_hint(engine):
+    """A python node still mints, but the result nudges toward graph."""
+    spec = {"type": "py.leaf", "category": "logic",
+            "display_name": "Py Leaf", "outputs": [{"name": "value"}],
+            "impl": {"kind": "python",
+                     "code": "def execute(c, i, x):\n    return {'value': 1}"}}
+    out = engine._invoke_node_handler("node_create", {"spec": spec})
+    assert out["status"] == "ok"
+    assert "hint" in out and "graph" in out["hint"]
+
+
+def test_node_create_graph_has_no_hint(engine):
+    """A graph node — the preferred kind — gets no steering hint."""
+    spec = {"type": "g.composed", "category": "logic",
+            "display_name": "Composed", "outputs": [{"name": "value"}],
+            "impl": {"kind": "graph", "graph": {"nodes": [], "wires": []}}}
+    out = engine._invoke_node_handler("node_create", {"spec": spec})
+    assert out["status"] == "ok"
+    assert "hint" not in out

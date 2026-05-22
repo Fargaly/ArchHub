@@ -1,7 +1,7 @@
 ---
 id: AgDR-0039
 timestamp: 2026-05-22
-status: approved
+status: executed
 founder-signoff: 2026-05-22 — reviewed via docs/prototypes/modular-logic-nodes.html; recommended trio adopted
 category: architecture
 supersedes: none
@@ -10,9 +10,12 @@ builds-on: [AgDR-0038, AgDR-0001, AgDR-0020]
 
 # AgDR-0039 — Modular logic nodes: a node's logic IS a graph
 
-> **Approved 2026-05-22.** Founder reviewed the visual prototype
+> **Executed 2026-05-22.** Founder reviewed the visual prototype
 > (`docs/prototypes/modular-logic-nodes.html`) — the design + the three
-> forks. Recommended trio adopted. Build follows.
+> forks; recommended trio adopted. All four slices shipped: slice 1
+> `impl.kind=graph` (PR #47), slice 2 aggregate primitives (PR #48),
+> slice 3 auto-derived composite I/O, slice 4 `node_create` graph-first
+> steering.
 
 ## Context
 

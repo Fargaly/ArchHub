@@ -13,3 +13,8 @@ cryptography>=42.0
 # cryptography dep above: tests/test_speckle_wire.py +
 # tests/test_litmus_max_to_revit.py fail collection without it.
 specklepy>=3.2.6,<4
+# mcp powers app/archhub_mcp_server.py (AgDR-0031) — the MCP server
+# that exposes ArchHub to other Claude sessions. Hard-imported at
+# module load; tests/test_archhub_mcp_server.py runs its --selftest.
+# Same implicit-local / missing-in-CI class as cryptography + specklepy.
+mcp>=1.0,<2

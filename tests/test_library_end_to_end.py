@@ -32,12 +32,19 @@ from tool_engine import ToolEngine  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    """Redirect LOCALAPPDATA so persistence writes go to tmp. Reset the
+    """Redirect the persistence root so writes go to tmp. Reset the
     in-process library before + after each test.
+
+    library_persistence.default_registry_path() reads LOCALAPPDATA on
+    Windows but XDG_DATA_HOME / ~/.local/share on POSIX — BOTH must be
+    monkeypatched, or the CI Linux/macOS runners fall back to one real
+    shared registry file and node-types leak across tests (the
+    data.constant-missing + cross-test-pollution failure).
     """
     appdata = tmp_path / "appdata"
     appdata.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+    monkeypatch.setenv("XDG_DATA_HOME", str(appdata))
     _lib.reset_registry()
     yield
     _lib.reset_registry()

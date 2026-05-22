@@ -113,8 +113,8 @@ walls" the matcher proposes the saved Skill.
 
 ## Pricing
 
-ArchHub is free in full while we're in beta. We will not charge for
-anything we haven't shipped.
+ArchHub is currently in open beta and all shipped features are free.
+See `docs/PRICING_STATUS.md` for the canonical pricing state.
 
 - **Free (today)** — everything that works: unlimited Skills, local
   Ollama or BYO cloud key, cloud sync via your own private GitHub repo,
@@ -217,6 +217,7 @@ Source of truth in this repo:
 - **[docs/CANVAS_PLAN.md](docs/CANVAS_PLAN.md)** — canvas architecture (current v1.4 + historical v0.18 plan).
 - **[docs/SKILLS.md](docs/SKILLS.md)** — Skill architecture: metadata, matcher, capture, sharing.
 - **[docs/MULTI_DEVICE.md](docs/MULTI_DEVICE.md)** — running ArchHub on multiple machines.
+- **[docs/RELIABILITY.md](docs/RELIABILITY.md)** — reliability expectations, known limits, and failure modes.
 - **[SECURITY.md](SECURITY.md)** — threat model + responsible disclosure.
 - **[DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md)** — running record of decisions and pivots.
 - **[VISION.md](VISION.md)** — north-star product principles.
@@ -234,8 +235,8 @@ Open-source under MIT. Contributions welcome — especially:
   SketchUp, Fusion 360)
 - Provider clients (Mistral, Cohere, local self-hosted endpoints)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) (to be written) or open an issue
-to discuss before starting on something large.
+See [CONTRIBUTING.md](CONTRIBUTING.md) or open an issue to discuss
+before starting on something large.
 
 ---
 

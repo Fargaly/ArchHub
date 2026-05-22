@@ -31,7 +31,10 @@ def _isolated(tmp_path, monkeypatch):
     LOCALAPPDATA and XDG_DATA_HOME so Windows + POSIX runners isolate."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    import library
+    library.reset_registry()
     yield
+    library.reset_registry()
 
 
 @pytest.fixture
@@ -47,6 +50,26 @@ def _cap_spec(type_name: str = "pdf.extract_revisions") -> dict:
         "description": "Extract a redline revision table from a drawing PDF.",
         "inputs": [{"name": "drawing_no", "type": "string"}],
         "outputs": [{"name": "revisions", "type": "object"}],
+        "impl": {"kind": "passthrough"},
+    }
+
+
+def _modular_spec(type_name: str = "demo.modular_cap") -> dict:
+    """A spec that satisfies the strict library modularity contract —
+    long description, an example, typed I/O — so node_create promotes
+    it into the library inventory."""
+    return {
+        "type": type_name,
+        "display_name": "Demo Modular Capability",
+        "category": "shape",
+        "inputs": [],
+        "outputs": [{"name": "value", "port_type": "any"}],
+        "config_schema": {"properties": {"x": {"type": "string"}}},
+        "description": ("A modular Capability Node used to prove node_create "
+                        "auto-promotes a well-formed spec into the library "
+                        "inventory so future turns can reuse it."),
+        "examples": [{"input": {}, "output": {"value": "x"}, "note": "happy"}],
+        "side_effects": "pure",
         "impl": {"kind": "passthrough"},
     }
 
@@ -173,3 +196,43 @@ def test_graph_wire_rejects_self_wire(engine):
         "src_node": "n_a", "src_port": "out",
         "dst_node": "n_a", "dst_port": "in"})
     assert out["status"] == "error" and "itself" in out["error"]
+
+
+# ─── slice 4 — search-first refusal + library auto-promotion ────────
+
+
+def test_node_create_refuses_near_duplicate(engine):
+    """LIBRARY-FIRST — a near-identical Capability Node (same intent,
+    different type) is refused; the Composer must reuse the original."""
+    engine._invoke_node_handler("node_create", {"spec": _cap_spec("pdf.rev_a")})
+    out = engine._invoke_node_handler("node_create", {"spec": _cap_spec("pdf.rev_b")})
+    assert out["status"] == "error" and out["code"] == "duplicate"
+    assert out["reuse"] == "pdf.rev_a"
+
+
+def test_node_create_same_type_is_an_update_not_a_dup(engine):
+    engine._invoke_node_handler("node_create", {"spec": _cap_spec("pdf.same")})
+    again = engine._invoke_node_handler(
+        "node_create", {"spec": _cap_spec("pdf.same")})
+    assert again["status"] == "ok"   # same type = update, allowed
+
+
+def test_node_create_promotes_modular_spec_to_library(engine):
+    """A well-formed Capability spec auto-registers into the library —
+    the library grows by use (AgDR-0038 Delta 3)."""
+    out = engine._invoke_node_handler(
+        "node_create", {"spec": _modular_spec()})
+    assert out["status"] == "ok"
+    assert out["library_promoted"] is True
+    import library as _lib
+    assert any(r["type"] == "demo.modular_cap"
+               for r in _lib.search("modular capability"))
+
+
+def test_node_create_nonmodular_spec_still_works_unpromoted(engine):
+    """A thin spec is still a working, executable node — it just is not
+    library-promoted until it meets the modularity bar."""
+    out = engine._invoke_node_handler(
+        "node_create", {"spec": _cap_spec("c.thin")})
+    assert out["status"] == "ok"
+    assert out["library_promoted"] is False

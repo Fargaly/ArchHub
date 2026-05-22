@@ -245,11 +245,27 @@ def _discover_in_port_range(known_ports: set,
 
 
 # ---------------------------------------------------------------------------
+# AgDR-0034 deferred-audit fix — list_sessions probes up to 16 ports per
+# call (parallel, 0.4 s each). Rapid callers (host-pill refresh,
+# connector probes, dropdowns) hammered that scan. A short-TTL cache
+# coalesces a burst into ONE scan; 2.5 s is recent enough that a
+# newly-opened Revit still surfaces within a couple seconds.
+_LIST_TTL_S = 2.5
+_list_cache: dict = {"at": 0.0, "result": None}
+
+
 def list_sessions(*, prune: bool = True) -> list[Session]:
     """Return all known Revit sessions, newest-heartbeat first.
 
     `prune` — also delete stale session files (>30 s silence + dead port).
+    Results are cached for ~2.5 s — a burst of calls costs one port scan.
     """
+    import time as _t
+    _now = _t.monotonic()
+    _cached = _list_cache.get("result")
+    if _cached is not None and (_now - _list_cache["at"]) < _LIST_TTL_S:
+        return list(_cached)
+
     out: list[Session] = []
     if SESSIONS_DIR.exists():
         for p in sorted(SESSIONS_DIR.glob("revit-*.json")):
@@ -301,7 +317,9 @@ def list_sessions(*, prune: bool = True) -> list[Session]:
             -_seconds_since(s.last_heartbeat) * -1,  # newer = smaller seconds-since
         )
     )
-    return out
+    _list_cache["at"] = _now
+    _list_cache["result"] = out
+    return list(out)   # copy — a caller mutating the list can't corrupt the cache
 
 
 def pick_session(prefer: Optional[str] = None) -> Optional[Session]:

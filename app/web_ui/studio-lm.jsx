@@ -3561,33 +3561,48 @@ const SkillsPanel = () => {
 const SearchPanel = ({ onOpen, setFocusId } = {}) => {
   const [q, setQ] = React.useState('');
   const [scope, setScope] = React.useState('all');
-  // Live results — re-evaluated on every keystroke. Bridge slots may be
-  // missing (F2-A); each call gracefully degrades to empty.
+  // Audit 2026-05-21: the old code called bridgeJson() (async → Promise)
+  // synchronously inside useMemo and `Array.isArray(Promise)` was always
+  // false → bridge data was dead, every source silently fell back to a
+  // stale module global, and memory search returned [] forever.  Also
+  // running bridge I/O inside a render-phase useMemo on every keystroke
+  // is a side effect in render.  Fix: fetch in a debounced effect.
+  const [bridgeData, setBridgeData] = React.useState(
+    { sessions: null, memory: [], skills: null });
+  React.useEffect(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) { setBridgeData({ sessions: null, memory: [], skills: null }); return; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      Promise.all([
+        Promise.resolve(bridgeJson('get_sessions')).catch(() => null),
+        Promise.resolve(bridgeJson('list_memory_facts', needle)).catch(() => null),
+        Promise.resolve(bridgeJson('get_saved_skills')).catch(() => null),
+      ]).then(([sessions, memory, skills]) => {
+        if (cancelled) return;
+        setBridgeData({
+          sessions: Array.isArray(sessions) ? sessions : null,
+          memory:   Array.isArray(memory) ? memory : [],
+          skills:   Array.isArray(skills) ? skills : null,
+        });
+      });
+    }, 150);  // debounce — don't fan out a bridge call per keystroke
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q]);
   const results = React.useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return { chats:[], nodes:[], skills:[], memory:[], files:[], hosts:[] };
     const matches = (s) => (s || '').toLowerCase().includes(needle);
-    // Sessions: prefer bridge but fall back to LM_SESSIONS.
-    let sessions = bridgeJson('get_sessions');
-    if (!Array.isArray(sessions)) sessions = LM_SESSIONS || [];
+    const sessions = bridgeData.sessions || LM_SESSIONS || [];
     const chats = sessions.filter(s => matches(s.title) || matches(s.last));
-    // Memory facts: bridge.list_memory_facts(query). When the bridge slot is
-    // missing we have no local fallback — Settings overlay (which previously
-    // owned LM_MEMORY) was removed in favor of the native PyQt dialog.
-    let memoryHits = bridgeJson('list_memory_facts', needle);
-    if (!Array.isArray(memoryHits)) memoryHits = [];
-    // Saved skills: bridge.get_saved_skills() else local.
-    let skills = bridgeJson('get_saved_skills');
-    if (!Array.isArray(skills)) skills = LM_SAVED_SKILLS || [];
+    const memoryHits = bridgeData.memory || [];
+    let skills = bridgeData.skills || LM_SAVED_SKILLS || [];
     skills = skills.filter(s => matches(s.name) || matches(s.args));
-    // Nodes: in current LM_GRAPH.
     const nodes = (LM_GRAPH.nodes || []).filter(n => matches(n.title) || matches(n.sub) || matches(n.id));
-    // Hosts: id, name, family.
     const hosts = (LM_HOSTS || []).filter(h => matches(h.id) || matches(h.name) || matches(h.file));
-    // Files: collect from sessions for now (no dedicated registry).
     const files = sessions.filter(s => matches(s.file)).map(s => ({ id:s.id, label:s.file, sid:s.id }));
     return { chats, nodes, skills, memory: memoryHits, files, hosts };
-  }, [q]);
+  }, [q, bridgeData]);
   const counts = {
     all: results.chats.length + results.nodes.length + results.skills.length + results.memory.length + results.files.length + results.hosts.length,
     chats: results.chats.length, nodes: results.nodes.length, skills: results.skills.length,
@@ -6405,10 +6420,18 @@ const CanvasHint = () => {
 // Right-click canvas context menu
 const CanvasMenu = ({ x, y, onAddNode, onFit, onClose, onClearAll, onPaste, onZoom100, onToggleSnap, onAutoLayout, onResetPositions, snapToGrid }) => {
   React.useEffect(() => {
+    // Audit 2026-05-21: the keydown handler was an inline arrow and the
+    // cleanup only removed 'click' → every right-click leaked a
+    // permanent keydown listener (CLAUDE.md "2-minute crash" class).
+    // Both handlers are now named + both removed in cleanup.
     const dismiss = () => onClose();
+    const onEsc = (e) => { if (e.key === 'Escape') dismiss(); };
     document.addEventListener('click', dismiss);
-    document.addEventListener('keydown', e => e.key === 'Escape' && dismiss());
-    return () => document.removeEventListener('click', dismiss);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('click', dismiss);
+      document.removeEventListener('keydown', onEsc);
+    };
   }, [onClose]);
   const items = [
     { i:'＋',  t:'Add node…',          k:'⌘L',  on:onAddNode },
@@ -9540,11 +9563,18 @@ const FullParam = ({ p, node, onChange }) => {
     const family = (node && (node.host || (node.title || '').toLowerCase())) || (p.family || 'revit');
     const [options, setOptions] = React.useState(p.options || []);
     React.useEffect(() => {
+      // Audit 2026-05-21: bridgeJson is `async` → returns a Promise.
+      // `Array.isArray(Promise)` is always false, so the version /
+      // document dropdowns NEVER populated.  Await the Promise.
+      let cancelled = false;
       const slot = p.type === 'version' ? 'list_host_sessions' : 'list_host_documents';
       const args = p.type === 'version' ? [family] : [family, p.session || ''];
-      const data = bridgeJson(slot, ...args);
-      if (Array.isArray(data)) setOptions(data);
-      else if (data && Array.isArray(data.items)) setOptions(data.items);
+      Promise.resolve(bridgeJson(slot, ...args)).then((data) => {
+        if (cancelled) return;
+        if (Array.isArray(data)) setOptions(data);
+        else if (data && Array.isArray(data.items)) setOptions(data.items);
+      }).catch(() => {});
+      return () => { cancelled = true; };
     }, [family, p.session]);
     return (
       <div>

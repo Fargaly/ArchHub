@@ -236,7 +236,10 @@ def forward(session: Session, path: str, *, body: Optional[bytes] = None,
             try:
                 return json.loads(raw) if raw else {"status": "ok"}
             except Exception:
-                return {"status": "ok", "raw": raw}
+                # Audit 2026-05-21 — non-JSON 2xx is an error, not ok.
+                return {"status": "error",
+                        "error": "non-JSON response from host",
+                        "raw": raw[:500]}
     except urllib.error.HTTPError as e:
         return {"status": "error", "error": f"HTTP {e.code}",
                 "session": session.session_id}

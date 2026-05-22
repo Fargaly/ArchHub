@@ -1,0 +1,136 @@
+name: Daily maintenance audit
+
+# AgDR-0034 — standing automated bug-hunt.
+# Runs the static maintenance audit + the headless-safe test suite
+# every day, writes the findings into the run's job summary, uploads
+# the report as an artifact, and opens/updates a tracking issue when
+# there are CRITICAL findings or a test failure.
+#
+# GitHub runners have no Revit / AutoCAD / display, so this CANNOT
+# run the .NET connector builds or the CDP live-app checks — that
+# stays the developer's job per the SESSION-CLOSE MANDATE in CLAUDE.md.
+
+on:
+  schedule:
+    # 06:00 UTC daily.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: daily-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt6 runtime libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libegl1 \
+            libfontconfig1 libdbus-1-3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+          python -m pip install pytest pytest-asyncio
+
+      # ─── 1. Static maintenance audit ──────────────────────────────
+      - name: Run maintenance audit
+        id: audit
+        run: |
+          python scripts/maintenance_audit.py --out audit-report.md > audit-full.txt
+          SUMMARY=$(grep '^AUDIT_SUMMARY_JSON ' audit-full.txt | sed 's/^AUDIT_SUMMARY_JSON //')
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+          CRIT=$(echo "$SUMMARY" | python -c "import sys,json; print(json.load(sys.stdin)['critical'])")
+          echo "critical=$CRIT" >> "$GITHUB_OUTPUT"
+
+      # ─── 2. Headless-safe test suite ──────────────────────────────
+      - name: Run test suite
+        id: tests
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          pytest tests/ -q \
+            --ignore=tests/test_bridge_qt.py \
+            --ignore=tests/test_ui_smoke.py \
+            2>&1 | tee pytest-out.txt
+
+      # ─── 3. Job summary ───────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "# 🔍 ArchHub daily audit — $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "## Maintenance audit"
+            echo '```json'
+            echo "${{ steps.audit.outputs.summary }}"
+            echo '```'
+            echo ""
+            echo "## Test suite"
+            tail -n 15 pytest-out.txt 2>/dev/null || echo "(no pytest output)"
+            echo ""
+            echo "<details><summary>Full audit report</summary>"
+            echo ""
+            cat audit-report.md 2>/dev/null || echo "(no report)"
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: |
+            audit-report.md
+            pytest-out.txt
+
+      # ─── 4. Tracking issue on CRITICAL findings or test failure ───
+      - name: Open / update tracking issue
+        if: always() && (steps.audit.outputs.critical != '0' || steps.tests.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          TITLE="🔍 Daily audit — $DATE"
+          BODY_FILE=$(mktemp)
+          {
+            echo "Automated daily audit found issues that need attention."
+            echo ""
+            echo "**Audit summary:** \`${{ steps.audit.outputs.summary }}\`"
+            echo "**Test suite:** ${{ steps.tests.outcome }}"
+            echo ""
+            echo "See the workflow run for the full report + artifact:"
+            echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$BODY_FILE"
+          # One tracking issue per day — create if absent.
+          EXISTING=$(gh issue list --search "$TITLE in:title" --state open --json number --jq '.[0].number' || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$BODY_FILE"
+          else
+            gh issue create --title "$TITLE" --body-file "$BODY_FILE" --label "audit" || \
+            gh issue create --title "$TITLE" --body-file "$BODY_FILE"
+          fi

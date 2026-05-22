@@ -371,7 +371,15 @@ def forward(session: Session, path: str, *, body: Optional[bytes] = None,
             try:
                 return json.loads(raw) if raw else {"status": "ok"}
             except Exception:
-                return {"status": "ok", "raw": raw}
+                # Audit 2026-05-21: a non-JSON 2xx body (HTML error page,
+                # partial write, wrong listener on the port) used to be
+                # reported as {"status":"ok"} — a connector op then
+                # surfaced garbage as real data.  Honest status:
+                # non-JSON == error.
+                return {"status": "error",
+                        "error": "non-JSON response from host",
+                        "raw": raw[:500],
+                        "session": session.session_id}
     except urllib.error.HTTPError as e:
         return {"status": "error", "error": f"HTTP {e.code}",
                 "session": session.session_id}

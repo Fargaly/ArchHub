@@ -27,6 +27,7 @@ on:
 permissions:
   contents: write
   issues: write
+  pull-requests: write
 
 concurrency:
   group: agents-dispatch
@@ -91,14 +92,24 @@ jobs:
               f.write(f'elapsed_seconds={elapsed}\n')
           "
 
-      - name: Commit any new outputs
+      - name: Open an auto-merging PR for new outputs
+        # `main` is branch-protected — the bot cannot push to it directly.
+        # Route outputs through a per-run branch + a PR that auto-merges
+        # once checks pass (auto-merge.yml + branch protection handle it).
         run: |
           git config user.name "archhub-bot"
           git config user.email "bot@archhub.io"
           git add agents/outputs agents/state || true
-          if ! git diff --cached --quiet 2>/dev/null; then
-            git commit -m "auto(agents): dispatch round $(date -u +%FT%TZ) — ${{ steps.round.outputs.depts_run }} depts, ${{ steps.round.outputs.elapsed_seconds }}s"
-            git push origin main || echo "push failed (race) — next round retries"
-          else
+          if git diff --cached --quiet 2>/dev/null; then
             echo "no new outputs this round"
+            exit 0
           fi
+          BRANCH="bot/agents-outputs-${{ github.run_id }}"
+          git commit -m "auto(agents): dispatch round $(date -u +%FT%TZ) — ${{ steps.round.outputs.depts_run }} depts, ${{ steps.round.outputs.elapsed_seconds }}s"
+          git push origin "HEAD:${BRANCH}"
+          gh pr create --base main --head "${BRANCH}" \
+            --title "auto(agents): dispatch outputs ${{ github.run_id }}" \
+            --body "Automated agent dispatch outputs. Auto-merges once checks pass." || true
+          gh pr merge --auto --squash "${BRANCH}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1407,6 +1407,11 @@ class ToolEngine:
         if cached is not None and (now - last) < self._CONN_TOOLS_TTL:
             return cached
         specs: list = []
+        # AgDR-0034 audit fix (e) — the "." -> "__" tool-name encoding
+        # is NOT invertible when an op_id itself contains "__". Carry
+        # the raw op_id in a side map; invoke() resolves through it
+        # instead of decoding the tool name.
+        op_by_name: dict = {}
         try:
             from connectors.base import all_connectors
             for c in all_connectors():
@@ -1418,8 +1423,10 @@ class ToolEngine:
                                        "description": p.help or p.label or p.id}
                         if p.required:
                             required.append(p.id)
+                    _tname = op.op_id.replace(".", "__")
+                    op_by_name[_tname] = op.op_id
                     specs.append({
-                        "name": op.op_id.replace(".", "__"),
+                        "name": _tname,
                         "description": (op.label or op.op_id) + " — "
                                        + (op.description or "")
                                        + (" [MUTATES THE HOST]" if op.destructive else ""),
@@ -1429,7 +1436,9 @@ class ToolEngine:
                     })
         except Exception:
             specs = []
+            op_by_name = {}
         self._conn_tools_cache = specs
+        self._conn_op_by_name = op_by_name
         self._conn_tools_ts = now
         return specs
 
@@ -1575,7 +1584,13 @@ class ToolEngine:
         # gets REAL data — it never has to fabricate.
         if "__" in tool_name and not next(
                 (t for t in TOOLS if t["name"] == tool_name), None):
-            op_id = tool_name.replace("__", ".")
+            # AgDR-0034 audit fix (e) — resolve through the raw-op_id
+            # map; the "__" -> "." decode is lossy for op_ids that
+            # themselves contain "__". Fallback decode only if the map
+            # has not been built yet (it always is before the LLM can
+            # call a connector tool).
+            op_id = getattr(self, "_conn_op_by_name", {}).get(
+                tool_name) or tool_name.replace("__", ".")
             try:
                 from ai_behaviour import get_tool_policy
                 pol = get_tool_policy(tool_name)

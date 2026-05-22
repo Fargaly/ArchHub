@@ -81,7 +81,7 @@ jobs:
       # already-installed app can fetch a fresh build without re-
       # running the full Setup.
       - name: Set up .NET 8 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 

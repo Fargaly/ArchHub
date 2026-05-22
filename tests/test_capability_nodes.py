@@ -300,3 +300,52 @@ def test_register_spec_accepts_impl_spec():
     }
     node_spec = register_spec(spec)
     assert node_spec.type == "cap.demo"
+
+
+# ─── AgDR-0039 — impl.kind=graph: logic IS a sub-graph ──────────────
+
+
+def test_graph_impl_runs_inner_graph():
+    """impl.kind=graph — a node whose logic is an inner graph of
+    primitives, cooked through the subgraph machinery. Logic composed,
+    not coded."""
+    spec = {
+        "type": "cap.graphnode",
+        "outputs": [{"name": "result", "type": "any"}],
+        "impl": {
+            "kind": "graph",
+            "graph": {
+                "nodes": [{"id": "c1", "type": "code.expression",
+                           "config": {"expr": "21 * 2"}}],
+                "wires": [],
+            },
+            "inner_outputs": [{"port": "result", "inner_node": "c1",
+                               "inner_port": "value"}],
+        },
+    }
+    out = _executor(spec)({}, {}, None)
+    assert out.get("result") == 42
+
+
+def test_graph_impl_seeds_outer_input():
+    """An outer input seeds the inner graph's entry port — the
+    composite's I/O bridges into the inner logic."""
+    spec = {
+        "type": "cap.graphadd",
+        "inputs": [{"name": "n", "type": "any"}],
+        "outputs": [{"name": "result", "type": "any"}],
+        "impl": {
+            "kind": "graph",
+            "graph": {
+                "nodes": [{"id": "e1", "type": "code.expression",
+                           "config": {"expr": "a + 10"}}],
+                "wires": [],
+            },
+            "inner_inputs": [{"port": "n", "inner_node": "e1",
+                              "inner_port": "a"}],
+            "inner_outputs": [{"port": "result", "inner_node": "e1",
+                               "inner_port": "value"}],
+        },
+    }
+    out = _executor(spec)({}, {"n": 5}, None)
+    assert out.get("result") == 15

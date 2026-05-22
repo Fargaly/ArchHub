@@ -8,3 +8,8 @@ cryptography>=42.0
 # google-generativeai is referenced via ai_runner.gemini_ask but falls
 # back to REST when missing, so it's NOT pinned here — users pick
 # whether to install. CI tests run without it.
+# specklepy powers SpeckleWire (app/speckle_wire.py) - the wire substrate
+# (roadmap M1.a). Same implicit-local / missing-in-CI class as the
+# cryptography dep above: tests/test_speckle_wire.py +
+# tests/test_litmus_max_to_revit.py fail collection without it.
+specklepy>=3.2.6,<4

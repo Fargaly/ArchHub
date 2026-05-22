@@ -123,3 +123,53 @@ def test_search_then_create_then_search_round_trip(engine):
     # Second search now finds it — reuse beats a duplicate next turn.
     again = engine._invoke_node_handler("node_search", {"intent": "revision"})
     assert again["count"] == 1
+
+
+# ─── slice 3b — node_place ──────────────────────────────────────────
+
+
+def test_node_place_emits_add_node_delta(engine):
+    engine._invoke_node_handler("node_create", {"spec": _cap_spec("place.me")})
+    out = engine._invoke_node_handler(
+        "node_place", {"type": "place.me", "x": 120, "y": 340})
+    assert out["status"] == "ok" and out["op"] == "add_node"
+    node = out["node"]
+    assert node["type"] == "place.me"
+    assert node["id"] == out["node_id"] and node["id"].startswith("n_")
+    assert node["x"] == 120 and node["y"] == 340
+    assert [p["name"] for p in node["inputs"]] == ["drawing_no"]
+    assert [p["name"] for p in node["outputs"]] == ["revisions"]
+
+
+def test_node_place_unregistered_type_is_error(engine):
+    out = engine._invoke_node_handler("node_place", {"type": "no.such.type"})
+    assert out["status"] == "error" and "not registered" in out["error"]
+
+
+def test_node_place_needs_a_type(engine):
+    out = engine._invoke_node_handler("node_place", {})
+    assert out["status"] == "error"
+
+
+# ─── slice 3b — graph_wire ──────────────────────────────────────────
+
+
+def test_graph_wire_emits_add_wire_delta(engine):
+    out = engine._invoke_node_handler("graph_wire", {
+        "src_node": "n_a", "src_port": "out",
+        "dst_node": "n_b", "dst_port": "in"})
+    assert out["status"] == "ok" and out["op"] == "add_wire"
+    assert out["wire"] == {"from": ["n_a", "out"], "to": ["n_b", "in"]}
+
+
+def test_graph_wire_missing_args_is_error(engine):
+    out = engine._invoke_node_handler("graph_wire", {
+        "src_node": "n_a", "src_port": "out", "dst_node": "n_b"})
+    assert out["status"] == "error"
+
+
+def test_graph_wire_rejects_self_wire(engine):
+    out = engine._invoke_node_handler("graph_wire", {
+        "src_node": "n_a", "src_port": "out",
+        "dst_node": "n_a", "dst_port": "in"})
+    assert out["status"] == "error" and "itself" in out["error"]

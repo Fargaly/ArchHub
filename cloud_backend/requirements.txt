@@ -1,4 +1,4 @@
-fastapi==0.118.0
+fastapi==0.136.1
 uvicorn[standard]==0.32.0
 stripe==11.5.0
 httpx==0.28.1

@@ -105,6 +105,15 @@ def _register_aumid_icon(aumid: str, ico_path: Path, display_name: str) -> None:
         pass
 
 
+def _safe_self_test() -> None:
+    """AgDR-0036 — daemon-thread wrapper for `_startup_self_test`.
+    Swallows everything; the self-test is diagnostic-only."""
+    try:
+        _startup_self_test()
+    except Exception:
+        pass
+
+
 def _startup_self_test() -> None:
     """Probe every host broker + runner at startup, log results.
 
@@ -457,8 +466,16 @@ def main() -> int:
     # alive" diagnosable from the user's own log without us asking them
     # to run anything. Non-fatal — any probe that raises gets logged as
     # "err" and the next host is probed.
+    #
+    # AgDR-0036 — runs on a DAEMON THREAD, not inline.  It does broker
+    # HTTP probes + parallel port scans + Outlook COM + auto_build
+    # filesystem walks — multi-second.  Inline (before surface.show)
+    # it hung the boot splash for that whole time.  Nothing in the UI
+    # depends on its result (it only writes boot.log), so background it.
     try:
-        _startup_self_test()
+        import threading as _th
+        _th.Thread(target=lambda: _safe_self_test(), daemon=True,
+                   name="archhub-self-test").start()
     except Exception:
         pass
 

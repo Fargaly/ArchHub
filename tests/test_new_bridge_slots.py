@@ -198,7 +198,15 @@ def test_get_storage_stats_returns_positive_bytes(tmp_appdata, bridge_inst):
     # Drop a few session files so the sessions count > 0 + bytes > 0.
     _write_session(tmp_appdata["sessions"], "a")
     _write_session(tmp_appdata["sessions"], "b")
-    out = json.loads(bridge_inst.get_storage_stats())
+    # AgDR-0036 — get_storage_stats is now non-blocking: the first call
+    # kicks a background fs-walk + returns {} instantly.  Poll until
+    # the cached result lands (the recursive glob never freezes the UI).
+    import time as _t
+    out = json.loads(bridge_inst.get_storage_stats())   # cold — kicks refresh
+    deadline = _t.time() + 5
+    while _t.time() < deadline and "sessions" not in out:
+        _t.sleep(0.05)
+        out = json.loads(bridge_inst.get_storage_stats())
     assert "sessions" in out
     assert "app" in out
     assert "custom_nodes" in out

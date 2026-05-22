@@ -69,28 +69,48 @@ def scan_bare_except(audit: Audit, path: Path, lines: list[str]) -> None:
                       "`except Exception: pass` — silent swallow; log it")
 
 
+# AgDR-0036 — the blocking-call patterns.  Beyond direct stdlib
+# blockers, this catches the HELPER-HOP cases the first detector
+# missed: a slot that LOOKS clean but calls `c.probe()` /
+# `broker.forward(...)` / `cloud_client._request(...)` /
+# `detect_all_*` / a recursive `glob("**/...")` — each blocks one or
+# two hops down.  Those five+ hidden offenders are what kept the
+# founder pointing at the lag.
+_BLOCKING_PATTERNS = re.compile(
+    r"\b(urlopen|subprocess\.(run|call|check_output|Popen)|"
+    r"\.recv\(|time\.sleep|socket\.create_connection|"
+    r"requests\.(get|post)|"
+    r"\.forward\(|\.probe\(\)|_request\(|"
+    r"detect_all_hosts|detect_all_local_llms|"
+    r"list_sessions\(|sessions_count\(|is_reachable\(|"
+    r"com_thread\(|GetActiveObject)\b")
+# A recursive glob is a separate, multi-line-safe check.
+_RECURSIVE_GLOB = re.compile(r"\.glob\(\s*['\"]\*\*")
+# Markers that prove the slow work was moved OFF the Qt main thread.
+_OFFTHREAD = ("Thread(", "to_thread", "QThread", "_cached_async",
+              "_async_state", ".submit(", "singleShot")
+
+
 def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
-    """Heuristic: within a @pyqtSlot-decorated function, flag a
-    blocking call NOT obviously off-thread.  Coarse — INFO severity."""
-    blocking = re.compile(
-        r"\b(urlopen|subprocess\.(run|call|check_output|Popen)|"
-        r"\.recv\(|time\.sleep|\.join\(\)|requests\.(get|post))\b")
+    """Flag any @pyqtSlot whose body does blocking I/O — directly OR
+    one helper-hop down — without an off-thread marker.  This is the
+    guard for the whole UI-freeze CLASS (AgDR-0035 / AgDR-0036)."""
     in_slot = False
     slot_line = 0
-    slot_has_thread = False
+    slot_off_thread = False
     slot_body: list[tuple[int, str]] = []
 
     def _flush():
-        nonlocal slot_body, slot_has_thread, slot_line
-        if slot_body and not slot_has_thread:
+        nonlocal slot_body, slot_off_thread, slot_line
+        if slot_body and not slot_off_thread:
             for ln_no, txt in slot_body:
-                if blocking.search(txt):
+                if _BLOCKING_PATTERNS.search(txt) or _RECURSIVE_GLOB.search(txt):
                     audit.add("HIGH", "blocking-in-pyqtslot", path, ln_no,
-                              f"blocking call in @pyqtSlot (slot at "
-                              f"line {slot_line}) — freezes the Qt UI "
-                              f"thread; run on a background thread")
+                              f"blocking I/O in @pyqtSlot (slot at line "
+                              f"{slot_line}) — freezes the Qt UI thread; "
+                              f"route through _cached_async or a thread")
         slot_body = []
-        slot_has_thread = False
+        slot_off_thread = False
 
     pending_slot = False
     for i, ln in enumerate(lines, 1):
@@ -105,7 +125,6 @@ def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
             pending_slot = False
             continue
         if in_slot:
-            # A new top-level def / class / decorator ends the slot body.
             indent = len(ln) - len(ln.lstrip())
             if s and indent <= 4 and (s.startswith("def ")
                                        or s.startswith("@")
@@ -115,8 +134,8 @@ def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
                 if s.startswith("@pyqtSlot"):
                     pending_slot = True
                 continue
-            if "Thread(" in ln or "to_thread" in ln or "QThread" in ln:
-                slot_has_thread = True
+            if any(m in ln for m in _OFFTHREAD):
+                slot_off_thread = True
             slot_body.append((i, ln))
     _flush()
 

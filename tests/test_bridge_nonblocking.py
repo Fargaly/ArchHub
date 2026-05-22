@@ -1,17 +1,14 @@
-"""AgDR-0035 — get_all_hosts / get_local_llms must never block the
-Qt main thread.
+"""AgDR-0035 / AgDR-0036 — bridge slots must never block the Qt main
+thread.  `_cached_async` is the mechanism: the slot returns a cached
+value instantly; the slow `work` callable runs on a bounded pool; a
+signal fires when fresh data lands.
 
-The slot returns (near-)instantly from a cache; the slow detector
-runs on a background thread.
-
-Tests call the slot methods with a PLAIN stand-in `self` (not a real
-QObject) — the methods only setattr/getattr cache fields + emit a
-stubbed signal, so a plain object is enough and avoids the heavy
+Tests use a PLAIN stand-in `self` (not a real QObject) that borrows
+the real `_cached_async` + `_async_state` methods — avoids the heavy
 ArchHubBridge(router, manager, ...) construction.
 """
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -31,120 +28,136 @@ class _DummySignal:
 
 
 class _DummyBridge:
-    """Plain stand-in for ArchHubBridge `self` — holds cache attrs +
-    a hosts_changed signal, and borrows the real `_cached_async`
-    method so get_all_hosts / get_local_llms run unchanged."""
+    """Plain stand-in for ArchHubBridge `self` — borrows the real
+    _cached_async + _async_state so the mechanism is exercised
+    unchanged."""
     def __init__(self):
         self.hosts_changed = _DummySignal()
-        # Bind the real helper onto this plain instance.
+        self.memory_changed = _DummySignal()
         self._cached_async = bridge.ArchHubBridge._cached_async.__get__(self)
+        self._async_state = bridge.ArchHubBridge._async_state.__get__(self)
 
 
-def _call(method, dummy, *args):
-    """Invoke an ArchHubBridge method with a plain `self`."""
-    return getattr(bridge.ArchHubBridge, method)(dummy, *args)
+# ─── 1. the slot returns instantly even when `work` is slow ─────────
 
 
-# ─── 1. the slot returns fast even when the detector is slow ────────
+def test_cached_async_returns_instantly_for_slow_work():
+    dummy = _DummyBridge()
+    ran = []
 
-
-def test_get_all_hosts_returns_instantly(monkeypatch):
-    import host_detector
-    slow_calls = []
-
-    def _slow_detect(*a, **kw):
-        slow_calls.append(time.time())
+    def _slow():
+        ran.append(time.time())
         time.sleep(3.0)
         return {"outlook": {"status": "live"}}
 
-    monkeypatch.setattr(host_detector, "detect_all_hosts", _slow_detect)
-
-    dummy = _DummyBridge()
     t0 = time.time()
-    raw = _call("get_all_hosts", dummy)
+    out = dummy._cached_async("k", _slow, empty={})
     elapsed = time.time() - t0
     assert elapsed < 0.5, f"slot blocked {elapsed:.2f}s — must be async"
-    assert isinstance(json.loads(raw), dict)
+    assert out == {}                       # cold cache → empty fallback
 
+    # The work ran on the background pool — wait for it.
     deadline = time.time() + 6
-    while time.time() < deadline and not slow_calls:
+    while time.time() < deadline and not ran:
         time.sleep(0.05)
-    assert slow_calls, "background detector never ran"
+    assert ran, "background work never ran"
 
 
-def test_get_all_hosts_serves_cache_on_second_call(monkeypatch):
-    import host_detector
-    monkeypatch.setattr(host_detector, "detect_all_hosts",
-                        lambda *a, **k: {"excel": {"status": "live"}})
+def test_cached_async_serves_fresh_on_second_call():
     dummy = _DummyBridge()
-    _call("get_all_hosts", dummy)  # kicks the bg refresh
+    dummy._cached_async("k", lambda: {"v": 1}, empty={})
     deadline = time.time() + 4
     while time.time() < deadline:
-        if getattr(dummy, "_hosts_cache_val", None):
+        out = dummy._cached_async("k", lambda: {"v": 1}, empty={})
+        if out == {"v": 1}:
             break
         time.sleep(0.05)
-    parsed = json.loads(_call("get_all_hosts", dummy))
-    assert parsed.get("excel", {}).get("status") == "live"
-    # The refresh emitted hosts_changed so the JS side re-pulls.
-    assert dummy.hosts_changed.emits >= 1
+    assert dummy._cached_async("k", lambda: {"v": 1}, empty={}) == {"v": 1}
+    assert dummy.hosts_changed.emits >= 1   # signalled JS to re-pull
 
 
-def test_get_local_llms_returns_instantly(monkeypatch):
+def test_cached_async_dedupes_concurrent_refresh():
+    """Rapid calls spawn only ONE background run (locked check-set)."""
+    dummy = _DummyBridge()
+    runs = []
+
+    def _work():
+        runs.append(1)
+        time.sleep(0.3)
+        return {"x": 1}
+
+    for _ in range(5):
+        dummy._cached_async("k", _work, empty={})
+    time.sleep(1.0)
+    assert len(runs) == 1, f"expected 1 refresh, got {len(runs)}"
+
+
+def test_cached_async_custom_signal():
+    """signal_name routes the re-pull notification to the right signal."""
+    dummy = _DummyBridge()
+    dummy._cached_async("m", lambda: {"ok": 1}, empty={},
+                        signal_name="memory_changed")
+    deadline = time.time() + 4
+    while time.time() < deadline and dummy.memory_changed.emits == 0:
+        time.sleep(0.05)
+    assert dummy.memory_changed.emits >= 1
+    assert dummy.hosts_changed.emits == 0
+
+
+def test_cached_async_per_key_isolation():
+    """Different keys keep independent caches — probe:revit must not
+    collide with probe:autocad."""
+    dummy = _DummyBridge()
+    dummy._cached_async("probe:revit", lambda: {"h": "revit"}, empty={})
+    dummy._cached_async("probe:acad", lambda: {"h": "acad"}, empty={})
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        a = dummy._cached_async("probe:revit", lambda: {}, empty={})
+        b = dummy._cached_async("probe:acad", lambda: {}, empty={})
+        if a and b:
+            break
+        time.sleep(0.05)
+    assert dummy._cached_async("probe:revit", lambda: {}, empty={}) == {"h": "revit"}
+    assert dummy._cached_async("probe:acad", lambda: {}, empty={}) == {"h": "acad"}
+
+
+# ─── 2. real slot wrappers stay non-blocking ────────────────────────
+
+
+def test_get_all_hosts_slot_is_async(monkeypatch):
+    import host_detector
+
+    def _slow(*a, **k):
+        time.sleep(3.0)
+        return {"excel": {"status": "live"}}
+
+    monkeypatch.setattr(host_detector, "detect_all_hosts", _slow)
+    dummy = _DummyBridge()
+    t0 = time.time()
+    bridge.ArchHubBridge.get_all_hosts(dummy)
+    assert time.time() - t0 < 0.5, "get_all_hosts blocked"
+
+
+def test_get_local_llms_slot_is_async(monkeypatch):
     import local_llm_detector
 
-    def _slow(*a, **kw):
+    def _slow(*a, **k):
         time.sleep(2.5)
         return {"ollama": {"status": "up"}}
 
     monkeypatch.setattr(local_llm_detector, "detect_all_local_llms", _slow)
     dummy = _DummyBridge()
     t0 = time.time()
-    _call("get_local_llms", dummy)
-    elapsed = time.time() - t0
-    assert elapsed < 0.5, f"get_local_llms blocked {elapsed:.2f}s"
+    bridge.ArchHubBridge.get_local_llms(dummy)
+    assert time.time() - t0 < 0.5, "get_local_llms blocked"
 
 
-# ─── 2. _cached_async contract ──────────────────────────────────────
+# ─── 3. AgDR docs ──────────────────────────────────────────────────
 
 
-def test_cached_async_dedupes_refresh(monkeypatch):
-    """Two rapid calls spawn only ONE background detector run."""
-    import host_detector
-    runs = []
-
-    def _detect(*a, **kw):
-        runs.append(1)
-        time.sleep(0.3)
-        return {"x": 1}
-
-    monkeypatch.setattr(host_detector, "detect_all_hosts", _detect)
-    dummy = _DummyBridge()
-    _call("get_all_hosts", dummy)
-    _call("get_all_hosts", dummy)
-    _call("get_all_hosts", dummy)
-    time.sleep(1.0)
-    assert len(runs) == 1, f"expected 1 refresh, got {len(runs)}"
-
-
-def test_cached_async_empty_fallback_is_dict(monkeypatch):
-    """First call (cache cold) returns the detector's real shape — a
-    dict — never a list, so JS never sees a shape flip."""
-    import host_detector
-    monkeypatch.setattr(host_detector, "detect_all_hosts",
-                        lambda *a, **k: {"x": 1})
-    dummy = _DummyBridge()
-    out = bridge.ArchHubBridge._cached_async(
-        dummy, "_hosts", "detect_all_hosts", "host_detector")
-    assert isinstance(out, dict)
-
-
-# ─── 3. AgDR doc ────────────────────────────────────────────────────
-
-
-def test_agdr_0035_exists():
-    p = (Path(__file__).resolve().parents[1] / "docs" / "agdr"
-         / "AgDR-0035-bridge-slots-never-block-ui-thread.md")
-    assert p.exists()
-    text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
-    assert "_cached_async" in text
+def test_agdr_0035_and_0036_exist():
+    agdr = Path(__file__).resolve().parents[1] / "docs" / "agdr"
+    assert (agdr / "AgDR-0035-bridge-slots-never-block-ui-thread.md").exists()
+    p36 = agdr / "AgDR-0036-non-blocking-slot-mechanism.md"
+    assert p36.exists()
+    assert "status: approved" in p36.read_text(encoding="utf-8")

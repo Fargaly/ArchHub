@@ -545,54 +545,74 @@ class ArchHubBridge(QObject):
         3.7 s every call.  Now: return the cached value instantly +
         refresh on a background thread + emit `hosts_changed` when the
         fresh data lands."""
-        return _safe_json(self._cached_async(
-            "_hosts", "detect_all_hosts", "host_detector"))
+        def _work():
+            from host_detector import detect_all_hosts
+            return detect_all_hosts()
+        return _safe_json(self._cached_async("hosts", _work, empty={}))
 
-    # ─── AgDR-0035 — non-blocking cached detector helper ────────────
-    def _cached_async(self, cache_key: str, fn_name: str,
-                      module_name: str, ttl: float = 30.0,
-                      empty=None):
-        """Return a cached detector result instantly; refresh it on a
-        background thread when stale.  Emits `hosts_changed` when a
-        refresh completes so the JS side re-pulls.  The detector
-        (`module.fn`) is the slow call that must never touch the Qt
-        main thread."""
+    # ─── AgDR-0036 — the non-blocking-slot MECHANISM ───────────────
+    # Every @pyqtSlot that does I/O (HTTP, COM, subprocess, fs walk,
+    # broker.forward, connector.probe) MUST route its slow work through
+    # `_cached_async`.  The slot returns a cached value INSTANTLY; the
+    # slow `work` callable runs on a bounded background pool; a signal
+    # fires when fresh data lands so the JS side re-pulls.  This makes
+    # it structurally impossible for a slow slot to freeze the Qt main
+    # thread.  A guard test (test_no_blocking_slots) fails CI if a new
+    # blocking slot is added.
+
+    def _async_state(self):
+        """Lazy, one-time per-bridge: {lock, cache, pool}.  Cache is a
+        dict key -> (value, ts, busy).  One bounded ThreadPoolExecutor
+        caps concurrent background work so rapid UI actions can't
+        exhaust OS threads."""
+        st = getattr(self, "_async_st", None)
+        if st is None:
+            import threading
+            from concurrent.futures import ThreadPoolExecutor
+            st = {
+                "lock": threading.Lock(),
+                "cache": {},
+                "pool": ThreadPoolExecutor(
+                    max_workers=6, thread_name_prefix="archhub-async"),
+            }
+            self._async_st = st
+        return st
+
+    def _cached_async(self, key: str, work, *, ttl: float = 30.0,
+                      empty=None, signal_name: str = "hosts_changed"):
+        """Non-blocking cache.  `work` is a zero-arg callable doing the
+        slow I/O.  Returns the cached value instantly; refreshes on the
+        background pool when stale; emits `signal_name` when fresh data
+        lands.  Thread-safe — the cache dict + the busy check-then-set
+        are guarded by one lock (fixes the AgDR-0035 race)."""
         import time as _t
+        st = self._async_state()
         now = _t.time()
-        val_attr = f"{cache_key}_cache_val"
-        ts_attr  = f"{cache_key}_cache_ts"
-        busy_attr = f"{cache_key}_cache_busy"
-        cached = getattr(self, val_attr, None)
-        ts = getattr(self, ts_attr, 0.0)
-        fresh = cached is not None and (now - ts) < ttl
-        if fresh:
-            return cached
-        if not getattr(self, busy_attr, False):
-            setattr(self, busy_attr, True)
+        with st["lock"]:
+            ent = st["cache"].get(key)
+            if ent and ent[0] is not None and (now - ent[1]) < ttl:
+                return ent[0]
+            cur = ent[0] if ent else None
+            busy = ent[2] if ent else False
+            kick = not busy
+            if kick:
+                st["cache"][key] = (cur, ent[1] if ent else 0.0, True)
 
+        if kick:
             def _refresh():
-                result = None
                 try:
-                    mod = __import__(module_name)
-                    result = getattr(mod, fn_name)()
+                    result = work()
                 except Exception as ex:
                     result = {"error": str(ex)}
+                with st["lock"]:
+                    st["cache"][key] = (result, _t.time(), False)
                 try:
-                    setattr(self, val_attr, result)
-                    setattr(self, ts_attr, _t.time())
-                finally:
-                    setattr(self, busy_attr, False)
-                # Tell the JS side fresh data is ready.
-                try: self.hosts_changed.emit()
-                except Exception: pass
+                    getattr(self, signal_name).emit()
+                except Exception:
+                    pass
+            st["pool"].submit(_refresh)
 
-            import threading
-            threading.Thread(target=_refresh, daemon=True).start()
-        # Return whatever we have right now — never block.  The empty
-        # fallback matches the detector's real shape (both
-        # detect_all_hosts + detect_all_local_llms return dicts) so the
-        # JS side never sees a list-vs-dict shape flip.
-        return cached if cached is not None else (
+        return cur if cur is not None else (
             empty if empty is not None else {})
 
     @pyqtSlot(result=str)
@@ -662,15 +682,25 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def probe_connector(self, host_id: str) -> str:
-        """Probe ONE connector's live status. COM/HTTP — keep callers off
-        the hot path; JSX calls this lazily per host pill."""
+        """Probe ONE connector's live status.
+
+        AgDR-0036 — `c.probe()` is COM (`GetActiveObject`) or, for
+        broker connectors, an HTTP `/ping` + a parallel 16-port range
+        scan — measured 1-6 s.  The JSX calls this once per host pill,
+        so the old synchronous slot froze the UI 1-6 s on every pill
+        render.  Now routed through `_cached_async`: cached status
+        returned instantly, real probe on the background pool, the
+        `hosts_changed` signal re-pulls when the probe lands."""
         try:
             from connectors.base import get as _get_connector
             c = _get_connector(host_id)
             if c is None:
                 return _safe_json({"status": "missing",
                                     "note": f"no connector '{host_id}'"})
-            return _safe_json(c.probe())
+            return _safe_json(self._cached_async(
+                f"probe:{host_id}", lambda: c.probe(),
+                empty={"status": "probing",
+                       "note": "probe in progress"}))
         except Exception as ex:
             return _safe_json({"status": "missing", "note": str(ex)})
 
@@ -978,8 +1008,10 @@ class ArchHubBridge(QObject):
         """AgDR-0035 — non-blocking.  `detect_all_local_llms` probes
         Ollama + LM Studio over HTTP (measured 2.2 s) — never run it
         on the Qt main thread.  Cached + background-refreshed."""
-        return _safe_json(self._cached_async(
-            "_local_llms", "detect_all_local_llms", "local_llm_detector"))
+        def _work():
+            from local_llm_detector import detect_all_local_llms
+            return detect_all_local_llms()
+        return _safe_json(self._cached_async("local_llms", _work, empty={}))
 
     @pyqtSlot(str, result=str)
     def set_model(self, model_id: str) -> str:
@@ -1248,26 +1280,31 @@ class ArchHubBridge(QObject):
                 except Exception: pass
 
     # ─── Memory ────────────────────────────────────────────────
+    # AgDR-0036 — both reads hit the ArchHub cloud over HTTP.  Run on
+    # the Qt main thread they froze the UI for the full HTTP timeout
+    # on a slow / down network.  Routed through `_cached_async` — the
+    # `memory_changed` signal re-pulls when fresh data lands.
     @pyqtSlot(result=str)
     def get_memory_stats(self) -> str:
-        try:
+        def _work():
             from cloud_client import memory_stats
-            stats = memory_stats() or {}
-            return _safe_json(stats)
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            return memory_stats() or {}
+        return _safe_json(self._cached_async(
+            "memory_stats", _work, empty={},
+            signal_name="memory_changed"))
 
     @pyqtSlot(str, result=str)
     def list_memory_facts(self, q: str = "") -> str:
-        try:
+        def _work():
             from cloud_client import _request
             path = f"/v1/memory/facts?q={q}" if q else "/v1/memory/facts"
             r = _request("GET", path)
             if r["status"] != "ok":
-                return _safe_json({"error": "not authed or cloud down"})
-            return _safe_json(r.get("json") or {})
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+                return {"error": "not authed or cloud down"}
+            return r.get("json") or {}
+        return _safe_json(self._cached_async(
+            f"memory_facts:{q}", _work, empty={},
+            signal_name="memory_changed"))
 
     @pyqtSlot(str, str, result=str)
     def add_memory_fact(self, text: str, scope: str = "user") -> str:
@@ -2056,10 +2093,17 @@ class ArchHubBridge(QObject):
     def list_host_sessions(self, family: str) -> str:
         """Return all running sessions for a host family.
         Shape: [{session_id, version, port, opened_doc, host_alive}].
-        Empty list = nothing running (or unsupported family)."""
+
+        AgDR-0036 — `_list_host_sessions_impl` does broker HTTP probes
+        + a parallel port scan (+ COM MAPI walk for Outlook).  Routed
+        through `_cached_async` so the host-node dropdown never freezes
+        the UI."""
         try:
             family = (family or "").strip().lower()
-            return _safe_json(_list_host_sessions_impl(family))
+            return _safe_json(self._cached_async(
+                f"hsess:{family}",
+                lambda: _list_host_sessions_impl(family),
+                empty=[]))
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -2067,10 +2111,16 @@ class ArchHubBridge(QObject):
     def list_host_documents(self, family: str,
                              session_id: str = "") -> str:
         """List documents inside the chosen session.
-        Shape: [{path, title, active, kind}]."""
+        Shape: [{path, title, active, kind}].
+
+        AgDR-0036 — `_list_host_documents_impl` does `broker.forward`
+        (blocking HTTP, up to 2 s).  Routed through `_cached_async`."""
         try:
             family = (family or "").strip().lower()
-            return _safe_json(_list_host_documents_impl(family, session_id))
+            return _safe_json(self._cached_async(
+                f"hdocs:{family}:{session_id}",
+                lambda: _list_host_documents_impl(family, session_id),
+                empty=[]))
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -3008,7 +3058,15 @@ class ArchHubBridge(QObject):
     @pyqtSlot(result=str)
     def get_storage_stats(self) -> str:
         """Report on-disk usage across sessions/, app/, custom_nodes/
-        and skills/. Used by the Settings → Storage badge."""
+        and skills/. Used by the Settings → Storage badge.
+
+        AgDR-0036 — the recursive `glob('**/*')` + per-file `stat()`
+        across the whole %LOCALAPPDATA%/ArchHub tree stalls the UI for
+        seconds on a large account.  Routed through `_cached_async`."""
+        return _safe_json(self._cached_async(
+            "storage_stats", self._compute_storage_stats, empty={}))
+
+    def _compute_storage_stats(self) -> dict:
         try:
             import os as _os
             from pathlib import Path
@@ -3041,15 +3099,15 @@ class ArchHubBridge(QObject):
             sk = _stat(skills_dir)
             total = (sessions["bytes"] + app_stat["bytes"]
                       + cn["bytes"] + sk["bytes"])
-            return _safe_json({
+            return {
                 "sessions":     sessions,
                 "app":          app_stat,
                 "custom_nodes": cn,
                 "skills":       sk,
                 "total_bytes":  total,
-            })
+            }
         except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            return {"error": str(ex)}
 
     @pyqtSlot(result=str)
     def get_profile(self) -> str:

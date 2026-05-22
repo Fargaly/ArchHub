@@ -1,5 +1,6 @@
 ---
-id: AgDR-0032
+id: AgDR-0037
+renumbered: was AgDR-0032 — collided with AgDR-0032-composer-stream-coalesce-and-delete-skill-fix; renumbered 2026-05-22 (this file was the fewer-referenced of the pair).
 timestamp: 2026-05-21T19:30:00Z
 agent: claude-code (Sonnet)
 session: same session that delivered AgDR-0029/0030 deploy + probe fixes; founder demand "this should happen automatically, I don't have to tell you" — recording the work executed live + committing rather than asking for sign-off after every fork

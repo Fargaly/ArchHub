@@ -17,6 +17,33 @@
 > The four design/architecture memos are NOT roadmaps — they are listed
 > under "Design references" and kept for rationale only.
 
+## AgDR ledger — reconciliation (2026-05-22)
+
+37 AgDRs in `docs/agdr/`.  State as of the 2026-05-22 finalize pass:
+
+- **AgDR-0001-0012** — node-system redesign slices.  `executed`
+  (0005, 0006 still `proposed` — group collapse / nesting; code
+  shipped via later slices, status not flipped).
+- **AgDR-0013-0022** — autonomous-loop slices (library gate, design
+  system, Speckle, typed-AI, node-to-code, ai.plan, ReactFlow
+  scaffold).  Status `proposed`.  Code + tests for these DID ship
+  during the autonomous loop (`tests/test_library*.py`,
+  `test_typed_ai_nodes.py`, `test_ai_plan_node.py`,
+  `test_code_nodes.py`, `test_speckle*.py`,
+  `test_reactflow_p2a_groundwork.py`, etc. — all green).  The status
+  was never flipped because the 2026-05-21 scope-creep correction
+  (`docs/SCOPE-AUDIT-2026-05-21.md`) put them under review.  Per the
+  AGDR MANDATE, `proposed → executed` needs explicit founder
+  sign-off — they stay `proposed` until the founder signs each off
+  or supersedes it.  NOT silent drift — documented here.
+- **AgDR-0023-0036** — Roslyn isolation, cold-start lag, hot-reload,
+  library actions, build pipeline, csc probe, MCP, composer/delete
+  fixes, drag-drop, audit bot, the UI-freeze-class kill.
+  `approved`/`executed` — all shipped + CDP-verified this session.
+- **AgDR-0023** superseded by AgDR-0025.
+- **AgDR-0037** — was a second AgDR-0032 (id collision); renumbered
+  2026-05-22.
+
 ## Shipped — milestone arc
 
 | Milestone | What |
@@ -136,7 +163,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P2 `acad` vs `autocad` host-name mismatch — the AutoCAD connector's `host` and the `tool_engine`/`ai_behaviour` family name disagree. Pick one, repo-wide (eng)
 - [x] #P2 `test_delete_session_removes_file` cross-file test pollution ✓ FIXED 2026-05-21 — Added autouse `_isolate_session_io_module_state` fixture to `tests/test_new_bridge_slots.py` that re-stamps `session_io.SESSIONS_DIR` via monkeypatch on EVERY test in the file. Structural isolation: any earlier test's leak is overridden before each `bridge_inst` slot invocation + auto-reverted after via monkeypatch teardown. Per ENGINEERING MANDATE (fix the CLASS of bug, not the symptom). Guard: new `tests/test_session_io_isolation.py` (5 tests) pins the fixture's existence + autouse-true contract + monkeypatch-usage so future devs can't accidentally remove it. 1939 full-suite green (verified twice consecutively, no flake). (qa)
 - [ ] #P2 Flaky test `test_host_executor_returns_typed_envelope` — asserts Revit version `"2025"` but the host-node executor returns the machine-detected version (`"2020"` on this box). Pre-existing, environment-dependent. Fix: don't hardcode a machine-dependent version, or make the executor echo the requested config (qa)
-- [ ] #P1 AgDR-0032 follow-ups — guard tests for the three net8-host /exec bugs (refs builder, response file, ALC-aware load); mirror the refs-builder shape in `AcadMCPCore.cs` once that csproj exists; defense-in-depth `CoreLoader.Unload` GC-pass + weak-reference wait so stale collectible ALCs drop faster (eng + qa)
+- [ ] #P1 AgDR-0037 follow-ups (was "AgDR-0032 follow-ups" — renumbered 2026-05-22 after a duplicate-id collision) — guard tests for the three net8-host /exec bugs (refs builder, response file, ALC-aware load); mirror the refs-builder shape in `AcadMCPCore.cs` once that csproj exists; defense-in-depth `CoreLoader.Unload` GC-pass + weak-reference wait so stale collectible ALCs drop faster (eng + qa)
 - [ ] #P2 Canonical `RevitMCPCore.dll` redeploy — PA-JPD17-04 is live on `RevitMCPCore-hotfix4.dll` (hot-loaded via `/reload` at AgDR-0032 ship time). Next clean Connectors-panel toggle should redeploy the canonical-named `RevitMCPCore.dll` into `%LOCALAPPDATA%\ArchHub\Revit\2025\` so future Revit launches load the canonical Core, not the hotfix sidekick. AgDR-0029's build-pair is the dispatcher — verify it copies the freshly-built Core over any stale hotfix sidekick (ops)
 
 ## LATER

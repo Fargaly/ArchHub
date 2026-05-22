@@ -17,17 +17,23 @@ Spec shape (all keys but `type` are optional):
                        [{"name": "...", "type": "list"}],
       "outputs":       ["filtered"],
       "config_schema": {...},
-      "code":          "<python source, optional>"
+      "impl":          {"kind": "python", "code": "<source>"}
     }
 
-When `code` is empty (the safe default for this iteration), the node
-behaves as a passthrough: each declared output receives the value of
-the input with the matching name, falling back to the first input.
+AgDR-0038 — behaviour is data: an `impl` block discriminated by `kind`:
 
-When `code` is non-empty it must define a function called `execute`
-with signature `(config, inputs, ctx) -> dict`. The exec runs in a
-fresh empty namespace — no project imports — so a bad script can't
-trash the rest of the runtime.
+  • passthrough      — each output gets the same-named input (or the
+                       first input value); the default when no `impl`.
+  • python           — exec a user `execute(config, inputs, ctx) -> dict`
+                       body in a RESTRICTED sandbox (no import / open /
+                       exec / `__` attrs).  `impl.safe_mode = false`
+                       lets a power user opt out.
+  • connector / ai   — reserved for AgDR-0038 slice 2; until then they
+                       return an honest typed error, never a fake result.
+
+Back-compat: a legacy spec with a bare top-level `code` key and no
+`impl` is normalised to `{"kind": "python", "code": ...}`, so every
+existing custom-node JSON file keeps working.
 """
 from __future__ import annotations
 
@@ -39,6 +45,10 @@ from typing import Any
 
 from .graph import Port, PortType
 from .registry import NodeSpec, _REGISTRY, register
+# AgDR-0038 Delta 4 — reuse the code.python sandbox contract (AgDR-0020)
+# so a Capability Node's python body runs with RESTRICTED builtins, not
+# the real __builtins__.  One sandbox contract for the whole codebase.
+from .nodes.code import _build_safe_builtins, _has_forbidden_token
 
 
 def custom_nodes_dir() -> Path:
@@ -92,14 +102,39 @@ def _spec_from_dict(spec: dict) -> NodeSpec:
     )
 
 
+# AgDR-0038 — `impl.kind`s reserved for slice 2 (typed connector-op
+# wrappers + LLM-backed executors). Declared-but-not-executable until
+# then; slice 1 surfaces them as an honest typed error.
+_SLICE2_KINDS = ("connector", "ai")
+
+
+def _resolve_impl(spec_dict: dict) -> dict:
+    """Normalise any spec to its `impl` block (AgDR-0038).
+
+    - an explicit `impl` dict carrying a `kind` → used as-is
+    - a legacy bare top-level `code` key, no `impl` → treated as
+      `{"kind": "python", "code": code}` (back-compat — every existing
+      custom-node file keeps working)
+    - neither → `{"kind": "passthrough"}`
+    """
+    impl = spec_dict.get("impl")
+    if isinstance(impl, dict) and impl.get("kind"):
+        return dict(impl)
+    code = (spec_dict.get("code") or "").strip()
+    if code:
+        return {"kind": "python", "code": code}
+    return {"kind": "passthrough"}
+
+
 def _build_executor(spec_dict: dict, node_spec: NodeSpec):
     """Return a callable matching the registry's executor signature.
 
-    If `spec_dict["code"]` is non-empty, we exec it in a fresh namespace
-    and expect an `execute(config, inputs, ctx)` callable inside. On any
-    failure we fall back to a passthrough so the node still works.
+    Dispatches on `impl.kind` (AgDR-0038). A python body runs in the
+    restricted sandbox (Delta 4 — closes the arbitrary-code-execution
+    hole: the exec namespace gets a curated builtins dict, never the
+    real `__builtins__`). Any failure to build a python executor falls
+    back to passthrough so the node still renders + runs.
     """
-    code = (spec_dict.get("code") or "").strip()
     output_names = [p.name for p in node_spec.outputs]
 
     def _passthrough(_config: dict, inputs: dict, _ctx) -> dict:
@@ -111,12 +146,46 @@ def _build_executor(spec_dict: dict, node_spec: NodeSpec):
             out[name] = inputs.get(name, first_val)
         return out
 
+    impl = _resolve_impl(spec_dict)
+    kind = str(impl.get("kind") or "passthrough")
+
+    if kind == "passthrough":
+        return _passthrough
+
+    if kind in _SLICE2_KINDS:
+        # Declared but not yet executable. Surface it honestly rather
+        # than fabricate a result (connector-honesty mandate).
+        def _slice2_pending(_config: dict, _inputs: dict, _ctx) -> dict:
+            return {"error": f"impl.kind '{kind}' is not available until "
+                             f"AgDR-0038 slice 2"}
+        return _slice2_pending
+
+    if kind != "python":
+        def _unknown_kind(_config: dict, _inputs: dict, _ctx) -> dict:
+            return {"error": f"unknown impl.kind '{kind}'"}
+        return _unknown_kind
+
+    # ── kind == "python" ────────────────────────────────────────────
+    code = (impl.get("code") or "").strip()
     if not code:
         return _passthrough
 
-    namespace: dict = {"__builtins__": __builtins__}
+    # safe_mode defaults TRUE — a minted node is sandboxed unless a
+    # power user explicitly opts out. Same contract as code.python.
+    safe = bool(impl.get("safe_mode", True))
+    if safe and _has_forbidden_token(code):
+        def _forbidden(_config: dict, _inputs: dict, _ctx) -> dict:
+            return {"error": "code contains forbidden tokens — no "
+                             "import / open / exec / eval / __ attrs "
+                             "(set impl.safe_mode=false to opt out)"}
+        return _forbidden
+
+    # Delta 4 — the security fix. Restricted builtins for a sandboxed
+    # node; an empty dict (Python injects the real builtins) only when
+    # the power user has explicitly opted out.
+    namespace: dict = {"__builtins__": _build_safe_builtins()} if safe else {}
     try:
-        exec(code, namespace, namespace)   # noqa: S102 — opt-in by user
+        exec(code, namespace, namespace)   # noqa: S102 — sandboxed above
     except Exception:
         return _passthrough
     fn = namespace.get("execute")

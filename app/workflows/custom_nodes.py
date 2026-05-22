@@ -28,8 +28,11 @@ AgDR-0038 — behaviour is data: an `impl` block discriminated by `kind`:
                        body in a RESTRICTED sandbox (no import / open /
                        exec / `__` attrs).  `impl.safe_mode = false`
                        lets a power user opt out.
-  • connector / ai   — reserved for AgDR-0038 slice 2; until then they
-                       return an honest typed error, never a fake result.
+  • connector        — a typed thin wrapper over a host connector op
+                       (connectors.base.run_op); an offline host yields
+                       an honest typed error, never a fabricated value.
+  • ai               — an LLM-backed capability; routes through the
+                       same LLMRouter that chat uses.
 
 Back-compat: a legacy spec with a bare top-level `code` key and no
 `impl` is normalised to `{"kind": "python", "code": ...}`, so every
@@ -102,10 +105,112 @@ def _spec_from_dict(spec: dict) -> NodeSpec:
     )
 
 
-# AgDR-0038 — `impl.kind`s reserved for slice 2 (typed connector-op
-# wrappers + LLM-backed executors). Declared-but-not-executable until
-# then; slice 1 surfaces them as an honest typed error.
-_SLICE2_KINDS = ("connector", "ai")
+def _map_outputs(value, output_names: list[str]) -> dict:
+    """Shape an executor's raw return into the spec's declared outputs.
+
+    - a dict that already names >=1 declared output -> returned as-is
+      (the executor spoke the spec's language).
+    - exactly one declared output -> {that_name: value}.
+    - otherwise -> {"value": value}.
+    """
+    if isinstance(value, dict) and output_names and any(
+            n in value for n in output_names):
+        return value
+    if len(output_names) == 1:
+        return {output_names[0]: value}
+    return {"value": value}
+
+
+def _connector_executor(impl: dict, output_names: list[str]):
+    """impl.kind=connector (AgDR-0038 slice 2) — a typed thin wrapper
+    over a host connector op.
+
+    impl keys:
+      host, op   select the connector operation
+      arg_map    {op_param: input_name} — remap node inputs to op params
+                 (identity mapping when absent)
+      args       {op_param: literal}    — static params, merged under inputs
+
+    Calls connectors.base.run_op. An offline host returns an honest
+    typed error — never a fabricated value (connector-honesty mandate).
+    """
+    host = str(impl.get("host", "") or "").strip()
+    op = str(impl.get("op", "") or "").strip()
+    op_id = op if "." in op else (f"{host}.{op}" if host and op else "")
+    arg_map = impl.get("arg_map") or {}
+    static = impl.get("args") or {}
+
+    def _exec(_config: dict, inputs: dict, _ctx) -> dict:
+        if not op_id:
+            return {"error": "connector impl needs `host` + `op`"}
+        inputs = inputs or {}
+        if arg_map:
+            params = {p: inputs.get(src) for p, src in arg_map.items()}
+        else:
+            params = dict(inputs)
+        params = {**static, **params}
+        try:
+            from connectors.base import run_op
+        except Exception as ex:
+            return {"error": f"connectors unavailable: {ex}"}
+        res = run_op(op_id, **params)
+        if not getattr(res, "ok", False):
+            return {"error": getattr(res, "error", "") or f"{op_id} failed",
+                    "op_id": op_id}
+        return _map_outputs(getattr(res, "value", None), output_names)
+
+    return _exec
+
+
+def _ai_executor(impl: dict, output_names: list[str]):
+    """impl.kind=ai (AgDR-0038 slice 2) — an LLM-backed capability.
+
+    impl keys:
+      model            model id, or "auto" (default)
+      prompt_template  str.format-ed with the node inputs
+      output_parse     "text" (default) | "json"
+
+    Routes through ctx.router — the same LLMRouter chat uses. No router
+    in context -> an honest `missing_dep` error, not a fabricated answer.
+    """
+    model = str(impl.get("model") or "auto")
+    template = str(impl.get("prompt_template") or "")
+    parse = str(impl.get("output_parse") or "text").lower()
+
+    def _exec(_config: dict, inputs: dict, ctx) -> dict:
+        if ctx is None or not getattr(ctx, "router", None):
+            return {"status": "missing_dep",
+                    "error": "no LLM router in execution context — set a "
+                             "provider key in Settings -> Providers"}
+        inputs = inputs or {}
+        try:
+            prompt = template.format(**inputs)
+        except Exception:
+            prompt = template          # unfilled placeholder — send as-is
+        if not prompt.strip():
+            return {"error": "ai impl has an empty prompt_template"}
+        buf: list[str] = []
+        try:
+            response = ctx.router.complete(
+                history=[{"role": "user", "content": prompt}],
+                model=model,
+                on_chunk=lambda piece: buf.append(piece),
+                on_tool_invocation=lambda inv: None,
+            )
+        except Exception as ex:
+            return {"status": "error", "error": f"{type(ex).__name__}: {ex}"}
+        text = getattr(response, "text", "") or "".join(buf)
+        if parse == "json":
+            import json as _json
+            try:
+                parsed = _json.loads(text)
+            except Exception:
+                return {"error": "ai output is not valid JSON "
+                                 "(impl.output_parse=json)", "raw": text}
+            return _map_outputs(parsed, output_names)
+        return _map_outputs(text, output_names)
+
+    return _exec
 
 
 def _resolve_impl(spec_dict: dict) -> dict:
@@ -152,13 +257,11 @@ def _build_executor(spec_dict: dict, node_spec: NodeSpec):
     if kind == "passthrough":
         return _passthrough
 
-    if kind in _SLICE2_KINDS:
-        # Declared but not yet executable. Surface it honestly rather
-        # than fabricate a result (connector-honesty mandate).
-        def _slice2_pending(_config: dict, _inputs: dict, _ctx) -> dict:
-            return {"error": f"impl.kind '{kind}' is not available until "
-                             f"AgDR-0038 slice 2"}
-        return _slice2_pending
+    if kind == "connector":
+        return _connector_executor(impl, output_names)
+
+    if kind == "ai":
+        return _ai_executor(impl, output_names)
 
     if kind != "python":
         def _unknown_kind(_config: dict, _inputs: dict, _ctx) -> dict:

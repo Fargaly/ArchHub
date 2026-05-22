@@ -851,11 +851,22 @@ const CONNECTOR_COLORS = {
 
 // ──────────────────────── ROOT ────────────────────────
 const StudioLM = () => {
-  // Pick first session if hydrated, else fall back to demo "walls". Bridge
-  // hydration may not have happened yet on the very first render.
-  const initialId = (LM_SESSIONS && LM_SESSIONS[0]) ? LM_SESSIONS[0].id : null;
-  const [openId, setOpenId] = React.useState(initialId);
-  const [openTabs, setOpenTabs] = React.useState(initialId ? [initialId] : []);
+  // Founder demand 2026-05-22: the app ALWAYS opens on the Home
+  // screen, never straight into a session/canvas.  `openId = null`
+  // is Home.  (The old behaviour seeded the most-recent session +
+  // an auto-open effect jumped past Home — both removed.)
+  const [openId, setOpenId] = React.useState(null);
+  const [openTabs, setOpenTabs] = React.useState([]);
+  // openId is the SINGLE source of truth for the live session.
+  // `window.__archhub_session_id` is a plain global that non-React
+  // code reads (currentSid / saveCurrentGraph). This effect mirrors
+  // openId into it on EVERY change — open, close, Home — so the two
+  // can never desync. Root fix 2026-05-22: going Home left the global
+  // pointing at a dead session ("revfix" stale-slug bug); now openId
+  // → null clears it too.
+  React.useEffect(() => {
+    window.__archhub_session_id = openId || null;
+  }, [openId]);
   // Founder demand 2026-05-15: Auto is the default. Router picks the best
   // available model per turn — keeps the user out of provider drama.
   const [model, setModel] = React.useState({
@@ -993,22 +1004,9 @@ const StudioLM = () => {
     return id;
   }, [openSession]);
 
-  // ─── One-time auto-open of the most recent session on first hydration.
-  // Sessions arrive async (bridge get_sessions); on the very first render
-  // LM_SESSIONS is usually empty so `openId` seeds to null (Home). When
-  // the list lands, open the first session ONCE — and via openSession so
-  // its graph actually loads. This replaces the old `key`-remount, which
-  // re-seeded state on EVERY pull (nuking modals / canvas / focus) and
-  // didn't even load the graph. Self-guards with a ref so it fires once.
-  const didAutoOpenRef = React.useRef(false);
-  React.useEffect(() => {
-    if (didAutoOpenRef.current) return;
-    if (openId) { didAutoOpenRef.current = true; return; }
-    if ((LM_SESSIONS || []).length > 0) {
-      didAutoOpenRef.current = true;
-      openSession(LM_SESSIONS[0].id);
-    }
-  });
+  // Founder demand 2026-05-22: NO auto-open of the most recent
+  // session.  The app stays on Home until the user picks a session.
+  // (The old one-time auto-open effect lived here — removed.)
 
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
   const addNodeFromLibrary = (libItem, x = 200, y = 200) => {

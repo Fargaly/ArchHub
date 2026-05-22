@@ -180,6 +180,7 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P2 SOC 2 Type I audit — triggered by first enterprise prospect with budget (ops)
 - [ ] #P2 Canvas v2 power-user features — multi-select align, copy/paste subgraph, mini-map; spec `docs/CANVAS_PLAN.md` §7 (eng)
 - [ ] #P2 Connector depth pass — bring all 18 host families to genuine parity; spec `docs/CONNECTOR_MASTER_PLAN_2026-05-15.md` (eng)
+- [ ] #P2 Built-in starter skills — ship clean `app/skills/*.archhub-skill.json` templates so a fresh canvas has learnable examples; `test_shipped_canvas_skills_are_loadable` skips until they exist (eng)
 
 ## Done — last 7 days
 

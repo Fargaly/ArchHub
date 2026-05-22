@@ -18,23 +18,52 @@
   .ah-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
   .ah-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 3px; }
   .ah-scroll::-webkit-scrollbar-track { background: transparent; }
+  /* Splash — "Minimal mark" (founder pick 2026-05-22): the icon only,
+     no wordmark, a soft pulse + one thin sweeping progress line.
+     Calm, premium, no text. */
   #__archhub_splash {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    position: fixed; inset: 0; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
     background: #0e0e11; z-index: 9999; pointer-events: none;
     transition: opacity 280ms ease;
   }
-  #__archhub_splash .word {
-    font-family: 'Instrument Serif', 'Times New Roman', serif;
-    font-style: italic; font-weight: 400;
-    font-size: 96px; letter-spacing: -0.02em;
-    color: #e8743a;
-    text-shadow: 0 1px 28px rgba(232,116,58,0.25);
+  #__archhub_splash .mark {
+    width: 104px; height: 104px;
+    image-rendering: -webkit-optimize-contrast;
+    animation: archhubSplashPulse 1.8s ease-in-out infinite;
+    filter: drop-shadow(0 4px 28px rgba(232,116,58,0.22));
+  }
+  @keyframes archhubSplashPulse {
+    0%, 100% { opacity: 0.78; transform: scale(0.97); }
+    50%      { opacity: 1;    transform: scale(1.0); }
+  }
+  /* Thin sweeping progress line, bottom edge. Indeterminate — it
+     signals "working", not a percentage. */
+  #__archhub_splash .sweep {
+    position: absolute; left: 0; bottom: 0;
+    height: 2px; width: 100%;
+    overflow: hidden;
+    background: rgba(232,116,58,0.10);
+  }
+  #__archhub_splash .sweep::before {
+    content: ''; position: absolute; top: 0; height: 100%;
+    width: 34%; border-radius: 2px;
+    background: linear-gradient(90deg,
+      rgba(232,116,58,0) 0%, #e8743a 50%, rgba(232,116,58,0) 100%);
+    animation: archhubSplashSweep 1.15s ease-in-out infinite;
+  }
+  @keyframes archhubSplashSweep {
+    0%   { left: -34%; }
+    100% { left: 100%; }
   }
   #__archhub_splash.fade { opacity: 0; }
 </style>
 </head>
 <body>
-<div id="__archhub_splash"><div class="word">ArchHub</div></div>
+<div id="__archhub_splash">
+  <img class="mark" src="archhub.png" alt=""/>
+  <div class="sweep"></div>
+</div>
 <div id="root"></div>
 
 <!-- QtWebChannel bridge — load FIRST so window.archhub is set before React boots. -->

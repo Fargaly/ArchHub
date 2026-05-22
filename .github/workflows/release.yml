@@ -60,10 +60,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -289,14 +289,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Signature verification failed (exit $LASTEXITCODE)" }
 
       - name: Upload as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ArchHub-Setup
           path: ${{ steps.find.outputs.path }}
           if-no-files-found: error
 
       - name: Upload MCP zip as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ArchHub-MCP-Binaries
           path: dist/ArchHub-MCP-Binaries.zip
@@ -367,7 +367,7 @@ jobs:
 
       - name: Upload manifests as release artifacts
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-manifests
           path: |

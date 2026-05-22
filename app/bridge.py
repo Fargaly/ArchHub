@@ -536,12 +536,64 @@ class ArchHubBridge(QObject):
         Teams, Word, Excel, PowerPoint, Photoshop, Illustrator, InDesign,
         LM Studio, Antigravity. Each entry: {status, version, note,
         detail}. Used by the JS host-pill row to render live indicators
-        for non-LLM hosts."""
-        try:
-            from host_detector import detect_all_hosts
-            return _safe_json(detect_all_hosts())
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+        for non-LLM hosts.
+
+        AgDR-0035 — NEVER blocks the Qt main thread.  `detect_all_hosts`
+        does filesystem walks + `tasklist` subprocess + port probes —
+        measured at 3.7 s.  Running it in this slot froze the ENTIRE
+        ArchHub UI (no typing, no drag, no right-click, no repaint) for
+        3.7 s every call.  Now: return the cached value instantly +
+        refresh on a background thread + emit `hosts_changed` when the
+        fresh data lands."""
+        return _safe_json(self._cached_async(
+            "_hosts", "detect_all_hosts", "host_detector"))
+
+    # ─── AgDR-0035 — non-blocking cached detector helper ────────────
+    def _cached_async(self, cache_key: str, fn_name: str,
+                      module_name: str, ttl: float = 30.0,
+                      empty=None):
+        """Return a cached detector result instantly; refresh it on a
+        background thread when stale.  Emits `hosts_changed` when a
+        refresh completes so the JS side re-pulls.  The detector
+        (`module.fn`) is the slow call that must never touch the Qt
+        main thread."""
+        import time as _t
+        now = _t.time()
+        val_attr = f"{cache_key}_cache_val"
+        ts_attr  = f"{cache_key}_cache_ts"
+        busy_attr = f"{cache_key}_cache_busy"
+        cached = getattr(self, val_attr, None)
+        ts = getattr(self, ts_attr, 0.0)
+        fresh = cached is not None and (now - ts) < ttl
+        if fresh:
+            return cached
+        if not getattr(self, busy_attr, False):
+            setattr(self, busy_attr, True)
+
+            def _refresh():
+                result = None
+                try:
+                    mod = __import__(module_name)
+                    result = getattr(mod, fn_name)()
+                except Exception as ex:
+                    result = {"error": str(ex)}
+                try:
+                    setattr(self, val_attr, result)
+                    setattr(self, ts_attr, _t.time())
+                finally:
+                    setattr(self, busy_attr, False)
+                # Tell the JS side fresh data is ready.
+                try: self.hosts_changed.emit()
+                except Exception: pass
+
+            import threading
+            threading.Thread(target=_refresh, daemon=True).start()
+        # Return whatever we have right now — never block.  The empty
+        # fallback matches the detector's real shape (both
+        # detect_all_hosts + detect_all_local_llms return dicts) so the
+        # JS side never sees a list-vs-dict shape flip.
+        return cached if cached is not None else (
+            empty if empty is not None else {})
 
     @pyqtSlot(result=str)
     def get_hosts(self) -> str:
@@ -923,11 +975,11 @@ class ArchHubBridge(QObject):
     # shows them grouped under LOCAL.
     @pyqtSlot(result=str)
     def get_local_llms(self) -> str:
-        try:
-            from local_llm_detector import detect_all_local_llms
-            return _safe_json(detect_all_local_llms())
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+        """AgDR-0035 — non-blocking.  `detect_all_local_llms` probes
+        Ollama + LM Studio over HTTP (measured 2.2 s) — never run it
+        on the Qt main thread.  Cached + background-refreshed."""
+        return _safe_json(self._cached_async(
+            "_local_llms", "detect_all_local_llms", "local_llm_detector"))
 
     @pyqtSlot(str, result=str)
     def set_model(self, model_id: str) -> str:

@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # PyQt6 on Linux needs xcb + EGL system libs even for headless
       # tests — Qt resolves a platform plugin during QApplication init.

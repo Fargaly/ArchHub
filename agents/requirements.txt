@@ -5,4 +5,4 @@ anthropic>=0.40
 httpx>=0.28
 pyyaml>=6
 fastapi>=0.110
-uvicorn[standard]>=0.30
+uvicorn[standard]>=0.47.0

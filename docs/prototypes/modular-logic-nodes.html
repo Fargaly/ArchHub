@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — Modular Logic Nodes · R&D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+<style>
+  :root{
+    --bg:#0e0e11; --panel:#15151a; --panel2:#1c1c23; --line:#2a2a33;
+    --ink:#e9e6df; --dim:#9b978d; --faint:#6a665d;
+    --orange:#e8743a; --orange2:#cc785c; --blue:#6a9bcc; --green:#788c5d;
+    --rad:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;font-size:15px;line-height:1.55}
+  body{max-width:1180px;margin:0 auto;padding:48px 32px 120px}
+  .serif{font-family:'Instrument Serif',serif;font-style:italic}
+  .mono{font-family:'JetBrains Mono',monospace}
+  h1{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;
+    font-size:54px;line-height:1.05;color:#fff;letter-spacing:-.5px}
+  h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--orange);font-weight:600;margin:64px 0 6px}
+  .sub{color:var(--dim);font-size:15px;max-width:680px}
+  .lead{color:var(--dim);font-size:17px;max-width:720px;margin-top:14px}
+  .tag{display:inline-block;font-size:11px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--faint);border:1px solid var(--line);
+    border-radius:20px;padding:4px 12px;margin-bottom:22px}
+  hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+
+  /* ── node card ── */
+  .canvas{background:
+      radial-gradient(circle at 1px 1px, #21212a 1px, transparent 0) 0 0/22px 22px,
+      var(--panel);
+    border:1px solid var(--line);border-radius:var(--rad);
+    padding:30px;margin-top:18px;position:relative;overflow:hidden}
+  .row{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .node{background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;min-width:150px;position:relative;
+    box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .node .bar{font-size:12.5px;font-weight:600;padding:8px 12px;
+    border-radius:8px 8px 0 0;color:#11110d;display:flex;
+    justify-content:space-between;align-items:center}
+  .node .body{padding:9px 12px;font-size:11.5px;color:var(--dim)}
+  .node .body .mono{font-size:10.5px;color:var(--faint)}
+  .k-graph .bar{background:var(--orange)}
+  .k-conn  .bar{background:var(--blue)}
+  .k-ai    .bar{background:var(--orange2)}
+  .k-py    .bar{background:#5a5a4a;color:#d8d4c8}
+  .k-prim  .bar{background:var(--green)}
+  .pill{font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    background:rgba(0,0,0,.22);padding:2px 6px;border-radius:10px}
+  .dot{width:9px;height:9px;border-radius:50%;border:2px solid var(--panel);
+    position:absolute;background:var(--blue)}
+  .arrow{color:var(--faint);font-size:24px;flex:0 0 auto}
+
+  /* expandable */
+  .expandable{cursor:pointer;transition:transform .12s}
+  .expandable:hover{transform:translateY(-2px)}
+  .inner{margin-top:14px;border:1px dashed var(--orange);border-radius:9px;
+    padding:18px;background:rgba(232,116,58,.05);display:none}
+  .inner.open{display:block}
+  .inner .cap{font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--orange);margin-bottom:12px}
+  .hint{font-size:12px;color:var(--faint);margin-top:10px}
+  .hint b{color:var(--orange);font-weight:600}
+
+  /* ── option cards ── */
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+  .opt{background:var(--panel);border:1.5px solid var(--line);
+    border-radius:var(--rad);padding:20px;cursor:pointer;
+    transition:border-color .14s,background .14s;position:relative}
+  .opt:hover{border-color:#3d3d48}
+  .opt.sel{border-color:var(--orange);background:rgba(232,116,58,.07)}
+  .opt .lbl{font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--faint);display:flex;justify-content:space-between}
+  .opt.sel .lbl{color:var(--orange)}
+  .opt .name{font-size:19px;font-weight:600;margin:6px 0 4px;color:#fff}
+  .opt .why{font-size:13px;color:var(--dim)}
+  .opt .rec{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    background:var(--orange);color:#11110d;padding:2px 7px;border-radius:10px}
+  .chiprow{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px}
+  .chip{font-size:11px;font-family:'JetBrains Mono',monospace;
+    background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:3px 8px;color:var(--dim)}
+  .chip.add{border-color:var(--green);color:#a9c08a;
+    background:rgba(120,140,93,.12)}
+  .miniport{display:flex;gap:5px;margin-top:11px;align-items:center;
+    font-size:11px;color:var(--faint)}
+  .pt{width:8px;height:8px;border-radius:50%;background:var(--blue)}
+  .pt.auto{background:var(--orange);box-shadow:0 0 0 3px rgba(232,116,58,.2)}
+
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+  .art{background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--rad);padding:16px}
+  .art .h{font-size:14px;font-weight:600;color:#fff}
+  .art .h span{color:var(--faint);font-weight:400;font-size:12px}
+  .art .d{font-size:12.5px;color:var(--dim);margin-top:6px}
+
+  .picks{position:sticky;bottom:0;margin-top:40px;
+    background:linear-gradient(180deg,transparent,var(--bg) 30%);
+    padding-top:24px}
+  .picksbar{background:var(--panel2);border:1px solid var(--orange);
+    border-radius:var(--rad);padding:16px 20px;display:flex;
+    gap:24px;align-items:center;flex-wrap:wrap}
+  .picksbar .t{font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--orange);font-weight:600}
+  .picksbar .v{font-family:'JetBrains Mono',monospace;font-size:13px;color:#fff}
+  .picksbar .v em{color:var(--faint);font-style:normal}
+</style>
+</head>
+<body>
+
+<div class="tag">R&D Workshop · AgDR-0039 candidate · 2026-05-22</div>
+<h1>Nodes built from<br/>modular logic.</h1>
+<p class="lead">A node is not a data envelope around a code blob. A node is a
+<b style="color:var(--ink)">graph</b> — its logic composed from the same modular
+elements everything else is. Open a node, find more nodes. The AI manipulates
+logic the way it manipulates a workflow: by wiring. This page is the design —
+look, then pick the three forks at the bottom.</p>
+
+<h2>1 · The idea — graphs all the way down</h2>
+<p class="sub">Click a composite node to open it. Its logic is a graph. One of
+those inner nodes is itself composite — open it too.</p>
+<div class="canvas">
+  <div class="row">
+    <div class="node k-conn"><div class="bar">Outlook <span class="pill">host</span></div>
+      <div class="body">inbox → <span class="mono">file</span></div></div>
+    <span class="arrow">→</span>
+    <div class="node k-graph expandable" onclick="peel('p1')">
+      <div class="bar">Reconcile Revisions <span class="pill">graph ▾</span></div>
+      <div class="body">drawing → <span class="mono">revisions</span></div></div>
+    <span class="arrow">→</span>
+    <div class="node k-ai"><div class="bar">Summary <span class="pill">ai</span></div>
+      <div class="body">→ <span class="mono">report</span></div></div>
+  </div>
+  <div class="inner" id="p1">
+    <div class="cap">inside “Reconcile Revisions” — its logic IS this graph</div>
+    <div class="row">
+      <div class="node k-prim"><div class="bar">extract <span class="pill">prim</span></div>
+        <div class="body">pdf → table</div></div>
+      <span class="arrow">→</span>
+      <div class="node k-prim"><div class="bar">filter <span class="pill">prim</span></div>
+        <div class="body">rows where Δ</div></div>
+      <span class="arrow">→</span>
+      <div class="node k-graph expandable" onclick="event.stopPropagation();peel('p2')">
+        <div class="bar">Match Rule <span class="pill">graph ▾</span></div>
+        <div class="body">a,b → match</div></div>
+      <span class="arrow">→</span>
+      <div class="node k-conn"><div class="bar">Revit <span class="pill">host op</span></div>
+        <div class="body">set_table</div></div>
+    </div>
+    <div class="inner" id="p2">
+      <div class="cap">inside “Match Rule” — still graph, still modular</div>
+      <div class="row">
+        <div class="node k-prim"><div class="bar">map <span class="pill">prim</span></div></div>
+        <span class="arrow">→</span>
+        <div class="node k-prim"><div class="bar">if <span class="pill">prim</span></div></div>
+        <span class="arrow">→</span>
+        <div class="node k-prim"><div class="bar">merge <span class="pill">prim</span></div></div>
+      </div>
+      <div class="hint">Leaf reached — <b>map / if / merge</b> are primitives.
+        A primitive is an atom: typed I/O, no inside.</div>
+    </div>
+  </div>
+  <div class="hint">Composite (<b>graph</b>) opens. Connector + AI are leaves — a
+    host op and an LLM call are real atoms. Nothing is an opaque code blob.</div>
+</div>
+
+<h2>2 · The four node kinds</h2>
+<p class="sub">Behaviour is data — an <span class="mono">impl</span> block with one
+of four kinds. Only one is a composite; two are irreducible atoms; one is the
+escape hatch.</p>
+<div class="canvas"><div class="row" style="gap:26px">
+  <div>
+    <div class="node k-graph"><div class="bar">graph <span class="pill">composite</span></div>
+      <div class="body">logic = a sub-graph of nodes.<br/>the default.</div></div>
+  </div>
+  <div>
+    <div class="node k-conn"><div class="bar">connector <span class="pill">leaf</span></div>
+      <div class="body">wraps 1 host op.<br/>declared, not coded.</div></div>
+  </div>
+  <div>
+    <div class="node k-ai"><div class="bar">ai <span class="pill">leaf</span></div>
+      <div class="body">one LLM call.<br/>prompt is data.</div></div>
+  </div>
+  <div>
+    <div class="node k-py"><div class="bar">python <span class="pill">escape</span></div>
+      <div class="body">raw sandboxed code.<br/>last resort only.</div></div>
+  </div>
+</div>
+<div class="hint">Today (AgDR-0038) <b>python</b> is freely mintable — that is the
+non-modular hole. The whole point of <b>graph</b> is to make it almost never
+needed.</div>
+</div>
+
+<h2>3 · Three forks — pick one each</h2>
+<p class="sub">Click the option you want in each. Recommended is marked. Your
+picks collect in the bar at the bottom.</p>
+
+<!-- D1 -->
+<div style="margin-top:26px;font-size:15px;font-weight:600;color:#fff">
+  Fork 1 — how rich is the logic vocabulary?</div>
+<div class="opts" data-fork="vocab">
+  <div class="opt" data-pick="lean" onclick="pick(this)">
+    <div class="lbl"><span>Option A</span></div>
+    <div class="name">Lean — 12 primitives</div>
+    <div class="why">Ship the current set. Anything an aggregate needs is built
+      by hand-wiring foreach + a constant accumulator.</div>
+    <div class="chiprow">
+      <span class="chip">input</span><span class="chip">constant</span>
+      <span class="chip">map</span><span class="chip">filter</span>
+      <span class="chip">transform</span><span class="chip">if</span>
+      <span class="chip">switch</span><span class="chip">merge</span>
+      <span class="chip">foreach</span><span class="chip">math</span>
+      <span class="chip">text</span><span class="chip">watch</span></div>
+  </div>
+  <div class="opt sel" data-pick="extended" onclick="pick(this)">
+    <div class="lbl"><span>Option B</span><span class="rec">Recommended</span></div>
+    <div class="name">Extended — +4 aggregate primitives</div>
+    <div class="why">Add the operators real logic keeps needing. Still a grammar,
+      not a catalogue — ~16, capped.</div>
+    <div class="chiprow">
+      <span class="chip">…the 12</span>
+      <span class="chip add">reduce</span><span class="chip add">accumulate</span>
+      <span class="chip add">sort</span><span class="chip add">group_by</span></div>
+  </div>
+</div>
+
+<!-- D2 -->
+<div style="margin-top:26px;font-size:15px;font-weight:600;color:#fff">
+  Fork 2 — keep the python escape hatch?</div>
+<div class="opts" data-fork="python">
+  <div class="opt" data-pick="pure" onclick="pick(this)">
+    <div class="lbl"><span>Option A</span></div>
+    <div class="name">Pure — kill python</div>
+    <div class="why">Three kinds only: graph / connector / ai. Total purity —
+      every node fully inspectable. Risk: a genuinely irreducible computation
+      (odd parse, niche math) has nowhere to live.</div>
+    <div class="row" style="gap:8px;margin-top:13px">
+      <div class="node k-graph" style="min-width:0"><div class="bar" style="padding:5px 9px">graph</div></div>
+      <div class="node k-conn" style="min-width:0"><div class="bar" style="padding:5px 9px">connector</div></div>
+      <div class="node k-ai" style="min-width:0"><div class="bar" style="padding:5px 9px">ai</div></div>
+    </div>
+  </div>
+  <div class="opt sel" data-pick="leaf" onclick="pick(this)">
+    <div class="lbl"><span>Option B</span><span class="rec">Recommended</span></div>
+    <div class="name">Pragmatic — python as a sealed leaf</div>
+    <div class="why">Keep it, but: sandboxed, leaf-only, never composite, and
+      <span class="mono">node_create</span> steers the AI to graph first. The
+      hatch exists; it is the rare exception, not the habit.</div>
+    <div class="row" style="gap:8px;margin-top:13px">
+      <div class="node k-graph" style="min-width:0"><div class="bar" style="padding:5px 9px">graph</div></div>
+      <div class="node k-conn" style="min-width:0"><div class="bar" style="padding:5px 9px">connector</div></div>
+      <div class="node k-ai" style="min-width:0"><div class="bar" style="padding:5px 9px">ai</div></div>
+      <div class="node k-py" style="min-width:0"><div class="bar" style="padding:5px 9px">python ⚠</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- D3 -->
+<div style="margin-top:26px;font-size:15px;font-weight:600;color:#fff">
+  Fork 3 — where does a composite node’s typed I/O come from?</div>
+<div class="opts" data-fork="io">
+  <div class="opt sel" data-pick="auto" onclick="pick(this)">
+    <div class="lbl"><span>Option A</span><span class="rec">Recommended</span></div>
+    <div class="name">Auto — derived from the inner graph</div>
+    <div class="why">The composite’s ports ARE the open ends of its inner graph.
+      Wire the inside; the outside contract appears. Nothing to keep in sync.
+      One truth. (How Blender node groups work.)</div>
+    <div class="miniport"><span class="pt auto"></span><span class="pt auto"></span>
+      ports light up <b style="color:var(--orange);margin:0 4px">from the inside</b> ▸ outer face</div>
+  </div>
+  <div class="opt" data-pick="declared" onclick="pick(this)">
+    <div class="lbl"><span>Option B</span></div>
+    <div class="name">Declared — author writes the contract</div>
+    <div class="why">The I/O is a hand-written spec; the inner graph must satisfy
+      it. More control + a stable public face, but two things to keep aligned.
+      (How a Houdini HDA parameter interface works.)</div>
+    <div class="miniport"><span class="pt"></span><span class="pt"></span>
+      contract declared first ▸ inner graph must match</div>
+  </div>
+</div>
+
+<h2>4 · Prior art — “graph packaged as a node” is proven</h2>
+<p class="sub">Every serious node system reached the same answer. None ship a
+code-blob node as the primary unit.</p>
+<div class="grid3">
+  <div class="art"><div class="h">Houdini — HDA <span>· VFX</span></div>
+    <div class="d">A subnetwork of nodes packaged as one reusable, nestable
+      asset with a declared parameter interface.</div></div>
+  <div class="art"><div class="h">Blender — Node Groups <span>· 3D</span></div>
+    <div class="d">Select nodes → group. I/O auto-derived from the Group
+      Input/Output you expose. Nestable.</div></div>
+  <div class="art"><div class="h">Unreal — Blueprints <span>· games</span></div>
+    <div class="d">Functions, Macros, Collapsed Graphs — a graph collapses into
+      a callable node. Logic is the graph.</div></div>
+  <div class="art"><div class="h">LabVIEW — subVI <span>· instrumentation</span></div>
+    <div class="d">Any VI used inside another. The connector pane wires the
+      typed I/O. Composition is the whole language.</div></div>
+  <div class="art"><div class="h">n8n — Sub-workflows <span>· automation</span></div>
+    <div class="d">A workflow called as a single node inside another. Exactly
+      the recursion.</div></div>
+  <div class="art"><div class="h">ComfyUI — Group Nodes <span>· AI</span></div>
+    <div class="d">Bundle a sub-graph into one node. The community’s answer to
+      per-node sprawl.</div></div>
+</div>
+
+<h2>5 · What this buys</h2>
+<p class="sub">
+  <b style="color:var(--ink)">Manipulate</b> — rewire one inner node, never
+  rewrite a blob. &nbsp;·&nbsp;
+  <b style="color:var(--ink)">Scale</b> — every logic-fragment is itself a
+  library node, reused. &nbsp;·&nbsp;
+  <b style="color:var(--ink)">Inspect</b> — typed + diffable, zero opacity.
+  &nbsp;·&nbsp;
+  <b style="color:var(--ink)">One mental model</b> — the AI (and the user)
+  composes logic the same way it composes a workflow. Wiring. That is the whole
+  skill.</p>
+
+<div class="picks">
+  <div class="picksbar">
+    <span class="t">Your picks</span>
+    <span class="v">vocab&nbsp;<em id="o-vocab">Extended</em></span>
+    <span class="v">python&nbsp;<em id="o-python">Sealed leaf</em></span>
+    <span class="v">I/O&nbsp;<em id="o-io">Auto-derived</em></span>
+    <span class="v" style="color:var(--faint)">— tell me your three; I AgDR + build.</span>
+  </div>
+</div>
+
+<script>
+function peel(id){
+  var el=document.getElementById(id);
+  if(el) el.classList.toggle('open');
+}
+var L={lean:'Lean 12',extended:'Extended',pure:'No python',leaf:'Sealed leaf',
+       auto:'Auto-derived',declared:'Declared'};
+function pick(el){
+  var grp=el.parentElement, fork=grp.dataset.fork;
+  grp.querySelectorAll('.opt').forEach(function(o){o.classList.remove('sel')});
+  el.classList.add('sel');
+  document.getElementById('o-'+fork).textContent=L[el.dataset.pick]||el.dataset.pick;
+}
+</script>
+</body>
+</html>

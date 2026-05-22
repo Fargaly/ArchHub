@@ -1920,13 +1920,62 @@ class ToolEngine:
                     return {"status": "error",
                             "error": "node_create needs a spec dict "
                                      "carrying a `type`"}
+                new_type = str(spec.get("type"))
+
+                def _sig_words(s: dict) -> set:
+                    text = (str(s.get("display_name", "")) + " " +
+                            str(s.get("description", ""))).lower()
+                    return {w for w in _re.findall(r"[a-z0-9_]+", text)
+                            if len(w) > 1}
+
+                # LIBRARY-FIRST (AgDR-0038 Delta 3) — refuse a near-
+                # duplicate of an existing Capability Node; the Composer
+                # should reuse it. Same `type` is an UPDATE — allowed.
+                new_words = _sig_words(spec)
+                if new_words:
+                    for other in _cn.list_specs():
+                        if other.get("type") == new_type:
+                            continue
+                        ow = _sig_words(other)
+                        if ow and len(new_words & ow) / len(new_words) >= 0.7:
+                            return {
+                                "status": "error",
+                                "code": "duplicate",
+                                "error": "a near-identical Capability Node "
+                                         f"already exists: "
+                                         f"'{other.get('type')}' — reuse it "
+                                         "instead of minting a duplicate "
+                                         "(LIBRARY-FIRST).",
+                                "reuse": other.get("type"),
+                            }
+
                 node_spec = _cn.register_spec(spec)   # validates + registers
                 _cn.write_spec(spec)                  # persist to disk
+
+                # Auto-promote to the library so the node is searchable +
+                # grows the inventory by use (AgDR-0038 Delta 3).
+                # Best-effort: a non-modular spec is still a working node,
+                # just not library-promoted until it meets the bar.
+                promoted = False
+                promo_note = ""
+                try:
+                    import library as _lib2
+                    try:
+                        _lib2.create_node_type(spec)
+                    except _lib2.DuplicateTypeError:
+                        _lib2.delete_node_type(new_type)
+                        _lib2.create_node_type(spec)
+                    promoted = True
+                except Exception as ex:
+                    promo_note = f"{type(ex).__name__}: {ex}"
+
                 return {
                     "status": "ok",
                     "type": node_spec.type,
                     "inputs": [p.name for p in node_spec.inputs],
                     "outputs": [p.name for p in node_spec.outputs],
+                    "library_promoted": promoted,
+                    "library_note": promo_note,
                 }
 
             if handler == "node_place":

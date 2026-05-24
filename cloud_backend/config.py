@@ -41,12 +41,26 @@ except Exception:
     pass
 
 
-def _req(name: str, default: str | None = None) -> str:
-    v = os.environ.get(name, default)
+_SENTINEL: object = object()
+
+
+def _req(name: str, default = _SENTINEL) -> str:
+    """Read an env var.
+
+    - `_req("X")` — REQUIRED in production. Missing/empty raises at boot
+      when ENV=production. Empty-string in dev.
+    - `_req("X", "default")` — OPTIONAL with a default. Caller has
+      explicitly said empty/missing is fine; production also tolerates.
+
+    Bug 2026-05-24: the prior signature `_req(name, default=None)` made
+    `_req("POLAR_*", "")` raise in prod because v=="" triggered the raise
+    even though caller passed "" as default. The sentinel fix distinguishes
+    "no default supplied" from "explicit empty default".
+    """
+    v = os.environ.get(name)
     if v is None or v == "":
-        # In dev we tolerate missing keys (the relevant endpoint will
-        # 503 at call time). Production deploys should fail loudly —
-        # set ENV=production and the start-up check below raises.
+        if default is not _SENTINEL:
+            return default  # type: ignore[return-value]
         if os.environ.get("ENV") == "production":
             raise RuntimeError(f"env var {name} required in production")
         return ""

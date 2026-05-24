@@ -1143,6 +1143,54 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "graph_wire"),
     },
+    # AgDR-0041 Property 3 — freeze a node so it returns its cached
+    # value + downstream keeps cooking. Useful for an expensive
+    # upstream stage you want to pin while iterating later stages.
+    {
+        "name": "node_freeze",
+        "family": "_local",
+        "description": (
+            "Freeze (or unfreeze) a node by id. Frozen nodes return "
+            "their last cached output; upstream changes do not re-cook "
+            "them. Pass state=false to unfreeze. Emits a set_node "
+            "delta with {frozen: bool}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "state":   {"type": "boolean",
+                            "description": "true = freeze (default), false = unfreeze."},
+            },
+            "required": ["node_id"],
+        },
+        "endpoint": ("_local", "node_freeze"),
+    },
+    # AgDR-0041 Property 6 — bypass a node so the runner skips its
+    # executor and passes upstream input directly to the downstream
+    # output (port-name match, then type-only fallback). No cache held.
+    {
+        "name": "node_bypass",
+        "family": "_local",
+        "description": (
+            "Bypass (or un-bypass) a node by id. Bypassed nodes are "
+            "skipped by the runner; upstream input flows through to "
+            "downstream output by port-name match. Pass state=false to "
+            "re-enable. Use this to A/B-test wires or temporarily skip "
+            "an expensive cloud call (e.g. an upscale stage). Emits a "
+            "set_node delta with {bypassed: bool}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "state":   {"type": "boolean",
+                            "description": "true = bypass (default), false = un-bypass."},
+            },
+            "required": ["node_id"],
+        },
+        "endpoint": ("_local", "node_bypass"),
+    },
 
     # AI-as-tool — call other models from inside a chat turn. The
     # primary LLM can delegate to ChatGPT for code, Gemini for vision /
@@ -2056,6 +2104,23 @@ class ToolEngine:
                 return {"status": "ok", "op": "add_wire",
                         "wire": {"from": [src_n, src_p],
                                  "to": [dst_n, dst_p]}}
+
+            # AgDR-0041 Property 3 + 6 — let Composer toggle node state.
+            # Both emit a `set_node` delta with the field flipped; UI
+            # applies it + canvas re-renders + runner picks up next cook.
+            if handler in ("node_freeze", "node_bypass"):
+                node_id = str(args.get("node_id", "") or "").strip()
+                if not node_id:
+                    return {"status": "error",
+                            "error": f"{handler} needs node_id"}
+                field = "frozen" if handler == "node_freeze" else "bypassed"
+                state_raw = args.get("state")
+                state = True if state_raw is None else bool(state_raw)
+                return {"status": "ok", "op": "set_node",
+                        "node_id": node_id,
+                        "patch": {field: state},
+                        "note": (f"{node_id} {field}={state} "
+                                  f"({'❄' if field == 'frozen' else '○'})")}
 
             return {"status": "error",
                     "error": f"Unknown node handler: {handler}"}

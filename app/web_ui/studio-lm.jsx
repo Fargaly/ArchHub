@@ -5927,7 +5927,21 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           onRun={() => { bridgeCall('run_node', currentSid(), nodeMenu.id, JSON.stringify(LM_GRAPH)); flashToast('Running node…'); }}
           onFreeze={() => {
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
-            if (node) { node.frozen = !node.frozen; saveCurrentGraph(); bumpGraph && bumpGraph(); }
+            if (node) {
+              node.frozen = !node.frozen;
+              // Mutually exclusive — a frozen node can't also be bypassed.
+              if (node.frozen) node.bypassed = false;
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+            }
+          }}
+          onBypass={() => {
+            // AgDR-0041 Property 6 — skip executor, passthrough upstream.
+            const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
+            if (node) {
+              node.bypassed = !node.bypassed;
+              if (node.bypassed) node.frozen = false;
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+            }
           }}
           onRename={() => {
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id)
@@ -6119,7 +6133,8 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onRename, onDupl
   });
   const items = [
     { i:'▶', t:'Run',             on:onRun },
-    { i:'❄', t:'Freeze / unfreeze', on:onFreeze },
+    { i:'❄', t:'Freeze / unfreeze (hold cached)', on:onFreeze },
+    { i:'○', t:'Bypass / un-bypass (skip + passthrough)', on:onBypass },
     { i:'✎', t:'Rename',          on:onRename },
     { i:'⎘', t:'Duplicate',       on:onDuplicate },
     { i:'★', t:'Save as Skill',   on:onSaveSkill },
@@ -6617,8 +6632,8 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
         {(n.bypass || n.frozen || n.preview_off || n.pinned) && (
           <span style={{ display:'flex', alignItems:'center', gap:5,
             fontFamily:LM.mono, fontSize:11, marginRight:4 }}>
-            {n.bypass && <span title="Bypass (Ctrl+B) — pass-through" style={{ color:LM.inkSoft }}>↦</span>}
-            {n.frozen && <span title="Frozen (Ctrl+F) — cached value" style={{ color:LM.cyan }}>❄</span>}
+            {(n.bypassed || n.bypass) && <span title="Bypassed (○) — skip executor, passthrough upstream" style={{ color:LM.inkSoft }}>○</span>}
+            {n.frozen && <span title="Frozen (❄) — return cached value, downstream keeps cooking" style={{ color:LM.cyan }}>❄</span>}
             {n.preview_off && <span title="Preview-off (Ctrl+Shift+P) — render suppressed" style={{ color:LM.inkSoft }}>⊘</span>}
             {n.pinned && (
               <span title={'Pinned @ ' + new Date(n.pinned_at || 0).toLocaleString()}

@@ -179,10 +179,47 @@ def _get_image(*, filename: str, subfolder: str = "",
                               "comfyui.get_image")
 
 
+def _merge_inputs_into_workflow(workflow: Any, inputs: Any) -> Any:
+    """Apply per-node input overrides on top of a workflow JSON.
+
+    AgDR-0041 D3·B (2026-05-25) — typed upstream nodes feed workflow
+    params dynamically. Shape of `inputs`:
+        {"<node_id>": {"<param>": <value>, ...}, ...}
+    For each node_id in `inputs`, sets workflow[node_id]["inputs"][param] =
+    value. Falls through when inputs is empty/None or workflow isn't a dict.
+    Returns the (possibly mutated copy of the) workflow.
+    """
+    if not inputs or not isinstance(inputs, dict):
+        return workflow
+    if not isinstance(workflow, dict):
+        return workflow
+    # Shallow copy of workflow + each touched node so we don't mutate
+    # the caller's dict (Skills cache the workflow JSON).
+    out = dict(workflow)
+    for node_id, overrides in inputs.items():
+        if not isinstance(overrides, dict):
+            continue
+        node = out.get(str(node_id))
+        if not isinstance(node, dict):
+            continue
+        node_copy = dict(node)
+        node_inputs = dict(node_copy.get("inputs") or {})
+        for k, v in overrides.items():
+            node_inputs[k] = v
+        node_copy["inputs"] = node_inputs
+        out[str(node_id)] = node_copy
+    return out
+
+
 def _run_workflow(*, workflow: Any, client_id: str = "archhub",
-                    poll_seconds: int = 60) -> OpResult:
+                    poll_seconds: int = 60,
+                    inputs: Any = None) -> OpResult:
     """Convenience: queue + poll history every 1s until done or
-    poll_seconds elapsed; return first output image url."""
+    poll_seconds elapsed; return first output image url.
+
+    D3·B: `inputs` overrides workflow node params before queue. See
+    `_merge_inputs_into_workflow` for the shape."""
+    workflow = _merge_inputs_into_workflow(workflow, inputs)
     q = _queue_prompt(workflow=workflow, client_id=client_id)
     if not q.ok:
         return q

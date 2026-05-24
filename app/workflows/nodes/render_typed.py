@@ -177,9 +177,16 @@ register(NodeSpec(
     description=("Queue a ComfyUI workflow JSON + poll until done. "
                   "Returns the first output image URL. The Tier 1 "
                   "library_import_comfyui_workflow tool wraps this "
-                  "with typed inputs per workflow."),
+                  "with typed inputs per workflow. `inputs` port "
+                  "(AgDR-0041 D3·B) overrides workflow node params "
+                  "at cook time — feed an image, a prompt, etc. "
+                  "from upstream typed nodes."),
     inputs=[
         Port(name="workflow", type=PortType.OBJECT, required=True),
+        # D3·B (2026-05-25) — override node params inside the workflow
+        # at cook time. Shape: {"<node_id>": {"<param>": <value>, …}}.
+        # Connector merges these on top of the workflow before queue.
+        Port(name="inputs", type=PortType.OBJECT),
     ],
     outputs=[
         Port(name="value", type=PortType.OBJECT),

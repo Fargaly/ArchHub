@@ -178,6 +178,7 @@ section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px
   <a class="chip" href="#p3">3 · freeze</a>
   <a class="chip" href="#p4">4 · delete auto-bridge</a>
   <a class="chip" href="#p5">5 · validator</a>
+  <a class="chip" href="#p6">6 · bypass</a>
   <a class="chip" href="#map">file map</a>
 </nav>
 
@@ -193,12 +194,13 @@ section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px
       Gaps named for new AgDR.</p>
   </div>
 
-  <div class="props">
+  <div class="props" style="grid-template-columns:repeat(6,1fr)">
     <div class="prop"><div class="n">1</div><h4>Host swap</h4><p>One node, host param. Same wire, different desktop app.</p></div>
-    <div class="prop"><div class="n">2</div><h4>Type-compat swap</h4><p>Inspector lists alternatives with matching ports.</p></div>
-    <div class="prop"><div class="n">3</div><h4>Freeze</h4><p>Hold cached value · downstream keeps cooking.</p></div>
+    <div class="prop"><div class="n">2</div><h4>Type-compat swap</h4><p>Right-click "swap with…" lists matching alternatives.</p></div>
+    <div class="prop"><div class="n">3</div><h4>Freeze ❄</h4><p>Hold cached value · downstream keeps cooking.</p></div>
     <div class="prop"><div class="n">4</div><h4>Delete auto-bridge</h4><p>Compatible types → auto-rewire · else clear error.</p></div>
     <div class="prop"><div class="n">5</div><h4>Live validator</h4><p>Type mismatches red-flag inline before cook.</p></div>
+    <div class="prop"><div class="n">6</div><h4>Bypass ○</h4><p>Skip entirely, no cache. Upstream passes through to downstream.</p></div>
   </div>
 </header>
 
@@ -633,6 +635,115 @@ section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px
 </section>
 
 <!-- ============================================================ -->
+<!-- 6 · BYPASS / MUTE                                              -->
+<!-- ============================================================ -->
+<section class="proto" id="p6">
+  <div class="tagline">property 6 · added per founder 2026-05-24</div>
+  <h2>Bypass · skip the node entirely · upstream passes through</h2>
+  <p>Different from freeze. <strong>Freeze</strong> = node returns its
+    last cached value. <strong>Bypass</strong> = node is invisible to
+    the runner, upstream input flows straight to downstream output
+    (port-type matched). No cache, no execute. Same as Photoshop "layer
+    eye" or ComfyUI "Bypass" mode.</p>
+
+  <div class="state-grid">
+    <div class="state-c">
+      <h4>Freeze ❄<span class="badge" style="background:rgba(144,192,255,0.15);color:var(--frost)">uses cache</span></h4>
+      <p>Holds last cooked value. Downstream pulls cache. Useful when
+        upstream changes but you want the proven result.</p>
+    </div>
+    <div class="state-c">
+      <h4>Bypass ○<span class="badge" style="background:rgba(154,154,163,0.15);color:var(--ink2)">passthrough</span></h4>
+      <p>Node deleted from active path. Upstream input bypasses
+        the node, goes direct to downstream. No cache. Re-cooks
+        with each change.</p>
+    </div>
+    <div class="state-c">
+      <h4>Delete ⨯<span class="badge err">gone</span></h4>
+      <p>Node removed permanently. Wire either auto-bridges (P4) or
+        breaks. State lost.</p>
+    </div>
+  </div>
+
+  <div class="demo" style="margin-top:18px">
+    <div class="canvas">
+      <h4 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px;margin-bottom:10px">Bypass in action — same graph, upscale node bypassed</h4>
+      <div class="canvas-row" style="margin-bottom:14px">
+        <div class="node ai"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+          <div class="port-row"><span class="port image">→ Image · 2K</span></div></div>
+        <span class="arr">→</span>
+        <div class="node selected" style="border-style:dashed;opacity:0.45;background:transparent;border-left-color:var(--ink3)">
+          <div class="nh">alibaba</div><div class="nv">qwen.upscale</div>
+          <div class="nmeta" style="color:var(--ink3)">○ bypassed</div>
+          <div class="port-row"><span class="port image">Image</span><span class="port image">→ Image</span></div></div>
+        <span class="arr auto">↬<span class="lbl">passthru</span></span>
+        <div class="node out"><div class="nh">out</div><div class="nv">file.save</div>
+          <div class="nmeta" style="color:var(--ok)">receives 2K Image direct</div></div>
+      </div>
+
+      <div style="font-size:11px;color:var(--ink3);text-align:center;font-style:italic;margin-top:6px">
+        Runner sees upscale as a no-op pipe. Cost stays $0. Output = raw render at native 2K (not 4K upscaled).</div>
+
+      <div style="margin-top:18px;padding:12px;background:var(--bg3);border-radius:6px;font-size:11px;color:var(--ink2);line-height:1.6">
+        <strong style="color:var(--ink)">Use cases for bypass over freeze</strong>:
+        <ul style="margin-top:6px;padding-left:18px">
+          <li>A/B comparison: bypass to see what the wire produces <em>without</em> a stage</li>
+          <li>Debugging: drop a node from execution without losing it from the graph</li>
+          <li>Cost trim: kill an expensive step temporarily without rewiring</li>
+          <li>Try a Skill that has optional polish nodes you don't want this run</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="insp">
+      <div class="insp-h">Inspector · qwen.upscale <span class="tag" style="color:var(--ink2)">○ bypassed</span></div>
+      <div class="insp-body">
+        <div style="background:var(--bg3);border:1px solid var(--ink3);
+                    border-radius:6px;padding:10px;font-size:11px;color:var(--ink2)">
+          ○ <strong>Bypassed</strong> · skipped by runner. Upstream
+          Image passes straight to downstream port. Re-cooks with each
+          upstream change. No cache held.
+        </div>
+        <div class="insp-title">passthrough mapping</div>
+        <div class="insp-row"><span class="l">in port</span><span class="r">image (Image)</span></div>
+        <div class="insp-row"><span class="l">↬ out port</span><span class="r">image (Image)</span></div>
+        <div class="insp-row"><span class="l">match by</span><span class="r" style="color:var(--ok)">auto · type + name</span></div>
+        <div class="insp-row"><span class="l">cost this cook</span><span class="r" style="color:var(--ok)">$0 · 0 ms</span></div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn ok" style="flex:1">▶ Re-enable</button>
+          <button class="btn frost" style="flex:1">❄ Freeze instead</button>
+        </div>
+        <div class="insp-title">node state cycle</div>
+        <div style="font-size:10px;color:var(--ink3);line-height:1.6">
+          <span style="color:var(--ok)">● Active</span> ⇄
+          <span style="color:var(--frost)">❄ Frozen</span> ⇄
+          <span style="color:var(--ink2)">○ Bypassed</span> ⇄
+          <span style="color:var(--err)">⨯ Deleted</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--warn);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--warn)">Gap</strong> · simpler than freeze.
+    Add <code>node.bypassed</code> bool. Runner: if bypassed, find
+    matching upstream-input port → emit as same-named output port.
+    Multi-input/output nodes: greedy match by (name, type), then
+    type-only. Ambiguous mappings → Inspector prompt for explicit
+    pair. Reuses port-type check from P4 / P5. UI: dashed border + ○
+    badge. ~80 py + 40 jsx lines.
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r6"/> YES — bypass per-node (auto-passthrough)</label>
+    <label><input type="radio" name="r6"/> REFINE — only allow bypass on 1-in-1-out nodes</label>
+    <label><input type="radio" name="r6"/> NO — freeze is enough</label>
+    <div class="note">Adds ~120 LOC to AgDR-0041 robustness scope</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
 <!-- FILE MAP                                                       -->
 <!-- ============================================================ -->
 <section class="proto" id="map">
@@ -693,11 +804,19 @@ section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px
           <td><span class="pkg">studio-lm.jsx · GraphHealthPanel</span></td>
           <td><span class="new">NEW</span> · new tab in side panel</td>
           <td>~180 jsx</td></tr>
+        <tr><td>6 · Bypass · runner passthrough</td>
+          <td><span class="pkg">app/workflows/runner.py · _pull</span></td>
+          <td><span class="new">NEW</span> · skip execute, port-match passthrough</td>
+          <td>~80</td></tr>
+        <tr><td>6 · Bypass · UI</td>
+          <td><span class="pkg">studio-lm.jsx · LMNode</span></td>
+          <td><span class="new">NEW</span> · dashed border + ○ badge + Inspector toggle</td>
+          <td>~40 jsx</td></tr>
         <tr style="background:rgba(95,200,121,0.06)">
           <td colspan="4" style="text-align:center;font-size:12px;color:var(--ok);padding:14px">
-            <strong>~1 400 lines total · 8 files · 1 AgDR.</strong> All
-            assimilate into existing structure. Tests covered by the
-            existing graph test suite + 3 new tests per property.
+            <strong>~1 520 lines total · 9 files · 1 AgDR (0041).</strong>
+            All assimilate into existing structure. Tests covered by
+            the existing graph test suite + 3 new tests per property.
           </td>
         </tr>
       </tbody>
@@ -742,7 +861,7 @@ section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px
   function refreshSummary(){
     var sum = document.getElementById('pick-summary');
     if(!sum) return;
-    var names = ['r1','r2','r3','r4','r5'];
+    var names = ['r1','r2','r3','r4','r5','r6'];
     var picks = names.map(function(n){
       var c = document.querySelector('input[name="'+n+'"]:checked');
       var lbl = c ? c.closest('label').innerText.trim().replace(/\s+/g,' ') : '—';

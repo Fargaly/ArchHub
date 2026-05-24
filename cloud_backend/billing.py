@@ -231,7 +231,14 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
         return {"ok": True, "handled": etype, "user_id": uid,
                 "tier": tier}
 
-    if etype == "customer.subscription.updated":
+    if etype in ("customer.subscription.created",
+                  "customer.subscription.updated"):
+        # subscription.created fires on first subscription (Stripe
+        # Checkout completion OR programmatic Subscriptions.create).
+        # subscription.updated fires on tier change, payment-method
+        # change, metadata change, etc. Both upgrade the user's plan —
+        # one handler covers both (idempotent: update_user_plan resets
+        # msg_used only when plan actually changes).
         period_end = int(obj.get("current_period_end") or 0)
         # Company subscription? Route to the company row first — a
         # Stripe customer is either a company or a user, never both.
@@ -251,8 +258,10 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
                     "company_id": company["id"], "tier": tier}
         uid = _user_id_from_event(event)
         tier = _tier_from_subscription(obj) or "solo"
+        stripe_customer = obj.get("customer")
         if uid:
             db.update_user_plan(uid, plan=tier,
+                                  stripe_id=stripe_customer,
                                   period_end=period_end)
         return {"ok": True, "handled": etype, "user_id": uid,
                 "tier": tier}

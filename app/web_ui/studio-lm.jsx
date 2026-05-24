@@ -6095,6 +6095,160 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         }}>{toast.msg}</div>
       )}
       <CanvasHint/>
+      {/* AgDR-0041 D2·A — live graph validator badge + panel */}
+      <GraphHealthBadge graphBump={graphBump} setFocusId={setFocusId}/>
+    </div>
+  );
+};
+
+// ─── AgDR-0041 D2·A — GraphHealthBadge ───────────────────────────
+// Live validator surface for the canvas. Debounces `graph_validate`
+// 200 ms after every graph edit (driven by graphBump). Renders a
+// compact badge bottom-right of the canvas:
+//   ● 0     when valid
+//   ● N err when validator flags any errors
+//   ● M warn when only warnings remain
+// Click expands into a side-panel listing each issue with its code,
+// node_id, edge_id, and message. Click an issue row to focus the
+// affected node (mirrors NodeMenu's setFocusId behaviour).
+//
+// Bridge contract — slot `graph_validate(graph_json) -> str` returns
+//   {status, issues:[{level,code,node_id,edge_id,msg}], errors, warnings, valid}
+// (test_bridge_agdr0041_slots.py covers the slot wiring end-to-end.)
+const GraphHealthBadge = ({ graphBump, setFocusId }) => {
+  const [issues, setIssues] = React.useState([]);
+  const [counts, setCounts] = React.useState({ err: 0, warn: 0 });
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const res = await bridgeAsync('graph_validate',
+          JSON.stringify(LM_GRAPH));
+        if (cancelled) return;
+        if (res && res.status === 'ok') {
+          setIssues(res.issues || []);
+          setCounts({ err: res.errors || 0, warn: res.warnings || 0 });
+        }
+      } catch (e) {
+        // Validator failure shouldn't crash the canvas — surface
+        // nothing rather than a broken badge.
+      }
+      if (!cancelled) setBusy(false);
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [graphBump]);
+
+  const color = counts.err > 0 ? LM.err
+              : counts.warn > 0 ? LM.warn
+              : LM.ok;
+  const summary = counts.err > 0
+    ? `● ${counts.err} err${counts.warn ? ` · ${counts.warn} warn` : ''}`
+    : counts.warn > 0
+      ? `● ${counts.warn} warn`
+      : '● ok';
+
+  return (
+    // bottom:70 keeps the badge above the chat composer (52px high + 14px gap).
+    // When open, panel anchors bottom-right and grows upward to a fixed 320 px
+    // so the empty / few-issue cases still feel like a "panel" not a vanishing
+    // line of text. Z-index 38 sits above wires + nodes but under modals.
+    <div data-no-pan data-testid="graph-health-badge"
+      style={{ position:'absolute', right:14, bottom:70, zIndex:38 }}>
+      {!open ? (
+        <button onClick={() => setOpen(true)}
+          aria-label={`graph health · ${summary}`}
+          style={{
+            background:LM.bgPanel, border:`1px solid ${color}`,
+            borderRadius:6, padding:'6px 12px', cursor:'pointer',
+            fontFamily:LM.mono, fontSize:11, color:color,
+            letterSpacing:'0.04em', display:'flex', alignItems:'center', gap:8,
+            opacity: busy ? 0.7 : 1, transition:'opacity .15s',
+          }}>
+          <span>{summary}</span>
+          <span style={{ color:LM.inkMuted, fontSize:9, letterSpacing:'0.12em' }}>HEALTH ▴</span>
+        </button>
+      ) : (
+        <div data-testid="graph-health-panel" style={{
+          width:340, height:320,
+          background:LM.bgPanel, border:`1px solid ${LM.line}`,
+          borderRadius:8, overflow:'hidden', display:'flex', flexDirection:'column',
+          boxShadow:'0 8px 28px rgba(0,0,0,0.45)',
+        }}>
+          <div style={{
+            padding:'10px 12px', borderBottom:`1px solid ${LM.line}`,
+            display:'flex', alignItems:'center', gap:8, background:LM.bgSoft,
+            flexShrink:0,
+          }}>
+            <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+              letterSpacing:'0.12em', flex:1 }}>GRAPH HEALTH</span>
+            <span style={{ fontFamily:LM.mono, fontSize:11, color: counts.err > 0 ? LM.err : LM.inkMuted }}>
+              {counts.err} err
+            </span>
+            <span style={{ fontFamily:LM.mono, fontSize:11, color: counts.warn > 0 ? LM.warn : LM.inkMuted }}>
+              · {counts.warn} warn
+            </span>
+            <button onClick={() => setOpen(false)} aria-label="close health panel"
+              style={{ background:'transparent', border:0, color:LM.inkMuted,
+                fontSize:16, cursor:'pointer', padding:'0 4px', lineHeight:1 }}>×</button>
+          </div>
+          <div style={{ overflow:'auto', flex:1, padding:'8px' }}>
+            {issues.length === 0 ? (
+              <div style={{
+                height:'100%', display:'flex', flexDirection:'column',
+                alignItems:'center', justifyContent:'center', gap:6,
+                fontFamily:LM.mono, fontSize:11, color:LM.ok,
+              }}>
+                <div style={{ fontSize:22, color:LM.ok }}>●</div>
+                <div>all clean — graph valid</div>
+                <div style={{ fontSize:10, color:LM.inkMuted,
+                  textTransform:'uppercase', letterSpacing:'0.12em',
+                  marginTop:4 }}>edits revalidate live</div>
+              </div>
+            ) : (
+              issues.map((iss, i) => {
+                const isErr = iss.level === 'err';
+                const onClick = () => {
+                  if (iss.node_id && setFocusId) setFocusId(iss.node_id);
+                };
+                return (
+                  <div key={i} data-testid={`graph-health-issue-${iss.code}`}
+                    onClick={onClick}
+                    style={{
+                      padding:'8px 10px', marginBottom:3,
+                      background:LM.bgSoft, borderRadius:5,
+                      borderLeft:`3px solid ${isErr ? LM.err : LM.warn}`,
+                      cursor: iss.node_id ? 'pointer' : 'default',
+                      fontSize:11, lineHeight:1.4, color:LM.ink,
+                    }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3 }}>
+                      <span style={{
+                        fontFamily:LM.mono, fontSize:9, padding:'1px 5px',
+                        background:LM.bgPanel, borderRadius:3,
+                        color: isErr ? LM.err : LM.warn,
+                        letterSpacing:'0.04em', textTransform:'uppercase',
+                      }}>{iss.level}</span>
+                      <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
+                        {iss.code}
+                      </span>
+                      {iss.node_id && (
+                        <span style={{ fontFamily:LM.mono, fontSize:9,
+                          color:LM.inkMuted, marginLeft:'auto' }}>
+                          @{iss.node_id}
+                        </span>
+                      )}
+                    </div>
+                    <div>{iss.msg}</div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

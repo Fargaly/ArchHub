@@ -275,6 +275,9 @@ def load_all_connectors() -> int:
         "connectors.revit_connector",
         "connectors.autocad_connector",
         "connectors.max_connector",
+        # AgDR-0041-adjacent · ComfyUI + Alibaba assimilation (2026-05-24).
+        "connectors.comfyui_connector",
+        "connectors.dashscope_connector",
     ]
     for m in modules:
         try:

@@ -4,7 +4,8 @@ timestamp: 2026-05-20T00:00:00Z
 agent: claude-code (Sonnet)
 session: node-redesign-loop · post-direction-x · design-system audit
 trigger: founder request `/design-system` after surfacing 4 isolated forks in AgDR-0013 — "don't pick decimals, design the system"
-status: proposed
+status: executed
+founder-signoff: 2026-05-25 — bulk-flip per D4·A pick on docs/prototypes/four-decisions-2026-05-25.html (shipped weeks ago, status drift)
 category: architecture
 projects: [archhub]
 supersedes:

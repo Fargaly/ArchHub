@@ -4,7 +4,8 @@ timestamp: 2026-05-21T00:00:00Z
 agent: claude-code (Sonnet)
 session: m1-shipping · founder /loop till finalize
 trigger: founder decisions 2026-05-21 on DiskTransport vs ServerTransport + SHARE nodes + ADAPTER nodes + 6-op Speckle host master drop
-status: proposed
+status: executed
+founder-signoff: 2026-05-25 — bulk-flip per D4·A pick on docs/prototypes/four-decisions-2026-05-25.html (shipped weeks ago, status drift)
 category: architecture
 projects: [archhub]
 supersedes:

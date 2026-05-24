@@ -4,7 +4,8 @@ timestamp: 2026-05-20T00:00:00Z
 agent: claude-code (Sonnet)
 session: node-redesign-loop · post-direction-x
 trigger: founder constraint "WHATEVER APPLIES TO ONE AI APPLIES TO ALL — NOT JUST ANTHROPIC" + 4th prototype `composer-library-multi-llm.html`
-status: proposed
+status: executed
+founder-signoff: 2026-05-25 — bulk-flip per D4·A pick on docs/prototypes/four-decisions-2026-05-25.html (shipped weeks ago, status drift)
 category: architecture
 projects: [archhub]
 supersedes:

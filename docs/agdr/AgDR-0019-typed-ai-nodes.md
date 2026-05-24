@@ -4,7 +4,8 @@ timestamp: 2026-05-21T00:00:00Z
 agent: claude-code (Sonnet)
 session: m1-shipping · founder /loop "till you finalize" · "don't sleep"
 trigger: AgDR-0001 §"Loose ends" — `ai` action-specific rail
-status: proposed
+status: executed
+founder-signoff: 2026-05-25 — bulk-flip per D4·A pick on docs/prototypes/four-decisions-2026-05-25.html (shipped weeks ago, status drift)
 category: architecture
 projects: [archhub]
 extends:

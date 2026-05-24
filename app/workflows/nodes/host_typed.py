@@ -136,8 +136,16 @@ register(NodeSpec(
     display_name="Export viewport",
     description=("Render the host's active view as an image + depth-map "
                  "pair. Output suitable for ControlNet Depth → SDXL "
-                 "diffusion (AgDR-0041 Use case A)."),
-    inputs=[],
+                 "diffusion (AgDR-0041 Use case A). `view` may be passed "
+                 "as an input port (dynamic — wire it from upstream) OR "
+                 "as a config default."),
+    inputs=[
+        # `view` is wireable — dynamic view selection from an upstream
+        # node — but defaults to config.view when no wire is connected.
+        # The typed executor merges config + inputs so a wired value
+        # overrides the config default at cook time.
+        Port(name="view", type=PortType.STRING),
+    ],
     outputs=[
         Port(name="image", type=PortType.ANY),
         Port(name="depth", type=PortType.ANY),

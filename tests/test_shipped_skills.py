@@ -74,3 +74,58 @@ def test_photo_mass_supports_host_swap():
     spec = photo_to_rhino_mass._build_spec()
     host_opts = set(spec["config_schema"]["host"]["options"])
     assert {"rhino", "revit", "3dsmax", "blender"}.issubset(host_opts)
+
+
+# ── AgDR-0040 + AgDR-0041 — Skills build executors via the subgraph
+# machinery. Smoke tests: the executor builds without raising AND its
+# I/O lifting matches the inner_inputs / inner_outputs declarations.
+
+from workflows.custom_nodes import _build_executor, _spec_from_dict  # noqa: E402
+
+
+@pytest.mark.parametrize("mod", SKILL_MODULES)
+def test_skill_builds_executor(mod):
+    """Each shipped Skill spec must produce a callable executor — the
+    subgraph dispatch chain reaches the inner-graph runner. Raises a
+    clear error here if a Skill spec drifts past what the substrate
+    understands."""
+    spec = mod._build_spec()
+    fn = _build_executor(spec, _spec_from_dict(spec))
+    assert callable(fn), f"{mod.__name__} did not produce an executor"
+
+
+@pytest.mark.parametrize("mod", SKILL_MODULES)
+def test_skill_inner_outputs_lift_to_outer_ports(mod):
+    """Every outer output port declared by the Skill MUST have a
+    matching inner_outputs entry — otherwise cooking the composite
+    would return a node whose declared output never fills."""
+    spec = mod._build_spec()
+    inner_out_ports = {o["port"] for o in
+                       (spec["impl"].get("inner_outputs") or [])}
+    outer_out_ports = {p["name"] for p in spec["outputs"]}
+    missing = outer_out_ports - inner_out_ports
+    assert not missing, (
+        f"{mod.__name__} outer outputs {missing!r} have no inner_outputs lift")
+
+
+@pytest.mark.parametrize("mod", SKILL_MODULES)
+def test_skill_inner_inputs_target_real_ports(mod):
+    """Every inner_inputs entry must target a port that exists on its
+    inner node — silent typos here would mean the composite eats outer
+    inputs and never delivers them downstream."""
+    from workflows import registry as _reg
+    spec = mod._build_spec()
+    inner_node_by_id = {n["id"]: n for n in spec["impl"]["graph"]["nodes"]}
+    for inp in (spec["impl"].get("inner_inputs") or []):
+        nid = inp["inner_node"]
+        port_name = inp["inner_port"]
+        assert nid in inner_node_by_id, (
+            f"{mod.__name__} inner_input refs unknown node {nid!r}")
+        inner_type = inner_node_by_id[nid]["type"]
+        ns = _reg.get(inner_type)
+        assert ns, f"{mod.__name__} inner node type {inner_type!r} unregistered"
+        node_spec = ns[0]
+        port_names = {p.name for p in node_spec.inputs}
+        assert port_name in port_names, (
+            f"{mod.__name__} inner_input port {port_name!r} not on "
+            f"{inner_type!r}; available: {sorted(port_names)}")

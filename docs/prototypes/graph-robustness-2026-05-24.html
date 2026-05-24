@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — graph robustness (swap · freeze · delete · validate) · 2026-05-24</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --frost:#90c0ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1{font-size:30px;line-height:1.15;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:22px;margin-bottom:14px;letter-spacing:-0.01em}
+h3{font-size:16px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+strong{color:var(--ink)}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 10px;border-radius:8px;font-size:11px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+
+header.head{max-width:1240px;margin:0 auto;padding:48px 24px 16px}
+.intent{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin-top:16px}
+.intent .q{font-size:15px;color:var(--ink);font-style:italic;border-left:3px solid var(--accent);padding-left:14px;margin-bottom:14px}
+.intent p{font-size:13px}
+
+section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+
+/* — props grid — */
+.props{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}
+.prop{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+.prop .n{font-size:18px;font-weight:700;color:var(--accent);font-family:ui-monospace,monospace}
+.prop h4{margin:6px 0 4px;color:var(--ink);font-size:12px;text-transform:none;letter-spacing:0}
+.prop p{font-size:11px;color:var(--ink2);line-height:1.4}
+
+/* — split mock — */
+.demo{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-top:16px}
+.canvas{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:18px;
+  min-height:200px;position:relative;
+  background-image:radial-gradient(circle,var(--line) 0.8px,transparent 0.8px);background-size:18px 18px}
+.canvas-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.node{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+  font-size:11px;min-width:130px;border-left:3px solid var(--accent);position:relative}
+.node .nh{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px}
+.node .nv{font-family:ui-monospace,monospace;color:var(--ink);font-weight:600;font-size:11px}
+.node .nmeta{font-size:9px;color:var(--ink3);margin-top:3px}
+.node.host{border-left-color:var(--accent)}
+.node.data{border-left-color:var(--blue)}
+.node.out{border-left-color:var(--ok)}
+.node.ai{border-left-color:var(--purple)}
+.node.selected{box-shadow:0 0 0 2px var(--accent);background:rgba(232,116,58,0.08)}
+.node.frozen{opacity:0.7;border-style:dashed;background:rgba(144,192,255,0.05)}
+.node.frozen::after{content:"❄";position:absolute;top:-7px;right:-7px;
+  background:var(--frost);color:#000;width:18px;height:18px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+.node.deleted{opacity:0.25;text-decoration:line-through}
+.node.error{border-left-color:var(--err);background:rgba(255,94,94,0.08);box-shadow:0 0 0 1px var(--err)}
+.node.warn{border-left-color:var(--warn)}
+.node.ghost{border-style:dashed;opacity:0.5;background:transparent}
+
+.arr{color:var(--ink3);font-size:18px;user-select:none}
+.arr.cached{color:var(--frost)}
+.arr.error{color:var(--err)}
+.arr.auto{color:var(--ok)}
+.arr .lbl{display:block;font-size:9px;text-align:center;color:var(--ink3);
+  font-family:ui-monospace,monospace;margin-top:-2px}
+
+/* port badges */
+.port-row{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+.port{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--bg);color:var(--ink2);
+  font-family:ui-monospace,monospace}
+.port.mesh{background:rgba(163,123,217,0.15);color:var(--purple)}
+.port.image{background:rgba(95,200,121,0.15);color:var(--ok)}
+.port.text{background:rgba(106,155,204,0.15);color:var(--blue)}
+.port.path{background:rgba(232,197,74,0.15);color:var(--warn)}
+.port.any{background:rgba(232,116,58,0.15);color:var(--accent)}
+
+/* inspector */
+.insp{background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.insp-h{padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--ink);font-weight:600;display:flex;align-items:center;gap:8px}
+.insp-h .tag{font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:0.06em}
+.insp-body{padding:14px;font-size:11px;color:var(--ink2)}
+.insp-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)}
+.insp-row .l{color:var(--ink3)}
+.insp-row .r{color:var(--ink);font-family:ui-monospace,monospace;font-size:11px;font-weight:500}
+.insp-title{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--accent);margin:10px 0 4px;font-weight:600}
+.btn{margin-top:8px;background:var(--accent);color:#fff;border:0;width:100%;padding:8px;
+  border-radius:6px;font-size:11px;cursor:pointer;font-weight:600}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn.warn{background:var(--warn);color:#000}
+.btn.err{background:var(--err)}
+.btn.frost{background:var(--frost);color:#000}
+.btn.ok{background:var(--ok);color:#000}
+
+/* swap suggestion list */
+.swap-list{display:flex;flex-direction:column;gap:5px;margin-top:6px}
+.swap-row{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg3);
+  border:1px solid var(--line);border-radius:5px;cursor:pointer;font-size:10px}
+.swap-row:hover{border-color:var(--accent);background:rgba(232,116,58,0.06)}
+.swap-row .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.swap-row .dot.green{background:var(--ok)}
+.swap-row .dot.warn{background:var(--warn)}
+.swap-row .nm{font-family:ui-monospace,monospace;color:var(--ink);font-weight:500;flex:1}
+.swap-row .compat{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em}
+.swap-row .compat.ok{color:var(--ok)}
+.swap-row .compat.warn{color:var(--warn)}
+
+/* legend */
+.legend{margin-top:14px;display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--ink2)}
+.legend .li{display:flex;align-items:center;gap:5px}
+.legend .lc{width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.legend .lc.ok{background:rgba(95,200,121,0.15)}
+.legend .lc.frost{background:rgba(144,192,255,0.15)}
+.legend .lc.err{background:rgba(255,94,94,0.15)}
+.legend .lc.warn{background:rgba(232,197,74,0.15)}
+
+/* state grid for property 5 */
+.state-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.state-c{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px}
+.state-c h4{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px;margin-bottom:8px}
+.state-c h4 .badge{display:inline-block;padding:1px 6px;font-size:9px;border-radius:3px;
+  margin-left:6px;text-transform:uppercase;letter-spacing:0.06em;font-weight:700}
+.state-c h4 .badge.ok{background:rgba(95,200,121,0.15);color:var(--ok)}
+.state-c h4 .badge.warn{background:rgba(232,197,74,0.15);color:var(--warn)}
+.state-c h4 .badge.err{background:rgba(255,94,94,0.15);color:var(--err)}
+.state-c p{font-size:11px;color:var(--ink2);line-height:1.5}
+
+/* file map */
+.fmap{background:var(--bg2);border:1px solid var(--line);border-radius:10px;
+  padding:16px 18px;margin-top:14px}
+.fmap table{width:100%;font-size:11px;color:var(--ink2);border-collapse:collapse}
+.fmap th{padding:8px 10px;text-transform:uppercase;letter-spacing:0.06em;font-size:10px;color:var(--ink3);text-align:left;font-weight:600}
+.fmap td{padding:8px 10px;border-top:1px solid var(--line)}
+.fmap td code{font-size:10px}
+.fmap td .pkg{display:inline-block;padding:2px 7px;background:var(--bg3);border-radius:4px;
+  font-size:10px;color:var(--accent2);font-family:ui-monospace,monospace}
+.fmap td .have{color:var(--ok)}
+.fmap td .new{color:var(--warn)}
+
+.verdict{margin-top:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.verdict label{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}
+.verdict label input{accent-color:var(--accent)}
+.verdict label:hover{color:var(--ink)}
+.verdict .note{margin-left:auto;font-size:11px;color:var(--ink3);font-style:italic}
+
+@media(max-width:1000px){
+  .props,.state-grid{grid-template-columns:1fr}
+  .demo{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="brand">Arch<span>Hub</span> · graph robustness</div>
+  <a class="chip" href="#p1">1 · swap host</a>
+  <a class="chip" href="#p2">2 · type-compat swap</a>
+  <a class="chip" href="#p3">3 · freeze</a>
+  <a class="chip" href="#p4">4 · delete auto-bridge</a>
+  <a class="chip" href="#p5">5 · validator</a>
+  <a class="chip" href="#map">file map</a>
+</nav>
+
+<header class="head">
+  <div class="tagline">graph robustness · 2026-05-24</div>
+  <h1>Swap · freeze · delete · validate — without breaking the wire</h1>
+  <div class="intent">
+    <div class="q">"a user can swap rhino with 3ds max … or revit or blender …
+      maybe a user freezes or deletes the upscale node … do you get me?"</div>
+    <p><strong>Yes.</strong> Five properties needed. Below: each prototyped
+      with before/after canvas state + the Inspector UI that drives it.
+      Mapped to existing AgDR-0001 (typed Ports) + AgDR-0040 (graph kind).
+      Gaps named for new AgDR.</p>
+  </div>
+
+  <div class="props">
+    <div class="prop"><div class="n">1</div><h4>Host swap</h4><p>One node, host param. Same wire, different desktop app.</p></div>
+    <div class="prop"><div class="n">2</div><h4>Type-compat swap</h4><p>Inspector lists alternatives with matching ports.</p></div>
+    <div class="prop"><div class="n">3</div><h4>Freeze</h4><p>Hold cached value · downstream keeps cooking.</p></div>
+    <div class="prop"><div class="n">4</div><h4>Delete auto-bridge</h4><p>Compatible types → auto-rewire · else clear error.</p></div>
+    <div class="prop"><div class="n">5</div><h4>Live validator</h4><p>Type mismatches red-flag inline before cook.</p></div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<!-- 1 · HOST SWAP                                                 -->
+<!-- ============================================================ -->
+<section class="proto" id="p1">
+  <div class="tagline">property 1</div>
+  <h2>Host swap — one node, four desktop apps</h2>
+  <p>Same node type · <code>host.import_mesh</code> · with <code>host</code>
+    param (revit / rhino / 3dsmax / blender). Swap = change one dropdown,
+    not delete-rewire. Already supported by the AgDR-0001 "connector"
+    primitive pattern — selector pattern in <code>node_grammar.py</code>.</p>
+
+  <div class="demo">
+    <div class="canvas">
+      <div class="canvas-row">
+        <div class="node data"><div class="nh">data</div><div class="nv">mesh.weld</div>
+          <div class="port-row"><span class="port mesh">→ Mesh</span></div></div>
+        <span class="arr">→</span>
+        <div class="node host selected"><div class="nh">host · rhino</div><div class="nv">import_mesh</div>
+          <div class="nmeta">target = current.3dm</div>
+          <div class="port-row"><span class="port mesh">Mesh</span></div></div>
+        <span class="arr">→</span>
+        <div class="node out"><div class="nh">out</div><div class="nv">os.reveal</div></div>
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--ink3);font-style:italic;text-align:center">
+        Same wire below — only <code>host</code> param changed to <code>blender</code>. Rest of graph identical.</div>
+      <div class="canvas-row" style="margin-top:14px">
+        <div class="node data"><div class="nh">data</div><div class="nv">mesh.weld</div>
+          <div class="port-row"><span class="port mesh">→ Mesh</span></div></div>
+        <span class="arr">→</span>
+        <div class="node host" style="border-left-color:var(--blue);background:rgba(106,155,204,0.06)">
+          <div class="nh">host · blender</div><div class="nv">import_mesh</div>
+          <div class="nmeta">target = scene.blend</div>
+          <div class="port-row"><span class="port mesh">Mesh</span></div></div>
+        <span class="arr">→</span>
+        <div class="node out"><div class="nh">out</div><div class="nv">os.reveal</div></div>
+      </div>
+    </div>
+
+    <div class="insp">
+      <div class="insp-h">Inspector · host.import_mesh <span class="tag">selected</span></div>
+      <div class="insp-body">
+        <div class="insp-row"><span class="l">node kind</span><span class="r">host.import_mesh</span></div>
+        <div class="insp-row"><span class="l">host</span><span class="r" style="color:var(--accent)">rhino ▾</span></div>
+        <div class="insp-title">other hosts (port-compatible)</div>
+        <div class="swap-list">
+          <div class="swap-row"><div class="dot green"></div><div class="nm">revit</div><div class="compat ok">100 % · Mesh in</div></div>
+          <div class="swap-row"><div class="dot green"></div><div class="nm">rhino ✓</div><div class="compat ok">100 % · Mesh in</div></div>
+          <div class="swap-row"><div class="dot green"></div><div class="nm">3dsmax</div><div class="compat ok">100 % · Mesh in</div></div>
+          <div class="swap-row"><div class="dot green"></div><div class="nm">blender</div><div class="compat ok">100 % · Mesh in</div></div>
+        </div>
+        <button class="btn">Apply swap → blender</button>
+        <div style="margin-top:8px;font-size:10px;color:var(--ink3);text-align:center;font-style:italic">
+          No cook lost · all upstream cached values pipe through</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--ok);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--ok)">Existing pattern</strong> · The
+    <code>connector</code> primitive (AgDR-0001) already does this for
+    16 hosts via the <code>connector.run</code> node. We extend by
+    adding host-aware <strong>typed</strong> variants
+    (<code>host.import_mesh</code>, <code>host.read_walls</code>, etc.)
+    so the canvas shows clear semantics, not "connector + op name".
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r1"/> YES — typed host nodes with host dropdown</label>
+    <label><input type="radio" name="r1"/> REFINE — keep generic connector.run only</label>
+    <label><input type="radio" name="r1"/> NO</label>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2 · TYPE-COMPATIBLE SWAP                                       -->
+<!-- ============================================================ -->
+<section class="proto" id="p2">
+  <div class="tagline">property 2</div>
+  <h2>Type-compatible swap — Inspector lists alternatives</h2>
+  <p>Click a node, Inspector shows ALL other nodes with compatible
+    input/output ports. Right-click → "Swap with…" applies in one click.
+    Compatibility = port type match (Mesh→Mesh, Image→Image).</p>
+
+  <div class="demo">
+    <div class="canvas">
+      <div class="canvas-row">
+        <div class="node data"><div class="nh">data</div><div class="nv">input.image</div>
+          <div class="port-row"><span class="port image">→ Image</span></div></div>
+        <span class="arr">→</span>
+        <div class="node ai selected"><div class="nh">mesh · tencent</div><div class="nv">hunyuan3d</div>
+          <div class="nmeta">image → mesh</div>
+          <div class="port-row"><span class="port image">Image</span><span class="port mesh">→ Mesh</span></div></div>
+        <span class="arr">→</span>
+        <div class="node data"><div class="nh">mesh</div><div class="nv">simplify</div>
+          <div class="port-row"><span class="port mesh">Mesh</span></div></div>
+      </div>
+    </div>
+
+    <div class="insp">
+      <div class="insp-h">Inspector · swap suggestions <span class="tag">image → mesh</span></div>
+      <div class="insp-body">
+        <div style="font-size:11px;color:var(--ink2);margin-bottom:10px">
+          Showing nodes that accept <strong>Image</strong> in and emit
+          <strong>Mesh</strong> out:</div>
+        <div class="swap-list">
+          <div class="swap-row"><div class="dot green"></div>
+            <div class="nm">mesh.hunyuan3d ✓</div>
+            <div class="compat ok">2 GB · ~20s · best</div></div>
+          <div class="swap-row"><div class="dot green"></div>
+            <div class="nm">mesh.stable_fast_3d</div>
+            <div class="compat ok">0.4 GB · ~0.8s · draft</div></div>
+          <div class="swap-row"><div class="dot green"></div>
+            <div class="nm">mesh.triposr</div>
+            <div class="compat ok">1 GB · ~3s · balanced</div></div>
+          <div class="swap-row"><div class="dot green"></div>
+            <div class="nm">mesh.instantmesh</div>
+            <div class="compat ok">3 GB · ~30s · 4-view</div></div>
+          <div class="swap-row"><div class="dot warn"></div>
+            <div class="nm">mesh.crm</div>
+            <div class="compat warn">3 GB · expects 4 views</div></div>
+        </div>
+        <button class="btn ghost">▾ Show all 12 alternatives</button>
+        <div style="margin-top:10px;padding:8px;background:var(--bg3);border-radius:4px;font-size:10px;color:var(--ink2)">
+          <b style="color:var(--ink)">Why filtered?</b> Downstream node
+          needs Mesh. Showing only nodes that emit Mesh keeps the
+          wire valid after swap.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--warn);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--warn)">Gap</strong> · ArchHub has typed
+    Ports (AgDR-0001) but no "swap suggestion" tool yet. New tool:
+    <code>library.suggest_swaps(node_id)</code> — uses existing
+    <code>node_search</code> infrastructure with port-type filter.
+    Inspector UI is new (~150 jsx lines).
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r2"/> YES — swap suggestions in Inspector</label>
+    <label><input type="radio" name="r2"/> YES — but only on right-click "swap with…"</label>
+    <label><input type="radio" name="r2"/> NO — palette browse is enough</label>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3 · FREEZE                                                     -->
+<!-- ============================================================ -->
+<section class="proto" id="p3">
+  <div class="tagline">property 3</div>
+  <h2>Freeze — pin cached value, downstream keeps flowing</h2>
+  <p>User freezes the expensive upscale node after the first good render.
+    Downstream cooks pull the cached image instead of re-running the
+    node. Cost stays $0. Unfreeze re-cooks.</p>
+
+  <div class="demo">
+    <div class="canvas">
+      <div class="canvas-row">
+        <div class="node ai"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+          <div class="port-row"><span class="port image">Image</span><span class="port image">→ Image</span></div></div>
+        <span class="arr cached">⇢<span class="lbl">cached</span></span>
+        <div class="node frozen selected" style="border-left-color:var(--frost)">
+          <div class="nh">alibaba</div><div class="nv">qwen_image.upscale</div>
+          <div class="nmeta">4K · last cooked 12m ago</div>
+          <div class="port-row"><span class="port image">Image</span><span class="port image">→ Image</span></div></div>
+        <span class="arr">→</span>
+        <div class="node out"><div class="nh">out</div><div class="nv">file.save</div>
+          <div class="nmeta" style="color:var(--ok)">running…</div></div>
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--ink3);text-align:center;font-style:italic">
+        Frozen ❄ · upstream changes ignored · downstream cooks with held value · no cloud call</div>
+    </div>
+
+    <div class="insp">
+      <div class="insp-h">Inspector · qwen_image.upscale <span class="tag">❄ frozen</span></div>
+      <div class="insp-body">
+        <div style="background:rgba(144,192,255,0.08);border:1px solid var(--frost);
+                    border-radius:6px;padding:10px;font-size:11px;color:var(--ink)">
+          ❄ <strong>Frozen</strong> · cached value held since 12m ago.
+          Upstream wire changes do not re-cook this node.
+        </div>
+        <div class="insp-title">cached output</div>
+        <div class="insp-row"><span class="l">type</span><span class="r">Image · 4096 × 3072</span></div>
+        <div class="insp-row"><span class="l">size</span><span class="r">8.4 MB</span></div>
+        <div class="insp-row"><span class="l">cooked at</span><span class="r">14:22 · 12m ago</span></div>
+        <div class="insp-row"><span class="l">upstream hash</span><span class="r" style="color:var(--warn)">⚠ changed since freeze</span></div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn frost" style="flex:1">❄ Unfreeze</button>
+          <button class="btn ghost" style="flex:1">▶ Force re-cook</button>
+        </div>
+        <div class="insp-title">downstream effect</div>
+        <div style="font-size:10px;color:var(--ink3);line-height:1.5">
+          file.save sees cached Image · no network call to Alibaba ·
+          cost saved this cook: $0.02
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--warn);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--warn)">Gap</strong> · Runner already has
+    cached-value tracking (lazy/dirty/cached cook). Add <code>frozen</code>
+    bool to Node spec — runner skips dirty check + returns cache when
+    true. New tool <code>node.freeze(id, true|false)</code>. UI: ❄
+    indicator badge top-right of node (CSS only) + Inspector unfreeze
+    button. ~80 py + 60 jsx lines.
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r3"/> YES — freeze ships per-node</label>
+    <label><input type="radio" name="r3"/> REFINE — group-freeze (whole subgraph)</label>
+    <label><input type="radio" name="r3"/> NO</label>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4 · DELETE WITH AUTO-BRIDGE                                    -->
+<!-- ============================================================ -->
+<section class="proto" id="p4">
+  <div class="tagline">property 4</div>
+  <h2>Delete · auto-bridge if compatible · error if not</h2>
+  <p>User deletes the intermediate upscale node. Runner inspects port
+    types of upstream + downstream. If they match → auto-wire through.
+    If they don't → wire shows broken-state with clear inline error.</p>
+
+  <div class="state-grid">
+    <!-- case A -->
+    <div class="state-c">
+      <h4>A · before delete</h4>
+      <div class="canvas" style="min-height:120px;padding:14px">
+        <div class="canvas-row">
+          <div class="node ai"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+            <div class="port-row"><span class="port image">→ Image</span></div></div>
+          <span class="arr">→</span>
+          <div class="node selected" style="border-left-color:var(--accent)"><div class="nh">alibaba</div><div class="nv">qwen.upscale</div>
+            <div class="port-row"><span class="port image">Image</span><span class="port image">→ Image</span></div></div>
+          <span class="arr">→</span>
+          <div class="node out"><div class="nh">out</div><div class="nv">file.save</div>
+            <div class="port-row"><span class="port image">Image</span></div></div>
+        </div>
+      </div>
+    </div>
+    <!-- case B -->
+    <div class="state-c">
+      <h4>B · delete pressed<span class="badge ok">Image→Image · OK</span></h4>
+      <div class="canvas" style="min-height:120px;padding:14px">
+        <div class="canvas-row">
+          <div class="node ai"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+            <div class="port-row"><span class="port image">→ Image</span></div></div>
+          <span class="arr auto">↬<span class="lbl">auto</span></span>
+          <div class="node ghost deleted"><div class="nh">alibaba</div><div class="nv">qwen.upscale</div></div>
+          <span class="arr auto">↬</span>
+          <div class="node out"><div class="nh">out</div><div class="nv">file.save</div></div>
+        </div>
+      </div>
+      <p style="margin-top:8px"><strong style="color:var(--ok)">Auto-bridged</strong> · upstream Image goes straight to downstream. No prompt — silent.</p>
+    </div>
+    <!-- case C -->
+    <div class="state-c">
+      <h4>C · incompatible delete<span class="badge err">Mesh ≠ Image · ERR</span></h4>
+      <div class="canvas" style="min-height:120px;padding:14px">
+        <div class="canvas-row">
+          <div class="node ai"><div class="nh">mesh · tencent</div><div class="nv">hunyuan3d</div>
+            <div class="port-row"><span class="port mesh">→ Mesh</span></div></div>
+          <span class="arr error">⚡</span>
+          <div class="node ghost deleted"><div class="nh">renderer</div><div class="nv">render.preview</div></div>
+          <span class="arr error">⚡</span>
+          <div class="node error"><div class="nh">out</div><div class="nv">image.save</div>
+            <div class="nmeta" style="color:var(--err)">expects Image</div></div>
+        </div>
+      </div>
+      <p style="margin-top:8px"><strong style="color:var(--err)">Broken wire</strong> · type mismatch. Wire turns red. Inspector lists 3 fix options below.</p>
+    </div>
+  </div>
+
+  <div class="demo" style="margin-top:18px">
+    <div class="canvas">
+      <h4 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px;margin-bottom:10px">Case C · Inspector recovery dialog</h4>
+      <div class="insp">
+        <div class="insp-h" style="background:rgba(255,94,94,0.08);border-bottom-color:var(--err)">
+          ⚡ Broken wire · Mesh → Image  <span class="tag" style="color:var(--err)">step blocked</span>
+        </div>
+        <div class="insp-body">
+          <div style="font-size:11px;color:var(--ink);margin-bottom:10px">
+            Upstream <code>hunyuan3d</code> emits <strong>Mesh</strong> · downstream
+            <code>image.save</code> expects <strong>Image</strong>. Pick a fix:</div>
+          <div class="swap-list">
+            <div class="swap-row"><div class="dot green"></div>
+              <div class="nm">+ Insert · render.mesh_to_image</div>
+              <div class="compat ok">~150 ms · render mesh to PNG</div></div>
+            <div class="swap-row"><div class="dot warn"></div>
+              <div class="nm">↺ Restore deleted · render.preview</div>
+              <div class="compat warn">undo delete</div></div>
+            <div class="swap-row"><div class="dot"></div>
+              <div class="nm">⤬ Swap downstream · mesh.export to .obj</div>
+              <div class="compat">change file.save → mesh.save</div></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn ok" style="flex:1">✓ Apply first fix</button>
+            <button class="btn ghost" style="flex:1">Leave broken</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="insp">
+      <div class="insp-h">Decision matrix</div>
+      <div class="insp-body" style="font-size:11px;line-height:1.6">
+        <div class="insp-title">on delete</div>
+        <ol style="padding-left:18px;color:var(--ink2)">
+          <li>Find upstream src port type</li>
+          <li>Find downstream dst port type</li>
+          <li>If <code>src == dst</code> → auto-bridge silently</li>
+          <li>If <code>src</code> is sub-type of <code>dst</code> (e.g. <code>any</code>) → auto-bridge</li>
+          <li>Else → broken-wire state · open Inspector recovery</li>
+        </ol>
+        <div class="insp-title">recovery offers</div>
+        <ol style="padding-left:18px;color:var(--ink2)">
+          <li>Search library for <code>src → dst</code> adapter</li>
+          <li>Offer to restore deleted</li>
+          <li>Offer to swap downstream node</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--warn);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--warn)">Gap</strong> · ArchHub already has
+    typed Ports. Add <code>graph.on_node_delete(id)</code> that runs the
+    decision matrix. Adapter search reuses <code>node_search</code> with
+    <code>{in_type, out_type}</code> filter. Broken-wire UI is new
+    (~150 jsx) but the runner already refuses to cook broken wires
+    today — we just surface the reason inline instead of swallowing it.
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r4"/> YES — auto-bridge + recovery dialog</label>
+    <label><input type="radio" name="r4"/> REFINE — always show dialog, never silent</label>
+    <label><input type="radio" name="r4"/> REFINE — silent always, no dialog</label>
+    <label><input type="radio" name="r4"/> NO</label>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5 · LIVE VALIDATOR                                             -->
+<!-- ============================================================ -->
+<section class="proto" id="p5">
+  <div class="tagline">property 5</div>
+  <h2>Live validator — surface mismatches before cook</h2>
+  <p>Runs continuously on edit. Wires + nodes light up red/yellow/green
+    BEFORE the user clicks Cook. No surprise "type error at runtime" —
+    you see it the instant you drop a node.</p>
+
+  <div class="demo">
+    <div class="canvas">
+      <h4 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px;margin-bottom:10px">3 states · same wire, different validity</h4>
+      <div class="canvas-row" style="margin-bottom:14px">
+        <div class="node ai" style="border-left-color:var(--ok)"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+          <div class="port-row"><span class="port image">→ Image</span></div></div>
+        <span class="arr" style="color:var(--ok)">✓</span>
+        <div class="node out" style="border-left-color:var(--ok)"><div class="nh">out</div><div class="nv">image.save</div></div>
+        <span style="margin-left:8px;font-size:10px;color:var(--ok);font-family:monospace">VALID · ready to cook</span>
+      </div>
+
+      <div class="canvas-row" style="margin-bottom:14px">
+        <div class="node ai warn"><div class="nh">comfy</div><div class="nv">render.archviz</div>
+          <div class="port-row"><span class="port image">→ Image</span></div>
+          <div class="nmeta" style="color:var(--warn)">⚠ depth input unset</div></div>
+        <span class="arr" style="color:var(--warn)">~</span>
+        <div class="node out"><div class="nh">out</div><div class="nv">image.save</div></div>
+        <span style="margin-left:8px;font-size:10px;color:var(--warn);font-family:monospace">PARTIAL · will cook with defaults</span>
+      </div>
+
+      <div class="canvas-row">
+        <div class="node ai" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">hunyuan3d</div>
+          <div class="port-row"><span class="port mesh">→ Mesh</span></div></div>
+        <span class="arr error">⚡</span>
+        <div class="node out error"><div class="nh">out</div><div class="nv">image.save</div>
+          <div class="nmeta" style="color:var(--err)">expects Image · got Mesh</div></div>
+        <span style="margin-left:8px;font-size:10px;color:var(--err);font-family:monospace">BLOCKED · type mismatch</span>
+      </div>
+
+      <div class="legend">
+        <div class="li"><div class="lc ok"></div> valid · cook</div>
+        <div class="li"><div class="lc warn"></div> partial · cook w/ defaults</div>
+        <div class="li"><div class="lc err"></div> broken · blocked</div>
+        <div class="li"><div class="lc frost"></div> frozen · cached</div>
+      </div>
+    </div>
+
+    <div class="insp">
+      <div class="insp-h">Graph health <span class="tag">live</span></div>
+      <div class="insp-body">
+        <div class="insp-row"><span class="l">total nodes</span><span class="r">7</span></div>
+        <div class="insp-row"><span class="l">valid</span><span class="r" style="color:var(--ok)">5</span></div>
+        <div class="insp-row"><span class="l">partial</span><span class="r" style="color:var(--warn)">1 (depth input)</span></div>
+        <div class="insp-row"><span class="l">broken</span><span class="r" style="color:var(--err)">1 (Mesh→Image)</span></div>
+        <div class="insp-row"><span class="l">frozen</span><span class="r" style="color:var(--frost)">0</span></div>
+        <div class="insp-title">issues (click to focus)</div>
+        <div class="swap-list">
+          <div class="swap-row"><div class="dot" style="background:var(--err)"></div>
+            <div class="nm">image.save · Mesh→Image</div><div class="compat" style="color:var(--err)">FIX</div></div>
+          <div class="swap-row"><div class="dot" style="background:var(--warn)"></div>
+            <div class="nm">render.archviz · depth unset</div><div class="compat warn">OPT</div></div>
+        </div>
+        <button class="btn ghost" style="margin-top:10px">▶ Cook valid + partial (skip broken)</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:var(--bg3);border-left:3px solid var(--warn);
+              border-radius:6px;font-size:11px;color:var(--ink2)">
+    <strong style="color:var(--warn)">Gap</strong> · validator logic
+    exists in runner (port-type check at cook time). Move it earlier —
+    run on every graph edit (debounced 200ms). New tool
+    <code>graph.validate()</code> → returns issue list. Wire CSS classes
+    already drawn from port type via existing
+    <code>WIRE[w.t]</code> lookup in <code>studio-lm.jsx</code> line 5414.
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="r5"/> YES — live validator + health panel</label>
+    <label><input type="radio" name="r5"/> REFINE — only at cook-time</label>
+    <label><input type="radio" name="r5"/> NO</label>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- FILE MAP                                                       -->
+<!-- ============================================================ -->
+<section class="proto" id="map">
+  <div class="tagline">code map</div>
+  <h2>Where each property lands (assimilation, no redesign)</h2>
+
+  <div class="fmap">
+    <table>
+      <thead><tr>
+        <th>Property</th><th>File · function</th><th>Status</th><th>LOC</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>1 · Host swap · selector param</td>
+          <td><span class="pkg">app/workflows/node_grammar.py</span></td>
+          <td><span class="have">HAVE</span> (AgDR-0001 connector selector pattern)</td>
+          <td>~50</td></tr>
+        <tr><td>1 · Host swap · typed variants</td>
+          <td><span class="pkg">app/workflows/nodes/host/*.py</span></td>
+          <td><span class="new">NEW</span> 4 hosts × ~5 typed ops</td>
+          <td>~400</td></tr>
+        <tr><td>2 · Swap suggestions tool</td>
+          <td><span class="pkg">app/tool_engine.py · library_suggest_swaps</span></td>
+          <td><span class="new">NEW</span> · wraps existing node_search w/ port-type filter</td>
+          <td>~80</td></tr>
+        <tr><td>2 · Inspector swap UI</td>
+          <td><span class="pkg">app/web_ui/studio-lm.jsx · NodeInspector</span></td>
+          <td><span class="new">NEW</span> · adds "Swap" section to Inspector</td>
+          <td>~150 jsx</td></tr>
+        <tr><td>3 · Freeze · runner skip</td>
+          <td><span class="pkg">app/workflows/runner.py · _pull</span></td>
+          <td><span class="new">NEW</span> · check <code>node.frozen</code> before dirty check</td>
+          <td>~30</td></tr>
+        <tr><td>3 · Freeze · tool</td>
+          <td><span class="pkg">app/tool_engine.py · node_freeze</span></td>
+          <td><span class="new">NEW</span></td>
+          <td>~40</td></tr>
+        <tr><td>3 · Freeze · UI badge</td>
+          <td><span class="pkg">studio-lm.jsx · LMNode</span></td>
+          <td><span class="new">NEW</span> · CSS ❄ badge + Inspector controls</td>
+          <td>~60 jsx</td></tr>
+        <tr><td>4 · Delete decision matrix</td>
+          <td><span class="pkg">app/workflows/graph.py · on_node_delete</span></td>
+          <td><span class="new">NEW</span></td>
+          <td>~120</td></tr>
+        <tr><td>4 · Adapter search reuse</td>
+          <td><span class="pkg">app/library.py · find_adapter(src,dst)</span></td>
+          <td><span class="new">NEW</span> · port-type → port-type lookup</td>
+          <td>~50</td></tr>
+        <tr><td>4 · Recovery dialog UI</td>
+          <td><span class="pkg">studio-lm.jsx · BrokenWireDialog</span></td>
+          <td><span class="new">NEW</span></td>
+          <td>~150 jsx</td></tr>
+        <tr><td>5 · Live validator</td>
+          <td><span class="pkg">app/workflows/runner.py · validate</span></td>
+          <td><span class="new">NEW</span> · debounced re-run on edit</td>
+          <td>~100</td></tr>
+        <tr><td>5 · Graph health panel</td>
+          <td><span class="pkg">studio-lm.jsx · GraphHealthPanel</span></td>
+          <td><span class="new">NEW</span> · new tab in side panel</td>
+          <td>~180 jsx</td></tr>
+        <tr style="background:rgba(95,200,121,0.06)">
+          <td colspan="4" style="text-align:center;font-size:12px;color:var(--ok);padding:14px">
+            <strong>~1 400 lines total · 8 files · 1 AgDR.</strong> All
+            assimilate into existing structure. Tests covered by the
+            existing graph test suite + 3 new tests per property.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:14px;padding:12px 16px;background:linear-gradient(135deg,rgba(232,116,58,0.1),rgba(95,200,121,0.05));
+              border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--ink)">
+    <strong style="color:var(--accent)">Where it slots in 4-week plan</strong>
+    · Add as <strong>AgDR-0041</strong> · ship in <strong>Week 1</strong>
+    alongside Tier 0 connectors. Robustness is the substrate the 4 use
+    cases run on — must land before the use cases.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- PICKS BAR                                                      -->
+<!-- ============================================================ -->
+<section style="background:var(--bg);padding:32px;text-align:center">
+  <p id="pick-summary" style="font-size:12px;color:var(--accent2);font-family:ui-monospace,monospace;margin-bottom:10px"></p>
+  <p style="font-size:11px;color:var(--ink3)">graph-robustness deep-dive ·
+    persisted picks · 2026-05-24</p>
+</section>
+
+<script>
+(function(){
+  var KEY = 'archhub-robustness-picks-v1';
+  var groups = {};
+  document.querySelectorAll('input[type=radio]').forEach(function(r){
+    if(!r.value || r.value === 'on'){
+      groups[r.name] = (groups[r.name] || 0);
+      r.value = 'idx_' + groups[r.name];
+      groups[r.name]++;
+    }
+  });
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch(e){}
+  Object.keys(saved).forEach(function(name){
+    var r = document.querySelector('input[name="'+name+'"][value="'+saved[name]+'"]');
+    if(r) r.checked = true;
+  });
+  function refreshSummary(){
+    var sum = document.getElementById('pick-summary');
+    if(!sum) return;
+    var names = ['r1','r2','r3','r4','r5'];
+    var picks = names.map(function(n){
+      var c = document.querySelector('input[name="'+n+'"]:checked');
+      var lbl = c ? c.closest('label').innerText.trim().replace(/\s+/g,' ') : '—';
+      return n + ': ' + lbl;
+    });
+    sum.innerText = 'Picks · ' + picks.join('  ·  ');
+  }
+  document.addEventListener('change', function(e){
+    if(e.target.matches('input[type=radio]')){
+      saved[e.target.name] = e.target.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch(e2){}
+      refreshSummary();
+    }
+  });
+  refreshSummary();
+})();
+</script>
+
+</body>
+</html>

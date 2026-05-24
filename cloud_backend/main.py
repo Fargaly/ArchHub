@@ -103,7 +103,9 @@ class RegisterReq(BaseModel):
 
 class ExchangeReq(BaseModel):
     code: str = Field(min_length=10, max_length=200)
-    code_verifier: str = Field(min_length=20, max_length=200)
+    # Empty verifier allowed for browser-direct flows (db.consume_code
+    # gates on the stored code_challenge being empty, see 2026-05-24).
+    code_verifier: str = Field(default="", max_length=200)
 
 
 class CheckoutReq(BaseModel):

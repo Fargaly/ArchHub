@@ -104,3 +104,4 @@ graphify-out/extraction-filtered.json
 graphify-out/graph.json
 graphify-out/extract.log
 
+scripts/stripe_login_pty.py

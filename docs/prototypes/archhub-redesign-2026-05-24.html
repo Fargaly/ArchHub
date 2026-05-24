@@ -838,10 +838,21 @@ header.head .why ul li{margin-bottom:4px;list-style:disc}
     </div>
   </div>
 
+  <div style="background:var(--bg3);border:1px solid var(--accent);border-left-width:3px;
+              border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:var(--ink2)">
+    <strong style="color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">
+      Refinement noted · 2026-05-24</strong>
+    Assimilate this into the existing right-panel <strong>node Inspector</strong>
+    for a selected <code>ai.conversation</code> (or <code>ai.plan</code>) node.
+    Not a new floating pane — Inspector already shows ports, params,
+    cooked value. Add a "Plan" tab next to "Inputs / Outputs / Params"
+    that renders the table + Thought-for-Xs below. Surface scoped to
+    that one node, not a global drawer.
+  </div>
   <div class="mock">
     <div class="mock-bar">
       <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
-      <div class="url">ArchHub · Composer turn → ai.plan emission</div>
+      <div class="url">ArchHub · Composer turn → ai.plan emission (mock — final spot = node Inspector)</div>
     </div>
     <div style="padding:24px;background:var(--bg2)">
       <div class="plan-stage">
@@ -1063,11 +1074,51 @@ header.head .why ul li{margin-bottom:4px;list-style:disc}
 
 <!-- ====================== picks bar ====================== -->
 <section style="background:var(--bg);padding:32px;text-align:center">
-  <p style="font-size:13px;color:var(--ink2)">Reply with your picks
-    (e.g. <code>A:yes B:refine C:yes D:yes E:yes-combine</code>) and I
-    AgDR + build each one. Stripe pairing still open — your one click
-    above unlocks the pricing tier rollout.</p>
+  <p style="font-size:13px;color:var(--ink2)">Picks persist across reload
+    via localStorage. Reply with picks
+    (e.g. <code>A:yes B:refine C:yes D:yes E:yes-combine</code>) — or
+    just say "check" and I read them off the page.</p>
+  <p id="pick-summary" style="font-size:12px;color:var(--accent2);margin-top:14px;font-family:ui-monospace,monospace"></p>
 </section>
+
+<script>
+(function(){
+  var KEY = 'archhub-redesign-picks-v1';
+  // Index each radio within its name group so we can save by index, not value.
+  var groups = {};
+  document.querySelectorAll('input[type=radio]').forEach(function(r){
+    if(!r.value || r.value === 'on'){
+      groups[r.name] = (groups[r.name] || 0);
+      r.value = 'idx_' + groups[r.name];
+      groups[r.name]++;
+    }
+  });
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch(e){}
+  Object.keys(saved).forEach(function(name){
+    var r = document.querySelector('input[name="'+name+'"][value="'+saved[name]+'"]');
+    if(r) r.checked = true;
+  });
+  function refreshSummary(){
+    var sum = document.getElementById('pick-summary');
+    if(!sum) return;
+    var picks = ['va','vb','vc','vd','ve'].map(function(n){
+      var c = document.querySelector('input[name="'+n+'"]:checked');
+      var lbl = c ? c.closest('label').innerText.trim().replace(/\s+/g,' ') : '—';
+      return n.slice(1).toUpperCase() + ': ' + lbl;
+    });
+    sum.innerText = 'Current picks · ' + picks.join('  ·  ');
+  }
+  document.addEventListener('change', function(e){
+    if(e.target.matches('input[type=radio]')){
+      saved[e.target.name] = e.target.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch(e2){}
+      refreshSummary();
+    }
+  });
+  refreshSummary();
+})();
+</script>
 
 </body>
 </html>

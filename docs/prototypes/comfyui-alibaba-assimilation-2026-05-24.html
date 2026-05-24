@@ -750,9 +750,50 @@ table.t td b.eg{color:var(--ink);font-family:ui-monospace,monospace;font-size:11
     All prototyped using research from Alibaba DashScope docs +
     ComfyUI registry + Hunyuan3D + community workflows. Live, real models.
     Nothing speculative.</p>
+  <p id="pick-summary" style="font-size:12px;color:var(--accent2);margin-top:14px;font-family:ui-monospace,monospace"></p>
   <p style="font-size:11px;color:var(--ink3);margin-top:8px">
-    archhub × comfyui × alibaba · 2026-05-24 · pick + I build</p>
+    archhub × comfyui × alibaba · 2026-05-24 · pick + I build · picks
+    persist across reload</p>
 </section>
+
+<script>
+(function(){
+  var KEY = 'archhub-comfyui-picks-v1';
+  var groups = {};
+  document.querySelectorAll('input[type=radio]').forEach(function(r){
+    if(!r.value || r.value === 'on'){
+      groups[r.name] = (groups[r.name] || 0);
+      r.value = 'idx_' + groups[r.name];
+      groups[r.name]++;
+    }
+  });
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch(e){}
+  Object.keys(saved).forEach(function(name){
+    var r = document.querySelector('input[name="'+name+'"][value="'+saved[name]+'"]');
+    if(r) r.checked = true;
+  });
+  function refreshSummary(){
+    var sum = document.getElementById('pick-summary');
+    if(!sum) return;
+    var names = ['vtier','va','vb','vc','vd','vorder'];
+    var picks = names.map(function(n){
+      var c = document.querySelector('input[name="'+n+'"]:checked');
+      var lbl = c ? c.closest('label').innerText.trim().replace(/\s+/g,' ') : '—';
+      return n + ': ' + lbl;
+    });
+    sum.innerText = 'Current picks · ' + picks.join('  ·  ');
+  }
+  document.addEventListener('change', function(e){
+    if(e.target.matches('input[type=radio]')){
+      saved[e.target.name] = e.target.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch(e2){}
+      refreshSummary();
+    }
+  });
+  refreshSummary();
+})();
+</script>
 
 </body>
 </html>

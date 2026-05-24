@@ -569,12 +569,15 @@ def issue_code(user_id: str, code_challenge: str,
 
 def consume_code(code: str, code_verifier: str) -> Optional[str]:
     """Verify code + PKCE verifier; if valid, delete + return user_id.
-    Returns None when code is missing / expired / verifier mismatched."""
-    import base64
-    import hashlib
-    expected = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    Returns None when code is missing / expired / verifier mismatched.
+
+    Browser-direct flow (2026-05-24): when the code was issued with an
+    empty `code_challenge`, the user is signing in via a browser
+    (no desktop client to generate a PKCE pair). In that mode the
+    magic-link code itself is the only secret — it is one-time-use,
+    5-min TTL, and only delivered to the email's owner. We skip the
+    verifier check rather than store a server-side verifier (simpler;
+    same security posture as classic magic-link auth)."""
     with connect() as con:
         r = con.execute(
             "SELECT user_id, code_challenge, expires_at FROM codes"
@@ -586,9 +589,18 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
         if int(r["expires_at"]) < int(time.time()):
             con.execute("DELETE FROM codes WHERE code = ?", (code,))
             return None
-        if r["code_challenge"] != expected:
-            con.execute("DELETE FROM codes WHERE code = ?", (code,))
-            return None
+        stored_challenge = r["code_challenge"] or ""
+        if stored_challenge:
+            # PKCE flow — desktop client must present a matching verifier.
+            import base64
+            import hashlib
+            expected = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode("ascii")).digest()
+            ).rstrip(b"=").decode("ascii")
+            if stored_challenge != expected:
+                con.execute("DELETE FROM codes WHERE code = ?", (code,))
+                return None
+        # else: browser-direct flow — code alone is the secret.
         user_id = r["user_id"]
         con.execute("DELETE FROM codes WHERE code = ?", (code,))
         return user_id

@@ -584,26 +584,15 @@ def signin_landing(challenge: str = "", redirect: str = "",
   <div id='out'></div>
 </div>
 <script>
-// Server-injected PKCE (set when desktop client deep-links here).
-// For direct browser visits these are empty — we generate a fresh
-// PKCE pair client-side + stash the verifier in sessionStorage so
-// /auth/return can complete the exchange after the user clicks the
-// magic-link.
+// Server-injected PKCE — set when desktop client deep-links here with
+// ?challenge=...&redirect=loopback. For direct browser visits these
+// are empty and we use the browser-direct flow (magic-link is the
+// secret, no PKCE — fine because the code is one-time, 5-min TTL,
+// and only delivered to the email-owner's inbox). See db.consume_code
+// for the server-side gate.
 let challenge = "{safe_challenge}";
 let redirect = "{safe_redirect}";
 const state = "{safe_state}";
-
-function b64url(buf) {{
-  return btoa(String.fromCharCode(...new Uint8Array(buf)))
-    .replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
-}}
-async function makePkce() {{
-  const bytes = crypto.getRandomValues(new Uint8Array(48));
-  const verifier = b64url(bytes);
-  const digest = await crypto.subtle.digest('SHA-256',
-    new TextEncoder().encode(verifier));
-  return {{ verifier, challenge: b64url(digest) }};
-}}
 
 async function submitEmail(ev) {{
   ev.preventDefault();
@@ -612,16 +601,12 @@ async function submitEmail(ev) {{
   const out = document.getElementById('out');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {{
-    // If no server-injected challenge, mint one client-side and
-    // remember the verifier locally — /auth/return reads it back.
-    if (!challenge) {{
-      const pk = await makePkce();
-      challenge = pk.challenge;
-      sessionStorage.setItem('archhub_pkce_verifier', pk.verifier);
-      sessionStorage.setItem('archhub_pkce_email', email);
-      if (!redirect) {{
-        redirect = window.location.origin + '/auth/return';
-      }}
+    // Browser-direct mode: leave challenge empty + default redirect
+    // to /auth/return so the magic-link lands back on this domain.
+    // No need to stash anything in sessionStorage — the magic-link
+    // works from any browser the user opens it in.
+    if (!challenge && !redirect) {{
+      redirect = window.location.origin + '/auth/return';
     }}
     const r = await fetch('/v1/auth/register', {{
       method:'POST',
@@ -698,17 +683,18 @@ def auth_return(code: str = "", redirect: str = "") -> HTMLResponse:
   <div id='out'></div>
 </div>
 <script>
+// Browser-direct exchange. The magic-link landed here in ANY browser —
+// no per-browser verifier needed. Server already validated the code
+// row has empty code_challenge (issued by /signin in browser mode)
+// and consumes the code without PKCE.
 const code = "{safe_code}";
 (async function() {{
   const card = document.getElementById('card');
   const out = document.getElementById('out');
-  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
-  const email = sessionStorage.getItem('archhub_pkce_email') || '';
-  if (!code || !verifier) {{
-    card.querySelector('h1').textContent = 'Session not found';
-    out.innerHTML = '<div class="err">No PKCE verifier in this '
-      + 'browser. The magic-link was probably opened in a different '
-      + 'browser or window. Go back to /signin and try again here.</div>'
+  if (!code) {{
+    card.querySelector('h1').textContent = 'Missing code';
+    out.innerHTML = '<div class="err">No code in URL. Use the link from '
+      + 'your sign-in email.</div>'
       + '<a class="btn" href="/signin">Back to sign-in</a>';
     return;
   }}
@@ -716,7 +702,7 @@ const code = "{safe_code}";
     const r = await fetch('/v1/auth/exchange', {{
       method:'POST',
       headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ code, code_verifier: verifier }}),
+      body: JSON.stringify({{ code, code_verifier: '' }}),
     }});
     if (!r.ok) {{
       const d = await r.json().catch(()=>({{detail:'unknown'}}));
@@ -727,12 +713,11 @@ const code = "{safe_code}";
       return;
     }}
     const j = await r.json();
-    localStorage.setItem('archhub_session_token', j.token || j.access_token || '');
-    localStorage.setItem('archhub_session_email', email);
-    sessionStorage.removeItem('archhub_pkce_verifier');
-    sessionStorage.removeItem('archhub_pkce_email');
+    const token = j.token || j.access_token || '';
+    localStorage.setItem('archhub_session_token', token);
     card.querySelector('h1').textContent = "You're signed in.";
-    out.innerHTML = '<div class="ok">Signed in as <b>' + email + '</b>.</div>'
+    out.innerHTML = '<div class="ok">Plan: <b>' + (j.plan||'trial') + '</b>. '
+      + 'Session token stored locally.</div>'
       + '<a class="btn" href="/dashboard">Open dashboard →</a>'
       + ' &nbsp; <a class="btn" style="background:transparent;border:1px solid #26262d" href="/upgrade">Choose a plan</a>';
   }} catch(e) {{

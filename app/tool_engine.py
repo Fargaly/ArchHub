@@ -1166,6 +1166,34 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "node_freeze"),
     },
+    # AgDR-0041 Property 2 — type-compatible swap suggestions.
+    # Powers the right-click "swap with…" menu by returning nodes
+    # whose port types match the target's signature.
+    {
+        "name": "library_suggest_swaps",
+        "family": "_local",
+        "description": (
+            "Find registered node types whose ports match the target's "
+            "I/O signature. Use this to swap one node for a compatible "
+            "alternative without breaking the wire. Pass either `type` "
+            "(lift I/O from the registry) OR explicit `in_types` + "
+            "`out_types` arrays. Returns ranked alternatives + their "
+            "ports."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type":      {"type": "string",
+                              "description": "Existing registered type whose I/O to mirror."},
+                "in_types":  {"type": "array", "items": {"type": "string"},
+                              "description": "Required input port types."},
+                "out_types": {"type": "array", "items": {"type": "string"},
+                              "description": "Required output port types."},
+                "limit":     {"type": "integer", "default": 10},
+            },
+        },
+        "endpoint": ("_local", "library_suggest_swaps"),
+    },
     # AgDR-0041 Property 6 — bypass a node so the runner skips its
     # executor and passes upstream input directly to the downstream
     # output (port-name match, then type-only fallback). No cache held.
@@ -1912,6 +1940,66 @@ class ToolEngine:
             if handler == "library_delete_node_type":
                 result = _lib.delete_node_type(args.get("node_type", ""))
                 return {"status": "ok", **result}
+
+            if handler == "library_suggest_swaps":
+                # AgDR-0041 P2 — type-compatible swap suggestions over
+                # the in-process workflows.registry (the live set the
+                # canvas actually wires against). Custom Capability
+                # nodes minted via node_create also live here once
+                # registered, so the suggester covers both.
+                target_type = str(args.get("type", "") or "").strip()
+                in_types  = [str(t).lower() for t in (args.get("in_types")  or [])]
+                out_types = [str(t).lower() for t in (args.get("out_types") or [])]
+                limit = int(args.get("limit", 10))
+                try:
+                    import workflows.registry as _wreg
+                except Exception as ex:
+                    return {"status": "error",
+                            "error": f"registry unavailable: {ex}"}
+                if target_type and not (in_types or out_types):
+                    spec_tup = _wreg.get(target_type)
+                    if spec_tup is None:
+                        return {"status": "error",
+                                "error": f"unknown node type {target_type!r}"}
+                    spec, _ = spec_tup
+                    in_types  = [getattr(p.type, "value", str(p.type))
+                                 for p in (spec.inputs or [])]
+                    out_types = [getattr(p.type, "value", str(p.type))
+                                 for p in (spec.outputs or [])]
+                results: list = []
+                for spec in _wreg.all_specs():
+                    if spec.type == target_type:
+                        continue
+                    spec_in  = [getattr(p.type, "value", str(p.type)).lower()
+                                for p in (spec.inputs or [])]
+                    spec_out = [getattr(p.type, "value", str(p.type)).lower()
+                                for p in (spec.outputs or [])]
+                    in_match  = all(t in spec_in  or t == "any" or "any" in spec_in
+                                    for t in in_types)  if in_types  else True
+                    out_match = all(t in spec_out or t == "any" or "any" in spec_out
+                                    for t in out_types) if out_types else True
+                    if not (in_match and out_match):
+                        continue
+                    score = (10 if in_match else 0) + (10 if out_match else 0)
+                    if target_type:
+                        tgt_spec = _wreg.get(target_type)
+                        if tgt_spec and tgt_spec[0].category == spec.category:
+                            score += 5
+                    results.append((score, spec))
+                results.sort(key=lambda p: -p[0])
+                out_list = [
+                    {"type": s.type,
+                     "display_name": s.display_name or s.type,
+                     "category": s.category,
+                     "score": sc,
+                     "in":  [getattr(p.type, "value", str(p.type))
+                             for p in (s.inputs or [])],
+                     "out": [getattr(p.type, "value", str(p.type))
+                             for p in (s.outputs or [])]}
+                    for sc, s in results[:max(1, limit)]
+                ]
+                return {"status": "ok", "results": out_list,
+                        "count": len(out_list)}
 
             return {"status": "error",
                     "error": f"Unknown library handler: {handler}"}

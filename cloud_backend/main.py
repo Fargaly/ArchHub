@@ -584,9 +584,27 @@ def signin_landing(challenge: str = "", redirect: str = "",
   <div id='out'></div>
 </div>
 <script>
-const challenge = "{safe_challenge}";
-const redirect = "{safe_redirect}";
+// Server-injected PKCE (set when desktop client deep-links here).
+// For direct browser visits these are empty — we generate a fresh
+// PKCE pair client-side + stash the verifier in sessionStorage so
+// /auth/return can complete the exchange after the user clicks the
+// magic-link.
+let challenge = "{safe_challenge}";
+let redirect = "{safe_redirect}";
 const state = "{safe_state}";
+
+function b64url(buf) {{
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+}}
+async function makePkce() {{
+  const bytes = crypto.getRandomValues(new Uint8Array(48));
+  const verifier = b64url(bytes);
+  const digest = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(verifier));
+  return {{ verifier, challenge: b64url(digest) }};
+}}
+
 async function submitEmail(ev) {{
   ev.preventDefault();
   const email = document.getElementById('email').value.trim();
@@ -594,6 +612,17 @@ async function submitEmail(ev) {{
   const out = document.getElementById('out');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {{
+    // If no server-injected challenge, mint one client-side and
+    // remember the verifier locally — /auth/return reads it back.
+    if (!challenge) {{
+      const pk = await makePkce();
+      challenge = pk.challenge;
+      sessionStorage.setItem('archhub_pkce_verifier', pk.verifier);
+      sessionStorage.setItem('archhub_pkce_email', email);
+      if (!redirect) {{
+        redirect = window.location.origin + '/auth/return';
+      }}
+    }}
     const r = await fetch('/v1/auth/register', {{
       method:'POST',
       headers:{{'Content-Type':'application/json'}},
@@ -601,12 +630,19 @@ async function submitEmail(ev) {{
                               redirect: redirect }}),
     }});
     if (r.ok) {{
-      out.innerHTML = '<div class="ok">Check your inbox. Click '
-        + 'the link to finish signing in.</div>';
+      out.innerHTML = '<div class="ok">Check your inbox at <b>'
+        + email + '</b>. Click the link to finish signing in.</div>';
     }} else {{
       const d = await r.json().catch(()=>({{detail:'unknown'}}));
+      let msg = d.detail;
+      // pydantic 422 detail is an array of objects — render nicely
+      if (Array.isArray(msg)) {{
+        msg = msg.map(e => (e.loc||[]).join('.') + ': ' + (e.msg||e.type)).join(' · ');
+      }} else if (typeof msg === 'object') {{
+        msg = JSON.stringify(msg);
+      }}
       out.innerHTML = '<div class="err">Sign-up failed: '
-        + (d.detail||'unknown error') + '</div>';
+        + (msg||'unknown error') + '</div>';
       btn.disabled = false;
       btn.textContent = 'Email me the sign-in link';
     }}
@@ -625,21 +661,86 @@ async function submitEmail(ev) {{
 def auth_return(code: str = "", redirect: str = "") -> HTMLResponse:
     """Lands here from the magic-link email. If a `redirect` was
     provided by the desktop client, forward to it with ?code=...
-    so the desktop's loopback server catches it. Otherwise show a
-    confirmation page."""
+    so the desktop's loopback server catches it.
+
+    For direct-browser flows (no redirect), the /signin page stashed
+    a PKCE verifier in sessionStorage — finish the exchange here +
+    drop a session token in localStorage so /dashboard, /upgrade,
+    etc. can call authenticated endpoints."""
     if redirect:
         sep = "&" if "?" in redirect else "?"
         return RedirectResponse(
             url=f"{redirect}{sep}code={code}&state=archhub",
             status_code=302,
         )
-    return HTMLResponse(
-        "<html><body style='font-family:system-ui;padding:60px;"
-        "max-width:520px;margin:0 auto;color:#ece8e0;background:#0f0f12;'>"
-        "<h1 style='font-style:italic;'>You're signed in.</h1>"
-        "<p>You can close this tab and return to ArchHub.</p>"
-        "</body></html>"
-    )
+    safe_code = "".join(c for c in code if c.isalnum() or c in "-_.")
+    html = f"""<!doctype html><html><head><title>Signing you in — ArchHub</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style>
+  body {{ margin:0; padding:60px 24px; background:#0f0f12; color:#ece8e0;
+          font-family:system-ui,-apple-system,'Segoe UI',sans-serif; }}
+  .card {{ max-width:480px; margin:0 auto; padding:36px; background:#1d1d22;
+           border:1px solid #26262d; border-radius:14px; }}
+  h1 {{ margin:0 0 8px; font-family:Georgia,serif; font-style:italic;
+        font-size:30px; letter-spacing:-0.02em; }}
+  p {{ color:#9b938a; line-height:1.55; font-size:14px; }}
+  .ok {{ margin-top:18px; padding:14px; background:rgba(126,193,142,0.1);
+         border:1px solid #7ec18e; border-radius:10px; color:#7ec18e; }}
+  .err {{ margin-top:18px; padding:14px; background:rgba(229,90,90,0.1);
+          border:1px solid #e55a5a; border-radius:10px; color:#e55a5a; }}
+  a.btn {{ display:inline-block; margin-top:14px; padding:12px 22px;
+           background:#d97757; color:#fff; border-radius:10px;
+           text-decoration:none; font-weight:500; }}
+</style></head><body>
+<div class='card' id='card'>
+  <h1>Signing you in…</h1>
+  <p>Hold on while we exchange your magic-link code for a session.</p>
+  <div id='out'></div>
+</div>
+<script>
+const code = "{safe_code}";
+(async function() {{
+  const card = document.getElementById('card');
+  const out = document.getElementById('out');
+  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
+  const email = sessionStorage.getItem('archhub_pkce_email') || '';
+  if (!code || !verifier) {{
+    card.querySelector('h1').textContent = 'Session not found';
+    out.innerHTML = '<div class="err">No PKCE verifier in this '
+      + 'browser. The magic-link was probably opened in a different '
+      + 'browser or window. Go back to /signin and try again here.</div>'
+      + '<a class="btn" href="/signin">Back to sign-in</a>';
+    return;
+  }}
+  try {{
+    const r = await fetch('/v1/auth/exchange', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify({{ code, code_verifier: verifier }}),
+    }});
+    if (!r.ok) {{
+      const d = await r.json().catch(()=>({{detail:'unknown'}}));
+      let msg = d.detail; if (typeof msg === 'object') msg = JSON.stringify(msg);
+      card.querySelector('h1').textContent = 'Exchange failed';
+      out.innerHTML = '<div class="err">' + (msg||'unknown') + '</div>'
+        + '<a class="btn" href="/signin">Try again</a>';
+      return;
+    }}
+    const j = await r.json();
+    localStorage.setItem('archhub_session_token', j.token || j.access_token || '');
+    localStorage.setItem('archhub_session_email', email);
+    sessionStorage.removeItem('archhub_pkce_verifier');
+    sessionStorage.removeItem('archhub_pkce_email');
+    card.querySelector('h1').textContent = "You're signed in.";
+    out.innerHTML = '<div class="ok">Signed in as <b>' + email + '</b>.</div>'
+      + '<a class="btn" href="/dashboard">Open dashboard →</a>'
+      + ' &nbsp; <a class="btn" style="background:transparent;border:1px solid #26262d" href="/upgrade">Choose a plan</a>';
+  }} catch(e) {{
+    out.innerHTML = '<div class="err">Network error: ' + e + '</div>';
+  }}
+}})();
+</script></body></html>"""
+    return HTMLResponse(content=html)
 
 
 @app.get("/invite", response_class=HTMLResponse)

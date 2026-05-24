@@ -497,6 +497,50 @@ class WorkflowRunner:
                     self._emit(e["id"], "cached")
             return self.node_outputs[node_id]
 
+        # Bypass — AgDR-0041 Property 6 (founder, 2026-05-24). Skip
+        # execute entirely + pass upstream inputs straight through to
+        # downstream outputs. Greedy match: out_port name == in_port
+        # name (best), else first in_port with same type, else None.
+        # No cache held; re-cooks every upstream change.
+        if node.get("bypassed") is True:
+            outputs: dict[str, Any] = {}
+            outs = node.get("outs") or []
+            ins = node.get("ins") or []
+            in_by_name = {p.get("id") or p.get("name"): p
+                          for p in ins if isinstance(p, dict)}
+            for op in outs:
+                if not isinstance(op, dict):
+                    continue
+                op_name = op.get("id") or op.get("name")
+                op_type = op.get("t") or op.get("type")
+                if op_name and op_name in inputs:
+                    outputs[op_name] = inputs[op_name]
+                    continue
+                # type-only fallback
+                for ip in ins:
+                    ip_name = ip.get("id") or ip.get("name")
+                    ip_type = ip.get("t") or ip.get("type")
+                    if ip_type and ip_type == op_type and ip_name in inputs:
+                        outputs[op_name] = inputs[ip_name]
+                        break
+                else:
+                    outputs.setdefault(op_name, None)
+            outputs.setdefault("status", "ok")
+            outputs["bypassed"] = True
+            self.node_outputs[node_id] = outputs
+            self.node_cache_keys[node_id] = new_key
+            self.node_dirty.discard(node_id)
+            for e in self._downstream_edges(node_id):
+                v = outputs.get(e["src_port"])
+                if _wire_safe(v):
+                    self.wire_bus[e["id"]] = v
+                try:
+                    preview = "○ bypassed"
+                except Exception:
+                    preview = "bypassed"
+                self._emit(e["id"], "cached", preview)
+            return outputs
+
         # Look up executor for this type.
         spec_tup = registry.get(node_type)
         if not spec_tup:

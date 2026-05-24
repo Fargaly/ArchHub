@@ -1,7 +1,7 @@
 ---
 id: AgDR-0041
 timestamp: 2026-05-24
-status: proposed
+status: executed
 founder-signoff: 2026-05-24 — picks recorded on docs/prototypes/graph-robustness-2026-05-24.html (r1–r6 all YES, r2 right-click variant)
 category: architecture
 supersedes: none
@@ -10,11 +10,23 @@ builds-on: [AgDR-0001, AgDR-0040]
 
 # AgDR-0041 — Graph robustness: swap, freeze, delete, validate, bypass
 
-> **Proposed 2026-05-24.** Founder reviewed
+> **Executed 2026-05-24.** All 6 properties shipped in one /loop
+> session. Founder reviewed
 > `docs/prototypes/graph-robustness-2026-05-24.html` and signed off
-> all 6 properties with picks recorded. Ships Week 1 alongside Tier 0
-> ComfyUI + DashScope connectors — it is the substrate the 4 use
-> cases (Revit→render, photo→mass, drone→walls, text→plan) run on.
+> r1–r6 (r2 right-click variant). Substrate landed before Tier 0
+> ComfyUI + DashScope connectors as planned — the 4 use cases
+> (Revit→render, photo→mass, drone→walls, text→plan) run on top.
+>
+> Shipping commits (all 2026-05-24):
+> - P3 + P6 tools + UI badges      · `8fda8b2`
+> - P6 runner bypass                · `10b0f76`
+> - P1 typed host nodes             · `2406c4a`
+> - P5 structured validator         · `c348ffe`
+> - P2 swap suggestions             · `c99f918`
+> - P4 delete decision matrix       · `9c6e870`
+>
+> Backend complete. UI surfaces (GraphHealthPanel · BrokenWireDialog ·
+> swap-with menu) are next-session work.
 
 ## Context
 

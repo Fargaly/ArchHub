@@ -84,7 +84,10 @@ app.include_router(companies.router)
 # ---------------------------------------------------------------------------
 class RegisterReq(BaseModel):
     email: EmailStr
-    code_challenge: str = Field(min_length=20, max_length=200)
+    # Allow empty challenge for browser-direct flows (see
+    # db.consume_code 2026-05-24 — code-only auth, no PKCE).
+    # Desktop client still sends a real 20+ char challenge.
+    code_challenge: str = Field(default="", max_length=200)
     redirect: str = ""
     # Optional customer-profile fields captured by the landing form.
     # All optional — magic-link sign-in still works without them.

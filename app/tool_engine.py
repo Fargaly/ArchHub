@@ -1166,6 +1166,37 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "node_freeze"),
     },
+    # Tier 1 — ComfyUI workflow → Capability Node spec auto-import.
+    # Founder's 2026-05-24 assimilation: paste a JSON, get a typed
+    # ArchHub node back that wraps comfyui.run_workflow under the
+    # hood. Pass register=true to also persist it to the library.
+    {
+        "name": "library_import_comfyui_workflow",
+        "family": "_local",
+        "description": (
+            "Import a ComfyUI API-format workflow JSON as an ArchHub "
+            "Capability Node. Open input ports (CLIPTextEncode, "
+            "LoadImage, Primitive*) become the node's inputs; "
+            "SaveImage / PreviewImage / VHS_VideoCombine sinks become "
+            "its outputs. Pass register=true to also register the spec "
+            "with the library; otherwise just returns the spec for "
+            "caller inspection."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workflow":     {"description": "ComfyUI workflow JSON (object or string)."},
+                "type_name":    {"type": "string",
+                                  "description": "Capability type id, e.g. 'comfy.archviz_v1'."},
+                "display_name": {"type": "string"},
+                "description":  {"type": "string"},
+                "category":     {"type": "string", "default": "render"},
+                "register":     {"type": "boolean", "default": False},
+            },
+            "required": ["workflow", "type_name"],
+        },
+        "endpoint": ("_local", "library_import_comfyui_workflow"),
+    },
     # AgDR-0041 Property 2 — type-compatible swap suggestions.
     # Powers the right-click "swap with…" menu by returning nodes
     # whose port types match the target's signature.
@@ -1970,6 +2001,53 @@ class ToolEngine:
             if handler == "library_delete_node_type":
                 result = _lib.delete_node_type(args.get("node_type", ""))
                 return {"status": "ok", **result}
+
+            if handler == "library_import_comfyui_workflow":
+                # Tier 1 — paste a ComfyUI JSON, get a Capability Node
+                # spec back. Caller can then library_create_node_type
+                # to register it, or inspect first.
+                try:
+                    from workflows.comfyui_import import (
+                        analyze_workflow, to_capability_spec)
+                except Exception as ex:
+                    return {"status": "error",
+                            "error": f"comfyui_import unavailable: {ex}"}
+                wf = args.get("workflow")
+                if wf is None:
+                    return {"status": "error",
+                            "error": "library_import_comfyui_workflow "
+                                     "needs `workflow` (JSON object or string)"}
+                type_name = str(args.get("type_name", "") or "").strip()
+                if not type_name:
+                    return {"status": "error",
+                            "error": "type_name required (e.g. "
+                                     "'comfy.archviz_v1')"}
+                try:
+                    summary = analyze_workflow(wf)
+                    spec = to_capability_spec(
+                        workflow=wf,
+                        type_name=type_name,
+                        display_name=str(args.get("display_name", "") or ""),
+                        description=str(args.get("description", "") or ""),
+                        category=str(args.get("category", "render") or "render"),
+                    )
+                except ValueError as ex:
+                    return {"status": "error", "error": str(ex)}
+                register_now = bool(args.get("register", False))
+                registered = False
+                if register_now:
+                    try:
+                        _lib.create_node_type(spec)
+                        registered = True
+                    except _lib.RegistrationError as ex:
+                        return {"status": "error",
+                                "error": f"spec validator rejected: {ex}",
+                                "violations": ex.violations,
+                                "spec": spec}
+                    except _lib.DuplicateTypeError:
+                        registered = False  # already exists, spec returned
+                return {"status": "ok", "spec": spec, "summary": summary,
+                        "registered": registered}
 
             if handler == "library_suggest_swaps":
                 # AgDR-0041 P2 — type-compatible swap suggestions over

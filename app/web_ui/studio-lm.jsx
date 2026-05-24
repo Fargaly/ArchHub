@@ -5929,6 +5929,34 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             }
           }}
           onClose={() => setNodeMenu(null)}
+          onSwap={(newType, suggestion) => {
+            // AgDR-0041 D2·A 3/3 — swap node type in place. Preserves
+            // node id, position, wires; rewrites type + ins/outs from
+            // the suggestion (which carries the new port shape).
+            const idx = (LM_GRAPH.nodes || []).findIndex(n => n.id === nodeMenu.id);
+            if (idx < 0) { flashToast('Node not found', 'err'); return; }
+            const n = LM_GRAPH.nodes[idx];
+            // Suggestion ports come in as `in`/`out` arrays of strings
+            // (port type names) per library_suggest_swaps schema. Build
+            // {id, label, t} entries the canvas understands; fall back
+            // to the node's existing port ids when names align.
+            const _mapPort = (oldList, newTypes) => {
+              const list = newTypes || [];
+              return list.map((t, i) => {
+                const existing = (oldList || [])[i];
+                const id = (existing && existing.id) || `p${i}`;
+                return { id, label: id, t: String(t || 'any').toLowerCase() };
+              });
+            };
+            n.type = newType;
+            n.custom_type = newType;
+            if (suggestion && suggestion.in)  n.ins  = _mapPort(n.ins,  suggestion.in);
+            if (suggestion && suggestion.out) n.outs = _mapPort(n.outs, suggestion.out);
+            n.title = newType.split('.').slice(-1)[0] || n.title;
+            n.sub = `swap → ${newType}`;
+            saveCurrentGraph(); bumpGraph && bumpGraph();
+            flashToast(`Swapped → ${newType}`);
+          }}
           onRun={() => { bridgeCall('run_node', currentSid(), nodeMenu.id, JSON.stringify(LM_GRAPH)); flashToast('Running node…'); }}
           onFreeze={() => {
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
@@ -6449,7 +6477,7 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
 };
 
 // ─── Right-click on node → action menu (founder demand #8) ─────────
-const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onRename, onDuplicate, onDisconnect, onDelete, onProperties, onSaveSkill, onExpand, onDisentangle, onFlattenToCode, onClose }) => {
+const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onBypass, onRename, onDuplicate, onDisconnect, onDelete, onProperties, onSaveSkill, onExpand, onDisentangle, onFlattenToCode, onSwap, onClose }) => {
   React.useEffect(() => {
     const dismiss = () => onClose();
     document.addEventListener('click', dismiss);
@@ -6465,6 +6493,40 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onRename, onDupl
   // is a Shared skill — converts the reference into an inline Private copy.
   const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeId);
   const isSharedSkill = node && node.kind === 'skill' && node.skill_mode === 'shared';
+
+  // AgDR-0041 D2·A 3/3 — swap-with section. Loads type-compatible
+  // alternatives lazily on menu open. Resolves the focused node's
+  // registered type (custom_type or kind) and asks the bridge for
+  // alternatives whose port shape matches. Empty until response lands.
+  const [swaps, setSwaps] = React.useState(null);  // null=loading, []=none
+  React.useEffect(() => {
+    let cancelled = false;
+    const targetType = (node && (node.custom_type || node.type || node.kind)) || '';
+    if (!targetType) { setSwaps([]); return; }
+    (async () => {
+      try {
+        const res = await bridgeAsync('library_suggest_swaps', targetType, 5);
+        if (cancelled) return;
+        // library_suggest_swaps wraps the list under `results`. Older
+        // call sites checked for items/alternatives/suggestions/etc.;
+        // accept those too as a defensive fallback.
+        let items = [];
+        if (res && typeof res === 'object') {
+          items = res.results || res.items || res.alternatives
+                  || res.suggestions || res.candidates || res.swaps || [];
+        }
+        // Skip echoing the SAME type back as a swap target.
+        items = (items || []).filter(s => {
+          const t = s.type || s.id || s.name;
+          return t && t !== targetType;
+        });
+        setSwaps(items);
+      } catch (e) {
+        setSwaps([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [nodeId]);
   // SLICE L (AgDR-0020): Flatten-to-code is offered when 2+ nodes
   // are selected AND every selected node is a flattenable type
   // (math.op / text.op / data.constant / data.passthrough).
@@ -6517,6 +6579,53 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onRename, onDupl
           <span style={{ flex:1 }}>{it.t}</span>
         </button>
       ))}
+      {/* AgDR-0041 D2·A 3/3 — swap-with section. Hidden until suggestions
+          arrive; renders inline once bridge responds with a non-empty list. */}
+      {swaps && swaps.length > 0 && (
+        <div data-testid="node-menu-swap-section">
+          <div style={{ height:1, background:LM.lineSoft, margin:'4px 4px' }}/>
+          <div style={{ padding:'4px 12px', fontFamily:LM.mono, fontSize:9,
+            color:LM.inkMuted, letterSpacing:'0.12em', textTransform:'uppercase' }}>
+            swap with…
+          </div>
+          {swaps.map((s, i) => {
+            const t = s.type || s.id || s.name;
+            const score = s.score != null ? s.score
+                        : (s.match != null ? s.match : null);
+            // library_suggest_swaps returns raw scores (port-match
+            // weight, typically 0-100ish). 0-1 ranges treated as
+            // pre-normalised percentages.
+            const scorePct = (score != null && score <= 1)
+                              ? Math.round(score * 100)
+                              : (score != null ? Math.round(score) : null);
+            return (
+              <button key={i}
+                onClick={() => { onSwap && onSwap(t, s); onClose(); }}
+                style={{
+                  width:'100%', display:'flex', alignItems:'center', gap:10,
+                  padding:'5px 10px 5px 24px', background:'transparent',
+                  border:0, borderRadius:4, cursor:'pointer', color:LM.ink,
+                  fontFamily:LM.mono, fontSize:11, textAlign:'left',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <span style={{ flex:1 }}>{t}</span>
+                {scorePct != null && (
+                  <span style={{ fontSize:10, color:LM.inkMuted }}>{scorePct}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {swaps === null && (
+        // Loading skeleton — keeps the menu height steady while the
+        // bridge call resolves. 200ms typical.
+        <div style={{ padding:'4px 12px', fontFamily:LM.mono, fontSize:9,
+          color:LM.inkMuted, letterSpacing:'0.12em' }}>
+          loading swaps…
+        </div>
+      )}
     </div>
   );
 };

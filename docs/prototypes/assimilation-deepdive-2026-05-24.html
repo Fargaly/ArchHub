@@ -1,0 +1,1590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — assimilation deep-dive · per-step prototypes · 2026-05-24</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --aliyun:#ff6a00; --comfy:#7a3cc9;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1,h2,h3,h4{font-weight:600;letter-spacing:-0.01em}
+h1{font-size:28px;line-height:1.15;margin-bottom:8px}
+h2{font-size:22px;margin-bottom:14px}
+h3{font-size:16px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+strong{color:var(--ink)}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 9px;border-radius:8px;font-size:11px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+nav.top a.chip.h{color:var(--accent)}
+
+header.head{max-width:1280px;margin:0 auto;padding:48px 24px 16px}
+.recap{background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:18px 22px;margin-top:18px;font-size:12px;color:var(--ink2)}
+.recap b{color:var(--ink)}
+.recap .row{display:flex;gap:18px;margin-bottom:6px;font-family:ui-monospace,monospace}
+.recap .row span{padding:2px 8px;background:var(--bg3);border-radius:4px;font-size:11px}
+.mandate{background:linear-gradient(135deg,rgba(255,94,94,0.08),rgba(232,116,58,0.05));
+  border:1px solid rgba(255,94,94,0.3);border-radius:10px;padding:14px 18px;margin-top:14px}
+.mandate b{color:var(--err);text-transform:uppercase;letter-spacing:0.08em;font-size:11px;display:block;margin-bottom:6px}
+
+section.proto{max-width:1280px;margin:0 auto;padding:48px 24px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+
+/* — refined redesign mocks — */
+.alt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+.alt-c{background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.alt-c .alt-h{padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--ink2);display:flex;align-items:center;gap:6px}
+.alt-c .alt-h b{color:var(--ink);font-weight:600}
+.alt-c .alt-h .num{background:var(--accent);color:#fff;width:16px;height:16px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.alt-c .alt-body{padding:24px 16px;min-height:200px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--ink2)}
+.alt-c .alt-foot{padding:8px 12px;border-top:1px solid var(--line);font-size:10px;color:var(--ink3);font-style:italic}
+
+/* — fake home mocks for A — */
+.alt-home{width:100%;height:200px;border-radius:8px;background:var(--bg);
+  border:1px solid var(--line);padding:12px;display:flex;flex-direction:column;gap:6px}
+.alt-home .fake-nav{height:18px;background:var(--bg3);border-radius:4px;margin-bottom:4px}
+.alt-home .fake-h{font-size:14px;color:var(--ink);font-weight:500}
+.alt-home .fake-input{background:var(--bg3);border:1px solid var(--line);border-radius:6px;
+  height:32px;flex:1;font-size:10px;color:var(--ink3);padding:8px}
+.alt-home .fake-chips{display:flex;gap:4px;flex-wrap:wrap}
+.alt-home .fake-chips span{padding:3px 7px;background:var(--bg3);border-radius:999px;font-size:9px;color:var(--ink3)}
+.alt-home.split{flex-direction:row;align-items:stretch}
+.alt-home.split .left{flex:1;display:flex;flex-direction:column;gap:6px}
+.alt-home.split .right{width:38%;border-left:1px solid var(--line);padding-left:10px;display:flex;flex-direction:column;gap:4px}
+.alt-home.split .right .r-card{background:var(--bg3);border-radius:4px;height:30px;padding:4px;font-size:9px;color:var(--ink3)}
+
+/* — number tier compare — */
+.num-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+.num-c{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:18px}
+.num-c h4{color:var(--accent);text-transform:none;letter-spacing:0;font-size:14px;margin-bottom:14px}
+.num-c .nrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line);font-family:ui-monospace,monospace;font-size:12px}
+.num-c .nrow .l{color:var(--ink3)}
+.num-c .nrow .r{color:var(--ink);font-weight:600}
+.num-c .ncomment{margin-top:10px;font-size:11px;color:var(--ink2);font-style:italic}
+
+/* — node catalog — */
+.fam-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+.fam{background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.fam-h{padding:12px 16px;display:flex;align-items:center;gap:10px;background:var(--bg3);border-bottom:1px solid var(--line)}
+.fam-h .ic{width:28px;height:28px;border-radius:6px;background:var(--accent);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;font-weight:700}
+.fam-h .ic.alibaba{background:var(--aliyun)}
+.fam-h .ic.comfy{background:var(--comfy)}
+.fam-h .ic.host{background:var(--accent)}
+.fam-h .ic.logic{background:var(--blue)}
+.fam-h .ic.view{background:var(--teal)}
+.fam-h .ic.mesh{background:var(--purple)}
+.fam-h .ic.render{background:var(--pink)}
+.fam-h .ic.anim{background:var(--warn);color:#000}
+.fam-h .ic.tex{background:#9a6f3c;color:#fff}
+.fam-h .info{flex:1}
+.fam-h .info h3{font-size:14px;margin-bottom:2px}
+.fam-h .info .sub{font-size:11px;color:var(--ink3)}
+.fam-h .count{padding:3px 8px;background:var(--bg);border-radius:4px;font-size:11px;
+  color:var(--ink2);font-family:ui-monospace,monospace}
+.fam-body{padding:8px 0}
+.fam-row{display:grid;grid-template-columns:200px 1fr 80px;gap:10px;padding:6px 16px;align-items:center;font-size:11px;border-top:1px solid var(--line)}
+.fam-row:first-child{border-top:0}
+.fam-row .nm{font-family:ui-monospace,monospace;color:var(--ink);font-weight:500;font-size:11px}
+.fam-row .desc{color:var(--ink2);font-size:11px;line-height:1.4}
+.fam-row .src{font-size:9px;text-transform:uppercase;letter-spacing:0.06em;
+  text-align:right;font-family:ui-monospace,monospace}
+.fam-row .src.new{color:var(--ok)}
+.fam-row .src.have{color:var(--ink3)}
+.fam-row .src.comfy{color:var(--comfy)}
+.fam-row .src.alibaba{color:var(--aliyun)}
+.fam-row .src.tencent{color:var(--blue)}
+
+/* — per-step prototype — */
+.step-stage{display:grid;grid-template-columns:1fr 320px;gap:18px;margin-top:18px}
+.step-trail{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px;
+  position:sticky;top:78px;align-self:start;font-size:11px}
+.step-trail h4{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px;margin-bottom:12px}
+.step-trail .tstep{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.step-trail .tstep:hover{background:var(--bg3)}
+.step-trail .tstep .num{width:20px;height:20px;border-radius:50%;background:var(--bg3);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-family:ui-monospace,monospace;flex-shrink:0}
+.step-trail .tstep .lbl{font-size:11px;color:var(--ink2)}
+
+.step{background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:18px;margin-bottom:18px}
+.step .step-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.step .step-h .num{background:var(--accent);color:#fff;width:24px;height:24px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0}
+.step .step-h h3{font-size:15px;color:var(--ink)}
+.step .step-h code{margin-left:auto;font-size:11px}
+
+.step .body{display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start}
+.step .body .canvas-mock{background:var(--bg);border:1px solid var(--line);border-radius:10px;
+  padding:14px;min-height:140px;font-family:ui-monospace,monospace;font-size:11px;color:var(--ink2);
+  line-height:1.6;position:relative;overflow:hidden}
+.step .body .canvas-mock .node-mock{background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;padding:8px 10px;display:inline-block;min-width:120px;margin:0 6px 6px 0;
+  border-left:3px solid var(--accent)}
+.step .body .canvas-mock .node-mock.host{border-left-color:var(--accent)}
+.step .body .canvas-mock .node-mock.alibaba{border-left-color:var(--aliyun);background:rgba(255,106,0,0.06)}
+.step .body .canvas-mock .node-mock.comfy{border-left-color:var(--comfy);background:rgba(122,60,201,0.06)}
+.step .body .canvas-mock .node-mock.data{border-left-color:var(--blue)}
+.step .body .canvas-mock .node-mock.out{border-left-color:var(--ok)}
+.step .body .canvas-mock .node-mock .nh{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em}
+.step .body .canvas-mock .node-mock .nv{color:var(--ink);font-weight:600;font-size:11px;margin-top:2px}
+.step .body .canvas-mock .arr{color:var(--ink3);font-size:14px;vertical-align:middle}
+.step .body .canvas-mock .selected{box-shadow:0 0 0 2px var(--accent);background:rgba(232,116,58,0.1)}
+
+.step .body .inspector{background:var(--bg);border:1px solid var(--line);border-radius:10px;
+  padding:0;font-size:11px;color:var(--ink2);overflow:hidden}
+.step .body .inspector .insp-h{padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--ink);font-weight:600;display:flex;align-items:center;gap:6px}
+.step .body .inspector .insp-h .tag{font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:0.06em}
+.step .body .inspector .insp-tabs{display:flex;background:var(--bg3);border-bottom:1px solid var(--line)}
+.step .body .inspector .insp-tabs span{padding:6px 10px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;cursor:pointer}
+.step .body .inspector .insp-tabs span.on{color:var(--accent);border-bottom:2px solid var(--accent)}
+.step .body .inspector .insp-body{padding:12px}
+.step .body .inspector .insp-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line);font-size:11px}
+.step .body .inspector .insp-row .l{color:var(--ink3)}
+.step .body .inspector .insp-row .r{color:var(--ink);font-family:ui-monospace,monospace;font-weight:500}
+.step .body .inspector .insp-row.title{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--accent);margin-top:6px;border-bottom:0;padding-bottom:2px}
+.step .body .inspector .insp-action{margin-top:10px;background:var(--accent);color:#fff;border:0;
+  width:100%;padding:8px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600}
+
+.step .step-detail{margin-top:14px;padding:10px 14px;background:var(--bg3);border-radius:8px;
+  font-size:11px;color:var(--ink2);line-height:1.5}
+.step .step-detail b{color:var(--ink)}
+
+/* — assimilation map — */
+.amap{background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:18px;margin-top:14px}
+.amap table{width:100%;font-size:11px;color:var(--ink2);border-collapse:collapse}
+.amap thead tr{color:var(--ink3);text-align:left}
+.amap th{padding:8px 10px;text-transform:uppercase;letter-spacing:0.06em;font-size:10px;font-weight:600}
+.amap td{padding:8px 10px;border-top:1px solid var(--line)}
+.amap td code{font-size:10px}
+.amap td .pkg{display:inline-block;padding:2px 7px;background:var(--bg3);border-radius:4px;
+  font-size:10px;color:var(--accent2);font-family:ui-monospace,monospace}
+
+.verdict{margin-top:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.verdict label{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}
+.verdict label input{accent-color:var(--accent)}
+.verdict label:hover{color:var(--ink)}
+.verdict .note{margin-left:auto;font-size:11px;color:var(--ink3);font-style:italic}
+
+@media(max-width:1000px){
+  .alt-grid,.num-grid,.fam-grid{grid-template-columns:1fr}
+  .step-stage{grid-template-columns:1fr}
+  .step .body{grid-template-columns:1fr}
+  .step-trail{position:static}
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="brand">Arch<span>Hub</span> · assimilation deep-dive</div>
+  <a class="chip h" href="#picks">Recap</a>
+  <a class="chip" href="#refA">A · home (3 alts)</a>
+  <a class="chip" href="#refB">B · hero-only</a>
+  <a class="chip" href="#refC">C · numbers</a>
+  <a class="chip" href="#refD">D · Inspector tab</a>
+  <a class="chip" href="#catalog">Node catalog · 100+</a>
+  <a class="chip" href="#stepA">Use A · per-step</a>
+  <a class="chip" href="#stepB">Use B · per-step</a>
+  <a class="chip" href="#stepD">Use D · refined</a>
+  <a class="chip" href="#asm">Assimilation map</a>
+  <a class="chip" href="#go">Go / no-go</a>
+</nav>
+
+<header class="head">
+  <div class="tagline">DEEP-DIVE · per-step prototype · 2026-05-24</div>
+  <h1>Every step prototyped. Then we build.</h1>
+  <p>Founder feedback: <i>"you still giving me wrapped up shit when I told
+    you examples only I expected more from you. I need to see in details
+    what you gave was very general."</i> Locked. Here's the deep version.</p>
+
+  <div class="recap" id="picks">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);margin-bottom:10px">Your picks</div>
+    <div class="row"><span>A:REFINE</span><span>B:REFINE</span><span>C:REFINE</span><span>D:REFINE</span><span>E:NO</span></div>
+    <div class="row"><span>vtier:full-0→1→2</span><span>va:REFINE</span><span>vb:REFINE</span><span>vc:NO</span><span>vd:REFINE Revit-only</span><span>vorder:4-weeks</span></div>
+    <div style="margin-top:12px"><b>Translation</b> → nothing ships before this doc; every refined node + every step + node catalog + assimilation map → then you sign each off → I AgDR + build.</div>
+  </div>
+
+  <div class="mandate">
+    <b>Assimilation mandate (founder, 2026-05-24)</b>
+    Don't always redesign. Assimilate into existing UI surfaces first.
+    Right Inspector panel for node config. Existing palette for new node families.
+    Existing canvas for new wires. Full redesign only when forced.
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<!--          A · refined home (3 layout alternatives)             -->
+<!-- ============================================================ -->
+<section class="proto" id="refA">
+  <div class="tagline">refined A · home</div>
+  <h2>3 home layouts to pick from</h2>
+  <p>You said REFINE — different layout. Three options below. All keep
+    the "What are we building today?" Composer-first principle but vary
+    the surrounding density.</p>
+
+  <div class="alt-grid">
+    <div class="alt-c">
+      <div class="alt-h"><span class="num">1</span><b>Centered minimal</b> — TapNow-style</div>
+      <div class="alt-body">
+        <div class="alt-home">
+          <div class="fake-nav"></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+            <div class="fake-h">What are we building today?</div>
+            <div class="fake-input" style="width:80%;height:48px">Describe…</div>
+            <div class="fake-chips" style="justify-content:center">
+              <span>Revit schedule</span><span>QTO PDF</span><span>+4</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="alt-foot">Empty real estate · no clutter · no recents below the fold</div>
+    </div>
+
+    <div class="alt-c">
+      <div class="alt-h"><span class="num">2</span><b>Split · prompt + recents</b></div>
+      <div class="alt-body">
+        <div class="alt-home split">
+          <div class="left">
+            <div class="fake-nav"></div>
+            <div class="fake-h">What are we building today?</div>
+            <div class="fake-input">Describe…</div>
+            <div class="fake-chips"><span>Revit schedule</span><span>QTO PDF</span><span>+4</span></div>
+          </div>
+          <div class="right">
+            <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px">Recent</div>
+            <div class="r-card">BBC4 QC reconcile</div>
+            <div class="r-card">BH3D revisions</div>
+            <div class="r-card">Tower 2 takeoff</div>
+            <div class="r-card">PDF rev Skill</div>
+          </div>
+        </div>
+      </div>
+      <div class="alt-foot">Composer dominates left · recents always visible right · IDE feel</div>
+    </div>
+
+    <div class="alt-c">
+      <div class="alt-h"><span class="num">3</span><b>Stacked · current + recents row</b></div>
+      <div class="alt-body">
+        <div class="alt-home">
+          <div class="fake-nav"></div>
+          <div class="fake-h" style="text-align:center">What are we building today?</div>
+          <div class="fake-input">Describe…</div>
+          <div class="fake-chips" style="justify-content:center"><span>Revit schedule</span><span>QTO PDF</span><span>+4</span></div>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            <div class="r-card" style="flex:1;background:var(--bg3);height:30px;padding:4px;font-size:9px;color:var(--ink3);border-radius:4px">BBC4</div>
+            <div class="r-card" style="flex:1;background:var(--bg3);height:30px;padding:4px;font-size:9px;color:var(--ink3);border-radius:4px">BH3D</div>
+            <div class="r-card" style="flex:1;background:var(--bg3);height:30px;padding:4px;font-size:9px;color:var(--ink3);border-radius:4px">Tower 2</div>
+          </div>
+        </div>
+      </div>
+      <div class="alt-foot">Hero centered · recents as one row · Skills 1 click deeper</div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="rA"/> Pick 1 — Centered minimal</label>
+    <label><input type="radio" name="rA"/> Pick 2 — Split · prompt + recents</label>
+    <label><input type="radio" name="rA"/> Pick 3 — Stacked · hero + row</label>
+    <label><input type="radio" name="rA"/> None — different again</label>
+    <div class="note">Mounts in <code>studio-lm.jsx</code> Home tab · replaces splash</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          B · hero-only landing                                -->
+<!-- ============================================================ -->
+<section class="proto" id="refB">
+  <div class="tagline">refined B · landing</div>
+  <h2>Hero only — no canvas demo, no 3D, just kill the splash</h2>
+  <p>You said REFINE — only top hero, defer rest. Cuts 5–7 days of work
+    down to 1 day. The full live-canvas demo gets parked until v1.5.</p>
+
+  <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:48px 32px;text-align:center;margin-top:14px">
+    <div style="display:inline-block;padding:4px 12px;background:rgba(232,116,58,0.15);
+      border:1px solid rgba(232,116,58,0.3);border-radius:999px;font-size:11px;
+      color:var(--accent2);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:18px">
+      AEC graph workspace · v1.4</div>
+    <h1 style="font-size:42px;line-height:1.1;margin-bottom:14px">
+      Wire Revit. Wire AutoCAD.<br/>Wire <span style="color:var(--accent);font-style:italic">your AI agent.</span></h1>
+    <p style="font-size:15px;color:var(--ink2);max-width:560px;margin:0 auto 24px">
+      A graph-first canvas where typed wires move real data between
+      hosts, LLMs, and your filters. Local-first. BYO key.</p>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button style="background:var(--accent);color:#fff;border:0;padding:11px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Download v1.4 · 64-bit</button>
+      <button style="background:transparent;border:1px solid var(--line);color:var(--ink);padding:11px 22px;border-radius:8px;font-size:13px;cursor:pointer">Watch 60s demo</button>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="rB"/> YES — exactly this</label>
+    <label><input type="radio" name="rB"/> Add static screenshot of canvas below hero</label>
+    <label><input type="radio" name="rB"/> Add a 60s GIF loop below hero</label>
+    <label><input type="radio" name="rB"/> Skip — leave landing as-is</label>
+    <div class="note">~1 day · pure marketing copy + button swap in <code>landing/index.html</code></div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          C · number alternatives                              -->
+<!-- ============================================================ -->
+<section class="proto" id="refC">
+  <div class="tagline">refined C · pricing numbers</div>
+  <h2>Three pricing alternatives — same shape, different numbers</h2>
+  <p>You said REFINE — change numbers. Same TapNow-style ladder structure
+    (slider in Studio, credits never expire, top-up bonus). The variable
+    is the ladder values.</p>
+
+  <div class="num-grid">
+    <div class="num-c">
+      <h4>Option 1 — Aggressive ($5 / $15 / $39)</h4>
+      <div class="nrow"><span class="l">Free</span><span class="r">$0</span></div>
+      <div class="nrow"><span class="l">Solo (1 seat)</span><span class="r">$5 / mo</span></div>
+      <div class="nrow"><span class="l">Studio (1 seat, slider)</span><span class="r">$15 / mo</span></div>
+      <div class="nrow"><span class="l">Firm (per seat)</span><span class="r">$39 / seat / mo</span></div>
+      <div class="nrow"><span class="l">Annual save</span><span class="r">15–40 %</span></div>
+      <div class="ncomment">Cheapest in market. Land grab strategy.
+        Margin still 90 %+ on local-first features. Risk: looks too
+        cheap to be serious for enterprise.</div>
+    </div>
+
+    <div class="num-c">
+      <h4>Option 2 — Hybrid ($5 / $25 / $79)</h4>
+      <div class="nrow"><span class="l">Free</span><span class="r">$0</span></div>
+      <div class="nrow"><span class="l">Solo</span><span class="r">$5 / mo</span></div>
+      <div class="nrow"><span class="l">Studio</span><span class="r">$25 / mo</span></div>
+      <div class="nrow"><span class="l">Firm</span><span class="r">$79 / seat / mo</span></div>
+      <div class="nrow"><span class="l">Annual save</span><span class="r">15–40 %</span></div>
+      <div class="ncomment">$5 entry honored. Studio matches Hypar
+        baseline ($25). Firm keeps the original strategy ($79). Best
+        of both — cheap entry, serious top-tier.</div>
+    </div>
+
+    <div class="num-c">
+      <h4>Option 3 — Strict 3× ($5 / $15 / $45)</h4>
+      <div class="nrow"><span class="l">Free</span><span class="r">$0</span></div>
+      <div class="nrow"><span class="l">Solo</span><span class="r">$5 / mo</span></div>
+      <div class="nrow"><span class="l">Studio</span><span class="r">$15 / mo</span></div>
+      <div class="nrow"><span class="l">Firm</span><span class="r">$45 / seat / mo</span></div>
+      <div class="nrow"><span class="l">Annual save</span><span class="r">15–40 %</span></div>
+      <div class="ncomment">Clean geometric ladder. Lowest top-tier.
+        Easiest upsell math. Sacrifices firm margin.</div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="rC"/> Option 1 — aggressive ($5 / $15 / $39)</label>
+    <label><input type="radio" name="rC"/> Option 2 — hybrid ($5 / $25 / $79)</label>
+    <label><input type="radio" name="rC"/> Option 3 — strict 3× ($5 / $15 / $45)</label>
+    <label><input type="radio" name="rC"/> Different numbers</label>
+    <div class="note">Pick → I create Stripe products + prices · Anthropic fund stays deferred</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          D · Inspector "Plan" tab (slim)                     -->
+<!-- ============================================================ -->
+<section class="proto" id="refD">
+  <div class="tagline">refined D · Inspector "Plan" tab</div>
+  <h2>Assimilate into existing right-panel Inspector. Less detail.</h2>
+  <p>You said REFINE — less detail + assimilate. Below: existing
+    Inspector for a selected <code>ai.plan</code> node, with a new
+    "Plan" tab added between "Params" and "Output". Three rows max:
+    elapsed time, plan as line, decision pills. Click to expand for
+    table.</p>
+
+  <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:24px;margin-top:14px">
+    <div style="display:grid;grid-template-columns:1fr 320px;gap:18px;align-items:start">
+      <!-- canvas with selected node -->
+      <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:20px;min-height:240px;
+                  background-image:radial-gradient(circle,var(--line) 1px,transparent 1px);background-size:20px 20px">
+        <div style="display:inline-block;background:var(--bg3);border:2px solid var(--accent);border-radius:8px;padding:10px 14px;margin-left:80px;margin-top:30px;box-shadow:0 0 0 4px rgba(232,116,58,0.15)">
+          <div style="font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em">ai · selected</div>
+          <div style="font-size:12px;color:var(--ink);font-family:ui-monospace,monospace;font-weight:600;margin-top:2px">ai.plan</div>
+          <div style="font-size:10px;color:var(--ink3);margin-top:3px">turn 14 · cached</div>
+        </div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:60px;text-align:center;font-style:italic">canvas (existing) — node selected highlights Inspector</div>
+      </div>
+
+      <!-- Inspector with new Plan tab -->
+      <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden">
+        <div style="padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink);font-weight:600">
+          Inspector · ai.plan
+        </div>
+        <div style="display:flex;background:var(--bg3);border-bottom:1px solid var(--line)">
+          <span style="padding:7px 11px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em">Inputs</span>
+          <span style="padding:7px 11px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em">Outputs</span>
+          <span style="padding:7px 11px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em">Params</span>
+          <span style="padding:7px 11px;font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid var(--accent);font-weight:700">Plan</span>
+        </div>
+        <div style="padding:14px;font-size:11px;color:var(--ink2)">
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)">
+            <span>Elapsed</span><span style="color:var(--ok);font-family:ui-monospace,monospace">2.3 s</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)">
+            <span>Steps</span><span style="color:var(--ink);font-family:ui-monospace,monospace">4 / 5 done</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line)">
+            <span>Cost</span><span style="color:var(--ink);font-family:ui-monospace,monospace">$0.003 · cached</span>
+          </div>
+          <div style="margin-top:12px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Decisions</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">
+            <span style="font-size:10px;padding:2px 7px;background:rgba(95,200,121,0.15);color:var(--ok);border-radius:4px;font-family:ui-monospace,monospace">read_walls</span>
+            <span style="font-size:10px;padding:2px 7px;background:rgba(95,200,121,0.15);color:var(--ok);border-radius:4px;font-family:ui-monospace,monospace">group_by</span>
+            <span style="font-size:10px;padding:2px 7px;background:rgba(95,200,121,0.15);color:var(--ok);border-radius:4px;font-family:ui-monospace,monospace">qto.price</span>
+            <span style="font-size:10px;padding:2px 7px;background:rgba(106,155,204,0.15);color:var(--blue);border-radius:4px;font-family:ui-monospace,monospace">text.template</span>
+            <span style="font-size:10px;padding:2px 7px;background:var(--bg3);color:var(--ink3);border-radius:4px;font-family:ui-monospace,monospace">excel.write</span>
+          </div>
+          <button style="width:100%;padding:7px;background:var(--bg3);border:1px solid var(--line);color:var(--accent);font-size:11px;border-radius:6px;cursor:pointer">▸ Open full table</button>
+          <button style="width:100%;padding:7px;background:var(--accent);color:#fff;border:0;font-size:11px;border-radius:6px;cursor:pointer;margin-top:6px">▶ Replay this turn</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="rD"/> YES — exactly this slim Inspector tab</label>
+    <label><input type="radio" name="rD"/> REFINE — different field set</label>
+    <label><input type="radio" name="rD"/> NO</label>
+    <div class="note">~1 day · new tab in existing <code>NodeInspector</code> React component</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          NODE CATALOG — comprehensive                          -->
+<!-- ============================================================ -->
+<section class="proto" id="catalog">
+  <div class="tagline">node catalog · what we get from ComfyUI ecosystem</div>
+  <h2>10 node families · 100+ nodes to absorb</h2>
+  <p>What you said: <i>"need to see in details … graph nodes, sketch nodes,
+    viewer nodes, things from ComfyUI assimilation, logic"</i>. Here's
+    every node family, drawn from the actual ComfyUI ecosystem +
+    Alibaba DashScope. Marked <span style="color:var(--ok)">HAVE</span> =
+    already in ArchHub, <span style="color:var(--comfy)">COMFY</span> = port from
+    ComfyUI registry, <span style="color:var(--aliyun)">ALI</span> =
+    DashScope wrap, <span style="color:var(--blue)">TENCENT</span> = open-source model.</p>
+
+  <div class="fam-grid">
+
+    <!-- 1. INPUT -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic">▷</div><div class="info"><h3>1 · Input</h3><div class="sub">user-supplied seed values</div></div><div class="count">9 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">input.text</div><div class="desc">String / paragraph · multiline editor in Inspector</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">input.number</div><div class="desc">Float or int · with min/max/step in Inspector</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">input.boolean</div><div class="desc">Toggle switch in Inspector</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">input.file</div><div class="desc">File-picker · path-typed</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">input.image</div><div class="desc">Drag-drop image · PNG / JPG / WEBP</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">input.color</div><div class="desc">Color picker · hex output</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">input.slider</div><div class="desc">Range with continuous emit</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">input.dropdown</div><div class="desc">Enum list · param-driven options</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">input.vec3</div><div class="desc">XYZ vector · for 3D positions</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 2. HOST -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic host">⌂</div><div class="info"><h3>2 · Host</h3><div class="sub">desktop app integrations · 16 hosts · 116 ops</div></div><div class="count">~140 ops</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">revit.read_walls</div><div class="desc">Pull current selection or view's walls</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">revit.export_viewport</div><div class="desc">Render view as PNG + depth map</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">revit.import_mass_family</div><div class="desc">Mesh → family-instance via .rfa template</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">revit.create_walls_from_curves</div><div class="desc">Curve list → wall instances</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">autocad.read_layer</div><div class="desc">Get entities from layer name</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">rhino.import_mesh</div><div class="desc">.glb / .obj / .ply → Block</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">rhino.import_curves</div><div class="desc">Polyline / NURBS curve list</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">blender.run_script</div><div class="desc">Python in Blender · BPY</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">speckle.send / receive</div><div class="desc">Content-addressed wire transport</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">excel.write_sheet</div><div class="desc">Data → .xlsx via COM</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">3dsmax.render_viewport</div><div class="desc">Viewport snapshot · arnold/vray</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 3. GRAPH -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic logic">⚙</div><div class="info"><h3>3 · Graph</h3><div class="sub">composition + flow control</div></div><div class="count">10 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">graph.subgraph</div><div class="desc">Inner graph as one node (AgDR-0040 graph kind)</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">graph.group</div><div class="desc">Collapsible visual grouping</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">graph.foreach</div><div class="desc">Iterate a list · inner graph runs N×</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">graph.while</div><div class="desc">Loop while predicate · cap iterations</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">graph.gate</div><div class="desc">Pass-through only if input truthy</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">graph.latch</div><div class="desc">Hold last value · KJNodes Set/Get</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">graph.merge</div><div class="desc">First non-null of (a, b)</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">graph.parallel</div><div class="desc">N branches in flight · gather</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">graph.set / graph.get</div><div class="desc">Cross-subgraph value pipe · KJNodes</div><div class="src comfy">COMFY</div></div>
+      </div>
+    </div>
+
+    <!-- 4. LOGIC -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic logic">∧</div><div class="info"><h3>4 · Logic</h3><div class="sub">predicates + math + comparison</div></div><div class="count">12 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">logic.if</div><div class="desc">Predicate routes value to true_out / false_out</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">logic.switch</div><div class="desc">Multi-way branch by key value</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">logic.compare</div><div class="desc">a == / != / < / > / >= / <= b</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">logic.and / or / not / xor</div><div class="desc">Boolean ops · WAS suite parity</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">math.op</div><div class="desc">add / sub / mul / div / mod / pow</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">math.round</div><div class="desc">round / floor / ceil · decimals param</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">math.lerp</div><div class="desc">Linear interpolate (a, b, t)</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">math.clamp</div><div class="desc">Constrain to (min, max)</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">data.reduce / accumulate / group_by / sort</div><div class="desc">Aggregate ops (AgDR-0040 slice 2)</div><div class="src have">HAVE</div></div>
+      </div>
+    </div>
+
+    <!-- 5. SKETCH / LINE -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic comfy">✎</div><div class="info"><h3>5 · Sketch / Line</h3><div class="sub">edge + line + scribble extraction · ControlNet inputs</div></div><div class="count">11 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">sketch.canny</div><div class="desc">Classic edge · clean sharp outlines for arch</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.canny_pyramid</div><div class="desc">Multi-scale Canny · fine + coarse edges</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.lineart</div><div class="desc">Neural lineart · general purpose</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.lineart_anime</div><div class="desc">Anime-style contours</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.lineart_manga</div><div class="desc">Thick-thin B&W lines</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.HED</div><div class="desc">Holistically-nested edge · soft outlines · semantic shapes</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.MLSD</div><div class="desc"><strong>Straight-line detection · BEST for arch facades</strong></div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.PIDI</div><div class="desc">Soft edge · halfway HED ↔ lineart</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.scribble</div><div class="desc">Loose hand-drawn line · variants xdog / pidi / hed</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.openpose</div><div class="desc">Skeletal pose for people in renders</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">sketch.normal_bae</div><div class="desc">Surface normals → ControlNet for material</div><div class="src comfy">COMFY</div></div>
+      </div>
+    </div>
+
+    <!-- 6. VISION / PERCEPTION -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic alibaba">👁</div><div class="info"><h3>6 · Vision / Perception</h3><div class="sub">images → structured data</div></div><div class="count">11 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">vision.describe</div><div class="desc">Qwen-VL Plus · image → text description</div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">vision.classify</div><div class="desc">Qwen-VL multi-label · "modernist / brutalist / classical"</div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">vision.OCR</div><div class="desc">Qwen-VL OCR mode · drawing PDF text</div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">vision.detect</div><div class="desc">YOLO bbox · doors / windows / cars</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">vision.segment</div><div class="desc">SAM masks · per-region</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">vision.depth_estimate</div><div class="desc">MIDAS / Depth-Anything v2 · monocular depth</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">vision.normal_estimate</div><div class="desc">Surface normals from photo</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">vision.face_detect</div><div class="desc">Impact Pack · face-region masks</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">vision.compare</div><div class="desc">Two images · structural diff</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">vision.measure</div><div class="desc">Reference object → real-world dim estimate</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 7. RENDER -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic render">✦</div><div class="info"><h3>7 · Render</h3><div class="sub">image generation + transformation</div></div><div class="count">14 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">render.sdxl</div><div class="desc">SDXL base + refiner · 1024px native</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.flux</div><div class="desc">Flux.1 dev/schnell · best photoreal</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.mystic</div><div class="desc">Freepik Mystic 2.5 · 2K artistic</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.controlnet</div><div class="desc">Inject sketch/depth/normal · preserves geometry</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.lora</div><div class="desc">Style adapter · stackable</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.ipadapter</div><div class="desc">Style transfer from reference image</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.archviz</div><div class="desc"><strong>Composite Skill</strong> · viewport+depth → SDXL+CN+upscale</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">render.upscale</div><div class="desc">4xUltrasharp / Qwen-Image · 2× / 4×</div><div class="src alibaba">ALI+COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.inpaint</div><div class="desc">Mask-region regenerate</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.outpaint</div><div class="desc">Extend canvas · seamless edges</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.region</div><div class="desc">Per-region prompts · spatial control</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.tiled_diffusion</div><div class="desc">Stitch 8K+ from tiled passes</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.style_transfer</div><div class="desc">A.style → B.content</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">render.qwen_image</div><div class="desc">Qwen-Image txt2img / edit · $0.02 / img</div><div class="src alibaba">ALI</div></div>
+      </div>
+    </div>
+
+    <!-- 8. MESH / 3D -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic mesh">⌖</div><div class="info"><h3>8 · Mesh / 3D</h3><div class="sub">image → mesh + mesh ops</div></div><div class="count">13 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">mesh.hunyuan3d</div><div class="desc"><strong>Image → textured mesh</strong> · Tencent 2.0/3.0 · 4-stage</div><div class="src tencent">TENCENT</div></div>
+        <div class="fam-row"><div class="nm">mesh.stable_fast_3d</div><div class="desc">Sub-1s mesh · Stability SF3D</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">mesh.triposr</div><div class="desc">Fast single-image 3D</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">mesh.instantmesh</div><div class="desc">High-fidelity mesh from multi-view</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">mesh.simplify</div><div class="desc">Poly-cap · quadric decimation</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.weld</div><div class="desc">Snap overlapping verts · tolerance</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.boolean</div><div class="desc">Union / diff / intersect</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.slice</div><div class="desc">Plane slice · returns curve list</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.poisson_reconstruct</div><div class="desc">Point cloud → watertight mesh</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.uv_unwrap</div><div class="desc">Auto-UV · sharp-edge seams</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.retopo</div><div class="desc">Auto-retopo · QuadRemesher style</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">mesh.gaussian_splat</div><div class="desc">3DGS from photos · ComfyUI-3D-Pack</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">mesh.nerf</div><div class="desc">NeRF radiance field · novel-view render</div><div class="src comfy">COMFY</div></div>
+      </div>
+    </div>
+
+    <!-- 9. MATERIAL / TEXTURE -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic tex">▦</div><div class="info"><h3>9 · Material / Texture</h3><div class="sub">PBR maps + texture ops</div></div><div class="count">8 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">texture.pbr_generate</div><div class="desc">Photo → albedo + normal + roughness + AO</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.normal_map</div><div class="desc">Diffuse → normal (Sobel + DLNR)</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.displacement</div><div class="desc">Photo → height map for displacement</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.ao_bake</div><div class="desc">Mesh → ambient occlusion bake</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">texture.seamless_tile</div><div class="desc">Make texture tile-able</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.roughness</div><div class="desc">Estimate roughness from photo</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.height_from_image</div><div class="desc">Bump map from grayscale</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">texture.apply_to_mesh</div><div class="desc">Bind texture set to mesh UVs</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 10. ANIMATION -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic anim">▶</div><div class="info"><h3>10 · Animation</h3><div class="sub">image → video · cheap via Alibaba Wan</div></div><div class="count">9 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">anim.wan_i2v_fast</div><div class="desc"><strong>Wan 2.5 i2v · $0.035 / clip · CHEAPEST</strong></div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">anim.wan_i2v</div><div class="desc">Wan 2.6 i2v · $0.07 / clip · higher fidelity</div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">anim.wan_i2v_quality</div><div class="desc">Wan 2.7 i2v · $0.10 / clip · client deliverable</div><div class="src alibaba">ALI</div></div>
+        <div class="fam-row"><div class="nm">anim.motion_brush</div><div class="desc">Paint motion-direction strokes on still</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">anim.frame_interp</div><div class="desc">RIFE 4.x · 30fps → 60fps</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">anim.keyframe</div><div class="desc">Set keyframe value · timeline node</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">anim.loop</div><div class="desc">Loop-able output · seamless start/end</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">anim.animatediff</div><div class="desc">SD-anim · text → 16-frame video</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">anim.video_extend</div><div class="desc">Wan 2.5 Video Extend · $0.05/M tok</div><div class="src alibaba">ALI</div></div>
+      </div>
+    </div>
+
+    <!-- 11. COMPOSITE / IMAGE-OP -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic">⊞</div><div class="info"><h3>11 · Composite / Image-op</h3><div class="sub">classic image ops · WAS / KJNodes parity</div></div><div class="count">10 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">image.blend</div><div class="desc">A over B · alpha / additive / multiply / overlay</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.mask</div><div class="desc">Apply alpha mask</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.crop</div><div class="desc">Region crop · auto or coords</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.resize</div><div class="desc">Bilinear / bicubic / lanczos</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.color_match</div><div class="desc">Reference color palette to target · KJNodes</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.histogram_match</div><div class="desc">Match brightness distribution</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.levels</div><div class="desc">Photoshop levels · in/out/gamma</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.saturate</div><div class="desc">HSV saturation shift</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.exposure</div><div class="desc">EV exposure stops</div><div class="src comfy">COMFY</div></div>
+        <div class="fam-row"><div class="nm">image.bg_remove</div><div class="desc">RemBG · transparent BG</div><div class="src comfy">COMFY</div></div>
+      </div>
+    </div>
+
+    <!-- 12. VIEWERS -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic view">⊡</div><div class="info"><h3>12 · Viewers</h3><div class="sub">inline preview · no canvas switch</div></div><div class="count">9 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">view.image</div><div class="desc">Inline image preview · zoomable</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.compare_slider</div><div class="desc"><strong>Before / after split</strong> · drag handle</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.mesh_3d</div><div class="desc">Orbit / pan / zoom · GLB / OBJ</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.depth_heatmap</div><div class="desc">Depth map → colored heatmap</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.plot_line</div><div class="desc">Series → SVG line chart</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.plot_histogram</div><div class="desc">Distribution chart</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.table</div><div class="desc">List of dicts → table</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">view.console</div><div class="desc">Stream log lines · timestamped</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">view.status_badge</div><div class="desc">OK / warn / err state on a wire</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 13. COMPOSER / AGENT -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic">⚡</div><div class="info"><h3>13 · Composer / Agent</h3><div class="sub">AI + plan + route</div></div><div class="count">7 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">ai.plan</div><div class="desc">Composer turn · auditable + replayable (AgDR-0021)</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">ai.complete</div><div class="desc">LLM call · text → text</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">ai.classify</div><div class="desc">Text → enum label</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">ai.tool_use</div><div class="desc">LLM with tool-use loop · MCP</div><div class="src have">HAVE</div></div>
+        <div class="fam-row"><div class="nm">ai.router</div><div class="desc"><strong>Auto-pick cheapest provider</strong> for given task</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">ai.review_gate</div><div class="desc">Human approval before downstream</div><div class="src new">NEW</div></div>
+        <div class="fam-row"><div class="nm">ai.chain</div><div class="desc">Multi-step prompt template</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="rcat"/> YES — adopt full catalog (12 families)</label>
+    <label><input type="radio" name="rcat"/> Trim — only sketch + render + mesh + viewers first</label>
+    <label><input type="radio" name="rcat"/> Trim — only what use cases A/B/D need</label>
+    <label><input type="radio" name="rcat"/> REFINE — different families</label>
+    <div class="note">~120 new node specs · auto-registered via Tier 1 importer</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          USE A · per-step prototype                            -->
+<!-- ============================================================ -->
+<section class="proto" id="stepA">
+  <div class="tagline">use case A · per-step prototype</div>
+  <h2>Revit viewport → AI render — each step + Inspector</h2>
+  <p>7 steps. Each shows the canvas state + the Inspector for the
+    selected node at that step. <strong>This is what the user
+    actually clicks through.</strong></p>
+
+  <div class="step-stage">
+    <div>
+
+      <!-- step 1 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">1</div>
+          <h3>Pick the Revit view</h3>
+          <code>revit.export_viewport</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <div class="node-mock host selected">
+              <div class="nh">host · revit</div>
+              <div class="nv">export_viewport</div>
+            </div>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector <span class="tag">step 1 of 7</span></div>
+            <div class="insp-tabs">
+              <span>In</span><span class="on">Params</span><span>Out</span>
+            </div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">view</span><span class="r">3D · "Hero"</span></div>
+              <div class="insp-row"><span class="l">resolution</span><span class="r">2048 × 1536</span></div>
+              <div class="insp-row"><span class="l">include_depth</span><span class="r">true</span></div>
+              <div class="insp-row"><span class="l">format</span><span class="r">PNG</span></div>
+              <button class="insp-action">▶ Cook this node</button>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>What user sees:</b> drops Revit host node,
+          picks the view from a dropdown (populated live via the Revit
+          connector). One click to cook. Output: <code>{image, depth}</code> pair.</div>
+      </div>
+
+      <!-- step 2 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">2</div>
+          <h3>Pair the image + depth</h3>
+          <code>image.pair</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock host"><div class="nh">host · revit</div><div class="nv">export_viewport</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock data selected"><div class="nh">data</div><div class="nv">image.pair</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector <span class="tag">step 2</span></div>
+            <div class="insp-tabs"><span class="on">In</span><span>Out</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">a (image)</span><span class="r" style="color:var(--ok)">connected · PNG 2048×1536</span></div>
+              <div class="insp-row"><span class="l">b (depth)</span><span class="r" style="color:var(--ok)">connected · PNG 2048×1536</span></div>
+              <div class="insp-row title">preview</div>
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <div style="flex:1;height:50px;background:linear-gradient(45deg,#88a,#446);border-radius:4px;font-size:9px;color:#fff;padding:3px">img</div>
+                <div style="flex:1;height:50px;background:linear-gradient(45deg,#fff,#222);border-radius:4px;font-size:9px;color:#000;padding:3px">depth</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Why this exists:</b> downstream ControlNet
+          wants both. Pair node bundles into one wire so the user
+          doesn't have to maintain two parallel paths.</div>
+      </div>
+
+      <!-- step 3 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">3</div>
+          <h3>Run the archviz workflow (ComfyUI)</h3>
+          <code>render.archviz</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock host"><div class="nh">host · revit</div><div class="nv">export_viewport</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock data"><div class="nh">data</div><div class="nv">image.pair</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock comfy selected"><div class="nh">comfy · skill</div><div class="nv">render.archviz</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector <span class="tag">step 3 · core</span></div>
+            <div class="insp-tabs"><span>In</span><span class="on">Params</span><span>Out</span><span>Plan</span></div>
+            <div class="insp-body">
+              <div class="insp-row title">model</div>
+              <div class="insp-row"><span class="l">base</span><span class="r">SDXL</span></div>
+              <div class="insp-row"><span class="l">controlnet</span><span class="r">depth · strength 0.6</span></div>
+              <div class="insp-row"><span class="l">lora</span><span class="r">archviz-photo-v2</span></div>
+              <div class="insp-row title">style</div>
+              <div class="insp-row"><span class="l">prompt</span><span class="r" style="font-size:10px">"hero render · golden hour · contextual"</span></div>
+              <div class="insp-row"><span class="l">negative</span><span class="r" style="font-size:10px">"cartoon, blur, lowres"</span></div>
+              <div class="insp-row"><span class="l">steps</span><span class="r">30</span></div>
+              <div class="insp-row"><span class="l">cfg</span><span class="r">7.5</span></div>
+              <button class="insp-action">▶ Cook · ~12s on local GPU</button>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Under the hood:</b> this is a Tier-1
+          ComfyUI workflow imported via <code>library.import_comfyui_workflow</code>.
+          The ArchHub node wraps it — depth + base-image inputs are
+          auto-derived from the workflow's open ports. User sees one
+          node, the executor POSTs JSON to ComfyUI's <code>/prompt</code>.</div>
+      </div>
+
+      <!-- step 4 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">4</div>
+          <h3>Inline preview before next stage</h3>
+          <code>view.compare_slider</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock comfy"><div class="nh">comfy · skill</div><div class="nv">render.archviz</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock selected" style="border-left-color:var(--teal)"><div class="nh">view</div><div class="nv">compare_slider</div></span>
+            <span style="margin-left:8px;font-size:10px;color:var(--ink3);font-style:italic">↳ tee — pipeline keeps flowing</span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · viewer <span class="tag">step 4</span></div>
+            <div class="insp-tabs"><span class="on">Preview</span><span>Params</span></div>
+            <div class="insp-body">
+              <div style="position:relative;height:90px;border-radius:6px;overflow:hidden">
+                <div style="position:absolute;inset:0;background:linear-gradient(45deg,#446,#88a)"></div>
+                <div style="position:absolute;inset:0;clip-path:polygon(0 0,55% 0,55% 100%,0 100%);background:linear-gradient(45deg,#e8743a,#ff9966)"></div>
+                <div style="position:absolute;top:0;bottom:0;left:55%;width:2px;background:#fff;cursor:ew-resize"></div>
+                <div style="position:absolute;left:55%;top:50%;transform:translate(-50%,-50%);width:18px;height:18px;background:#fff;border-radius:50%;cursor:ew-resize"></div>
+                <div style="position:absolute;top:4px;left:4px;font-size:9px;color:#fff;font-family:monospace">AI</div>
+                <div style="position:absolute;top:4px;right:4px;font-size:9px;color:#fff;font-family:monospace">Revit raw</div>
+              </div>
+              <div style="font-size:10px;color:var(--ink3);margin-top:8px;font-style:italic">drag handle to compare</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Why inline:</b> user shouldn't have to
+          switch tabs to see the result. Viewer is a real node on the wire,
+          tees the value through (downstream still flows). The compare-
+          slider lets architect verify geometry preserved before
+          committing to the upscale stage.</div>
+      </div>
+
+      <!-- step 5 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">5</div>
+          <h3>Approval gate (default for AI writes)</h3>
+          <code>ai.review_gate</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock comfy"><div class="nh">comfy</div><div class="nv">render.archviz</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock selected" style="border-left-color:var(--warn)"><div class="nh">ai · gate</div><div class="nv">review_gate</div></span>
+            <span class="arr">⌛</span>
+            <span class="node-mock alibaba" style="opacity:0.5"><div class="nh">alibaba</div><div class="nv">qwen_image.upscale</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · gate <span class="tag">step 5 · paused</span></div>
+            <div class="insp-tabs"><span class="on">Pending</span></div>
+            <div class="insp-body">
+              <div style="background:rgba(232,197,74,0.1);border:1px solid var(--warn);border-radius:6px;padding:10px;font-size:11px;color:var(--ink)">
+                ⏸ Holding before <b>qwen_image.upscale</b><br/>
+                <span style="color:var(--ink3);font-size:10px">cost preview: ~$0.02 · network call</span>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:10px">
+                <button class="insp-action" style="background:var(--ok)">✓ Approve</button>
+                <button class="insp-action" style="background:var(--err)">✕ Reject</button>
+              </div>
+              <div style="margin-top:8px;font-size:10px;color:var(--ink3);text-align:center">Tip: Auto-mode skips this gate</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>USER-AGENCY MANDATE</b> — Plan mode
+          (default) gates any AI write. Auto/YOLO skip the gate.
+          Per-org policy can lock review_gate on cost-bearing nodes
+          (any non-local call).</div>
+      </div>
+
+      <!-- step 6 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">6</div>
+          <h3>Cheap upscale via Alibaba</h3>
+          <code>qwen_image.upscale</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock comfy"><div class="nh">comfy</div><div class="nv">render.archviz</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock" style="border-left-color:var(--warn)"><div class="nh">ai · gate</div><div class="nv">review_gate</div></span>
+            <span class="arr">✓</span>
+            <span class="node-mock alibaba selected"><div class="nh">alibaba</div><div class="nv">qwen_image.upscale</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · alibaba <span class="tag">step 6</span></div>
+            <div class="insp-tabs"><span>In</span><span class="on">Params</span><span>Cost</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">scale</span><span class="r">2 × → 4K</span></div>
+              <div class="insp-row"><span class="l">model</span><span class="r">qwen-image · upscale</span></div>
+              <div class="insp-row"><span class="l">format</span><span class="r">JPG q92</span></div>
+              <div class="insp-row title">cost</div>
+              <div class="insp-row"><span class="l">per-image</span><span class="r" style="color:var(--ok)">$0.02</span></div>
+              <div class="insp-row"><span class="l">org balance</span><span class="r">$17.43</span></div>
+              <div class="insp-row"><span class="l">eta</span><span class="r">~8s</span></div>
+              <button class="insp-action">▶ Run</button>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Provider choice surfaced:</b> Cost tab
+          shows per-run + balance so user knows what they're spending
+          before clicking Run. <code>ai.router</code> could pick this
+          automatically.</div>
+      </div>
+
+      <!-- step 7 -->
+      <div class="step">
+        <div class="step-h">
+          <div class="num">7</div>
+          <h3>Save to disk + open in viewer</h3>
+          <code>file.save</code> + <code>os.reveal</code>
+        </div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock alibaba"><div class="nh">alibaba</div><div class="nv">qwen_image.upscale</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock out selected"><div class="nh">out</div><div class="nv">file.save</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock out"><div class="nh">os</div><div class="nv">reveal</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · save <span class="tag">step 7 · done</span></div>
+            <div class="insp-tabs"><span class="on">Out</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">path</span><span class="r" style="font-size:10px">/Projects/Tower2/Hero_v3.jpg</span></div>
+              <div class="insp-row"><span class="l">size</span><span class="r">8.4 MB</span></div>
+              <div class="insp-row"><span class="l">dim</span><span class="r">4096 × 3072</span></div>
+              <div style="margin-top:10px;background:rgba(95,200,121,0.1);border:1px solid var(--ok);border-radius:6px;padding:8px;font-size:11px;color:var(--ok)">
+                ✓ Done · 41s total · cost $0.025
+              </div>
+              <button class="insp-action" style="margin-top:8px">▶ Open in Finder</button>
+              <button style="background:transparent;border:1px solid var(--line);color:var(--ink);width:100%;margin-top:6px;padding:8px;border-radius:6px;font-size:11px;cursor:pointer">⊞ Save as Skill</button>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>"Save as Skill"</b> turns this 7-node
+          wire into a single composite node "Hero render from Revit"
+          installable from your Library. Next time the user just
+          drops one node + clicks Cook.</div>
+      </div>
+
+    </div>
+
+    <div class="step-trail">
+      <h4>Use A · 7 steps</h4>
+      <div class="tstep"><div class="num">1</div><div class="lbl">revit.export_viewport</div></div>
+      <div class="tstep"><div class="num">2</div><div class="lbl">image.pair</div></div>
+      <div class="tstep"><div class="num">3</div><div class="lbl">render.archviz · SDXL+CN</div></div>
+      <div class="tstep"><div class="num">4</div><div class="lbl">view.compare_slider</div></div>
+      <div class="tstep"><div class="num">5</div><div class="lbl">ai.review_gate</div></div>
+      <div class="tstep"><div class="num">6</div><div class="lbl">qwen_image.upscale</div></div>
+      <div class="tstep"><div class="num">7</div><div class="lbl">file.save + os.reveal</div></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink3)">
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Total cost</b> · $0.025</div>
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Time</b> · ~41 s</div>
+        <div><b style="color:var(--ink)">Local-first</b> · steps 1, 2, 3, 4, 5, 7 = local · only step 6 = network</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="sA"/> YES — exactly this flow</label>
+    <label><input type="radio" name="sA"/> REFINE — drop the review gate</label>
+    <label><input type="radio" name="sA"/> REFINE — drop the upscale step (local 4K instead)</label>
+    <label><input type="radio" name="sA"/> REFINE — different node order</label>
+    <label><input type="radio" name="sA"/> NO</label>
+    <div class="note">7 nodes · 5 new (compare_slider, review_gate, qwen_image.upscale, render.archviz, image.pair)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          USE B · per-step prototype                            -->
+<!-- ============================================================ -->
+<section class="proto" id="stepB">
+  <div class="tagline">use case B · per-step prototype</div>
+  <h2>Photo → Rhino mass — each step + Inspector</h2>
+
+  <div class="step-stage">
+    <div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">1</div><h3>Drag photo onto canvas</h3><code>input.image</code></div>
+        <div class="body">
+          <div class="canvas-mock"><span class="node-mock data selected"><div class="nh">input</div><div class="nv">image</div></span></div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · input.image <span class="tag">step 1</span></div>
+            <div class="insp-tabs"><span class="on">Preview</span><span>Params</span></div>
+            <div class="insp-body">
+              <div style="height:80px;background:linear-gradient(45deg,#5a4a3a,#8a7a6a);border-radius:6px;display:flex;align-items:flex-end;padding:4px;font-size:9px;color:#fff;font-family:monospace">precedent.jpg · 4032×3024</div>
+              <div class="insp-row" style="margin-top:8px"><span class="l">size</span><span class="r">2.1 MB</span></div>
+              <div class="insp-row"><span class="l">format</span><span class="r">JPG</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Drag-drop UX:</b> drop a file onto the
+          canvas → ArchHub auto-creates the right typed input node.
+          Image → <code>input.image</code>, .glb → <code>input.mesh</code>, .e57 → <code>input.point_cloud</code>.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">2</div><h3>Vision describe (Qwen-VL · semantic anchor)</h3><code>vision.describe</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock data"><div class="nh">input</div><div class="nv">image</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock alibaba selected"><div class="nh">alibaba · vl</div><div class="nv">vision.describe</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · vision.describe <span class="tag">step 2</span></div>
+            <div class="insp-tabs"><span>In</span><span class="on">Params</span><span>Out</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">model</span><span class="r">qwen3-vl-plus</span></div>
+              <div class="insp-row"><span class="l">prompt</span><span class="r" style="font-size:10px">"describe the building's style, story count, roof, key features"</span></div>
+              <div class="insp-row"><span class="l">max_tokens</span><span class="r">200</span></div>
+              <div class="insp-row title">cost</div>
+              <div class="insp-row"><span class="l">per-call</span><span class="r" style="color:var(--ok)">~$0.002</span></div>
+              <div class="insp-row title">out (cached)</div>
+              <div style="background:var(--bg3);padding:8px;border-radius:4px;font-size:10px;color:var(--ink);margin-top:4px;line-height:1.4">"3-story modernist villa, flat roof, deep cantilever on east side, board-formed concrete + glass curtain wall on south face, ~12m wide"</div>
+              <button class="insp-action">▶ Re-run</button>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Why VL first:</b> Hunyuan generates
+          generic blob unless seeded with semantic anchor. VL text
+          becomes Hunyuan's prompt — keeps shape + style on-target.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">3</div><h3>Image → textured mesh (Hunyuan3D-2 · local)</h3><code>mesh.hunyuan3d</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock data"><div class="nh">input</div><div class="nv">image</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock alibaba"><div class="nh">alibaba</div><div class="nv">vision.describe</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock" style="border-left-color:var(--purple);background:rgba(163,123,217,0.06)"><div class="nh">mesh · tencent</div><div class="nv">hunyuan3d</div></span>
+            <span class="node-mock comfy selected" style="margin-left:30px"><div class="nh">comfy · pipe</div><div class="nv">↳ stage 1-4</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · mesh.hunyuan3d <span class="tag">step 3 · cooking</span></div>
+            <div class="insp-tabs"><span>In</span><span class="on">Params</span><span>Stages</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">model</span><span class="r">hunyuan3d-2.0 · turbo</span></div>
+              <div class="insp-row"><span class="l">bg_remove</span><span class="r">auto (RemBG)</span></div>
+              <div class="insp-row"><span class="l">poly_target</span><span class="r">~50k</span></div>
+              <div class="insp-row"><span class="l">texture_res</span><span class="r">2048</span></div>
+              <div class="insp-row"><span class="l">prompt_from</span><span class="r" style="color:var(--ok)">vision.describe ↑</span></div>
+              <div class="insp-row title">stages</div>
+              <div style="font-size:10px;color:var(--ink2);margin-top:6px;line-height:1.6">
+                <div>1 · BG removal · <span style="color:var(--ok)">✓ 0.4s</span></div>
+                <div>2 · Geometry · <span style="color:var(--ok)">✓ 8.1s</span></div>
+                <div>3 · Optimise · <span style="color:var(--warn)">⟳ 3.2s</span></div>
+                <div>4 · Texture · <span style="color:var(--ink3)">⌛ queued</span></div>
+              </div>
+              <div class="insp-row title">cost</div>
+              <div class="insp-row"><span class="l">local GPU</span><span class="r" style="color:var(--ok)">$0 · ~20s</span></div>
+              <div class="insp-row"><span class="l">comfyui cloud</span><span class="r">~$0.05</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Local-first wins:</b> Hunyuan3D-2
+          turbo runs on a 24 GB GPU in ~20s. No cloud cost. Cloud
+          fallback (ComfyUI managed) exists for users without GPU.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">4</div><h3>Mesh cleanup</h3><code>mesh.simplify</code> + <code>mesh.weld</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">hunyuan3d</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock selected" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">simplify</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">weld</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · mesh.simplify <span class="tag">step 4</span></div>
+            <div class="insp-tabs"><span class="on">Params</span><span>Preview</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">target_polys</span><span class="r">8 000</span></div>
+              <div class="insp-row"><span class="l">algorithm</span><span class="r">quadric decimation</span></div>
+              <div class="insp-row"><span class="l">preserve_uv</span><span class="r">true</span></div>
+              <div class="insp-row title">before / after</div>
+              <div style="display:flex;gap:6px;margin-top:6px;font-size:10px;font-family:monospace">
+                <div style="flex:1;background:var(--bg3);padding:6px;border-radius:4px"><div style="color:var(--ink3)">in</div><div style="color:var(--ink);font-weight:600">50 234 polys</div></div>
+                <div style="flex:1;background:var(--bg3);padding:6px;border-radius:4px"><div style="color:var(--ink3)">out</div><div style="color:var(--ok);font-weight:600">7 998 polys</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Why cleanup:</b> raw Hunyuan output =
+          50k+ polys with floating verts. Rhino chokes on dense meshes.
+          Simplify to 8k + weld within 0.001 tolerance = clean
+          watertight mesh ready for Block import.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">5</div><h3>3D viewer (verify before importing to Rhino)</h3><code>view.mesh_3d</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">weld</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock selected" style="border-left-color:var(--teal)"><div class="nh">view</div><div class="nv">mesh_3d</div></span>
+            <span style="margin-left:8px;font-size:10px;color:var(--ink3);font-style:italic">↳ tee</span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · view.mesh_3d <span class="tag">step 5</span></div>
+            <div class="insp-tabs"><span class="on">Preview</span><span>Params</span></div>
+            <div class="insp-body">
+              <div style="height:120px;background:linear-gradient(180deg,#1a1a22,#0a0a0c);border-radius:6px;position:relative;overflow:hidden">
+                <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotateY(20deg) rotateX(15deg);
+                  width:60px;height:80px;background:linear-gradient(135deg,#888,#444);border:1px solid #aaa;box-shadow:0 8px 20px rgba(0,0,0,0.4)"></div>
+                <div style="position:absolute;bottom:4px;right:4px;font-size:9px;color:var(--ink3);font-family:monospace">drag · orbit · scroll-zoom</div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button style="flex:1;font-size:10px;padding:5px;background:var(--bg3);border:1px solid var(--line);color:var(--ink);border-radius:4px">Wire</button>
+                <button style="flex:1;font-size:10px;padding:5px;background:var(--bg3);border:1px solid var(--line);color:var(--ink);border-radius:4px">Solid</button>
+                <button style="flex:1;font-size:10px;padding:5px;background:var(--accent);color:#fff;border:0;border-radius:4px">Tex</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Inline 3D:</b> Three.js viewer right
+          in the Inspector panel. Orbit / pan / zoom. Pick shading mode.
+          Verify the mesh looks right before piping into Rhino — avoids
+          import → realize-it's-broken → undo cycle.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">6</div><h3>Import to Rhino as Block</h3><code>rhino.import_mesh</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">weld</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock host selected"><div class="nh">host · rhino</div><div class="nv">import_mesh</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock out"><div class="nh">out</div><div class="nv">rhino.frame_view</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · rhino.import_mesh <span class="tag">step 6</span></div>
+            <div class="insp-tabs"><span class="on">Params</span><span>Out</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">target</span><span class="r">Rhino 8 (current doc)</span></div>
+              <div class="insp-row"><span class="l">as</span><span class="r">Block instance</span></div>
+              <div class="insp-row"><span class="l">block_name</span><span class="r" style="font-size:10px">"precedent_villa_v1"</span></div>
+              <div class="insp-row"><span class="l">layer</span><span class="r">"AI Mass · ref"</span></div>
+              <div class="insp-row"><span class="l">snap_to</span><span class="r">CPlane origin</span></div>
+              <div class="insp-row"><span class="l">scale_to</span><span class="r">12 m wide (VL hint)</span></div>
+              <button class="insp-action">▶ Drop into Rhino</button>
+              <div style="margin-top:8px;font-size:10px;color:var(--warn);text-align:center">⚠ Write to host — requires approval (Plan mode)</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Block, not mesh:</b> import as Block so
+          architect can swap the geometry later without losing scene
+          state. <code>scale_to</code> uses VL's "~12m wide" estimate
+          to size correctly on first drop.</div>
+      </div>
+
+    </div>
+
+    <div class="step-trail">
+      <h4>Use B · 6 steps</h4>
+      <div class="tstep"><div class="num">1</div><div class="lbl">input.image (drag-drop)</div></div>
+      <div class="tstep"><div class="num">2</div><div class="lbl">vision.describe (Qwen-VL)</div></div>
+      <div class="tstep"><div class="num">3</div><div class="lbl">mesh.hunyuan3d (local GPU)</div></div>
+      <div class="tstep"><div class="num">4</div><div class="lbl">mesh.simplify + weld</div></div>
+      <div class="tstep"><div class="num">5</div><div class="lbl">view.mesh_3d (Three.js)</div></div>
+      <div class="tstep"><div class="num">6</div><div class="lbl">rhino.import_mesh as Block</div></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink3)">
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Total cost</b> · ~$0.05 (local GPU)</div>
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Time</b> · ~30 s end-to-end</div>
+        <div><b style="color:var(--ink)">Variant</b> · same wire, swap step 6 to <code>revit.import_mass_family</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="sB"/> YES — exactly this flow</label>
+    <label><input type="radio" name="sB"/> REFINE — skip VL (Hunyuan only)</label>
+    <label><input type="radio" name="sB"/> REFINE — use Stable Fast 3D not Hunyuan (faster)</label>
+    <label><input type="radio" name="sB"/> REFINE — different host target</label>
+    <label><input type="radio" name="sB"/> NO</label>
+    <div class="note">6 nodes · 5 new (vision.describe, mesh.hunyuan3d, mesh.simplify, mesh.weld, rhino.import_mesh, view.mesh_3d)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          USE D · refined (Revit walls only)                    -->
+<!-- ============================================================ -->
+<section class="proto" id="stepD">
+  <div class="tagline">use case D · refined</div>
+  <h2>Drone photos → Revit walls (skip topo per your call)</h2>
+  <p>You said REFINE — Revit only, skip topo. Cuts photogrammetry to
+    just the wall family extraction. 5 steps.</p>
+
+  <div class="step-stage">
+    <div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">1</div><h3>Multi-image input</h3><code>input.image_set</code></div>
+        <div class="body">
+          <div class="canvas-mock"><span class="node-mock data selected"><div class="nh">input</div><div class="nv">image_set</div></span></div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · image_set <span class="tag">step 1</span></div>
+            <div class="insp-tabs"><span class="on">Files</span></div>
+            <div class="insp-body">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px">
+                <div style="aspect-ratio:1;background:linear-gradient(45deg,#5a4a3a,#8a7a6a);border-radius:3px"></div>
+                <div style="aspect-ratio:1;background:linear-gradient(45deg,#4a5a6a,#7a8a9a);border-radius:3px"></div>
+                <div style="aspect-ratio:1;background:linear-gradient(45deg,#6a4a3a,#9a7a6a);border-radius:3px"></div>
+                <div style="aspect-ratio:1;background:linear-gradient(45deg,#5a6a4a,#8a9a7a);border-radius:3px"></div>
+                <div style="aspect-ratio:1;background:var(--bg3);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--ink3)">+32</div>
+              </div>
+              <div class="insp-row"><span class="l">count</span><span class="r">36 images</span></div>
+              <div class="insp-row"><span class="l">avg dim</span><span class="r">4032 × 3024</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail">Drag a folder of drone images. ArchHub
+          auto-creates an image_set node, deduplicates via perceptual
+          hash, validates resolution + overlap.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">2</div><h3>Gaussian splatting (3DGS · local)</h3><code>mesh.gaussian_splat</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock data"><div class="nh">input</div><div class="nv">image_set</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock comfy selected"><div class="nh">comfy · 3d</div><div class="nv">gaussian_splat</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · gaussian_splat <span class="tag">step 2</span></div>
+            <div class="insp-tabs"><span class="on">Params</span><span>Progress</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">iterations</span><span class="r">7 000</span></div>
+              <div class="insp-row"><span class="l">resolution</span><span class="r">2048</span></div>
+              <div class="insp-row"><span class="l">init_points</span><span class="r">from SfM</span></div>
+              <div class="insp-row title">progress</div>
+              <div style="background:var(--bg3);height:8px;border-radius:4px;overflow:hidden;margin:6px 0">
+                <div style="width:62%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))"></div>
+              </div>
+              <div style="font-size:10px;color:var(--ink3);text-align:right;font-family:monospace">4 340 / 7 000 · ~3 min left</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">3</div><h3>Splat → mesh (Poisson)</h3><code>mesh.poisson_reconstruct</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock comfy"><div class="nh">comfy</div><div class="nv">gaussian_splat</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock selected" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">poisson_reconstruct</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · poisson <span class="tag">step 3</span></div>
+            <div class="insp-tabs"><span class="on">Params</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">depth</span><span class="r">9</span></div>
+              <div class="insp-row"><span class="l">samples_per_node</span><span class="r">1.5</span></div>
+              <div class="insp-row"><span class="l">trim_density</span><span class="r">0.4</span></div>
+              <div class="insp-row title">out</div>
+              <div class="insp-row"><span class="l">tris</span><span class="r">~280 000</span></div>
+              <div class="insp-row"><span class="l">watertight</span><span class="r" style="color:var(--ok)">✓</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">4</div><h3>VL facade segmentation (walls / windows / doors)</h3><code>vision.segment_facade</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock" style="border-left-color:var(--purple)"><div class="nh">mesh</div><div class="nv">poisson</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock alibaba selected"><div class="nh">alibaba · vl</div><div class="nv">segment_facade</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · segment_facade <span class="tag">step 4</span></div>
+            <div class="insp-tabs"><span class="on">Out</span></div>
+            <div class="insp-body">
+              <div style="font-size:11px;color:var(--ink);font-family:monospace;background:var(--bg3);padding:8px;border-radius:4px;line-height:1.5">
+                walls: 4<br/>
+                openings: 9 (5 windows · 3 doors · 1 garage)<br/>
+                roof: flat · cantilever north<br/>
+                est_height: 9.2 m<br/>
+                est_footprint: 14.8 m × 11.3 m
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Why VL on the mesh:</b> raw mesh has
+          no semantic labels. Qwen-VL describes the rendered views,
+          labels regions (wall vs window vs door). Output drives the
+          next step's Revit family-type choice.</div>
+      </div>
+
+      <div class="step">
+        <div class="step-h"><div class="num">5</div><h3>Build Revit walls + opening families</h3><code>revit.create_walls_from_curves</code></div>
+        <div class="body">
+          <div class="canvas-mock">
+            <span class="node-mock alibaba"><div class="nh">alibaba</div><div class="nv">segment_facade</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock host selected"><div class="nh">host · revit</div><div class="nv">create_walls</div></span>
+            <span class="arr">→</span>
+            <span class="node-mock host"><div class="nh">host · revit</div><div class="nv">place_openings</div></span>
+          </div>
+          <div class="inspector">
+            <div class="insp-h">Inspector · revit.create_walls <span class="tag">step 5</span></div>
+            <div class="insp-tabs"><span class="on">Params</span></div>
+            <div class="insp-body">
+              <div class="insp-row"><span class="l">wall_type</span><span class="r">"Generic 200mm"</span></div>
+              <div class="insp-row"><span class="l">level</span><span class="r">"Level 0"</span></div>
+              <div class="insp-row"><span class="l">height</span><span class="r">3.0 m (per wall)</span></div>
+              <div class="insp-row"><span class="l">window_family</span><span class="r">"M_Fixed"</span></div>
+              <div class="insp-row"><span class="l">door_family</span><span class="r">"M_Single-Flush"</span></div>
+              <button class="insp-action">▶ Build in Revit</button>
+              <div style="margin-top:8px;font-size:10px;color:var(--warn);text-align:center">⚠ Write to host — approval required</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-detail"><b>Refined per your note:</b> skip topo
+          import. Just walls + openings. Architect can hand-tune from
+          a working starting point — saves the 3-week modelling pass.</div>
+      </div>
+
+    </div>
+
+    <div class="step-trail">
+      <h4>Use D · 5 steps (refined)</h4>
+      <div class="tstep"><div class="num">1</div><div class="lbl">input.image_set</div></div>
+      <div class="tstep"><div class="num">2</div><div class="lbl">mesh.gaussian_splat</div></div>
+      <div class="tstep"><div class="num">3</div><div class="lbl">mesh.poisson_reconstruct</div></div>
+      <div class="tstep"><div class="num">4</div><div class="lbl">vision.segment_facade</div></div>
+      <div class="tstep"><div class="num">5</div><div class="lbl">revit.create_walls + openings</div></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink3)">
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Total cost</b> · ~$0.08 (VL only)</div>
+        <div style="margin-bottom:4px"><b style="color:var(--ink)">Time</b> · ~12 min (local 3DGS dominates)</div>
+        <div><b style="color:var(--ink)">vs status quo</b> · 3 weeks of family modelling</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="sD"/> YES — exactly this 5-step flow</label>
+    <label><input type="radio" name="sD"/> REFINE — drop Poisson (work on splat direct)</label>
+    <label><input type="radio" name="sD"/> REFINE — VL describes per-photo not per-mesh-view</label>
+    <label><input type="radio" name="sD"/> NO</label>
+    <div class="note">5 nodes · 4 new (gaussian_splat, poisson_reconstruct, segment_facade, create_walls)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          ASSIMILATION MAP                                     -->
+<!-- ============================================================ -->
+<section class="proto" id="asm">
+  <div class="tagline">assimilation map</div>
+  <h2>Where each thing lands in the existing codebase</h2>
+  <p>Per your mandate: <strong>don't redesign, assimilate.</strong> Every
+    new node + tier + use case has a precise home in existing files.</p>
+
+  <div class="amap">
+    <table>
+      <thead>
+        <tr>
+          <th>What we add</th>
+          <th>Where it goes</th>
+          <th>Existing pattern it joins</th>
+          <th>Lines added</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>connector.comfyui</b></td>
+          <td><span class="pkg">app/connectors/comfyui.py</span></td>
+          <td>Same shape as <code>excel_connector.py</code> — ConnectorBase subclass</td>
+          <td>~180</td>
+        </tr>
+        <tr>
+          <td><b>connector.dashscope</b></td>
+          <td><span class="pkg">app/connectors/dashscope.py</span></td>
+          <td>Same shape as the OpenAI / Anthropic shim in <code>llm_router.py</code></td>
+          <td>~140</td>
+        </tr>
+        <tr>
+          <td><b>~30 sketch / render nodes</b></td>
+          <td><span class="pkg">app/workflows/nodes/render/</span> (new package)</td>
+          <td>Same pattern as <code>nodes/aec.py</code> · one file per node family</td>
+          <td>~600</td>
+        </tr>
+        <tr>
+          <td><b>~13 mesh / 3D nodes</b></td>
+          <td><span class="pkg">app/workflows/nodes/mesh/</span> (new)</td>
+          <td>Same as <code>nodes/aggregate.py</code> AgDR-0040 slice 2</td>
+          <td>~400</td>
+        </tr>
+        <tr>
+          <td><b>~11 vision / VL nodes</b></td>
+          <td><span class="pkg">app/workflows/nodes/vision/</span> (new)</td>
+          <td>Wraps <code>dashscope</code> connector + ComfyUI segment / detect</td>
+          <td>~300</td>
+        </tr>
+        <tr>
+          <td><b>~9 viewer nodes</b></td>
+          <td><span class="pkg">app/workflows/nodes/view/</span> + JS in <code>studio-lm.jsx</code></td>
+          <td>Same as existing <code>watch.preview</code> node</td>
+          <td>~250 py · ~400 jsx</td>
+        </tr>
+        <tr>
+          <td><b>~10 graph nodes (loop / gate / latch / parallel)</b></td>
+          <td><span class="pkg">app/workflows/nodes/control.py</span> (extend)</td>
+          <td>Joins existing <code>control.if</code> / <code>control.foreach</code></td>
+          <td>~200</td>
+        </tr>
+        <tr>
+          <td><b>~12 logic / math nodes</b></td>
+          <td><span class="pkg">app/workflows/nodes/math_text.py</span> (extend)</td>
+          <td>Joins existing <code>math.op</code></td>
+          <td>~150</td>
+        </tr>
+        <tr>
+          <td><b>Workflow importer · library.import_comfyui_workflow</b></td>
+          <td><span class="pkg">app/library.py</span> + <span class="pkg">tool_engine.py</span></td>
+          <td>Same pattern as <code>node_create</code> tool (AgDR-0038 slice 3)</td>
+          <td>~250</td>
+        </tr>
+        <tr>
+          <td><b>Inspector "Plan" tab (D refinement)</b></td>
+          <td><span class="pkg">app/web_ui/studio-lm.jsx · NodeInspector</span></td>
+          <td>New tab next to existing In / Out / Params · same React component</td>
+          <td>~120 jsx</td>
+        </tr>
+        <tr>
+          <td><b>Composer-first home (A refinement)</b></td>
+          <td><span class="pkg">app/web_ui/studio-lm.jsx · HomeTab</span></td>
+          <td>Replaces splash block · reuses existing Composer + LibraryGrid components</td>
+          <td>~200 jsx</td>
+        </tr>
+        <tr>
+          <td><b>Hero-only landing (B refinement)</b></td>
+          <td><span class="pkg">landing/index.html</span></td>
+          <td>Edit hero section · drop 4 obsolete CTA blocks</td>
+          <td>~80 html</td>
+        </tr>
+        <tr>
+          <td><b>Pricing page (C refinement)</b></td>
+          <td><span class="pkg">landing/pricing.html</span></td>
+          <td>New from prototype · ~600 lines</td>
+          <td>~600</td>
+        </tr>
+        <tr style="background:rgba(95,200,121,0.06)">
+          <td colspan="4" style="text-align:center;font-size:12px;color:var(--ok);padding:14px">
+            <strong>~3 600 lines total · spread across ~12 files · zero
+            new top-level architecture.</strong> Everything assimilates
+            into existing structure. The Composer / canvas / library
+            don't change.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--          GO / NO-GO                                            -->
+<!-- ============================================================ -->
+<section class="proto" id="go">
+  <div class="tagline">go / no-go</div>
+  <h2>Tell me what to AgDR + build</h2>
+  <p>Pick the verdicts above (all persist via localStorage). Say
+    "check" → I read all radios + write the AgDRs + build in order.</p>
+
+  <div style="background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-top:14px">
+    <h4 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:14px;margin-bottom:10px">Suggested build order</h4>
+    <ol style="font-size:12px;color:var(--ink2);padding-left:24px;line-height:1.8">
+      <li><strong>Week 1</strong> — connector.comfyui + connector.dashscope (Tier 0) · Composer-first home (A) · hero-only landing (B) · pricing page (C) · Inspector Plan tab (D). All small / safe.</li>
+      <li><strong>Week 2</strong> — Use case A (Revit → render) full wire · render.archviz Skill installable. Most visible. Sales gold.</li>
+      <li><strong>Week 3</strong> — Workflow importer (Tier 1) · Use case B (photo → mass) · view.mesh_3d + view.compare_slider.</li>
+      <li><strong>Week 4</strong> — Use case D (Revit walls from drones) · vision.segment_facade · mesh.gaussian_splat. Plus the remaining ~80 node specs auto-imported via Tier 1.</li>
+    </ol>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vgo"/> Adopt full 4-week sequence</label>
+    <label><input type="radio" name="vgo"/> Week 1 + 2 only (test market)</label>
+    <label><input type="radio" name="vgo"/> Week 1 only · pause + reassess</label>
+    <label><input type="radio" name="vgo"/> Different order</label>
+    <div class="note">AgDR per week · founder signs each off before next starts</div>
+  </div>
+</section>
+
+<section style="background:var(--bg);padding:32px;text-align:center">
+  <p id="pick-summary" style="font-size:12px;color:var(--accent2);font-family:ui-monospace,monospace;margin-bottom:10px"></p>
+  <p style="font-size:11px;color:var(--ink3)">Picks persist · open in:
+    archhub × comfyui × alibaba · deep-dive · 2026-05-24</p>
+</section>
+
+<script>
+(function(){
+  var KEY = 'archhub-deepdive-picks-v1';
+  var groups = {};
+  document.querySelectorAll('input[type=radio]').forEach(function(r){
+    if(!r.value || r.value === 'on'){
+      groups[r.name] = (groups[r.name] || 0);
+      r.value = 'idx_' + groups[r.name];
+      groups[r.name]++;
+    }
+  });
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch(e){}
+  Object.keys(saved).forEach(function(name){
+    var r = document.querySelector('input[name="'+name+'"][value="'+saved[name]+'"]');
+    if(r) r.checked = true;
+  });
+  function refreshSummary(){
+    var sum = document.getElementById('pick-summary');
+    if(!sum) return;
+    var names = ['rA','rB','rC','rD','rcat','sA','sB','sD','vgo'];
+    var picks = names.map(function(n){
+      var c = document.querySelector('input[name="'+n+'"]:checked');
+      var lbl = c ? c.closest('label').innerText.trim().replace(/\s+/g,' ').slice(0,50) : '—';
+      return n + ': ' + lbl;
+    });
+    sum.innerText = 'Picks · ' + picks.join('  ·  ');
+  }
+  document.addEventListener('change', function(e){
+    if(e.target.matches('input[type=radio]')){
+      saved[e.target.name] = e.target.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch(e2){}
+      refreshSummary();
+    }
+  });
+  refreshSummary();
+})();
+</script>
+
+</body>
+</html>

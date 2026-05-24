@@ -121,3 +121,19 @@ PLAN_SEATS: dict[str, int] = {
     "studio": 5,
     "firm":   25,
 }
+
+# ── Cloud LLM proxy gate (founder, 2026-05-24) ────────────────────────
+# Free / Solo run BYO key (user pastes their own ANTHROPIC_API_KEY in
+# the desktop Settings → LLM tab). Studio / Firm get cloud-proxied LLM
+# access funded out of the founder's prepaid provider balance + audited
+# per-org. Keeps the $5 entry tier real (zero backend cost) while paid
+# tiers get the "we hold the keys" convenience differentiator.
+PROXY_ENABLED_PLANS: set[str] = {"studio", "firm"}
+
+# Master kill-switch. Until the founder funds prepaid balances on the
+# upstream providers AND flips this to a truthy value, the proxy
+# returns 402 BYO_REQUIRED for every request — so accidental traffic
+# (or a leaked key) cannot burn down the dev balance. Flip live with
+# `flyctl secrets set PROXY_LIVE=1 -a archhub-cloud` once the
+# Anthropic / OpenAI / Google balances are loaded.
+PROXY_LIVE = _req("PROXY_LIVE", "0").strip() in ("1", "true", "True", "yes")

@@ -90,6 +90,31 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
             },
         )
 
+    # ── Tier + ops gate (2026-05-24). Quota check above wins when the
+    # actor is genuinely burnt out (more actionable upgrade message).
+    # This gate then enforces: Free / Solo run BYO key, only Studio +
+    # Firm get cloud-proxied LLM access, AND only when PROXY_LIVE is
+    # on (founder flips after funding upstream provider balances).
+    # Until then every paid request gets a clear BYO_REQUIRED — so
+    # accidental traffic can't burn down the dev balance.
+    plan = (user.get("plan") or "trial").lower().strip()
+    if not config.PROXY_LIVE or plan not in config.PROXY_ENABLED_PLANS:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "byo_key_required",
+                "plan":  plan,
+                "proxy_live":   config.PROXY_LIVE,
+                "allowed_plans": sorted(config.PROXY_ENABLED_PLANS),
+                "reason": ("Cloud LLM proxy is in private beta. Your plan "
+                           "either runs BYO key (Free / Solo) or the proxy "
+                           "is not enabled yet. Paste your own provider key "
+                           "in ArchHub → Settings → LLM to keep working "
+                           "while we onboard cloud-proxy customers."),
+                "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
+            },
+        )
+
     model = body.get("model") or "auto"
     provider = _provider_for(model)
     if model == "auto":

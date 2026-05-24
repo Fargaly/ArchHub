@@ -12,7 +12,7 @@ Round 2 enforces a strict rule: a surface stays only if it drives a
 click within 60 s of being seen, or shows a number the user reads
 before acting.
 
-### UI cuts (15, file:line evidence in `docs/UI_DEAD_SURFACE_AUDIT_v2.md`)
+### UI cuts (15, file:line evidence in `docs/archive/audits/UI_DEAD_SURFACE_AUDIT_v2.md`)
 
 1. `app/chat_window.py:1425-1444` — brand wordmark "ArchHub™" → 24×24
    "A" monogram plate.
@@ -103,7 +103,7 @@ this — saved a future "why don't my numbers match" investigation.
 
 UI dead-surface patch + zero-setup status reports.
 
-### Cuts (surgical, all reversible — see `docs/UI_DEAD_SURFACE_AUDIT.md`)
+### Cuts (surgical, all reversible — see `docs/archive/audits/UI_DEAD_SURFACE_AUDIT.md`)
 
 Founder feedback: "a lot of shit is visible with no actual use." Audit
 of 56 surfaces across 13 groups. Distribution: USED 39 · REDUNDANT 3 ·
@@ -301,7 +301,7 @@ Fly app.
 
 ### Fixed — UI brand-drift
 
-`docs/UI_AUDIT_v1.2.md` — full forensic report. Top fixes:
+`docs/archive/audits/UI_AUDIT_v1.2.md` — full forensic report. Top fixes:
 
 - `app/chat_window.py` — host pills + update banner colours switched
   from hardcoded hex to `_LivePalette` tokens. Now obey dark mode.

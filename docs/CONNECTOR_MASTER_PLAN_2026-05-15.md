@@ -15,8 +15,8 @@
 > procore,rhino}_runner.py` + `registry.py`, `app/mcp/node_mcp.py`, `app/mcp_fetcher.py`,
 > `app/bridge.py`, `app/workflows/registry.py` + `nodes/tools.py`, `app/speckle_client.py`,
 > `app/local_llm_detector.py`, `app/auto_build.py`, `payload/sources/{revit_mcp,acad_mcp,
-> max_mcp}/*`, `payload/{rhino,blender}/*`, `docs/HOST_NODE_UI_GRAMMAR_2026-05-15.md`,
-> `docs/AUDIT_2026-05-14.md`.
+> max_mcp}/*`, `payload/{rhino,blender}/*`, `docs/archive/node-rnd-2026-05-15/HOST_NODE_UI_GRAMMAR_2026-05-15.md`,
+> `docs/archive/audits/AUDIT_2026-05-14.md`.
 
 ---
 
@@ -81,11 +81,11 @@ code · **STUB** = honest placeholder.
 | 15 | **Word** | Windows COM (`Word.Application`) | `host_detector.probe_word` (detect) | **DETECT-ONLY** | No module, no action code |
 | 16 | **Excel** | Windows COM (`Excel.Application`) | `host_detector.probe_excel` (detect) | **DETECT-ONLY** | No module, no action code |
 | 17 | **PowerPoint** | Windows COM (`PowerPoint.Application`) | `host_detector.probe_powerpoint` (detect) | **DETECT-ONLY** | No module, no action code |
-| 18 | **Dropbox** | Dropbox REST API v2 | *(none — in the v1.4 host list per `AUDIT_2026-05-14.md` but `host_detector.PROBERS` has no `dropbox` key)* | **NOTHING** | No probe, no module. Needs OAuth2 + `dropbox` SDK + everything |
+| 18 | **Dropbox** | Dropbox REST API v2 | *(none — in the v1.4 host list per `archive/audits/AUDIT_2026-05-14.md` but `host_detector.PROBERS` has no `dropbox` key)* | **NOTHING** | No probe, no module. Needs OAuth2 + `dropbox` SDK + everything |
 
 **Honest summary:** 5 desktop-host connectors genuinely WORK (Revit, AutoCAD,
 3ds Max code-complete, Blender, Rhino), Outlook WORKS richly, Speckle is PARTIAL.
-**11 of 18 are detect-only or nothing.** The repo's own `AUDIT_2026-05-14.md`
+**11 of 18 are detect-only or nothing.** The repo's own `archive/audits/AUDIT_2026-05-14.md`
 marks host nodes "✅" — that is true for *node registration and detection*, not
 for *action capability* on the 11.
 
@@ -187,7 +187,7 @@ public function returns the uniform `{"status":...}` envelope. Operations become
 graph nodes automatically — tool defs go in `tool_engine.TOOLS`,
 `register_tool_nodes()` auto-generates a `tool.<name>` node spec, and
 `mcp/node_mcp.py:_HOST_TOOL_PREFIX` gains the family prefix. Ports are spec'd in
-`docs/HOST_NODE_UI_GRAMMAR_2026-05-15.md §2.2`. Every connector ships
+`docs/archive/node-rnd-2026-05-15/HOST_NODE_UI_GRAMMAR_2026-05-15.md §2.2`. Every connector ships
 `tests/test_<family>_runner.py` with a fixture path (no host installed, CI-safe)
 and a `skipif`-guarded live path.
 
@@ -734,7 +734,7 @@ Linear, ordered. The orchestrator (main Claude session) follows this top to bott
     each shows the correct live/offline/unauth status per the
     `HOST_NODE_UI_GRAMMAR` four-state spec, and no connector returns fabricated
     data when its host is absent.
-13. **Honest status doc.** Update `docs/AUDIT_2026-05-14.md` (or a new audit) with
+13. **Honest status doc.** Update `docs/archive/audits/AUDIT_2026-05-14.md` (or a new audit) with
     the truthful per-host state: WORKS-LIVE / CODE-COMPLETE-FIXTURE / HONEST-STUB —
     matching §6. Do not mark any host "done = live" that was only fixture-verified.
 

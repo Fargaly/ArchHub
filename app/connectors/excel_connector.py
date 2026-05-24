@@ -16,7 +16,7 @@ COM discipline:
   * Ops use `_excel_app()` which prefers `GetActiveObject` and falls back to
     `Dispatch` so driving an op can always complete.
 
-Output shapes follow `docs/HOST_NODE_UI_GRAMMAR_2026-05-15.md` §2.2.6:
+Output shapes follow `docs/archive/node-rnd-2026-05-15/HOST_NODE_UI_GRAMMAR_2026-05-15.md` §2.2.6:
 ranges return 2-D arrays (`list[list]`); list ops return `list[dict]`.
 
 Limitations:

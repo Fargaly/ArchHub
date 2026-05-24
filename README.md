@@ -212,7 +212,7 @@ Source of truth in this repo:
 
 - **[STRATEGY.md](STRATEGY.md)** — pricing, GTM, moats, financial model.
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — v1.4 user-facing walkthrough.
-- **[docs/AUDIT_2026-05-14.md](docs/AUDIT_2026-05-14.md)** — current state audit, surface-by-surface.
+- **[docs/archive/audits/AUDIT_2026-05-14.md](docs/archive/audits/AUDIT_2026-05-14.md)** — historical state audit (archived), surface-by-surface.
 - **[docs/NODE_LIBRARY_v2.md](docs/NODE_LIBRARY_v2.md)** — 80-node canvas taxonomy.
 - **[docs/CANVAS_PLAN.md](docs/CANVAS_PLAN.md)** — canvas architecture (current v1.4 + historical v0.18 plan).
 - **[docs/SKILLS.md](docs/SKILLS.md)** — Skill architecture: metadata, matcher, capture, sharing.

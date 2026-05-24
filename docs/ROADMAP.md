@@ -32,7 +32,7 @@
   `test_code_nodes.py`, `test_speckle*.py`,
   `test_reactflow_p2a_groundwork.py`, etc. — all green).  The status
   was never flipped because the 2026-05-21 scope-creep correction
-  (`docs/SCOPE-AUDIT-2026-05-21.md`) put them under review.  Per the
+  (`docs/archive/audits/SCOPE-AUDIT-2026-05-21.md`) put them under review.  Per the
   AGDR MANDATE, `proposed → executed` needs explicit founder
   sign-off — they stay `proposed` until the founder signs each off
   or supersedes it.  NOT silent drift — documented here.

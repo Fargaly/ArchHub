@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub redesign — 5 prototypes · 2026-05-24</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1,h2,h3,h4{font-weight:600;letter-spacing:-0.01em}
+h1{font-size:32px;line-height:1.15;margin-bottom:8px}
+h2{font-size:24px;margin-bottom:16px}
+h3{font-size:17px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:13px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:12px;color:var(--accent2)}
+
+/* — top nav — */
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.92);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 32px;display:flex;align-items:center;gap:24px}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:16px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:6px 12px;border-radius:999px;font-size:13px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+
+/* — section frame — */
+section.proto{max-width:1240px;margin:0 auto;padding:48px 32px;
+  border-bottom:1px solid var(--line)}
+.intent{display:grid;grid-template-columns:1fr 320px;gap:32px;align-items:start;margin-bottom:32px}
+.intent .tagline{font-size:13px;color:var(--accent);
+  text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;font-weight:600}
+.steal{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--ink2)}
+.steal b{color:var(--ink);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
+  display:block;margin-bottom:6px}
+.steal .src{display:inline-block;padding:1px 7px;background:var(--bg3);
+  border-radius:4px;margin-right:6px;font-size:11px;color:var(--accent2)}
+
+/* — mock frame — */
+.mock{background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;box-shadow:0 24px 80px -32px rgba(232,116,58,0.18)}
+.mock-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  background:var(--bg3);border-bottom:1px solid var(--line)}
+.mock-bar .dot{width:11px;height:11px;border-radius:50%}
+.mock-bar .dot.r{background:#ff5e5e}.mock-bar .dot.y{background:#e8c54a}.mock-bar .dot.g{background:#5fc879}
+.mock-bar .url{flex:1;text-align:center;font-size:11px;color:var(--ink3);font-family:ui-monospace,monospace}
+
+/* — pick verdict — */
+.verdict{margin-top:24px;display:flex;align-items:center;gap:14px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.verdict label{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2)}
+.verdict label input{accent-color:var(--accent)}
+.verdict label:hover{color:var(--ink)}
+.verdict .note{margin-left:auto;font-size:12px;color:var(--ink3);font-style:italic}
+
+/* ============================================================ */
+/*                    PROTOTYPE A — HOME                          */
+/* ============================================================ */
+.app-shell{background:var(--bg2);height:560px;display:grid;
+  grid-template-rows:54px 1fr;color:var(--ink)}
+.app-nav{display:flex;align-items:center;gap:18px;padding:0 22px;
+  border-bottom:1px solid var(--line)}
+.app-nav .logo{font-weight:700;font-size:14px;letter-spacing:-0.02em}
+.app-nav .logo span{color:var(--accent)}
+.app-nav .navchip{padding:6px 12px;border-radius:8px;font-size:13px;color:var(--ink2);cursor:pointer}
+.app-nav .navchip.active{background:var(--bg3);color:var(--ink)}
+.app-nav .right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink2)}
+.app-nav .right .pro-badge{background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:0.06em}
+
+.home-stage{padding:48px 60px;overflow:auto}
+.home-hero{text-align:center;margin-bottom:32px}
+.home-hero .greet{font-size:14px;color:var(--ink3);margin-bottom:10px}
+.home-hero h1.q{font-size:36px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
+.home-hero h1.q .em{color:var(--accent)}
+
+.composer{max-width:780px;margin:0 auto 16px;background:var(--bg3);
+  border:1px solid var(--line);border-radius:14px;padding:14px}
+.composer-input{background:transparent;border:0;outline:0;color:var(--ink);
+  font:15px/1.5 inherit;width:100%;min-height:56px;resize:none}
+.composer-input::placeholder{color:var(--ink3)}
+.composer-row{display:flex;align-items:center;gap:8px;margin-top:8px;
+  padding-top:10px;border-top:1px solid var(--line)}
+.composer-row .picker{display:flex;align-items:center;gap:6px;padding:5px 10px;
+  background:rgba(232,116,58,0.08);border:1px solid rgba(232,116,58,0.25);
+  border-radius:8px;font-size:12px;color:var(--accent2);cursor:pointer}
+.composer-row .picker .dot-llm{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.composer-row .mode{padding:5px 10px;border:1px solid var(--line);border-radius:8px;
+  font-size:12px;color:var(--ink2);cursor:pointer}
+.composer-row .mode.on{background:var(--bg2);color:var(--ink);border-color:var(--ink3)}
+.composer-row .send{margin-left:auto;width:34px;height:34px;border-radius:8px;
+  background:var(--accent);color:#fff;font-size:18px;display:flex;
+  align-items:center;justify-content:center;cursor:pointer;border:0}
+
+.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;
+  max-width:780px;margin:0 auto 36px}
+.chip-starter{padding:7px 13px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:999px;font-size:12px;color:var(--ink2);cursor:pointer;
+  display:flex;align-items:center;gap:6px}
+.chip-starter:hover{background:var(--bg2);color:var(--ink);border-color:var(--ink3)}
+.chip-starter .ico{color:var(--accent)}
+
+.home-row{max-width:1000px;margin:0 auto;}
+.home-row h3.row-h{font-size:13px;text-transform:uppercase;letter-spacing:0.1em;
+  color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.home-row h3.row-h .more{margin-left:auto;color:var(--accent);font-size:12px;
+  text-transform:none;letter-spacing:0;cursor:pointer}
+
+.recent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px}
+.recent{background:var(--bg3);border:1px solid var(--line);border-radius:10px;
+  padding:12px;cursor:pointer;height:120px;display:flex;flex-direction:column;
+  position:relative;overflow:hidden}
+.recent:hover{border-color:var(--accent);background:var(--bg2)}
+.recent .recent-title{font-size:13px;color:var(--ink);font-weight:500;margin-bottom:4px;line-height:1.3}
+.recent .recent-meta{font-size:11px;color:var(--ink3);margin-top:auto}
+.recent .recent-tag{position:absolute;top:8px;right:8px;font-size:9px;
+  text-transform:uppercase;letter-spacing:0.06em;padding:2px 5px;border-radius:3px;
+  background:var(--bg);color:var(--ink2)}
+.recent .recent-tag.live{background:rgba(95,200,121,0.15);color:var(--ok)}
+
+.skills-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:32px}
+.skill-card{background:var(--bg3);border:1px solid var(--line);border-radius:10px;
+  padding:14px;cursor:pointer}
+.skill-card:hover{border-color:var(--accent)}
+.skill-card .icn{width:32px;height:32px;border-radius:8px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));margin-bottom:10px;
+  display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff}
+.skill-card h4{color:var(--ink);text-transform:none;font-size:14px;letter-spacing:0;margin-bottom:4px}
+.skill-card p{font-size:12px;color:var(--ink2);margin-bottom:8px;line-height:1.4}
+.skill-card .by{font-size:11px;color:var(--ink3)}
+
+/* ============================================================ */
+/*                  PROTOTYPE B — LANDING DEMO                    */
+/* ============================================================ */
+.landing-stage{background:radial-gradient(ellipse at top,rgba(232,116,58,0.12),transparent 60%),var(--bg2);
+  padding:48px 32px}
+.landing-hero{text-align:center;max-width:760px;margin:0 auto 32px}
+.landing-hero .tag{display:inline-block;padding:4px 12px;background:rgba(232,116,58,0.15);
+  border:1px solid rgba(232,116,58,0.3);border-radius:999px;font-size:11px;
+  color:var(--accent2);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:18px}
+.landing-hero h1{font-size:44px;line-height:1.1;margin-bottom:14px}
+.landing-hero h1 .em{color:var(--accent);font-style:italic}
+.landing-hero p.sub{font-size:16px;color:var(--ink2);line-height:1.5}
+
+/* canvas demo */
+.canvas-demo{max-width:1100px;margin:0 auto;background:var(--bg);
+  border:1px solid var(--line);border-radius:16px;padding:24px;
+  position:relative;height:380px;overflow:hidden}
+.canvas-grid{position:absolute;inset:0;
+  background-image:radial-gradient(circle,var(--line) 1px,transparent 1px);
+  background-size:24px 24px;opacity:0.4}
+.demo-node{position:absolute;background:var(--bg2);border:1px solid var(--line);
+  border-radius:10px;padding:10px 12px;font-size:11px;width:140px;color:var(--ink)}
+.demo-node .nh{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px}
+.demo-node .nv{font-size:12px;color:var(--ink)}
+.demo-node.host{border-left:3px solid var(--accent)}
+.demo-node.proc{border-left:3px solid var(--blue)}
+.demo-node.out{border-left:3px solid var(--ok)}
+.demo-node.ai{border-left:3px solid var(--purple)}
+
+.demo-svg{position:absolute;inset:0;pointer-events:none}
+
+.demo-floating-chat{position:absolute;right:24px;bottom:24px;width:260px;
+  background:var(--bg3);border:1px solid var(--accent);border-radius:12px;padding:12px;
+  box-shadow:0 12px 40px -8px rgba(232,116,58,0.4)}
+.demo-floating-chat .ch-h{font-size:10px;color:var(--accent);text-transform:uppercase;
+  letter-spacing:0.08em;margin-bottom:6px}
+.demo-floating-chat .ch-m{font-size:11px;color:var(--ink);line-height:1.4;
+  background:var(--bg2);border-radius:6px;padding:6px 8px;margin-bottom:8px}
+.demo-floating-chat .ch-i{width:100%;background:var(--bg);border:1px solid var(--line);
+  color:var(--ink);font-size:11px;padding:5px 8px;border-radius:6px;outline:0}
+
+/* feature row strip */
+.feat-strip{max-width:1100px;margin:32px auto 0;display:grid;
+  grid-template-columns:1fr 1fr 1fr;gap:14px}
+.feat{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px}
+.feat .micro{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px}
+.feat h4{font-size:13px;color:var(--ink);margin-bottom:6px;text-transform:none;letter-spacing:0}
+.feat p{font-size:11px;color:var(--ink2)}
+
+/* ============================================================ */
+/*                  PROTOTYPE C — PRICING                         */
+/* ============================================================ */
+.bill-toggle{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:32px}
+.bill-toggle .t{padding:6px 16px;border-radius:8px;font-size:13px;color:var(--ink2);
+  cursor:pointer;border:1px solid var(--line)}
+.bill-toggle .t.on{background:var(--bg2);color:var(--ink);border-color:var(--accent)}
+.bill-toggle .save{font-size:11px;color:var(--ok);background:rgba(95,200,121,0.12);
+  padding:3px 8px;border-radius:4px;margin-left:6px}
+
+.price-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;max-width:1100px;margin:0 auto}
+.tier{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:24px;
+  display:flex;flex-direction:column;position:relative}
+.tier.pop{border-color:var(--accent);background:linear-gradient(180deg,rgba(232,116,58,0.08),var(--bg2))}
+.tier.pop::after{content:"MOST POPULAR";position:absolute;top:-9px;right:14px;
+  background:var(--accent);color:#fff;font-size:9px;letter-spacing:0.08em;
+  font-weight:700;padding:2px 8px;border-radius:4px}
+.tier .tname{font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink3);margin-bottom:4px}
+.tier h3.tprice{font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);margin-bottom:0}
+.tier h3.tprice .cur{font-size:16px;color:var(--ink2);font-weight:500;margin-right:2px}
+.tier h3.tprice .per{font-size:12px;color:var(--ink3);font-weight:400;margin-left:4px}
+.tier .strike{font-size:12px;color:var(--ink3);text-decoration:line-through;margin-top:2px}
+.tier .billed{font-size:11px;color:var(--ink3);margin-top:6px;margin-bottom:14px}
+
+.tier .credit{background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:14px;
+  display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tier .credit > div{font-size:11px;color:var(--ink3)}
+.tier .credit > div b{display:block;color:var(--ink);font-size:13px;font-weight:600;margin-top:2px}
+
+/* slider — within Studio */
+.tier .slider-box{margin-bottom:14px}
+.tier .slider-box .slabel{font-size:10px;color:var(--ink3);text-transform:uppercase;
+  letter-spacing:0.08em;margin-bottom:6px}
+.tier .slider-box input[type=range]{width:100%;accent-color:var(--accent)}
+.tier .slider-box .ticks{display:flex;justify-content:space-between;font-size:9px;
+  color:var(--ink3);margin-top:4px;font-family:ui-monospace,monospace}
+
+.tier .ftrs{font-size:12px;color:var(--ink2);margin-bottom:18px;flex:1}
+.tier .ftrs li{list-style:none;padding:5px 0;display:flex;gap:6px;align-items:flex-start}
+.tier .ftrs li::before{content:"✓";color:var(--ok);font-weight:700;flex-shrink:0}
+.tier .ftrs li.plus{color:var(--ink);font-size:11px;text-transform:uppercase;
+  letter-spacing:0.06em;padding-top:14px;margin-top:8px;border-top:1px solid var(--line)}
+.tier .ftrs li.plus::before{content:""}
+
+.tier button{background:var(--accent);color:#fff;border:0;padding:11px;border-radius:8px;
+  font-size:13px;font-weight:600;cursor:pointer;width:100%}
+.tier.free button{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.tier:not(.pop):not(.free) button{background:var(--bg3);color:var(--ink);
+  border:1px solid var(--ink3)}
+
+.never-expire{max-width:900px;margin:32px auto 0;background:var(--bg2);
+  border-left:3px solid var(--accent);border-radius:8px;padding:18px 22px}
+.never-expire h4{color:var(--accent);text-transform:none;letter-spacing:0;font-size:15px;margin-bottom:6px}
+
+/* ============================================================ */
+/*               PROTOTYPE D — ai.plan emission                   */
+/* ============================================================ */
+.plan-stage{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden}
+.plan-h{padding:14px 20px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:14px;background:var(--bg2)}
+.plan-h .pidx{font-size:11px;color:var(--ink3);background:var(--bg3);
+  padding:2px 8px;border-radius:4px;font-family:ui-monospace,monospace}
+.plan-h .ptitle{font-size:14px;color:var(--ink);font-weight:500}
+.plan-h .pright{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--ink2)}
+.plan-h .pright .think{display:flex;align-items:center;gap:5px}
+.plan-h .pright .think .pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 0 0 rgba(95,200,121,0.5);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(95,200,121,0.6)}70%{box-shadow:0 0 0 8px rgba(95,200,121,0)}100%{box-shadow:0 0 0 0 rgba(95,200,121,0)}}
+
+.plan-body{padding:22px;display:grid;grid-template-columns:280px 1fr;gap:24px}
+.plan-thought{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;
+  font-size:12px;color:var(--ink2);line-height:1.6}
+.plan-thought .step{display:flex;gap:10px;margin-bottom:10px}
+.plan-thought .step .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);
+  margin-top:6px;flex-shrink:0}
+.plan-thought .step.done .dot{background:var(--ok)}
+.plan-thought .step .body{flex:1}
+.plan-thought .step .body b{color:var(--ink);font-size:11px;text-transform:uppercase;
+  letter-spacing:0.06em;display:block;margin-bottom:2px}
+.plan-thought .step .body span{font-size:11px;color:var(--ink3)}
+
+.plan-table{background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.plan-table .th{display:grid;grid-template-columns:48px 1fr 220px 80px;gap:8px;
+  padding:10px 14px;background:var(--bg3);font-size:10px;text-transform:uppercase;
+  letter-spacing:0.08em;color:var(--ink3)}
+.plan-table .tr{display:grid;grid-template-columns:48px 1fr 220px 80px;gap:8px;
+  padding:12px 14px;border-top:1px solid var(--line);font-size:12px;align-items:center}
+.plan-table .tr .n{font-family:ui-monospace,monospace;color:var(--ink3);font-size:11px}
+.plan-table .tr .name{color:var(--ink);font-weight:500}
+.plan-table .tr .name small{color:var(--ink3);font-weight:400;display:block;font-size:11px;margin-top:2px}
+.plan-table .tr .type{font-family:ui-monospace,monospace;color:var(--accent2);font-size:11px}
+.plan-table .tr .stat{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;
+  padding:3px 7px;border-radius:4px;text-align:center;width:fit-content}
+.plan-table .tr .stat.ok{background:rgba(95,200,121,0.15);color:var(--ok)}
+.plan-table .tr .stat.run{background:rgba(106,155,204,0.15);color:var(--blue)}
+.plan-table .tr .stat.queued{background:var(--bg3);color:var(--ink3)}
+
+.plan-footer{padding:14px 22px;border-top:1px solid var(--line);background:var(--bg2);
+  display:flex;align-items:center;gap:16px;font-size:12px;color:var(--ink2)}
+.plan-footer .auto-arrange{padding:5px 11px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;font-size:11px;color:var(--ink);cursor:pointer;display:flex;align-items:center;gap:5px}
+.plan-footer .replay{margin-left:auto;color:var(--accent);font-size:11px;cursor:pointer;
+  display:flex;align-items:center;gap:5px}
+
+/* ============================================================ */
+/*               PROTOTYPE E — MOAT SURFACE                       */
+/* ============================================================ */
+.moat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1100px;margin:0 auto}
+.moat{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:24px;position:relative;overflow:hidden}
+.moat::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.moat .micn{width:42px;height:42px;border-radius:10px;background:var(--bg3);
+  display:flex;align-items:center;justify-content:center;font-size:20px;
+  color:var(--accent);margin-bottom:16px;border:1px solid var(--line)}
+.moat h3{font-size:18px;color:var(--ink);margin-bottom:10px;letter-spacing:-0.01em}
+.moat p.lead{font-size:13px;color:var(--ink2);line-height:1.5;margin-bottom:16px}
+.moat .badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.moat .badge{padding:3px 9px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:4px;font-size:10px;color:var(--ink2);font-family:ui-monospace,monospace}
+.moat .badge.live{background:rgba(95,200,121,0.12);color:var(--ok);border-color:rgba(95,200,121,0.3)}
+.moat .vs{font-size:11px;color:var(--ink3);padding-top:14px;border-top:1px solid var(--line)}
+.moat .vs b{color:var(--ink2)}
+
+.moat-cta{max-width:900px;margin:36px auto 0;text-align:center;
+  background:linear-gradient(135deg,rgba(232,116,58,0.08),rgba(106,155,204,0.05));
+  border:1px solid var(--line);border-radius:14px;padding:32px 24px}
+.moat-cta h3{font-size:22px;margin-bottom:10px;color:var(--ink)}
+.moat-cta p{font-size:14px;color:var(--ink2);max-width:600px;margin:0 auto 18px}
+.moat-cta button{background:var(--accent);color:#fff;border:0;padding:11px 22px;
+  border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+
+/* — header — */
+header.head{max-width:1240px;margin:0 auto;padding:64px 32px 24px}
+header.head .why{background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:18px 22px;margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:24px}
+header.head .why h4{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px}
+header.head .why ul{font-size:12px;color:var(--ink2);padding-left:18px}
+header.head .why ul li{margin-bottom:4px;list-style:disc}
+
+@media(max-width:980px){
+  .price-grid{grid-template-columns:repeat(2,1fr)}
+  .recent-grid{grid-template-columns:repeat(2,1fr)}
+  .skills-grid{grid-template-columns:1fr}
+  .moat-grid{grid-template-columns:1fr}
+  .plan-body{grid-template-columns:1fr}
+  .intent{grid-template-columns:1fr}
+  header.head .why{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="brand">Arch<span>Hub</span> · redesign prototypes</div>
+  <a class="chip" href="#A">A · Home</a>
+  <a class="chip" href="#B">B · Landing</a>
+  <a class="chip" href="#C">C · Pricing</a>
+  <a class="chip" href="#D">D · ai.plan</a>
+  <a class="chip" href="#E">E · Moat</a>
+  <div style="margin-left:auto;font-size:12px;color:var(--ink3)">2026-05-24 · founder review</div>
+</nav>
+
+<header class="head">
+  <h1>Five prototypes to pick from</h1>
+  <p style="font-size:15px;max-width:760px">
+    Direct response to your 5 marching orders after the TapNow + Freepik studies.
+    Each section below is a clickable mock plus the rationale. Decide YES /
+    REFINE / NO at the bottom of each, then I build it.
+  </p>
+  <div class="why">
+    <div>
+      <h4>What we learned</h4>
+      <ul>
+        <li>TapNow vocab (Node / Wire / Group / Canvas) is literally
+          ours — they validated the design class.</li>
+        <li>Freepik DeepImagine puts a giant prompt + mode toggle + model
+          chips on the home screen. Composer-first wins.</li>
+        <li>Both ship live interactive demos on the marketing site —
+          screenshots don't sell.</li>
+        <li>Pricing pattern: cheap entry, slider within tier, credits
+          never expire, top-up bonus at higher tier.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>What ArchHub keeps that they can't</h4>
+      <ul>
+        <li>Real Revit / AutoCAD / 3ds Max / Rhino / Blender hosts.</li>
+        <li>Local-first, offline, BYO key.</li>
+        <li>Speckle wires — content-addressed, version-immutable, undo via
+          previous Version.</li>
+        <li>Vertical depth in AEC — they're general creative, we're
+          architects-and-engineers-specific.</li>
+      </ul>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<!--            A — COMPOSER-FIRST HOME                           -->
+<!-- ============================================================ -->
+<section class="proto" id="A">
+  <div class="intent">
+    <div>
+      <div class="tagline">Prototype A</div>
+      <h2>Composer-first home — kill the splash</h2>
+      <p>Today: splash + Home tab with marketing copy and CTA buttons.
+        Replace with one giant prompt input + AEC starter chips. The
+        thing the user came to do (drive ArchHub) is the first thing
+        on screen. Below: recent projects + curated Skills, not a
+        wall of dead CTAs.</p>
+    </div>
+    <div class="steal">
+      <b>Borrowed from</b>
+      <div style="margin-top:8px">
+        <span class="src">TapNow</span> Composer-first "What are we making today?"
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Freepik</span> model chips + category chips above input
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Linear / Notion</span> recent grid pattern
+      </div>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="url">archhub.io/home — composer-first</div>
+    </div>
+    <div class="app-shell">
+      <div class="app-nav">
+        <div class="logo">Arch<span>Hub</span></div>
+        <div class="navchip active">Home</div>
+        <div class="navchip">Canvas</div>
+        <div class="navchip">Library</div>
+        <div class="navchip">Hosts</div>
+        <div class="right">
+          <span>5 / 30 trial msgs</span>
+          <span class="pro-badge">SOLO</span>
+        </div>
+      </div>
+      <div class="home-stage">
+        <div class="home-hero">
+          <div class="greet">Welcome back, Ahmed</div>
+          <h1 class="q">What are we <span class="em">building</span> today?</h1>
+        </div>
+        <div class="composer">
+          <textarea class="composer-input" placeholder="Describe what you want — wire a graph, query a host, run a Skill…"></textarea>
+          <div class="composer-row">
+            <div class="picker">
+              <span class="dot-llm"></span>
+              Claude Sonnet 4.6
+              <span style="opacity:0.5">▾</span>
+            </div>
+            <div class="mode on">Plan</div>
+            <div class="mode">Auto</div>
+            <div class="mode">YOLO</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+        <div class="chips">
+          <div class="chip-starter"><span class="ico">▣</span> Pull a Revit schedule</div>
+          <div class="chip-starter"><span class="ico">▦</span> QTO from a drawing PDF</div>
+          <div class="chip-starter"><span class="ico">⌖</span> Extract redline revisions</div>
+          <div class="chip-starter"><span class="ico">⟁</span> New project workspace</div>
+          <div class="chip-starter"><span class="ico">⌥</span> AutoCAD layer audit</div>
+          <div class="chip-starter"><span class="ico">⊞</span> Wire a custom node</div>
+        </div>
+
+        <div class="home-row">
+          <h3 class="row-h">Recent <span class="more">View all →</span></h3>
+          <div class="recent-grid">
+            <div class="recent">
+              <span class="recent-tag live">LIVE</span>
+              <div class="recent-title">BBC4 submittal QC reconcile</div>
+              <div class="recent-meta">Revit · 43 nodes · 2h ago</div>
+            </div>
+            <div class="recent">
+              <div class="recent-title">BH3D revision tables</div>
+              <div class="recent-meta">Revit · 13 nodes · yesterday</div>
+            </div>
+            <div class="recent">
+              <div class="recent-title">Tower 2 — wall takeoff</div>
+              <div class="recent-meta">Speckle · 8 nodes · 3d ago</div>
+            </div>
+            <div class="recent">
+              <div class="recent-title">Skill: PDF revision extractor</div>
+              <div class="recent-meta">Subgraph · v1.2 · 5d ago</div>
+            </div>
+          </div>
+
+          <h3 class="row-h">Suggested Skills <span class="more">Browse library →</span></h3>
+          <div class="skills-grid">
+            <div class="skill-card">
+              <div class="icn">📐</div>
+              <h4>Wall-set QTO</h4>
+              <p>Take a Revit selection, group by family + type, emit costed schedule.</p>
+              <div class="by">by you · 12 runs</div>
+            </div>
+            <div class="skill-card">
+              <div class="icn">🔄</div>
+              <h4>DWG → Revit redline</h4>
+              <p>Diff an old DWG against current Revit walls; emit a markup PDF.</p>
+              <div class="by">by community · 247 installs</div>
+            </div>
+            <div class="skill-card">
+              <div class="icn">📊</div>
+              <h4>Submittal log reconciler</h4>
+              <p>Match a master xlsx against a dated submittal folder; flag strays.</p>
+              <div class="by">verified · 1.2k installs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="va"/> YES — build it</label>
+    <label><input type="radio" name="va"/> REFINE — different layout</label>
+    <label><input type="radio" name="va"/> NO — keep splash</label>
+    <div class="note">~3 days · replaces splash + Home tab · AgDR before build</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--           B — LANDING PAGE LIVE DEMO                         -->
+<!-- ============================================================ -->
+<section class="proto" id="B">
+  <div class="intent">
+    <div>
+      <div class="tagline">Prototype B</div>
+      <h2>Live landing demo — not screenshots</h2>
+      <p>Today: <code>landing/</code> is mostly static. TapNow + Freepik
+        marketing sites both ship REAL interactive demos — drag a cube
+        to change camera angle, click a model card to swap, see nodes
+        wire on scroll. The marketing site IS the product trial.</p>
+      <p>Below: a live ReactFlow canvas mock with a typed example wire
+        — hover reveals node config; a floating Composer chat-in-card.</p>
+    </div>
+    <div class="steal">
+      <b>Borrowed from</b>
+      <div style="margin-top:8px">
+        <span class="src">TapNow</span> live nodes + 3D cube + lens picker
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Freepik</span> chat-in-feature-card + MCP-Connected badge
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Vercel / Stripe</span> animated docs
+      </div>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="url">archhub.io — live canvas demo</div>
+    </div>
+    <div class="landing-stage">
+      <div class="landing-hero">
+        <div class="tag">AEC graph workspace · v1.4</div>
+        <h1>Wire Revit. Wire AutoCAD.<br/>Wire <span class="em">your AI agent</span>.</h1>
+        <p class="sub">A graph-first canvas where typed wires move real data between
+          hosts, LLMs, and your filters. Local-first. BYO key. No black boxes.</p>
+      </div>
+
+      <div class="canvas-demo">
+        <div class="canvas-grid"></div>
+        <svg class="demo-svg" viewBox="0 0 1052 332" preserveAspectRatio="none">
+          <path d="M 170 90 C 240 90, 240 165, 320 165" stroke="#e8743a" stroke-width="2.4" fill="none" opacity="0.7"/>
+          <path d="M 480 165 C 560 165, 560 165, 640 165" stroke="#6a9bcc" stroke-width="2.8" fill="none" opacity="0.7" stroke-dasharray="6 4"/>
+          <path d="M 800 165 C 870 165, 870 240, 940 240" stroke="#5fc879" stroke-width="2.4" fill="none" opacity="0.7"/>
+          <path d="M 170 200 C 240 200, 240 240, 320 240" stroke="#a37bd9" stroke-width="2.0" fill="none" opacity="0.7"/>
+        </svg>
+
+        <div class="demo-node host" style="left:30px;top:74px;">
+          <div class="nh">Host · Revit 2025</div>
+          <div class="nv">read_walls()</div>
+          <div style="font-size:9px;color:var(--ink3);margin-top:4px">→ list of Wall · 43 items</div>
+        </div>
+
+        <div class="demo-node ai" style="left:30px;top:180px;">
+          <div class="nh">ai · llm.classify</div>
+          <div class="nv">Categorize wall types</div>
+        </div>
+
+        <div class="demo-node proc" style="left:340px;top:148px;">
+          <div class="nh">data · group_by</div>
+          <div class="nv">key = family</div>
+        </div>
+
+        <div class="demo-node proc" style="left:660px;top:148px;">
+          <div class="nh">qto · price</div>
+          <div class="nv">per-m² rate table</div>
+        </div>
+
+        <div class="demo-node out" style="left:950px;top:225px;width:90px">
+          <div class="nh">output</div>
+          <div class="nv">schedule.xlsx</div>
+        </div>
+
+        <div class="demo-floating-chat">
+          <div class="ch-h">⚡ Composer</div>
+          <div class="ch-m">Wired <b>revit.read_walls</b> → <b>data.group_by</b> →
+            <b>qto.price</b>. Want me to also pipe through the LLM classifier
+            for the 4 unknown wall types?</div>
+          <input class="ch-i" placeholder="Yes, classify them by family…"/>
+        </div>
+      </div>
+
+      <div class="feat-strip">
+        <div class="feat">
+          <div class="micro">Interactive</div>
+          <h4>Drag-rewire on the page</h4>
+          <p>Visitors can grab a node and re-route a wire. No signup. Try it
+            before you trust it.</p>
+        </div>
+        <div class="feat">
+          <div class="micro">3D · click to orbit</div>
+          <h4>Live Revit model preview</h4>
+          <p>The <code>host.revit.read_walls</code> output renders to a live IFC
+            viewer. Spin it, click a wall, see the data row light up.</p>
+        </div>
+        <div class="feat">
+          <div class="micro">Talk to it</div>
+          <h4>Composer chat in every feature card</h4>
+          <p>Each section has its own context-scoped chat. Ask "what does
+            this do?" without leaving the page.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vb"/> YES — full build</label>
+    <label><input type="radio" name="vb"/> YES — but cut 3D viewer (heavy)</label>
+    <label><input type="radio" name="vb"/> REFINE — only top hero, defer rest</label>
+    <label><input type="radio" name="vb"/> NO</label>
+    <div class="note">~5–7 days · risky (ReactFlow + IFC viewer on landing)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--                    C — PRICING                                -->
+<!-- ============================================================ -->
+<section class="proto" id="C">
+  <div class="intent">
+    <div>
+      <div class="tagline">Prototype C</div>
+      <h2>$5 floor · slider in tier · credits never expire</h2>
+      <p>Direct port of the TapNow pricing pattern at your $5 / $15 / $39
+        ladder. Solo / Studio / Firm + a real Free tier. Studio gets a
+        usage slider so a heavy power-user doesn't have to jump to Firm.
+        Top-up rate improves at higher tiers (+10 / +20 / +30 % bonus).
+        Big "credits never expire" banner — that's a real differentiator
+        vs Cursor / ChatGPT which burn quota monthly.</p>
+    </div>
+    <div class="steal">
+      <b>Borrowed from</b>
+      <div style="margin-top:8px">
+        <span class="src">TapNow</span> slider within tier · annual 15-40 % off · top-up bonus
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Freepik</span> $0 / $8.99 / Premium tier names
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Linear / Vercel</span> credit-counter UI
+      </div>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="url">archhub.io/pricing</div>
+    </div>
+
+    <div style="padding:48px 32px;background:var(--bg2)">
+      <div style="text-align:center;margin-bottom:32px">
+        <h2 style="font-size:30px">Pricing that respects your wallet</h2>
+        <p style="max-width:560px;margin:8px auto 0;font-size:14px">
+          Start at $5. Scale within tier with a slider. Credits never expire.
+          Annual saves 15–40 %.</p>
+      </div>
+
+      <div class="bill-toggle">
+        <div class="t">Monthly</div>
+        <div class="t on">Annual <span class="save">SAVE up to 40 %</span></div>
+        <div class="t">Enterprise</div>
+      </div>
+
+      <div class="price-grid">
+        <!-- FREE -->
+        <div class="tier free">
+          <div class="tname">Free</div>
+          <h3 class="tprice"><span class="cur">$</span>0</h3>
+          <div class="billed">forever · no card</div>
+          <div class="credit">
+            <div>Monthly cap<b>30 messages</b></div>
+            <div>LLM key<b>BYO</b></div>
+          </div>
+          <ul class="ftrs">
+            <li>Local-first canvas + Library</li>
+            <li>All hosts (Revit / AutoCAD / Rhino / Blender)</li>
+            <li>Bring your own Anthropic / OpenAI key</li>
+            <li>Speckle wires (offline mode)</li>
+          </ul>
+          <button>Get started</button>
+        </div>
+
+        <!-- SOLO -->
+        <div class="tier">
+          <div class="tname">Solo</div>
+          <h3 class="tprice"><span class="cur">$</span>5<span class="per">/ mo</span></h3>
+          <div class="strike">$6 monthly</div>
+          <div class="billed">Billed annually · $60 / yr</div>
+          <div class="credit">
+            <div>Monthly credits<b>500 msgs</b></div>
+            <div>Top-up<b>$1 = 100 msg</b></div>
+          </div>
+          <ul class="ftrs">
+            <li>Everything in Free</li>
+            <li>Cloud Skills sync (1 device)</li>
+            <li>Cloud Memory (1 device)</li>
+            <li>BYO key still works (uncounted)</li>
+          </ul>
+          <button>Pick Solo</button>
+        </div>
+
+        <!-- STUDIO -->
+        <div class="tier pop">
+          <div class="tname">Studio</div>
+          <h3 class="tprice"><span class="cur">$</span>15<span class="per">/ mo</span></h3>
+          <div class="strike">$25 monthly</div>
+          <div class="billed">Billed annually · $180 / yr</div>
+          <div class="credit">
+            <div>Monthly credits<b id="cval">2 000 msgs</b></div>
+            <div>Top-up<b>$1 = 110 msg <span style="color:var(--ok)">+10 %</span></b></div>
+          </div>
+          <div class="slider-box">
+            <div class="slabel">Scale within tier</div>
+            <input type="range" min="0" max="4" value="1"
+              oninput="document.getElementById('cval').innerHTML=['1 000 msgs','2 000 msgs','4 000 msgs','8 000 msgs','15 000 msgs'][this.value]; document.getElementById('cprice').innerHTML=['$10','$15','$25','$40','$70'][this.value]"/>
+            <div class="ticks"><span>1k</span><span>2k</span><span>4k</span><span>8k</span><span>15k</span></div>
+          </div>
+          <ul class="ftrs">
+            <li>Cloud LLM proxy (we hold the keys)</li>
+            <li>Multi-device sync</li>
+            <li>Cloud Skills + Memory</li>
+            <li>Priority queue</li>
+          </ul>
+          <button>Pick Studio · <span id="cprice">$15</span> / mo</button>
+        </div>
+
+        <!-- FIRM -->
+        <div class="tier">
+          <div class="tname">Firm</div>
+          <h3 class="tprice"><span class="cur">$</span>39<span class="per">/ seat / mo</span></h3>
+          <div class="strike">$50 monthly</div>
+          <div class="billed">Billed annually · $468 / seat / yr</div>
+          <div class="credit">
+            <div>Per seat<b>5 000 msgs</b></div>
+            <div>Top-up<b>$1 = 120 msg <span style="color:var(--ok)">+20 %</span></b></div>
+          </div>
+          <ul class="ftrs">
+            <li>Everything in Studio</li>
+            <li>SSO (Google / Microsoft / Okta)</li>
+            <li>Role-based permissions</li>
+            <li>Shared firm Skill library</li>
+            <li>Audit log export</li>
+            <li class="plus">+ shared msg pool · seat usage caps</li>
+          </ul>
+          <button>Pick Firm · min 5 seats</button>
+        </div>
+      </div>
+
+      <div class="never-expire">
+        <h4>💎 Credits never expire</h4>
+        <p style="font-size:13px;color:var(--ink2)">
+          90 % of AI platforms wipe your unused credits monthly. We don't.
+          Top up once, use it next year. Even if you cancel your
+          subscription, every paid credit stays usable.</p>
+      </div>
+
+      <div style="max-width:1100px;margin:32px auto 0;background:var(--bg);
+                  border:1px solid var(--line);border-radius:14px;padding:24px">
+        <h4 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:14px;margin-bottom:14px">
+          Cost calibration — what you actually get</h4>
+        <table style="width:100%;font-size:12px;color:var(--ink2);border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--line);color:var(--ink3);text-align:left">
+            <th style="padding:8px 0;text-transform:uppercase;letter-spacing:0.06em;font-size:10px">Action</th>
+            <th style="padding:8px 0;text-transform:uppercase;letter-spacing:0.06em;font-size:10px">≈ messages</th>
+            <th style="padding:8px 0;text-transform:uppercase;letter-spacing:0.06em;font-size:10px">Solo (500 msg)</th>
+            <th style="padding:8px 0;text-transform:uppercase;letter-spacing:0.06em;font-size:10px">Studio (2k msg)</th>
+            <th style="padding:8px 0;text-transform:uppercase;letter-spacing:0.06em;font-size:10px">Firm (5k msg)</th>
+          </tr></thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--line)"><td style="padding:8px 0">Composer turn (3-tool plan)</td>
+              <td>~5 msg</td><td>100 / mo</td><td>400 / mo</td><td>1 000 / mo</td></tr>
+            <tr style="border-bottom:1px solid var(--line)"><td style="padding:8px 0">Quick host op (revit.read_walls)</td>
+              <td>~1 msg</td><td>500 / mo</td><td>2 000 / mo</td><td>5 000 / mo</td></tr>
+            <tr><td style="padding:8px 0">Skill run (precomposed graph)</td>
+              <td>~2 msg</td><td>250 / mo</td><td>1 000 / mo</td><td>2 500 / mo</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vc"/> YES — adopt $5/$15/$39 ladder</label>
+    <label><input type="radio" name="vc"/> REFINE — change numbers</label>
+    <label><input type="radio" name="vc"/> NO — keep current</label>
+    <div class="note">Stripe products + prices already pending — I create after you pick</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--                D — ai.plan emission polish                    -->
+<!-- ============================================================ -->
+<section class="proto" id="D">
+  <div class="intent">
+    <div>
+      <div class="tagline">Prototype D</div>
+      <h2>ai.plan output — explicit thought + decision table</h2>
+      <p>Today: Composer emits nodes + wires, then drops them on the
+        canvas. TapNow shows a polished "Thought for 2s · All 3 scenes
+        ready — 12 panels total, arranged vertically on canvas" + a
+        scene table. Same idea for us: show the model's plan (text
+        rationale, ordered steps, status per node) + auto-arrange
+        toggle + replay button. AgDR-0021 already persists this; the
+        UX polish is the gap.</p>
+    </div>
+    <div class="steal">
+      <b>Borrowed from</b>
+      <div style="margin-top:8px">
+        <span class="src">TapNow</span> "Thought for Xs" + scene table + auto-arrange
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Cursor</span> ordered-step plan with live status pills
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Linear</span> compact replay scrubber
+      </div>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="url">ArchHub · Composer turn → ai.plan emission</div>
+    </div>
+    <div style="padding:24px;background:var(--bg2)">
+      <div class="plan-stage">
+        <div class="plan-h">
+          <div class="pidx">turn 14</div>
+          <div class="ptitle">"Take the wall selection, group by family, price per m², emit a schedule."</div>
+          <div class="pright">
+            <div class="think">
+              <span class="pulse"></span>
+              Thought for 2.3 s
+            </div>
+            <span>·</span>
+            <span>4 of 5 nodes ready</span>
+            <span>·</span>
+            <span>cached</span>
+          </div>
+        </div>
+
+        <div class="plan-body">
+          <div class="plan-thought">
+            <div class="step done">
+              <div class="dot"></div>
+              <div class="body">
+                <b>Read input</b>
+                <span>Found 43 Wall · 4 families.</span>
+              </div>
+            </div>
+            <div class="step done">
+              <div class="dot"></div>
+              <div class="body">
+                <b>Pick primitives</b>
+                <span>data.group_by + qto.price already in library.</span>
+              </div>
+            </div>
+            <div class="step done">
+              <div class="dot"></div>
+              <div class="body">
+                <b>Wire ports</b>
+                <span>Type-checked: walls → list → grouped → priced.</span>
+              </div>
+            </div>
+            <div class="step">
+              <div class="dot"></div>
+              <div class="body">
+                <b>Pick output sink</b>
+                <span>schedule.xlsx (Excel host detected).</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-table">
+            <div class="th">
+              <div>#</div><div>Node</div><div>Type</div><div>Status</div>
+            </div>
+            <div class="tr">
+              <div class="n">1</div>
+              <div class="name">Wall selection<small>43 items · Revit</small></div>
+              <div class="type">host.revit.read_walls</div>
+              <div class="stat ok">Done</div>
+            </div>
+            <div class="tr">
+              <div class="n">2</div>
+              <div class="name">Group by family<small>key = "family_name"</small></div>
+              <div class="type">data.group_by</div>
+              <div class="stat ok">Done</div>
+            </div>
+            <div class="tr">
+              <div class="n">3</div>
+              <div class="name">Apply rate table<small>per-m² rates from project.json</small></div>
+              <div class="type">qto.price</div>
+              <div class="stat ok">Done</div>
+            </div>
+            <div class="tr">
+              <div class="n">4</div>
+              <div class="name">Format header row<small>localized labels</small></div>
+              <div class="type">text.template</div>
+              <div class="stat run">Running…</div>
+            </div>
+            <div class="tr">
+              <div class="n">5</div>
+              <div class="name">Emit schedule<small>Tower2_QTO.xlsx</small></div>
+              <div class="type">excel.write_sheet</div>
+              <div class="stat queued">Queued</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="plan-footer">
+          <div class="auto-arrange">▦ Auto-arrange on canvas</div>
+          <div class="auto-arrange">⊟ Group into 1 Skill</div>
+          <div class="auto-arrange">↩ Approve writes</div>
+          <div class="replay">▶ Replay this turn from cache</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vd"/> YES — exactly this</label>
+    <label><input type="radio" name="vd"/> REFINE — less detail</label>
+    <label><input type="radio" name="vd"/> NO</label>
+    <div class="note">~2 days · pure UI polish over AgDR-0021 (no backend change)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--                E — MOAT SURFACE                                -->
+<!-- ============================================================ -->
+<section class="proto" id="E">
+  <div class="intent">
+    <div>
+      <div class="tagline">Prototype E</div>
+      <h2>Surface the moat on the landing page</h2>
+      <p>TapNow + Freepik are general creative tools. They cannot follow
+        us into Revit COM, AutoCAD .NET, 3ds Max plug-ins, IFC, or
+        AEC firm workflows. They also can't ship a local-first /
+        offline / BYO-key story (their whole biz IS the cloud).
+        We have a moat — make it visible on the home page so visitors
+        get the "why ArchHub not TapNow / Freepik" in 8 seconds.</p>
+    </div>
+    <div class="steal">
+      <b>Borrowed from</b>
+      <div style="margin-top:8px">
+        <span class="src">Linear</span> "designed for" pattern
+      </div>
+      <div style="margin-top:6px">
+        <span class="src">Cloudflare</span> badge grid
+      </div>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="url">archhub.io — why us, not them</div>
+    </div>
+    <div style="padding:48px 32px;background:var(--bg2)">
+      <div style="text-align:center;max-width:760px;margin:0 auto 32px">
+        <div class="tag" style="display:inline-block;padding:4px 12px;background:rgba(232,116,58,0.15);
+          border:1px solid rgba(232,116,58,0.3);border-radius:999px;font-size:11px;
+          color:var(--accent2);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:18px">
+          What general AI canvases cannot do</div>
+        <h2 style="font-size:32px;letter-spacing:-0.01em">Built for AEC.<br/>Not retrofitted into it.</h2>
+      </div>
+
+      <div class="moat-grid">
+        <div class="moat">
+          <div class="micn">🏗</div>
+          <h3>Real host integration</h3>
+          <p class="lead">16 connectors, 116 ops. Drive Revit walls, AutoCAD
+            layers, 3ds Max models, Rhino curves, Blender meshes, Speckle
+            commits, Outlook threads — from one wire.</p>
+          <div class="badges">
+            <div class="badge live">Revit · COM</div>
+            <div class="badge live">AutoCAD · .NET</div>
+            <div class="badge live">3ds Max</div>
+            <div class="badge live">Rhino</div>
+            <div class="badge live">Blender</div>
+            <div class="badge live">Speckle</div>
+            <div class="badge">Outlook</div>
+            <div class="badge">Excel · COM</div>
+            <div class="badge">+8</div>
+          </div>
+          <div class="vs"><b>vs TapNow / Freepik:</b> zero host integrations. Cloud-only.</div>
+        </div>
+
+        <div class="moat">
+          <div class="micn">🔐</div>
+          <h3>Local-first · BYO key</h3>
+          <p class="lead">Runs offline on your machine. Your drawings never
+            leave your network unless you say so. Bring your own
+            Anthropic / OpenAI / Google key — pay providers direct.
+            Optional cloud features are opt-in, never default.</p>
+          <div class="badges">
+            <div class="badge live">Offline canvas</div>
+            <div class="badge live">BYO Anthropic / OpenAI / Google</div>
+            <div class="badge live">Encrypted local store</div>
+            <div class="badge live">No telemetry default</div>
+          </div>
+          <div class="vs"><b>vs TapNow / Freepik:</b> their entire business model
+            is the cloud. They can't ship local.</div>
+        </div>
+
+        <div class="moat">
+          <div class="micn">⛓</div>
+          <h3>Speckle wires</h3>
+          <p class="lead">Every wire is a content-addressed Speckle
+            commit. Versions are immutable. Undo = receive previous
+            Version. Diff two design states. Audit every wire change.</p>
+          <div class="badges">
+            <div class="badge live">Content-addressed</div>
+            <div class="badge live">Immutable Versions</div>
+            <div class="badge live">Disk transport default</div>
+            <div class="badge live">Server opt-in</div>
+          </div>
+          <div class="vs"><b>vs TapNow / Freepik:</b> no IP-grade wire substrate.
+            Their wires are runtime objects.</div>
+        </div>
+      </div>
+
+      <div class="moat-cta">
+        <h3>The AEC firm-grade workspace.</h3>
+        <p>Hosts on your machine. Keys you own. Wires you can audit.
+          AI that has to show its work. That's the differentiator
+          general canvases cannot copy without becoming us.</p>
+        <button>Download v1.4 · 64-bit · 247 MB</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="ve"/> YES — exact placement</label>
+    <label><input type="radio" name="ve"/> YES — combine with B (landing)</label>
+    <label><input type="radio" name="ve"/> REFINE — less competitor call-out</label>
+    <label><input type="radio" name="ve"/> NO</label>
+    <div class="note">Section to drop into landing page after the hero/demo</div>
+  </div>
+</section>
+
+<!-- ====================== picks bar ====================== -->
+<section style="background:var(--bg);padding:32px;text-align:center">
+  <p style="font-size:13px;color:var(--ink2)">Reply with your picks
+    (e.g. <code>A:yes B:refine C:yes D:yes E:yes-combine</code>) and I
+    AgDR + build each one. Stripe pairing still open — your one click
+    above unlocks the pricing tier rollout.</p>
+</section>
+
+</body>
+</html>

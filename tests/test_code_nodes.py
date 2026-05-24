@@ -224,9 +224,15 @@ def test_typed_code_primitives_carry_only_relevant_params():
 
 def test_code_grammar_count_after_slice_l():
     """PRIMITIVES ≤ 80 (cap raised post AgDR-0021 + this code split).
-    Visible payload ≤ 70 (bridge cap)."""
+    Visible HARDCODED payload ≤ 70 (bridge cap on the grammar — the
+    "not a catalogue" rule). Synthesized entries (Tier 1/2 typed
+    primitives + shipped Skills auto-surfaced from registry/library)
+    are uncapped because they ARE real registered types, not a
+    decorative palette."""
     assert len(ng.PRIMITIVES) <= 80
-    assert len(ng.grammar_payload()) <= 70
+    payload = ng.grammar_payload()
+    hardcoded = [e for e in payload if not e.get("_source")]
+    assert len(hardcoded) <= 70
 
 
 # ─── 6. integration — code node cooks through runner ─────────────────

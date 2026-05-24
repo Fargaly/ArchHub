@@ -452,7 +452,12 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     # for LOGIC / SHAPE / WATCH / TRIGGER typed nodes. AgDR-0016 added
     # SHARE (3) + ADAPTER (3). AgDR-0018 added 3 more ADAPTER nodes.
     # Ceiling stays well below the old 80-node decorative catalogue.
-    assert len(payload) <= 70, "a grammar, not a catalogue"
+    # AgDR-0041 (2026-05-24): the cap applies to HARDCODED grammar
+    # only. Synthesized entries (Tier 1/2 typed primitives + shipped
+    # Skills auto-surfaced from the registry/library) are uncapped
+    # because they ARE real registered executors, not palette filler.
+    hardcoded = [p for p in payload if not p.get("_source")]
+    assert len(hardcoded) <= 70, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
     # Required families now represented by typed-node anchors:
     #   input  → number    · logic   → if      · output → result

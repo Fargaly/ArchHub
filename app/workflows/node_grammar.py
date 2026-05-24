@@ -786,9 +786,177 @@ def get_primitive(kind: str) -> Primitive | None:
 def engine_type(kind: str, params: dict | None = None) -> str | None:
     """Registry type a placed node of `kind` dispatches on, given its
     params. None for connector (run_op path), note (UX-only), and any
-    not-yet-built primitive."""
+    not-yet-built primitive.
+
+    Identity fallback (AgDR-0041 / Tier 1 + Tier 2 / shipped Skills):
+    if `kind` is not a hardcoded grammar primitive but IS itself a
+    registered engine type (registry or library), use it directly.
+    This is what lets a dropped `render.comfyui` / `skill.revit_hero_render`
+    node resolve without inflating PRIMITIVES with every typed primitive."""
     p = _BY_KIND.get(kind)
-    return p.engine_type_for(params) if p else None
+    if p is not None:
+        return p.engine_type_for(params)
+    # Identity fallback — kind == registered type.
+    try:
+        from .registry import get as _reg_get
+        if _reg_get(kind):
+            return kind
+    except Exception:
+        pass
+    try:
+        import library as _lib
+        if _lib.inspect(kind):
+            return kind
+    except Exception:
+        pass
+    return None
+
+
+# Type-prefix → palette category map. New synthesized grammar entries
+# (Tier 1 host primitives, Tier 2 render/vision/mesh/anim/llm typed
+# nodes, shipped Skills from the library) use this to pick which
+# collapsible section they appear under in the palette. Order doesn't
+# matter — longest prefix wins.
+_PREFIX_CAT: list[tuple[str, str]] = [
+    ("skill.",   "skill"),
+    ("host.",    "connector"),
+    ("render.",  "ai"),
+    ("vision.",  "ai"),
+    ("mesh.",    "ai"),
+    ("anim.",    "ai"),
+    ("llm.",     "ai"),
+]
+
+# Short user-facing blurbs per synthesized kind. Hand-written so the
+# palette stays scannable — descriptions from the spec are too long
+# AND tend to include dev jargon (registry / executor / subgraph) that
+# the palette UX test refuses. New kinds get a generated fallback.
+_SYNTH_BLURBS: dict[str, str] = {
+    # Tier 1 typed host nodes (AgDR-0041 P1)
+    "host.import_mesh":     "Drop a mesh into the host",
+    "host.read_walls":      "Read walls from the host",
+    "host.export_viewport": "Export host viewport + depth",
+    "host.run_script":      "Run a script in the host",
+    # Tier 2 typed primitives over comfyui + dashscope
+    "render.comfyui":     "Run a ComfyUI workflow",
+    "render.image_edit":  "Image-to-image edit (Qwen)",
+    "render.task_poll":   "Poll a DashScope async task",
+    "vision.describe":    "Describe an image (Qwen-VL)",
+    "mesh.from_image":    "Single image → 3D mesh",
+    "anim.wan_i2v":       "Image → video (Wan)",
+    "llm.qwen":           "Cheap text completion (Qwen)",
+    # Shipped Skills
+    "skill.revit_hero_render":    "Revit view → hero render",
+    "skill.photo_to_rhino_mass":  "Photo → host mass block",
+    "skill.drone_to_revit_walls": "Drone shots → Revit walls",
+}
+
+
+def _prefix_cat(t: str) -> str:
+    for pre, cat in _PREFIX_CAT:
+        if t.startswith(pre):
+            return cat
+    return "node"
+
+
+def _synth_blurb(kind: str, display: str) -> str:
+    """Short palette subtitle for a synthesized entry. Hand-written
+    entries take priority; otherwise fall back to display capped at
+    40 chars, then a final generic."""
+    if kind in _SYNTH_BLURBS:
+        return _SYNTH_BLURBS[kind]
+    if display and len(display) <= 40:
+        return display
+    return (display or kind)[:40]
+
+
+def _synthesized_primitives() -> list[dict]:
+    """Grammar entries auto-surfaced from the registry + library so the
+    palette reflects every shipped primitive / Skill without manually
+    extending PRIMITIVES.
+
+    Inclusion rules:
+    - Registry types whose prefix is in `_PREFIX_CAT` (Tier 1 host_typed
+      + Tier 2 render/vision/mesh/anim/llm primitives) — EXCEPT those
+      already covered by a hardcoded primitive's `engine_types` (don't
+      double-list `llm.complete` etc., which the `ai` primitive resolves
+      to via selector).
+    - Library Capability specs (the 3 shipped Skills + any user-saved).
+
+    Skips: anything already in `_BY_KIND`, anything already named by a
+    primitive's `engine_types`, anything without a registered executor.
+    """
+    out: list[dict] = []
+    # Build the "already covered by a Primitive" set so we don't shadow
+    # the existing selector-driven entries.
+    covered: set = set()
+    for p in PRIMITIVES:
+        for t in p.engine_types.values():
+            if t:
+                covered.add(t)
+    # 1. Registry-backed typed primitives.
+    try:
+        from .registry import all_specs as _all_specs
+        for spec in _all_specs():
+            t = getattr(spec, "type", "") or ""
+            if not t or t in covered or t in _BY_KIND:
+                continue
+            cat = _prefix_cat(t)
+            if cat == "node":
+                # Not a known prefix — skip; we only want the deliberate
+                # surfaces (host/render/vision/mesh/anim/llm). Other
+                # registry types (data.constant etc.) are PRIMITIVES.
+                continue
+            out.append({
+                "kind": t, "display": getattr(spec, "display_name", t) or t,
+                "cat": cat, "selector": "", "engine_types": {"": t},
+                "status": READY,
+                "note": "auto-surfaced from registry",
+                "blurb": _synth_blurb(
+                    t, getattr(spec, "display_name", "") or t),
+                "ports": _ports_for(t),
+                "params": [],
+                "_source": "registry",
+            })
+    except Exception:
+        pass
+    # 2. Library-backed Skills (impl.kind=graph composites).
+    try:
+        import library as _lib
+        for s in _lib.list_node_types(category=None):
+            t = s.get("type", "") or ""
+            if not t or t in covered or t in _BY_KIND:
+                continue
+            # Only the Skills surface here — library may also hold raw
+            # primitives (seeded), but those are already PRIMITIVES.
+            cat = _prefix_cat(t)
+            if cat == "node" and not t.startswith("skill."):
+                continue
+            spec = _lib.inspect(t) or {}
+            inputs = spec.get("inputs") or []
+            outputs = spec.get("outputs") or []
+
+            def _to_port(p: dict) -> dict:
+                name = p.get("name") or p.get("id") or ""
+                pt = (p.get("port_type") or p.get("type")
+                      or "any")
+                return {"id": name, "type": str(pt).upper()}
+            out.append({
+                "kind": t,
+                "display": spec.get("display_name") or s.get("name") or t,
+                "cat": cat, "selector": "", "engine_types": {"": t},
+                "status": READY,
+                "note": "auto-surfaced from library",
+                "blurb": _synth_blurb(
+                    t, spec.get("display_name") or s.get("name") or t),
+                "ports": {"in":  [_to_port(p) for p in inputs],
+                          "out": [_to_port(p) for p in outputs]},
+                "params": [],
+                "_source": "library",
+            })
+    except Exception:
+        pass
+    return out
 
 
 def _ports_for(engine_t: str) -> dict:
@@ -822,7 +990,12 @@ def grammar_payload() -> list[dict]:
     so the library palette is built from ONE source (no JS-side copy
     that can drift). Each entry carries the engine ports (from the
     registry) the canvas needs to draw + wire a placed node. Consumed
-    by the `get_node_grammar` bridge slot."""
+    by the `get_node_grammar` bridge slot.
+
+    Returns hardcoded PRIMITIVES first (palette display order matters)
+    then `_synthesized_primitives()` — Tier 1 host_typed + Tier 2
+    render/vision/mesh/anim/llm + shipped Skills. Synthesized entries
+    let new types land in the palette without manual PRIMITIVES edits."""
     out: list[dict] = []
     for p in PRIMITIVES:
         if p.hidden:
@@ -841,6 +1014,8 @@ def grammar_payload() -> list[dict]:
             "ports": _ports_for(rep),
             "params": [dict(x) for x in p.params],
         })
+    # AgDR-0041 / Tier 0/1/2 — surface registry + library entries.
+    out.extend(_synthesized_primitives())
     return out
 
 

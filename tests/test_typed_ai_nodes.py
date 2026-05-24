@@ -141,15 +141,20 @@ def test_ai_tools_carries_allowed_tools_param(primitives_by_kind):
 
 def test_grammar_count_after_ai_split():
     """Cap raised to 80 (was 75) after AgDR-0021 ai_plan + AgDR-0020
-    code-split. `grammar_payload()` palette-facing cap stays ≤70
-    because the master nodes are hidden."""
+    code-split. `grammar_payload()` palette-facing cap stays ≤70 for
+    the HARDCODED grammar (master nodes hidden). Synthesized entries
+    (AgDR-0041: Tier 1/2 typed primitives + shipped Skills) are
+    uncapped because they ARE real registered executors."""
     assert len(ng.PRIMITIVES) <= 80
     payload = ng.grammar_payload()
-    assert len(payload) <= 70
+    hardcoded = [p for p in payload if not p.get("_source")]
+    assert len(hardcoded) <= 70
     # Adapter (6) + share (3) + AI typed (4) → at least 13 AgDR-derived
-    # primitives in the visible payload.
+    # primitives in the visible payload. Count only HARDCODED entries
+    # so this assertion is not perturbed by Tier 2 typed primitives
+    # (render/vision/mesh/anim/llm.qwen) which also sit under cat=ai.
     cats_count = {}
-    for p in payload:
+    for p in hardcoded:
         cats_count[p["cat"]] = cats_count.get(p["cat"], 0) + 1
     # AgDR-0019 split AI master into 4 typed nodes; AgDR-0021 added
     # `ai_plan` as the 5th typed AI primitive. Update if more land.

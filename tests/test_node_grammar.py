@@ -127,9 +127,14 @@ class TestGrammarPayload:
         payload = ng.grammar_payload()
         # SLICE H: `input` + `constant` primitives are hidden in the
         # palette (still in PRIMITIVES for legacy engine resolution).
-        # The payload count excludes hidden ones.
+        # The payload count excludes hidden ones BUT also includes
+        # synthesized entries (Tier 1 host_typed + Tier 2 typed
+        # primitives + shipped Skills) auto-surfaced from registry +
+        # library by `_synthesized_primitives()`.
         non_hidden = [p for p in ng.PRIMITIVES if not p.hidden]
-        assert len(payload) == len(non_hidden)
+        synth_count = sum(1 for e in payload if e.get("_source"))
+        assert len(payload) == len(non_hidden) + synth_count
+        assert len(payload) >= len(non_hidden)
         json.dumps(payload)  # must not raise
         for entry in payload:
             assert {"kind", "display", "cat", "selector", "engine_types",
@@ -176,8 +181,14 @@ class TestGrammarPayload:
         # and `reroute` which is an identity wire-organising dot whose
         # whole point is having no config — AgDR-0007) lands with at
         # least one editable param row — no bare nodes.
+        # Synthesized entries (Tier 1 host_typed + Tier 2 typed primitives +
+        # shipped Skills auto-surfaced from registry/library) are typed
+        # nodes whose param rows are derived from the spec config_schema
+        # on placement, not from the grammar. Skip them here.
         for e in payload:
-            if e["status"] == "ready" and e["kind"] not in ("skill", "reroute"):
+            if (e["status"] == "ready"
+                    and e["kind"] not in ("skill", "reroute")
+                    and not e.get("_source")):
                 assert e["params"], f"{e['kind']} has no param rows"
 
     def test_registry_primitives_carry_engine_ports(self):

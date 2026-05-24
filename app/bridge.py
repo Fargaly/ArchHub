@@ -1931,6 +1931,33 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── AgDR-0041 P5 — live validator ─────────────────────────────
+    @pyqtSlot(str, result=str)
+    def graph_validate(self, graph_json: str) -> str:
+        """Validate a canvas graph snapshot and return structured issues.
+
+        AgDR-0041 P5 — debounced on every canvas edit. JSX calls this
+        and paints wires + nodes green/yellow/red from the issue list.
+        Returns same shape as tool_engine `graph_validate` handler:
+          {status, issues:[{level,code,node_id,edge_id,msg}],
+           errors, warnings, valid}
+        On parse failure returns `{status:"error", error:<reason>}` so
+        the panel can show a single-line banner instead of dying."""
+        try:
+            import json as _json
+            graph = _json.loads(graph_json or "{}")
+            if not isinstance(graph, dict):
+                return _safe_json({"status": "error",
+                                    "error": "graph must be an object"})
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            res = self.tools.invoke("graph_validate", {"graph": graph})
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
     # ─── Wire validation (canvas drop-validation) ──────────────────
     @pyqtSlot(str, str, bool, bool, result=bool)
     def can_wire(self, out_type: str, in_type: str,

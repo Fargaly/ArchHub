@@ -1254,6 +1254,34 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "graph_on_node_delete"),
     },
+    # AgDR-0041 Property 5 — live validator. UI calls this on every
+    # graph edit (debounced) to colour wires + nodes green/yellow/red
+    # without waiting for cook. Returns the same issue shape as
+    # Workflow.validate_v2() but accepts the lighter JSX graph
+    # snapshot ({nodes:[{id,ins,outs}], wires:[{from,to}]}).
+    {
+        "name": "graph_validate",
+        "family": "_local",
+        "description": (
+            "Validate a graph snapshot. Returns a list of issues: "
+            "duplicate_id / missing_src / missing_dst / "
+            "unknown_src_port / unknown_dst_port / type_mismatch / "
+            "unset_input. Each issue carries level (err/warn), code, "
+            "node_id, edge_id, and msg. UI uses this to paint wires + "
+            "nodes green / yellow / red live, before cook."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "graph": {"type": "object",
+                          "description": "Graph snapshot — accepts the "
+                                          "JSX {nodes, wires} shape or the "
+                                          "Workflow {nodes, edges} shape."},
+            },
+            "required": ["graph"],
+        },
+        "endpoint": ("_local", "graph_validate"),
+    },
     # AgDR-0041 Property 6 — bypass a node so the runner skips its
     # executor and passes upstream input directly to the downstream
     # output (port-name match, then type-only fallback). No cache held.
@@ -1809,7 +1837,8 @@ class ToolEngine:
             # AgDR-0038 Capability Node tools (node_search / node_create /
             # node_place / graph_wire).
             if (handler.startswith("node_") or handler == "graph_wire"
-                    or handler == "graph_on_node_delete"):
+                    or handler == "graph_on_node_delete"
+                    or handler == "graph_validate"):
                 return self._invoke_node_handler(handler, args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
@@ -2372,6 +2401,124 @@ class ToolEngine:
                             "note": ("type mismatch on delete — "
                                      "show recovery dialog")}
                 return {"status": "ok", "action": "silent_delete"}
+
+            # AgDR-0041 Property 5 — live validator over the JSX graph
+            # snapshot. Returns same shape as Workflow.validate_v2() so
+            # the GraphHealthPanel can colour wires + nodes consistently
+            # whether the source is a saved Workflow or the live canvas.
+            if handler == "graph_validate":
+                graph = args.get("graph") or {}
+                nodes = graph.get("nodes") or []
+                edges = graph.get("wires") or graph.get("edges") or []
+                issues: list[dict] = []
+                # Duplicate ids.
+                seen: set = set()
+                dup: set = set()
+                for n in nodes:
+                    nid = n.get("id")
+                    if nid in seen:
+                        dup.add(nid)
+                    seen.add(nid)
+                for nid in dup:
+                    issues.append({
+                        "level": "err", "code": "duplicate_id",
+                        "node_id": nid, "edge_id": None,
+                        "msg": f"Duplicate node id {nid!r}."})
+                node_map = {n.get("id"): n for n in nodes}
+                # Port lookup tolerant of JSX (ins/outs) + Workflow
+                # (inputs/outputs) shape.
+                def _ports(n, side):
+                    if side == "in":
+                        return n.get("ins") or n.get("inputs") or []
+                    return n.get("outs") or n.get("outputs") or []
+                def _port_id(p):
+                    return p.get("id") or p.get("name") if isinstance(p, dict) else None
+                def _port_type(p):
+                    if not isinstance(p, dict): return "any"
+                    return (p.get("t") or p.get("type") or "any").lower()
+                def _required(p):
+                    return bool(isinstance(p, dict) and p.get("required"))
+                # Edge accessors — JSX {from:[n,p],to:[n,p]} OR
+                # Workflow {src_node,src_port,dst_node,dst_port}.
+                def _src(e):
+                    return e.get("src_node") or (e.get("from", ["", ""])[0])
+                def _src_p(e):
+                    return e.get("src_port") or (e.get("from", ["", ""])[1])
+                def _dst(e):
+                    return e.get("dst_node") or (e.get("to", ["", ""])[0])
+                def _dst_p(e):
+                    return e.get("dst_port") or (e.get("to", ["", ""])[1])
+                def _edge_id(e):
+                    return (e.get("id") or
+                            f"{_src(e)}.{_src_p(e)}→{_dst(e)}.{_dst_p(e)}")
+                wired_in: set = set()
+                for e in edges:
+                    eid = _edge_id(e)
+                    s_n, s_p, d_n, d_p = _src(e), _src_p(e), _dst(e), _dst_p(e)
+                    wired_in.add((d_n, d_p))
+                    if s_n not in node_map:
+                        issues.append({
+                            "level": "err", "code": "missing_src",
+                            "node_id": None, "edge_id": eid,
+                            "msg": (f"Edge {eid}: src_node {s_n!r} missing.")})
+                        continue
+                    if d_n not in node_map:
+                        issues.append({
+                            "level": "err", "code": "missing_dst",
+                            "node_id": None, "edge_id": eid,
+                            "msg": (f"Edge {eid}: dst_node {d_n!r} missing.")})
+                        continue
+                    src_ports = _ports(node_map[s_n], "out")
+                    dst_ports = _ports(node_map[d_n], "in")
+                    src_port = next((p for p in src_ports
+                                       if _port_id(p) == s_p), None)
+                    dst_port = next((p for p in dst_ports
+                                       if _port_id(p) == d_p), None)
+                    if src_port is None:
+                        issues.append({
+                            "level": "err", "code": "unknown_src_port",
+                            "node_id": s_n, "edge_id": eid,
+                            "msg": (f"Edge {eid}: src_port {s_p!r} not on "
+                                    f"node {s_n!r}.")})
+                    if dst_port is None:
+                        issues.append({
+                            "level": "err", "code": "unknown_dst_port",
+                            "node_id": d_n, "edge_id": eid,
+                            "msg": (f"Edge {eid}: dst_port {d_p!r} not on "
+                                    f"node {d_n!r}.")})
+                    if src_port is not None and dst_port is not None:
+                        st = _port_type(src_port)
+                        dt = _port_type(dst_port)
+                        if st != dt and st != "any" and dt != "any":
+                            issues.append({
+                                "level": "err", "code": "type_mismatch",
+                                "node_id": d_n, "edge_id": eid,
+                                "msg": (f"Edge {eid}: type {st!r} from "
+                                        f"{s_n!r}.{s_p!r} does not match "
+                                        f"{dt!r} on {d_n!r}.{d_p!r}.")})
+                # Unset-required-input — warn only, cook may still proceed
+                # if a default exists.
+                for n in nodes:
+                    nid = n.get("id")
+                    for p in _ports(n, "in"):
+                        pid = _port_id(p)
+                        if _required(p) and (nid, pid) not in wired_in:
+                            issues.append({
+                                "level": "warn", "code": "unset_input",
+                                "node_id": nid, "edge_id": None,
+                                "msg": (f"Node {nid!r}: required input "
+                                        f"{pid!r} unset.")})
+                # Summary stats so the UI can render a one-line badge
+                # without a second pass.
+                counts = {"err": 0, "warn": 0}
+                for iss in issues:
+                    counts[iss.get("level", "warn")] = (
+                        counts.get(iss.get("level", "warn"), 0) + 1)
+                return {"status": "ok",
+                        "issues": issues,
+                        "errors": counts.get("err", 0),
+                        "warnings": counts.get("warn", 0),
+                        "valid": counts.get("err", 0) == 0}
 
             # AgDR-0041 Property 3 + 6 — let Composer toggle node state.
             # Both emit a `set_node` delta with the field flipped; UI

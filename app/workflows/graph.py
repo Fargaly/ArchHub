@@ -287,28 +287,103 @@ class Workflow:
 
     # ---- validation ---------
     def validate(self) -> list[str]:
-        """Return a list of errors. Empty list = workflow is valid."""
-        errors: list[str] = []
+        """Return a list of error messages. Empty list = valid.
+        Back-compat shim around validate_v2() — surfaces only `err`
+        items as strings for callers from before AgDR-0041 P5."""
+        return [iss["msg"] for iss in self.validate_v2()
+                if iss.get("level") == "err"]
+
+    def validate_v2(self) -> list[dict]:
+        """Structured validation — returns issues as dicts so the
+        Inspector / GraphHealthPanel can colour wires + nodes.
+
+        Issue shape:
+          {level: "err" | "warn" | "ok",
+           code:  "duplicate_id" | "missing_src" | "missing_dst" |
+                  "unknown_src_port" | "unknown_dst_port" |
+                  "type_mismatch" | "cycle" | "unset_input",
+           node_id: str | None,
+           edge_id: str | None,
+           msg: str}
+
+        Levels:
+          err  — graph cannot cook (wire blocked, type mismatch)
+          warn — graph can cook with defaults (required input unset)
+
+        AgDR-0041 P5 — live validator. Runs cheaply on every edit so
+        the canvas can colour wires green / yellow / red without
+        waiting for cook time."""
+        issues: list[dict] = []
         ids = {n.id for n in self.nodes}
+
         if len(ids) != len(self.nodes):
-            errors.append("Duplicate node ids.")
+            issues.append({
+                "level": "err", "code": "duplicate_id",
+                "node_id": None, "edge_id": None,
+                "msg": "Duplicate node ids in graph."})
+
         for e in self.edges:
             if e.src_node not in ids:
-                errors.append(f"Edge {e.id}: src_node '{e.src_node}' missing.")
+                issues.append({"level": "err", "code": "missing_src",
+                    "node_id": None, "edge_id": e.id,
+                    "msg": f"Edge {e.id}: src_node '{e.src_node}' missing."})
+                continue
             if e.dst_node not in ids:
-                errors.append(f"Edge {e.id}: dst_node '{e.dst_node}' missing.")
-            src = self.get_node(e.src_node) if e.src_node in ids else None
-            dst = self.get_node(e.dst_node) if e.dst_node in ids else None
-            if src and not any(p.name == e.src_port for p in src.outputs):
-                errors.append(f"Edge {e.id}: src_port '{e.src_port}' not on node '{src.id}'.")
-            if dst and not any(p.name == e.dst_port for p in dst.inputs):
-                errors.append(f"Edge {e.id}: dst_port '{e.dst_port}' not on node '{dst.id}'.")
-        # Topo sort to detect cycles
+                issues.append({"level": "err", "code": "missing_dst",
+                    "node_id": None, "edge_id": e.id,
+                    "msg": f"Edge {e.id}: dst_node '{e.dst_node}' missing."})
+                continue
+            src = self.get_node(e.src_node)
+            dst = self.get_node(e.dst_node)
+            src_port = next((p for p in (src.outputs if src else [])
+                              if p.name == e.src_port), None)
+            dst_port = next((p for p in (dst.inputs if dst else [])
+                              if p.name == e.dst_port), None)
+            if src and not src_port:
+                issues.append({"level": "err", "code": "unknown_src_port",
+                    "node_id": src.id, "edge_id": e.id,
+                    "msg": (f"Edge {e.id}: src_port '{e.src_port}' "
+                            f"not on node '{src.id}'.")})
+            if dst and not dst_port:
+                issues.append({"level": "err", "code": "unknown_dst_port",
+                    "node_id": dst.id, "edge_id": e.id,
+                    "msg": (f"Edge {e.id}: dst_port '{e.dst_port}' "
+                            f"not on node '{dst.id}'.")})
+            # Port-type compatibility — AgDR-0041 P5 wire colouring.
+            # ANY accepts anything; identical types compatible; mismatch
+            # = err (cook would propagate as upstream_error).
+            if src_port and dst_port:
+                st = src_port.type
+                dt = dst_port.type
+                ANY = PortType.ANY
+                if st != dt and st != ANY and dt != ANY:
+                    issues.append({"level": "err", "code": "type_mismatch",
+                        "node_id": dst.id, "edge_id": e.id,
+                        "msg": (f"Edge {e.id}: type {st.value!r} from "
+                                f"'{src.id}.{e.src_port}' does not match "
+                                f"{dt.value!r} on '{dst.id}.{e.dst_port}'.")})
+
+        # Required-input-unset detection (warn, not err — many nodes
+        # tolerate defaults). A required input port with no incoming
+        # edge is what we surface.
+        wired_in: set = {(e.dst_node, e.dst_port) for e in self.edges}
+        for n in self.nodes:
+            for p in n.inputs:
+                if p.required and (n.id, p.name) not in wired_in:
+                    issues.append({"level": "warn", "code": "unset_input",
+                        "node_id": n.id, "edge_id": None,
+                        "msg": (f"Node '{n.id}': required input "
+                                f"'{p.name}' ({p.type.value}) unset.")})
+
+        # Cycles — block cook, surface as err.
         try:
             self._topo_sort()
         except RuntimeError as ex:
-            errors.append(str(ex))
-        return errors
+            issues.append({"level": "err", "code": "cycle",
+                "node_id": None, "edge_id": None,
+                "msg": str(ex)})
+
+        return issues
 
     def _topo_sort(self) -> list[str]:
         in_deg = {n.id: 0 for n in self.nodes}
@@ -321,6 +396,13 @@ class Workflow:
             nid = queue.pop(0)
             order.append(nid)
             for e in self.edges_out_of(nid):
+                # Edges to ghost / missing dst nodes are reported as
+                # 'missing_dst' by validate_v2; skip them here so the
+                # cycle detector doesn't KeyError on a broken graph
+                # (AgDR-0041 P5 — validator runs on edit-time graphs
+                # that may be transiently inconsistent).
+                if e.dst_node not in in_deg:
+                    continue
                 in_deg[e.dst_node] -= 1
                 if in_deg[e.dst_node] == 0:
                     queue.append(e.dst_node)

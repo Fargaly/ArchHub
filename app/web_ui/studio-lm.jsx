@@ -4549,6 +4549,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const [nodeMenu, setNodeMenu] = React.useState(null);
   const [wireMenu, setWireMenu] = React.useState(null);
+  // AgDR-0041 D2·A 2/3 — BrokenWireDialog state. Set by onDelete when
+  // bridge.graph_on_node_delete returns action='broken_wire' (type mismatch
+  // would orphan a wire). Shape: {nodeId, nodeTitle, broken, compatible,
+  // onConfirm:(mode)=>void} where mode ∈ 'delete_anyway' | 'cancel'.
+  const [brokenWireDialog, setBrokenWireDialog] = React.useState(null);
   const [expanded, setExpanded] = React.useState({});
   const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
   const [wireDrag, setWireDrag] = React.useState(null);     // wire-in-flight preview
@@ -5960,21 +5965,75 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(w => w.from[0] !== nodeMenu.id && w.to[0] !== nodeMenu.id);
             saveCurrentGraph(); bumpGraph && bumpGraph(); flashToast('Node disconnected');
           }}
-          onDelete={() => {
-            // Founder demand: deletion always works. v1.4 nodes live in
-            // LM_GRAPH.nodes (the `userNodes` parallel state was deprecated).
-            // Pull from LM_GRAPH directly; cascade-remove incident wires.
-            const before = (LM_GRAPH.nodes || []).length;
-            LM_GRAPH.nodes = (LM_GRAPH.nodes || []).filter(n => n.id !== nodeMenu.id);
-            if ((LM_GRAPH.nodes || []).length === before) {
-              flashToast('Node not found', 'err');
+          onDelete={async () => {
+            // AgDR-0041 D2·A 2/3 — preview delete via bridge.graph_on_node_delete:
+            //   silent_delete → no incident wires; just delete + toast
+            //   auto_bridge  → upstream→downstream types match; delete + add
+            //                  bridge wire(s) so the cook chain stays intact
+            //   broken_wire  → type mismatch; open BrokenWireDialog so the
+            //                  user picks insert-adapter / delete-anyway / cancel
+            const nid = nodeMenu.id;
+            const node = (LM_GRAPH.nodes || []).find(n => n.id === nid);
+            if (!node) { flashToast('Node not found', 'err'); return; }
+            // Fast-path: bridge unavailable → fall back to legacy hard delete.
+            const _hardDelete = () => {
+              LM_GRAPH.nodes = (LM_GRAPH.nodes || []).filter(n => n.id !== nid);
+              LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(
+                w => w.from[0] !== nid && w.to[0] !== nid);
+              if (typeof removeUserNode === 'function') removeUserNode(nid);
+              setFocusId(null);
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+            };
+            let res = null;
+            try {
+              res = await bridgeAsync('graph_on_node_delete', nid,
+                                       JSON.stringify(LM_GRAPH));
+            } catch (e) {
+              // Bridge failure → safe fallback so the canvas stays usable.
+              res = null;
+            }
+            const action = res && res.status === 'ok' ? res.action : null;
+            if (action === 'silent_delete' || !action) {
+              _hardDelete();
+              flashToast('Node deleted');
               return;
             }
-            LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(w => w.from[0] !== nodeMenu.id && w.to[0] !== nodeMenu.id);
-            // Also clean userNodes for any legacy strays.
-            if (typeof removeUserNode === 'function') removeUserNode(nodeMenu.id);
-            setFocusId(null);
-            saveCurrentGraph(); bumpGraph && bumpGraph(); flashToast('Node deleted');
+            if (action === 'auto_bridge') {
+              // Delete + add the bridge wires. Each bridge wire is
+              // {from:[n,p], to:[n,p]} — the same shape as LM_GRAPH.wires.
+              _hardDelete();
+              const bridgeWires = (res.wires || []).map(w => ({
+                id: `wb_${Math.random().toString(36).slice(2,8)}`,
+                from: w.from, to: w.to,
+              }));
+              LM_GRAPH.wires = (LM_GRAPH.wires || []).concat(bridgeWires);
+              saveCurrentGraph(); bumpGraph && bumpGraph();
+              flashToast(`Node deleted · auto-bridged ${bridgeWires.length} wire(s)`);
+              return;
+            }
+            if (action === 'broken_wire') {
+              // Surface recovery dialog. Dialog owns _hardDelete invocation
+              // when the user picks delete-anyway or insert-adapter (after
+              // patching the inner wires).
+              setBrokenWireDialog({
+                nodeId: nid,
+                nodeTitle: node.title || nid,
+                broken: res.broken || [],
+                compatible: res.compatible || [],
+                onConfirm: (mode) => {
+                  setBrokenWireDialog(null);
+                  if (mode === 'cancel') return;
+                  _hardDelete();
+                  flashToast(mode === 'delete_anyway'
+                    ? 'Node deleted · wires left dangling'
+                    : 'Node deleted');
+                },
+              });
+              return;
+            }
+            // Unknown action — defensive fallback.
+            _hardDelete();
+            flashToast('Node deleted');
           }}
           onProperties={() => { setFocusId(nodeMenu.id); }}
           onSaveSkill={() => {
@@ -6097,6 +6156,142 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       <CanvasHint/>
       {/* AgDR-0041 D2·A — live graph validator badge + panel */}
       <GraphHealthBadge graphBump={graphBump} setFocusId={setFocusId}/>
+      {/* AgDR-0041 D2·A 2/3 — recovery dialog when delete would orphan typed wires */}
+      {brokenWireDialog && (
+        <BrokenWireDialog
+          info={brokenWireDialog}
+          onClose={() => setBrokenWireDialog(null)}/>
+      )}
+    </div>
+  );
+};
+
+// ─── AgDR-0041 D2·A 2/3 — BrokenWireDialog ──────────────────────
+// Modal that pops when the user deletes a node whose incident wires
+// would land in a type-mismatch state (bridge.graph_on_node_delete
+// returns action='broken_wire'). Lists the broken pairs + offers
+// recovery options. UI shape mirrors the prototype mock on
+// docs/prototypes/four-decisions-2026-05-25.html § D2.
+//
+// Actions:
+//   delete_anyway → drop the node + leave dangling wires (runner will
+//                   surface upstream_error on next cook)
+//   cancel        → keep the node, no-op
+//
+// Insert-adapter + swap-downstream are scaffolded as disabled buttons
+// for D2·A 2/3 — the recovery actions need library_suggest_swaps
+// integration + a node-picker; planned for D2·A 3/3 alongside the
+// right-click swap-with menu. Listed here so the user sees the
+// recovery surface today.
+const BrokenWireDialog = ({ info, onClose }) => {
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const brokenCount = (info.broken || []).length;
+  return (
+    <div data-no-pan data-testid="broken-wire-dialog-backdrop"
+      onClick={onClose}
+      style={{
+        position:'fixed', inset:0, zIndex:200,
+        background:'rgba(0,0,0,0.55)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+      }}>
+      <div data-testid="broken-wire-dialog"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width:520, maxWidth:'94vw',
+          background:LM.bgPanel, border:`1px solid ${LM.accent}`,
+          borderRadius:10, overflow:'hidden',
+          boxShadow:'0 12px 48px rgba(232,116,58,0.22)',
+        }}>
+        <div style={{
+          padding:'14px 18px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:8, background:LM.bgSoft,
+        }}>
+          <span style={{ color:LM.warn, fontSize:18 }}>⚠</span>
+          <span style={{ fontFamily:LM.serif, fontSize:16, color:LM.ink, flex:1 }}>
+            Deleting <code style={{ color:LM.accent2, background:'transparent',
+              padding:0, fontFamily:LM.mono, fontSize:13 }}>
+              {info.nodeTitle}
+            </code> {brokenCount === 1 ? 'breaks 1 wire' : `breaks ${brokenCount} wires`}
+          </span>
+          <button onClick={() => info.onConfirm('cancel')}
+            aria-label="close" style={{
+              background:'transparent', border:0, color:LM.inkMuted,
+              fontSize:18, cursor:'pointer', padding:'0 4px', lineHeight:1,
+            }}>×</button>
+        </div>
+        <div style={{ padding:'14px 18px' }}>
+          <div style={{ fontSize:12, color:LM.inkMuted, marginBottom:10 }}>
+            Type mismatch — upstream port can't feed downstream port directly.
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:14 }}>
+            {(info.broken || []).map((b, i) => (
+              <div key={i} style={{
+                padding:'8px 10px', borderRadius:6, background:LM.bgSoft,
+                fontFamily:LM.mono, fontSize:11, color:LM.ink,
+                borderLeft:`3px solid ${LM.err}`,
+                display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
+              }}>
+                <span style={{ color:LM.ok }}>{b.src && b.src[0]}.{b.src && b.src[1]}</span>
+                <span style={{ color:LM.inkMuted, fontSize:10 }}>
+                  ({b.src && b.src[2]})
+                </span>
+                <span style={{ color:LM.inkMuted }}>→</span>
+                <span style={{ color:LM.err }}>{b.dst && b.dst[0]}.{b.dst && b.dst[1]}</span>
+                <span style={{ color:LM.inkMuted, fontSize:10 }}>
+                  ({b.dst && b.dst[2]})
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            <button disabled title="Coming with D2·A 3/3 — needs library_suggest_swaps integration"
+              style={{
+                background:LM.bgSoft, border:`1px solid ${LM.line}`,
+                color:LM.inkMuted, padding:'10px 14px', borderRadius:6,
+                cursor:'not-allowed', textAlign:'left', fontFamily:LM.sans,
+                fontSize:12, opacity:0.5,
+              }}>
+              <div style={{ color:LM.inkMuted, marginBottom:2 }}>Insert adapter</div>
+              <div style={{ fontSize:10, color:LM.inkMuted }}>library.suggest_swaps · arriving D2·A 3/3</div>
+            </button>
+            <button disabled title="Coming with D2·A 3/3"
+              style={{
+                background:LM.bgSoft, border:`1px solid ${LM.line}`,
+                color:LM.inkMuted, padding:'10px 14px', borderRadius:6,
+                cursor:'not-allowed', textAlign:'left', fontFamily:LM.sans,
+                fontSize:12, opacity:0.5,
+              }}>
+              <div style={{ color:LM.inkMuted, marginBottom:2 }}>Swap downstream node</div>
+              <div style={{ fontSize:10, color:LM.inkMuted }}>show alternatives for downstream port type</div>
+            </button>
+            <button onClick={() => info.onConfirm('cancel')}
+              style={{
+                background:LM.bgSoft, border:`1px solid ${LM.line}`,
+                color:LM.ink, padding:'10px 14px', borderRadius:6,
+                cursor:'pointer', textAlign:'left', fontFamily:LM.sans, fontSize:12,
+              }}>
+              <div style={{ marginBottom:2 }}>Restore <code style={{
+                fontFamily:LM.mono, fontSize:11, background:LM.bgPanel,
+                padding:'1px 5px', borderRadius:3, color:LM.accent2 }}>{info.nodeTitle}</code></div>
+              <div style={{ fontSize:10, color:LM.inkMuted }}>cancel delete</div>
+            </button>
+            <button onClick={() => info.onConfirm('delete_anyway')}
+              style={{
+                background:LM.bgPanel, border:`1px solid ${LM.err}`,
+                color:LM.err, padding:'10px 14px', borderRadius:6,
+                cursor:'pointer', textAlign:'left', fontFamily:LM.sans, fontSize:12,
+              }}>
+              <div style={{ marginBottom:2 }}>Delete anyway, leave dangling</div>
+              <div style={{ fontSize:10, color:LM.inkMuted }}>cook will surface upstream_error on next run</div>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

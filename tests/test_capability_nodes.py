@@ -302,7 +302,7 @@ def test_register_spec_accepts_impl_spec():
     assert node_spec.type == "cap.demo"
 
 
-# ─── AgDR-0039 — impl.kind=graph: logic IS a sub-graph ──────────────
+# ─── AgDR-0040 — impl.kind=graph: logic IS a sub-graph ──────────────
 
 
 def test_graph_impl_runs_inner_graph():
@@ -351,7 +351,7 @@ def test_graph_impl_seeds_outer_input():
     assert out.get("result") == 15
 
 
-# ─── AgDR-0039 slice 3 — auto-derived composite I/O ─────────────────
+# ─── AgDR-0040 slice 3 — auto-derived composite I/O ─────────────────
 
 
 def test_graph_impl_auto_derives_io():

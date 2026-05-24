@@ -1,4 +1,4 @@
-"""AgDR-0039 slice 2 — aggregate primitives.
+"""AgDR-0040 slice 2 — aggregate primitives.
 
 reduce / accumulate / sort / group_by — the operators that let a node's
 logic be COMPOSED from primitives rather than written as a code blob.

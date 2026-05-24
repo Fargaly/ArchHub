@@ -1081,7 +1081,7 @@ TOOLS: list[dict] = [
         "description": (
             "Mint a Capability Node from a data spec — typed inputs + "
             "outputs + an `impl` block. PREFER impl.kind=graph: compose "
-            "the logic from wired primitives (the AgDR-0039 modular "
+            "the logic from wired primitives (the AgDR-0040 modular "
             "model). Other kinds: connector (one host op), ai (one LLM "
             "call), passthrough. python is a LAST-RESORT sealed leaf — "
             "use it only for a computation no primitive can express. "
@@ -1995,7 +1995,7 @@ class ToolEngine:
                     "library_promoted": promoted,
                     "library_note": promo_note,
                 }
-                # AgDR-0039 slice 4 — steer the Composer toward composed
+                # AgDR-0040 slice 4 — steer the Composer toward composed
                 # logic. A python node still mints (sealed leaf), but the
                 # result nudges graph for next time.
                 impl_kind = ((spec.get("impl") or {}).get("kind")

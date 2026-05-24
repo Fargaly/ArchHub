@@ -17,5 +17,5 @@ from . import share         # noqa: F401  node-grammar M1.5: registers share.ser
 from . import adapter       # noqa: F401  cross-host native-type mapping: registers adapter.cad_to_revit_wall + adapter.to_revit_directshape + adapter.max_to_revit_family
 from . import code          # noqa: F401  SLICE L (AgDR-0020): registers code.expression + code.python
 from . import ai_plan       # noqa: F401  M4 foundation (AgDR-0021): registers ai.plan
-from . import aggregate     # noqa: F401  AgDR-0039 slice 2: registers data.reduce + accumulate + sort + group_by
+from . import aggregate     # noqa: F401  AgDR-0040 slice 2: registers data.reduce + accumulate + sort + group_by
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

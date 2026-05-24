@@ -238,7 +238,7 @@ def test_node_create_nonmodular_spec_still_works_unpromoted(engine):
     assert out["library_promoted"] is False
 
 
-# ─── AgDR-0039 slice 4 — node_create steers toward graph ────────────
+# ─── AgDR-0040 slice 4 — node_create steers toward graph ────────────
 
 
 def test_node_create_python_gets_graph_hint(engine):

@@ -1,5 +1,5 @@
 ---
-id: AgDR-0039
+id: AgDR-0040
 timestamp: 2026-05-22
 status: executed
 founder-signoff: 2026-05-22 — reviewed via docs/prototypes/modular-logic-nodes.html; recommended trio adopted
@@ -8,7 +8,7 @@ supersedes: none
 builds-on: [AgDR-0038, AgDR-0001, AgDR-0020]
 ---
 
-# AgDR-0039 — Modular logic nodes: a node's logic IS a graph
+# AgDR-0040 — Modular logic nodes: a node's logic IS a graph
 
 > **Executed 2026-05-22.** Founder reviewed the visual prototype
 > (`docs/prototypes/modular-logic-nodes.html`) — the design + the three

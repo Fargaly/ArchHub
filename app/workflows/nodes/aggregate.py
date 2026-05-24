@@ -1,4 +1,4 @@
-"""Aggregate primitives — AgDR-0039 slice 2.
+"""Aggregate primitives — AgDR-0040 slice 2.
 
 Four list-aggregate operators that round out the logic vocabulary, so a
 node's logic can be COMPOSED from primitives instead of an opaque code

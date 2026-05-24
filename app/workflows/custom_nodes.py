@@ -246,7 +246,7 @@ def _ports_of(node: dict, side: str) -> list[dict]:
 
 
 def _derive_graph_io(inner_graph: dict) -> tuple[list, list]:
-    """AgDR-0039 slice 3 — derive a composite node's typed I/O from its
+    """AgDR-0040 slice 3 — derive a composite node's typed I/O from its
     inner graph's OPEN ports: an input port with no incoming wire is a
     composite input; an output port with no outgoing wire is a
     composite output. Port ids are bare when unique, node-qualified on
@@ -285,7 +285,7 @@ def _derive_graph_io(inner_graph: dict) -> tuple[list, list]:
 
 
 def _graph_executor(impl: dict, output_names: list[str]):
-    """impl.kind=graph (AgDR-0039) — a node whose logic IS a typed
+    """impl.kind=graph (AgDR-0040) — a node whose logic IS a typed
     sub-graph. The whole point: logic is composed from modular elements
     (primitives, connector ops, other Capability Nodes), not a code blob.
 
@@ -301,7 +301,7 @@ def _graph_executor(impl: dict, output_names: list[str]):
     inner_graph = impl.get("graph") or impl.get("inner_graph") or {}
     inner_inputs = impl.get("inner_inputs")
     inner_outputs = impl.get("inner_outputs")
-    # AgDR-0039 slice 3 — when the I/O maps are absent, auto-derive them
+    # AgDR-0040 slice 3 — when the I/O maps are absent, auto-derive them
     # from the inner graph's open ports. Wire the inside; the outer
     # contract appears. One source of truth.
     if inner_inputs is None or inner_outputs is None:

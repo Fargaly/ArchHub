@@ -5158,9 +5158,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     setDropTarget(null);
   };
 
-  const nodeById = Object.fromEntries(
+  // Memoized — Object.fromEntries + per-node spread is O(N) churn that
+  // was previously re-running every render (mouse-move, hover, tooltip
+  // toggle, anything). Identity-stable between drag ticks / graph bumps
+  // so downstream memos (wires) can hold.
+  const nodeById = React.useMemo(() => Object.fromEntries(
     (allNodes || []).map(n => [n.id, { ...n, x: positions[n.id]?.x ?? n.x, y: positions[n.id]?.y ?? n.y }])
-  );
+  ), [allNodes, positions]);
 
   // SLICE C2 (AgDR-0005): collapsed-group view-state. For every
   // group whose `collapsed === true`, compute its collapsed-node
@@ -5269,7 +5273,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return { x, y: node.y + socketY(idx), t: portsList[idx]?.t };
   };
 
-  const wires = (LM_GRAPH.wires || []).map((w, i) => {
+  // Memoized — endpoint resolution + per-wire shape compute is O(W) and
+  // previously re-ran every render. Aliases derive from the same inputs
+  // (nodeById + graph mutables), so when this memo holds, the alias
+  // content seen by the .map() closures is by construction identical to
+  // the content the next render's alias rebuild would produce. graphBump
+  // covers every wire/group mutation; focusId only affects `focused`.
+  const wires = React.useMemo(() => (LM_GRAPH.wires || []).map((w, i) => {
     const from = resolveEndpoint(w.from[0], w.from[1], 'out');
     const to   = resolveEndpoint(w.to[0],   w.to[1],   'in');
     if (!from || !to) return null;
@@ -5283,7 +5293,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                 (toNode && toNode.state === 'running'),
       focused: touches,
     };
-  }).filter(Boolean);
+  }).filter(Boolean), [nodeById, focusId, graphBump]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleExpanded = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
   const onResetView = () => { setPan({ x:14, y:12 }); setZoom(0.66); setCtxMenu(null); };

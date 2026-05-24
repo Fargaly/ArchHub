@@ -392,6 +392,33 @@ PRIMITIVES: list[Primitive] = [
         params=({"k": "op", "v": "last", "type": "text"},),
         blurb="Last item",
     ),
+    # ── AgDR-0040 slice 2 — aggregate primitives. The modular-logic
+    # vocab grew 4 list ops (reduce / accumulate / sort / group_by);
+    # three surface here so the palette exposes them. `data.sort` is
+    # registered + executable but the existing shape/sort (transform.apply
+    # op=sort) already owns the palette slot — same UX.
+    Primitive(
+        "reduce", "Reduce", "shape", "",
+        {"": "data.reduce"}, READY,
+        "data.reduce — fold a list to one value "
+        "(sum/product/min/max/count/concat/and/or)",
+        params=({"k": "op", "v": "sum", "type": "text"},),
+        blurb="Fold a list into one value",
+    ),
+    Primitive(
+        "accumulate", "Accumulate", "shape", "",
+        {"": "data.accumulate"}, READY,
+        "data.accumulate — running fold; emits the intermediate series",
+        params=({"k": "op", "v": "sum", "type": "text"},),
+        blurb="Running fold over a list",
+    ),
+    Primitive(
+        "group_by", "Group by", "shape", "",
+        {"": "data.group_by"}, READY,
+        "data.group_by — partition a list of records by a key field",
+        params=({"k": "key", "v": "", "type": "text"},),
+        blurb="Partition a list by key",
+    ),
     # ── MATH category — typed arithmetic / comparison / logic (slice J).
     # All map to `math.op` with `op` pre-set. One engine, many typed nodes.
     Primitive(

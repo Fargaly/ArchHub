@@ -1194,6 +1194,35 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "library_suggest_swaps"),
     },
+    # AgDR-0041 Property 4 — delete-with-auto-bridge analyzer. Given
+    # the graph + a node about to be deleted, return either an
+    # auto-bridge wire (compat types) or a broken-wire dialog with
+    # recovery options. UI calls this BEFORE actually removing the
+    # node so the user can decide.
+    {
+        "name": "graph_on_node_delete",
+        "family": "_local",
+        "description": (
+            "Analyse the impact of deleting a node. Returns one of: "
+            "(a) silent_delete — no incident wires, safe; "
+            "(b) auto_bridge — upstream src port type matches "
+            "downstream dst port type, wire(s) to add after delete; "
+            "(c) broken_wire — type mismatch, recovery dialog should "
+            "offer adapter / restore / swap. The UI calls this BEFORE "
+            "removing the node so the user decides."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "graph":   {"type": "object",
+                            "description": "Full graph snapshot "
+                                            "(nodes + wires/edges)."},
+            },
+            "required": ["node_id", "graph"],
+        },
+        "endpoint": ("_local", "graph_on_node_delete"),
+    },
     # AgDR-0041 Property 6 — bypass a node so the runner skips its
     # executor and passes upstream input directly to the downstream
     # output (port-name match, then type-only fallback). No cache held.
@@ -1748,7 +1777,8 @@ class ToolEngine:
                 return self._invoke_library_handler(handler, args or {})
             # AgDR-0038 Capability Node tools (node_search / node_create /
             # node_place / graph_wire).
-            if handler.startswith("node_") or handler == "graph_wire":
+            if (handler.startswith("node_") or handler == "graph_wire"
+                    or handler == "graph_on_node_delete"):
                 return self._invoke_node_handler(handler, args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
@@ -2192,6 +2222,78 @@ class ToolEngine:
                 return {"status": "ok", "op": "add_wire",
                         "wire": {"from": [src_n, src_p],
                                  "to": [dst_n, dst_p]}}
+
+            # AgDR-0041 Property 4 — delete with auto-bridge.
+            # Given the graph + a node_id about to be deleted, return:
+            #   - {action:"auto_bridge", wire:[...]}  if upstream src
+            #     port type == downstream dst port type (or ANY).
+            #   - {action:"silent_delete"}            if no impacted wires.
+            #   - {action:"broken_wire", issues:[...], adapters:[...]}
+            #     if a wire would be type-mismatched after delete.
+            if handler == "graph_on_node_delete":
+                nid = str(args.get("node_id", "") or "").strip()
+                graph = args.get("graph") or {}
+                if not nid:
+                    return {"status": "error",
+                            "error": "graph_on_node_delete needs node_id"}
+                nodes = graph.get("nodes") or []
+                edges = graph.get("wires") or graph.get("edges") or []
+                node_map = {n.get("id"): n for n in nodes}
+                if nid not in node_map:
+                    return {"status": "error",
+                            "error": f"node {nid!r} not in graph"}
+                # Wires touching this node.
+                def _src(e):
+                    return e.get("src_node") or (e.get("from", ["", ""])[0])
+                def _src_p(e):
+                    return e.get("src_port") or (e.get("from", ["", ""])[1])
+                def _dst(e):
+                    return e.get("dst_node") or (e.get("to", ["", ""])[0])
+                def _dst_p(e):
+                    return e.get("dst_port") or (e.get("to", ["", ""])[1])
+                upstream  = [e for e in edges if _dst(e) == nid]
+                downstream = [e for e in edges if _src(e) == nid]
+                if not upstream and not downstream:
+                    return {"status": "ok", "action": "silent_delete",
+                            "note": "no incident wires"}
+                # Try to auto-bridge: 1 upstream + 1 downstream + matching type.
+                def _port_type(n_id, p_name, side):
+                    """Look up the port type on a node (side='in'|'out')."""
+                    n = node_map.get(n_id) or {}
+                    ports = n.get("ins") if side == "in" else n.get("outs")
+                    for p in (ports or []):
+                        if isinstance(p, dict) and (p.get("id") or p.get("name")) == p_name:
+                            return (p.get("t") or p.get("type") or "any").lower()
+                    return "any"
+                proposals: list = []
+                for up in upstream:
+                    src_n, src_p = _src(up), _src_p(up)
+                    src_t = _port_type(src_n, src_p, "out")
+                    for dn in downstream:
+                        dst_n, dst_p = _dst(dn), _dst_p(dn)
+                        dst_t = _port_type(dst_n, dst_p, "in")
+                        compatible = (src_t == dst_t
+                                       or src_t == "any" or dst_t == "any")
+                        proposals.append({
+                            "src": [src_n, src_p, src_t],
+                            "dst": [dst_n, dst_p, dst_t],
+                            "compatible": compatible,
+                        })
+                bridges = [p for p in proposals if p["compatible"]]
+                broken  = [p for p in proposals if not p["compatible"]]
+                if bridges and not broken:
+                    wires = [{"from": p["src"][:2], "to": p["dst"][:2]}
+                             for p in bridges]
+                    return {"status": "ok", "action": "auto_bridge",
+                            "wires": wires,
+                            "note": f"{len(wires)} compatible bridge(s)"}
+                if broken:
+                    return {"status": "ok", "action": "broken_wire",
+                            "broken": broken,
+                            "compatible": bridges,
+                            "note": ("type mismatch on delete — "
+                                     "show recovery dialog")}
+                return {"status": "ok", "action": "silent_delete"}
 
             # AgDR-0041 Property 3 + 6 — let Composer toggle node state.
             # Both emit a `set_node` delta with the field flipped; UI

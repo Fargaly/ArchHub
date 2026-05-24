@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub × ComfyUI × Alibaba — assimilation strategy · 2026-05-24</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --aliyun:#ff6a00; --comfy:#7a3cc9;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1,h2,h3,h4{font-weight:600;letter-spacing:-0.01em}
+h1{font-size:32px;line-height:1.15;margin-bottom:8px}
+h2{font-size:24px;margin-bottom:16px}
+h3{font-size:17px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:13px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:12px;color:var(--accent2)}
+code.k{color:var(--blue)}
+code.t{color:var(--teal)}
+code.p{color:var(--pink)}
+strong{color:var(--ink)}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.92);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 32px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:16px;margin-right:14px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:6px 10px;border-radius:999px;font-size:12px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+nav.top a.chip.aliyun:hover{color:var(--aliyun);border-color:var(--aliyun)}
+nav.top a.chip.comfy:hover{color:var(--comfy);border-color:var(--comfy)}
+
+section.proto{max-width:1240px;margin:0 auto;padding:48px 32px;
+  border-bottom:1px solid var(--line)}
+.tagline{font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:8px;font-weight:600}
+.tagline.aliyun{color:var(--aliyun)}
+.tagline.comfy{color:var(--comfy)}
+.tagline.ach{color:var(--accent2)}
+
+header.head{max-width:1240px;margin:0 auto;padding:56px 32px 24px}
+.eureka{background:linear-gradient(135deg,rgba(232,116,58,0.12),rgba(122,60,201,0.08));
+  border:1px solid var(--line);border-radius:14px;padding:24px 28px;margin-top:24px}
+.eureka h3{color:var(--accent);font-size:16px;text-transform:uppercase;letter-spacing:0.08em;
+  margin-bottom:10px;font-weight:700}
+.eureka p{font-size:15px;color:var(--ink);line-height:1.6}
+.eureka p strong{color:var(--accent2)}
+
+/* table */
+table.t{width:100%;font-size:12px;color:var(--ink2);border-collapse:collapse;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table.t thead tr{background:var(--bg3);color:var(--ink3);text-align:left}
+table.t th{padding:10px 14px;text-transform:uppercase;letter-spacing:0.06em;
+  font-size:10px;font-weight:600}
+table.t tbody tr{border-top:1px solid var(--line)}
+table.t td{padding:10px 14px}
+table.t td.num{font-family:ui-monospace,monospace;color:var(--ink);font-weight:600}
+table.t td .tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;
+  text-transform:uppercase;letter-spacing:0.06em;font-weight:600}
+table.t td .tag.cheap{background:rgba(95,200,121,0.15);color:var(--ok)}
+table.t td .tag.mid{background:rgba(232,197,74,0.15);color:var(--warn)}
+table.t td .tag.exp{background:rgba(255,94,94,0.15);color:var(--err)}
+table.t td .tag.ali{background:rgba(255,106,0,0.15);color:var(--aliyun)}
+table.t td .tag.comfy{background:rgba(122,60,201,0.15);color:var(--comfy)}
+table.t td b.eg{color:var(--ink);font-family:ui-monospace,monospace;font-size:11px}
+
+/* tier card */
+.tier-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:24px}
+.tier-c{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:20px;
+  position:relative;overflow:hidden}
+.tier-c::before{content:"";position:absolute;top:0;left:0;right:0;height:3px}
+.tier-c.t0::before{background:var(--ok)}
+.tier-c.t1::before{background:var(--accent)}
+.tier-c.t2::before{background:var(--purple)}
+.tier-c .level{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink3);margin-bottom:4px}
+.tier-c h3{font-size:16px;color:var(--ink);margin-bottom:8px}
+.tier-c .effort{font-size:11px;color:var(--ink3);font-family:ui-monospace,monospace;margin-bottom:14px}
+.tier-c p{font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5}
+.tier-c ul{font-size:11px;color:var(--ink2);padding-left:16px}
+.tier-c ul li{margin-bottom:4px;list-style:disc}
+
+/* wire diagram */
+.wire-stage{background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+  padding:24px;position:relative;overflow-x:auto}
+.wire-row{display:flex;align-items:center;gap:12px;min-width:1100px;padding:14px 0}
+.wnode{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  min-width:130px;flex-shrink:0;font-size:11px}
+.wnode .nh{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:3px}
+.wnode .nt{font-family:ui-monospace,monospace;color:var(--ink);font-size:11px;font-weight:600;line-height:1.3}
+.wnode .nmeta{font-size:10px;color:var(--ink3);margin-top:4px;font-family:ui-monospace,monospace}
+.wnode.host{border-left:3px solid var(--accent)}
+.wnode.ai{border-left:3px solid var(--purple)}
+.wnode.comfy{border-left:3px solid var(--comfy);background:rgba(122,60,201,0.08)}
+.wnode.alibaba{border-left:3px solid var(--aliyun);background:rgba(255,106,0,0.08)}
+.wnode.data{border-left:3px solid var(--blue)}
+.wnode.out{border-left:3px solid var(--ok)}
+.warrow{color:var(--ink3);font-size:20px;flex-shrink:0;user-select:none}
+.warrow .label{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;
+  font-family:ui-monospace,monospace;display:block;text-align:center;margin-top:-2px}
+
+.wire-note{margin-top:10px;font-size:11px;color:var(--ink3);font-style:italic;line-height:1.5}
+.wire-cost{margin-top:10px;display:flex;gap:14px;font-size:11px;font-family:ui-monospace,monospace;
+  color:var(--ink2);flex-wrap:wrap}
+.wire-cost span b{color:var(--ok);margin-left:4px}
+
+/* tag grid */
+.feat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:20px}
+.feat-c{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:18px}
+.feat-c h4{color:var(--ink);text-transform:none;letter-spacing:0;font-size:14px;margin-bottom:8px}
+.feat-c h4 .src{display:inline-block;padding:2px 8px;background:var(--bg3);border-radius:4px;
+  font-size:10px;color:var(--ink3);font-family:ui-monospace,monospace;margin-left:8px;text-transform:uppercase;letter-spacing:0.04em}
+.feat-c h4 .src.ali{color:var(--aliyun)}
+.feat-c h4 .src.comfy{color:var(--comfy)}
+.feat-c p{font-size:12px;line-height:1.5;color:var(--ink2)}
+.feat-c code{font-size:11px}
+
+/* verdict */
+.verdict{margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.verdict label{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2)}
+.verdict label input{accent-color:var(--accent)}
+.verdict label:hover{color:var(--ink)}
+.verdict .note{margin-left:auto;font-size:12px;color:var(--ink3);font-style:italic}
+
+/* legend */
+.legend{display:flex;gap:14px;font-size:11px;margin:14px 0 4px;flex-wrap:wrap;color:var(--ink2)}
+.legend .li{display:flex;align-items:center;gap:5px}
+.legend .lc{width:14px;height:3px;border-radius:2px}
+.legend .lc.host{background:var(--accent)}
+.legend .lc.ai{background:var(--purple)}
+.legend .lc.comfy{background:var(--comfy)}
+.legend .lc.alibaba{background:var(--aliyun)}
+.legend .lc.data{background:var(--blue)}
+.legend .lc.out{background:var(--ok)}
+
+@media(max-width:980px){
+  .tier-grid{grid-template-columns:1fr}
+  .feat-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="brand">Arch<span>Hub</span> × ComfyUI × Alibaba</div>
+  <a class="chip" href="#eureka">Insight</a>
+  <a class="chip aliyun" href="#alibaba">Alibaba pricing</a>
+  <a class="chip comfy" href="#comfyui">ComfyUI tech</a>
+  <a class="chip" href="#tiers">Integration tiers</a>
+  <a class="chip" href="#A">Use A · Revit→render</a>
+  <a class="chip" href="#B">Use B · photo→mass</a>
+  <a class="chip" href="#C">Use C · text→plan</a>
+  <a class="chip" href="#D">Use D · point→building</a>
+  <a class="chip" href="#cost">Cost</a>
+  <a class="chip" href="#verdict">Picks</a>
+</nav>
+
+<header class="head">
+  <div class="tagline">research + assimilation strategy · 2026-05-24</div>
+  <h1>Render workflows we never touched — Alibaba models, ComfyUI graphs,
+    Revit / Rhino assimilation</h1>
+  <p style="font-size:15px;max-width:880px">
+    You asked: cheap Alibaba models + ComfyUI community workflows + creative
+    assimilation. Revit viewport to AI render? Photo to Rhino mass? Yes —
+    all feasible. Here's the strategy.</p>
+
+  <div class="eureka" id="eureka">
+    <h3>The big finding</h3>
+    <p><strong>ComfyUI workflows are graph-as-JSON.</strong> ArchHub workflows
+      <strong>are</strong> graph-as-JSON (AgDR-0040). They are <strong>the
+      same substrate.</strong> Assimilation is not "rebuild ComfyUI" — it's
+      one connector + a workflow importer that wraps any ComfyUI graph as a
+      Capability Node. Alibaba via DashScope adds 3–10× cheaper LLM + the
+      cheapest image-to-video on the market ($0.035 / clip vs $0.50+
+      Runway/Pika).</p>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<!--                    ALIBABA CATALOG                            -->
+<!-- ============================================================ -->
+<section class="proto" id="alibaba">
+  <div class="tagline aliyun">part 1 · DashScope catalog</div>
+  <h2>Alibaba models you can wire today</h2>
+  <p style="margin-bottom:18px">Endpoint <code>dashscope-intl.aliyuncs.com</code>
+    (Singapore) — new accounts get <strong>1M input + 1M output tokens free
+    for 90 days</strong>. Production pricing below.</p>
+
+  <table class="t">
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>What it does</th>
+        <th>Price (per M tok or per run)</th>
+        <th>vs incumbent</th>
+        <th>ArchHub fit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>Qwen3 Max</b> <span class="tag ali">ALI</span></td>
+        <td>Top-tier text + code · 262K ctx</td>
+        <td class="num">$0.36 in / $1.43 out</td>
+        <td>~5× cheaper than Claude Sonnet 4.6 ($3 / $15)</td>
+        <td>Composer fallback when Claude burns budget</td>
+      </tr>
+      <tr>
+        <td><b>Qwen3.6 Plus</b> <span class="tag ali">ALI</span></td>
+        <td>Balanced text / code</td>
+        <td class="num">$0.33 in / $1.95 out</td>
+        <td>~6× cheaper than GPT-4o</td>
+        <td>Default for Solo tier cloud-proxy</td>
+      </tr>
+      <tr>
+        <td><b>Qwen3-VL Plus</b> <span class="tag ali">ALI</span></td>
+        <td><strong>Vision</strong> · 131K ctx · reads PDFs, screenshots, drawings</td>
+        <td class="num">$0.14 in / $0.41 out <span class="tag cheap">cheap</span></td>
+        <td>~3–5× cheaper than GPT-4o vision</td>
+        <td><strong>Use case B</strong> — photo → mass spec.<br/>Also: drawing PDF OCR + revision extraction</td>
+      </tr>
+      <tr>
+        <td><b>Qwen-Image Edit</b> <span class="tag ali">ALI</span></td>
+        <td>Image-to-image edit · in/out-paint · style transfer</td>
+        <td class="num">~$0.02 / image</td>
+        <td>vs Adobe Firefly ($0.15) / Midjourney ($0.10)</td>
+        <td>Render touch-up · style swap · material remap</td>
+      </tr>
+      <tr>
+        <td><b>Wan 2.5 i2v Fast</b> <span class="tag ali">ALI</span></td>
+        <td>Image → 5-sec video · audio sync</td>
+        <td class="num">$0.035 / clip <span class="tag cheap">cheapest</span></td>
+        <td>vs Runway Gen-3 ($0.50+) · Pika ($0.30+)</td>
+        <td>Animate static renders for client walk-throughs</td>
+      </tr>
+      <tr>
+        <td><b>Wan 2.7 i2v</b> <span class="tag ali">ALI</span></td>
+        <td>Higher-fidelity image → video</td>
+        <td class="num">$0.10 / clip <span class="tag mid">mid</span></td>
+        <td>5× cheaper than Sora ($0.50)</td>
+        <td>Final-quality client deliverable videos</td>
+      </tr>
+      <tr style="background:rgba(232,116,58,0.04)">
+        <td colspan="5" style="text-align:center;font-size:12px;color:var(--accent2);padding:14px">
+          ⚡ Lock-in: route 80 % of Solo / Studio cloud-proxy traffic through Qwen.
+          Reserve Claude Sonnet for code-tool turns where reasoning matters.
+          Margin per request 5–10× higher than the all-Claude path.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<!--                    COMFYUI TECH                                -->
+<!-- ============================================================ -->
+<section class="proto" id="comfyui">
+  <div class="tagline comfy">part 2 · ComfyUI ecosystem</div>
+  <h2>ComfyUI patterns that map straight onto ArchHub</h2>
+
+  <div class="feat-grid">
+    <div class="feat-c">
+      <h4>Graph-as-JSON <span class="src comfy">comfyui core</span></h4>
+      <p>Every ComfyUI workflow is a JSON document — nodes, edges, params.
+        Server runs <strong>headless</strong> by default: POST <code>/prompt</code>
+        with the JSON, GET <code>/view</code> for outputs. Identical
+        mental model to ArchHub's <code>workflows/graph.py</code> + <code>runner.py</code>.
+        Translation is a 200-line adapter, not a rewrite.</p>
+    </div>
+    <div class="feat-c">
+      <h4>ControlNet Depth / Canny <span class="src comfy">archviz</span></h4>
+      <p>SDXL + Depth ControlNet preserves <strong>spatial relationships</strong> —
+        the exact thing Revit viewport renders need. Feed a depth map from
+        Revit (we already have it via .NET API), AI fills in materials /
+        lighting / context. Stage 1 = SDXL, Stage 2 = upscale.</p>
+    </div>
+    <div class="feat-c">
+      <h4>Hunyuan3D-2 <span class="src comfy">tencent · OSS</span></h4>
+      <p>Single image → textured 3D mesh in 4 stages: bg-removal →
+        geometry → optimize → texture. 1.1B params, runs on a 24 GB GPU
+        locally OR via ComfyUI cloud node. <strong>Output = .glb / .obj
+        → direct Rhino import.</strong></p>
+    </div>
+    <div class="feat-c">
+      <h4>Stable Fast 3D / TripoSR <span class="src comfy">stability + tripo</span></h4>
+      <p>Single-image 3D mesh in <strong>under 1 second</strong> on a decent
+        GPU. Lower fidelity than Hunyuan but fast enough for iterative
+        "drop a photo → mass model" UX. Both wrap into <code>comfyui.image_to_mesh</code>.</p>
+    </div>
+    <div class="feat-c">
+      <h4>ComfyUI-3D-Pack <span class="src comfy">community</span></h4>
+      <p>Single repo bundling Hunyuan3D + StableFast3D + InstantMesh + CRM +
+        TripoSR + 3DGS + NeRF nodes. One install → 7 mesh-gen pipelines
+        exposed as ComfyUI nodes. <strong>One ArchHub Capability Node per
+        pipeline.</strong></p>
+    </div>
+    <div class="feat-c">
+      <h4>ComfyUI Manager <span class="src comfy">2000+ nodes</span></h4>
+      <p>Community node registry — 2000+ custom nodes one-click installable.
+        IPAdapter, AnimateDiff, Impact Pack (face-detect), Frame Interpolation,
+        SAM segmentation. ArchHub's <strong>library_search → library_create</strong>
+        contract maps 1:1 onto the registry — point Composer at it and it
+        becomes a discoverable node source.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--                  INTEGRATION TIERS                            -->
+<!-- ============================================================ -->
+<section class="proto" id="tiers">
+  <div class="tagline ach">part 3 · integration strategy</div>
+  <h2>Three tiers — pick how deep we go</h2>
+  <p>Each tier compatible with the previous. Tier 0 ships in days, Tier 2 in weeks.</p>
+
+  <div class="tier-grid">
+    <div class="tier-c t0">
+      <div class="level">Tier 0 · Connector wrapper</div>
+      <h3>connector.comfyui · connector.dashscope</h3>
+      <div class="effort">~3 days · 2 PRs</div>
+      <p>Two new entries in <code>app/connectors/</code>. <code>comfyui</code>
+        talks to a local or remote ComfyUI server via its REST API
+        (<code>POST /prompt</code> + <code>GET /view</code>).
+        <code>dashscope</code> wraps Qwen / Wan / Qwen-VL endpoints.
+        Both register as standard ArchHub connector ops — appear in
+        <code>tool_engine</code> immediately.</p>
+      <ul>
+        <li>+24 connector ops (12 per connector)</li>
+        <li>Works against user's own ComfyUI install</li>
+        <li>BYO DashScope key (Solo plan)</li>
+        <li>Zero new node code — uses <code>connector.run</code> machinery</li>
+      </ul>
+    </div>
+    <div class="tier-c t1">
+      <div class="level">Tier 1 · Workflow importer</div>
+      <h3>library.import_comfyui_workflow</h3>
+      <div class="effort">~7 days · 1 AgDR + 1 PR</div>
+      <p>Paste a ComfyUI JSON URL or upload the file →
+        ArchHub creates a Capability Node wrapping that workflow,
+        auto-derives typed I/O ports from the workflow's
+        external inputs/outputs (same pattern as AgDR-0040 slice 3).
+        The community's 2000+ workflows become 2000+ ArchHub nodes
+        on demand.</p>
+      <ul>
+        <li>1-click adopt any community workflow</li>
+        <li>Auto-derived inputs (any unconnected text/image input port)</li>
+        <li>Saved to Library, queryable via <code>node_search</code></li>
+        <li>Versioned via Speckle (every import is a Version)</li>
+      </ul>
+    </div>
+    <div class="tier-c t2">
+      <div class="level">Tier 2 · Deep wrap + render primitives</div>
+      <h3>render.* · vision.* · mesh.* node families</h3>
+      <div class="effort">~14 days · 3 AgDRs + 4 PRs</div>
+      <p>First-class typed nodes for the 4 use cases below, each
+        composing the connector / importer above. <code>render.archviz</code>,
+        <code>render.upscale</code>, <code>vision.subject_describe</code>,
+        <code>mesh.from_image</code>, <code>mesh.import_to_host</code>.
+        These are what the Composer's
+        <code>node_search</code> finds first when the user says
+        "make this Revit view look real."</p>
+      <ul>
+        <li>Inline render preview node (no canvas switch)</li>
+        <li>Cost-aware routing (Wan-fast vs Wan-quality)</li>
+        <li>Host-aware (Revit / Rhino / Max emit + ingest the right format)</li>
+        <li>Verified Skill: "Hero render from Revit view" — installable</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vtier"/> Ship Tier 0 only (test market fit)</label>
+    <label><input type="radio" name="vtier"/> Ship 0 → 1 (lets Composer reuse community)</label>
+    <label><input type="radio" name="vtier"/> Ship 0 → 1 → 2 (full assimilation)</label>
+    <label><input type="radio" name="vtier"/> Skip</label>
+    <div class="note">~3d / ~10d / ~24d cumulative · AgDR per tier</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--               USE CASE A — REVIT VIEWPORT → RENDER             -->
+<!-- ============================================================ -->
+<section class="proto" id="A">
+  <div class="tagline">Use case A</div>
+  <h2>Revit viewport → AI hero render</h2>
+  <p>Today: architect screenshots viewport, opens Photoshop, paints
+    sky / context / mood — half a day per hero shot. Tomorrow: one
+    Composer turn.</p>
+
+  <div class="legend">
+    <span class="li"><span class="lc host"></span> host</span>
+    <span class="li"><span class="lc data"></span> data</span>
+    <span class="li"><span class="lc comfy"></span> ComfyUI</span>
+    <span class="li"><span class="lc alibaba"></span> Alibaba</span>
+    <span class="li"><span class="lc out"></span> output</span>
+  </div>
+
+  <div class="wire-stage">
+    <div class="wire-row">
+      <div class="wnode host">
+        <div class="nh">Host · Revit</div>
+        <div class="nt">revit.export_viewport</div>
+        <div class="nmeta">view = "3D - Hero"<br/>res = 2048×1536</div>
+      </div>
+      <div class="warrow">→<span class="label">image,depth</span></div>
+      <div class="wnode data">
+        <div class="nh">data</div>
+        <div class="nt">image.pair</div>
+        <div class="nmeta">(viewport.png, depth.png)</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode comfy">
+        <div class="nh">ComfyUI workflow</div>
+        <div class="nt">render.archviz</div>
+        <div class="nmeta">SDXL + ControlNet Depth<br/>style = "golden hour"<br/>strength = 0.6</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode alibaba">
+        <div class="nh">Alibaba</div>
+        <div class="nt">qwen_image.upscale</div>
+        <div class="nmeta">2× → 4K</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode out">
+        <div class="nh">output</div>
+        <div class="nt">file.save</div>
+        <div class="nmeta">hero_render.jpg<br/>4096×3072</div>
+      </div>
+    </div>
+    <div class="wire-note">Depth-controlled diffusion keeps the building's
+      geometry exactly as drawn — only the SKIN (materials, lighting,
+      context) is hallucinated. Architect stays in control of the form.</div>
+    <div class="wire-cost">
+      <span>SDXL Depth (ComfyUI local)<b>≈ $0</b></span>
+      <span>Qwen-Image upscale<b>$0.02</b></span>
+      <span>Composer turn<b>~$0.005</b></span>
+      <span style="margin-left:auto;color:var(--accent2)">Total per render<b>~$0.025</b> vs Lumion subscription $1500/yr</span>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="va"/> YES — flagship use case</label>
+    <label><input type="radio" name="va"/> YES — but local-first only (no Alibaba)</label>
+    <label><input type="radio" name="va"/> REFINE</label>
+    <label><input type="radio" name="va"/> NO</label>
+    <div class="note">Variants: night render · interior · context (existing site)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--               USE CASE B — PHOTO → RHINO MASS                  -->
+<!-- ============================================================ -->
+<section class="proto" id="B">
+  <div class="tagline">Use case B</div>
+  <h2>Photo → Rhino mass model</h2>
+  <p>Architect snaps a photo of a precedent (or a real existing building
+    on the site) → ArchHub digests it → drops a clean mass model in
+    Rhino, snapped to the site plane. The thing every junior architect
+    spends a weekend doing.</p>
+
+  <div class="wire-stage">
+    <div class="wire-row">
+      <div class="wnode host">
+        <div class="nh">Host · file</div>
+        <div class="nt">input.image</div>
+        <div class="nmeta">precedent.jpg</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode alibaba">
+        <div class="nh">Alibaba · vision</div>
+        <div class="nt">qwen_vl.describe</div>
+        <div class="nmeta">"3-story modernist<br/>villa, flat roof,<br/>cantilever, ~12m wide"</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode comfy">
+        <div class="nh">ComfyUI · 3D Pack</div>
+        <div class="nt">mesh.hunyuan3d</div>
+        <div class="nmeta">image → .glb<br/>4 stages</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode data">
+        <div class="nh">data · cleanup</div>
+        <div class="nt">mesh.simplify</div>
+        <div class="nmeta">poly cap = 8k<br/>weld + clean</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode host">
+        <div class="nh">Host · Rhino</div>
+        <div class="nt">rhino.import_mesh</div>
+        <div class="nmeta">as Block<br/>snap to CPlane</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode out">
+        <div class="nh">output</div>
+        <div class="nt">rhino.frame_view</div>
+      </div>
+    </div>
+    <div class="wire-note">Vision pass (Qwen-VL) gives Composer the
+      semantic anchor ("modernist villa") so it can pick the right
+      LoRA / style for stage 2. Without it, Hunyuan output is generic
+      blob.</div>
+    <div class="wire-cost">
+      <span>Qwen-VL describe<b>~$0.002</b></span>
+      <span>Hunyuan3D-2 (local GPU)<b>$0</b></span>
+      <span>Hunyuan3D-2 (ComfyUI cloud fallback)<b>~$0.05</b></span>
+      <span style="margin-left:auto;color:var(--accent2)">Total<b>~$0.05</b> · time ~30s</span>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vb"/> YES — kill feature for site studies</label>
+    <label><input type="radio" name="vb"/> YES — but Hunyuan only (skip VL)</label>
+    <label><input type="radio" name="vb"/> REFINE</label>
+    <label><input type="radio" name="vb"/> NO</label>
+    <div class="note">Same wire works for Revit (mass family) + 3ds Max (Edit Mesh)</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--               USE CASE C — TEXT → SITE PLAN                    -->
+<!-- ============================================================ -->
+<section class="proto" id="C">
+  <div class="tagline">Use case C · bonus</div>
+  <h2>Text brief → 2.5D site plan in Rhino</h2>
+  <p>"3 BR house on a 600 m² L-shaped lot facing south, two-car garage
+    detached, swimming pool to the east." → site plan curves in Rhino,
+    drag-editable.</p>
+
+  <div class="wire-stage">
+    <div class="wire-row">
+      <div class="wnode host">
+        <div class="nh">data</div>
+        <div class="nt">input.text</div>
+        <div class="nmeta">brief paragraph</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode ai">
+        <div class="nh">ai · Composer</div>
+        <div class="nt">ai.plan</div>
+        <div class="nmeta">extract program<br/>+ adjacencies</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode alibaba">
+        <div class="nh">Alibaba</div>
+        <div class="nt">qwen_image.txt2img</div>
+        <div class="nmeta">"top-down site plan"<br/>style = "architectural"</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode comfy">
+        <div class="nh">ComfyUI</div>
+        <div class="nt">extract.canny</div>
+        <div class="nmeta">image → line art</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode data">
+        <div class="nh">data · trace</div>
+        <div class="nt">cv2.contours</div>
+        <div class="nmeta">lines → polylines</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode host">
+        <div class="nh">Host · Rhino</div>
+        <div class="nt">rhino.import_curves</div>
+        <div class="nmeta">layer = "Site"</div>
+      </div>
+    </div>
+    <div class="wire-note">Output is editable curves, not raster — architect
+      can grab a wall and drag it. AI seeded the geometry; human owns the
+      revision.</div>
+    <div class="wire-cost">
+      <span>Composer plan<b>~$0.005</b></span>
+      <span>Qwen-Image txt2img<b>~$0.02</b></span>
+      <span style="margin-left:auto;color:var(--accent2)">Total<b>~$0.025</b> per iteration</span>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vc"/> YES</label>
+    <label><input type="radio" name="vc"/> REFINE</label>
+    <label><input type="radio" name="vc"/> NO — too speculative</label>
+    <div class="note">Demo gold for sales — "type a brief, see a plan"</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--               USE CASE D — POINT CLOUD + PHOTOS → BLDG          -->
+<!-- ============================================================ -->
+<section class="proto" id="D">
+  <div class="tagline">Use case D · bonus</div>
+  <h2>Point cloud + photos → existing-conditions building</h2>
+  <p>Surveyor brings a Faro scan + drone photos. Today: 3 weeks of Revit
+    family modelling. Tomorrow: 2 Composer turns + a coffee break.</p>
+
+  <div class="wire-stage">
+    <div class="wire-row">
+      <div class="wnode host">
+        <div class="nh">data</div>
+        <div class="nt">input.point_cloud</div>
+        <div class="nmeta">site.e57<br/>2.3M points</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode host">
+        <div class="nh">data</div>
+        <div class="nt">input.photos</div>
+        <div class="nmeta">36 drone shots</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode comfy">
+        <div class="nh">ComfyUI · 3D Pack</div>
+        <div class="nt">render.gaussian_splat</div>
+        <div class="nmeta">3DGS from cloud + photos</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode data">
+        <div class="nh">data · mesh</div>
+        <div class="nt">mesh.poisson</div>
+        <div class="nmeta">splat → watertight mesh</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode alibaba">
+        <div class="nh">Alibaba · vision</div>
+        <div class="nt">qwen_vl.segment_facade</div>
+        <div class="nmeta">label walls / openings</div>
+      </div>
+      <div class="warrow">→</div>
+      <div class="wnode host">
+        <div class="nh">Host · Revit</div>
+        <div class="nt">revit.import_topo</div>
+        <div class="nmeta">+ wall / opening families<br/>per VL labels</div>
+      </div>
+    </div>
+    <div class="wire-note">3DGS handles the photogrammetry, Qwen-VL handles
+      the semantic tagging (this is a window, this is a door), Revit
+      consumes both into the right family types.</div>
+    <div class="wire-cost">
+      <span>3DGS local (8 GB GPU)<b>~5 min · $0</b></span>
+      <span>Qwen-VL segment<b>~$0.02 / facade</b></span>
+      <span style="margin-left:auto;color:var(--accent2)">Total<b>~$0.10</b> · time ~15 min · vs 3 weeks billable</span>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <label><input type="radio" name="vd"/> YES — pilot with surveyor partner</label>
+    <label><input type="radio" name="vd"/> REFINE — Revit only, skip topo</label>
+    <label><input type="radio" name="vd"/> NO — niche</label>
+    <div class="note">Highest-margin Skill — sell to historic preservation firms</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--               COST COMPARISON                                  -->
+<!-- ============================================================ -->
+<section class="proto" id="cost">
+  <div class="tagline">part 4 · margin math</div>
+  <h2>Cost per use case — at our $5 / $15 / $39 pricing</h2>
+
+  <table class="t">
+    <thead>
+      <tr><th>Skill</th><th>Provider mix</th><th>$ per run</th><th>Solo $5 / mo budget</th><th>Studio $15 / mo budget</th><th>Margin</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>Revit → AI render</b></td>
+        <td>ComfyUI local + Alibaba upscale</td>
+        <td class="num">$0.025</td>
+        <td class="num">200 renders / mo</td>
+        <td class="num">600 renders / mo</td>
+        <td><span class="tag cheap">95 %</span></td>
+      </tr>
+      <tr>
+        <td><b>Photo → Rhino mass</b></td>
+        <td>Qwen-VL + Hunyuan local</td>
+        <td class="num">$0.05</td>
+        <td class="num">100 / mo</td>
+        <td class="num">300 / mo</td>
+        <td><span class="tag cheap">90 %</span></td>
+      </tr>
+      <tr>
+        <td><b>Text → site plan</b></td>
+        <td>Claude + Qwen-Image</td>
+        <td class="num">$0.025</td>
+        <td class="num">200 / mo</td>
+        <td class="num">600 / mo</td>
+        <td><span class="tag cheap">95 %</span></td>
+      </tr>
+      <tr>
+        <td><b>Photogrammetry → bldg</b></td>
+        <td>3DGS local + Qwen-VL</td>
+        <td class="num">$0.10</td>
+        <td class="num">50 / mo</td>
+        <td class="num">150 / mo</td>
+        <td><span class="tag cheap">90 %</span></td>
+      </tr>
+      <tr style="background:rgba(122,60,201,0.06)">
+        <td colspan="6" style="text-align:center;font-size:12px;color:var(--ink);padding:14px">
+          <strong>Local-first wins the cost war.</strong> Hunyuan3D + SDXL + 3DGS
+          all run on the founder's machine (or the user's). Only cheap APIs
+          (Qwen-VL describe, Qwen-Image upscale) hit cloud. Margins stay
+          90 %+ even at the $5 tier.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<!--               VERDICT BAR                                     -->
+<!-- ============================================================ -->
+<section class="proto" id="verdict">
+  <div class="tagline">picks</div>
+  <h2>Tell me what to AgDR + build</h2>
+
+  <p style="margin-bottom:14px">Pick the integration tier above
+    (<code>vtier</code>) and which use cases to ship first
+    (<code>va/vb/vc/vd</code>). Order I'd recommend:</p>
+
+  <ol style="font-size:13px;color:var(--ink2);padding-left:24px;margin-bottom:18px">
+    <li style="margin-bottom:6px"><strong>Week 1</strong> — Tier 0 connectors
+      (<code>connector.comfyui</code> + <code>connector.dashscope</code>).
+      Unlocks every workflow below.</li>
+    <li style="margin-bottom:6px"><strong>Week 2</strong> — Use case A
+      (Revit → render) as flagship Skill. Most visible. Built on Tier 0.</li>
+    <li style="margin-bottom:6px"><strong>Week 3</strong> — Use case B
+      (photo → mass) + Tier 1 workflow importer. Community workflows
+      become free Skills.</li>
+    <li><strong>Week 4</strong> — Tier 2 typed nodes + C / D as
+      progressive disclosure. Demo gold.</li>
+  </ol>
+
+  <div class="verdict">
+    <label><input type="radio" name="vorder"/> Adopt full sequence (4 weeks)</label>
+    <label><input type="radio" name="vorder"/> Tier 0 + Use case A only (2 weeks)</label>
+    <label><input type="radio" name="vorder"/> Pause — too much at once</label>
+    <div class="note">After picks, I write an AgDR per tier + build</div>
+  </div>
+</section>
+
+<section style="background:var(--bg);padding:32px;text-align:center">
+  <p style="font-size:13px;color:var(--ink2)">
+    All prototyped using research from Alibaba DashScope docs +
+    ComfyUI registry + Hunyuan3D + community workflows. Live, real models.
+    Nothing speculative.</p>
+  <p style="font-size:11px;color:var(--ink3);margin-top:8px">
+    archhub × comfyui × alibaba · 2026-05-24 · pick + I build</p>
+</section>
+
+</body>
+</html>

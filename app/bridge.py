@@ -1958,6 +1958,93 @@ class ArchHubBridge(QObject):
             return _safe_json({"status": "error",
                                 "error": f"{type(ex).__name__}: {ex}"})
 
+    # ─── AgDR-0041 P4 — delete-with-auto-bridge ────────────────────
+    @pyqtSlot(str, str, result=str)
+    def graph_on_node_delete(self, node_id: str, graph_json: str) -> str:
+        """Preview the impact of deleting a node BEFORE removing it.
+
+        Returns one of:
+          - {action:"silent_delete"}  — no incident wires; safe to drop.
+          - {action:"auto_bridge", wires:[…]} — upstream src type matches
+            downstream dst type; UI applies those wires after delete.
+          - {action:"broken_wire", broken:[…], compatible:[…]} — type
+            mismatch; UI surfaces BrokenWireDialog with recovery options
+            (insert adapter / restore / swap downstream).
+        Always returns `status: 'ok' | 'error'`."""
+        try:
+            import json as _json
+            graph = _json.loads(graph_json or "{}")
+            if not isinstance(graph, dict):
+                return _safe_json({"status": "error",
+                                    "error": "graph must be an object"})
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            res = self.tools.invoke("graph_on_node_delete",
+                                     {"node_id": (node_id or "").strip(),
+                                      "graph": graph})
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
+    # ─── AgDR-0041 P3 — freeze / unfreeze a node ───────────────────
+    @pyqtSlot(str, bool, result=str)
+    def node_freeze(self, node_id: str, state: bool) -> str:
+        """Freeze (state=True) or unfreeze (state=False) a node.
+        Returns the set_node delta the JSX merges into LM_GRAPH so the
+        ❄ badge appears + the runner short-circuits the node's cook to
+        its cached value next time the graph runs."""
+        try:
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            res = self.tools.invoke("node_freeze",
+                                     {"node_id": (node_id or "").strip(),
+                                      "state": bool(state)})
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
+    # ─── AgDR-0041 P6 — bypass / un-bypass a node ──────────────────
+    @pyqtSlot(str, bool, result=str)
+    def node_bypass(self, node_id: str, state: bool) -> str:
+        """Bypass (state=True) or un-bypass (state=False) a node.
+        Returns the set_node delta the JSX merges into LM_GRAPH so the
+        ○ badge appears + the runner skips the node's executor +
+        passes upstream input through to downstream output."""
+        try:
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            res = self.tools.invoke("node_bypass",
+                                     {"node_id": (node_id or "").strip(),
+                                      "state": bool(state)})
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
+    # ─── AgDR-0041 P2 — type-compatible swap suggestions ───────────
+    @pyqtSlot(str, int, result=str)
+    def library_suggest_swaps(self, node_type: str, limit: int) -> str:
+        """Find registered types whose I/O signature matches the target.
+        Powers the right-click 'swap with…' context menu. Returns
+        ranked alternatives + their port shapes; the UI presents these,
+        click swaps the node in place + runner re-cooks downstream."""
+        try:
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            args = {"type": (node_type or "").strip(),
+                    "limit": int(limit) if limit else 10}
+            res = self.tools.invoke("library_suggest_swaps", args)
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
     # ─── Wire validation (canvas drop-validation) ──────────────────
     @pyqtSlot(str, str, bool, bool, result=bool)
     def can_wire(self, out_type: str, in_type: str,

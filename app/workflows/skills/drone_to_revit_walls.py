@@ -14,7 +14,7 @@ def _build_spec() -> dict:
     return {
         "type": "skill.drone_to_revit_walls",
         "display_name": "Drone photos → Revit walls",
-        "category": "host",
+        "category": "skill",
         "description": (
             "Process a folder of drone images into 3DGS, reconstruct a "
             "watertight mesh, ask Qwen-VL to label facade regions "
@@ -24,22 +24,31 @@ def _build_spec() -> dict:
             "captures."
         ),
         "inputs": [
-            {"name": "image_set_path", "type": "string"},
+            {"name": "image_set_path", "port_type": "string",
+              "description": "Folder of drone source images."},
         ],
         "outputs": [
-            {"name": "wall_count", "type": "number"},
+            {"name": "wall_count", "port_type": "number",
+              "description": "Number of Revit walls created."},
         ],
         "config_schema": {
             "wall_type":  {"type": "string", "default": "Generic 200mm"},
             "level":      {"type": "string", "default": "Level 0"},
             "iterations": {"type": "number", "default": 7000},
         },
-        "side_effects": "writes_to_host",
-        "examples": [{
-            "input": {"image_set_path": "C:/scan/drone/"},
-            "output": {"wall_count": 4},
-            "note": "happy-path: ComfyUI 3D-Pack live + Revit live + dashscope",
-        }],
+        "side_effects": "host_write",
+        "examples": [
+            {
+                "input": {"image_set_path": "C:/scan/drone/"},
+                "output": {"wall_count": 4},
+                "note": "happy-path: ComfyUI 3D-Pack live + Revit live + dashscope",
+            },
+            {
+                "input": {"image_set_path": "C:/scan/drone-empty/"},
+                "output": {"error": "0 images found; need ≥20 for 3DGS"},
+                "note": "edge case: empty folder; runner aborts before paid call",
+            },
+        ],
         "impl": {
             "kind": "graph",
             "graph": {

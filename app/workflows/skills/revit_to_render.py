@@ -23,7 +23,7 @@ def _build_spec() -> dict:
     return {
         "type": "skill.revit_hero_render",
         "display_name": "Revit → AI hero render",
-        "category": "render",
+        "category": "skill",
         "description": (
             "Take the active Revit 3D view + depth map, run them through "
             "ComfyUI's SDXL+Depth-ControlNet workflow to add materials / "
@@ -33,11 +33,14 @@ def _build_spec() -> dict:
             "in config to match your setup."
         ),
         "inputs": [
-            {"name": "view_name", "type": "string"},
-            {"name": "style_prompt", "type": "string"},
+            {"name": "view_name", "port_type": "string",
+              "description": "Name of the Revit 3D view to export."},
+            {"name": "style_prompt", "port_type": "string",
+              "description": "Style guidance fed to the upscaler."},
         ],
         "outputs": [
-            {"name": "image_path", "type": "string"},
+            {"name": "image_path", "port_type": "string",
+              "description": "Final hero-render image on disk."},
         ],
         "config_schema": {
             "comfyui_workflow_path": {
@@ -46,13 +49,21 @@ def _build_spec() -> dict:
             },
             "save_dir": {"type": "string", "default": "./renders"},
         },
-        "side_effects": "writes_image_to_disk",
-        "examples": [{
-            "input": {"view_name": "3D - Hero",
-                       "style_prompt": "golden hour, contextual, photoreal"},
-            "output": {"image_path": "./renders/hero_v1.jpg"},
-            "note": "happy-path: Revit live + ComfyUI live + Qwen key set",
-        }],
+        "side_effects": "host_write",
+        "examples": [
+            {
+                "input": {"view_name": "3D - Hero",
+                           "style_prompt": "golden hour, contextual, photoreal"},
+                "output": {"image_path": "./renders/hero_v1.jpg"},
+                "note": "happy-path: Revit live + ComfyUI live + Qwen key set",
+            },
+            {
+                "input": {"view_name": "3D - Hero",
+                           "style_prompt": "golden hour"},
+                "output": {"error": "Revit not running — open the project first"},
+                "note": "edge case: Revit closed; surface a typed error + recovery hint",
+            },
+        ],
         "impl": {
             "kind": "graph",
             "graph": {

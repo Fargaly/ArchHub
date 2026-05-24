@@ -32,6 +32,15 @@ from . import nodes  # noqa: F401
 # `subgraph._seed` helper used during nested cooks.
 from . import subgraph  # noqa: F401
 
+# AgDR-0041 (2026-05-24) — shipped Skills land on boot. Each module
+# calls `library.create_node_type(spec)` under a try/except, so a
+# pre-library import path (e.g. CLI tests) is a no-op + a duplicate
+# registration is benign.
+try:
+    from . import skills  # noqa: F401
+except Exception:
+    pass
+
 __all__ = [
     "Workflow", "Node", "Edge", "Port", "PortType", "Trigger", "SCHEMA_VERSION",
     "WorkflowExecutor", "ExecutionContext", "ExecutionEvent", "ExecutionResult",

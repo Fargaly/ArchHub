@@ -16,7 +16,7 @@ def _build_spec() -> dict:
     return {
         "type": "skill.photo_to_rhino_mass",
         "display_name": "Photo → Rhino mass",
-        "category": "mesh",
+        "category": "skill",
         "description": (
             "Snap a precedent photo, get a clean mass block dropped into "
             "Rhino. Qwen-VL classifies the subject so Hunyuan3D produces "
@@ -25,10 +25,12 @@ def _build_spec() -> dict:
             "to land in a different app."
         ),
         "inputs": [
-            {"name": "image_url", "type": "string"},
+            {"name": "image_url", "port_type": "string",
+              "description": "URL or path of the precedent photo."},
         ],
         "outputs": [
-            {"name": "block_name", "type": "string"},
+            {"name": "block_name", "port_type": "string",
+              "description": "Name of the Block created in the host."},
         ],
         "config_schema": {
             "host": {"type": "string", "default": "rhino",
@@ -38,12 +40,19 @@ def _build_spec() -> dict:
                                         "triposr", "instantmesh"]},
             "poly_target": {"type": "number", "default": 8000},
         },
-        "side_effects": "writes_to_host",
-        "examples": [{
-            "input": {"image_url": "https://example.com/villa.jpg"},
-            "output": {"block_name": "precedent_villa_v1"},
-            "note": "happy-path: dashscope key + rhino live + ComfyUI live",
-        }],
+        "side_effects": "host_write",
+        "examples": [
+            {
+                "input": {"image_url": "https://example.com/villa.jpg"},
+                "output": {"block_name": "precedent_villa_v1"},
+                "note": "happy-path: dashscope key + rhino live + ComfyUI live",
+            },
+            {
+                "input": {"image_url": "C:/photos/mass_ref.jpg"},
+                "output": {"error": "Rhino not running — open Rhino first"},
+                "note": "edge case: host missing; runner stops before mesh upload",
+            },
+        ],
         "impl": {
             "kind": "graph",
             "graph": {

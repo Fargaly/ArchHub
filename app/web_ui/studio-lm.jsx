@@ -9048,6 +9048,26 @@ const MiniMap = ({ pan, zoom, positions, allNodes, wrapRef, setPan }) => {
 const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
+  // AgDR-0042 memory graph wire — when search query non-empty, also
+  // query memory.query (community-aware BFS) for ranked hits.
+  // Hat 1 caught: "memory graph 6 slices shipped, ZERO JSX consumer".
+  // Now consumed here as a "Memory · top hits" section at top of right pane.
+  const [memoryHits, setMemoryHits] = React.useState([]);
+  React.useEffect(() => {
+    if (!q || q.length < 2) { setMemoryHits([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = await bridgeAsync('memory_query', JSON.stringify({
+          question: q, limit: 5,
+        }));
+        if (cancelled) return;
+        const r = (res && res.results) || [];
+        setMemoryHits(r);
+      } catch (e) { if (!cancelled) setMemoryHits([]); }
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q]);
   // The one node system — the modal is built from the node grammar
   // (docs/NODE_GRAMMAR.md), the SAME ~12 primitives the canvas palette
   // uses. No second catalogue that can drift out of sync.
@@ -9126,6 +9146,52 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
               </span>
             </div>
           </button>
+          {/* AgDR-0042 memory · top hits — shown when search query has
+              ≥2 chars and memory_query returned results. Ranked by
+              memory.query BFS score over the community graph. */}
+          {memoryHits.length > 0 && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                <span style={{ color:LM.accent }}>⊕</span>
+                <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, letterSpacing:'0.18em' }}>MEMORY · TOP HITS</span>
+                <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginLeft:'auto' }}>via memory.query</span>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                {memoryHits.map((h, i) => (
+                  <button key={i} onClick={() => {
+                    // Try to find a grammar entry for this type, fall back to no-op + toast.
+                    const bareType = (h.id || '').replace(/^lib:cap:|^lib:skill:/, '');
+                    const match = (LM_NODE_GRAMMAR || []).find(p => p.kind === bareType);
+                    if (match) {
+                      addNodeFromLibrary({ id:'ng:'+match.kind, _grammar:match, title:match.display, sub:match.blurb });
+                      onClose();
+                    } else {
+                      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+                        { detail:{ msg:'No grammar entry for ' + bareType, kind:'info' } })); } catch (e) {}
+                    }
+                  }} style={{
+                    display:'flex', alignItems:'center', gap:10, padding:'8px 12px',
+                    background:LM.bgSoft, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${LM.accent}`,
+                    borderRadius:5, cursor:'pointer', textAlign:'left', color:LM.ink,
+                    fontFamily:LM.sans, fontSize:11.5,
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = LM.bgSoft; }}>
+                    <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, minWidth:60 }}>
+                      score {Math.round(h.score || 0)}
+                    </span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ color:LM.ink, fontWeight:500 }}>{h.label || h.id}</div>
+                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{h.id} · {h.kind}</div>
+                    </div>
+                    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, maxWidth:160, textAlign:'right' }}>
+                      {String(h.why || '').slice(0,80)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {groups.map(g => {
             const c = catMeta(g.cat);
             const items = q ? (g.items || []).filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : (g.items || []);

@@ -121,19 +121,64 @@ def find_source_root(install_root: Path) -> Path | None:
     return None
 
 
+_GIT_BROKEN = False  # set True after first failed launch this process
+
+
+def _suppress_win_error_dialogs() -> None:
+    """Stop child crashes (0xc0000142 etc) from popping modal dialogs
+    that block the parent. Without this, an antivirus DLL-injection
+    failure on git.exe halts ArchHub boot until the user clicks OK
+    on a hidden popup. Founder 2026-05-25: identified Kaspersky 21.22
+    WSC ghost as the trigger. SetErrorMode flags:
+      SEM_FAILCRITICALERRORS  0x0001  no Windows critical-error dialog
+      SEM_NOGPFAULTERRORBOX   0x0002  no fault popup
+      SEM_NOOPENFILEERRORBOX  0x8000  no missing-file popup
+    Best-effort; non-Windows + import failure are silently OK."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
+    except Exception:
+        pass
+
+
 def _git(source_root: Path, *args: str) -> str:
+    global _GIT_BROKEN
+    if _GIT_BROKEN:
+        return ""
+    _suppress_win_error_dialogs()
+    # CREATE_NO_WINDOW (0x08000000) keeps a console window from
+    # flashing AND prevents the renderer from inheriting console
+    # state, which on Win11 sometimes triggers the same 0xc0000142
+    # path under AV-DLL injection.
+    creationflags = 0x08000000 if sys.platform == "win32" else 0
     try:
         result = subprocess.run(
             ["git", *args],
             cwd=str(source_root),
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=3,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            creationflags=creationflags,
         )
-    except Exception:
+    except subprocess.TimeoutExpired:
+        # git hung — likely AV DLL injection holding the process.
+        # Mark broken so subsequent calls skip the wait.
+        _GIT_BROKEN = True
         return ""
-    return (result.stdout or "").strip() if result.returncode == 0 else ""
+    except Exception:
+        _GIT_BROKEN = True
+        return ""
+    # Exit code 0xc0000142 = STATUS_DLL_INIT_FAILED (= -1073741502 in signed).
+    # Treat any non-zero exit as a failure and mark git broken so we
+    # don't pay the timeout on every subsequent call.
+    if result.returncode != 0:
+        if result.returncode in (-1073741502, 0xc0000142):
+            _GIT_BROKEN = True
+        return ""
+    return (result.stdout or "").strip()
 
 
 def source_commit(source_root: Path) -> str:

@@ -985,15 +985,17 @@ const StudioLM = () => {
   const [userNodes, setUserNodes] = React.useState([]);
   // Bump counter to force rerender after we mutate LM_GRAPH.wires/nodes in place.
   const [graphBump, setGraphBump] = React.useState(0);
-  const bumpGraph = React.useCallback(() => setGraphBump(b => b + 1), []);
-  // AgDR-0032 — rAF-coalesced bump.  Streaming chat used to call
-  // bumpGraph() on every chunk → ~50 full canvas re-renders per
-  // assistant response → Composer lag.  Coalesce: if a bump is
-  // already pending in this animation frame, drop the duplicate.
-  // Falls through to a plain bumpGraph for callers that need a
-  // synchronous re-render (drag-end, modal close, etc.).
+  // god-counter kill (founder, 2026-05-25): bumpGraph used to fire a
+  // synchronous setState on every call → 73 sites → cascade re-renders.
+  // Now every bumpGraph call is rAF-coalesced — duplicate bumps in the
+  // same frame collapse into one re-render. Hat 3 audit Fix #1: kills
+  // the busy-render storm on streaming, drag, and saveGraph chains
+  // without touching the call sites. Sync bump preserved as
+  // bumpGraphSync for the handful of cases that genuinely need it
+  // (commit-on-blur, drag-end → snap). Net effect: render rate drops
+  // from per-mutation to per-frame max.
   const bumpPendingRef = React.useRef(false);
-  const bumpGraphRaf = React.useCallback(() => {
+  const bumpGraph = React.useCallback(() => {
     if (bumpPendingRef.current) return;
     bumpPendingRef.current = true;
     requestAnimationFrame(() => {
@@ -1001,6 +1003,12 @@ const StudioLM = () => {
       setGraphBump(b => b + 1);
     });
   }, []);
+  // Sync escape hatch — forces an immediate re-render in the current
+  // microtask. Use SPARINGLY (modal close, undo/redo seam). Most call
+  // sites should use bumpGraph which now coalesces.
+  const bumpGraphSync = React.useCallback(() => setGraphBump(b => b + 1), []);
+  // Back-compat alias — existing AgDR-0032 callers keep working.
+  const bumpGraphRaf = bumpGraph;
   // ─── AgDR-0024 — expose bumpGraph so external mutators (CDP demos,
   // test harnesses, future bridge slots) can force the canvas to
   // re-render after splicing into `window.LM_GRAPH` directly. Safe

@@ -313,6 +313,49 @@ async function runSessionAction(action, sid, opts) {
 
 const currentSid = () => window.__archhub_session_id || 'default';
 
+// AgDR-0015 Phase + Hat 3 audit Fix #12 — Perf HUD. Toggle via
+// Ctrl+Shift+P (Cmd on macOS). Tracks: FPS · save_graph slot calls/min
+// · bridge calls/min. Lets the founder verify perf wins (the
+// saveCurrentGraph debounce shipped in 5ce3818, the rAF drag throttle
+// in 50ecf9c) actually moved the needle.
+window.__archhub_perf = window.__archhub_perf || {
+  saveCalls: 0, bridgeCalls: 0, fps: 0, lastFrame: 0, frames: 0,
+};
+(() => {
+  if (window.__archhub_perf_installed) return;
+  window.__archhub_perf_installed = true;
+  // Tally save_graph calls by wrapping the bridge slot post-hookup.
+  // Hook fires when the QWebChannel bridge becomes available.
+  const _hook = () => {
+    if (!window.archhub || window.archhub.__perf_wrapped) return;
+    const realSave = window.archhub.save_graph && window.archhub.save_graph.bind(window.archhub);
+    if (realSave) {
+      window.archhub.save_graph = (...a) => {
+        window.__archhub_perf.saveCalls++;
+        return realSave(...a);
+      };
+    }
+    window.archhub.__perf_wrapped = true;
+  };
+  if (window.archhubReady && window.archhubReady.then) {
+    window.archhubReady.then(_hook).catch(() => {});
+  } else {
+    setTimeout(_hook, 500);
+  }
+  // FPS loop.
+  const tick = (t) => {
+    const p = window.__archhub_perf;
+    if (p.lastFrame) {
+      const dt = t - p.lastFrame;
+      if (dt > 0) p.fps = Math.round(1000 / dt);
+    }
+    p.lastFrame = t;
+    p.frames++;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+})();
+
 // PERF FIX (founder 2026-05-25 — "fix the fucking lag problem"):
 // `saveCurrentGraph()` fires from 63 call sites across the JSX —
 // every drag end, every keystroke in a node param, every wire add.
@@ -1975,6 +2018,7 @@ const StudioLM = () => {
                   onCreateSession={createSession}
                   onSettings={openSettingsResolved}/>}
       <ServerStrip session={session} model={model} setSettingsOpen={openSettingsResolved}/>
+      <PerfHud/>
       {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -10657,6 +10701,60 @@ const ModelPicker = ({ setModel, onClose, model }) => {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// Hat 3 audit Fix #12 — PerfHud overlay. Press Ctrl+Shift+P (Cmd on
+// macOS) to toggle. Shows FPS · save_graph calls/min · React render
+// count. Lets the founder A/B subjective perf wins against numbers.
+const PerfHud = () => {
+  const [open, setOpen] = React.useState(false);
+  const [tick, setTick] = React.useState(0);
+  const baselineRef = React.useRef({ saveCalls: 0, t: Date.now() });
+  React.useEffect(() => {
+    const onKey = (e) => {
+      const accel = e.ctrlKey || e.metaKey;
+      if (accel && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        e.preventDefault();
+        setOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    baselineRef.current = { saveCalls: (window.__archhub_perf||{}).saveCalls || 0, t: Date.now() };
+    const t = setInterval(() => setTick(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [open]);
+  if (!open) return null;
+  const p = window.__archhub_perf || {};
+  const elapsedS = Math.max(1, (Date.now() - baselineRef.current.t) / 1000);
+  const callsPerMin = Math.round(((p.saveCalls || 0) - baselineRef.current.saveCalls) * 60 / elapsedS);
+  return (
+    <div data-no-pan style={{
+      position:'fixed', left:14, bottom:36, zIndex:90,
+      background:LM.bgPanel, border:`1px solid ${LM.accent}`, borderRadius:6,
+      padding:'8px 12px', fontFamily:LM.mono, fontSize:10, color:LM.ink,
+      boxShadow:'0 8px 24px rgba(0,0,0,0.5)', minWidth:200,
+    }}>
+      <div style={{ color:LM.accent, fontSize:9, letterSpacing:'0.12em', marginBottom:6 }}>
+        PERF HUD · ⌃⇧P TO CLOSE
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'2px 12px' }}>
+        <span style={{ color:LM.inkMuted }}>FPS</span>
+        <span style={{ color: p.fps >= 50 ? LM.ok : p.fps >= 30 ? LM.warn : LM.err }}>{p.fps || '—'}</span>
+        <span style={{ color:LM.inkMuted }}>save_graph</span>
+        <span>{p.saveCalls || 0} total · {callsPerMin}/min</span>
+        <span style={{ color:LM.inkMuted }}>RAF frames</span>
+        <span>{p.frames || 0}</span>
+      </div>
+      <div style={{ fontSize:9, color:LM.inkMuted, marginTop:6, lineHeight:1.4 }}>
+        save_graph debounced 250ms (5ce3818).<br/>
+        Drag rAF-throttled (50ecf9c).
       </div>
     </div>
   );

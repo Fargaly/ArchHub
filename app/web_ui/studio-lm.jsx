@@ -1086,6 +1086,10 @@ const StudioLM = () => {
     requestAnimationFrame(() => {
       bumpPendingRef.current = false;
       setGraphBump(b => b + 1);
+      // Surface mutation to non-canvas listeners (footer HealthStripItem
+      // polls graph_validate on this event). Coalesced with the rAF so
+      // we don't fire >60Hz.
+      try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
     });
   }, []);
   // Sync escape hatch — forces an immediate re-render in the current
@@ -3759,6 +3763,32 @@ const NodeLibItem = ({ it, cat, onAdd, draggable = true, pinned = false, onPin =
         <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</div>
         <div style={{ fontFamily:LM.sans, fontSize:10, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
       </div>
+      {/* AgDR-0014 side-effect indicator — same rubric as NodeLibrary
+          modal pills, condensed to a 1-char dot for the rail. Founder
+          2026-05-25: "library doesn't have the updated node catalogue"
+          → catalogue had pills in modal but rail items showed only
+          name+sub. Now every rail row carries the same colour-coded
+          dot so users see purity at a glance. */}
+      {(() => {
+        const c = (it._grammar && it._grammar.cat) || (cat && cat.label && cat.label.toLowerCase()) || '';
+        const _sfx = ({
+          input:'pure', logic:'pure', math:'pure', text:'pure',
+          shape:'pure', adapter:'pure', watch:'pure', trigger:'pure',
+          note:'pure', code:'pure',
+          ai:'network', share:'network',
+          connector:'host_write', output:'host_write', skill:'host_write',
+        })[c];
+        if (!_sfx) return null;
+        const col = _sfx === 'pure' ? LM.ok
+                  : _sfx === 'host_write' ? LM.warn
+                  : LM.blue;
+        const ch = _sfx === 'pure' ? '·' : _sfx === 'host_write' ? '✎' : '↗';
+        return (
+          <span title={`side-effect: ${_sfx}`}
+            style={{ fontFamily:LM.mono, fontSize:9, color:col, flexShrink:0,
+              padding:'0 4px', letterSpacing:'0.04em' }}>{ch}</span>
+        );
+      })()}
       {onPin && (pinned || h) && (
         <span onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPin(it); }}
           title={pinned ? 'Unpin' : 'Pin to top'}
@@ -4935,6 +4965,16 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
 
   const [pan, setPan] = React.useState({ x: 14, y: 12 });
   const [zoom, setZoom] = React.useState(0.66);
+  // Founder 2026-05-25 (workshop signal): minimap moved OUT of canvas
+  // working area. Default OFF; user opts in via footer "◻ map" pill.
+  const [minimapOn, setMinimapOn] = React.useState(() => {
+    try { return localStorage.getItem('archhub.minimap') === 'on'; } catch (e) { return false; }
+  });
+  React.useEffect(() => {
+    const onToggle = (ev) => setMinimapOn(!!(ev && ev.detail));
+    window.addEventListener('archhub-minimap-toggle', onToggle);
+    return () => window.removeEventListener('archhub-minimap-toggle', onToggle);
+  }, []);
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const [nodeMenu, setNodeMenu] = React.useState(null);
   const [wireMenu, setWireMenu] = React.useState(null);
@@ -6207,8 +6247,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         flashToast('▶ Workflow running…');
       }}/>
       <FloatingComposer setLibraryOpen={setLibraryOpen} focusId={focusId}/>
-      <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}
-        wrapRef={wrapRef} setPan={setPan}/>
+      {/* Minimap default OFF per founder 2026-05-25 (workshop signal).
+          User opts in via footer "◻ map" pill which flips
+          window.__archhub_minimap_on + dispatches archhub-minimap-toggle. */}
+      {minimapOn && (
+        <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}
+          wrapRef={wrapRef} setPan={setPan}/>
+      )}
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y}
         onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }}
         onFit={onResetView} onClose={() => setCtxMenu(null)}
@@ -6653,8 +6698,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         }}>{toast.msg}</div>
       )}
       <CanvasHint/>
-      {/* AgDR-0041 D2·A — live graph validator badge + panel */}
-      <GraphHealthBadge graphBump={graphBump} setFocusId={setFocusId}/>
+      {/* AgDR-0041 D2·A — Graph Health relocated to footer status strip
+          (HealthStripItem) per founder 2026-05-25 workshop signal:
+          "put it any fucking place aside from the canvas working space".
+          Bridge to that pill via the lm-graph-bump event below. */}
       {/* AgDR-0041 D2·A 2/3 — recovery dialog when delete would orphan typed wires */}
       {brokenWireDialog && (
         <BrokenWireDialog
@@ -12272,11 +12319,160 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
           graph + 176 communities are running, not a backend rumor. */}
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <MemoryStripItem/>
+      {/* AgDR-0041 — Graph Health relocated FROM the canvas working
+          space TO the footer per founder 2026-05-25 (workshop signal:
+          "cramping the working space with useless stuff"). Click expands
+          a popover anchored above the strip. */}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+      <HealthStripItem/>
+      {/* Minimap toggle — default OFF. User opts in via this pill if
+          they want the spatial nav PIP. Founder 2026-05-25: "move it
+          from the main working canvas". */}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+      <MinimapToggleStripItem/>
       <div style={{ flex:1 }}/>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem>v1.4 prototype</StripItem>
     </div>
+  );
+};
+
+// AgDR-0041 — footer-anchored Graph Health pill + popover.
+// Replaces the in-canvas GraphHealthBadge which cramped the working
+// area per founder 2026-05-25. Same data source (bridge.graph_validate
+// debounced on graphBump) but renders in the status strip and pops a
+// modal anchored bottom-right when clicked.
+const HealthStripItem = () => {
+  const [issues, setIssues] = React.useState([]);
+  const [counts, setCounts] = React.useState({ err: 0, warn: 0 });
+  const [open, setOpen] = React.useState(false);
+  const [bump, setBump] = React.useState(0);
+  React.useEffect(() => {
+    // Re-poll when canvas mutates; piggyback off the same bumpGraph
+    // signal the old badge listened to via window event.
+    const onBump = () => setBump(b => b + 1);
+    window.addEventListener('lm-graph-bump', onBump);
+    return () => window.removeEventListener('lm-graph-bump', onBump);
+  }, []);
+  React.useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = await bridgeAsync('graph_validate', JSON.stringify(LM_GRAPH));
+        if (cancelled) return;
+        if (res && res.status === 'ok') {
+          setIssues(res.issues || []);
+          setCounts({ err: res.errors || 0, warn: res.warnings || 0 });
+        }
+      } catch (e) {}
+    }, 800);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [bump]);
+  const total = counts.err + counts.warn;
+  const col = counts.err > 0 ? LM.err : counts.warn > 0 ? LM.warn : LM.ok;
+  const label = counts.err > 0
+    ? `● ${counts.err}e ${counts.warn}w`
+    : counts.warn > 0 ? `● ${counts.warn} warn`
+    : '● healthy';
+  return (
+    <>
+      <button onClick={() => setOpen(o => !o)}
+        data-testid="health-strip-item"
+        title={`Graph health · ${counts.err} errors · ${counts.warn} warnings`}
+        style={{
+          background:'transparent', border:0, padding:'0 6px', cursor:'pointer',
+          color: col, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+          transition:'color .12s',
+        }}>{label}</button>
+      {open && (
+        <div onClick={() => setOpen(false)} style={{
+          position:'fixed', inset:0, background:'transparent', zIndex:60,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            position:'fixed', right:14, bottom:36, width:380,
+            maxHeight:'calc(100vh - 90px)',
+            background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:8,
+            boxShadow:'0 12px 36px rgba(0,0,0,.5)',
+            display:'flex', flexDirection:'column', overflow:'hidden', zIndex:61,
+          }}>
+            <div style={{ padding:'10px 14px', borderBottom:`1px solid ${LM.line}`,
+              display:'flex', alignItems:'center', gap:10, background:LM.bgSoft }}>
+              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+                letterSpacing:'0.14em', flex:1 }}>GRAPH HEALTH</span>
+              <span style={{ fontFamily:LM.mono, fontSize:10.5,
+                color: counts.err > 0 ? LM.err : LM.inkMuted }}>{counts.err} err</span>
+              <span style={{ fontFamily:LM.mono, fontSize:10.5,
+                color: counts.warn > 0 ? LM.warn : LM.inkMuted }}>{counts.warn} warn</span>
+              <button onClick={() => setOpen(false)} style={{
+                background:'transparent', border:0, color:LM.inkMuted,
+                fontSize:14, cursor:'pointer', padding:0, lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ overflow:'auto', flex:1, padding:8 }}>
+              {issues.length === 0 ? (
+                <div style={{ padding:'18px 8px', textAlign:'center', fontFamily:LM.mono,
+                  fontSize:10.5, color:LM.ok }}>● graph valid · {total} issues</div>
+              ) : issues.map((iss, i) => {
+                const isErr = iss.level === 'err';
+                return (
+                  <div key={i} onClick={() => {
+                    if (iss.node_id) try { window.dispatchEvent(new CustomEvent('lm-focus-node',
+                      { detail:{ node_id: iss.node_id } })); } catch (e) {}
+                    setOpen(false);
+                  }} style={{
+                    padding:'7px 9px', marginBottom:3, background:LM.bgSoft, borderRadius:4,
+                    borderLeft:`3px solid ${isErr ? LM.err : LM.warn}`,
+                    cursor: iss.node_id ? 'pointer' : 'default',
+                    fontSize:10.5, lineHeight:1.4, color:LM.ink,
+                  }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2 }}>
+                      <span style={{ fontFamily:LM.mono, fontSize:8.5, padding:'1px 5px',
+                        background:LM.bgPanel, borderRadius:2,
+                        color: isErr ? LM.err : LM.warn,
+                        letterSpacing:'0.04em', textTransform:'uppercase' }}>{iss.level}</span>
+                      <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>{iss.code}</span>
+                      {iss.node_id && <span style={{ fontFamily:LM.mono, fontSize:8.5,
+                        color:LM.inkMuted, marginLeft:'auto' }}>@{iss.node_id}</span>}
+                    </div>
+                    <div>{iss.msg}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+// Minimap visibility toggle. Default OFF. The actual MiniMap component
+// renders only when window.__archhub_minimap_on === true. Stored in
+// localStorage for persistence. Click pill flips state + dispatches
+// archhub-minimap-toggle so the canvas re-renders.
+const MinimapToggleStripItem = () => {
+  const [on, setOn] = React.useState(() => {
+    try { return localStorage.getItem('archhub.minimap') === 'on'; }
+    catch (e) { return false; }
+  });
+  const flip = () => {
+    const v = !on;
+    setOn(v);
+    try { localStorage.setItem('archhub.minimap', v ? 'on' : 'off'); } catch (e) {}
+    try { window.__archhub_minimap_on = v; } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('archhub-minimap-toggle', { detail: v })); } catch (e) {}
+  };
+  React.useEffect(() => { try { window.__archhub_minimap_on = on; } catch (e) {} }, [on]);
+  return (
+    <button onClick={flip}
+      data-testid="minimap-toggle"
+      title={on ? 'Hide minimap' : 'Show minimap (PIP)'}
+      style={{
+        background:'transparent', border:0, padding:'0 6px', cursor:'pointer',
+        color: on ? LM.accent : LM.inkMuted,
+        fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+        transition:'color .12s',
+      }}>{on ? '▣ map' : '◻ map'}</button>
   );
 };
 

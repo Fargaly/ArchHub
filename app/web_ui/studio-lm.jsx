@@ -9636,6 +9636,112 @@ const ConnectorRail = ({ node, bumpGraph }) => {
   );
 };
 
+// AgDR-0021 ai.plan — slim Inspector section (per archhub-redesign D REFINED).
+// Pulls the most recent plan record via bridge.get_plan_history. Shows:
+//   - plan_id, model, status, ts
+//   - steps done / total
+//   - cost estimate
+//   - Decisions pills (one per recorded decision in the plan)
+//   - Replay-from-cache + Open-full-table buttons
+// Fails silent on no plan / no bridge — section just doesn't render data.
+const AiPlanSection = ({ node }) => {
+  const [plan, setPlan] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await bridgeAsync('get_plan_history', '', 1);
+        if (cancelled) return;
+        // get_plan_history returns {records:[...]} or array
+        const recs = (res && (res.records || res)) || [];
+        setPlan(Array.isArray(recs) && recs.length > 0 ? recs[0] : null);
+      } catch (e) { /* silent */ }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [node.id]);
+  const onReplay = () => {
+    if (!plan || !plan.plan_id) return;
+    try {
+      bridgeCall('run_node', currentSid(), node.id, JSON.stringify(LM_GRAPH));
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+        detail: { msg: 'Replaying plan ' + plan.plan_id, kind: 'info' } }));
+    } catch (e) {}
+  };
+  if (loading) {
+    return (
+      <div>
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em', marginBottom:10 }}>PLAN</div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>loading…</div>
+      </div>
+    );
+  }
+  if (!plan) {
+    return (
+      <div>
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em', marginBottom:10 }}>PLAN</div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, lineHeight:1.5 }}>
+          No plans cached yet. Run this ai.plan node to mint one — it persists at <code style={{ fontFamily:LM.mono, fontSize:9, background:LM.bg, padding:'1px 4px', borderRadius:3, color:LM.accentHi }}>{'<project>/.archhub/plans/<id>.json'}</code>.
+        </div>
+      </div>
+    );
+  }
+  const steps = Array.isArray(plan.plan) ? plan.plan : [];
+  const done = steps.filter(s => s && s.status === 'ok').length;
+  const total = steps.length;
+  const cost = plan.cost_estimate || plan.cost || '—';
+  const decisions = Array.isArray(plan.decisions)
+    ? plan.decisions
+    : steps.slice(0, 3).map(s => (s && (s.tool || s.name || s.summary)) || '').filter(Boolean);
+  const Row = ({ k, v }) => (
+    <div style={{
+      background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`, padding:'6px 8px',
+      borderRadius:3, fontFamily:LM.mono, fontSize:10,
+    }}>
+      <div style={{ color:LM.inkMuted, fontSize:8.5, letterSpacing:'0.1em', textTransform:'uppercase' }}>{k}</div>
+      <div style={{ color:LM.ink, marginTop:2 }}>{v}</div>
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em', marginBottom:10 }}>PLAN · {plan.status || 'ok'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+        <Row k="Plan id" v={plan.plan_id || '—'}/>
+        <Row k="Steps · done / total" v={`${done} / ${total || '—'}`}/>
+        <Row k="Model" v={plan.model || '—'}/>
+        <Row k="Cost · est" v={typeof cost === 'number' ? `$${cost.toFixed(3)}` : String(cost)}/>
+      </div>
+      {decisions.length > 0 && (
+        <>
+          <div style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.18em', textTransform:'uppercase', marginTop:14, marginBottom:6 }}>Decisions</div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
+            {decisions.map((d, i) => (
+              <span key={i} style={{
+                background:LM.accentDim, color:LM.accent, fontFamily:LM.mono,
+                fontSize:9, padding:'2px 7px', borderRadius:3, letterSpacing:'0.06em',
+              }}>{String(d).slice(0,40)}</span>
+            ))}
+          </div>
+        </>
+      )}
+      <div style={{ display:'flex', gap:6, marginTop:14 }}>
+        <button onClick={onReplay} style={{
+          flex:1, background:LM.bgSoft, border:`1px solid ${LM.accent}`, color:LM.accent,
+          padding:'7px 10px', borderRadius:3, fontFamily:LM.mono, fontSize:9.5, cursor:'pointer', textAlign:'left',
+        }}>▶ Replay from cache</button>
+        <button onClick={() => {
+          // Best-effort: open the plan JSON in the user's text editor via bridge.
+          try { bridgeCall('open_file', plan && plan.file_path || ''); } catch (e) {}
+        }} style={{
+          flex:1, background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`, color:LM.ink,
+          padding:'7px 10px', borderRadius:3, fontFamily:LM.mono, fontSize:9.5, cursor:'pointer', textAlign:'left',
+        }}>▸ Open full table</button>
+      </div>
+    </div>
+  );
+};
+
 const NodeRail = ({ node, bumpGraph }) => {
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // Founder demand #15: spread defaults so a partial node blob never KOs the rail.
@@ -9705,6 +9811,16 @@ const NodeRail = ({ node, bumpGraph }) => {
             {(node.params || []).map(p => <FullParam key={p.k} p={p} node={node} onChange={(v) => onParamChange(p.k, v)}/>)}
           </div>
         </div>
+      )}
+
+      {/* AgDR-0021 ai.plan — Plan section (slim variant per
+          archhub-redesign-2026-05-24.html Prototype D REFINED:
+          "assimilate into existing right-panel Inspector"). Shown when
+          the focused node is an ai.plan instance. Pulls last plan
+          record via bridge.get_plan_history. */}
+      {(node.kind === 'ai_plan' || node.type === 'ai.plan' ||
+        (node.title && /ai\.plan/i.test(node.title))) && (
+        <AiPlanSection node={node}/>
       )}
 
       <div style={{ display:'flex', flexDirection:'column', gap:5 }}>

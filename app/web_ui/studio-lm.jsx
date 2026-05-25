@@ -2140,6 +2140,7 @@ const StudioLM = () => {
       <AiPlanHistoryModal/>
       <CommandPalette/>
       <MemoryExplorerModal/>
+      <GlobalToast/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
       {aiNodeOpen && <AINodeModal onClose={() => setAiNodeOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -10181,6 +10182,48 @@ const ConnectorRail = ({ node, bumpGraph }) => {
 //   - Decisions pills (one per recorded decision in the plan)
 //   - Replay-from-cache + Open-full-table buttons
 // Fails silent on no plan / no bridge — section just doesn't render data.
+// Global toast container — mounts at the StudioLM root so toasts fire
+// from Home, Settings, Library, Cmd+K, Memory Explorer, anywhere.
+// Previously toasts were caught only by the NodeCanvas listener, so
+// any lm-canvas-toast event fired outside an open canvas session was
+// silent. Founder feedback 2026-05-25: "I click things and see
+// nothing happen". Now every dispatch surfaces here.
+const GlobalToast = () => {
+  const [toast, setToast] = React.useState(null);
+  React.useEffect(() => {
+    const onToast = (ev) => {
+      const d = (ev && ev.detail) || {};
+      const msg = d.msg || d.text;
+      if (!msg) return;
+      const kind = d.kind || 'info';
+      setToast({ msg, kind, ts: Date.now() });
+    };
+    window.addEventListener('lm-canvas-toast', onToast);
+    return () => window.removeEventListener('lm-canvas-toast', onToast);
+  }, []);
+  React.useEffect(() => {
+    if (!toast) return;
+    const ts = toast.ts;
+    const t = setTimeout(() => setToast(c => c && c.ts === ts ? null : c), 2400);
+    return () => clearTimeout(t);
+  }, [toast]);
+  if (!toast) return null;
+  const col = toast.kind === 'err'  ? LM.err
+            : toast.kind === 'warn' ? LM.warn
+            : toast.kind === 'ok'   ? LM.ok
+                                    : LM.accent;
+  return (
+    <div style={{
+      position:'fixed', bottom:24, left:'50%', transform:'translateX(-50%)',
+      background:LM.bgPanel, border:`1px solid ${col}aa`,
+      borderLeft:`3px solid ${col}`, borderRadius:6,
+      padding:'9px 16px', color:LM.ink, fontFamily:LM.sans, fontSize:12,
+      boxShadow:'0 12px 28px rgba(0,0,0,.45)', zIndex:90,
+      maxWidth:'82%', whiteSpace:'pre-wrap',
+    }}>{toast.msg}</div>
+  );
+};
+
 // AgDR-0042 — Memory explorer modal. Opens when the user clicks the
 // bottom-strip memory pill. Renders a dashboard of the shared-memory
 // knowledge graph: total node + edge counts, breakdown by kind,

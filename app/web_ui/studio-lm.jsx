@@ -6277,7 +6277,7 @@ const BrokenWireDialog = ({ info, onClose }) => {
             ))}
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            <button disabled title="Coming with D2·A 3/3 — needs library_suggest_swaps integration"
+            <button disabled aria-label="Insert adapter — arriving D2·A 3/3, needs library_suggest_swaps integration" title="Coming with D2·A 3/3 — needs library_suggest_swaps integration"
               style={{
                 background:LM.bgSoft, border:`1px solid ${LM.line}`,
                 color:LM.inkMuted, padding:'10px 14px', borderRadius:6,
@@ -6287,7 +6287,7 @@ const BrokenWireDialog = ({ info, onClose }) => {
               <div style={{ color:LM.inkMuted, marginBottom:2 }}>Insert adapter</div>
               <div style={{ fontSize:10, color:LM.inkMuted }}>library.suggest_swaps · arriving D2·A 3/3</div>
             </button>
-            <button disabled title="Coming with D2·A 3/3"
+            <button disabled aria-label="Swap downstream node — arriving D2·A 3/3" title="Coming with D2·A 3/3"
               style={{
                 background:LM.bgSoft, border:`1px solid ${LM.line}`,
                 color:LM.inkMuted, padding:'10px 14px', borderRadius:6,

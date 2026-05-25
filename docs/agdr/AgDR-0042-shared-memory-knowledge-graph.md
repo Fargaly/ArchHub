@@ -1,11 +1,14 @@
 ---
 id: AgDR-0042
 timestamp: 2026-05-24
-status: proposed
-founder-signoff: 2026-05-24 — "I think it would be good for the shared memory systems that we discussed before not only for the dev work"
+status: executing
+founder-signoff: 2026-05-25 — picked D1·C (ship ALL 6 slices) on docs/prototypes/four-decisions-2026-05-25.html + reaffirmed on docs/prototypes/scope-reality-2026-05-25.html (committed to 7-25d realistic spread)
 category: architecture
 supersedes: none
 builds-on: [AgDR-0038, AgDR-0040, AgDR-0041]
+slices-shipped:
+  - "slice 1/6 — app/memory/graph.py core data model + SQLite store (2026-05-25)"
+slices-remaining: [2, 3, 4, 5, 6]
 ---
 
 # AgDR-0042 — Shared-memory knowledge graph (graphify-style data model)

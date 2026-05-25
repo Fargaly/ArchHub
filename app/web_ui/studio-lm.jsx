@@ -10662,6 +10662,45 @@ const ModelPicker = ({ setModel, onClose, model }) => {
   );
 };
 
+// AgDR-0042 — bottom-strip live memory readout. Polls memory_stats
+// every 30s. Click → flashToast with breakdown by kind.
+const MemoryStripItem = () => {
+  // ALL hooks at top — React rules-of-hooks forbid conditional ordering.
+  const [stats, setStats] = React.useState(null);
+  const [h, setH] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const r = await bridgeAsync('memory_stats');
+        if (cancelled) return;
+        if (r && r.status === 'ok') setStats(r);
+      } catch (e) {}
+    };
+    pull();
+    const t = setInterval(pull, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  if (!stats) return null;
+  const onClick = () => {
+    try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+      { detail:{ msg:`Memory: ${stats.total_nodes} nodes (${(stats.by_kind||{}).capability || 0} cap · ${(stats.by_kind||{}).skill || 0} skill · ${(stats.by_kind||{}).decision || 0} agdr) · ${stats.communities_total} communities`, kind:'info' } })); } catch (e) {}
+  };
+  return (
+    <button onClick={onClick}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      title={`${stats.total_nodes} memory nodes · ${stats.communities_total} communities. Click for breakdown.`}
+      style={{
+        background:'transparent', border:0, padding:'0 4px', cursor:'pointer',
+        color: h ? LM.accent : LM.inkMuted,
+        fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+        transition:'color .12s',
+      }}>
+      <span style={{ color:LM.accent }}>⊕</span> memory · {stats.total_nodes} · {stats.communities_total} comm
+    </button>
+  );
+};
+
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen }) => {
   const live = (LM_HOSTS || []).filter(h => h.state !== 'off').length;
@@ -10703,6 +10742,11 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
           <StripItem>{(LM_SESSIONS || []).length} sessions · {(LM_SESSIONS || []).filter(s=>s.state==='running').length} running</StripItem>
         </>
       )}
+      {/* AgDR-0042 — memory graph live stats from bridge.memory_stats.
+          Founder gets a visible heartbeat that the 197-node memory
+          graph + 176 communities are running, not a backend rumor. */}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+      <MemoryStripItem/>
       <div style={{ flex:1 }}/>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>

@@ -1931,6 +1931,63 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── AgDR-0042 D1·C — shared-memory graph access ─────────────
+    @pyqtSlot(str, result=str)
+    def memory_query(self, args_json: str) -> str:
+        """Query the shared-memory knowledge graph from the JSX side.
+
+        AgDR-0042 — exposes `memory.query()` as a bridge slot so the
+        Composer canvas + Library panel can search without an LLM
+        tool round-trip. Args envelope is the same shape the
+        memory_query LLM tool accepts:
+          {question: str, kinds?: [str], limit?: int, min_score?: float}
+        Returns the same response envelope:
+          {status: 'ok', results: [{id, kind, label, score, why}], count}
+        Errors surface as {status:'error', error:str} so the panel
+        can render a single-line banner without crashing."""
+        try:
+            import json as _json
+            args = _json.loads(args_json or "{}")
+            if not isinstance(args, dict):
+                return _safe_json({"status": "error",
+                                    "error": "args must be an object"})
+            if self.tools is None:
+                return _safe_json({"status": "error",
+                                    "error": "tool engine not initialised"})
+            res = self.tools.invoke("memory_query", args)
+            return _safe_json(res)
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(result=str)
+    def memory_stats(self) -> str:
+        """Snapshot of the memory graph — node count by kind +
+        community count. Cheap (single SQL COUNT per kind). Used by
+        the Library panel header + the upcoming community-grouped
+        Library UI."""
+        try:
+            from memory import MemoryGraph, community_stats
+            g = MemoryGraph.open()
+            try:
+                kinds = ("capability", "skill", "turn", "tool",
+                         "decision", "project", "design")
+                counts = {k: g.count_nodes(kind=k) for k in kinds}
+                stats = community_stats(g)
+                return _safe_json({
+                    "status": "ok",
+                    "total_nodes": g.count_nodes(),
+                    "total_edges": g.count_edges(),
+                    "by_kind": counts,
+                    "communities_total": len(stats),
+                    "communities_top": stats[:5],
+                })
+            finally:
+                g.close()
+        except Exception as ex:
+            return _safe_json({"status": "error",
+                                "error": f"{type(ex).__name__}: {ex}"})
+
     # ─── AgDR-0041 P5 — live validator ─────────────────────────────
     @pyqtSlot(str, result=str)
     def graph_validate(self, graph_json: str) -> str:

@@ -6913,6 +6913,47 @@ const _injectA11yStyles = (() => {
   document.head.appendChild(s);
 })();
 
+// ─── AgDR-0015 design tokens as CSS vars ────────────────────────────
+// Hat 3 audit Fix #4. The LM object contains every AgDR-0015 token
+// already; emit them as :root CSS variables so future themes can
+// swap by setting [data-theme="vellum"] etc. without touching the
+// 822 inline `style={{}}` literals. Today the values mirror LM.*
+// exactly so visual diff is ZERO; the substrate is the win.
+const _injectTokenVars = (() => {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('lm-token-vars')) return;
+  const css = [
+    ':root{',
+    `  --lm-bg:${LM.bg}; --lm-bgPanel:${LM.bgPanel}; --lm-bgSoft:${LM.bgSoft};`,
+    `  --lm-bgHover:${LM.bgHover}; --lm-bgDeep:${LM.bgDeep}; --lm-bgCanvas:${LM.bgCanvas};`,
+    `  --lm-ink:${LM.ink}; --lm-inkSoft:${LM.inkSoft}; --lm-inkMuted:${LM.inkMuted}; --lm-inkDim:${LM.inkDim};`,
+    `  --lm-line:${LM.line}; --lm-lineSoft:${LM.lineSoft}; --lm-lineHair:${LM.lineHair};`,
+    `  --lm-accent:${LM.accent}; --lm-accentSoft:${LM.accentSoft}; --lm-accentDim:${LM.accentDim}; --lm-accentHi:${LM.accentHi};`,
+    `  --lm-ok:${LM.ok}; --lm-warn:${LM.warn}; --lm-err:${LM.err};`,
+    `  --lm-cyan:${LM.cyan}; --lm-purple:${LM.purple}; --lm-blue:${LM.blue};`,
+    `  --lm-serif:${LM.serif}; --lm-sans:${LM.sans}; --lm-mono:${LM.mono};`,
+    // Spacing scale
+    Object.entries(LM.size).map(([k,v]) => `  --lm-s${k}:${v}px;`).join('\n'),
+    // Type scale
+    Object.entries(LM.font).map(([k,v]) => `  --lm-f${k}:${v}px;`).join('\n'),
+    // Radius scale
+    Object.entries(LM.radius).map(([k,v]) => `  --lm-r${k}:${v}px;`).join('\n'),
+    // Shadow scale
+    Object.entries(LM.shadow).map(([k,v]) => `  --lm-sh-${k}:${v};`).join('\n'),
+    // Motion vocab
+    Object.entries(LM.motion).map(([k,v]) => `  --lm-m-${k}:${v};`).join('\n'),
+    '}',
+    // Honor reduced-motion per AgDR-0015 a11y floor
+    '@media (prefers-reduced-motion){',
+    '  *, *::before, *::after { animation-duration:0.001ms!important; transition-duration:0.001ms!important; }',
+    '}',
+  ].join('\n');
+  const s = document.createElement('style');
+  s.id = 'lm-token-vars';
+  s.textContent = css;
+  document.head.appendChild(s);
+})();
+
 // ─── AgDR-0022 — ReactFlow scaffold P2.a (groundwork) ─────────────
 // Feature-flag reader. `localStorage.archhub.canvas` picks which
 // canvas substrate to render: `custom` (today's NodeCanvas) or

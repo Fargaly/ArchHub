@@ -6651,28 +6651,31 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
       : '● ok';
 
   return (
-    // bottom:70 keeps the badge above the chat composer (52px high + 14px gap).
-    // When open, panel anchors bottom-right and grows upward to a fixed 320 px
-    // so the empty / few-issue cases still feel like a "panel" not a vanishing
-    // line of text. Z-index 38 sits above wires + nodes but under modals.
+    // TOP-RIGHT — sits UNDER the minimap (which lives at right:14, top:14,
+    // 170×96). Stack order: minimap → 8px gap → health badge. Was
+    // bottom-center where it collided with composer + Claude badge
+    // (founder 2026-05-25 screenshot showed full overlap). Panel grows
+    // DOWNWARD with viewport-capped height so it never escapes the
+    // canvas. Z-index 38 sits above wires + nodes, under modals.
     <div data-no-pan data-testid="graph-health-badge"
-      style={{ position:'absolute', right:14, bottom:70, zIndex:38 }}>
+      style={{ position:'absolute', right:14, top:118, zIndex:38 }}>
       {!open ? (
         <button onClick={() => setOpen(true)}
           aria-label={`graph health · ${summary}`}
           style={{
             background:LM.bgPanel, border:`1px solid ${color}`,
-            borderRadius:6, padding:'6px 12px', cursor:'pointer',
+            borderRadius:7, padding:'6px 12px', cursor:'pointer',
             fontFamily:LM.mono, fontSize:11, color:color,
             letterSpacing:'0.04em', display:'flex', alignItems:'center', gap:8,
             opacity: busy ? 0.7 : 1, transition:'opacity .15s',
+            boxShadow:'0 4px 12px rgba(0,0,0,.3)',
           }}>
           <span>{summary}</span>
-          <span style={{ color:LM.inkMuted, fontSize:9, letterSpacing:'0.12em' }}>HEALTH ▴</span>
+          <span style={{ color:LM.inkMuted, fontSize:9, letterSpacing:'0.12em' }}>HEALTH ▾</span>
         </button>
       ) : (
         <div data-testid="graph-health-panel" style={{
-          width:340, height:320,
+          width:340, maxHeight:'calc(100vh - 180px)', minHeight:240,
           background:LM.bgPanel, border:`1px solid ${LM.line}`,
           borderRadius:8, overflow:'hidden', display:'flex', flexDirection:'column',
           boxShadow:'0 8px 28px rgba(0,0,0,0.45)',

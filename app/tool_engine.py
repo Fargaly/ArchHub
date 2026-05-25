@@ -1254,6 +1254,39 @@ TOOLS: list[dict] = [
         },
         "endpoint": ("_local", "graph_on_node_delete"),
     },
+    # AgDR-0042 D1·C slice 3/6 — memory.query() exposed as an LLM tool.
+    # Back-compat shim around node_search; the LLM gets a richer ranker
+    # that joins library + Composer-turn signals into one queryable
+    # graph. Falls through to an empty result list cleanly when the
+    # memory graph hasn't been populated yet (first run / fresh install).
+    {
+        "name": "memory_query",
+        "family": "_local",
+        "description": (
+            "Search the shared-memory knowledge graph. Returns ranked "
+            "nodes (Capabilities, Skills, prior Composer turns, "
+            "decisions) matching the question. Each hit carries `id`, "
+            "`kind`, `label`, `score`, and a one-line `why` provenance "
+            "string. Use this in place of `node_search` whenever the "
+            "user asks 'find me a Skill / Capability / prior workflow "
+            "that does X' — the graph join lifts relevance beyond pure "
+            "name matching by including past usage + skill composition."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "kinds":    {"type": "array", "items": {"type": "string"},
+                              "description": "Filter by node kind, e.g. "
+                                              "['skill'] or "
+                                              "['capability','skill']."},
+                "limit":    {"type": "integer", "default": 10},
+                "min_score": {"type": "number", "default": 0.0},
+            },
+            "required": ["question"],
+        },
+        "endpoint": ("_local", "memory_query"),
+    },
     # AgDR-0041 Property 5 — live validator. UI calls this on every
     # graph edit (debounced) to colour wires + nodes green/yellow/red
     # without waiting for cook. Returns the same issue shape as
@@ -1840,6 +1873,9 @@ class ToolEngine:
                     or handler == "graph_on_node_delete"
                     or handler == "graph_validate"):
                 return self._invoke_node_handler(handler, args or {})
+            # AgDR-0042 slice 3/6 — memory.query() exposed as a tool.
+            if handler == "memory_query":
+                return self._invoke_memory_query(args or {})
             return {"status": "error", "error": f"Unknown local handler: {handler}"}
 
         # speckle family
@@ -2154,6 +2190,52 @@ class ToolEngine:
         except _lib.UnknownTypeError as ex:
             return {"status": "error", "error": str(ex),
                     "code": "unknown_type"}
+        except Exception as ex:
+            return {"status": "error",
+                    "error": f"{type(ex).__name__}: {ex}"}
+
+    # ---- AgDR-0042 slice 3/6 — memory.query() handler --------------------
+
+    def _invoke_memory_query(self, args: dict) -> dict:
+        """Handler for the `memory_query` LLM tool.
+
+        Opens the default MemoryGraph + runs `query()` against the
+        question + filters. Lazy-opens the graph per call (SQLite open
+        is microseconds at this scale); a future hot-path optimisation
+        can cache the handle, but keeping it stateless avoids cross-
+        request bleed (different users / sessions) at the cost of a
+        few µs.
+
+        Falls through to {status:'ok', results:[]} when the graph file
+        doesn't exist yet (first run / fresh install / before any
+        extractor has been called) — the LLM gets an honest "nothing
+        here yet" rather than a crash, mirroring node_search's
+        empty-library behaviour.
+        """
+        question = str(args.get("question", "") or "").strip()
+        if not question:
+            return {"status": "error", "error": "memory_query needs `question`"}
+        try:
+            from memory import MemoryGraph
+            from memory.query import query as _mq
+        except Exception as ex:
+            return {"status": "error",
+                    "error": f"memory package unavailable: {ex}"}
+        try:
+            g = MemoryGraph.open()
+            try:
+                kinds = args.get("kinds")
+                limit = int(args.get("limit", 10))
+                min_score = float(args.get("min_score", 0.0))
+                results = _mq(
+                    g, question,
+                    kinds=tuple(kinds) if kinds else None,
+                    limit=limit, min_score=min_score,
+                )
+                return {"status": "ok", "results": results,
+                        "count": len(results)}
+            finally:
+                g.close()
         except Exception as ex:
             return {"status": "error",
                     "error": f"{type(ex).__name__}: {ex}"}

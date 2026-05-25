@@ -23,8 +23,9 @@ from __future__ import annotations
 from .graph import (  # noqa: F401
     MemoryGraph, MemoryNode, MemoryEdge, Confidence, default_graph_path,
 )
+from .query import query, neighbors_summary  # noqa: F401
 
 __all__ = [
     "MemoryGraph", "MemoryNode", "MemoryEdge", "Confidence",
-    "default_graph_path",
+    "default_graph_path", "query", "neighbors_summary",
 ]

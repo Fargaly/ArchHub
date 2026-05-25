@@ -55,41 +55,115 @@ def _brain_command() -> str:
 # ─────────────────────── Windows (Task Scheduler) ──────────────────────
 
 
-def _windows_install(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, Any]:
-    # schtasks needs the full command WITH args quoted as a single string.
+def _windows_install(
+    port: int = DEFAULT_PORT,
+    db: Optional[str] = None,
+    *,
+    elevated: bool = False,
+) -> dict[str, Any]:
+    """Register brain daemon to autostart at user logon.
+
+    Default registers at USER privilege (no admin prompt). Pass
+    `elevated=True` to attempt `/rl HIGHEST` — that requires running
+    PowerShell as Administrator and will fail with "Access denied"
+    otherwise. User-level install survives a normal login + works for
+    everything the brain needs (it binds 127.0.0.1, no privileged ports).
+    """
     brain = _brain_command()
     args = f'--http {port}' + (f' --db "{db}"' if db else '')
     full_cmd = f'{brain} {args}'
 
-    # Wrap in pythonw via cmd /c if we need no-console behaviour
-    # For schtasks, /tr accepts an executable + args.
-    create = subprocess.run(
-        [
-            "schtasks", "/create",
-            "/tn", SCHTASKS_NAME,
-            "/tr", full_cmd,
-            "/sc", "onlogon",
-            "/rl", "HIGHEST",
-            "/f",  # force overwrite
-        ],
-        capture_output=True, text=True,
-    )
+    cmd = [
+        "schtasks", "/create",
+        "/tn", SCHTASKS_NAME,
+        "/tr", full_cmd,
+        "/sc", "onlogon",
+        "/f",  # force overwrite
+    ]
+    if elevated:
+        cmd.extend(["/rl", "HIGHEST"])
+
+    create = subprocess.run(cmd, capture_output=True, text=True)
+    if create.returncode == 0:
+        return {
+            "platform": "windows-schtasks",
+            "ok": True,
+            "elevated": elevated,
+            "command": full_cmd,
+            "stdout": create.stdout.strip(),
+            "stderr": create.stderr.strip(),
+        }
+
+    # Fallback — drop a Startup-folder shortcut (zero admin needed).
+    fallback = _windows_install_startup_folder(full_cmd)
+    if fallback.get("ok"):
+        return fallback
     return {
         "platform": "windows-schtasks",
-        "ok": create.returncode == 0,
+        "ok": False,
+        "elevated": elevated,
         "command": full_cmd,
         "stdout": create.stdout.strip(),
         "stderr": create.stderr.strip(),
+        "fallback_attempted": "startup-folder",
+        "fallback_error": fallback.get("error"),
     }
 
 
+def _startup_folder_path() -> Path:
+    """%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"""
+    appdata = Path(os.environ.get("APPDATA",
+                                    str(Path.home() / "AppData/Roaming")))
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def _startup_vbs_path() -> Path:
+    return _startup_folder_path() / "ArchHub-Brain.vbs"
+
+
+def _windows_install_startup_folder(full_cmd: str) -> dict[str, Any]:
+    """Write a .vbs shim that launches the brain daemon hidden at logon.
+    No admin required. Survives reboots."""
+    try:
+        folder = _startup_folder_path()
+        folder.mkdir(parents=True, exist_ok=True)
+        vbs = (
+            'Dim oShell\n'
+            'Set oShell = WScript.CreateObject("WScript.Shell")\n'
+            f'oShell.Run "{full_cmd}", 0, False\n'
+        )
+        path = _startup_vbs_path()
+        path.write_text(vbs, encoding="utf-8")
+        return {
+            "platform": "windows-startup-folder",
+            "ok": True,
+            "elevated": False,
+            "command": full_cmd,
+            "path": str(path),
+            "note": "ArchHub Brain registered via Startup folder .vbs (no admin needed)",
+        }
+    except OSError as ex:
+        return {"ok": False, "error": str(ex)}
+
+
 def _windows_uninstall() -> dict[str, Any]:
+    # Remove both possible install paths (schtasks + Startup folder).
     r = subprocess.run(
         ["schtasks", "/delete", "/tn", SCHTASKS_NAME, "/f"],
         capture_output=True, text=True,
     )
+    startup_removed = False
+    try:
+        p = _startup_vbs_path()
+        if p.exists():
+            p.unlink()
+            startup_removed = True
+    except OSError:
+        pass
     return {
-        "platform": "windows-schtasks", "ok": r.returncode == 0,
+        "platform": "windows", "ok": r.returncode == 0 or startup_removed,
+        "schtasks_removed": r.returncode == 0,
+        "startup_folder_removed": startup_removed,
         "stdout": r.stdout.strip(), "stderr": r.stderr.strip(),
     }
 
@@ -99,9 +173,13 @@ def _windows_status() -> dict[str, Any]:
         ["schtasks", "/query", "/tn", SCHTASKS_NAME, "/fo", "LIST"],
         capture_output=True, text=True,
     )
+    startup_present = _startup_vbs_path().exists()
     return {
-        "platform": "windows-schtasks",
-        "installed": r.returncode == 0,
+        "platform": "windows",
+        "installed": r.returncode == 0 or startup_present,
+        "schtasks_present": r.returncode == 0,
+        "startup_folder_present": startup_present,
+        "startup_folder_path": str(_startup_vbs_path()),
         "details": r.stdout.strip() if r.returncode == 0 else r.stderr.strip(),
     }
 
@@ -354,14 +432,16 @@ def run(
     *,
     port: int = DEFAULT_PORT,
     db: Optional[str] = None,
+    elevated: bool = False,
 ) -> dict[str, Any]:
     plat = _platform()
     fn = _DISPATCH.get((plat, action))
     if fn is None:
         return {"ok": False, "error": f"unsupported action '{action}' on {plat}"}
-    # Install action takes args; status/start/stop/uninstall don't
     try:
         if action == "install":
+            if plat == "windows":
+                return fn(port=port, db=db, elevated=elevated)
             return fn(port=port, db=db)
         return fn()
     except FileNotFoundError as ex:
@@ -378,9 +458,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                                   "start", "stop"])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--db", type=str, default=None)
+    parser.add_argument("--elevated", action="store_true",
+                         help="Windows: request /rl HIGHEST (needs admin)")
     args = parser.parse_args(argv)
 
-    result = run(args.action, port=args.port, db=args.db)
+    result = run(args.action, port=args.port, db=args.db,
+                  elevated=args.elevated)
     import json as _json
     print(_json.dumps(result, indent=2))
     return 0 if result.get("ok") or result.get("installed") else 1

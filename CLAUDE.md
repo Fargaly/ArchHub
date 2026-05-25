@@ -179,6 +179,88 @@ Workshop output is an AgDR (per existing AGDR mandate) + a closed
 thread of next actions. Only after the AgDR ships `executed` and the
 founder confirms does shipping resume.
 
+## BRAIN-FIRST MANDATE (founder, 2026-05-25 — non-negotiable)
+
+Every Claude Code session, every AI agent, every human collaborator on
+this repo CONNECTS TO THE BRAIN BEFORE STARTING ANY OPERATION. The
+brain (personal-brain-mcp daemon on `http://127.0.0.1:8473/mcp`) is the
+shared memory + skills + setups + secrets-refs layer per AgDR-0044.
+Operating without it = working blind = re-solving solved problems +
+ignoring founder context + minting duplicate skills.
+
+- **Session preamble.** First action in EVERY new session, BEFORE any
+  Read / Write / Edit / Bash on repo files:
+  ```
+  curl -X POST http://127.0.0.1:8473/mcp \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+         "params":{"name":"brain.health","arguments":{}}}'
+  ```
+  If response includes `"ok":true` → proceed.
+  If connection refused / non-200 → daemon down, see "Bring brain up"
+  below. DO NOT continue with repo work until brain is reachable.
+
+- **Bring brain up.** When the daemon is unreachable, the session's
+  first job is to start it — not to ask the founder:
+  ```
+  cd ArchHub/personal-brain-mcp && PYTHONPATH=src python -m \
+    personal_brain.server --http 8473 &
+  python -m personal_brain.service install --port 8473   # autostart
+  ```
+  Re-probe brain.health. Only then begin requested work.
+
+- **Wiring announce at session start.** Right after the health check,
+  every session calls `brain.wiring_announce` with the current cwd +
+  git remote + detected MCPs. This gives the brain the scope hint
+  (USER / PROJECT / FIRM) used for all subsequent context retrievals.
+
+- **Context inject on every user prompt.** Inside Claude Code, the
+  UserPromptSubmit hook in `~/.claude/settings.json` routes to
+  `brain.context` automatically. Outside (Cursor / Codex / Gemini /
+  ChatGPT / ArchHub Composer), the equivalent hook or pre-prompt
+  injection fires the same call. No prompt processed without brain
+  context attached — even when injection is empty.
+
+- **Memory write on every successful tool call.** PostToolUse hook
+  routes to `brain.write` with ADD/UPDATE/DELETE/NOOP ops. Memory grows
+  as you work — that's how the next session sees your context.
+
+- **Skill mint on session close.** Stop hook routes to
+  `brain.skill_mint` with the full trace. Successful trajectories that
+  cross the R1+R2 gates become reusable skills.
+
+- **Secrets — references only.** Never store resolved secrets in brain
+  memory. Use `op://vault/...` references; the brain resolves them
+  through 1Password CLI / Windows Credential Manager at tool-call time.
+
+- **AI agents + human collaborators.** Same rules. If you onboard a
+  contributor, their first PR is to ensure their environment runs the
+  brain daemon + has the installer wired to their client (`python -m
+  personal_brain.installer`). PRs from contributors whose work shows no
+  brain interaction (zero `brain.write` ops in trace, no `<brain_context>`
+  injection) are reviewed with extra scrutiny — they're working without
+  the shared memory + may be reinventing prior work.
+
+- **Failure modes.** "Brain unreachable so I skipped it" is the same
+  failure class as "I skipped the tests." Don't. ResilientBrainClient
+  wraps every call with a circuit breaker — operations that LITERALLY
+  cannot wait for brain (file reads during a hot keystroke) gracefully
+  degrade to cached state, but the session-start health probe + wiring
+  announce are NEVER skipped.
+
+- **Verification floor.** Before reporting any session's work "done,"
+  this preflight runs:
+  1. `curl http://127.0.0.1:8473/mcp ...brain.health` returns `"ok":true`
+  2. `_LAST_BRAIN_STATS` (or equivalent client log) shows at least one
+     pre_prompt hit fired this session
+  3. PostToolUse memory writes attempted at least once (even if NOOP)
+  Reports missing any of these are rejected by the founder by default.
+
+This mandate is the OPPOSITE of optional. The brain is the moat. Sessions
+that bypass it accumulate context debt that grows quadratically with
+team + project size.
+
 ## AUTOMATION MANDATE (founder, 2026-05-22 — non-negotiable)
 
 Never hand the founder a checklist of manual steps. The founder is a

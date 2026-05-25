@@ -3997,12 +3997,11 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
       padding:'30px 44px 60px', display:'flex', flexDirection:'column', position:'relative',
     }}>
-      <div style={{ order:-10 }}><ModelStrip model={model} setPickerOpen={setPickerOpen}/></div>
+      <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
 
       {/* HERO · composer-first per docs/prototypes/archhub-redesign-2026-05-24.html
-          Prototype A (REFINE picked). Greet + H1 + composer block top-centered.
-          Explicit CSS order so Hero sits between ModelStrip + Composer. */}
-      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:14, marginTop:32, order:0 }}>
+          Prototype A (REFINE picked). Greet + H1 + composer block top-centered. */}
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:14, marginTop:32 }}>
         <div style={{
           fontFamily:LM.mono, fontSize:13, color:LM.inkMuted, letterSpacing:'0.04em',
         }}>Welcome back{window.__archhub_user ? ', ' + window.__archhub_user : ''}</div>
@@ -4034,7 +4033,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         </div>
       </div>
 
-      <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'40px 0 14px', order:10 }}>
+      <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'40px 0 14px' }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:22, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Recent</h2>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
           {sessions.length} · CLICK TO OPEN
@@ -4047,7 +4046,6 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       </div>
       {sessions.length === 0 ? (
         <div style={{
-          order:11,
           padding:'48px 24px', textAlign:'center', color:LM.inkMuted, fontFamily:LM.serif,
           fontStyle:'italic', fontSize:18, background:LM.bgPanel, border:`1px dashed ${LM.line}`,
           borderRadius:9,
@@ -4058,7 +4056,6 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         </div>
       ) : (
         <div style={{
-          order:11,
           display:'grid',
           // Founder demand 2026-05-15: thumbnails too huge. Shrink + auto-pack
           // by minmax so wide screens get more columns instead of giant cards.
@@ -4080,9 +4077,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         onDragLeave={_onDragLeave}
         onDrop={_onDrop}
         style={{
-        // CSS order positions composer between Hero (order ~0) and
-        // Recent header (order ~10). ModelStrip stays at order -10 (top).
-        position:'static', order:5,
+        position:'static', order:-1,
         width:780, maxWidth:'92%', margin:'18px auto 0',
         background:LM.bgPanel,
         border:`1px solid ${dragOver ? LM.accent : LM.accent+'66'}`,

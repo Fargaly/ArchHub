@@ -10,14 +10,99 @@
 
 (() => {
 
+// ─── THEMES — surface palettes the LM proxy reads from ─────────────
+// Founder, 2026-05-25: ship themes that actually recolor surfaces.
+// Approach: every color token in LM is a getter that reads from
+// _currentTheme. Inline styles like `style={{ background:LM.bg }}`
+// re-evaluate on every render, so theme switch + forced re-render
+// repaints everything — zero inline-style touches needed across the
+// 881 surface refs.
+const THEMES = {
+  forge: {
+    bg:'#0e0e11', bgPanel:'#15151a', bgSoft:'#1c1c23', bgHover:'#22222a',
+    bgDeep:'#0a0a0d', bgCanvas:'#101015', bgInk:'#18181e',
+    ink:'#ece8e0', inkSoft:'#9b938a', inkMuted:'#5e574f', inkDim:'#3a3530',
+    line:'#26262e', lineSoft:'#1e1e24', lineHair:'#1a1a20',
+    accent:'#d97757', accentSoft:'#3a2018', accentDim:'#2a1812', accentHi:'#e8896a',
+    ok:'#7ec18e', warn:'#e5b25a', err:'#e6705f',
+    cyan:'#5fb3b3', purple:'#a98cd6', blue:'#7898d6',
+  },
+  blueprint: {
+    bg:'#0a1622', bgPanel:'#10202e', bgSoft:'#152838', bgHover:'#1a3046',
+    bgDeep:'#06101a', bgCanvas:'#0c1a26', bgInk:'#0e1a28',
+    ink:'#e0eaf3', inkSoft:'#7da8c8', inkMuted:'#4a6982', inkDim:'#2c4257',
+    line:'#1f3651', lineSoft:'#19293f', lineHair:'#142031',
+    accent:'#6aa9ff', accentSoft:'#1a2c44', accentDim:'#142238', accentHi:'#8cc0ff',
+    ok:'#5fc88a', warn:'#e8b85c', err:'#e6705f',
+    cyan:'#65c4d4', purple:'#9b8ce6', blue:'#5d92e8',
+  },
+  vellum: {
+    bg:'#f5efe2', bgPanel:'#eee5d2', bgSoft:'#e6dcc4', bgHover:'#ddd0b3',
+    bgDeep:'#fbf6ec', bgCanvas:'#f0e9d8', bgInk:'#ece2c8',
+    ink:'#3a2f1f', inkSoft:'#6b5a44', inkMuted:'#8e7c63', inkDim:'#a99a83',
+    line:'#c9b89a', lineSoft:'#d4c6ac', lineHair:'#dfd4be',
+    accent:'#a8421f', accentSoft:'#e8d0c0', accentDim:'#decbb6', accentHi:'#c45530',
+    ok:'#5a8a3a', warn:'#b8742a', err:'#a83828',
+    cyan:'#3a8a8a', purple:'#7a4a9a', blue:'#3a5a8a',
+  },
+};
+const _COLOR_KEYS = Object.keys(THEMES.forge);
+// Mutable backing — read at LM.<color> access time. _setTheme swaps + bumps.
+let _currentTheme = THEMES.forge;
+try {
+  const saved = (typeof localStorage !== 'undefined' && localStorage.getItem('archhub.theme')) || 'forge';
+  _currentTheme = THEMES[saved] || THEMES.forge;
+} catch (e) {}
+
+// window.__archhubSetTheme — global setter. Mutates the backing object
+// + fires archhub-theme-changed which the StudioLM root listens for to
+// bump its React tree. Persists to localStorage so a cold start picks
+// up the same theme.
+if (typeof window !== 'undefined') {
+  window.__archhubSetTheme = (name) => {
+    const t = THEMES[String(name || '').toLowerCase()];
+    if (!t) return false;
+    _currentTheme = t;
+    try { localStorage.setItem('archhub.theme', String(name).toLowerCase()); } catch (e) {}
+    try { document.body && document.body.setAttribute('data-theme', String(name).toLowerCase()); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('archhub-theme-changed', { detail: name })); } catch (e) {}
+    return true;
+  };
+  window.__archhubGetTheme = () => {
+    for (const k of Object.keys(THEMES)) if (THEMES[k] === _currentTheme) return k;
+    return 'forge';
+  };
+}
+
 const LM = {
-  // ── Color tokens ──────────────────────────────────────────────────
-  bg:'#0e0e11', bgPanel:'#15151a', bgSoft:'#1c1c23', bgHover:'#22222a',
-  bgDeep:'#0a0a0d', bgCanvas:'#101015', bgInk:'#18181e',
-  ink:'#ece8e0', inkSoft:'#9b938a', inkMuted:'#5e574f', inkDim:'#3a3530',
-  line:'#26262e', lineSoft:'#1e1e24', lineHair:'#1a1a20',
-  accent:'#d97757', accentSoft:'#3a2018', accentDim:'#2a1812', accentHi:'#e8896a',
-  ok:'#7ec18e', warn:'#e5b25a', err:'#e6705f', cyan:'#5fb3b3', purple:'#a98cd6', blue:'#7898d6',
+  // ── Color tokens — GETTERS reading _currentTheme ──────────────────
+  // Each call to LM.bg / LM.accent / etc. re-evaluates the current
+  // theme, so inline styles in components repaint on theme switch +
+  // forced re-render. No call site changes.
+  get bg()         { return _currentTheme.bg; },
+  get bgPanel()    { return _currentTheme.bgPanel; },
+  get bgSoft()     { return _currentTheme.bgSoft; },
+  get bgHover()    { return _currentTheme.bgHover; },
+  get bgDeep()     { return _currentTheme.bgDeep; },
+  get bgCanvas()   { return _currentTheme.bgCanvas; },
+  get bgInk()      { return _currentTheme.bgInk; },
+  get ink()        { return _currentTheme.ink; },
+  get inkSoft()    { return _currentTheme.inkSoft; },
+  get inkMuted()   { return _currentTheme.inkMuted; },
+  get inkDim()     { return _currentTheme.inkDim; },
+  get line()       { return _currentTheme.line; },
+  get lineSoft()   { return _currentTheme.lineSoft; },
+  get lineHair()   { return _currentTheme.lineHair; },
+  get accent()     { return _currentTheme.accent; },
+  get accentSoft() { return _currentTheme.accentSoft; },
+  get accentDim()  { return _currentTheme.accentDim; },
+  get accentHi()   { return _currentTheme.accentHi; },
+  get ok()         { return _currentTheme.ok; },
+  get warn()       { return _currentTheme.warn; },
+  get err()        { return _currentTheme.err; },
+  get cyan()       { return _currentTheme.cyan; },
+  get purple()     { return _currentTheme.purple; },
+  get blue()       { return _currentTheme.blue; },
   // ── Typography family tokens ──────────────────────────────────────
   serif:"'Instrument Serif', Georgia, serif",
   sans:"'Inter', system-ui, sans-serif",
@@ -2048,6 +2133,16 @@ const StudioLM = () => {
     window.addEventListener('lm-node-toggle-preview', onTogglePreview);
     window.addEventListener('lm-node-toggle-pin', onTogglePin);
     window.addEventListener('lm-host-promote-output', onPromoteOutput);
+    // Theme swap triggers full re-render so LM-getter inline styles
+    // re-evaluate with the new palette. bumpGraph reaches the canvas;
+    // the surrounding shell re-renders via its own state bump.
+    const onThemeChanged = () => {
+      try { bumpGraph(); } catch (e) {}
+      // Force the shell (Home, ServerStrip, modals) to re-render too —
+      // tiny no-op state bump via window event the shell listens for.
+      setGraphBump(b => b + 1);
+    };
+    window.addEventListener('archhub-theme-changed', onThemeChanged);
     return () => {
       window.removeEventListener('lm-new-session', onNewSession);
       window.removeEventListener('lm-spawn-skill', onSpawnSkill);
@@ -2067,6 +2162,7 @@ const StudioLM = () => {
       window.removeEventListener('lm-node-toggle-preview', onTogglePreview);
       window.removeEventListener('lm-node-toggle-pin', onTogglePin);
       window.removeEventListener('lm-host-promote-output', onPromoteOutput);
+      window.removeEventListener('archhub-theme-changed', onThemeChanged);
     };
   }, [createSession, openId, bumpGraph]);
 
@@ -11508,12 +11604,14 @@ const Settings = ({ onClose }) => {
   const setT = (v) => {
     setTheme(v);
     try { localStorage.setItem('archhub.theme', v); } catch (e) {}
-    // Live-swap the active theme by setting body[data-theme]. The
-    // theme CSS rule blocks in _injectTokenVars rebind all --lm-*
-    // surface vars. Components that read tokens directly (inline
-    // styles via the LM object) won't re-render — they need a reload
-    // to pick up the new palette. CSS-var consumers swap instantly.
+    // Two-layer swap:
+    // (1) body[data-theme] — rebinds --lm-* CSS vars for var() consumers.
+    // (2) window.__archhubSetTheme — swaps the LM proxy's backing object
+    //     so every inline `style={{ background:LM.bg }}` returns the new
+    //     palette on next render. Then bumps a global counter that
+    //     forces the React tree to re-render.
     try { document.body.setAttribute('data-theme', v); } catch (e) {}
+    try { window.__archhubSetTheme && window.__archhubSetTheme(v); } catch (e) {}
     _flash();
   };
   const clearJsxCache = () => {

@@ -82,17 +82,26 @@ _LM_HEX_LINE_RE = re.compile(
 
 
 def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
-    """Pull `const LM = { ... }` colour tokens out of studio-lm.jsx.
+    """Pull the canonical dark-theme palette out of studio-lm.jsx.
     Returns dict of `name → '#rrggbb'`. Ignores typography / token
-    nested objects (only top-level hex strings are surfaced)."""
+    nested objects (only top-level hex strings are surfaced).
+
+    Source of truth shifted 2026-05-25 — the LM colour tokens are now
+    getters reading `_currentTheme`, with the actual palette literals
+    living in `THEMES.forge`. The audit always runs against `forge`
+    (the default canonical dark theme); blueprint + vellum can be
+    audited via the same machinery once palette is parameterised."""
     if jsx_path is None:
         # Locate `app/web_ui/studio-lm.jsx` relative to this file.
         jsx_path = Path(__file__).resolve().parent / "web_ui" / "studio-lm.jsx"
     src = Path(jsx_path).read_text(encoding="utf-8")
-    # Carve out the LM block — first `const LM = {` to next `};` at
-    # module-top indent. A simple substring grab is robust enough since
-    # LM is the first declaration.
-    start = src.find("const LM = {")
+    # First try THEMES.forge — the new home for the canonical palette.
+    forge_marker = "forge: {"
+    start = src.find(forge_marker)
+    if start < 0:
+        # Back-compat: pre-2026-05-25 source had hex literals inline in
+        # `const LM = {`.
+        start = src.find("const LM = {")
     if start < 0:
         return {}
     # Find matching close brace by counting depth.
@@ -113,23 +122,21 @@ def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
         return {}
     block = src[start:end + 1]
     out: dict[str, str] = {}
+    # THEMES.forge entries are indented 4 spaces (one nesting deeper
+    # than the original top-level LM block which was 2 spaces). Accept
+    # both depths; reject anything deeper (e.g. brand:{} sub-objects).
+    is_forge_block = block.lstrip().startswith("forge")
+    max_leading = 4 if is_forge_block else 2
     for match in _LM_HEX_LINE_RE.finditer(block):
         name = match.group(1)
         hex_val = "#" + match.group(2).lower()
-        # Skip the `LM` token itself.
-        if name == "LM":
+        if name in ("LM", "forge"):
             continue
-        # Skip entries nested inside a child object (`brand:` etc.).
-        # Top-level palette LINES start at ≤2 spaces indent; nested
-        # entries indent ≥4. Use the LINE's indent — multiple
-        # key:hex pairs can share one line, all at the same line
-        # indent, so we check leading whitespace of the line start.
         line_start = block.rfind("\n", 0, match.start()) + 1
-        # Count leading spaces on the line.
         leading = 0
         while line_start + leading < len(block) and block[line_start + leading] == " ":
             leading += 1
-        if leading > 2:
+        if leading > max_leading:
             continue
         out[name] = hex_val
     return out

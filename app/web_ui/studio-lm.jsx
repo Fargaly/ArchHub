@@ -6675,7 +6675,11 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
         </button>
       ) : (
         <div data-testid="graph-health-panel" style={{
-          width:340, maxHeight:'calc(100vh - 180px)', minHeight:240,
+          // Reserve 280px at bottom: composer (~80) + Claude AI badge
+          // (~64) + status bar (~28) + safety gap (~108). Founder
+          // screenshot 2026-05-25 showed the panel overlapping the
+          // composer — this cap guarantees clearance.
+          width:340, maxHeight:'calc(100vh - 280px)', minHeight:200,
           background:LM.bgPanel, border:`1px solid ${LM.line}`,
           borderRadius:8, overflow:'hidden', display:'flex', flexDirection:'column',
           boxShadow:'0 8px 28px rgba(0,0,0,0.45)',

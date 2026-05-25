@@ -6112,13 +6112,72 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                 nodeTitle: node.title || nid,
                 broken: res.broken || [],
                 compatible: res.compatible || [],
-                onConfirm: (mode) => {
+                onConfirm: async (mode) => {
+                  if (mode === 'cancel') {
+                    setBrokenWireDialog(null);
+                    return;
+                  }
+                  if (mode === 'insert_adapter') {
+                    // Find first broken pair + ask bridge for adapter
+                    // whose I/O matches (in_type=src_t, out_type=dst_t).
+                    const first = (res.broken || [])[0];
+                    if (!first || !first.src || !first.dst) {
+                      flashToast('No broken wire to adapt', 'err');
+                      return;
+                    }
+                    const srcType = String(first.src[2] || 'any').toLowerCase();
+                    const dstType = String(first.dst[2] || 'any').toLowerCase();
+                    flashToast(`Searching adapter ${srcType} → ${dstType}…`);
+                    let suggestions = null;
+                    try {
+                      suggestions = await bridgeAsync('library_suggest_swaps',
+                        JSON.stringify({in_types:[srcType], out_types:[dstType], limit:5}));
+                    } catch (e) {
+                      flashToast('Adapter search failed: '+e, 'err');
+                      return;
+                    }
+                    // library_suggest_swaps returns {results:[{type,in:[...],out:[...],score}]}
+                    const list = (suggestions && suggestions.results) || [];
+                    const pick = list[0];
+                    if (!pick || !pick.type) {
+                      setBrokenWireDialog(null);
+                      flashToast(`No adapter exists for ${srcType} → ${dstType}`, 'err');
+                      return;
+                    }
+                    // Compose adapter node mid-way between src + dst.
+                    const srcNodeObj = (LM_GRAPH.nodes || []).find(n => n.id === first.src[0]);
+                    const dstNodeObj = (LM_GRAPH.nodes || []).find(n => n.id === first.dst[0]);
+                    const ax = srcNodeObj && dstNodeObj
+                      ? Math.round((srcNodeObj.x + dstNodeObj.x) / 2) : 400;
+                    const ay = srcNodeObj && dstNodeObj
+                      ? Math.round((srcNodeObj.y + dstNodeObj.y) / 2) : 300;
+                    const adapterId = `${pick.type}_${Math.random().toString(36).slice(2,8)}`;
+                    const inPortId = (pick.in && pick.in[0] && (pick.in[0].id || pick.in[0].name)) || 'in';
+                    const outPortId = (pick.out && pick.out[0] && (pick.out[0].id || pick.out[0].name)) || 'value';
+                    LM_GRAPH.nodes.push({
+                      id: adapterId, kind: pick.type, type: pick.type, custom_type: pick.type,
+                      cat: 'adapter', x: ax, y: ay, w: 200, h: 100,
+                      title: pick.display_name || pick.type,
+                      sub: `auto-adapter ${srcType} → ${dstType}`,
+                      ins: [{id: inPortId, t: srcType}],
+                      outs: [{id: outPortId, t: dstType}],
+                      params: [], _user: true,
+                    });
+                    // Re-route: drop broken wire(s) touching this node, add 2 new wires src→adapter→dst.
+                    _hardDelete();
+                    LM_GRAPH.wires = (LM_GRAPH.wires || []).concat([
+                      {id:`wA_${adapterId}_in`, from:first.src.slice(0,2), to:[adapterId, inPortId]},
+                      {id:`wA_${adapterId}_out`, from:[adapterId, outPortId], to:first.dst.slice(0,2)},
+                    ]);
+                    saveCurrentGraph(); bumpGraph && bumpGraph();
+                    setBrokenWireDialog(null);
+                    flashToast(`Inserted adapter ${pick.display_name || pick.type}`);
+                    return;
+                  }
+                  // delete_anyway
                   setBrokenWireDialog(null);
-                  if (mode === 'cancel') return;
                   _hardDelete();
-                  flashToast(mode === 'delete_anyway'
-                    ? 'Node deleted · wires left dangling'
-                    : 'Node deleted');
+                  flashToast('Node deleted · wires left dangling');
                 },
               });
               return;
@@ -6341,25 +6400,15 @@ const BrokenWireDialog = ({ info, onClose }) => {
             ))}
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            <button disabled aria-label="Insert adapter — arriving D2·A 3/3, needs library_suggest_swaps integration" title="Coming with D2·A 3/3 — needs library_suggest_swaps integration"
+            <button aria-label="Insert adapter — find a node that bridges the type mismatch"
+              onClick={() => info.onConfirm('insert_adapter')}
               style={{
-                background:LM.bgSoft, border:`1px solid ${LM.line}`,
-                color:LM.inkMuted, padding:'10px 14px', borderRadius:6,
-                cursor:'not-allowed', textAlign:'left', fontFamily:LM.sans,
-                fontSize:12, opacity:0.5,
+                background:LM.bgSoft, border:`1px solid ${LM.accent}`,
+                color:LM.accent2, padding:'10px 14px', borderRadius:6,
+                cursor:'pointer', textAlign:'left', fontFamily:LM.sans, fontSize:12,
               }}>
-              <div style={{ color:LM.inkMuted, marginBottom:2 }}>Insert adapter</div>
-              <div style={{ fontSize:10, color:LM.inkMuted }}>library.suggest_swaps · arriving D2·A 3/3</div>
-            </button>
-            <button disabled aria-label="Swap downstream node — arriving D2·A 3/3" title="Coming with D2·A 3/3"
-              style={{
-                background:LM.bgSoft, border:`1px solid ${LM.line}`,
-                color:LM.inkMuted, padding:'10px 14px', borderRadius:6,
-                cursor:'not-allowed', textAlign:'left', fontFamily:LM.sans,
-                fontSize:12, opacity:0.5,
-              }}>
-              <div style={{ color:LM.inkMuted, marginBottom:2 }}>Swap downstream node</div>
-              <div style={{ fontSize:10, color:LM.inkMuted }}>show alternatives for downstream port type</div>
+              <div style={{ marginBottom:2 }}>Insert adapter</div>
+              <div style={{ fontSize:10, color:LM.inkMuted }}>library.suggest_swaps · auto-bridge {info.broken && info.broken[0] && info.broken[0].src && info.broken[0].dst ? `${info.broken[0].src[2]} → ${info.broken[0].dst[2]}` : 'first broken pair'}</div>
             </button>
             <button onClick={() => info.onConfirm('cancel')}
               style={{

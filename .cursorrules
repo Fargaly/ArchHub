@@ -1,0 +1,8 @@
+Read AGENTS.md at the repository root before touching any file.
+It contains the founder's protected-files list, destructive-op blacklist,
+and the universal mandate set. The `.githooks/` pre-commit and pre-push
+hooks enforce the protected-files rule; do not bypass with --no-verify.
+
+CLAUDE.md has the long-form Claude-flavored ruleset. AGENTS.md is the
+agent-agnostic short version every coding agent (Cursor included) MUST
+follow regardless of vendor.

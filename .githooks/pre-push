@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Pre-push guard — second line of defense if pre-commit was bypassed
+# (--no-verify) or a foreign branch was force-pushed with .cs edits.
+# Inspects every commit being pushed for staged broker edits; rejects
+# the push when any are present without ARCHHUB_ALLOW_CS_EDIT=1.
+
+set -euo pipefail
+
+if [[ "${ARCHHUB_ALLOW_CS_EDIT:-0}" == "1" ]]; then
+    exit 0
+fi
+
+# stdin lines: <local_ref> <local_sha> <remote_ref> <remote_sha>
+remote="$1"
+url="$2"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions (local_sha = 40 zeros).
+    if [[ "$local_sha" == "0000000000000000000000000000000000000000" ]]; then
+        continue
+    fi
+
+    # New branch: compare against remote HEAD.
+    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+        range="$local_sha"
+        # Limit to the last 50 commits so a fresh branch from upstream
+        # doesn't re-flag historical broker changes.
+        cs_changes=$(git log --name-only --pretty=format: -50 "$range" -- \
+                     'payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+    else
+        cs_changes=$(git log --name-only --pretty=format: "$remote_sha..$local_sha" -- \
+                     'payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+    fi
+
+    if [[ -n "$cs_changes" ]]; then
+        cat >&2 <<EOF
+═══════════════════════════════════════════════════════════════════════
+  PUSH BLOCKED — $local_ref carries broker .cs edits
+═══════════════════════════════════════════════════════════════════════
+Files touched in commits being pushed:
+$(echo "$cs_changes" | sed 's/^/  /')
+
+Founder mandate (AGENTS.md): broker .cs needs AgDR + sign-off.
+Bypass: ARCHHUB_ALLOW_CS_EDIT=1 git push ...
+═══════════════════════════════════════════════════════════════════════
+EOF
+        exit 1
+    fi
+done
+
+exit 0

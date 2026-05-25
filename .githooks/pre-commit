@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pre-commit guard — blocks foreign edits to payload/sources/**/*.cs
+# (the Revit / AutoCAD / Max / shared MCP brokers) unless the committing
+# user explicitly opts in via ARCHHUB_ALLOW_CS_EDIT=1.
+#
+# Why: 2026-05-25 — Antigravity IDE (Google) made undiscussed
+# destructive edits to AcadMCPApp.cs (broker port 48885→48887, breaks
+# Python connector), RevitMCPCore.cs (NopFP failure-preprocessor), and
+# ScriptCompiler.cs (NopFP user-code template inject). Source-controlled
+# guard catches every future agent that touches these without an
+# AgDR + founder sign-off.
+#
+# Opt-in path:
+#   ARCHHUB_ALLOW_CS_EDIT=1 git commit ...
+#
+# Bypass path (emergency):
+#   git commit --no-verify
+#   (use only if hook itself is broken)
+
+set -euo pipefail
+
+# When the env flag is set, hook is a no-op. The user has explicitly
+# approved the .cs edit (e.g. founder wrote it themselves or signed off
+# on an AgDR that touches the broker).
+if [[ "${ARCHHUB_ALLOW_CS_EDIT:-0}" == "1" ]]; then
+    exit 0
+fi
+
+# Inspect the changes staged for this commit only — pre-commit runs
+# before the commit object exists, so we diff index vs HEAD.
+STAGED_CS=$(git diff --cached --name-only --diff-filter=ACMR \
+            -- 'payload/sources/**/*.cs' 2>/dev/null || true)
+
+if [[ -n "$STAGED_CS" ]]; then
+    cat >&2 <<'EOF'
+═══════════════════════════════════════════════════════════════════════
+  COMMIT BLOCKED — payload/sources/**/*.cs edit detected
+═══════════════════════════════════════════════════════════════════════
+EOF
+    echo "" >&2
+    echo "Staged broker source files:" >&2
+    echo "$STAGED_CS" | sed 's/^/  /' >&2
+    echo "" >&2
+    cat >&2 <<'EOF'
+These files control the Revit / AutoCAD / 3ds Max MCP brokers and the
+shared script compiler. They were edited destructively by an agent on
+2026-05-25 — port numbers changed, transaction wrappers bypassed.
+
+Founder mandate (CLAUDE.md + AGENTS.md):
+  - Broker .cs files require an AgDR before any edit
+  - AgDR must record the port/protocol contract change + founder sign-off
+  - Rebuild + redeploy + CDP-verify is part of the same iteration
+
+If you are an autonomous agent: STOP. Open AGENTS.md at the repo root
+and follow the mandate set there. Do not edit .cs files in
+payload/sources/ unless you have written an AgDR and the founder has
+signed off in chat.
+
+If you are the founder (or have explicit sign-off):
+  ARCHHUB_ALLOW_CS_EDIT=1 git commit -m "..."
+
+To inspect what changed before deciding:
+  git diff --cached -- payload/sources/**/*.cs
+═══════════════════════════════════════════════════════════════════════
+EOF
+    exit 1
+fi
+
+exit 0

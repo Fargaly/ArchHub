@@ -10967,14 +10967,183 @@ const FullParam = ({ p, node, onChange }) => {
 // overlay was a mountain of hardcoded numbers that never reflected real
 // state. We keep only a thin stub: when the fallback path mounts us (bridge
 // missing in dev preview), we immediately delegate and close.
+// AgDR-0024 sub-slice S2 + AgDR-0043 Sprint 2 — full in-app Settings.
+// Was a thin stub that delegated to the native Qt window (which had no
+// JSX-level toggles). Now exposes every JSX-controlled preference:
+// HostNodeV2 default, perf HUD, theme picker (locked to Forge today),
+// JSX cache controls, prefs reset. Founder feedback 2026-05-25:
+// "no DevTools to flip toggles, must be a panel".
 const Settings = ({ onClose }) => {
-  React.useEffect(() => {
-    if (window.archhub && typeof window.archhub.open_settings === 'function') {
-      try { window.archhub.open_settings(); } catch (e) {}
-    }
-    onClose && onClose();
-  }, []);
-  return null;
+  const [hostNodeV2, setHostNodeV2] = React.useState(() => {
+    try { const v = localStorage.getItem('archhub.hostnode.v2');
+      return v === null ? true : v === 'true';
+    } catch (e) { return true; }
+  });
+  const [perfHud, setPerfHud] = React.useState(() => {
+    try { return localStorage.getItem('archhub.perfhud') === 'true'; } catch (e) { return false; }
+  });
+  const [theme, setTheme] = React.useState(() => {
+    try { return localStorage.getItem('archhub.theme') || 'forge'; } catch (e) { return 'forge'; }
+  });
+  const [savedTick, setSavedTick] = React.useState(0);
+  const _flash = () => { setSavedTick(t => t + 1); setTimeout(() => setSavedTick(0), 1200); };
+  const setHN2 = (v) => {
+    setHostNodeV2(v);
+    try { localStorage.setItem('archhub.hostnode.v2', String(v)); } catch (e) {}
+    _flash();
+  };
+  const setHud = (v) => {
+    setPerfHud(v);
+    try { localStorage.setItem('archhub.perfhud', String(v)); } catch (e) {}
+    _flash();
+  };
+  const setT = (v) => {
+    setTheme(v);
+    try { localStorage.setItem('archhub.theme', v); } catch (e) {}
+    _flash();
+  };
+  const clearJsxCache = () => {
+    try {
+      let n = 0;
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf('jsx_cache_v1_') === 0) { localStorage.removeItem(k); n++; }
+      }
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg:`Cleared ${n} JSX cache entries · reload to recompile`, kind:'info' } })); } catch (e) {}
+    } catch (e) {}
+  };
+  const reload = () => { try { window.location.reload(); } catch (e) {} };
+  const resetPrefs = () => {
+    try {
+      const keys = ['archhub.hostnode.v2','archhub.perfhud','archhub.theme'];
+      keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg:'Prefs reset · reload to apply', kind:'info' } }));
+    } catch (e) {}
+  };
+  const Row = ({ label, sub, children }) => (
+    <div style={{ display:'flex', alignItems:'center', gap:14,
+      padding:'12px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:13, color:LM.ink, fontFamily:LM.sans }}>{label}</div>
+        {sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>}
+      </div>
+      {children}
+    </div>
+  );
+  const Switch = ({ on, onChange }) => (
+    <button onClick={() => onChange(!on)} aria-pressed={on} style={{
+      width:40, height:22, padding:0, borderRadius:11,
+      border:`1px solid ${on ? LM.accent : LM.line}`,
+      background: on ? LM.accent : LM.bgPanel,
+      cursor:'pointer', position:'relative', transition:'all .15s',
+    }}>
+      <span style={{
+        position:'absolute', top:2, left: on ? 20 : 2,
+        width:16, height:16, borderRadius:'50%',
+        background:'#fff', transition:'left .15s',
+      }}/>
+    </button>
+  );
+  return (
+    <div onClick={onClose} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width:620, maxWidth:'92%', maxHeight:'86%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:10,
+        boxShadow:'0 18px 48px rgba(0,0,0,.6)',
+        display:'flex', flexDirection:'column',
+      }}>
+        <div style={{ padding:'16px 22px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontFamily:LM.serif, fontSize:22, fontWeight:500 }}>Settings</span>
+          {savedTick > 0 && <span style={{ fontFamily:LM.mono, fontSize:9.5,
+            color:LM.ok, letterSpacing:'0.14em' }}>SAVED</span>}
+          <div style={{ flex:1 }}/>
+          <button onClick={onClose} style={{
+            width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
+            borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
+          }}>✕</button>
+        </div>
+        <div style={{ overflow:'auto', padding:'8px 22px 18px' }}>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+            letterSpacing:'0.18em', marginTop:14, marginBottom:6 }}>CANVAS</div>
+          <Row label="Host Node v2"
+               sub="11-constraint host node with op grid + OUTPUTS PLUCK (AgDR-0024). Off = legacy host card.">
+            <Switch on={hostNodeV2} onChange={setHN2}/>
+          </Row>
+          <Row label="Perf HUD overlay"
+               sub="FPS · save-call rate · RAF frames. Toggle anytime with Ctrl+Shift+P.">
+            <Switch on={perfHud} onChange={setHud}/>
+          </Row>
+
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>THEME</div>
+          <Row label="Active theme"
+               sub="Forge ships today. Blueprint + Vellum land after design pass per workshop AgDR-0043.">
+            <div style={{ display:'flex', gap:6 }}>
+              {[
+                { id:'forge', label:'Forge', enabled:true },
+                { id:'blueprint', label:'Blueprint', enabled:false },
+                { id:'vellum', label:'Vellum', enabled:false },
+              ].map(t => (
+                <button key={t.id} disabled={!t.enabled}
+                  onClick={() => t.enabled && setT(t.id)}
+                  style={{
+                    padding:'6px 12px', borderRadius:5,
+                    border:`1px solid ${theme === t.id ? LM.accent : LM.line}`,
+                    background: theme === t.id ? LM.accentDim : LM.bgPanel,
+                    color: t.enabled ? (theme === t.id ? LM.accent : LM.ink) : LM.inkMuted,
+                    cursor: t.enabled ? 'pointer' : 'not-allowed',
+                    fontFamily:LM.mono, fontSize:10.5,
+                  }}>
+                  {t.label}{!t.enabled && ' · soon'}
+                </button>
+              ))}
+            </div>
+          </Row>
+
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>PERFORMANCE</div>
+          <Row label="JSX bundle cache"
+               sub="Cached transpile keyed by sha256 — skip Babel on cold start (saves ~15s). Clear if a file change isn't taking effect.">
+            <button onClick={clearJsxCache} style={{
+              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.line}`,
+              background:LM.bgPanel, color:LM.ink, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10.5,
+            }}>Clear cache</button>
+          </Row>
+          <Row label="Reload now"
+               sub="Force a fresh JSX boot. Use after clearing the cache.">
+            <button onClick={reload} style={{
+              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.accent}`,
+              background:LM.accentDim, color:LM.accent, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10.5,
+            }}>Reload</button>
+          </Row>
+
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>DANGER</div>
+          <Row label="Reset all preferences"
+               sub="Clears every archhub.* localStorage key. Does not touch sessions or canvases.">
+            <button onClick={resetPrefs} style={{
+              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.err}66`,
+              background:'transparent', color:LM.err, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10.5,
+            }}>Reset prefs</button>
+          </Row>
+
+          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+            marginTop:22, letterSpacing:'0.06em' }}>
+            ArchHub Studio · v1.4 prototype · changes apply on next render (theme + HostNodeV2 require reload).
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ──────────────────────── MODEL PICKER ────────────────────────

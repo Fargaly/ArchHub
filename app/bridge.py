@@ -470,12 +470,20 @@ class ArchHubBridge(QObject):
     node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
 
     def __init__(self, *, router=None, manager=None, tools=None,
-                  chat_widget=None, parent=None):
+                  chat_widget=None, parent=None,
+                  auto_extract_memory: bool = True):
         super().__init__(parent)
         self.router = router
         self.manager = manager
         self.tools = tools
         self.chat_widget = chat_widget
+        # AgDR-0042 boot hook flag. True (default) populates the
+        # shared-memory graph on the deferred boot thread; False skips
+        # it. Tests that assert empty-graph slot behaviour pass False
+        # to keep the test graph clean. Production paths always boot
+        # with True so memory_query / memory_stats slots have data
+        # without manual extractor invocation.
+        self._auto_extract_memory = bool(auto_extract_memory)
         self._active_session_id: Optional[str] = None
         # AgDR-0036 Phase 1 — custom-node + connector registration are
         # the two heavy boot steps (custom_nodes.load_all scans disk;
@@ -500,6 +508,44 @@ class ArchHubBridge(QObject):
                 pass
             try:
                 self.hosts_changed.emit()
+            except Exception:
+                pass
+            # AgDR-0042 — populate the shared-memory graph on boot so
+            # memory_query / memory_stats slots have data without the
+            # user / agent having to invoke extractors by hand. All
+            # extractors are idempotent + safe to re-run (upserts),
+            # so doing this every boot is the simplest correctness
+            # contract. Failure (memory pkg missing, library empty,
+            # etc.) is silent — memory is a feature, not a critical
+            # boot path. Gated by auto_extract_memory constructor
+            # flag — tests that assert empty-graph behaviour pass
+            # False.
+            if not self._auto_extract_memory:
+                return
+            try:
+                from memory import MemoryGraph, default_graph_path
+                from memory.extractors import (
+                    extract_library, extract_decisions,
+                    extract_turns, extract_projects,
+                )
+                g = MemoryGraph.open(default_graph_path())
+                try:
+                    extract_library(g, infer_wires=False)
+                    extract_decisions(g)
+                    # Composer-turn + project extractors are project-
+                    # scoped; the M1 default project dir is where
+                    # ai.plan writes its records.
+                    import os as _os
+                    base = _os.environ.get("LOCALAPPDATA") or str(
+                        Path.home())
+                    default_proj = Path(base) / "ArchHub" / "projects" / "default"
+                    if default_proj.is_dir():
+                        extract_turns(g, default_proj)
+                    projects_root = Path(base) / "ArchHub" / "projects"
+                    if projects_root.is_dir():
+                        extract_projects(g, projects_root)
+                finally:
+                    g.close()
             except Exception:
                 pass
         _threading.Thread(target=_deferred_boot, daemon=True,

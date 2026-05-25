@@ -31,7 +31,11 @@ def bridge_inst(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     engine = ToolEngine(manager=_StubManager())
-    return _bridge_module.ArchHubBridge(tools=engine)
+    # auto_extract_memory=False — tests own when the graph gets
+    # populated; the boot hook would race + violate empty-graph
+    # assertions.
+    return _bridge_module.ArchHubBridge(
+        tools=engine, auto_extract_memory=False)
 
 
 # ── memory_query slot ────────────────────────────────────────────────
@@ -134,7 +138,7 @@ def test_slots_present_on_bridge(bridge_inst):
 
 
 def test_tools_missing_returns_error(monkeypatch):
-    b = _bridge_module.ArchHubBridge(tools=None)
+    b = _bridge_module.ArchHubBridge(tools=None, auto_extract_memory=False)
     out = json.loads(b.memory_query(json.dumps({"question": "x"})))
     assert out["status"] == "error"
     assert "tool engine" in out["error"]

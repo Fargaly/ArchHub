@@ -1989,6 +1989,65 @@ const StudioLM = () => {
     window.addEventListener('lm-action-run-canvas', onCmdRunCanvas);
     window.addEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
     window.addEventListener('lm-toggle-perf-hud', onTogglePerfHud);
+    // AgDR-0024 S2 — HostNodeV2 floating-verb-bar event handlers.
+    // Mutate node in place, persist, bump. Identical semantics to the
+    // existing Ctrl+B / Ctrl+F / Ctrl+Shift+P key bindings.
+    const _verbToggle = (key) => (ev) => {
+      const nid = ev && ev.detail && ev.detail.node_id;
+      if (!nid) return;
+      const node = (LM_GRAPH.nodes || []).find(x => x.id === nid);
+      if (!node) return;
+      node[key] = !node[key];
+      try { saveCurrentGraph(); } catch (e) {}
+      bumpGraph();
+    };
+    const onToggleBypass = _verbToggle('bypass');
+    const onToggleFreeze = _verbToggle('frozen');
+    const onTogglePreview = _verbToggle('preview_off');
+    const onTogglePin = (ev) => {
+      const nid = ev && ev.detail && ev.detail.node_id;
+      if (!nid) return;
+      const node = (LM_GRAPH.nodes || []).find(x => x.id === nid);
+      if (!node) return;
+      if (node.pinned) {
+        node.pinned = false; delete node.pinned_at; delete node.pinned_value;
+      } else {
+        node.pinned = true; node.pinned_at = Date.now();
+        if (node.cooked && node.cooked.value !== undefined) {
+          node.pinned_value = node.cooked.value;
+        }
+      }
+      try { saveCurrentGraph(); } catch (e) {}
+      bumpGraph();
+    };
+    // AgDR-0024 S3 — Output pluck handler. Promotes a host op output
+    // to a typed output socket on the node, then bumps the canvas to
+    // re-render the new socket. Downstream wires can attach next.
+    const onPromoteOutput = (ev) => {
+      const d = ev && ev.detail;
+      if (!d || !d.node_id || !d.output) return;
+      const node = (LM_GRAPH.nodes || []).find(x => x.id === d.node_id);
+      if (!node) return;
+      node.outs = Array.isArray(node.outs) ? node.outs : [];
+      const oid = d.output.id || d.output.name;
+      if (!oid) return;
+      // Don't double-promote.
+      if (node.outs.some(o => o.id === oid)) return;
+      node.outs.push({
+        id: oid,
+        label: d.output.label || oid,
+        type: d.output.type || 'any',
+        from_op: d.op_id || null,
+        promoted: true,
+      });
+      try { saveCurrentGraph(); } catch (e) {}
+      bumpGraph();
+    };
+    window.addEventListener('lm-node-toggle-bypass', onToggleBypass);
+    window.addEventListener('lm-node-toggle-freeze', onToggleFreeze);
+    window.addEventListener('lm-node-toggle-preview', onTogglePreview);
+    window.addEventListener('lm-node-toggle-pin', onTogglePin);
+    window.addEventListener('lm-host-promote-output', onPromoteOutput);
     return () => {
       window.removeEventListener('lm-new-session', onNewSession);
       window.removeEventListener('lm-spawn-skill', onSpawnSkill);
@@ -2003,6 +2062,11 @@ const StudioLM = () => {
       window.removeEventListener('lm-action-run-canvas', onCmdRunCanvas);
       window.removeEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
       window.removeEventListener('lm-toggle-perf-hud', onTogglePerfHud);
+      window.removeEventListener('lm-node-toggle-bypass', onToggleBypass);
+      window.removeEventListener('lm-node-toggle-freeze', onToggleFreeze);
+      window.removeEventListener('lm-node-toggle-preview', onTogglePreview);
+      window.removeEventListener('lm-node-toggle-pin', onTogglePin);
+      window.removeEventListener('lm-host-promote-output', onPromoteOutput);
     };
   }, [createSession, openId, bumpGraph]);
 
@@ -7553,13 +7617,11 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
 };
 
 
-// ─── AgDR-0024 S1 — HostNodeV2Body (REST stage) ─────────────────────
-// Direction A op grid + active-tile-expand + MAIN INPUTS rows.
-//   - NO hover-promote markers (S2 ships those).
-//   - NO ADVANCED INPUTS section (S2).
-//   - NO OUTPUT PLUCK section (S3).
-//   - NO floating disable-verbs bar (S2).
-// Renders only when `localStorage.archhub.host_node_v2 = 'on'`.
+// ─── AgDR-0024 S1+S2+S3 — HostNodeV2Body ─────────────────────────────
+// Direction A op grid + active-tile-expand + MAIN INPUTS + ADVANCED
+// INPUTS (collapsible) + OUTPUT PLUCK with hover-promote markers.
+// S4 (Save-as-Skill capture / ai.plan reads schema) lives elsewhere.
+// Renders only when `localStorage.archhub.host_node_v2 = 'on'` (default).
 // Reads ops from `LM_CONNECTORS` (Slice A per-host master list).
 const _PER_HOST_BRAND = {
   revit:   '#d97757', autocad: '#e6705f', max:     '#a98cd6',
@@ -7593,10 +7655,39 @@ const HostNodeV2Body = ({ n }) => {
   const cooked = (n.cooked_ops_at && typeof n.cooked_ops_at === 'object')
     ? n.cooked_ops_at : {};
 
-  // Inputs of the active op — used to render MAIN params section.
+  // Inputs of the active op — used to render MAIN + ADVANCED sections.
   const activeOp = ops.find(o => o.op_id === activeOpId) || ops[0] || null;
-  const activeInputs = ((activeOp && activeOp.inputs) || [])
+  const _allInputs = ((activeOp && activeOp.inputs) || [])
     .filter(i => i.id !== 'instance');  // hide the host's instance picker
+  // S2 — split inputs by advanced/optional flag. Default rendering only
+  // shows main inputs; ADVANCED collapsible bands the rest.
+  const activeInputs = _allInputs.filter(i => !(i.advanced || i.optional));
+  const advancedInputs = _allInputs.filter(i => i.advanced || i.optional);
+  // S3 — outputs the active op promises. OUTPUT PLUCK lets the user
+  // hover-promote each one to a typed canvas socket via the bridge.
+  const activeOutputs = (activeOp && activeOp.outputs) || [];
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [hoverOut, setHoverOut] = React.useState(null);
+  const promoteOutput = (out) => {
+    try {
+      window.dispatchEvent(new CustomEvent('lm-host-promote-output', {
+        detail: { node_id: n.id, op_id: activeOpId, output: out },
+      }));
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+        detail: { msg: '⊕ promoted ' + (out.id || out.name) + ' (' + (out.type || '?') + ')', kind:'info' },
+      }));
+    } catch (e) {}
+  };
+  // Type-pill colours match the typed-wire palette (Slice D).
+  const typeCol = (t) => {
+    const k = String(t || '').toLowerCase();
+    if (k.includes('element')) return LM.accent;
+    if (k.includes('list')) return LM.cyan;
+    if (k.includes('number') || k === 'int' || k === 'float') return LM.blue;
+    if (k === 'bool' || k === 'boolean') return LM.warn;
+    if (k === 'id') return LM.ok;
+    return LM.inkSoft;
+  };
   // Pull current values from node.config (slot-resolved) so the tile
   // shows what's actually wired / set.
   const cfg = (n.config && typeof n.config === 'object') ? n.config : {};
@@ -7690,6 +7781,132 @@ const HostNodeV2Body = ({ n }) => {
                       ))}
                     </div>
                   )}
+                </div>
+                {/* S2 — ADVANCED INPUTS section, collapsible. Shown when
+                    the active op declares optional/advanced inputs. */}
+                {advancedInputs.length > 0 && (
+                  <div style={{
+                    marginTop:8, paddingTop:6,
+                    borderTop:`1px solid ${LM.lineSoft}`,
+                  }}>
+                    <button onClick={() => setAdvancedOpen(o => !o)} style={{
+                      background:'transparent', border:0, padding:0,
+                      color:LM.inkMuted, cursor:'pointer',
+                      fontFamily:LM.mono, fontSize:8.5,
+                      letterSpacing:'0.18em', display:'flex',
+                      alignItems:'center', gap:5,
+                    }}>
+                      <span>{advancedOpen ? '▾' : '▸'}</span>
+                      ADVANCED INPUTS · {advancedInputs.length}
+                    </button>
+                    {advancedOpen && (
+                      <div style={{
+                        marginTop:5,
+                        display:'flex', flexDirection:'column', gap:3,
+                      }}>
+                        {advancedInputs.map(inp => (
+                          <div key={inp.id} style={{
+                            display:'grid',
+                            gridTemplateColumns:'110px 1fr',
+                            alignItems:'center', gap:6,
+                            fontFamily:LM.mono, fontSize:10,
+                          }}>
+                            <span style={{ color:LM.inkMuted }}>{inp.id}</span>
+                            <span style={{
+                              background: LM.bg,
+                              border:`1px solid ${LM.lineSoft}`,
+                              borderRadius:3, padding:'2px 7px',
+                              color:LM.inkSoft,
+                              overflow:'hidden', textOverflow:'ellipsis',
+                              whiteSpace:'nowrap',
+                            }}>{valueFor(inp.id)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* S3 — OUTPUT PLUCK. Each output row hover-promotes to
+                    a typed right-rail socket via lm-host-promote-output.
+                    Type pill colour follows the typed-wire palette. */}
+                {activeOutputs.length > 0 && (
+                  <div style={{
+                    marginTop:8, paddingTop:6,
+                    borderTop:`1px solid ${LM.lineSoft}`,
+                  }}>
+                    <div style={{
+                      fontFamily: LM.mono, fontSize:8.5, color:brand,
+                      letterSpacing:'0.18em', marginBottom:4,
+                    }}>OUTPUTS · {activeOutputs.length} · HOVER TO PROMOTE</div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+                      {activeOutputs.map(out => {
+                        const tk = out.id || out.name || 'out';
+                        const isHover = hoverOut === tk;
+                        const col = typeCol(out.type);
+                        return (
+                          <div key={tk}
+                            onMouseEnter={() => setHoverOut(tk)}
+                            onMouseLeave={() => setHoverOut(null)}
+                            onClick={() => promoteOutput(out)}
+                            data-host-output={tk}
+                            style={{
+                              display:'grid', gridTemplateColumns:'110px 1fr auto',
+                              alignItems:'center', gap:6,
+                              fontFamily:LM.mono, fontSize:10,
+                              padding:'3px 5px', cursor:'pointer',
+                              borderRadius:3,
+                              background: isHover ? LM.bgHover : 'transparent',
+                              borderLeft: isHover ? `2px solid ${col}` : '2px solid transparent',
+                              transition:'background .12s, border-color .12s',
+                            }}>
+                            <span style={{ color: isHover ? LM.ink : LM.inkMuted }}>{tk}</span>
+                            <span style={{
+                              color: LM.inkSoft, fontSize:9.5,
+                              overflow:'hidden', textOverflow:'ellipsis',
+                              whiteSpace:'nowrap',
+                            }}>{out.label || out.description || ''}</span>
+                            <span style={{
+                              fontFamily:LM.mono, fontSize:8,
+                              padding:'1px 5px', borderRadius:2,
+                              color: col, border:`1px solid ${col}55`,
+                              background: col + '14', letterSpacing:'0.06em',
+                              textTransform:'uppercase',
+                            }}>{out.type || 'any'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {/* S2 — Floating disable-verbs bar. Pin / Freeze / Bypass /
+                    Preview-off, fires the same window events as the
+                    right-click menu so behaviour is identical. */}
+                <div style={{
+                  marginTop:8, paddingTop:6,
+                  borderTop:`1px solid ${LM.lineSoft}`,
+                  display:'flex', gap:4, justifyContent:'flex-end',
+                }}>
+                  {[
+                    { key:'pin', icon:'📌', label:'Pin', on: !!n.pinned, ev:'lm-node-toggle-pin' },
+                    { key:'freeze', icon:'❄', label:'Freeze', on: !!n.frozen, ev:'lm-node-toggle-freeze' },
+                    { key:'bypass', icon:'○', label:'Bypass', on: !!n.bypass, ev:'lm-node-toggle-bypass' },
+                    { key:'preview', icon:'⊘', label:'Preview off', on: !!n.preview_off, ev:'lm-node-toggle-preview' },
+                  ].map(v => (
+                    <button key={v.key}
+                      title={v.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        try { window.dispatchEvent(new CustomEvent(v.ev, { detail:{ node_id: n.id } })); } catch (e2) {}
+                      }}
+                      style={{
+                        width:22, height:22, border:`1px solid ${v.on ? LM.accent : LM.line}`,
+                        background: v.on ? LM.accentDim : 'transparent',
+                        color: v.on ? LM.accent : LM.inkSoft,
+                        cursor:'pointer', borderRadius:3,
+                        fontFamily:LM.mono, fontSize:11,
+                        display:'grid', placeItems:'center',
+                      }}>{v.icon}</button>
+                  ))}
                 </div>
               </div>
             );

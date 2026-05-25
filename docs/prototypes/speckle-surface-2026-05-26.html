@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Prototype B · Speckle wire-spine UI surfacing</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --line:#26262e;
+    --accent:#d97757; --accentDim:#2a1812; --accentHi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --blue:#7898d6; --cyan:#5fb3b3; --purple:#a98cd6;
+    --speckle:#3a6acc;
+    --serif:'Instrument Serif', Georgia, serif;
+    --sans:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:14px; line-height:1.55; }
+  .wrap { max-width:1080px; margin:0 auto; padding:40px 32px 80px; }
+  h1 { font-family:var(--serif); font-size:42px; line-height:1.05; letter-spacing:-0.02em; margin:0 0 4px; }
+  h1 em { color:var(--speckle); font-style:italic; }
+  .sub { font-family:var(--mono); font-size:10px; color:var(--inkMuted); letter-spacing:0.18em; text-transform:uppercase; }
+  h2 { font-family:var(--serif); font-size:24px; font-weight:500; margin:38px 0 10px; letter-spacing:-0.01em; }
+  h3 { font-family:var(--mono); font-size:10px; color:var(--accent); letter-spacing:0.18em; margin:18px 0 8px; text-transform:uppercase; }
+  p { color:var(--inkSoft); margin:6px 0 10px; }
+  code { font-family:var(--mono); font-size:12.5px; background:var(--bgSoft); padding:1px 6px; border-radius:3px; color:var(--accentHi); }
+  blockquote {
+    margin:14px 0; padding:10px 14px; background:var(--bgSoft);
+    border-left:3px solid var(--accent); border-radius:0 5px 5px 0;
+    font-family:var(--serif); font-style:italic; font-size:15px; color:var(--ink);
+  }
+
+  .header-meta { display:flex; gap:14px; align-items:center; margin-top:8px; color:var(--inkMuted); font-family:var(--mono); font-size:10.5px; }
+  .header-meta b { color:var(--ink); }
+
+  .pill { display:inline-block; padding:1px 7px; border-radius:3px; font-family:var(--mono); font-size:9.5px; letter-spacing:0.06em; text-transform:uppercase; }
+  .pill.speckle { background:#0e1730; color:var(--speckle); border:1px solid #3a6acc55; }
+  .pill.disk    { background:#1a221b; color:var(--ok); }
+  .pill.server  { background:#161d2a; color:var(--blue); }
+
+  .frame { background:var(--bgPanel); border:1px solid var(--line); border-radius:9px; padding:14px 18px; margin:14px 0; }
+
+  /* ── Canvas mock ────────────────────────────────────────────────────── */
+  .canvas {
+    position:relative; height:280px; background:var(--bg);
+    border:1px solid var(--line); border-radius:7px; overflow:hidden;
+    background-image: radial-gradient(circle at 1px 1px, #1a1a20 1px, transparent 0);
+    background-size: 18px 18px;
+  }
+  .node {
+    position:absolute; padding:8px 11px; border-radius:7px;
+    background:var(--bgPanel); border:1px solid var(--line);
+    font-family:var(--mono); font-size:10.5px; color:var(--ink);
+    min-width:128px; box-shadow:0 4px 12px rgba(0,0,0,.4);
+  }
+  .node .cat { font-size:8.5px; color:var(--accent); letter-spacing:0.18em; text-transform:uppercase; margin-bottom:3px; }
+  .node .title { font-size:11.5px; color:var(--ink); margin-bottom:2px; }
+  .node .sub { font-size:9.5px; color:var(--inkMuted); }
+  .node.host-revit  { border-top:2px solid #d97757; }
+  .node.host-acad   { border-top:2px solid #e6705f; }
+  .node.host-rhino  { border-top:2px solid #b8b4ab; }
+
+  /* speckle wire indicator on every wire */
+  svg.wire { position:absolute; inset:0; pointer-events:none; }
+  .wire-dot {
+    position:absolute; width:9px; height:9px; border-radius:50%;
+    background:var(--speckle); border:2px solid #0e1730;
+    box-shadow:0 0 6px var(--speckle); z-index:2;
+  }
+  .wire-label {
+    position:absolute; transform:translate(-50%, -50%);
+    font-family:var(--mono); font-size:8px; color:var(--speckle);
+    background:rgba(14,14,17,.85); padding:1px 5px; border-radius:2px;
+    letter-spacing:0.04em; z-index:2;
+  }
+
+  /* ── Footer strip mock ─────────────────────────────────────────────── */
+  .footer-mock {
+    margin-top:14px; padding:5px 12px;
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:5px;
+    display:flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:9.5px; color:var(--inkSoft);
+  }
+  .footer-mock .sep { width:1px; height:14px; background:var(--line); margin:0 6px; }
+  .footer-mock .item { padding:0 6px; }
+  .footer-mock .item.share-pill {
+    background:#0e1730; border:1px solid #3a6acc55; color:var(--speckle);
+    border-radius:3px; padding:1px 7px;
+  }
+
+  /* ── Wire color legend ──────────────────────────────────────────────── */
+  .legend { display:grid; grid-template-columns:repeat(2, 1fr); gap:14px; margin-top:10px; }
+  .legend-item { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--bgSoft); border:1px solid var(--line); border-radius:5px; }
+  .legend-item .swatch { width:34px; height:6px; border-radius:3px; }
+  .legend-item .label { font-family:var(--mono); font-size:11px; color:var(--ink); }
+  .legend-item .desc { font-size:11.5px; color:var(--inkMuted); flex:1; }
+
+  /* ── Inspector mock ────────────────────────────────────────────────── */
+  .insp { background:var(--bgPanel); border:1px solid var(--line); border-radius:7px; padding:10px 14px; }
+  .insp .row { display:grid; grid-template-columns:140px 1fr; gap:8px; padding:4px 0; font-family:var(--mono); font-size:10.5px; }
+  .insp .row .k { color:var(--inkMuted); letter-spacing:0.04em; }
+  .insp .row .v { color:var(--ink); }
+  .insp .row .v.speckle { color:var(--speckle); }
+
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th { color:var(--inkMuted); font-family:var(--mono); font-size:9.5px; letter-spacing:0.14em; font-weight:500; text-transform:uppercase; }
+
+  hr { border:0; border-top:1px solid var(--line); margin:32px 0 10px; }
+  .footer { font-family:var(--mono); font-size:10px; color:var(--inkMuted); letter-spacing:0.06em; margin-top:40px; padding-top:16px; border-top:1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="sub">PROTOTYPE · B · PROPOSED · 2026-05-26 · AWAITING FOUNDER SIGNOFF</div>
+<h1>Speckle wire-spine — <em>made visible</em></h1>
+<div class="header-meta">
+  <span>id: <b>AgDR-0050 (proposed)</b></span>
+  <span>·</span>
+  <span>session: post-workshop · founder asked "where is the speckle for wiring + data spine"</span>
+  <span>·</span>
+  <span>builds-on: AgDR-0012 + AgDR-0016 + AgDR-0048</span>
+</div>
+
+<h2>Why this exists</h2>
+<blockquote>
+  "i also clearly remember that i signed off a fucking speckle for adaptation for the wiring and data spine · what happened to that · where is that?"
+  <br/>— founder, 2026-05-26
+</blockquote>
+<p>
+  The Speckle data spine IS shipped (AgDR-0012 + AgDR-0016 + AgDR-0017).
+  Every wire is a Speckle <code>Operations.send / receive</code> segment
+  with DiskTransport default at <code>.speckle/&lt;project&gt;/</code>.
+  3 SHARE primitives exist (<code>share.server</code> · <code>share.publish</code> ·
+  <code>share.subscribe</code>). The ADAPTER category exists. The
+  problem: <b>it's invisible by design</b> (founder original ask: "no
+  server, no Docker, fully offline"). Now the founder wants to <em>see</em>
+  the spine — without surrendering the invisible-by-default behavior.
+  This prototype surfaces Speckle through four lightweight UI signals
+  that DO NOT add cognitive overhead for users who don't care.
+</p>
+
+<h2>Surface 1 · Wire color encoding (live)</h2>
+<p>
+  Today's wires use slice-D type colours (any/element/list/number/...).
+  We add a <b>transport-state</b> overlay: a small <span class="pill speckle">●</span>
+  midpoint dot on every wire, color-coded by transport state.
+</p>
+<div class="frame">
+  <div class="canvas">
+    <svg class="wire" viewBox="0 0 1000 280" preserveAspectRatio="none">
+      <path d="M 168 70 C 240 70, 240 140, 320 140" stroke="#d97757" stroke-width="2" fill="none"/>
+      <path d="M 480 140 C 560 140, 560 70, 640 70" stroke="#d97757" stroke-width="2" fill="none"/>
+      <path d="M 480 140 C 560 140, 560 210, 640 210" stroke="#d97757" stroke-width="2" fill="none"/>
+    </svg>
+    <div class="node host-revit" style="left:30px; top:46px;">
+      <div class="cat">▣ REVIT</div>
+      <div class="title">model_query</div>
+      <div class="sub">walls @ Level 2</div>
+    </div>
+    <div class="node" style="left:320px; top:115px;">
+      <div class="cat">⊕ AI</div>
+      <div class="title">ai.classify</div>
+      <div class="sub">load-bearing? y/n</div>
+    </div>
+    <div class="node host-acad" style="left:640px; top:46px;">
+      <div class="cat">▣ ACAD</div>
+      <div class="title">acad.tag_walls</div>
+      <div class="sub">load-bearing only</div>
+    </div>
+    <div class="node host-rhino" style="left:640px; top:186px;">
+      <div class="cat">▣ RHINO</div>
+      <div class="title">rhino.export_iges</div>
+      <div class="sub">subset → iges</div>
+    </div>
+
+    <!-- speckle midpoint dots on every wire -->
+    <div class="wire-dot" style="left:240px; top:104px;" title="DiskTransport · 4 walls · 1.2 KB"></div>
+    <div class="wire-dot" style="left:560px; top:104px;" title="DiskTransport · 2 walls · 0.6 KB"></div>
+    <div class="wire-dot" style="left:560px; top:176px;" title="DiskTransport · 2 walls · 0.6 KB"></div>
+    <div class="wire-label" style="left:240px; top:84px;">● disk · 4 walls</div>
+    <div class="wire-label" style="left:560px; top:84px;">● disk · 2 walls</div>
+    <div class="wire-label" style="left:560px; top:196px;">● disk · 2 walls</div>
+  </div>
+  <div class="legend">
+    <div class="legend-item">
+      <div class="swatch" style="background:var(--speckle);"></div>
+      <div class="label">disk</div>
+      <div class="desc"><b>default</b> · DiskTransport at <code>.speckle/&lt;project&gt;/</code></div>
+    </div>
+    <div class="legend-item">
+      <div class="swatch" style="background:var(--ok);"></div>
+      <div class="label">server-local</div>
+      <div class="desc">SHARE node spawned local Speckle server (opt-in)</div>
+    </div>
+    <div class="legend-item">
+      <div class="swatch" style="background:var(--blue);"></div>
+      <div class="label">server-remote</div>
+      <div class="desc">cross-machine sharing via remote Speckle</div>
+    </div>
+    <div class="legend-item">
+      <div class="swatch" style="background:var(--warn);"></div>
+      <div class="label">transient</div>
+      <div class="desc">in-memory only (debug runs / non-graph wires)</div>
+    </div>
+  </div>
+</div>
+
+<h2>Surface 2 · Inspector "Wire" tab when wire selected</h2>
+<div class="frame">
+  <div class="insp">
+    <div class="row"><div class="k">wire id</div><div class="v">w:walls→ai.classify</div></div>
+    <div class="row"><div class="k">from</div><div class="v">model_query.walls (revit)</div></div>
+    <div class="row"><div class="k">to</div><div class="v">ai.classify.input (ai)</div></div>
+    <div class="row"><div class="k">type</div><div class="v">list&lt;element&gt;</div></div>
+    <div class="row"><div class="k">transport</div><div class="v speckle">● DiskTransport · .speckle/p-664-doubletree/</div></div>
+    <div class="row"><div class="k">latest version</div><div class="v">v0.0024 · 4 walls · 1.2 KB · 14:32</div></div>
+    <div class="row"><div class="k">history</div><div class="v">24 versions · click to time-scrub</div></div>
+    <div class="row"><div class="k">undo</div><div class="v speckle">▶ receive previous Version</div></div>
+  </div>
+  <p style="margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--inkMuted);">
+    Click any wire → Inspector flips to "Wire" tab (mirrors NodeInspector contract).
+    Version time-scrub uses the same content-addressed undo that's built today.
+  </p>
+</div>
+
+<h2>Surface 3 · Footer transport pill</h2>
+<div class="frame">
+  <div class="footer-mock">
+    <span class="item"><span style="color:var(--ok)">●</span> server :7388 · 9/9 hosts</span>
+    <span class="sep"></span>
+    <span class="item">auto-(router-picks) · 4.2k tok · $0.024</span>
+    <span class="sep"></span>
+    <span class="item">⊕ memory · 201 · 173 comm</span>
+    <span class="item share-pill">spk ● disk · p-664 · v0.0024</span>
+    <span class="item"><span style="color:var(--ok)">●</span> healthy</span>
+    <span style="flex:1"></span>
+    <span class="item">settings</span>
+    <span class="sep"></span>
+    <span class="item">v1.4 prototype</span>
+  </div>
+  <p style="margin-top:10px;">
+    New pill <code>spk ● disk · &lt;project&gt; · v&lt;N&gt;</code> sits in the diagnostics group.
+    Click → opens Speckle panel (Surface 4 below). Color matches the wire dot color
+    (disk = speckle-blue · server = green/blue · transient = warn-orange).
+  </p>
+</div>
+
+<h2>Surface 4 · Speckle panel (modal · click footer pill)</h2>
+<div class="frame">
+  <div style="background:var(--bgPanel); border:1px solid var(--line); border-radius:9px; padding:14px 18px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <span style="color:var(--speckle); font-size:18px;">●</span>
+      <span style="font-family:var(--serif); font-size:20px;">Speckle · data spine</span>
+      <span style="flex:1"></span>
+      <span style="font-family:var(--mono); font-size:9.5px; color:var(--inkMuted);">DISKTRANSPORT · .speckle/p-664-doubletree/</span>
+    </div>
+
+    <h3>STATE</h3>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px;">
+      <div style="background:var(--bgSoft); border:1px solid var(--line); border-radius:5px; padding:8px 11px;">
+        <div style="font-family:var(--mono); font-size:9px; color:var(--inkMuted); letter-spacing:0.14em;">PROJECT</div>
+        <div style="font-size:13px; margin-top:2px;">p-664-doubletree</div>
+      </div>
+      <div style="background:var(--bgSoft); border:1px solid var(--line); border-radius:5px; padding:8px 11px;">
+        <div style="font-family:var(--mono); font-size:9px; color:var(--inkMuted); letter-spacing:0.14em;">VERSIONS</div>
+        <div style="font-size:13px; margin-top:2px;">24 · 4.7 MB</div>
+      </div>
+      <div style="background:var(--bgSoft); border:1px solid var(--line); border-radius:5px; padding:8px 11px;">
+        <div style="font-family:var(--mono); font-size:9px; color:var(--inkMuted); letter-spacing:0.14em;">TRANSPORT</div>
+        <div style="font-size:13px; margin-top:2px; color:var(--speckle);">disk · offline</div>
+      </div>
+      <div style="background:var(--bgSoft); border:1px solid var(--line); border-radius:5px; padding:8px 11px;">
+        <div style="font-family:var(--mono); font-size:9px; color:var(--inkMuted); letter-spacing:0.14em;">PEERS</div>
+        <div style="font-size:13px; margin-top:2px;">0 (offline by default)</div>
+      </div>
+    </div>
+
+    <h3>SHARE NODES (drop on canvas to enable)</h3>
+    <table>
+      <tr><th>node</th><th>kind</th><th>what it does</th></tr>
+      <tr><td><code>share.server</code></td><td><span class="pill server">server</span></td><td>lazy-starts a local Speckle server · binds 127.0.0.1:<port></td></tr>
+      <tr><td><code>share.publish</code></td><td><span class="pill server">server</span></td><td>pushes the current wire's latest Version to the server stream</td></tr>
+      <tr><td><code>share.subscribe</code></td><td><span class="pill server">server</span></td><td>pulls remote Versions into a local wire</td></tr>
+    </table>
+
+    <h3>HISTORY (last 5 versions)</h3>
+    <pre style="background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:10px 14px; font-family:var(--mono); font-size:10.5px; color:var(--inkSoft); margin:0;">v0.0024  14:32  walls (4)         ← current
+v0.0023  14:31  walls (3)
+v0.0022  14:18  walls (3)
+v0.0021  13:55  walls (5)
+v0.0020  13:48  walls (5)
+                              ▶ scrub to restore any version</pre>
+  </div>
+</div>
+
+<h2>Surface 5 (optional) · ADAPTER category badge per host pair</h2>
+<p>
+  The ADAPTER category already exists. Surface a small <code>R→A</code> / <code>R→3DS</code>
+  badge above adapter nodes on the canvas indicating which host-pair they bridge.
+  Pure-affinity affordance for AEC users who think in pipes between apps.
+</p>
+
+<hr/>
+
+<h2>Forks for signoff</h2>
+<table>
+  <tr><th>Fork</th><th>Pick</th><th>Trade-off</th></tr>
+  <tr><td><b>F1</b> — wire dot density</td><td>A. Dot on EVERY wire (this prototype)<br/>B. Dot only on selected/hovered wire<br/>C. Recommended: <b>A</b> · low visual weight; the founder's complaint is invisibility.</td><td>Always-on adds 1 div per wire to the DOM but matches the founder's "show me" ask.</td></tr>
+  <tr><td><b>F2</b> — Wire labels on canvas</td><td>A. Always show <code>● disk · N walls</code><br/>B. Show on hover only<br/>C. Show under setting toggle<br/>D. Recommended: <b>B</b> · always-on labels would clutter the canvas working space (the same complaint that moved health + minimap to the footer).</td><td>Hover-only protects the canvas focus; always-on shouts the spine.</td></tr>
+  <tr><td><b>F3</b> — Inspector "Wire" tab vs floating popover</td><td>A. New tab on existing Inspector (this prototype)<br/>B. Floating tooltip on wire-hover<br/>C. Both<br/>D. Recommended: <b>A</b> · tab follows existing Inspector contract; founder dragged us toward that pattern repeatedly.</td><td>Tab needs Inspector to be visible (it is for selected-node sessions); tooltip works canvas-only.</td></tr>
+  <tr><td><b>F4</b> — Footer pill format</td><td>A. <code>spk ● disk · p-664 · v0.0024</code> (this prototype)<br/>B. <code>● 24 versions · 4.7 MB</code> (no Speckle branding)<br/>C. Recommended: <b>A</b> · brands the spine so founder + future agents see it.</td><td>"spk" + version is informational + clickable; the no-brand version reads as just stats.</td></tr>
+  <tr><td><b>F5</b> — Speckle panel modal vs side-drawer</td><td>A. Modal (this prototype)<br/>B. Right-side drawer under Conversation panel<br/>C. Recommended: <b>A</b> · modal matches Memory Explorer + ai.plan History contracts.</td><td>Modal is consistent with existing panels; drawer would compete with the conversation panel.</td></tr>
+</table>
+
+<h2>What this prototype does NOT add</h2>
+<ul>
+  <li><b>No new wire transport.</b> DiskTransport stays default per AgDR-0016.</li>
+  <li><b>No mandatory account.</b> Server stays opt-in via SHARE nodes.</li>
+  <li><b>No new dependency.</b> All UI hooks read from `app/speckle_wire.py` state already exposed.</li>
+  <li><b>No prototype-breaking change.</b> All other shipped surfaces (canvas, composer, footer items) preserved.</li>
+</ul>
+
+<h2>The slice plan (post-signoff)</h2>
+<table>
+  <tr><th>Slice</th><th>What</th><th>Files</th><th>Risk</th></tr>
+  <tr><td><code>S1</code></td><td>Bridge slot <code>get_wire_transport_state(wire_id)</code> returning `{transport, project, latest_version, size}` from <code>speckle_wire.py</code></td><td><code>app/bridge.py</code> + <code>app/speckle_wire.py</code></td><td>L</td></tr>
+  <tr><td><code>S2</code></td><td>JSX wire dot — small midpoint indicator per wire reading the new slot. F1=A → always show, F2=B → label on hover.</td><td><code>studio-lm.jsx</code> (WireLayer · ~30 lines)</td><td>L</td></tr>
+  <tr><td><code>S3</code></td><td>Inspector "Wire" tab. Triggered by <code>selectedWire !== null</code> in NodeCanvas state.</td><td><code>studio-lm.jsx</code> (Inspector · new component · ~80 lines)</td><td>L-M</td></tr>
+  <tr><td><code>S4</code></td><td>Footer SpeckleStripItem pill. Polls <code>get_speckle_summary()</code> bridge slot.</td><td><code>studio-lm.jsx</code> + <code>bridge.py</code></td><td>L</td></tr>
+  <tr><td><code>S5</code></td><td>SpeckleExplorerModal. Mounted at StudioLM root. Listens for <code>lm-speckle-explorer-open</code>.</td><td><code>studio-lm.jsx</code> · ~250 lines</td><td>L</td></tr>
+  <tr><td><code>S6</code></td><td>(Optional, F5 = A pick.) Optional ADAPTER host-pair badge.</td><td><code>studio-lm.jsx</code> · ~20 lines</td><td>L</td></tr>
+</table>
+
+<hr/>
+
+<h2>SIGNOFF (founder fills)</h2>
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Prototype reviewed</td><td>☐ yes / ☐ revise</td></tr>
+  <tr><td>F1 pick</td><td>☐ A · ☐ B</td></tr>
+  <tr><td>F2 pick</td><td>☐ A · ☐ B · ☐ C</td></tr>
+  <tr><td>F3 pick</td><td>☐ A · ☐ B · ☐ C</td></tr>
+  <tr><td>F4 pick</td><td>☐ A · ☐ B</td></tr>
+  <tr><td>F5 pick</td><td>☐ A · ☐ B</td></tr>
+  <tr><td>Approve AgDR-0050 draft</td><td>☐ yes (status → executed once code lands)<br/>☐ revise prototype</td></tr>
+  <tr><td>Signature + date</td><td>__________ · 2026-05-__</td></tr>
+</table>
+
+<div class="footer">
+  Prototype B · `docs/prototypes/speckle-surface-2026-05-26.html` · status: proposed.<br/>
+  When founder signs: copy → `docs/prototypes/signed/speckle-surface-2026-05-__/index.html` + `SIGNOFF.md` per PROTOTYPE-IS-CONTRACT mandate.<br/>
+  Then write `docs/agdr/AgDR-0050-speckle-wire-surface.md` linking back to this prototype.<br/>
+  Only THEN does any JSX or python code land.
+</div>
+
+</div>
+</body>
+</html>

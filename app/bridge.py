@@ -2026,6 +2026,92 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
 
+    # ─────────────────────── Slice 9-16 settings bridge ──────────────
+    # AgDR-0045 — Settings × Brain. Every slot proxies to a brain.* MCP
+    # tool. Returns JSON string (QWebChannel friendly). Errors land as
+    # {"ok":false,"error":"..."} — never raise across the bridge.
+
+    def _brain_tool(self, tool_name: str, args: dict) -> dict:
+        """Internal helper — call a brain MCP tool via the local BrainClient."""
+        try:
+            from memory_gate import BrainClient
+        except Exception as ex:
+            return {"ok": False, "error": f"BrainClient import: {ex}"}
+        try:
+            client = BrainClient()
+            # Reuse the BrainClient transport (handles SSE + stateless HTTP)
+            result = client._call(tool_name, args, timeout=4.0)
+            if isinstance(result, dict):
+                return result
+            return {"ok": True, "result": result}
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+    @pyqtSlot(result=str)
+    def brain_status(self) -> str:
+        """Health probe + daemon status. Drives the status pulse + stats
+        tiles in Settings → Brain."""
+        try:
+            health = self._brain_tool("brain.health", {})
+            from memory_gate import get_last_brain_stats
+            last_hit = get_last_brain_stats() or {}
+            return _safe_json({
+                "ok": health.get("ok", False),
+                "health": health,
+                "last_hit": last_hit,
+            })
+        except Exception as ex:
+            return _safe_json({"ok": False, "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(str, str, int, result=str)
+    def brain_firm_create(self, name: str, created_by: str = "",
+                            force: int = 0) -> str:
+        return _safe_json(self._brain_tool("brain.firm_create", {
+            "name": name, "created_by": created_by or None,
+            "force": bool(force),
+        }))
+
+    @pyqtSlot(str, int, result=str)
+    def brain_firm_invite_create(self, role: str = "seat",
+                                   ttl_hours: int = 24) -> str:
+        return _safe_json(self._brain_tool("brain.firm_invite_create", {
+            "role": role, "ttl_hours": ttl_hours,
+        }))
+
+    @pyqtSlot(str, str, result=str)
+    def brain_firm_invite_accept(self, token: str, user_id: str = "") -> str:
+        return _safe_json(self._brain_tool("brain.firm_invite_accept", {
+            "token": token, "user_id": user_id or None,
+        }))
+
+    @pyqtSlot(result=str)
+    def brain_firm_seats(self) -> str:
+        return _safe_json(self._brain_tool("brain.firm_seats", {}))
+
+    @pyqtSlot(result=str)
+    def brain_firm_leave(self) -> str:
+        return _safe_json(self._brain_tool("brain.firm_leave", {}))
+
+    @pyqtSlot(str, str, int, result=str)
+    def brain_promote(self, fragment_id: str, target_scope: str,
+                       is_maintainer: int = 0) -> str:
+        return _safe_json(self._brain_tool("brain.promote", {
+            "fragment_id": fragment_id,
+            "target_scope": target_scope,
+            "is_maintainer": bool(is_maintainer),
+        }))
+
+    @pyqtSlot(result=str)
+    def brain_wiring_announce(self) -> str:
+        """Manual trigger of SessionStart-style wiring announce. Used by
+        Settings → Brain → 'Rescan' button."""
+        import os as _os
+        import socket as _sock
+        return _safe_json(self._brain_tool("brain.wiring_announce", {
+            "device_id": _sock.gethostname() or "device-?",
+            "cwd": _os.getcwd(),
+        }))
+
     @pyqtSlot(result=str)
     def memory_stats(self) -> str:
         """Snapshot of the memory graph — node count by kind +

@@ -12419,6 +12419,9 @@ const Settings = ({ onClose }) => {
             }}>Reload</button>
           </Row>
 
+          {/* AgDR-0044/0045 — Brain section (BrainSection self-contained) */}
+          <BrainSection flash={_flash}/>
+
           <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
             letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>DANGER</div>
           <Row label="Reset all preferences"

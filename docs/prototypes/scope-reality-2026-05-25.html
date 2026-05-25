@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — scope reality · D1 + D2 · 2026-05-25</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --bg4:#1c1c22; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --frost:#90c0ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+h1{font-size:30px;line-height:1.15;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:22px;margin-bottom:14px;letter-spacing:-0.01em}
+h3{font-size:15px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+pre{font-family:ui-monospace,SF Mono,Consolas,monospace;background:var(--bg3);
+  border:1px solid var(--line);border-radius:8px;padding:14px;font-size:11px;
+  color:var(--ink);overflow:auto;line-height:1.5;margin:8px 0}
+strong{color:var(--ink)}
+small{color:var(--ink3);font-size:11px}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 10px;border-radius:8px;font-size:11px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+
+header.head{max-width:1240px;margin:0 auto;padding:36px 24px 16px}
+section{max-width:1240px;margin:0 auto;padding:32px 24px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+
+/* ── D1 scope bars ───────────────────────────────────────────── */
+.barchart{margin-top:16px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:24px}
+.bar-row{display:grid;grid-template-columns:80px 1fr 200px;align-items:center;gap:14px;
+  margin-bottom:18px;font-size:12px}
+.bar-row .label{color:var(--ink);font-weight:600;font-family:ui-monospace,monospace}
+.bar-row .bar{height:34px;background:var(--bg3);border-radius:6px;position:relative;overflow:hidden}
+.bar-row .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  border-radius:6px;display:flex;align-items:center;padding-left:12px;font-size:11px;
+  color:#000;font-weight:700;font-family:ui-monospace,monospace}
+.bar-row.tiny .bar-fill{background:var(--ok);color:#000}
+.bar-row.med .bar-fill{background:var(--warn);color:#000}
+.bar-row.big .bar-fill{background:var(--err);color:#fff}
+.bar-row .info{font-size:11px;color:var(--ink2);font-family:ui-monospace,monospace}
+.bar-axis{display:grid;grid-template-columns:80px 1fr 200px;gap:14px;font-size:9px;
+  color:var(--ink3);margin-top:-8px}
+.bar-axis .ticks{display:flex;justify-content:space-between;padding:0 4px}
+
+/* ── D1 slice cards ──────────────────────────────────────────── */
+.slices{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:16px}
+.slice{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:12px;
+  position:relative;font-size:11px}
+.slice .n{position:absolute;top:8px;right:10px;font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace}
+.slice h4{font-size:11px;text-transform:none;letter-spacing:0;color:var(--ink);margin-bottom:6px}
+.slice .body{color:var(--ink2);font-size:11px;line-height:1.4;margin-bottom:8px}
+.slice .meta{font-size:10px;color:var(--ink3);font-family:ui-monospace,monospace}
+.slice .risk{font-size:9px;text-transform:uppercase;letter-spacing:0.08em;padding:2px 6px;
+  border-radius:3px;display:inline-block;margin-top:6px;font-weight:600}
+.slice .risk.low{background:rgba(95,200,121,0.15);color:var(--ok)}
+.slice .risk.med{background:rgba(232,197,74,0.15);color:var(--warn)}
+.slice .risk.high{background:rgba(255,94,94,0.15);color:var(--err)}
+.slice.A{border-color:var(--ok)}
+.slice.B{border-color:var(--ok)}
+.slice.C{border-top:3px solid var(--accent)}
+
+.coverage{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+.cov{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px}
+.cov h4{margin-bottom:8px;font-size:11px;letter-spacing:0.08em}
+.cov .num{font-family:ui-monospace,monospace;font-size:24px;color:var(--accent);font-weight:700;line-height:1}
+.cov .sub{font-size:11px;color:var(--ink2);margin-top:4px}
+
+/* ── risk heatmap ────────────────────────────────────────────── */
+.heat{margin-top:16px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px}
+.heat table{width:100%;border-collapse:collapse;font-size:11px}
+.heat th,.heat td{padding:8px;text-align:center;border:1px solid var(--line);font-family:ui-monospace,monospace}
+.heat th{background:var(--bg3);color:var(--ink2);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
+.heat td.label{text-align:left;color:var(--ink);background:var(--bg3)}
+.heat td.touch-none{background:var(--bg);color:var(--ink3)}
+.heat td.touch-low{background:rgba(95,200,121,0.18);color:var(--ok)}
+.heat td.touch-med{background:rgba(232,197,74,0.20);color:var(--warn)}
+.heat td.touch-high{background:rgba(255,94,94,0.20);color:var(--err)}
+
+/* ── D2 feedback loop diagram ────────────────────────────────── */
+.feedback{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.loop{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px}
+.loop.a{border-left:3px solid var(--warn)}
+.loop.b{border-left:3px solid var(--ok)}
+.loop h3{margin-bottom:12px}
+.loop .badge{font-size:9px;text-transform:uppercase;letter-spacing:0.08em;padding:2px 6px;
+  border-radius:3px;font-weight:600;display:inline-block;margin-bottom:8px}
+.loop.a .badge{background:rgba(232,197,74,0.18);color:var(--warn)}
+.loop.b .badge{background:rgba(95,200,121,0.18);color:var(--ok)}
+.steps{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.step{display:flex;gap:10px;align-items:flex-start;background:var(--bg3);padding:10px 12px;border-radius:8px;font-size:12px}
+.step .num{background:var(--bg4);color:var(--accent);font-family:ui-monospace,monospace;
+  font-weight:700;width:22px;height:22px;border-radius:4px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;flex-shrink:0}
+.step .what{color:var(--ink);flex:1}
+.step .who{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;
+  white-space:nowrap;align-self:center}
+.step .who.me{color:var(--accent2)}
+.step .who.you{color:var(--frost)}
+
+.measured{margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.measured div{background:var(--bg3);padding:10px;border-radius:6px;text-align:center}
+.measured .num{font-family:ui-monospace,monospace;font-size:20px;color:var(--ink);font-weight:700}
+.measured .sub{font-size:10px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px}
+
+/* ── verdict ─────────────────────────────────────────────────── */
+.verdict-row{margin-top:18px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:18px}
+.verdict-row h4{color:var(--ink);font-size:13px;text-transform:none;letter-spacing:0;margin-bottom:10px}
+.verdict-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.verdict-buttons button{background:var(--bg3);border:1px solid var(--line);color:var(--ink);
+  padding:10px 14px;font-size:12px;border-radius:8px;cursor:pointer;font-family:inherit;
+  flex:1;min-width:140px;transition:all .15s}
+.verdict-buttons button:hover{border-color:var(--accent);color:var(--accent2)}
+.verdict-buttons button.on{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
+
+/* ── est variance plot ───────────────────────────────────────── */
+.variance{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:16px}
+.var-row{display:grid;grid-template-columns:80px 1fr 120px;align-items:center;gap:12px;
+  margin-bottom:14px;font-size:11px}
+.var-row .label{font-family:ui-monospace,monospace;color:var(--ink)}
+.var-bar{height:24px;position:relative;background:var(--bg3);border-radius:4px;overflow:visible}
+.var-bar .range{position:absolute;top:0;bottom:0;background:rgba(232,116,58,0.2);
+  border:1px solid var(--accent);border-radius:4px}
+.var-bar .est{position:absolute;top:-4px;bottom:-4px;width:3px;background:var(--frost);border-radius:2px}
+.var-bar .marker{position:absolute;top:24px;font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace;
+  transform:translateX(-50%);white-space:nowrap}
+.var-row .info{font-size:10px;color:var(--ink2);font-family:ui-monospace,monospace;text-align:right}
+
+.scale{display:grid;grid-template-columns:80px 1fr 120px;gap:12px;margin-top:22px}
+.scale .ticks{display:flex;justify-content:space-between;font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <span class="brand">arch<span>hub</span></span>
+  <a class="chip" href="#scope">D1 scope</a>
+  <a class="chip" href="#slices">D1 slices</a>
+  <a class="chip" href="#heat">D1 risk</a>
+  <a class="chip" href="#variance">D1 estimate uncertainty</a>
+  <a class="chip" href="#feedback">D2 feedback loop</a>
+  <a class="chip" href="#pick">re-pick</a>
+</nav>
+
+<header class="head">
+  <h1>Scope reality — D1 and D2 picks at honest scale</h1>
+  <p>What you actually committed to. No "~10 days" hand-wave.</p>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="scope">
+  <div class="tagline">D1 · same chart, real scale</div>
+  <h2>You picked C. C is 5× A.</h2>
+  <p>Previous prototype used chips like <code>~2 days</code> vs <code>~10 days</code> side-by-side.
+  Reads as comparable. Plotted to scale here.</p>
+
+  <div class="barchart">
+    <div class="bar-row tiny">
+      <span class="label">D1·A</span>
+      <div class="bar"><div class="bar-fill" style="width:20%">2d · 400 LOC</div></div>
+      <span class="info">slices 1+2</span>
+    </div>
+    <div class="bar-row med">
+      <span class="label">D1·B</span>
+      <div class="bar"><div class="bar-fill" style="width:30%">3d · 600 LOC</div></div>
+      <span class="info">slices 1+2+3</span>
+    </div>
+    <div class="bar-row big">
+      <span class="label">D1·C ←</span>
+      <div class="bar"><div class="bar-fill" style="width:100%">10d · 1800 LOC · all 6 slices</div></div>
+      <span class="info">slices 1+2+3+4+5+6</span>
+    </div>
+    <div class="bar-axis">
+      <span></span>
+      <div class="ticks"><span>0d</span><span>2.5d</span><span>5d</span><span>7.5d</span><span>10d</span></div>
+      <span></span>
+    </div>
+  </div>
+
+  <div class="coverage">
+    <div class="cov">
+      <h4>D1·A → D1·C delta</h4>
+      <div class="num">+8 days</div>
+      <div class="sub">9× the wall-clock vs A</div>
+    </div>
+    <div class="cov">
+      <h4>D1·A → D1·C LOC delta</h4>
+      <div class="num">+1,400</div>
+      <div class="sub">350% more code surface</div>
+    </div>
+    <div class="cov">
+      <h4>New subsystems in C only</h4>
+      <div class="num">3</div>
+      <div class="sub">Project + Decision extractors, Louvain, Speckle firm-sync</div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="slices">
+  <div class="tagline">D1 · slice-by-slice scope</div>
+  <h2>What each slice ships</h2>
+  <p>Top border colour = part of which option (A green · B blue tip · C all six).</p>
+
+  <div class="slices">
+    <div class="slice A">
+      <span class="n">1</span>
+      <h4>Core data model + SQLite</h4>
+      <div class="body">app/memory/graph.py + store. Nodes + edges + EXTRACTED/INFERRED confidence.</div>
+      <div class="meta">~200 LOC · 1d</div>
+      <span class="risk low">low risk · pure code</span>
+    </div>
+    <div class="slice A">
+      <span class="n">2</span>
+      <h4>Library + Composer-turn extractors</h4>
+      <div class="body">Reads existing library SQLite + ai.plan cache. Writes lib:* + turn:* nodes.</div>
+      <div class="meta">~200 LOC · 1d</div>
+      <span class="risk low">low risk · read-only on existing</span>
+    </div>
+    <div class="slice B">
+      <span class="n">3</span>
+      <h4>memory.query() BFS + tool</h4>
+      <div class="body">Replaces node_search. New tool surface; back-compat shim keeps old call working.</div>
+      <div class="meta">~200 LOC · 1d</div>
+      <span class="risk med">med risk · LLM tool surface change</span>
+    </div>
+    <div class="slice C">
+      <span class="n">4</span>
+      <h4>Project + Decision extractors</h4>
+      <div class="body">Speckle Versions, Revit families, AutoCAD blocks → proj:*. AgDR frontmatter → agdr:*.</div>
+      <div class="meta">~300 LOC · 2d</div>
+      <span class="risk high">HIGH risk · touches 4 connectors</span>
+    </div>
+    <div class="slice C">
+      <span class="n">5</span>
+      <h4>Louvain community detection + UI</h4>
+      <div class="body">Auto-groups "wall workflows" etc. Adds collapsible sections to LibraryPanel JSX.</div>
+      <div class="meta">~400 LOC · 2d</div>
+      <span class="risk high">HIGH risk · JSX UI design</span>
+    </div>
+    <div class="slice C">
+      <span class="n">6</span>
+      <h4>Speckle firm-shared graph sync</h4>
+      <div class="body">Multi-seat shared brain. Per-firm graph + conflict resolution + Stripe seat ties.</div>
+      <div class="meta">~500 LOC · 3d</div>
+      <span class="risk high">HIGHEST risk · product+billing+data isolation</span>
+    </div>
+  </div>
+
+  <p style="margin-top:18px"><strong>The honest gap:</strong> slices 1+2+3 are pure backend you'll never see fail
+  weirdly. Slices 4+5+6 touch product surfaces (multiple connectors, JSX UI, your billing model) where
+  "I'll just figure it out" goes wrong fast.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="heat">
+  <div class="tagline">D1 · what each slice touches</div>
+  <h2>Risk heatmap — which subsystems each slice modifies</h2>
+
+  <div class="heat">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>app/memory<br><small>new</small></th>
+          <th>library.py<br><small>existing</small></th>
+          <th>tool_engine.py<br><small>LLM surface</small></th>
+          <th>4 connectors<br><small>revit/cad/etc</small></th>
+          <th>studio-lm.jsx<br><small>3,900 lines</small></th>
+          <th>cloud_backend<br><small>Stripe/seats</small></th>
+          <th>speckle<br><small>multi-seat sync</small></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="label">1 · core</td>
+          <td class="touch-high">★ new pkg</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+        </tr>
+        <tr>
+          <td class="label">2 · lib+turn extractors</td>
+          <td class="touch-low">+code</td>
+          <td class="touch-low">read</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+        </tr>
+        <tr>
+          <td class="label">3 · query + tool</td>
+          <td class="touch-low">+code</td>
+          <td class="touch-med">shim</td>
+          <td class="touch-high">★ new tool</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+        </tr>
+        <tr>
+          <td class="label">4 · proj+agdr extractors</td>
+          <td class="touch-low">+code</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-high">★ read 4</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-low">read</td>
+        </tr>
+        <tr>
+          <td class="label">5 · Louvain + UI</td>
+          <td class="touch-med">+algo</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-high">★ Library panel</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+        </tr>
+        <tr>
+          <td class="label">6 · firm-sync</td>
+          <td class="touch-med">+sync</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-none">—</td>
+          <td class="touch-med">seat UI</td>
+          <td class="touch-high">★ seat ties</td>
+          <td class="touch-high">★ multi-seat</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:14px"><strong>Read the bottom three rows:</strong> slice 4 touches 4 connectors. Slice 5 touches the
+  3,900-line JSX. Slice 6 touches Stripe + Speckle + seat logic. Slices 1+2+3 stay inside
+  <code>app/memory/</code> + a tool stub. Different blast radii.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="variance">
+  <div class="tagline">D1 · estimate uncertainty</div>
+  <h2>The "10 days" is a guess. Here's the realistic spread.</h2>
+  <p>Software estimates for new subsystems routinely run 2-3× over.
+  Bars = realistic range. Blue line = my point estimate.</p>
+
+  <div class="variance">
+    <div class="var-row">
+      <span class="label">D1·A (1+2)</span>
+      <div class="var-bar">
+        <div class="range" style="left:8%;width:8%"></div>
+        <div class="est" style="left:14%"></div>
+        <div class="marker" style="left:14%">2d est</div>
+      </div>
+      <span class="info">1.5d – 4d</span>
+    </div>
+    <div class="var-row">
+      <span class="label">D1·B (1+2+3)</span>
+      <div class="var-bar">
+        <div class="range" style="left:12%;width:14%"></div>
+        <div class="est" style="left:22%"></div>
+        <div class="marker" style="left:22%">3d est</div>
+      </div>
+      <span class="info">2d – 6d</span>
+    </div>
+    <div class="var-row">
+      <span class="label">D1·C (all 6)</span>
+      <div class="var-bar">
+        <div class="range" style="left:40%;width:60%"></div>
+        <div class="est" style="left:70%"></div>
+        <div class="marker" style="left:70%">10d est</div>
+      </div>
+      <span class="info">7d – 25d</span>
+    </div>
+    <div class="scale">
+      <span></span>
+      <div class="ticks"><span>0d</span><span>5d</span><span>10d</span><span>15d</span><span>20d</span><span>25d</span></div>
+      <span></span>
+    </div>
+  </div>
+
+  <p style="margin-top:14px">D1·C realistic worst case = <strong>25 days</strong> autonomous, much of it on subsystems
+  (slice 5 UI, slice 6 multi-seat) where my visual-verification loop is weak. D1·B
+  worst case = <strong>6 days</strong>, all backend, you can see progress every commit.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="feedback">
+  <div class="tagline">D2 · feedback loop reality</div>
+  <h2>D2·A vs D2·B — who actually checks the UI?</h2>
+  <p>D2·A "autonomous + CDP-verify" was misleading. CDP tells me DOM exists.
+  It does not tell me anything <em>looks right</em>.</p>
+
+  <div class="feedback">
+    <div class="loop a">
+      <span class="badge">D2·A · what I sold you</span>
+      <h3>"Autonomous JSX edits"</h3>
+      <div class="steps">
+        <div class="step"><span class="num">1</span><span class="what">I edit JSX</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">2</span><span class="what">I restart ArchHub</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">3</span><span class="what">CDP: <code>document.querySelector('.HealthPanel') !== null</code></span><span class="who me">me</span></div>
+        <div class="step"><span class="num">4</span><span class="what">Commit + report "shipped"</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">5</span><span class="what">You eventually open ArchHub, see component is ugly / wrong colours / overflows / etc.</span><span class="who you">you (later)</span></div>
+        <div class="step"><span class="num">6</span><span class="what">Throwaway rework</span><span class="who me">me (more work)</span></div>
+      </div>
+      <div class="measured">
+        <div><div class="num">DOM</div><div class="sub">what CDP sees</div></div>
+        <div><div class="num">✗</div><div class="sub">pixels checked</div></div>
+        <div><div class="num">?</div><div class="sub">rework rate</div></div>
+      </div>
+    </div>
+
+    <div class="loop b">
+      <span class="badge">D2·B · honest version</span>
+      <h3>"Checkpoint per component"</h3>
+      <div class="steps">
+        <div class="step"><span class="num">1</span><span class="what">I edit JSX</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">2</span><span class="what">I restart ArchHub</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">3</span><span class="what">CDP screenshot → paste in chat</span><span class="who me">me</span></div>
+        <div class="step"><span class="num">4</span><span class="what">You look at screenshot, say go / fix X / scrap it</span><span class="who you">you (5 sec)</span></div>
+        <div class="step"><span class="num">5</span><span class="what">Iterate or commit</span><span class="who me">me</span></div>
+      </div>
+      <div class="measured">
+        <div><div class="num">PNG</div><div class="sub">what you see</div></div>
+        <div><div class="num">✓</div><div class="sub">pixels checked</div></div>
+        <div><div class="num">low</div><div class="sub">rework rate</div></div>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top:14px"><strong>5-second eyeball after each restart</strong> is much cheaper than discovering
+  3 ugly components later. D2·B is what D2·A should have been called.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section id="pick">
+  <div class="tagline">re-pick · saves to localStorage</div>
+  <h2>Re-pick D1 and D2 with this in front of you</h2>
+
+  <div class="verdict-row">
+    <h4>D1 — memory graph scope</h4>
+    <div class="verdict-buttons" data-key="d1">
+      <button data-v="A">D1·A — slices 1+2 · 2d · low risk</button>
+      <button data-v="B">D1·B — slices 1+2+3 · 3d · med</button>
+      <button data-v="C">D1·C — all 6 · 10d (7-25d real) · high</button>
+      <button data-v="D">D1·D — defer entirely</button>
+    </div>
+  </div>
+
+  <div class="verdict-row">
+    <h4>D2 — JSX UI loop</h4>
+    <div class="verdict-buttons" data-key="d2">
+      <button data-v="A">D2·A — I ship, you discover</button>
+      <button data-v="B">D2·B — screenshot checkpoint per component</button>
+      <button data-v="C">D2·C — you ship UI yourself</button>
+    </div>
+  </div>
+
+  <div class="verdict-row">
+    <h4>Result</h4>
+    <div id="result" style="font-family:ui-monospace,monospace;color:var(--accent2);font-size:13px;
+      padding:14px;background:var(--bg3);border-radius:8px;min-height:42px;border:1px solid var(--line)">
+      — pick D1 and D2 above —
+    </div>
+  </div>
+</section>
+
+<script>
+const KEY = 'archhub.scope-reality.2026-05-25';
+const state = JSON.parse(localStorage.getItem(KEY) || '{}');
+
+function bind() {
+  document.querySelectorAll('.verdict-buttons').forEach(row => {
+    const key = row.dataset.key;
+    row.querySelectorAll('button').forEach(btn => {
+      const v = btn.dataset.v;
+      if (state[key] === v) btn.classList.add('on');
+      btn.onclick = () => {
+        row.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on');
+        state[key] = v;
+        localStorage.setItem(KEY, JSON.stringify(state));
+        render();
+      };
+    });
+  });
+}
+
+function render() {
+  const d1 = state.d1, d2 = state.d2;
+  if (!d1 || !d2) {
+    document.getElementById('result').innerHTML = '— pick D1 and D2 above —';
+    return;
+  }
+  const days = {A:'2d', B:'3d', C:'10d (7-25d real)', D:'0d'};
+  const d2text = {A:'autonomous, you find bugs later', B:'screenshot per component', C:'you ship JSX'};
+  document.getElementById('result').innerHTML =
+    `<strong>D1·${d1}</strong> + <strong>D2·${d2}</strong> · D3·B · D4·A done<br>` +
+    `<small style="color:var(--ink2)">D1: ${days[d1]} · D2: ${d2text[d2]}</small>`;
+}
+
+bind();
+render();
+</script>
+
+</body>
+</html>

@@ -2139,6 +2139,7 @@ const StudioLM = () => {
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}/>}
       <AiPlanHistoryModal/>
       <CommandPalette/>
+      <MemoryExplorerModal/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
       {aiNodeOpen && <AINodeModal onClose={() => setAiNodeOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -10180,6 +10181,197 @@ const ConnectorRail = ({ node, bumpGraph }) => {
 //   - Decisions pills (one per recorded decision in the plan)
 //   - Replay-from-cache + Open-full-table buttons
 // Fails silent on no plan / no bridge — section just doesn't render data.
+// AgDR-0042 — Memory explorer modal. Opens when the user clicks the
+// bottom-strip memory pill. Renders a dashboard of the shared-memory
+// knowledge graph: total node + edge counts, breakdown by kind,
+// top-N communities, and a search box that runs memory_query over
+// the BFS-walked community graph. The founder asked 2026-05-25:
+// "I have 197 nodes / 76 capabilities / 176 communities — where can
+// I see them?" This is the surface.
+const MemoryExplorerModal = () => {
+  const [open, setOpen] = React.useState(false);
+  const [stats, setStats] = React.useState(null);
+  const [q, setQ] = React.useState('');
+  const [results, setResults] = React.useState([]);
+  const [searching, setSearching] = React.useState(false);
+  React.useEffect(() => {
+    const onOpen = (ev) => {
+      setOpen(true);
+      const s = ev && ev.detail && ev.detail.stats;
+      if (s) setStats(s);
+      else {
+        bridgeAsync('memory_stats').then(r => {
+          if (r && r.status === 'ok') setStats(r);
+        });
+      }
+    };
+    window.addEventListener('lm-memory-explorer-open', onOpen);
+    return () => window.removeEventListener('lm-memory-explorer-open', onOpen);
+  }, []);
+  // Debounced search.
+  React.useEffect(() => {
+    if (!open) return;
+    if (!q.trim()) { setResults([]); return; }
+    setSearching(true);
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const r = await bridgeAsync('memory_query', JSON.stringify({
+          question: q, limit: 20,
+        }));
+        if (cancelled) return;
+        setResults((r && r.results) || []);
+      } catch (e) { setResults([]); }
+      finally { if (!cancelled) setSearching(false); }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q, open]);
+  if (!open) return null;
+  const close = () => { setOpen(false); setQ(''); setResults([]); };
+  const kinds = (stats && stats.by_kind) || {};
+  const kindRows = [
+    { k:'capability', label:'Capabilities', col:LM.accent },
+    { k:'skill',      label:'Skills',       col:LM.cyan },
+    { k:'decision',   label:'Decisions',    col:LM.purple },
+    { k:'turn',       label:'Turns',        col:LM.blue },
+    { k:'tool',       label:'Tools',        col:LM.ok },
+    { k:'project',    label:'Projects',     col:LM.warn },
+    { k:'design',     label:'Designs',      col:LM.inkSoft },
+  ];
+  const top = (stats && stats.communities_top) || [];
+  return (
+    <div onClick={close} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:75,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width:880, maxWidth:'94%', height:600, maxHeight:'88%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:9,
+        display:'flex', flexDirection:'column',
+        boxShadow:'0 18px 48px rgba(0,0,0,.6)',
+      }}>
+        <div style={{ padding:'14px 18px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ color:LM.accent, fontSize:18 }}>⊕</span>
+          <span style={{ fontFamily:LM.serif, fontSize:20, fontWeight:500 }}>Memory graph</span>
+          {stats && (
+            <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+              {stats.total_nodes} NODES · {stats.total_edges} EDGES · {stats.communities_total} COMM
+            </span>
+          )}
+          <div style={{ flex:1 }}/>
+          <button onClick={close} style={{
+            width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
+            borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
+          }}>✕</button>
+        </div>
+        <div style={{ flex:1, overflow:'auto', padding:'14px 18px' }}>
+          {!stats && (
+            <div style={{ padding:18, fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+              loading memory stats…
+            </div>
+          )}
+          {stats && (
+            <>
+              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+                letterSpacing:'0.18em', marginBottom:8 }}>BY KIND</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:18 }}>
+                {kindRows.map(r => (
+                  <div key={r.k} style={{
+                    background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                    borderLeft:`2px solid ${r.col}`, borderRadius:5,
+                    padding:'8px 11px',
+                  }}>
+                    <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+                      letterSpacing:'0.14em', textTransform:'uppercase' }}>{r.label}</div>
+                    <div style={{ fontFamily:LM.serif, fontSize:22, color:LM.ink, marginTop:3 }}>
+                      {kinds[r.k] || 0}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+                letterSpacing:'0.18em', marginBottom:8 }}>TOP COMMUNITIES</div>
+              {top.length === 0 ? (
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted, marginBottom:18 }}>
+                  no community data yet
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:5, marginBottom:18 }}>
+                  {top.map((c, i) => (
+                    <div key={i} style={{
+                      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                      borderLeft:`2px solid ${LM.cyan}`, borderRadius:5,
+                      padding:'7px 12px',
+                      display:'flex', alignItems:'center', gap:10,
+                    }}>
+                      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.cyan, minWidth:36 }}>
+                        #{c.community_id || c.id || i+1}
+                      </span>
+                      <span style={{ fontSize:12.5, color:LM.ink, flex:1 }}>
+                        {c.label || c.topic || c.summary || '(unnamed)'}
+                      </span>
+                      <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
+                        {c.size || c.node_count || 0} nodes
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+                letterSpacing:'0.18em', marginBottom:8 }}>SEARCH</div>
+              <input value={q} onChange={e => setQ(e.target.value)}
+                placeholder="Ask the memory graph (BFS over communities)…"
+                style={{
+                  width:'100%', padding:'10px 13px',
+                  background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                  borderRadius:5, color:LM.ink, fontFamily:LM.sans, fontSize:13,
+                  outline:'none', boxSizing:'border-box', marginBottom:10,
+                }}/>
+              {searching && (
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted, marginBottom:8 }}>
+                  searching…
+                </div>
+              )}
+              {!searching && q && results.length === 0 && (
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+                  no hits for "{q}"
+                </div>
+              )}
+              {results.length > 0 && (
+                <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                  {results.map((h, i) => (
+                    <div key={i} style={{
+                      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                      borderLeft:`2px solid ${LM.accent}`, borderRadius:5,
+                      padding:'8px 12px',
+                      display:'flex', alignItems:'center', gap:10,
+                    }}>
+                      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, minWidth:50 }}>
+                        score {Math.round(h.score || 0)}
+                      </span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:12.5, color:LM.ink }}>{h.label || h.id}</div>
+                        <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>
+                          {h.id} · {h.kind}
+                        </div>
+                      </div>
+                      <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+                        maxWidth:240, textAlign:'right' }}>
+                        {String(h.why || '').slice(0,100)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // AgDR-0021 — ai.plan HISTORY modal. Listens for
 // `lm-aiplan-history-open` (fired by the ai.plan hero node's "history"
 // button), pulls full plan history via bridge.get_plan_history, renders
@@ -11664,8 +11856,10 @@ const MemoryStripItem = () => {
   }, []);
   if (!stats) return null;
   const onClick = () => {
-    try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
-      { detail:{ msg:`Memory: ${stats.total_nodes} nodes (${(stats.by_kind||{}).capability || 0} cap · ${(stats.by_kind||{}).skill || 0} skill · ${(stats.by_kind||{}).decision || 0} agdr) · ${stats.communities_total} communities`, kind:'info' } })); } catch (e) {}
+    // Open the dedicated memory explorer modal. The toast fallback is
+    // still useful when the modal can't mount (e.g. very early in boot).
+    try { window.dispatchEvent(new CustomEvent('lm-memory-explorer-open',
+      { detail:{ stats } })); } catch (e) {}
   };
   return (
     <button onClick={onClick}

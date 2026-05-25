@@ -9277,10 +9277,26 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                   {items.map(i => {
                     // AgDR-0014 — lookup side_effects/status by type
-                    // when grammar kind matches a library entry.
+                    // when grammar kind matches a library entry. Backend
+                    // only registers ~16 of the 91 grammar kinds today,
+                    // so fall back to a category-default side_effect
+                    // (founder, 2026-05-25: pills must cover ALL nodes
+                    // or they look like noise). Status only shows for
+                    // backend-registered entries with non-default state.
                     const k = i._grammar && i._grammar.kind;
                     const meta = (k && libMeta[k]) || null;
-                    const sfx = meta && meta.side_effects;
+                    const cat = (i._grammar && i._grammar.cat) || g.cat || '';
+                    // Category → side_effect default. Derived from the
+                    // 14-category × side_effect rubric in AgDR-0014.
+                    const _catSfx = {
+                      input:'pure', logic:'pure', math:'pure', text:'pure',
+                      shape:'pure', adapter:'pure', watch:'pure',
+                      trigger:'pure', note:'pure', code:'pure',
+                      ai:'network', share:'network',
+                      connector:'host_write', output:'host_write',
+                      skill:'host_write',
+                    };
+                    const sfx = (meta && meta.side_effects) || _catSfx[cat] || null;
                     const stat = meta && meta.status;
                     return (
                       <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }} style={{

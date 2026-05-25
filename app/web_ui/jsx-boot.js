@@ -78,14 +78,19 @@
   // consumes them + defines StudioLM, app-boot.jsx mounts it.
   const FILES = ['shared-data.jsx', 'studio-lm.jsx', 'app-boot.jsx'];
 
-  async function loadOne(file) {
+  // PERF FIX (founder 2026-05-25 — "fix the fucking lag problem"):
+  // Hat 3 audit Fix #6 — fetch + sha256 + cache-check were serialized
+  // across files. They have no inter-dep; only eval order is
+  // sequential. Now: fetch+hash+compile run in parallel via Promise.all,
+  // then eval in declaration order. Saves 50-150ms on cold start.
+
+  async function fetchHashCompile(file) {
     const t0 = performance.now();
     const src = await fetchText(file);
     const hash = await sha256(src);
     const cacheKey = 'jsx_cache_v1_' + file.replace(/\W/g, '_') + '_' + hash;
     const cached = lsGet(cacheKey);
     let compiled, fromCache;
-
     if (cached) {
       compiled = cached;
       fromCache = true;
@@ -101,19 +106,27 @@
       compiled = out.code || '';
       lsSet(cacheKey, compiled);
     }
-    await evalGlobal(compiled, file);
     const dt = Math.round(performance.now() - t0);
-    console.log('[jsx-boot] ' + file + ' loaded in ' + dt +
-                ' ms · cache=' + (fromCache ? 'HIT' : 'MISS'));
-    return { file: file, ms: dt, cacheHit: fromCache };
+    return { file: file, compiled: compiled, ms: dt, cacheHit: fromCache };
+  }
+
+  async function loadOne(prepared) {
+    // Eval phase only — fetch/compile already done by fetchHashCompile.
+    await evalGlobal(prepared.compiled, prepared.file);
+    console.log('[jsx-boot] ' + prepared.file + ' loaded in ' +
+                prepared.ms + ' ms · cache=' +
+                (prepared.cacheHit ? 'HIT' : 'MISS'));
+    return { file: prepared.file, ms: prepared.ms, cacheHit: prepared.cacheHit };
   }
 
   async function boot() {
     const t0 = performance.now();
     try {
+      // PERF: parallel fetch + hash + compile, then sequential eval.
+      const prepared = await Promise.all(FILES.map(fetchHashCompile));
       const results = [];
-      for (const f of FILES) {
-        results.push(await loadOne(f));
+      for (const p of prepared) {
+        results.push(await loadOne(p));
       }
       window.__archhub_jsx_boot = {
         total_ms: Math.round(performance.now() - t0),

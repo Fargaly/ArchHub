@@ -4575,12 +4575,36 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
 const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, removeUserNode, bumpGraph, graphBump, onHome, onCreateSession }) => {
   const allNodes = [...(LM_GRAPH.nodes || []), ...(userNodes || [])];
   const focusNode = allNodes.find(n => n.id === focusId);
+  // Conversation-panel collapse state lifted here so the parent grid
+  // template can shrink the right column to 28px (vs 320px expanded).
+  // Per-session key, persisted in localStorage so re-open restores it.
+  // Re-read on focusId change (= active node swap in the canvas).
+  const _convoKey = 'archhub.conv_collapsed.' + (focusId || 'default');
+  const [convoCollapsed, setConvoCollapsed] = React.useState(() => {
+    try { return localStorage.getItem(_convoKey) === '1'; } catch (e) { return false; }
+  });
+  React.useEffect(() => {
+    try { setConvoCollapsed(localStorage.getItem(_convoKey) === '1'); } catch (e) {}
+  }, [focusId]);
+  // Listen for the chevron click inside ChatInline (same localStorage
+  // key, dispatched event keeps the Workspace grid in sync).
+  React.useEffect(() => {
+    const onToggle = (ev) => {
+      const k = ev && ev.detail && ev.detail.key;
+      if (!k || k === _convoKey) {
+        try { setConvoCollapsed(localStorage.getItem(_convoKey) === '1'); } catch (e) {}
+      }
+    };
+    window.addEventListener('archhub-conv-collapse-toggle', onToggle);
+    return () => window.removeEventListener('archhub-conv-collapse-toggle', onToggle);
+  }, [_convoKey]);
   return (
     <main style={{
       gridColumn:'2', gridRow:'1', minHeight:0, overflow:'hidden',
       display:'grid',
-      gridTemplateColumns:'1fr 320px',
+      gridTemplateColumns: convoCollapsed ? '1fr 28px' : '1fr 320px',
       gridTemplateRows:'36px 1fr',
+      transition:'grid-template-columns .15s ease-out',
     }}>
       <WsHeader
         session={session} model={model} openTabs={openTabs}
@@ -9335,12 +9359,9 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen, onRun }) => (
     </div>
     <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" aria-label="Reset view" style={toolBtn()}>⟲</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
-      padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
-      color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
-      display:'flex', alignItems:'center', gap:4,
-    }}>＋ add node</button>
-    <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
+    {/* `+ add node` removed per ui-ux-check 2026-05-25 — duplicated the
+        left-rail Nodes panel + Cmd+K + composer `library` button. Three
+        entry points already; toolbar one was redundant. */}
     {/* Founder demand #11: ▶ RUN WORKFLOW — calls bridge.run_workflow (M2 threaded). */}
     <button onClick={(e) => { e.stopPropagation(); onRun && onRun(); }} title="Run entire workflow (⌘↵)" aria-label="Run entire workflow (⌘↵)" style={{
       padding:'0 10px', height:22, border:0, background:LM.accent, cursor:'pointer',
@@ -11540,6 +11561,42 @@ const ConversationRail = ({ node, bumpGraph }) => {
       return;
     }
   }, [node, bumpGraph]);
+  // Collapse state per-session. Persists in localStorage so re-opening
+  // a session restores the user's preference. Founder + ui-ux-check
+  // 2026-05-25: right panel ate ~340px of canvas when user was graph-
+  // editing not chatting. Collapsed state shrinks to 28px chevron rail.
+  const _convoKey = 'archhub.conv_collapsed.' + (node.id || 'default');
+  const [collapsed, setCollapsed] = React.useState(() => {
+    try { return localStorage.getItem(_convoKey) === '1'; } catch (e) { return false; }
+  });
+  const toggleCollapsed = () => {
+    setCollapsed(c => {
+      const next = !c;
+      try { localStorage.setItem(_convoKey, next ? '1' : '0'); } catch (e) {}
+      try { window.dispatchEvent(new CustomEvent('archhub-conv-collapse-toggle',
+        { detail:{ key: _convoKey, collapsed: next } })); } catch (e) {}
+      return next;
+    });
+  };
+  if (collapsed) {
+    return (
+      <aside key={node.id} onClick={toggleCollapsed} title="Expand conversation panel"
+        style={{
+          gridColumn:'2', gridRow:'2',
+          width:28, background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
+          cursor:'pointer', display:'flex', flexDirection:'column',
+          alignItems:'center', padding:'14px 0', gap:14,
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = LM.bgSoft; }}
+        onMouseLeave={e => { e.currentTarget.style.background = LM.bgPanel; }}>
+        <span style={{ fontFamily:LM.mono, fontSize:14, color:LM.accent }}>‹</span>
+        <span style={{
+          writingMode:'vertical-rl', transform:'rotate(180deg)',
+          fontFamily:LM.mono, fontSize:9, color:LM.inkSoft, letterSpacing:'0.18em',
+        }}>CONVERSATION · {node.messages.length}</span>
+      </aside>
+    );
+  }
   return (
     <aside key={node.id} style={{
       gridColumn:'2', gridRow:'2',
@@ -11550,6 +11607,14 @@ const ConversationRail = ({ node, bumpGraph }) => {
       {/* Header */}
       <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}` }}>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+          <button onClick={toggleCollapsed} title="Collapse conversation panel" aria-label="Collapse conversation panel"
+            style={{
+              background:'transparent', border:0, padding:'0 4px 0 0',
+              color:LM.inkSoft, cursor:'pointer', fontFamily:LM.mono, fontSize:14,
+              lineHeight:1,
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = LM.accent}
+            onMouseLeave={e => e.currentTarget.style.color = LM.inkSoft}>›</button>
           <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
           <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
           <div style={{ flex:1 }}/>

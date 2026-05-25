@@ -1276,11 +1276,12 @@ class LLMRouter:
             _lib_gate = None
             _lib_turn_state = None
 
-        max_iters = self._max_iterations(model_name)
-        # Diagnostic log — captures every iteration of the tool-use
-        # loop to %LOCALAPPDATA%/ArchHub/logs/llm_trace.log so we can
-        # see what each provider actually returned. Helps diagnose
-        # "empty response" complaints without rebuilding state.
+        # Diagnostic log — defined HERE (before any caller) because the
+        # AgDR-0044 Layer 5 init below references _trace in its except
+        # branch. Prior version defined _trace at line 1339 which left
+        # the Layer 5 init blocks raising UnboundLocalError under any
+        # init failure path (caught 2026-05-25, test_tool_filter gemini
+        # route). Writes to %LOCALAPPDATA%/ArchHub/logs/llm_trace.log.
         def _trace(msg: str) -> None:
             try:
                 import os, time as _t
@@ -1296,6 +1297,62 @@ class LLMRouter:
             except Exception:
                 pass
 
+        # AgDR-0044 Layer 5 — MEMORY + SKILL substrate gate.
+        # Talks to the personal-brain MCP daemon (default :8473). Brain
+        # unavailable → all 4 hook calls become no-ops; the turn proceeds
+        # exactly as it would without Layer 5. Gate is enrichment, never
+        # block.
+        try:
+            from memory_gate import MemoryGate, MemoryTurnState
+            import uuid as _uuid
+            _mem_gate = MemoryGate()
+            _mem_turn_state = MemoryTurnState(
+                session_id=session_pin,
+                trace_id=str(_uuid.uuid4()),
+            )
+        except Exception as _mem_ex:
+            _trace(f"memory_gate init exception: {_mem_ex}")
+            _mem_gate = None
+            _mem_turn_state = None
+
+        # AgDR-0044 Layer 5 — PRE-PROMPT hook.
+        # Pull relevant skills + facts + wiring + secret refs from brain
+        # and prepend the injection block to system_prompt. Best-effort:
+        # if brain returns nothing, system_prompt unchanged.
+        if _mem_gate is not None and _mem_turn_state is not None and messages:
+            try:
+                last_user_msg = ""
+                for _m in reversed(messages):
+                    if _m.get("role") == "user":
+                        _c = _m.get("content")
+                        if isinstance(_c, str):
+                            last_user_msg = _c
+                        elif isinstance(_c, list):
+                            # Anthropic-shape user content blocks
+                            for _blk in _c:
+                                if isinstance(_blk, dict) and _blk.get("type") == "text":
+                                    last_user_msg = _blk.get("text", "")
+                                    break
+                        break
+                if last_user_msg:
+                    _pre = _mem_gate.pre_prompt(
+                        _mem_turn_state,
+                        user_message=last_user_msg,
+                        owner_user=None,
+                    )
+                    _inj = (_pre.augmentation or {}).get("injection", "")
+                    if _inj:
+                        system_prompt = system_prompt + "\n\n" + _inj
+                        _trace(
+                            f"layer5 pre_prompt injected "
+                            f"{len((_pre.augmentation or {}).get('skills') or [])} skills + "
+                            f"{len((_pre.augmentation or {}).get('facts') or [])} facts "
+                            f"({(_pre.augmentation or {}).get('retrieval_ms', 0):.1f}ms)"
+                        )
+            except Exception as _pre_ex:
+                _trace(f"layer5 pre_prompt exception: {_pre_ex}")
+
+        max_iters = self._max_iterations(model_name)
         _trace(f"START history_len={len(history)} "
                 f"last_user={(history[-1].get('content','') if history else '')[:80]!r} "
                 f"tool_schemas={len(tool_schemas)}")
@@ -1435,6 +1492,20 @@ class LLMRouter:
                         })
                         continue   # skip ToolEngine.invoke — gate denied
 
+                # AgDR-0044 Layer 5 — PRE-EXECUTE hook.
+                # Scan args for op:// secret refs; brain records the
+                # resolution for trace stripping. Slice 7 will enforce
+                # bipartite ACL on memory tools here too.
+                if _mem_gate is not None and _mem_turn_state is not None:
+                    try:
+                        _mem_gate.pre_execute(
+                            _mem_turn_state,
+                            tool_name=inv.tool_name,
+                            arguments=inv.arguments,
+                        )
+                    except Exception as _pre_ex:
+                        _trace(f"layer5 pre_execute exception: {_pre_ex}")
+
                 try:
                     result = self.tools.invoke(inv.tool_name, inv.arguments,
                                                 session_pin=session_pin)
@@ -1449,6 +1520,24 @@ class LLMRouter:
                     "name": inv.tool_name,
                     "content": inv.result,
                 })
+
+                # AgDR-0044 Layer 5 — POST-EXECUTE hook.
+                # Fire-and-forget brain.write with a synthesized fragment
+                # capturing this tool call. Brain unavailable → silent skip.
+                if _mem_gate is not None and _mem_turn_state is not None:
+                    try:
+                        _mem_gate.post_execute(
+                            _mem_turn_state,
+                            tool_name=inv.tool_name,
+                            arguments=inv.arguments,
+                            result=inv.result,
+                            status=inv.status,
+                            contributing_agent=f"{provider}:{model_name}",
+                            owner_user=None,
+                            session_id=session_pin,
+                        )
+                    except Exception as _post_ex:
+                        _trace(f"layer5 post_execute exception: {_post_ex}")
 
             messages.append({"role": "tool", "tool_results": tool_results})
 
@@ -1504,6 +1593,33 @@ class LLMRouter:
 
         _trace(f"END full_text_len={len(full_text)} "
                 f"invocations={[(i.tool_name, i.status) for i in all_invocations]}")
+
+        # AgDR-0044 Layer 5 — STOP hook.
+        # Submit the full trace to brain.skill_mint. Reflexion worker
+        # scores novelty + success off-thread (Slice 5). Brain unavailable
+        # → silent skip; the turn already produced its response above.
+        if _mem_gate is not None and _mem_turn_state is not None:
+            try:
+                _outcome = (
+                    "success" if (
+                        full_text.strip() and
+                        all(i.status == "ok" for i in all_invocations)
+                    ) else "partial"
+                )
+                _mint = _mem_gate.stop(
+                    _mem_turn_state,
+                    outcome=_outcome,
+                    contributing_agent=f"{provider}:{model_name}",
+                    owner_user=None,
+                )
+                if _mint:
+                    _trace(
+                        f"layer5 skill_mint queued={_mint.get('queued')} "
+                        f"novelty={_mint.get('novelty_score', 0):.2f} "
+                        f"name={_mint.get('proposed_name', '-')}"
+                    )
+            except Exception as _stop_ex:
+                _trace(f"layer5 stop exception: {_stop_ex}")
 
         return LLMResponse(
             text=full_text,

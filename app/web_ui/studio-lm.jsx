@@ -12305,63 +12305,61 @@ const MemoryStripItem = () => {
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen }) => {
   const live = (LM_HOSTS || []).filter(h => h.state !== 'off').length;
+  // Founder + ui-ux-check 2026-05-25: footer text was `inkMuted`
+  // (#5e574f on #15151a ≈ 3.5:1) — fails WCAG AA 4.5:1. Bumped to
+  // `inkSoft` (#9b938a ≈ 7.8:1).
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     return (
       <button onClick={onClick}
         onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
         style={{
-          background:'transparent', border:0, padding:'0 4px',
+          background:'transparent', border:0, padding:'0 6px',
           cursor: onClick ? 'pointer' : 'default',
-          color: h && onClick ? LM.ink : (accent || LM.inkMuted),
+          color: h && onClick ? LM.ink : (accent || LM.inkSoft),
           fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
           transition:'color .12s',
         }}>{children}</button>
     );
   };
+  // Visual group separator — replaces the inline `·` with a thin
+  // vertical line so the eye groups [system] [session] [diag] [actions].
+  const GroupSep = () => (
+    <span style={{ width:1, height:14, background:LM.line, margin:'0 6px' }}/>
+  );
   return (
     <div style={{
       gridColumn:'1 / -1', gridRow:'2',
       background:LM.bgPanel, borderTop:`1px solid ${LM.line}`,
-      padding:'0 10px', display:'flex', alignItems:'center', gap:4,
+      padding:'0 12px', display:'flex', alignItems:'center', gap:2,
+      minHeight:28,
     }}>
+      {/* GROUP — SYSTEM */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
         <span style={{ color:LM.ok }}>●</span> server :7300 · {live}/{(LM_HOSTS || []).length} hosts
       </StripItem>
+      <GroupSep/>
+      {/* GROUP — SESSION / MODEL */}
       {session ? (
         <>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem>{session.file}</StripItem>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span> · 4.2k tok · $0.024
+            <span style={{ color:LM.ink }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
+            <span style={{ color:LM.inkMuted }}> · 4.2k tok · $0.024</span>
           </StripItem>
         </>
       ) : (
-        <>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-          <StripItem>{(LM_SESSIONS || []).length} sessions · {(LM_SESSIONS || []).filter(s=>s.state==='running').length} running</StripItem>
-        </>
+        <StripItem>{(LM_SESSIONS || []).length} sessions · {(LM_SESSIONS || []).filter(s=>s.state==='running').length} running</StripItem>
       )}
-      {/* AgDR-0042 — memory graph live stats from bridge.memory_stats.
-          Founder gets a visible heartbeat that the 197-node memory
-          graph + 176 communities are running, not a backend rumor. */}
-      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+      <GroupSep/>
+      {/* GROUP — DIAGNOSTICS */}
       <MemoryStripItem/>
-      {/* AgDR-0041 — Graph Health relocated FROM the canvas working
-          space TO the footer per founder 2026-05-25 (workshop signal:
-          "cramping the working space with useless stuff"). Click expands
-          a popover anchored above the strip. */}
-      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <HealthStripItem/>
-      {/* Minimap toggle — default OFF. User opts in via this pill if
-          they want the spatial nav PIP. Founder 2026-05-25: "move it
-          from the main working canvas". */}
-      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <MinimapToggleStripItem/>
       <div style={{ flex:1 }}/>
+      {/* GROUP — ACTIONS */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
-      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+      <GroupSep/>
       <StripItem>v1.4 prototype</StripItem>
     </div>
   );
@@ -12404,15 +12402,21 @@ const HealthStripItem = () => {
     ? `● ${counts.err}e ${counts.warn}w`
     : counts.warn > 0 ? `● ${counts.warn} warn`
     : '● healthy';
+  // Founder + ui-ux-check 2026-05-25: non-zero warning state should
+  // grab the eye, not blend with text. Add 1px border + tinted bg
+  // when issues exist.
+  const hasIssues = total > 0;
   return (
     <>
       <button onClick={() => setOpen(o => !o)}
         data-testid="health-strip-item"
         title={`Graph health · ${counts.err} errors · ${counts.warn} warnings`}
         style={{
-          background:'transparent', border:0, padding:'0 6px', cursor:'pointer',
+          background: hasIssues ? col + '14' : 'transparent',
+          border: hasIssues ? `1px solid ${col}66` : `1px solid transparent`,
+          padding:'1px 7px', borderRadius:3, cursor:'pointer',
           color: col, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
-          transition:'color .12s',
+          transition:'color .12s, border-color .12s',
         }}>{label}</button>
       {open && (
         <div onClick={() => setOpen(false)} style={{

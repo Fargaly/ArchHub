@@ -1,0 +1,1209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — workshop v2 · respecting signed design · 2026-05-25</title>
+<style>
+/* === EXACT AgDR-0015 TOKENS (do not modify) ============================== */
+:root{
+  /* dark palette — studio-lm.jsx:13-23 */
+  --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+  --bgDeep:#0a0a0d; --bgCanvas:#101015; --bgInk:#18181e;
+  --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+  --line:#26262e; --lineSoft:#1e1e24; --lineHair:#1a1a20;
+  --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812; --accentHi:#e8896a;
+  --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f;
+  --cyan:#5fb3b3; --purple:#a98cd6; --blue:#7898d6; --frost:#90c0ff;
+  --pink:#e29bb5; --yellow:#e3b950;
+  /* spacing 4-base · 8 steps */
+  --s0:0px; --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:28px; --s7:40px;
+  /* type 6 steps */
+  --fxs:10px; --fsm:11px; --fbase:13px; --fmd:15px; --flg:18px; --fxl:22px;
+  /* radius 6 steps */
+  --rxs:3px; --rsm:5px; --rmd:8px; --rlg:12px; --rpill:999px;
+  /* elevation 5 tiers */
+  --sh1:0 1px 2px rgba(0,0,0,0.3); --sh2:0 4px 12px rgba(0,0,0,0.4);
+  --sh3:0 8px 24px rgba(0,0,0,0.5); --sh4:0 16px 48px rgba(0,0,0,0.6);
+  /* motion */
+  --mfast:120ms cubic-bezier(.4,0,.2,1); --mbase:200ms cubic-bezier(.4,0,.2,1);
+  --mslow:320ms cubic-bezier(.4,0,.2,1); --mspring:380ms cubic-bezier(.34,1.56,.64,1);
+  /* fonts */
+  --serif:'Instrument Serif',Georgia,serif;
+  --sans:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SF Mono,Consolas,monospace;
+  /* per-host brand stripes (AgDR-0015:207-226) */
+  --brand-revit:#0696D7; --brand-autocad:#E87D0D; --brand-max:#a98cd6;
+  --brand-rhino:#b8b4ab; --brand-blender:#E87D0D; --brand-speckle:#3a6acc;
+}
+@media (prefers-reduced-motion){ * { animation-duration:0.001ms!important; transition-duration:0.001ms!important; } }
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);font:var(--fbase)/1.55 var(--sans)}
+button{font-family:inherit}
+h1{font-family:var(--serif);font-size:36px;font-weight:600;line-height:1.1;letter-spacing:-0.025em}
+h2{font-family:var(--serif);font-size:var(--fxl);letter-spacing:-0.015em;margin-bottom:var(--s3)}
+h3{font-size:var(--fmd);margin-bottom:var(--s2)}
+h4{font-family:var(--mono);font-size:var(--fxs);text-transform:uppercase;letter-spacing:0.1em;color:var(--inkMuted);margin-bottom:var(--s2)}
+p{color:var(--inkSoft);margin-bottom:var(--s2)}
+code{font-family:var(--mono);background:var(--bgSoft);padding:1px 6px;border-radius:var(--rxs);font-size:var(--fxs);color:var(--accentHi)}
+kbd{font-family:var(--mono);font-size:var(--fxs);background:var(--bgSoft);border:1px solid var(--lineSoft);padding:1px 5px;border-radius:var(--rxs)}
+strong{color:var(--ink)}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(14,14,17,0.96);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);padding:var(--s3) var(--s5);display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
+nav.top .brand{font-family:var(--serif);font-size:var(--flg);letter-spacing:-0.02em}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--inkSoft);padding:5px 10px;border-radius:var(--rmd);font-size:var(--fsm);cursor:pointer}
+nav.top a.chip:hover{color:var(--ink);background:var(--bgPanel)}
+nav.top .spacer{flex:1}
+nav.top .tag{font-family:var(--mono);font-size:var(--fxs);color:var(--accent);padding:3px 8px;border:1px solid var(--accent);border-radius:var(--rxs);letter-spacing:0.08em}
+
+header.head{max-width:1280px;margin:0 auto;padding:var(--s6) var(--s5) var(--s4)}
+section.proto{max-width:1280px;margin:0 auto;padding:var(--s6) var(--s5);border-bottom:1px solid var(--line)}
+.tagline{font-family:var(--mono);font-size:var(--fxs);color:var(--accent);text-transform:uppercase;letter-spacing:0.14em;margin-bottom:var(--s2)}
+.note{background:var(--accentDim);border:1px solid var(--accent);border-left:3px solid var(--accent);
+  border-radius:var(--rmd);padding:var(--s3) var(--s4);margin-top:var(--s3);font-size:var(--fsm);color:var(--ink)}
+.note strong{color:var(--accentHi)}
+
+/* === FRAME (app window) ================================================== */
+.frame{background:var(--bg);border:1px solid var(--line);border-radius:var(--rlg);overflow:hidden;
+  margin-top:var(--s4);box-shadow:var(--sh4)}
+.titlebar{background:var(--bgPanel);border-bottom:1px solid var(--line);padding:var(--s2) var(--s4);
+  display:flex;align-items:center;gap:var(--s3);font-size:var(--fxs);color:var(--inkSoft)}
+.titlebar .traffic{display:flex;gap:6px}
+.titlebar .traffic span{width:11px;height:11px;border-radius:50%}
+.titlebar .traffic span:nth-child(1){background:#ff5f57}
+.titlebar .traffic span:nth-child(2){background:#febc2e}
+.titlebar .traffic span:nth-child(3){background:#28c840}
+.titlebar .crumb{color:var(--ink);font-family:var(--mono);font-size:var(--fxs)}
+
+/* === HOME (composer-first, per archhub-redesign A, REFINED to centered) === */
+.home{padding:var(--s7) var(--s7);display:flex;flex-direction:column;align-items:center;gap:var(--s4);min-height:560px;background:var(--bg)}
+.home .greet{font-size:var(--fbase);color:var(--inkMuted);font-family:var(--mono);letter-spacing:0.04em}
+.home h1{text-align:center;margin-top:var(--s2)}
+.home h1 .em{color:var(--accent);font-style:italic}
+.home .sub{color:var(--inkSoft);font-size:var(--fbase);text-align:center;max-width:540px;margin-top:var(--s2)}
+
+.composer-block{width:100%;max-width:780px;background:var(--bgPanel);border:1px solid var(--line);
+  border-radius:var(--rlg);padding:var(--s4);margin-top:var(--s4);box-shadow:var(--sh1)}
+.composer-block textarea{width:100%;background:transparent;border:0;color:var(--ink);
+  font:var(--fmd)/1.5 var(--sans);min-height:56px;resize:vertical;outline:none}
+.composer-block textarea::placeholder{color:var(--inkMuted)}
+.crow{display:flex;gap:var(--s2);align-items:center;padding-top:var(--s3);margin-top:var(--s2);border-top:1px solid var(--lineSoft)}
+.llm-chip{display:flex;align-items:center;gap:6px;background:var(--accentDim);border:1px solid var(--accent);
+  color:var(--accentHi);padding:5px 10px;border-radius:var(--rsm);font-size:var(--fsm);cursor:pointer}
+.llm-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.mode-row{display:flex;gap:4px}
+.mode{padding:5px 10px;border:1px solid var(--lineSoft);background:transparent;color:var(--inkSoft);
+  border-radius:var(--rsm);font-size:var(--fsm);cursor:pointer}
+.mode.on{background:var(--bgSoft);color:var(--ink);border-color:var(--inkMuted)}
+.crow .spacer{flex:1}
+.send{width:34px;height:34px;border-radius:var(--rmd);background:var(--accent);color:#000;border:0;
+  font-size:18px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center}
+
+.chips{display:flex;flex-wrap:wrap;gap:var(--s2);max-width:780px;margin-top:var(--s5);justify-content:center}
+.chip-starter{display:flex;align-items:center;gap:6px;padding:7px 13px;background:var(--bgPanel);
+  border:1px solid var(--line);border-radius:var(--rpill);font-size:var(--fsm);color:var(--inkSoft);cursor:pointer}
+.chip-starter:hover{background:var(--bgHover);color:var(--ink);border-color:var(--inkMuted)}
+.chip-starter .ico{color:var(--accent);font-family:var(--mono)}
+
+.home-row{width:100%;max-width:1000px;margin-top:var(--s6)}
+.row-h{font-family:var(--mono);font-size:var(--fxs);text-transform:uppercase;letter-spacing:0.1em;
+  color:var(--inkMuted);margin-bottom:var(--s3);display:flex;align-items:center}
+.row-h a{color:var(--accent);margin-left:auto;text-decoration:none;cursor:pointer}
+.recent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s3)}
+.recent{background:var(--bgPanel);border:1px solid var(--line);border-radius:var(--rmd);padding:var(--s3);
+  height:120px;position:relative;cursor:pointer;transition:border-color var(--mfast)}
+.recent:hover{border-color:var(--accent)}
+.recent .rtitle{font-size:var(--fbase);color:var(--ink);font-weight:500;margin-bottom:var(--s1)}
+.recent .rmeta{font-size:var(--fsm);color:var(--inkMuted);font-family:var(--mono)}
+.recent .rtag{position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:9px;
+  padding:2px 6px;border-radius:var(--rxs);letter-spacing:0.08em;text-transform:uppercase}
+.recent .rtag.live{background:rgba(126,193,142,0.15);color:var(--ok)}
+.recent .rtag.draft{background:rgba(229,178,90,0.15);color:var(--warn)}
+
+.skills-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3)}
+.skill-card{background:var(--bgPanel);border:1px solid var(--line);border-radius:var(--rmd);padding:var(--s4);
+  cursor:pointer;transition:border-color var(--mfast)}
+.skill-card:hover{border-color:var(--accent)}
+.skill-card .sk-icon{width:32px;height:32px;border-radius:var(--rmd);
+  background:linear-gradient(135deg,var(--accent),var(--accentHi));display:flex;align-items:center;justify-content:center;
+  color:#000;font-size:16px;margin-bottom:var(--s3)}
+.skill-card h4{font-family:var(--sans);font-size:var(--fmd);text-transform:none;letter-spacing:0;color:var(--ink);margin-bottom:6px}
+.skill-card p{font-size:var(--fsm);color:var(--inkSoft);margin-bottom:var(--s2);line-height:1.5}
+.skill-card .by{font-family:var(--mono);font-size:var(--fxs);color:var(--inkMuted)}
+
+/* === STUDIO LAYOUT (per studio-v2-consolidated) ========================== */
+.studio{display:grid;grid-template-columns:64px 380px 1fr 360px;min-height:620px}
+
+/* Rail (icon strip) */
+.rail{background:var(--bgPanel);border-right:1px solid var(--line);display:flex;flex-direction:column;
+  align-items:center;padding:var(--s3) 0;gap:var(--s1)}
+.ricon{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:var(--rmd);
+  cursor:pointer;font-family:var(--mono);font-size:var(--fsm);color:var(--inkSoft);position:relative;transition:background var(--mfast)}
+.ricon:hover{background:var(--bgHover);color:var(--ink)}
+.ricon.on{color:var(--accent);background:var(--accentDim)}
+.ricon .tip{position:absolute;left:50px;top:50%;transform:translateY(-50%);background:var(--bgSoft);
+  border:1px solid var(--line);padding:4px 8px;border-radius:var(--rxs);font-size:var(--fxs);color:var(--ink);
+  white-space:nowrap;opacity:0;pointer-events:none;transition:opacity var(--mfast);z-index:5}
+.ricon:hover .tip{opacity:1}
+.rail .gap{flex:1}
+
+/* Composer rail (left middle) — studio-v2-consolidated */
+.composer-rail{background:var(--bgPanel);border-right:1px solid var(--line);display:flex;flex-direction:column}
+.cr-head{padding:var(--s3) var(--s4);border-bottom:1px solid var(--lineSoft);display:flex;align-items:center;gap:var(--s2)}
+.cr-head .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 1.8s infinite}
+.cr-head .lbl{font-family:var(--mono);font-size:var(--fxs);color:var(--accent);letter-spacing:0.18em;text-transform:uppercase;flex:1}
+.cr-head .mode{font-family:var(--mono);font-size:9px;color:var(--inkMuted)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.cr-body{flex:1;overflow-y:auto;padding:var(--s4)}
+.turn{margin-bottom:var(--s4)}
+.turn .who{font-family:var(--mono);font-size:9px;color:var(--inkMuted);letter-spacing:0.18em;text-transform:uppercase;margin-bottom:6px}
+.turn .bubble{background:var(--bgSoft);color:var(--ink);border:1px solid var(--lineSoft);padding:10px 12px;border-radius:var(--rsm);font-size:var(--fbase)}
+.turn .assist{font-size:var(--fbase);color:var(--ink);padding:0 0 0 4px}
+.tool{background:var(--bgSoft);border:1px solid var(--lineSoft);border-radius:var(--rsm);padding:8px 10px;
+  margin:6px 0;font-family:var(--mono);font-size:10.5px;color:var(--ink)}
+.tool.ok{border-color:var(--ok);background:#152419}
+.tool .name{color:var(--accent)}
+.tool .args{color:var(--inkSoft)}
+.tool .result{color:var(--inkMuted);padding-top:4px;border-top:1px dashed var(--lineSoft);margin-top:4px}
+.cr-input{padding:var(--s3) var(--s4);border-top:1px solid var(--lineSoft)}
+.cr-input textarea{width:100%;background:var(--bgSoft);border:1px solid var(--line);border-radius:var(--rsm);
+  padding:8px 10px;font:12.5px var(--sans);color:var(--ink);resize:none;min-height:54px;outline:none}
+.cr-hint{display:flex;gap:14px;margin-top:6px;font-family:var(--mono);font-size:9.5px;color:var(--inkMuted)}
+
+/* === CANVAS (per host-node-direction-a-comfyui-v2-ecosystem) ============= */
+.canvas{background:var(--bgCanvas);position:relative;overflow:hidden;
+  background-image:radial-gradient(circle at 1px 1px, var(--lineHair) 1px, transparent 0);
+  background-size:16px 16px}
+.canvas-toolbar{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:var(--bgPanel);
+  border:1px solid var(--line);border-radius:var(--rmd);padding:6px 8px;display:flex;gap:6px;align-items:center;z-index:10}
+.cti{width:24px;height:24px;border-radius:var(--rxs);display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:12px;color:var(--inkSoft);cursor:pointer;transition:all var(--mfast)}
+.cti:hover{background:var(--bgHover);color:var(--ink)}
+.ct-badge{padding:3px 9px;border-radius:var(--rxs);background:var(--accentDim);border:1px solid var(--accent);
+  color:var(--accent);font-family:var(--mono);font-size:9.5px;letter-spacing:0.06em}
+
+/* SVG wire layer */
+.wires{position:absolute;inset:0;pointer-events:none}
+.wires path{fill:none;stroke-width:2.4;opacity:0.85}
+.wires path.cook{stroke-dasharray:6 4;animation:flow 1.2s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+
+/* Host node v2 (AgDR-0024 — Direction A) */
+.host-node{position:absolute;background:var(--bgPanel);border:1px solid var(--line);border-top:3px solid var(--brand-revit);
+  border-radius:var(--rmd);box-shadow:var(--sh3);width:280px;font-size:var(--fsm)}
+.host-node[data-host="autocad"]{border-top-color:var(--brand-autocad)}
+.host-node[data-host="comfy"]{border-top-color:var(--purple)}
+.host-node[data-host="dashscope"]{border-top-color:var(--brand-autocad)}
+.host-title{padding:8px 12px;background:var(--bgSoft);display:flex;align-items:center;gap:8px}
+.host-icon{font-family:var(--mono);font-size:14px;color:var(--brand-revit)}
+.host-node[data-host="autocad"] .host-icon{color:var(--brand-autocad)}
+.host-node[data-host="comfy"] .host-icon{color:var(--purple)}
+.host-node[data-host="dashscope"] .host-icon{color:var(--brand-autocad)}
+.host-cat{font-family:var(--mono);font-size:9px;letter-spacing:0.18em;color:var(--brand-revit);text-transform:uppercase}
+.host-node[data-host="autocad"] .host-cat{color:var(--brand-autocad)}
+.host-node[data-host="comfy"] .host-cat{color:var(--purple)}
+.host-node[data-host="dashscope"] .host-cat{color:var(--brand-autocad)}
+.host-doc{font-family:var(--mono);font-size:9px;color:var(--inkMuted)}
+.flag-bar{display:flex;gap:4px;margin-left:auto}
+.flag{width:8px;height:8px;border-radius:50%;background:transparent;border:1.5px solid var(--inkDim)}
+.flag.pin{background:var(--purple);border-color:var(--purple)}
+.flag.freeze{background:var(--cyan);border-color:var(--cyan)}
+.flag.bypass{background:var(--warn);border-color:var(--warn)}
+
+/* Main sockets (left/right of node body) */
+.main-sock{position:absolute;width:13px;height:13px;border-radius:50%;background:var(--bgPanel);
+  border:2.5px solid var(--inkSoft);box-shadow:0 0 0 2px var(--bg)}
+.main-sock.left{left:-7px;top:46px}
+.main-sock.right{right:-7px;top:46px;background:var(--blue);border-color:var(--blue)}
+.main-sock-label{position:absolute;left:8px;top:36px;font-family:var(--mono);font-size:9px;color:var(--inkMuted);letter-spacing:0.04em}
+.main-sock-label.right{left:auto;right:8px}
+
+/* Op grid */
+.op-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:9px}
+.op-tile{background:var(--bgSoft);border:1px solid var(--lineSoft);border-radius:var(--rxs);
+  padding:6px 8px;font-family:var(--mono);font-size:9.5px;color:var(--inkSoft);position:relative}
+.op-tile.cfg{border-left:2px solid var(--blue)}
+.op-pill{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--inkDim)}
+.op-tile.done .op-pill{background:var(--ok)}
+.op-tile.run .op-pill{background:var(--warn);animation:pulse 1s infinite}
+.op-name{color:var(--ink);font-size:10px}
+.op-time{color:var(--inkMuted);font-size:8.5px}
+.op-active{grid-column:span 4;background:var(--bgHover);border:1px solid var(--brand-revit);border-radius:var(--rsm);padding:10px 12px;margin-top:3px}
+.host-node[data-host="comfy"] .op-active{border-color:var(--purple)}
+.host-node[data-host="dashscope"] .op-active{border-color:var(--brand-autocad)}
+.op-active-row{display:flex;align-items:center;gap:8px}
+.op-active-row .pill{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.op-active-row .opname{font-size:11.5px;color:var(--ink);flex:1;font-weight:600}
+.op-active-row .meta{font-family:var(--mono);font-size:8.5px;color:var(--blue);letter-spacing:0.06em}
+
+/* Sections (MAIN / ADVANCED / OUTPUTS) */
+.op-section{padding:4px 9px;border-top:1px solid var(--lineSoft)}
+.op-sec-head{display:flex;align-items:center;gap:6px;padding:6px 0;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:0.18em;cursor:pointer;text-transform:uppercase}
+.op-sec-head .chev{transition:transform var(--mfast)}
+.op-sec-head.collapsed .chev{transform:rotate(-90deg)}
+.op-sec-head.in{color:var(--purple)}
+.op-sec-head.out{color:var(--cyan)}
+.op-sec-head .ct{margin-left:auto;color:var(--inkDim)}
+.param-row{display:grid;grid-template-columns:22px 120px 1fr 22px;gap:6px;align-items:center;padding:3px 0;
+  font-family:var(--mono);font-size:10px;position:relative}
+.row-sock-l, .row-sock-r{width:10px;height:10px;border-radius:50%;border:1.5px dashed var(--inkMuted);
+  background:transparent;opacity:0;transition:opacity var(--mfast)}
+.param-row:hover .row-sock-l, .param-row:hover .row-sock-r{opacity:0.55}
+.param-row.wired-in .row-sock-l{opacity:1;background:var(--purple);border:1.5px solid var(--purple)}
+.param-row.wired-out .row-sock-r{opacity:1;background:var(--cyan);border:1.5px solid var(--cyan)}
+.row-key{color:var(--inkMuted)}
+.row-val{background:var(--bg);border:1px solid var(--lineSoft);border-radius:var(--rxs);
+  padding:3px 8px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.param-row.wired-in .row-val{background:#2c1a2e;border-color:var(--purple)}
+.param-row.wired-out .row-val{background:#1d2c2c;border-color:var(--cyan)}
+
+/* Rail sockets (right edge — OUTPUTS PLUCK) */
+.rail-sock{position:absolute;width:13px;height:13px;border-radius:50%;background:var(--bgPanel);
+  border:2.5px solid var(--cyan);box-shadow:0 0 0 2px var(--bg);right:-7px}
+.rail-sock.purple{border-color:var(--purple)}
+.rail-sock.blue{border-color:var(--blue)}
+.rail-sock.yellow{border-color:var(--yellow)}
+
+/* Ghost (typed non-host) node */
+.ghost-node{position:absolute;background:var(--bgPanel);border:1px solid var(--line);border-top:2px solid var(--ok);
+  border-radius:var(--rmd);box-shadow:var(--sh2);width:200px;font-size:var(--fsm)}
+.ghost-node[data-kind="skill"]{border-top-color:var(--ok)}
+.ghost-node[data-kind="ai_chat"]{border-top-color:var(--purple)}
+.ghost-node[data-kind="ai_plan"]{border-top-color:var(--accent)}
+.ghost-node[data-kind="watch"]{border-top-color:var(--blue)}
+.ghost-node[data-kind="output"]{border-top-color:var(--cyan)}
+.ghost-node[data-kind="constant"]{border-top-color:var(--inkSoft)}
+.gn-tag{font-family:var(--mono);font-size:8px;letter-spacing:0.16em;color:var(--inkMuted);
+  padding:6px 10px 0;text-transform:uppercase}
+.gn-title{padding:0 10px 6px;font-size:11.5px;color:var(--ink);font-weight:500}
+.gn-meta{padding:0 10px 8px;font-family:var(--mono);font-size:9px;color:var(--inkMuted)}
+.gn-sock{position:absolute;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--inkSoft);
+  background:var(--bgPanel);box-shadow:0 0 0 2px var(--bg)}
+.gn-sock.l{left:-6px}
+.gn-sock.r{right:-6px;background:var(--blue);border-color:var(--blue)}
+
+/* Node state overlays */
+.host-node[data-state="frozen"]{opacity:0.7;border-style:dashed}
+.host-node[data-state="frozen"]::after{content:"❄";position:absolute;top:-9px;right:-9px;
+  width:18px;height:18px;border-radius:50%;background:var(--frost);color:#000;font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--sh1)}
+.host-node[data-state="bypassed"]{border-style:dashed;opacity:0.7}
+.host-node[data-state="bypassed"]::after{content:"○";position:absolute;top:-9px;right:-9px;
+  width:18px;height:18px;border-radius:50%;background:var(--warn);color:#000;font-size:11px;
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--sh1)}
+
+/* === RIGHT INSPECTOR (per studio-v2 + archhub-redesign D refined) ======== */
+.insp{background:var(--bgPanel);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.insp-head{padding:var(--s3) var(--s4);border-bottom:1px solid var(--lineSoft);display:flex;align-items:center;gap:var(--s2)}
+.panel-stripe{width:7px;height:7px;background:var(--accent);border-radius:1px}
+.insp-host-label{font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:0.18em;text-transform:uppercase}
+.insp-title{font-family:var(--serif);font-size:var(--flg);letter-spacing:-0.015em;padding:0 var(--s4) var(--s1);color:var(--ink)}
+.insp-sub{font-family:var(--mono);font-size:9px;color:var(--inkMuted);padding:0 var(--s4) var(--s3)}
+.insp-tabs{display:flex;border-bottom:1px solid var(--lineSoft);padding:0 var(--s3);gap:1px}
+.insp-tab{padding:6px 11px;font-family:var(--mono);font-size:9.5px;color:var(--inkMuted);letter-spacing:0.06em;
+  text-transform:uppercase;border-radius:var(--rxs) var(--rxs) 0 0;cursor:pointer;border-bottom:2px solid transparent}
+.insp-tab.on{color:var(--ink);background:var(--bgSoft);border-bottom-color:var(--accent)}
+.insp-body{flex:1;overflow-y:auto;padding:var(--s3) var(--s4)}
+.insp-grp{font-family:var(--mono);font-size:8.5px;letter-spacing:0.18em;color:var(--inkMuted);
+  text-transform:uppercase;padding:var(--s3) 0 var(--s1)}
+.insp-grp.in{color:var(--purple)}
+.insp-grp.out{color:var(--cyan)}
+.insp-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-family:var(--mono);font-size:10px}
+.insp-row .ms{width:8px;height:8px;border-radius:50%;border:1.5px dashed var(--inkMuted);flex-shrink:0}
+.insp-row.wired-in .ms{background:var(--purple);border:1.5px solid var(--purple)}
+.insp-row.wired-out .ms{background:var(--cyan);border:1.5px solid var(--cyan)}
+.insp-row .k{color:var(--inkMuted);min-width:120px}
+.insp-row .v{flex:1;background:var(--bgSoft);border:1px solid var(--lineSoft);border-radius:var(--rxs);
+  padding:3px 8px;color:var(--ink)}
+.insp-row.wired-in .v{background:#2c1a2e;border-color:var(--purple)}
+.insp-row.wired-out .v{background:#1d2c2c;border-color:var(--cyan)}
+
+/* Verb-row (Inspector freeze/bypass/pin) */
+.verb-row{display:flex;gap:6px;padding:var(--s3) 0}
+.verb{flex:1;padding:5px 8px;background:var(--bgSoft);border:1px solid var(--lineSoft);border-radius:var(--rxs);
+  color:var(--inkSoft);font-family:var(--mono);font-size:9.5px;letter-spacing:0.08em;cursor:pointer;text-align:center}
+.verb.on.pin{background:var(--purple);color:#000}
+.verb.on.frozen{background:var(--cyan);color:#000}
+.verb.on.bypass{background:var(--warn);color:#000}
+
+/* Plan tab (slim — per archhub-redesign D refined) */
+.plan-slim{display:flex;flex-direction:column;gap:8px}
+.plan-meta{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.plan-meta-row{background:var(--bgSoft);border:1px solid var(--lineSoft);padding:6px 8px;border-radius:var(--rxs);font-family:var(--mono);font-size:10px}
+.plan-meta-row .k{color:var(--inkMuted);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase}
+.plan-meta-row .v{color:var(--ink);margin-top:2px}
+.plan-decisions{display:flex;flex-wrap:wrap;gap:4px;margin-top:var(--s2)}
+.plan-decisions .dpill{background:var(--accentDim);color:var(--accent);font-family:var(--mono);font-size:9px;
+  padding:2px 7px;border-radius:var(--rxs);letter-spacing:0.06em}
+.plan-actions{display:flex;gap:6px;margin-top:var(--s3)}
+.plan-actions button{flex:1;background:var(--bgSoft);border:1px solid var(--lineSoft);color:var(--ink);
+  padding:7px 10px;border-radius:var(--rxs);font-family:var(--mono);font-size:9.5px;cursor:pointer;text-align:left}
+.plan-actions button.primary{color:var(--accent);border-color:var(--accent)}
+
+/* === TOPBAR + STATUS BAR ================================================ */
+.topbar{height:38px;background:var(--bgPanel);border-bottom:1px solid var(--line);padding:0 var(--s4);
+  display:flex;align-items:center;gap:var(--s4);font-family:var(--mono);font-size:var(--fsm);color:var(--inkSoft)}
+.topbar .tb-brand{font-family:var(--serif);font-size:var(--flg);color:var(--ink);letter-spacing:-0.01em}
+.topbar .crumbs{color:var(--inkMuted)}
+.topbar .crumbs strong{color:var(--ink);font-weight:400}
+.topbar .gap{flex:1}
+.topbar .mode-pill{background:var(--accentDim);color:var(--accent);border:1px solid var(--accent);
+  padding:4px 10px;border-radius:var(--rxs);font-size:var(--fsm);letter-spacing:0.06em}
+.topbar .model-chip{background:var(--bgSoft);border:1px solid var(--line);color:var(--ink);padding:4px 10px;
+  border-radius:var(--rxs);display:flex;align-items:center;gap:6px}
+.topbar .model-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+.statusbar{background:var(--bgPanel);border-top:1px solid var(--line);padding:6px var(--s4);
+  display:flex;align-items:center;gap:var(--s4);font-family:var(--mono);font-size:var(--fxs);color:var(--inkSoft)}
+.sseg{display:flex;align-items:center;gap:4px;cursor:pointer}
+.sseg:hover{color:var(--ink)}
+.sseg .d{width:6px;height:6px;border-radius:50%}
+.sseg.ok .d{background:var(--ok)}
+.sseg.warn .d{background:var(--warn)}
+.sseg.live .d{background:var(--ok);animation:pulse 1.5s ease-in-out infinite}
+.statusbar .gap{flex:1}
+.statusbar .cost{color:var(--accent)}
+
+/* === CMD-K POPUP (per host-node-direction-a + AgDR-0014) ================= */
+.cmdk-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);
+  display:none;align-items:flex-start;justify-content:center;padding-top:80px;z-index:30}
+.cmdk-overlay.on{display:flex}
+.lp{width:380px;background:var(--bgPanel);border:1px solid var(--line);border-radius:var(--rmd);
+  box-shadow:var(--sh4);overflow:hidden}
+.lp-head{padding:8px 12px;border-bottom:1px solid var(--lineSoft);font-family:var(--mono);font-size:9px;
+  color:var(--accent);letter-spacing:0.18em;text-transform:uppercase}
+.lp-input{margin:8px 10px;padding:5px 8px;background:var(--bg);border:1px solid var(--line);
+  border-radius:var(--rxs);font-family:var(--mono);font-size:10px;color:var(--ink);width:calc(100% - 20px);outline:none}
+.lp-group{padding:6px 0}
+.lp-group-label{padding:4px 12px;font-family:var(--mono);font-size:9px;color:var(--inkDim);letter-spacing:0.12em;text-transform:uppercase}
+.lp-hit{padding:5px 12px;display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:9.5px}
+.lp-hit:hover, .lp-hit.sel{background:var(--bgHover)}
+.lp-hit .mark{width:10px;text-align:center;color:var(--ok)}
+.lp-hit.create .mark{color:var(--accent)}
+.lp-hit .nm{flex:1;color:var(--ink)}
+.lp-hit .mt{font-size:8.5px;color:var(--inkMuted)}
+.lp-hit .fxpill{font-family:var(--mono);font-size:8.5px;padding:1px 5px;border-radius:var(--rxs);letter-spacing:0.06em}
+.lp-hit .fxpill.pure{background:#1a221b;color:var(--ok)}
+.lp-hit .fxpill.host{background:#231f14;color:var(--warn)}
+.lp-hit .fxpill.net{background:#161d2a;color:var(--blue)}
+
+/* === REFINEMENT ALTS · home-3-up ======================================== */
+.home-alts{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s4);margin-top:var(--s4)}
+.alt{background:var(--bgPanel);border:1px solid var(--line);border-radius:var(--rmd);padding:var(--s3);cursor:pointer}
+.alt h3{font-size:var(--fbase);margin-bottom:var(--s2)}
+.alt .miniframe{background:var(--bgCanvas);border-radius:var(--rxs);height:160px;padding:var(--s2);position:relative;overflow:hidden}
+.alt p{font-size:var(--fxs);color:var(--inkMuted);margin-top:var(--s2)}
+.alt .verdict{margin-top:var(--s2);display:flex;gap:4px}
+.alt .verdict button{flex:1;background:var(--bgSoft);border:1px solid var(--lineSoft);color:var(--inkSoft);
+  padding:5px 8px;border-radius:var(--rxs);font-family:var(--mono);font-size:9px;cursor:pointer;letter-spacing:0.06em}
+.alt .verdict button.on.yes{background:var(--ok);color:#000;border-color:var(--ok)}
+.alt .verdict button.on.no{background:var(--err);color:#fff;border-color:var(--err)}
+
+/* === FOOTER ============================================================= */
+footer{max-width:1280px;margin:0 auto;padding:var(--s6) var(--s5);color:var(--inkMuted);font-size:var(--fxs);text-align:center}
+footer code{color:var(--accentHi)}
+
+/* === VERDICT ROW ======================================================== */
+.verdict-block{background:var(--accentDim);border:1px solid var(--accent);border-radius:var(--rlg);
+  padding:var(--s4);margin-top:var(--s4)}
+.verdict-block h3{color:var(--accentHi);margin-bottom:var(--s2)}
+.vbtns{display:flex;gap:var(--s2)}
+.vbtns button{flex:1;background:var(--bgPanel);border:1px solid var(--line);color:var(--ink);
+  padding:10px 14px;border-radius:var(--rmd);font-size:var(--fbase);cursor:pointer}
+.vbtns button:hover{border-color:var(--accent)}
+.vbtns button.on{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+.vout{margin-top:var(--s3);font-family:var(--mono);font-size:var(--fsm);color:var(--accentHi);min-height:18px}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <span class="brand">arch<span>Hub</span> · workshop v2</span>
+  <a class="chip" href="#audit">audit</a>
+  <a class="chip" href="#home-proto">home</a>
+  <a class="chip" href="#studio-proto">studio</a>
+  <a class="chip" href="#node-proto">nodes</a>
+  <a class="chip" href="#wire-proto">wires</a>
+  <a class="chip" href="#alts">alts</a>
+  <a class="chip" href="#verdict">verdict</a>
+  <span class="spacer"></span>
+  <span class="tag">REFINE · v2 · respects signed design</span>
+</nav>
+
+<header class="head">
+  <h1>Workshop v2 — <span style="color:var(--accent);font-style:italic">no more guessing</span></h1>
+  <p style="font-size:var(--fmd);margin-top:var(--s2)">v1 ignored AgDR-0015 design tokens, AgDR-0024 HostNodeV2 anatomy, AgDR-0040 modular logic, archhub-redesign founder picks. v2 rebuilds from your signed sources.</p>
+  <div class="note">
+    <strong>What v1 got wrong (founder verbatim):</strong>
+    1. "cramped fucking home" — home was a 60% scaled tile-grid inside the canvas pane, not full-screen<br>
+    2. "where are the fucking wires and node design" — used generic boxes + CSS dashes instead of HostNodeV2 op-grid + bezier SVG wires with per-type colors<br>
+    3. "design guidelines that you follow?" — never read AgDR-0015 tokens (Instrument Serif, 6-step type scale, 8-step spacing, 4-tier elevation)<br>
+    4. "nonsense panels users won't use" — invented a 3-tab right rail (Inspector/Health/Plans). Per <strong>assimilation mandate</strong>: <em>"add Plan as a tab inside the existing Inspector"</em>, not a parallel panel.
+    <br><br>
+    <strong>This v2 uses verbatim:</strong> archhub-redesign-2026-05-24 home (REFINE picked) · host-node-direction-a-comfyui-v2-ecosystem node anatomy (11 constraints all approved 2026-05-21) · modular-logic-nodes wire colors · AgDR-0015 tokens · studio-v2-consolidated studio layout · AgDR-0014 Library Cmd-K · AgDR-0039 Home-always-on-boot.
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="home-proto">
+  <div class="tagline">home · composer-first · per archhub-redesign A (REFINE)</div>
+  <h2>Home screen — full-width, hero, the recents + skills founder signed off</h2>
+  <div class="frame">
+    <div class="titlebar"><div class="traffic"><span></span><span></span><span></span></div>
+      <span class="crumb">archhub · home · auto</span></div>
+    <div class="topbar">
+      <span class="tb-brand">archhub</span>
+      <span class="crumbs">project · <strong>Office Building 14</strong></span>
+      <span class="gap"></span>
+      <span class="mode-pill">PLAN</span>
+      <span class="model-chip"><span class="dot"></span>Claude Sonnet 4.6 ▾</span>
+    </div>
+    <div class="home">
+      <div class="greet">Welcome back, Ahmed</div>
+      <h1>What are we <span class="em">building</span> today?</h1>
+
+      <div class="composer-block">
+        <textarea placeholder="Describe the workflow — &quot;walls in living room, tag by area, push to Revit&quot;"></textarea>
+        <div class="crow">
+          <span class="llm-chip"><span class="dot"></span>Claude Sonnet 4.6 ▾</span>
+          <div class="mode-row">
+            <button class="mode on">Plan</button>
+            <button class="mode">Auto</button>
+            <button class="mode">YOLO</button>
+          </div>
+          <span class="spacer"></span>
+          <span style="font-family:var(--mono);font-size:var(--fxs);color:var(--inkMuted)">⌘↵ to send</span>
+          <button class="send">↑</button>
+        </div>
+      </div>
+
+      <div class="chips">
+        <div class="chip-starter"><span class="ico">▣</span>Revit → AI hero render</div>
+        <div class="chip-starter"><span class="ico">▦</span>Photo → host mass</div>
+        <div class="chip-starter"><span class="ico">⌖</span>Drone → Revit walls</div>
+        <div class="chip-starter"><span class="ico">⟁</span>Text → ai.plan</div>
+        <div class="chip-starter"><span class="ico">⌥</span>Tag walls by room</div>
+        <div class="chip-starter"><span class="ico">⊞</span>Wall takeoff QTO</div>
+      </div>
+
+      <div class="home-row">
+        <div class="row-h">Recent <a>View all →</a></div>
+        <div class="recent-grid">
+          <div class="recent">
+            <span class="rtag live">LIVE</span>
+            <div class="rtitle">Tower 2 · floor plan tagging</div>
+            <div class="rmeta">3 hrs · 12 turns · $0.34</div>
+          </div>
+          <div class="recent">
+            <span class="rtag live">LIVE</span>
+            <div class="rtitle">Hero render · golden hour</div>
+            <div class="rmeta">yesterday · 8 turns · $0.18</div>
+          </div>
+          <div class="recent">
+            <span class="rtag draft">DRAFT</span>
+            <div class="rtitle">Drone façade scan</div>
+            <div class="rmeta">2d · 3 turns · $0.08</div>
+          </div>
+          <div class="recent">
+            <div class="rtitle">Wall takeoff · level 3</div>
+            <div class="rmeta">3d · 6 turns · $0.12</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="home-row">
+        <div class="row-h">Suggested skills · ranked by memory.communities()</div>
+        <div class="skills-grid">
+          <div class="skill-card">
+            <div class="sk-icon">★</div>
+            <h4>Revit → AI hero render</h4>
+            <p>Active 3D view + depth → SDXL+ControlNet → Qwen-Image 4K. Cost ~$0.025, ~41s.</p>
+            <div class="by">by you · used 14 times</div>
+          </div>
+          <div class="skill-card">
+            <div class="sk-icon">▦</div>
+            <h4>Photo → host mass</h4>
+            <p>Qwen-VL anchor → Hunyuan3D → host import. Swap host param: rhino / revit / max / blender.</p>
+            <div class="by">by shipped_skill · used 7 times</div>
+          </div>
+          <div class="skill-card">
+            <div class="sk-icon">◬</div>
+            <h4>Drone → Revit walls</h4>
+            <p>3DGS reconstruction → Qwen-VL facade labels → typed Revit walls + openings.</p>
+            <div class="by">by shipped_skill · used 3 times</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar">
+      <div class="sseg live"><span class="d"></span>broker :7300</div>
+      <div class="sseg ok"><span class="d"></span>Revit · 1 doc</div>
+      <div class="sseg ok"><span class="d"></span>Speckle · 3 streams</div>
+      <div class="sseg warn"><span class="d"></span>ComfyUI · idle</div>
+      <div class="gap"></div>
+      <div class="sseg cost">session $0.34</div>
+      <div class="sseg">197 memory nodes · 176 communities</div>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Source:</strong> <code>docs/prototypes/archhub-redesign-2026-05-24.html</code> Prototype A (lines 67-141) — composer-first home with starter chips + recent grid + suggested skills. Founder picked REFINE → see alts below.<br>
+    <strong>AgDR-0039:</strong> Home is the default opening screen; <code>openId=null</code> on boot. NO wordmark in splash (founder hates current wordmark).
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="studio-proto">
+  <div class="tagline">studio · per studio-v2-consolidated</div>
+  <h2>Studio layout — composer rail · canvas · Inspector (one panel, not three)</h2>
+  <div class="frame">
+    <div class="titlebar"><div class="traffic"><span></span><span></span><span></span></div>
+      <span class="crumb">archhub · canvas · tag-walls-by-room</span></div>
+    <div class="topbar">
+      <span class="tb-brand">archhub</span>
+      <span class="crumbs">project · <strong>Office Building 14</strong> · graph · <strong>Tag walls by room</strong></span>
+      <span class="gap"></span>
+      <span class="mode-pill">PLAN</span>
+      <span class="model-chip"><span class="dot"></span>Claude Sonnet 4.6 ▾</span>
+    </div>
+
+    <div class="studio">
+      <!-- RAIL -->
+      <div class="rail">
+        <div class="ricon">⌂<span class="tip">Home · ⌘0</span></div>
+        <div class="ricon on">▤<span class="tip">Canvas · ⌘1</span></div>
+        <div class="ricon">⌬<span class="tip">Library Cmd-K · ⌘K</span></div>
+        <div class="ricon">★<span class="tip">Skills · ⌘3</span></div>
+        <div class="ricon">⊕<span class="tip">Memory graph · ⌘4</span></div>
+        <div class="gap"></div>
+        <div class="ricon">⚙<span class="tip">Settings</span></div>
+      </div>
+
+      <!-- COMPOSER RAIL -->
+      <div class="composer-rail">
+        <div class="cr-head">
+          <span class="dot"></span>
+          <span class="lbl">Composer · plan</span>
+          <span class="mode">⌘K</span>
+        </div>
+        <div class="cr-body">
+          <div class="turn">
+            <div class="who">you</div>
+            <div class="bubble">Tag every wall in Office 14 · L2 by the room it bounds, push back to Revit.</div>
+          </div>
+          <div class="turn">
+            <div class="who">claude · thinking</div>
+            <div class="assist">Plan: pull walls + rooms from Revit, classify each wall by spatial containment, apply room.name as comment. Then push.</div>
+            <div class="tool ok">
+              <div><span class="name">revit.list_walls</span><span class="args">(view: "L2")</span></div>
+              <div class="result">142 walls · 18 rooms · ~12s</div>
+            </div>
+            <div class="tool">
+              <div><span class="name">code.python</span><span class="args">(classify by containment)</span></div>
+              <div class="result">142 walls tagged · 4 ambiguous (flagged)</div>
+            </div>
+            <div class="tool">
+              <div><span class="name">revit.set_param</span><span class="args">(param: "Comments", values: 142)</span></div>
+              <div class="result">pending approval (Plan mode)</div>
+            </div>
+          </div>
+        </div>
+        <div class="cr-input">
+          <textarea placeholder="Continue the plan…"></textarea>
+          <div class="cr-hint">
+            <span>Tab library</span><span><kbd>⌘K</kbd> palette</span><span><kbd>⌘↵</kbd> run</span><span><kbd>⌘Z</kbd> undo via Speckle</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CANVAS with REAL NODES + WIRES -->
+      <div class="canvas">
+        <div class="canvas-toolbar">
+          <span class="cti">+</span>
+          <span class="cti">−</span>
+          <span class="cti">▢</span>
+          <span class="cti">⤢</span>
+          <span class="ct-badge">◆ 5 NODES · 4 WIRES</span>
+          <span class="cti">▶</span>
+        </div>
+
+        <!-- SVG wire layer -->
+        <svg class="wires" viewBox="0 0 800 460" preserveAspectRatio="none">
+          <!-- wires colored per type -->
+          <path d="M 295 80 C 380 80, 380 160, 470 160" stroke="#e29bb5" stroke-width="2.4"/>
+          <path d="M 295 140 C 380 140, 380 220, 470 220" stroke="#a98cd6" stroke-width="2.4"/>
+          <path d="M 295 200 C 380 200, 380 240, 470 240" stroke="#e3b950" stroke-width="2.4"/>
+          <path d="M 750 200 C 770 200, 770 280, 600 320" stroke="#5fc879" stroke-width="2.8" class="cook"/>
+        </svg>
+
+        <!-- Host node v2 — REVIT (source) -->
+        <div class="host-node" data-host="revit" style="left:30px;top:50px">
+          <div class="host-title">
+            <span class="host-icon">◆</span>
+            <div>
+              <div class="host-cat">REVIT</div>
+              <div class="host-doc">· live · A203.rvt · 2024</div>
+            </div>
+            <div class="flag-bar"><span class="flag"></span><span class="flag"></span><span class="flag"></span></div>
+          </div>
+          <div class="main-sock left"></div>
+          <span class="main-sock-label">trigger</span>
+          <div class="main-sock right"></div>
+          <span class="main-sock-label right">last_out</span>
+
+          <div class="op-grid">
+            <div class="op-tile done"><span class="op-pill"></span><div class="op-name">list_walls</div><div class="op-time">12s</div></div>
+            <div class="op-tile"><div class="op-name">list_rooms</div><div class="op-time">8s</div></div>
+            <div class="op-tile"><div class="op-name">get_view</div><div class="op-time"></div></div>
+            <div class="op-tile cfg"><div class="op-name">set_param</div><div class="op-time">cfg</div></div>
+            <div class="op-active">
+              <div class="op-active-row">
+                <span class="pill"></span>
+                <span class="opname">list_walls</span>
+                <span class="meta">AUTO · 18s · 142 ROWS</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="op-section">
+            <div class="op-sec-head in"><span class="chev">▾</span>MAIN INPUTS<span class="ct">3</span></div>
+            <div class="param-row">
+              <div class="row-sock-l"></div>
+              <div class="row-key">view</div>
+              <div class="row-val">"L2 Plan"</div>
+              <div class="row-sock-r"></div>
+            </div>
+            <div class="param-row">
+              <div class="row-sock-l"></div>
+              <div class="row-key">scope</div>
+              <div class="row-val">view</div>
+              <div class="row-sock-r"></div>
+            </div>
+          </div>
+          <div class="op-section">
+            <div class="op-sec-head out"><span class="chev">▾</span>OUTPUTS — PLUCK<span class="ct">+3</span></div>
+            <div class="param-row wired-out">
+              <div class="row-sock-l"></div>
+              <div class="row-key">walls</div>
+              <div class="row-val">List&lt;Wall&gt; · 142</div>
+              <div class="row-sock-r"></div>
+            </div>
+            <div class="param-row wired-out">
+              <div class="row-sock-l"></div>
+              <div class="row-key">rooms</div>
+              <div class="row-val">List&lt;Room&gt; · 18</div>
+              <div class="row-sock-r"></div>
+            </div>
+            <div class="param-row">
+              <div class="row-sock-l"></div>
+              <div class="row-key">view_id</div>
+              <div class="row-val">Id · L2_plan_v3</div>
+              <div class="row-sock-r"></div>
+            </div>
+          </div>
+          <!-- promoted rail sockets -->
+          <div class="rail-sock" style="top:200px"></div>
+          <div class="rail-sock purple" style="top:226px"></div>
+          <div class="rail-sock blue" style="top:252px"></div>
+        </div>
+
+        <!-- Ghost node (typed python) -->
+        <div class="ghost-node" data-kind="code_expr" style="border-top-color:var(--cyan);left:485px;top:140px">
+          <div class="gn-tag">CODE · PY</div>
+          <div class="gn-title">classify_walls_by_room</div>
+          <div class="gn-meta">spatial containment · 142→142+4 flagged</div>
+          <div class="gn-sock l" style="top:30px"></div>
+          <div class="gn-sock l" style="top:50px"></div>
+          <div class="gn-sock l" style="top:70px"></div>
+          <div class="gn-sock r" style="top:50px"></div>
+        </div>
+
+        <!-- Ghost node (skill output) -->
+        <div class="ghost-node" data-kind="output" style="left:485px;top:300px">
+          <div class="gn-tag">OUTPUT · REVIT</div>
+          <div class="gn-title">set_param · Comments</div>
+          <div class="gn-meta">pending approval</div>
+          <div class="gn-sock l" style="top:30px"></div>
+        </div>
+
+        <!-- Frozen example (top-right corner) -->
+        <div class="host-node" data-host="dashscope" data-state="frozen" style="right:30px;top:50px;width:200px">
+          <div class="host-title">
+            <span class="host-icon">◆</span>
+            <div>
+              <div class="host-cat">DASHSCOPE</div>
+              <div class="host-doc">· cached</div>
+            </div>
+            <div class="flag-bar"><span class="flag freeze"></span></div>
+          </div>
+          <div class="op-grid">
+            <div class="op-tile done"><span class="op-pill"></span><div class="op-name">vision.describe</div><div class="op-time">$0.002</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INSPECTOR (ONE panel, tabs inside per archhub-redesign D refined) -->
+      <div class="insp">
+        <div class="insp-head">
+          <span class="panel-stripe"></span>
+          <span class="insp-host-label">REVIT · LIST_WALLS</span>
+        </div>
+        <div class="insp-title">list_walls</div>
+        <div class="insp-sub">connector op · auto · cached 12s</div>
+        <div class="insp-tabs">
+          <div class="insp-tab">Inputs</div>
+          <div class="insp-tab">Outputs</div>
+          <div class="insp-tab">Params</div>
+          <div class="insp-tab on">Plan</div>
+          <div class="insp-tab">Health</div>
+        </div>
+        <div class="insp-body">
+          <!-- Plan tab slim (per refined D) -->
+          <div class="plan-slim">
+            <div class="plan-meta">
+              <div class="plan-meta-row">
+                <div class="k">Plan id</div>
+                <div class="v">plan_a3f9b21c</div>
+              </div>
+              <div class="plan-meta-row">
+                <div class="k">Steps · done</div>
+                <div class="v">2 / 3</div>
+              </div>
+              <div class="plan-meta-row">
+                <div class="k">Model</div>
+                <div class="v">sonnet-4.6</div>
+              </div>
+              <div class="plan-meta-row">
+                <div class="k">Cost · est</div>
+                <div class="v">$0.42</div>
+              </div>
+            </div>
+            <h4 style="margin-top:var(--s3)">Decisions</h4>
+            <div class="plan-decisions">
+              <span class="dpill">classify by containment</span>
+              <span class="dpill">flag ambiguous</span>
+              <span class="dpill">push back to Revit</span>
+            </div>
+            <div class="plan-actions">
+              <button class="primary">▶ Replay from cache</button>
+              <button>▸ Open full table</button>
+            </div>
+          </div>
+
+          <!-- Verb row (freeze/pin/bypass) -->
+          <h4 style="margin-top:var(--s4)">Verbs</h4>
+          <div class="verb-row">
+            <button class="verb">⌖ pin</button>
+            <button class="verb on frozen">❄ frozen</button>
+            <button class="verb">○ bypass</button>
+            <button class="verb">⊘ hide</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <div class="sseg live"><span class="d"></span>broker :7300</div>
+      <div class="sseg ok"><span class="d"></span>Revit · 1 doc</div>
+      <div class="sseg ok"><span class="d"></span>Speckle · 3 streams</div>
+      <div class="sseg warn"><span class="d"></span>ComfyUI · idle</div>
+      <div class="gap"></div>
+      <div class="sseg">last cook 1.2s</div>
+      <div class="sseg cost">session $0.34</div>
+      <div class="sseg">197 nodes · 176 communities</div>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Source:</strong> <code>docs/prototypes/studio-v2-consolidated.html</code> 380px/1fr/360px grid. Composer rail full-height. Canvas in middle. ONE Inspector panel — tabs inside (Inputs/Outputs/Params/<strong>Plan</strong>/Health). Plan tab slim per <code>archhub-redesign Prototype D REFINED</code> (not a separate hero node).<br>
+    <strong>Assimilation mandate (2026-05-24, founder):</strong> <em>"add Plan as a tab inside the existing Inspector"</em> — not a parallel panel.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="node-proto">
+  <div class="tagline">node · per AgDR-0024 HostNodeV2 (11 constraints approved 2026-05-21)</div>
+  <h2>Node anatomy — Direction A + ComfyUI grid + Output Pluck</h2>
+  <div class="frame" style="background:var(--bgCanvas);padding:var(--s7);min-height:520px;position:relative;background-image:radial-gradient(circle at 1px 1px, var(--lineHair) 1px, transparent 0);background-size:16px 16px">
+
+    <!-- Revit host node (full anatomy) -->
+    <div class="host-node" data-host="revit" style="left:60px;top:40px;width:300px">
+      <div class="host-title">
+        <span class="host-icon">◆</span>
+        <div>
+          <div class="host-cat">REVIT</div>
+          <div class="host-doc">· live · A203.rvt · 2024</div>
+        </div>
+        <div class="flag-bar">
+          <span class="flag pin"></span>
+          <span class="flag freeze"></span>
+          <span class="flag"></span>
+        </div>
+      </div>
+      <div class="main-sock left"></div>
+      <div class="main-sock right"></div>
+
+      <div class="op-grid">
+        <div class="op-tile done"><span class="op-pill"></span><div class="op-name">list_walls</div><div class="op-time">12s</div></div>
+        <div class="op-tile"><div class="op-name">list_rooms</div><div class="op-time">8s</div></div>
+        <div class="op-tile run"><span class="op-pill"></span><div class="op-name">get_view</div><div class="op-time">running</div></div>
+        <div class="op-tile cfg"><div class="op-name">set_param</div><div class="op-time">cfg</div></div>
+        <div class="op-tile"><div class="op-name">find_in_view</div></div>
+        <div class="op-tile"><div class="op-name">levels</div></div>
+        <div class="op-tile"><div class="op-name">project_info</div></div>
+        <div class="op-tile"><div class="op-name">grids</div></div>
+        <div class="op-active">
+          <div class="op-active-row">
+            <span class="pill"></span>
+            <span class="opname">list_walls</span>
+            <span class="meta">AUTO · 18s · 142 ROWS · CACHED</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="op-section">
+        <div class="op-sec-head in"><span class="chev">▾</span>MAIN INPUTS<span class="ct">3</span></div>
+        <div class="param-row wired-in">
+          <div class="row-sock-l"></div>
+          <div class="row-key">view</div>
+          <div class="row-val">← upstream.view</div>
+          <div class="row-sock-r"></div>
+        </div>
+        <div class="param-row">
+          <div class="row-sock-l"></div>
+          <div class="row-key">scope</div>
+          <div class="row-val">view</div>
+          <div class="row-sock-r"></div>
+        </div>
+        <div class="param-row">
+          <div class="row-sock-l"></div>
+          <div class="row-key">filter</div>
+          <div class="row-val">all</div>
+          <div class="row-sock-r"></div>
+        </div>
+      </div>
+
+      <div class="op-section">
+        <div class="op-sec-head in collapsed"><span class="chev">▾</span>ADVANCED INPUTS<span class="ct">+5</span></div>
+      </div>
+
+      <div class="op-section">
+        <div class="op-sec-head out"><span class="chev">▾</span>OUTPUTS — PLUCK<span class="ct">+3</span></div>
+        <div class="param-row wired-out">
+          <div class="row-sock-l"></div>
+          <div class="row-key">walls</div>
+          <div class="row-val">List&lt;Wall&gt;</div>
+          <div class="row-sock-r"></div>
+        </div>
+        <div class="param-row">
+          <div class="row-sock-l"></div>
+          <div class="row-key">rooms</div>
+          <div class="row-val">List&lt;Room&gt;</div>
+          <div class="row-sock-r"></div>
+        </div>
+      </div>
+
+      <!-- rail sockets right -->
+      <div class="rail-sock purple" style="top:280px"></div>
+      <div class="rail-sock blue" style="top:312px"></div>
+    </div>
+
+    <!-- Frozen node example (right side) -->
+    <div class="host-node" data-host="comfy" data-state="frozen" style="right:280px;top:40px;width:230px">
+      <div class="host-title">
+        <span class="host-icon">◆</span>
+        <div>
+          <div class="host-cat">COMFY</div>
+          <div class="host-doc">· cached · hero_v3</div>
+        </div>
+        <div class="flag-bar"><span class="flag freeze"></span></div>
+      </div>
+      <div class="op-grid">
+        <div class="op-tile done"><span class="op-pill"></span><div class="op-name">run_workflow</div><div class="op-time">~41s</div></div>
+        <div class="op-tile"><div class="op-name">queue</div></div>
+      </div>
+    </div>
+
+    <!-- Bypassed node example -->
+    <div class="host-node" data-host="dashscope" data-state="bypassed" style="right:30px;top:40px;width:220px">
+      <div class="host-title">
+        <span class="host-icon">◆</span>
+        <div>
+          <div class="host-cat">DASHSCOPE</div>
+          <div class="host-doc">· bypassed (passthrough)</div>
+        </div>
+        <div class="flag-bar"><span class="flag bypass"></span></div>
+      </div>
+      <div class="op-grid">
+        <div class="op-tile"><div class="op-name">image_edit</div></div>
+      </div>
+    </div>
+
+    <!-- Ghost node legend strip -->
+    <div style="position:absolute;left:60px;bottom:30px;display:flex;gap:var(--s3)">
+      <div class="ghost-node" data-kind="skill" style="position:relative;left:0;top:0">
+        <div class="gn-tag">SKILL · COMPOSITE</div>
+        <div class="gn-title">skill.revit_hero_render</div>
+        <div class="gn-meta">5 inner · $0.025 · ~41s</div>
+        <div class="gn-sock l" style="top:30px"></div>
+        <div class="gn-sock r" style="top:30px"></div>
+      </div>
+      <div class="ghost-node" data-kind="ai_plan" style="position:relative;left:0;top:0">
+        <div class="gn-tag">AI · PLAN</div>
+        <div class="gn-title">ai.plan</div>
+        <div class="gn-meta">composer turn · 5 steps · gated</div>
+        <div class="gn-sock l" style="top:30px"></div>
+        <div class="gn-sock r" style="top:30px"></div>
+      </div>
+      <div class="ghost-node" data-kind="ai_chat" style="position:relative;left:0;top:0">
+        <div class="gn-tag">AI · CHAT</div>
+        <div class="gn-title">conversation.chat</div>
+        <div class="gn-meta">claude-sonnet-4.6 · plan mode</div>
+        <div class="gn-sock l" style="top:30px"></div>
+        <div class="gn-sock r" style="top:30px"></div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Source:</strong> <code>docs/prototypes/host-node-direction-a-comfyui-v2-ecosystem.html</code> + AgDR-0024 (11 constraints all approved by founder 2026-05-21 "agreed...go"). Per-host brand stripe top (3px). Op grid 4 cols. Active-tile span-4. MAIN ⇄ ADVANCED I/O split (advanced collapsed). OUTPUTS PLUCK section = typed right-rail sockets. Type-hint pills on hover. Floating disable-verbs bar.<br>
+    <strong>States:</strong> ❄ frozen (dashed border + frost ❄ badge) · ○ bypassed (dashed + warn ○ badge) · ⨯ deleted (line-through) per <code>graph-robustness-2026-05-24.html</code>.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="wire-proto">
+  <div class="tagline">wires · SVG bezier · port-typed colors · per modular-logic + graph-robustness</div>
+  <h2>Wire palette + cook animation</h2>
+  <div class="frame" style="padding:var(--s5);background:var(--bgCanvas);background-image:radial-gradient(circle at 1px 1px, var(--lineHair) 1px, transparent 0);background-size:16px 16px;min-height:280px;position:relative">
+    <svg viewBox="0 0 1100 240" style="width:100%;height:240px">
+      <!-- Type palette demo wires -->
+      <g font-family="JetBrains Mono" font-size="10" fill="#9b938a">
+        <text x="0" y="20">walls (List&lt;Wall&gt;)</text>
+        <path d="M 130 16 C 220 16, 220 16, 320 16" stroke="#e29bb5" stroke-width="2.4" fill="none"/>
+        <text x="330" y="20">.pink — wall lists</text>
+
+        <text x="0" y="50">rooms (List&lt;Room&gt;)</text>
+        <path d="M 130 46 C 220 46, 220 46, 320 46" stroke="#a98cd6" stroke-width="2.4" fill="none"/>
+        <text x="330" y="50">.purple — element/room lists</text>
+
+        <text x="0" y="80">list (any List)</text>
+        <path d="M 130 76 C 220 76, 220 76, 320 76" stroke="#7898d6" stroke-width="2.4" fill="none"/>
+        <text x="330" y="80">.blue — generic list</text>
+
+        <text x="0" y="110">number</text>
+        <path d="M 130 106 C 220 106, 220 106, 320 106" stroke="#e3b950" stroke-width="2.4" fill="none"/>
+        <text x="330" y="110">.yellow — scalar</text>
+
+        <text x="0" y="140">string</text>
+        <path d="M 130 136 C 220 136, 220 136, 320 136" stroke="#5fb3b3" stroke-width="2.4" fill="none"/>
+        <text x="330" y="140">.cyan — string/id</text>
+
+        <text x="0" y="170">any</text>
+        <path d="M 130 166 C 220 166, 220 166, 320 166" stroke="#9b938a" stroke-width="2.4" fill="none"/>
+        <text x="330" y="170">.inkSoft — any/untyped</text>
+
+        <text x="600" y="20">cooking · stroke-dasharray 6 4 · animated flow</text>
+        <path d="M 600 50 C 700 50, 800 80, 900 50" stroke="#7ec18e" stroke-width="2.8" fill="none" stroke-dasharray="6 4" class="cook"/>
+
+        <text x="600" y="100">bypass · dashed · ↬ passthru label</text>
+        <path d="M 600 130 C 700 130, 800 130, 900 130" stroke="#e5b25a" stroke-width="2.4" fill="none" stroke-dasharray="3 3"/>
+        <text x="730" y="125" fill="#e5b25a">↬ passthru</text>
+
+        <text x="600" y="160">err · type mismatch · ⚡</text>
+        <path d="M 600 190 C 700 190, 800 190, 900 190" stroke="#e6705f" stroke-width="2.4" fill="none"/>
+        <text x="730" y="185" fill="#e6705f">⚡ expects Image · got Mesh</text>
+      </g>
+    </svg>
+  </div>
+  <div class="note">
+    <strong>Source:</strong> <code>docs/prototypes/studio-v2-consolidated.html:22-28</code> (Slice D palette) + <code>graph-robustness-2026-05-24.html</code> (states + animations). Bezier <code>&lt;path&gt; C</code> curves, stroke-width 2.4 default · 2.8 for plucked/list, opacity 0.85. Cook = <code>stroke-dasharray:6 4</code> with linear animation. All colors WCAG-pass on bg <code>#101015</code>.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="alts">
+  <div class="tagline">refinement alternatives · home · pick one</div>
+  <h2>Home — 3 alternatives (founder picked REFINE on archhub-redesign A)</h2>
+  <div class="home-alts">
+    <div class="alt">
+      <h3>Alt 1 · Centered minimal (TapNow-style)</h3>
+      <div class="miniframe">
+        <div style="text-align:center;padding-top:30px;color:var(--ink);font-size:var(--fmd);font-family:var(--serif)">What are we <span style="color:var(--accent);font-style:italic">building?</span></div>
+        <div style="margin:14px auto;width:80%;height:36px;background:var(--bgPanel);border:1px solid var(--line);border-radius:6px"></div>
+        <div style="display:flex;gap:4px;justify-content:center;font-size:9px;color:var(--inkMuted)">
+          <span style="background:var(--bgPanel);padding:3px 7px;border-radius:999px">▣ render</span>
+          <span style="background:var(--bgPanel);padding:3px 7px;border-radius:999px">▦ mass</span>
+          <span style="background:var(--bgPanel);padding:3px 7px;border-radius:999px">⌖ walls</span>
+        </div>
+      </div>
+      <p>Composer + 6 starter chips only. Recents on click "View all". Maximum focus on the prompt.</p>
+      <div class="verdict" data-alt="alt1">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="alt">
+      <h3>Alt 2 · Split prompt + recents (THIS prototype)</h3>
+      <div class="miniframe">
+        <div style="text-align:center;padding-top:20px;color:var(--ink);font-size:var(--fbase);font-family:var(--serif)">What are we <span style="color:var(--accent);font-style:italic">building?</span></div>
+        <div style="margin:8px auto;width:80%;height:24px;background:var(--bgPanel);border:1px solid var(--line);border-radius:5px"></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-top:8px">
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:28px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:28px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:28px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:28px"></div>
+        </div>
+        <div style="margin-top:6px;display:grid;grid-template-columns:repeat(3,1fr);gap:3px">
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:32px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:32px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:32px"></div>
+        </div>
+      </div>
+      <p>Composer hero + recents row (4) + suggested skills (3). The full home above this section uses this alt.</p>
+      <div class="verdict" data-alt="alt2">
+        <button class="yes on">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="alt">
+      <h3>Alt 3 · Stacked hero + skills only</h3>
+      <div class="miniframe">
+        <div style="text-align:center;padding-top:16px;color:var(--ink);font-size:var(--fbase);font-family:var(--serif)">What are we <span style="color:var(--accent);font-style:italic">building?</span></div>
+        <div style="margin:6px auto;width:80%;height:30px;background:var(--bgPanel);border:1px solid var(--line);border-radius:5px"></div>
+        <div style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:3px">
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:60px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:60px"></div>
+          <div style="background:var(--bgPanel);border:1px solid var(--line);border-radius:3px;height:60px"></div>
+        </div>
+      </div>
+      <p>Composer + suggested skills only. No recents (use Cmd+K to find old sessions). Cleaner first impression.</p>
+      <div class="verdict" data-alt="alt3">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="cmdk">
+  <div class="tagline">library · per AgDR-0014 + host-node-direction-a Cmd-K popup</div>
+  <h2>Library · ⌘K · LIBRARY-FIRST</h2>
+  <div style="display:flex;justify-content:center;padding:var(--s5) 0;background:var(--bgCanvas);border:1px solid var(--line);border-radius:var(--rlg);background-image:radial-gradient(circle at 1px 1px, var(--lineHair) 1px, transparent 0);background-size:16px 16px">
+    <div class="lp">
+      <div class="lp-head">⌘ K · LIBRARY-FIRST</div>
+      <input class="lp-input" placeholder="describe what you need…" value="render hero"/>
+      <div class="lp-group">
+        <div class="lp-group-label">existing matches · ≥0.75 similarity</div>
+        <div class="lp-hit sel">
+          <span class="mark">●</span>
+          <span class="nm">skill.revit_hero_render</span>
+          <span class="fxpill host">HOST_WRITE</span>
+          <span class="mt">existing · 96%</span>
+        </div>
+        <div class="lp-hit">
+          <span class="mark">●</span>
+          <span class="nm">render.comfyui</span>
+          <span class="fxpill net">NETWORK</span>
+          <span class="mt">existing · 82%</span>
+        </div>
+        <div class="lp-hit">
+          <span class="mark">●</span>
+          <span class="nm">render.image_edit</span>
+          <span class="fxpill net">NETWORK</span>
+          <span class="mt">existing · 78%</span>
+        </div>
+      </div>
+      <div class="lp-group">
+        <div class="lp-group-label">community · "render workflows"</div>
+        <div class="lp-hit">
+          <span class="mark">●</span>
+          <span class="nm">vision.describe</span>
+          <span class="fxpill net">NETWORK</span>
+          <span class="mt">used 14×</span>
+        </div>
+        <div class="lp-hit">
+          <span class="mark">●</span>
+          <span class="nm">host.export_viewport</span>
+          <span class="fxpill host">HOST_WRITE</span>
+          <span class="mt">used 8×</span>
+        </div>
+      </div>
+      <div class="lp-group">
+        <div class="lp-group-label">create new (last resort)</div>
+        <div class="lp-hit create">
+          <span class="mark">+</span>
+          <span class="nm">+ Create new node "render hero"</span>
+          <span class="mt">last resort · AI-mint</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Source:</strong> <code>docs/prototypes/host-node-direction-a-comfyui-v2-ecosystem.html:447-470</code> + AgDR-0014 (11-category enum + side-effect pills pure/host_write/network + status lifecycle). Library-first mandate: <code>library.search</code> called BEFORE <code>library.create_node_type</code> with ≥0.75 similarity gate. Cmd-K shows existing matches FIRST, "create new" is last resort.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="proto" id="verdict">
+  <div class="tagline">decision · sign the contract</div>
+  <h2>Sign off → Sprint 0+1 ships matching THIS prototype 1:1</h2>
+  <p>v1 was wrong. This v2 respects every signed design source. Per <strong>PROTOTYPE-IS-CONTRACT</strong> mandate: after sign-off, JSX mirrors this page pixel-by-pixel. Visual diff before any "shipped" claim.</p>
+  <div class="verdict-block">
+    <h3>Your pick</h3>
+    <div class="vbtns" id="verdict">
+      <button data-v="ship">SHIP IT · Sprint 0+1 starts next /loop</button>
+      <button data-v="revise">REVISE · what changes?</button>
+      <button data-v="hold">HOLD · review tomorrow</button>
+    </div>
+    <div class="vout" id="vout">— pick one —</div>
+  </div>
+</section>
+
+<footer>
+  ArchHub · workshop v2 · 2026-05-25<br>
+  <code>docs/prototypes/signed/workshop-2026-05-25-v2.html</code><br>
+  sources: archhub-redesign-2026-05-24 · host-node-direction-a-comfyui-v2-ecosystem · modular-logic-nodes · graph-robustness-2026-05-24 · studio-v2-consolidated · agdr-0014-library-design-system · agdr-0015-visual-ui-design-system · AgDR-0015/0024/0040/0039
+</footer>
+
+<script>
+// Verdict
+document.querySelectorAll('#verdict button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#verdict button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const v = b.dataset.v;
+    localStorage.setItem('archhub.workshop.v2.verdict', v);
+    const txt = {
+      ship: '✓ SHIP IT — locked. Sprint 0 (process mandates already in CLAUDE.md) + Sprint 1 (home rebuild · composer rail · canvas with HostNodeV2 nodes + typed bezier wires · Inspector with Plan tab · status bar · debounce-save) starts next /loop. JSX matches this page 1:1.',
+      revise: '✎ REVISE — tell me what to change. Each change becomes a new entry in this prototype (versioned in commits).',
+      hold: '⏸ HOLD — re-open tomorrow.',
+    };
+    document.getElementById('vout').textContent = txt[v];
+  };
+});
+// Restore
+const v = localStorage.getItem('archhub.workshop.v2.verdict');
+if (v) document.querySelector(`#verdict button[data-v="${v}"]`)?.click();
+
+// Alt YES/REFINE/NO
+document.querySelectorAll('.alt .verdict').forEach(row => {
+  row.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => {
+      row.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      btn.classList.add('on');
+      const cls = btn.className.split(' ')[0];
+      btn.classList.add(cls);
+      localStorage.setItem('archhub.workshop.v2.' + row.dataset.alt, cls);
+    };
+  });
+  const key = 'archhub.workshop.v2.' + row.dataset.alt;
+  const saved = localStorage.getItem(key);
+  if (saved) {
+    const btn = row.querySelector('button.' + saved);
+    if (btn) btn.click();
+  }
+});
+</script>
+</body>
+</html>

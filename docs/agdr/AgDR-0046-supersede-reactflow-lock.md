@@ -1,6 +1,8 @@
 ---
-id: AgDR-0045
+id: AgDR-0046
 timestamp: 2026-05-25T12:30:00Z
+renumbered_from: AgDR-0045
+renumber_reason: id collision with AgDR-0045-settings-brain-unified.md (timestamp 00:00:00Z, written first). Caught by 2026-05-25 repo overhaul workshop. This file kept its content + supersede chain; only the id and filename changed.
 agent: claude-code (Sonnet)
 session: founder ship-everything loop · 2026-05-25
 trigger: FAILURE_LOG row 7 — "AgDR-0022 + ARCHITECTURE LOCK 'ReactFlow is the canvas substrate' but ReactFlow NEVER installed"

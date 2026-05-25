@@ -7488,8 +7488,8 @@ const _injectTokenVars = (() => {
   } catch (e) { document.body.setAttribute('data-theme', 'forge'); }
 })();
 
-// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0045) ───
-// AgDR-0045 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
+// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0046) ───
+// AgDR-0046 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
 // + AgDR-0022 in full. Custom canvas IS the substrate of record; the stub
 // below + helpers are KEPT only so `test_reactflow_p2a_groundwork.py`
 // doesn't break, but neither is wired into any render path. They render
@@ -7499,7 +7499,7 @@ const _injectTokenVars = (() => {
 // every feature ReactFlow would have offered (typed wires, groups,
 // HostNodeV2, ai.plan hero, broken-wire dialog). Migration cost
 // (3-5 days, full rewrite) >> value (zero new capability). See
-// docs/agdr/AgDR-0045-supersede-reactflow-lock.md.
+// docs/agdr/AgDR-0046-supersede-reactflow-lock.md.
 const _readCanvasFlavor = () => {
   try {
     const v = (localStorage.getItem('archhub.canvas') || '').toLowerCase();

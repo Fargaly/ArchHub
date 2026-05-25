@@ -4,7 +4,7 @@ timestamp: 2026-05-20T00:00:00Z
 agent: claude-code (Sonnet)
 session: node-redesign-loop · founder-driven
 trigger: founder commit after 3-prototype review
-status: executed
+status: partially_superseded
 category: architecture
 projects: [archhub]
 supersedes:
@@ -12,7 +12,17 @@ supersedes:
   - AgDR-0001 §6 (typed-socket coercion → replaced by Speckle speckle_type)
   - AgDR-0001 §7.2 (add-node UX as primary entry → demoted to fallback; composer becomes primary)
   - AgDR-0007 §"Wire colour key" (PortType lowercased keys → replaced by Speckle-type colour mapping)
+superseded_sections:
+  - "ReactFlow is the canvas substrate" → superseded by AgDR-0046 (custom canvas is the substrate of record; ReactFlow never installed)
+  - "LIBRARY-FIRST mandate" enforcement details → details refined by AgDR-0013 / AgDR-0014 (library-first gate + library design system)
+  - "Speckle wire transport" details → refined by AgDR-0016 (speckle-share-adapter-router-gate)
 ---
+
+> **DOC BANNER — partial supersede 2026-05-25:**
+> The "ReactFlow is the canvas substrate" line below is no longer
+> the architecture lock — see `AgDR-0046-supersede-reactflow-lock.md`.
+> Custom canvas (`NodeView` + `WireLayer`) is the substrate of record.
+> Other sections of this AgDR remain in force.
 
 # Architecture lock — Direction X: Composer-as-IDE + Speckle Wires + AI Plan, governed by Library-First and User-Always-In-Control
 

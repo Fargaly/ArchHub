@@ -99,7 +99,7 @@ the current chat session:
   truth. Never spin up parallel plan docs.
 - **ARCHITECTURE LOCK**: Composer-as-IDE · Speckle wires (DiskTransport
   default, no server) · `ai.plan` as a real canvas node · custom
-  canvas substrate (NodeView/WireLayer, see AgDR-0045 superseding the
+  canvas substrate (NodeView/WireLayer, see AgDR-0046 superseding the
   earlier ReactFlow lock).
 - **USER-AGENCY MANDATE**: every AI write to a host is approval-gated
   by default. Composer has Plan / Auto / YOLO modes. YOLO is opt-in

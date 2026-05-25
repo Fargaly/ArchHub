@@ -2007,6 +2007,26 @@ class ArchHubBridge(QObject):
                                 "error": f"{type(ex).__name__}: {ex}"})
 
     @pyqtSlot(result=str)
+    def get_brain_stats(self) -> str:
+        """Snapshot of the last AgDR-0044 Layer 5 brain pre_prompt hit.
+
+        Polled by the JSX BrainChip near the ModelStrip so the user
+        sees a live `⌬ brain · N skills · M facts · Δms` indicator
+        without round-tripping the gate. Returns the in-process module
+        global `memory_gate._LAST_BRAIN_STATS` updated on every
+        MemoryGate.pre_prompt call. Empty dict before the first turn.
+
+        Shape:
+          {ts, skills_n, facts_n, secret_refs_n, retrieval_ms,
+           user_message_preview, available, client_status}
+        """
+        try:
+            from memory_gate import get_last_brain_stats
+            return _safe_json(get_last_brain_stats() or {})
+        except Exception as ex:
+            return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(result=str)
     def memory_stats(self) -> str:
         """Snapshot of the memory graph — node count by kind +
         community count. Cheap (single SQL COUNT per kind). Used by

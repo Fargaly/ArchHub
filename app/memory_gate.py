@@ -44,6 +44,21 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
+# Module-global cache of the last brain pre_prompt result. The JSX
+# BrainChip polls this via bridge.get_brain_stats so the UI shows a
+# live "⌬ brain · N skills · M facts · Δms" indicator next to the
+# ModelStrip. Updated inside MemoryGate.pre_prompt — both available
+# and unavailable branches stash, so the chip can render "offline"
+# vs "live · empty" vs "live · N skills".
+_LAST_BRAIN_STATS: dict[str, Any] = {}
+
+
+def get_last_brain_stats() -> dict:
+    """Snapshot of the most recent brain hit. Empty dict if no turn
+    has fired yet this process."""
+    return dict(_LAST_BRAIN_STATS)
+
+
 # ─────────────────────── data shapes ────────────────────────────────────
 
 
@@ -434,9 +449,26 @@ class MemoryGate:
         block to prepend to the system prompt). Empty injection if brain
         unavailable.
         """
+        global _LAST_BRAIN_STATS
         if not user_message or not user_message.strip():
             return GateDecision(allow=True, reason="empty prompt")
         if not self.client.is_available():
+            # Stash unavailable state so the chip can render "brain offline".
+            try:
+                _LAST_BRAIN_STATS = {
+                    "ts": time.time(), "skills_n": 0, "facts_n": 0,
+                    "secret_refs_n": 0, "retrieval_ms": 0.0,
+                    "user_message_preview": (user_message or "")[:80],
+                    "available": False,
+                }
+                try:
+                    _LAST_BRAIN_STATS["client_status"] = (
+                        self.client.status() if hasattr(self.client, "status") else None
+                    )
+                except Exception:
+                    _LAST_BRAIN_STATS["client_status"] = None
+            except Exception:
+                pass
             return GateDecision(allow=True, reason="brain unavailable; bare prompt",
                                  augmentation={"injection": ""})
         payload = self.client.context(
@@ -450,6 +482,29 @@ class MemoryGate:
             return GateDecision(allow=True, augmentation={"injection": ""})
         turn_state.context_injected = True
         turn_state.context_payload = payload
+        # Track last brain hit so the JSX BrainChip can render a live
+        # "⌬ brain · N skills · M facts · Δms" pill without round-tripping
+        # the gate per turn. Module-global is fine — single MemoryGate per
+        # process, single LLM router context.
+        try:
+            _LAST_BRAIN_STATS = {
+                "ts": time.time(),
+                "skills_n": len(payload.get("skills", []) or []),
+                "facts_n": len(payload.get("facts", []) or []),
+                "secret_refs_n": len(payload.get("secret_refs", []) or []),
+                "retrieval_ms": float(payload.get("retrieval_ms", 0.0) or 0.0),
+                "user_message_preview": (user_message or "")[:80],
+                "available": True,
+            }
+            try:
+                _LAST_BRAIN_STATS["client_status"] = (
+                    self.client.status() if hasattr(self.client, "status") else None
+                )
+            except Exception:
+                _LAST_BRAIN_STATS["client_status"] = None
+        except Exception:
+            pass
+
         return GateDecision(
             allow=True,
             augmentation={

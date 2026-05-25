@@ -4212,7 +4212,10 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
       padding:'30px 44px 110px', display:'flex', flexDirection:'column', position:'relative',
     }}>
-      <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
+      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+        <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
+        <BrainChip/>
+      </div>
       <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'24px 0 14px' }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
@@ -4569,6 +4572,7 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
       </div>
 
       <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
+      <BrainChip compact/>
       <HoverBtn onClick={onFork}>fork</HoverBtn>
       <HoverBtn onClick={onSaveAsSkill} title="Package this canvas into the node library as a reusable node">save as skill</HoverBtn>
       <HoverBtn primary onClick={onSave} title="Save this session">save</HoverBtn>
@@ -4666,6 +4670,74 @@ const HoverBtn = ({ primary, onClick, children, style, title }) => {
           : { background: h ? LM.bgHover : 'transparent', borderColor: h ? LM.accent+'66' : LM.line, color: h ? LM.ink : LM.inkSoft }),
         ...style,
       }}>{children}</button>
+  );
+};
+
+// AgDR-0044 Layer 5 — BrainChip. Pollable indicator next to the
+// ModelStrip showing the last brain pre_prompt hit. Click opens the
+// existing MemoryExplorerModal (lm-memory-explorer-open). Polls
+// bridge.get_brain_stats every 4s when an LLM turn is idle; spec
+// guarantees the readout is at most ~4s stale.
+//
+// Visual states:
+//   - never fired         → faint "⌬ brain · idle" pill
+//   - available, 0 / 0    → muted "⌬ brain · 0 skills · 0 facts"
+//   - available, N skills → accent "⌬ brain · N · M · Δms"
+//   - breaker open / unavailable → err "⌬ brain · offline"
+const BrainChip = ({ compact }) => {
+  const [stats, setStats] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const r = await bridgeAsync('get_brain_stats');
+        if (!cancelled) setStats((r && typeof r === 'object') ? r : null);
+      } catch (e) { /* keep last value */ }
+    };
+    pull();
+    const t = setInterval(pull, 4000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  const click = (e) => {
+    e.stopPropagation();
+    try { window.dispatchEvent(new CustomEvent('lm-memory-explorer-open', { detail:{} })); } catch (e2) {}
+  };
+  // Derive display state.
+  const hasTurn = stats && stats.ts;
+  const available = stats && stats.available !== false;
+  const breakerOpen = stats && stats.client_status && stats.client_status.breaker
+    && stats.client_status.breaker.state === 'open';
+  const offline = breakerOpen || (hasTurn && !available);
+  const skillsN = (stats && stats.skills_n) || 0;
+  const factsN = (stats && stats.facts_n) || 0;
+  const ms = (stats && stats.retrieval_ms) || 0;
+  const hit = skillsN + factsN > 0;
+  const col = offline ? LM.err
+            : !hasTurn ? LM.inkMuted
+            : hit ? LM.accent
+            : LM.inkSoft;
+  const label = offline ? '⌬ brain · offline'
+              : !hasTurn ? '⌬ brain · idle'
+              : `⌬ brain · ${skillsN}s · ${factsN}f · ${Math.round(ms)}ms`;
+  const tip = !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
+            : offline ? 'Brain daemon offline. Circuit breaker open or socket refused.'
+            : `Last hit: ${skillsN} skills + ${factsN} facts injected in ${Math.round(ms)}ms. Last user message: "${(stats.user_message_preview || '').slice(0,60)}"`;
+  return (
+    <button onClick={click} title={tip}
+      data-testid="brain-chip"
+      style={{
+        display:'flex', alignItems:'center', gap:6,
+        padding: compact ? '4px 9px' : '6px 12px',
+        background: hit ? LM.accentDim : LM.bg,
+        border: `1px solid ${hit ? LM.accent + '66' : LM.line}`,
+        borderRadius:6, cursor:'pointer',
+        color: col,
+        fontFamily:LM.mono, fontSize: compact ? 10 : 10.5, letterSpacing:'0.04em',
+        whiteSpace:'nowrap',
+        transition: 'background .12s, border-color .12s, color .12s',
+      }}>
+      {label}
+    </button>
   );
 };
 

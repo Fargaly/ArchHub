@@ -10579,8 +10579,12 @@ const AiPlanHistoryModal = () => {
             )}
             {!loading && records.map(r => {
               const isSel = selected && selected.plan_id === r.plan_id;
-              const steps = (r.plan && r.plan.steps) || r.steps || [];
-              const stepsDone = steps.filter(s => s.status === 'done' || s.ok).length;
+              // ai_plan executor record shape (real, not mock):
+              //   { plan_id, prompt, model, plan: [ToolInvocation], result,
+              //     status, error, ts }
+              // Each ToolInvocation = { id, tool_name, arguments, status, result }.
+              const steps = Array.isArray(r.plan) ? r.plan : [];
+              const stepsDone = steps.filter(s => s.status === 'ok').length;
               return (
                 <button key={r.plan_id} onClick={() => setSelected(r)} style={{
                   display:'block', width:'100%', textAlign:'left',
@@ -10632,8 +10636,8 @@ const AiPlanHistoryModal = () => {
                 {[
                   ['model', selected.model || '?'],
                   ['status', selected.status || '?'],
-                  ['cost', '$' + ((selected.cost || 0).toFixed(4))],
-                  ['steps', ((selected.plan && selected.plan.steps) || []).length],
+                  ['cached', selected.cached ? 'yes (replay)' : 'no (fresh)'],
+                  ['steps', (Array.isArray(selected.plan) ? selected.plan : []).length],
                 ].map(([k,v]) => (
                   <div key={k} style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
                     borderRadius:5, padding:'6px 9px' }}>
@@ -10651,16 +10655,53 @@ const AiPlanHistoryModal = () => {
                 </div>
               )}
               <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent,
-                letterSpacing:'0.18em', marginBottom:6 }}>STEPS</div>
-              {((selected.plan && selected.plan.steps) || []).map((s, i) => (
-                <div key={i} style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
-                  borderLeft:`2px solid ${s.ok || s.status === 'done' ? LM.ok : (s.error ? LM.err : LM.inkMuted)}`,
-                  borderRadius:5, padding:'8px 11px', marginBottom:6 }}>
-                  <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft,
-                    marginBottom:2 }}>{i+1}. {s.tool || s.action || s.kind || 'step'}</div>
-                  <div style={{ fontSize:11.5, color:LM.ink }}>{s.summary || s.description || s.prompt || ''}</div>
-                </div>
-              ))}
+                letterSpacing:'0.18em', marginBottom:6 }}>TOOL INVOCATIONS</div>
+              {(Array.isArray(selected.plan) ? selected.plan : []).map((s, i) => {
+                const ok = s.status === 'ok';
+                const isErr = s.status === 'error';
+                const col = ok ? LM.ok : isErr ? LM.err : LM.inkMuted;
+                const argsText = (() => {
+                  try {
+                    if (!s.arguments) return '';
+                    const a = typeof s.arguments === 'string' ? s.arguments : JSON.stringify(s.arguments);
+                    return a.length > 240 ? a.slice(0, 240) + '…' : a;
+                  } catch (e) { return ''; }
+                })();
+                const resultText = (() => {
+                  try {
+                    if (s.result == null) return '';
+                    const r = typeof s.result === 'string' ? s.result : JSON.stringify(s.result);
+                    return r.length > 240 ? r.slice(0, 240) + '…' : r;
+                  } catch (e) { return ''; }
+                })();
+                return (
+                  <div key={i} style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                    borderLeft:`2px solid ${col}`,
+                    borderRadius:5, padding:'8px 11px', marginBottom:6 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:3 }}>
+                      <span style={{ fontFamily:LM.mono, fontSize:10, color:col,
+                        textTransform:'uppercase', letterSpacing:'0.08em' }}>{s.status || '?'}</span>
+                      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, fontWeight:500 }}>
+                        {i+1}. {s.tool_name || s.id || 'tool'}
+                      </span>
+                    </div>
+                    {argsText && (
+                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkSoft,
+                        background:LM.bg, padding:'4px 7px', borderRadius:3, marginBottom:3,
+                        whiteSpace:'pre-wrap', wordBreak:'break-all' }}>
+                        args: {argsText}
+                      </div>
+                    )}
+                    {resultText && (
+                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkSoft,
+                        background:LM.bg, padding:'4px 7px', borderRadius:3,
+                        whiteSpace:'pre-wrap', wordBreak:'break-all' }}>
+                        → {resultText}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               {selected.result && (
                 <div style={{ marginTop:14 }}>
                   <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent,
@@ -10884,13 +10925,21 @@ const AiPlanSection = ({ node }) => {
       </div>
     );
   }
+  // ai_plan record shape: plan = [ToolInvocation]{id, tool_name, arguments,
+  // status, result}. "Decisions" = first 3 distinct tool_name calls.
   const steps = Array.isArray(plan.plan) ? plan.plan : [];
   const done = steps.filter(s => s && s.status === 'ok').length;
   const total = steps.length;
-  const cost = plan.cost_estimate || plan.cost || '—';
-  const decisions = Array.isArray(plan.decisions)
-    ? plan.decisions
-    : steps.slice(0, 3).map(s => (s && (s.tool || s.name || s.summary)) || '').filter(Boolean);
+  const cached = plan.cached ? 'replay' : 'fresh';
+  const decisions = (() => {
+    const seen = new Set();
+    const out = [];
+    for (const s of steps) {
+      const n = s && s.tool_name;
+      if (n && !seen.has(n)) { seen.add(n); out.push(n); if (out.length >= 3) break; }
+    }
+    return out;
+  })();
   const Row = ({ k, v }) => (
     <div style={{
       background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`, padding:'6px 8px',
@@ -10904,10 +10953,10 @@ const AiPlanSection = ({ node }) => {
     <div>
       <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em', marginBottom:10 }}>PLAN · {plan.status || 'ok'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-        <Row k="Plan id" v={plan.plan_id || '—'}/>
-        <Row k="Steps · done / total" v={`${done} / ${total || '—'}`}/>
+        <Row k="Plan id" v={(plan.plan_id || '—').slice(0,12)}/>
+        <Row k="Tool calls · ok / total" v={`${done} / ${total || '—'}`}/>
         <Row k="Model" v={plan.model || '—'}/>
-        <Row k="Cost · est" v={typeof cost === 'number' ? `$${cost.toFixed(3)}` : String(cost)}/>
+        <Row k="Source" v={cached}/>
       </div>
       {decisions.length > 0 && (
         <>

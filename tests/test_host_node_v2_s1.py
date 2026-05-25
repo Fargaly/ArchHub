@@ -130,26 +130,39 @@ def test_host_node_v2_s1_no_hover_promote():
     assert "row-sock-r" not in body
 
 
-def test_host_node_v2_s1_no_floating_disable_verbs_bar():
-    """S1 has no floating bar — that lands in S2 (AgDR-0024)."""
+def test_host_node_v2_s2_has_floating_disable_verbs_bar():
+    """S2 (shipped 2026-05-25) — floating verb bar present in HostNodeV2Body."""
     src = _src()
     start = src.find("const HostNodeV2Body = ")
     end = src.find("\nconst ", start + 10)
-    body = src[start:end if end > 0 else start + 6000]
-    # The floating-bar marker from the prototype must NOT show up
-    # inside HostNodeV2Body yet.
-    assert "RUN MODE:" not in body
-    assert "floating-bar" not in body
+    body = src[start:end if end > 0 else start + 8000]
+    # Each verb fires a dedicated lm-node-toggle-* event from the bar.
+    assert "lm-node-toggle-pin" in body
+    assert "lm-node-toggle-freeze" in body
+    assert "lm-node-toggle-bypass" in body
+    assert "lm-node-toggle-preview" in body
 
 
-def test_host_node_v2_s1_no_output_pluck_section():
+def test_host_node_v2_s3_has_output_pluck_section():
+    """S3 (shipped 2026-05-25) — OUTPUT PLUCK section + promote handler."""
     src = _src()
     start = src.find("const HostNodeV2Body = ")
     end = src.find("\nconst ", start + 10)
-    body = src[start:end if end > 0 else start + 6000]
-    # OUTPUT PLUCK ships in S3.
-    assert "OUTPUT PLUCK" not in body
-    assert "OUTPUTS — PLUCK" not in body
+    body = src[start:end if end > 0 else start + 8000]
+    # Per AgDR-0024 S3 — outputs render with hover-to-promote affordance
+    # and dispatch lm-host-promote-output.
+    assert "HOVER TO PROMOTE" in body
+    assert "lm-host-promote-output" in body
+
+
+def test_host_node_v2_s2_has_advanced_inputs_section():
+    """S2 — ADVANCED INPUTS collapsible band present."""
+    src = _src()
+    start = src.find("const HostNodeV2Body = ")
+    end = src.find("\nconst ", start + 10)
+    body = src[start:end if end > 0 else start + 8000]
+    assert "ADVANCED INPUTS" in body
+    assert "setAdvancedOpen" in body
 
 
 # ─── 5. AgDR doc exists ─────────────────────────────────────────────

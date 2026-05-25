@@ -1941,17 +1941,60 @@ const StudioLM = () => {
     // Founder demand 2026-05-16: "+ new node" in the node library opens
     // the AI node-smith modal.
     const onNewNode = () => setAiNodeOpen(true);
+    // AgDR-0043 Sprint 2 Move 6 — Cmd+K command palette dispatches these
+    // events; this is the single place state setters are reachable.
+    const onCmdOpenLibrary = () => setLibraryOpen(true);
+    const onCmdOpenSettings = () => openSettingsResolved();
+    const onCmdOpenAiNode = () => setAiNodeOpen(true);
+    const onCmdNewCanvas = () => { try { createSession(); } catch (e) {} };
+    const onCmdOpenSession = (ev) => {
+      const sid = ev && ev.detail && ev.detail.id;
+      if (sid) try { openSession(sid); } catch (e) {}
+    };
+    const onCmdRunCanvas = () => { try { bridgeCall('cook_session', currentSid()); } catch (e) {} };
+    const onCmdAddGrammarNode = (ev) => {
+      const d = ev && ev.detail;
+      if (!d || !d.kind) return;
+      try {
+        addNodeFromLibrary({ id:'ng:'+d.kind, _grammar:d.grammar,
+                              title:(d.grammar && d.grammar.display) || d.kind,
+                              sub:(d.grammar && d.grammar.blurb) || d.kind });
+      } catch (e) {}
+    };
+    const onTogglePerfHud = () => {
+      // Mirror the Ctrl+Shift+P key binding the PerfHud already listens to.
+      try {
+        const ev2 = new KeyboardEvent('keydown', { key:'P', ctrlKey:true, shiftKey:true });
+        window.dispatchEvent(ev2);
+      } catch (e) {}
+    };
     window.addEventListener('lm-new-session', onNewSession);
     window.addEventListener('lm-spawn-skill', onSpawnSkill);
     window.addEventListener('lm-share-canvas', onShareCanvas);
     window.addEventListener('lm-wire-promote', onWirePromote);
     window.addEventListener('lm-new-node', onNewNode);
+    window.addEventListener('lm-action-open-library', onCmdOpenLibrary);
+    window.addEventListener('lm-action-open-settings', onCmdOpenSettings);
+    window.addEventListener('lm-action-open-ai-node', onCmdOpenAiNode);
+    window.addEventListener('lm-action-new-canvas', onCmdNewCanvas);
+    window.addEventListener('lm-action-open-session', onCmdOpenSession);
+    window.addEventListener('lm-action-run-canvas', onCmdRunCanvas);
+    window.addEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
+    window.addEventListener('lm-toggle-perf-hud', onTogglePerfHud);
     return () => {
       window.removeEventListener('lm-new-session', onNewSession);
       window.removeEventListener('lm-spawn-skill', onSpawnSkill);
       window.removeEventListener('lm-share-canvas', onShareCanvas);
       window.removeEventListener('lm-wire-promote', onWirePromote);
       window.removeEventListener('lm-new-node', onNewNode);
+      window.removeEventListener('lm-action-open-library', onCmdOpenLibrary);
+      window.removeEventListener('lm-action-open-settings', onCmdOpenSettings);
+      window.removeEventListener('lm-action-open-ai-node', onCmdOpenAiNode);
+      window.removeEventListener('lm-action-new-canvas', onCmdNewCanvas);
+      window.removeEventListener('lm-action-open-session', onCmdOpenSession);
+      window.removeEventListener('lm-action-run-canvas', onCmdRunCanvas);
+      window.removeEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
+      window.removeEventListener('lm-toggle-perf-hud', onTogglePerfHud);
     };
   }, [createSession, openId, bumpGraph]);
 
@@ -2022,6 +2065,8 @@ const StudioLM = () => {
       {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}/>}
+      <AiPlanHistoryModal/>
+      <CommandPalette/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
       {aiNodeOpen && <AINodeModal onClose={() => setAiNodeOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -7250,7 +7295,13 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
   }
 
   // AI nodes can expand horizontally for full conversation + search
-  const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
+  // AgDR-0021 — ai.plan is the HERO canvas node per Prototype D + workshop
+  // Sprint 2 Move 8. 2.5× normal width, taller title bar, accent glow ring.
+  const isAiPlan = (n.kind === 'ai_plan' || n.type === 'ai.plan' ||
+                    (n.title && /ai\.plan/i.test(n.title)));
+  const heroW = isAiPlan ? Math.max(550, (n.w || 220) * 2.5) : null;
+  const w = heroW ? heroW
+          : (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
   // Sockets are absolutely positioned, so they don't stretch the node's own
   // box. With the wider SOCKET_STEP a static n.h no longer covers nodes with
@@ -7271,11 +7322,15 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
         borderWidth:'2px 1px 1px 1px',
         borderColor: `${cat.col} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line}`,
         borderRadius:9, color:LM.ink, fontFamily:LM.sans,
-        boxShadow: focused
-          ? `0 0 0 3px ${LM.accentDim}, 0 8px 24px rgba(0,0,0,.4)`
-          : (selected
-              ? `0 0 0 2px ${LM.accent}aa, 0 2px 8px rgba(0,0,0,.35)`
-              : '0 2px 8px rgba(0,0,0,.35)'),
+        boxShadow: isAiPlan
+          ? (focused
+              ? `0 0 0 4px ${LM.accent}66, 0 0 32px ${LM.accent}33, 0 12px 32px rgba(0,0,0,.5)`
+              : `0 0 0 2px ${LM.accent}88, 0 0 22px ${LM.accent}22, 0 6px 18px rgba(0,0,0,.45)`)
+          : focused
+            ? `0 0 0 3px ${LM.accentDim}, 0 8px 24px rgba(0,0,0,.4)`
+            : (selected
+                ? `0 0 0 2px ${LM.accent}aa, 0 2px 8px rgba(0,0,0,.35)`
+                : '0 2px 8px rgba(0,0,0,.35)'),
         cursor: 'default',
         opacity: (dimmed ? 0.42 : 1) * (n.preview_off ? 0.55 : 1),
         transition:'border-color .12s, box-shadow .12s, opacity .15s, width .15s, background .15s',
@@ -7311,6 +7366,40 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
         )}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
+        {/* AgDR-0021 — ai.plan hero buttons: Replay last plan + History. */}
+        {isAiPlan && (
+          <>
+            <button onClick={(e) => {
+              e.stopPropagation();
+              // Replay = re-cook node with current params. The plan node
+              // persists its prompt+model+ctx on each cook, so rerun
+              // produces a new plan record using the same inputs unless
+              // the user edited params.
+              try {
+                bridgeCall('run_node', currentSid(), n.id, JSON.stringify(LM_GRAPH));
+                window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+                  detail: { msg: '▶ replaying ai.plan…', kind:'info' }
+                }));
+              } catch (e2) {
+                window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+                  detail: { msg: 'replay failed', kind:'err' }
+                }));
+              }
+            }} title="Replay last plan" style={{
+              padding:'3px 9px', border:`1px solid ${LM.accent}88`, borderRadius:4,
+              background:LM.accentDim, color:LM.accent, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10, marginLeft:4,
+            }}>▶ replay</button>
+            <button onClick={(e) => {
+              e.stopPropagation();
+              try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open', { detail:{ node_id: n.id } })); } catch (e2) {}
+            }} title="Open plan history" style={{
+              padding:'3px 9px', border:`1px solid ${LM.line}`, borderRadius:4,
+              background:'transparent', color:LM.inkSoft, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10, marginLeft:4,
+            }}>history</button>
+          </>
+        )}
         {isAi && (
           <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:3,
@@ -9825,6 +9914,329 @@ const ConnectorRail = ({ node, bumpGraph }) => {
 //   - Decisions pills (one per recorded decision in the plan)
 //   - Replay-from-cache + Open-full-table buttons
 // Fails silent on no plan / no bridge — section just doesn't render data.
+// AgDR-0021 — ai.plan HISTORY modal. Listens for
+// `lm-aiplan-history-open` (fired by the ai.plan hero node's "history"
+// button), pulls full plan history via bridge.get_plan_history, renders
+// a scrollable table with prompt/model/cost/steps + per-row open +
+// delete. Closes on backdrop click or ✕.
+const AiPlanHistoryModal = () => {
+  const [open, setOpen] = React.useState(false);
+  const [records, setRecords] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [selected, setSelected] = React.useState(null);
+  React.useEffect(() => {
+    const onOpen = () => {
+      setOpen(true); setLoading(true);
+      (async () => {
+        try {
+          const r = await bridgeAsync('get_plan_history', '', 50);
+          const recs = (r && r.records) || [];
+          setRecords(recs);
+        } catch (e) { setRecords([]); }
+        finally { setLoading(false); }
+      })();
+    };
+    window.addEventListener('lm-aiplan-history-open', onOpen);
+    return () => window.removeEventListener('lm-aiplan-history-open', onOpen);
+  }, []);
+  if (!open) return null;
+  const close = () => { setOpen(false); setSelected(null); };
+  return (
+    <div onClick={close} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:70,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width:880, maxWidth:'94%', height:560, maxHeight:'88%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:9,
+        display:'flex', flexDirection:'column',
+        boxShadow:'0 18px 48px rgba(0,0,0,.6)',
+      }}>
+        <div style={{ padding:'14px 18px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontFamily:LM.serif, fontSize:20, fontWeight:500 }}>Plan history</span>
+          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+            {records.length} RECORDS · NEWEST FIRST
+          </span>
+          <div style={{ flex:1 }}/>
+          <button onClick={close} style={{
+            width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
+            borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
+          }}>✕</button>
+        </div>
+        <div style={{ flex:1, display:'grid', gridTemplateColumns: selected ? '360px 1fr' : '1fr',
+          minHeight:0, overflow:'hidden' }}>
+          <div style={{ overflow:'auto', borderRight: selected ? `1px solid ${LM.line}` : 0 }}>
+            {loading && <div style={{ padding:18, fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>loading…</div>}
+            {!loading && records.length === 0 && (
+              <div style={{ padding:18, fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+                No plans yet. Run an ai.plan node to mint one.
+              </div>
+            )}
+            {!loading && records.map(r => {
+              const isSel = selected && selected.plan_id === r.plan_id;
+              const steps = (r.plan && r.plan.steps) || r.steps || [];
+              const stepsDone = steps.filter(s => s.status === 'done' || s.ok).length;
+              return (
+                <button key={r.plan_id} onClick={() => setSelected(r)} style={{
+                  display:'block', width:'100%', textAlign:'left',
+                  padding:'11px 16px', border:0,
+                  borderBottom:`1px solid ${LM.lineSoft}`,
+                  background: isSel ? LM.bgSoft : 'transparent',
+                  borderLeft: isSel ? `2px solid ${LM.accent}` : '2px solid transparent',
+                  color:LM.ink, fontFamily:LM.sans, cursor:'pointer',
+                }}>
+                  <div style={{ fontSize:12.5, fontWeight:500, marginBottom:3,
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {(r.prompt || '(no prompt)').slice(0,80)}
+                  </div>
+                  <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+                    display:'flex', gap:10 }}>
+                    <span>{r.model || '?'}</span>
+                    <span>· {stepsDone}/{steps.length} steps</span>
+                    <span>· ${(r.cost || 0).toFixed(4)}</span>
+                    <span style={{ marginLeft:'auto' }}>
+                      {r.ts ? new Date(r.ts).toLocaleString() : ''}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {selected && (
+            <div style={{ overflow:'auto', padding:'14px 18px' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em' }}>PLAN</span>
+                <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{selected.plan_id}</span>
+                <div style={{ flex:1 }}/>
+                <button onClick={async () => {
+                  try {
+                    await bridgeAsync('delete_plan_record', selected.plan_id, '');
+                    setRecords(records.filter(x => x.plan_id !== selected.plan_id));
+                    setSelected(null);
+                  } catch (e) {}
+                }} style={{
+                  padding:'3px 9px', border:`1px solid ${LM.err}66`, borderRadius:3,
+                  background:'transparent', color:LM.err, cursor:'pointer',
+                  fontFamily:LM.mono, fontSize:10,
+                }}>delete</button>
+              </div>
+              <div style={{ fontSize:13, lineHeight:1.4, marginBottom:14, color:LM.ink }}>
+                {selected.prompt || '(no prompt)'}
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:12 }}>
+                {[
+                  ['model', selected.model || '?'],
+                  ['status', selected.status || '?'],
+                  ['cost', '$' + ((selected.cost || 0).toFixed(4))],
+                  ['steps', ((selected.plan && selected.plan.steps) || []).length],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                    borderRadius:5, padding:'6px 9px' }}>
+                    <div style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
+                      letterSpacing:'0.14em', textTransform:'uppercase' }}>{k}</div>
+                    <div style={{ fontSize:12, color:LM.ink, marginTop:2 }}>{String(v)}</div>
+                  </div>
+                ))}
+              </div>
+              {selected.error && (
+                <div style={{ background:LM.err+'14', border:`1px solid ${LM.err}66`,
+                  borderRadius:5, padding:'8px 12px', marginBottom:12,
+                  color:LM.err, fontFamily:LM.mono, fontSize:11 }}>
+                  ⚠ {selected.error}
+                </div>
+              )}
+              <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent,
+                letterSpacing:'0.18em', marginBottom:6 }}>STEPS</div>
+              {((selected.plan && selected.plan.steps) || []).map((s, i) => (
+                <div key={i} style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                  borderLeft:`2px solid ${s.ok || s.status === 'done' ? LM.ok : (s.error ? LM.err : LM.inkMuted)}`,
+                  borderRadius:5, padding:'8px 11px', marginBottom:6 }}>
+                  <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft,
+                    marginBottom:2 }}>{i+1}. {s.tool || s.action || s.kind || 'step'}</div>
+                  <div style={{ fontSize:11.5, color:LM.ink }}>{s.summary || s.description || s.prompt || ''}</div>
+                </div>
+              ))}
+              {selected.result && (
+                <div style={{ marginTop:14 }}>
+                  <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent,
+                    letterSpacing:'0.18em', marginBottom:6 }}>RESULT</div>
+                  <pre style={{ background:LM.bg, border:`1px solid ${LM.line}`,
+                    borderRadius:5, padding:'8px 11px', fontFamily:LM.mono,
+                    fontSize:10.5, color:LM.inkSoft, overflow:'auto', maxHeight:200,
+                    whiteSpace:'pre-wrap' }}>
+                    {typeof selected.result === 'string' ? selected.result
+                      : JSON.stringify(selected.result, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// AgDR-0043 Sprint 2 Move 6 — Cmd+K command palette. Linear-style.
+// Surfaces every action + library node + session in one keystroke.
+// Categories: actions (verbs), nodes (every grammar primitive), sessions
+// (every existing session). Fuzzy filter on label.
+const CommandPalette = () => {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const [selIdx, setSelIdx] = React.useState(0);
+  const [sessionsCache, setSessionsCache] = React.useState([]);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      // Cmd+K or Ctrl+K opens; Esc closes.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setOpen(o => !o);
+      } else if (e.key === 'Escape' && open) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  React.useEffect(() => {
+    if (open) {
+      setQ(''); setSelIdx(0);
+      (async () => {
+        try {
+          const s = await bridgeAsync('get_sessions');
+          if (Array.isArray(s)) setSessionsCache(s);
+        } catch (e) {}
+      })();
+    }
+  }, [open]);
+  // Build the unified command list.
+  const all = React.useMemo(() => {
+    const items = [];
+    // Actions
+    items.push(
+      { kind:'action', label:'⊞ New canvas', id:'new-canvas',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-new-canvas')); } catch (e) {} } },
+      { kind:'action', label:'⊕ Open node library', id:'open-library',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-library')); } catch (e) {} } },
+      { kind:'action', label:'⚙ Open settings', id:'open-settings',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-settings')); } catch (e) {} } },
+      { kind:'action', label:'⊕ Create node with AI', id:'create-ai-node',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-ai-node')); } catch (e) {} } },
+      { kind:'action', label:'▶ Run current canvas', id:'run-canvas',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-run-canvas')); } catch (e) {} } },
+      { kind:'action', label:'↻ Refresh sessions', id:'refresh-sessions',
+        run:() => { try { refreshSessions(); } catch (e) {} } },
+      { kind:'action', label:'⌥ Toggle perf HUD', id:'toggle-perf-hud',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-toggle-perf-hud')); } catch (e) {} } },
+      { kind:'action', label:'📜 Open plan history', id:'open-plan-history',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open', { detail:{} })); } catch (e) {} } },
+    );
+    // Nodes from grammar
+    (window.__archhub_LM_NODE_GRAMMAR || []).forEach(p => {
+      items.push({
+        kind:'node',
+        label:'+ ' + (p.display || p.kind),
+        sub: p.cat,
+        id: 'node:' + p.kind,
+        run: () => {
+          try {
+            window.dispatchEvent(new CustomEvent('lm-action-add-grammar-node', {
+              detail: { kind: p.kind, grammar: p }
+            }));
+          } catch (e) {}
+        },
+      });
+    });
+    // Sessions
+    sessionsCache.forEach(s => {
+      items.push({
+        kind:'session',
+        label:'→ ' + (s.title || '(untitled)'),
+        sub: s.state || 'idle',
+        id: 'sess:' + s.id,
+        run: () => {
+          try { window.dispatchEvent(new CustomEvent('lm-action-open-session', { detail:{ id: s.id } })); } catch (e) {}
+        },
+      });
+    });
+    return items;
+  }, [sessionsCache]);
+  const filtered = React.useMemo(() => {
+    const qq = q.trim().toLowerCase();
+    if (!qq) return all.slice(0, 60);
+    return all.filter(x => (x.label + ' ' + (x.sub || '')).toLowerCase().includes(qq)).slice(0, 60);
+  }, [all, q]);
+  React.useEffect(() => { setSelIdx(0); }, [q]);
+  if (!open) return null;
+  const run = (it) => {
+    try { it && it.run && it.run(); } catch (e) {}
+    setOpen(false);
+  };
+  return (
+    <div onClick={() => setOpen(false)} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:80,
+      display:'grid', placeItems:'start center', paddingTop:80,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width:620, maxWidth:'94%', background:LM.bg,
+        border:`1px solid ${LM.line}`, borderRadius:10,
+        boxShadow:'0 18px 48px rgba(0,0,0,.6)',
+        display:'flex', flexDirection:'column', maxHeight:540, minHeight:200,
+      }}>
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setSelIdx(i => Math.min(filtered.length-1, i+1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setSelIdx(i => Math.max(0, i-1)); }
+            else if (e.key === 'Enter') { e.preventDefault(); run(filtered[selIdx]); }
+          }}
+          placeholder="Type a command, node, or session…"
+          style={{
+            padding:'14px 18px', background:'transparent', border:0,
+            borderBottom:`1px solid ${LM.line}`, color:LM.ink,
+            fontFamily:LM.sans, fontSize:15, outline:'none',
+          }}/>
+        <div style={{ flex:1, overflow:'auto', padding:'4px 0' }}>
+          {filtered.length === 0 && (
+            <div style={{ padding:18, fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+              No matches for "{q}"
+            </div>
+          )}
+          {filtered.map((it, i) => {
+            const isSel = i === selIdx;
+            const tagCol = it.kind === 'action' ? LM.accent
+                         : it.kind === 'node' ? LM.cyan : LM.ok;
+            return (
+              <div key={it.id} onClick={() => run(it)}
+                onMouseEnter={() => setSelIdx(i)}
+                style={{
+                  display:'flex', alignItems:'center', gap:10,
+                  padding:'8px 18px', cursor:'pointer', color:LM.ink,
+                  background: isSel ? LM.bgSoft : 'transparent',
+                  borderLeft: isSel ? `2px solid ${LM.accent}` : '2px solid transparent',
+                }}>
+                <span style={{ flex:1, fontFamily:LM.sans, fontSize:13 }}>{it.label}</span>
+                {it.sub && <span style={{ fontFamily:LM.mono, fontSize:9.5,
+                  color:LM.inkMuted, letterSpacing:'0.08em' }}>{it.sub}</span>}
+                <span style={{ fontFamily:LM.mono, fontSize:8.5,
+                  color:tagCol, letterSpacing:'0.14em',
+                  textTransform:'uppercase', padding:'1px 5px',
+                  border:`1px solid ${tagCol}55`, borderRadius:3 }}>{it.kind}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ padding:'7px 14px', borderTop:`1px solid ${LM.line}`,
+          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, display:'flex', gap:18 }}>
+          <span>↑↓ navigate</span><span>↵ run</span><span>esc close</span>
+          <span style={{ marginLeft:'auto' }}>{filtered.length} / {all.length} commands</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AiPlanSection = ({ node }) => {
   const [plan, setPlan] = React.useState(null);
   const [loading, setLoading] = React.useState(true);

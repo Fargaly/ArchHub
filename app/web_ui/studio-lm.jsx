@@ -7014,15 +7014,18 @@ const _injectTokenVars = (() => {
   document.head.appendChild(s);
 })();
 
-// ─── AgDR-0022 — ReactFlow scaffold P2.a (groundwork) ─────────────
-// Feature-flag reader. `localStorage.archhub.canvas` picks which
-// canvas substrate to render: `custom` (today's NodeCanvas) or
-// `reactflow` (the AgDR-0012 migration target). Default `custom`
-// until P2.a-P2.d sub-slices reach parity. Toggle is INSTANT —
-// no app restart needed (the next React render reads the flag).
+// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0045) ───
+// AgDR-0045 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
+// + AgDR-0022 in full. Custom canvas IS the substrate of record; the stub
+// below + helpers are KEPT only so `test_reactflow_p2a_groundwork.py`
+// doesn't break, but neither is wired into any render path. They render
+// nothing in production. Treat the entire block as deprecated.
 //
-// Read at module load + memoised; mutation lives in
-// `_setCanvasFlavor(name)` which the Settings panel calls.
+// Why: ReactFlow was never installed; the custom NodeView shipped
+// every feature ReactFlow would have offered (typed wires, groups,
+// HostNodeV2, ai.plan hero, broken-wire dialog). Migration cost
+// (3-5 days, full rewrite) >> value (zero new capability). See
+// docs/agdr/AgDR-0045-supersede-reactflow-lock.md.
 const _readCanvasFlavor = () => {
   try {
     const v = (localStorage.getItem('archhub.canvas') || '').toLowerCase();

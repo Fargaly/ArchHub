@@ -7046,27 +7046,60 @@ const _injectA11yStyles = (() => {
 const _injectTokenVars = (() => {
   if (typeof document === 'undefined') return;
   if (document.getElementById('lm-token-vars')) return;
+  // Theme overrides — Blueprint (cool engineering blue) + Vellum (warm
+  // paper drafting). Forge is the default; overrides only re-bind the
+  // surface tokens that actually drive theme perception (bg, ink, accent,
+  // typography accent). Spacing / radius / motion stay constant across
+  // themes per AgDR-0015 design system.
+  const FORGE = {
+    bg:LM.bg, bgPanel:LM.bgPanel, bgSoft:LM.bgSoft, bgHover:LM.bgHover,
+    bgDeep:LM.bgDeep, bgCanvas:LM.bgCanvas,
+    ink:LM.ink, inkSoft:LM.inkSoft, inkMuted:LM.inkMuted, inkDim:LM.inkDim,
+    line:LM.line, lineSoft:LM.lineSoft, lineHair:LM.lineHair,
+    accent:LM.accent, accentSoft:LM.accentSoft, accentDim:LM.accentDim, accentHi:LM.accentHi,
+  };
+  // Blueprint — cool ink-and-rule, like a Mylar drafting sheet inverted.
+  const BLUEPRINT = {
+    bg:'#0a1622', bgPanel:'#10202e', bgSoft:'#152838', bgHover:'#1a3046',
+    bgDeep:'#06101a', bgCanvas:'#0c1a26',
+    ink:'#e0eaf3', inkSoft:'#7da8c8', inkMuted:'#4a6982', inkDim:'#2c4257',
+    line:'#1f3651', lineSoft:'#19293f', lineHair:'#142031',
+    accent:'#6aa9ff', accentSoft:'#1a2c44', accentDim:'#142238', accentHi:'#8cc0ff',
+  };
+  // Vellum — warm light theme, like printed trace paper under tungsten.
+  const VELLUM = {
+    bg:'#f5efe2', bgPanel:'#eee5d2', bgSoft:'#e6dcc4', bgHover:'#ddd0b3',
+    bgDeep:'#fbf6ec', bgCanvas:'#f0e9d8',
+    ink:'#3a2f1f', inkSoft:'#6b5a44', inkMuted:'#8e7c63', inkDim:'#a99a83',
+    line:'#c9b89a', lineSoft:'#d4c6ac', lineHair:'#dfd4be',
+    accent:'#a8421f', accentSoft:'#e8d0c0', accentDim:'#decbb6', accentHi:'#c45530',
+  };
+  const _themeBlock = (sel, t) => [
+    `${sel}{`,
+    `  --lm-bg:${t.bg}; --lm-bgPanel:${t.bgPanel}; --lm-bgSoft:${t.bgSoft};`,
+    `  --lm-bgHover:${t.bgHover}; --lm-bgDeep:${t.bgDeep}; --lm-bgCanvas:${t.bgCanvas};`,
+    `  --lm-ink:${t.ink}; --lm-inkSoft:${t.inkSoft}; --lm-inkMuted:${t.inkMuted}; --lm-inkDim:${t.inkDim};`,
+    `  --lm-line:${t.line}; --lm-lineSoft:${t.lineSoft}; --lm-lineHair:${t.lineHair};`,
+    `  --lm-accent:${t.accent}; --lm-accentSoft:${t.accentSoft}; --lm-accentDim:${t.accentDim}; --lm-accentHi:${t.accentHi};`,
+    `  background-color:${t.bg}; color:${t.ink};`,
+    `}`,
+  ].join('\n');
   const css = [
     ':root{',
-    `  --lm-bg:${LM.bg}; --lm-bgPanel:${LM.bgPanel}; --lm-bgSoft:${LM.bgSoft};`,
-    `  --lm-bgHover:${LM.bgHover}; --lm-bgDeep:${LM.bgDeep}; --lm-bgCanvas:${LM.bgCanvas};`,
-    `  --lm-ink:${LM.ink}; --lm-inkSoft:${LM.inkSoft}; --lm-inkMuted:${LM.inkMuted}; --lm-inkDim:${LM.inkDim};`,
-    `  --lm-line:${LM.line}; --lm-lineSoft:${LM.lineSoft}; --lm-lineHair:${LM.lineHair};`,
-    `  --lm-accent:${LM.accent}; --lm-accentSoft:${LM.accentSoft}; --lm-accentDim:${LM.accentDim}; --lm-accentHi:${LM.accentHi};`,
+    Object.entries(FORGE).map(([k,v]) => `  --lm-${k}:${v};`).join('\n'),
     `  --lm-ok:${LM.ok}; --lm-warn:${LM.warn}; --lm-err:${LM.err};`,
     `  --lm-cyan:${LM.cyan}; --lm-purple:${LM.purple}; --lm-blue:${LM.blue};`,
     `  --lm-serif:${LM.serif}; --lm-sans:${LM.sans}; --lm-mono:${LM.mono};`,
-    // Spacing scale
     Object.entries(LM.size).map(([k,v]) => `  --lm-s${k}:${v}px;`).join('\n'),
-    // Type scale
     Object.entries(LM.font).map(([k,v]) => `  --lm-f${k}:${v}px;`).join('\n'),
-    // Radius scale
     Object.entries(LM.radius).map(([k,v]) => `  --lm-r${k}:${v}px;`).join('\n'),
-    // Shadow scale
     Object.entries(LM.shadow).map(([k,v]) => `  --lm-sh-${k}:${v};`).join('\n'),
-    // Motion vocab
     Object.entries(LM.motion).map(([k,v]) => `  --lm-m-${k}:${v};`).join('\n'),
     '}',
+    // Theme overrides — set on document.body via data-theme attribute.
+    _themeBlock('body[data-theme="forge"]', FORGE),
+    _themeBlock('body[data-theme="blueprint"]', BLUEPRINT),
+    _themeBlock('body[data-theme="vellum"]', VELLUM),
     // Honor reduced-motion per AgDR-0015 a11y floor
     '@media (prefers-reduced-motion){',
     '  *, *::before, *::after { animation-duration:0.001ms!important; transition-duration:0.001ms!important; }',
@@ -7076,6 +7109,11 @@ const _injectTokenVars = (() => {
   s.id = 'lm-token-vars';
   s.textContent = css;
   document.head.appendChild(s);
+  // Apply the user's saved theme at load.
+  try {
+    const saved = (localStorage.getItem('archhub.theme') || 'forge').toLowerCase();
+    document.body.setAttribute('data-theme', saved);
+  } catch (e) { document.body.setAttribute('data-theme', 'forge'); }
 })();
 
 // ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0045) ───
@@ -11228,6 +11266,12 @@ const Settings = ({ onClose }) => {
   const setT = (v) => {
     setTheme(v);
     try { localStorage.setItem('archhub.theme', v); } catch (e) {}
+    // Live-swap the active theme by setting body[data-theme]. The
+    // theme CSS rule blocks in _injectTokenVars rebind all --lm-*
+    // surface vars. Components that read tokens directly (inline
+    // styles via the LM object) won't re-render — they need a reload
+    // to pick up the new palette. CSS-var consumers swap instantly.
+    try { document.body.setAttribute('data-theme', v); } catch (e) {}
     _flash();
   };
   const clearJsxCache = () => {
@@ -11311,24 +11355,24 @@ const Settings = ({ onClose }) => {
           <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
             letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>THEME</div>
           <Row label="Active theme"
-               sub="Forge ships today. Blueprint + Vellum land after design pass per workshop AgDR-0043.">
+               sub="Forge · dark warm · ships today as default. Blueprint · cool engineering blue · Vellum · warm light · live-swap the CSS-var-driven surfaces instantly; legacy inline-style surfaces pick up the new palette after a reload.">
             <div style={{ display:'flex', gap:6 }}>
               {[
-                { id:'forge', label:'Forge', enabled:true },
-                { id:'blueprint', label:'Blueprint', enabled:false },
-                { id:'vellum', label:'Vellum', enabled:false },
+                { id:'forge',     label:'Forge'     },
+                { id:'blueprint', label:'Blueprint' },
+                { id:'vellum',    label:'Vellum'    },
               ].map(t => (
-                <button key={t.id} disabled={!t.enabled}
-                  onClick={() => t.enabled && setT(t.id)}
+                <button key={t.id}
+                  onClick={() => setT(t.id)}
                   style={{
                     padding:'6px 12px', borderRadius:5,
                     border:`1px solid ${theme === t.id ? LM.accent : LM.line}`,
                     background: theme === t.id ? LM.accentDim : LM.bgPanel,
-                    color: t.enabled ? (theme === t.id ? LM.accent : LM.ink) : LM.inkMuted,
-                    cursor: t.enabled ? 'pointer' : 'not-allowed',
+                    color: theme === t.id ? LM.accent : LM.ink,
+                    cursor:'pointer',
                     fontFamily:LM.mono, fontSize:10.5,
                   }}>
-                  {t.label}{!t.enabled && ' · soon'}
+                  {t.label}
                 </button>
               ))}
             </div>

@@ -159,13 +159,21 @@ pwsh tools/preflight.ps1
 ## 7. If you're an agent reading this for the first time
 
 1. **Acknowledge in your first response** that you read AGENTS.md.
-2. Open `CLAUDE.md` for the full long-form mandate set.
-3. Open `docs/agdr/` and skim the executed AgDRs to learn the
+2. **Activate the hooks** if this is a fresh clone:
+   ```
+   powershell -ExecutionPolicy Bypass -File tools/setup_hooks.ps1
+   # or:
+   bash tools/setup_hooks.sh
+   ```
+   `git config core.hooksPath` is a per-clone local setting that does
+   NOT travel with `git clone`; the setup script wires it.
+3. Open `CLAUDE.md` for the full long-form mandate set.
+4. Open `docs/agdr/` and skim the executed AgDRs to learn the
    architecture before touching code.
-4. If you're about to do something destructive (per §2) or touch a
+5. If you're about to do something destructive (per §2) or touch a
    protected file (per §1), STOP. Ask the founder in chat.
-5. Run `pwsh tools/cs_tripwire.ps1` after any session that touched
-   files near `payload/sources/`.
+6. Run `powershell -ExecutionPolicy Bypass -File tools/cs_tripwire.ps1`
+   after any session that touched files near `payload/sources/`.
 
 ---
 

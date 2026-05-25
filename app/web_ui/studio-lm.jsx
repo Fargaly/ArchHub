@@ -3717,10 +3717,10 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
         })()}
       </div>
 
-      {/* AgDR-0044 — minimap relocated FROM canvas working area TO the
-          left rail per founder 2026-05-25. Always visible here; the
-          canvas working space stays clean. */}
-      <RailMiniMap/>
+      {/* Minimap previously here; founder 2026-05-25 second pass: "I
+          hate the map location · put it into the right side bar at the
+          top · proper fit". Moved to the Conversation/Inspector
+          right-rail header below. */}
 
       <div style={{
         margin:8, padding:'7px 10px', borderRadius:6,
@@ -11604,11 +11604,17 @@ const ConversationRail = ({ node, bumpGraph }) => {
     <aside key={node.id} style={{
       gridColumn:'2', gridRow:'2',
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
-      display:'grid', gridTemplateRows:'auto 1fr auto', minHeight:0, overflow:'hidden',
+      display:'grid', gridTemplateRows:'auto auto 1fr auto', minHeight:0, overflow:'hidden',
       animation:'lmSlideIn .18s ease-out',
     }}>
+      {/* MAP — at the TOP of the right sidebar per founder 2026-05-25
+          ("put it into the right side bar at the top · proper fit").
+          Was in left rail (RailMiniMap) — left rail copy removed. */}
+      <RailMiniMap/>
+
       {/* Header */}
-      <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}`,
+        borderTop:`1px solid ${LM.lineSoft}` }}>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
           <button onClick={toggleCollapsed} title="Collapse conversation panel" aria-label="Collapse conversation panel"
             style={{
@@ -12027,6 +12033,232 @@ const FullParam = ({ p, node, onChange }) => {
 // HostNodeV2 default, perf HUD, theme picker (locked to Forge today),
 // JSX cache controls, prefs reset. Founder feedback 2026-05-25:
 // "no DevTools to flip toggles, must be a panel".
+// ──────────────────────── BRAIN SETTINGS · AgDR-0044/0045 ──────────
+// Mounted as a section inside Settings. Surfaces personal-brain-mcp
+// daemon health + Firm tab (create/invite/join) + Communities tab
+// (subscribe/list) + Promote-to-shared on demand. All actions proxy
+// through bridge.brain_* slots which hit the brain MCP daemon.
+const BrainSection = ({ flash }) => {
+  const b = (typeof window !== 'undefined') ? window.archhub : null;
+  const [status, setStatus] = React.useState(null);
+  const [firm, setFirm] = React.useState(null);
+  const [seats, setSeats] = React.useState([]);
+  const [inviteToken, setInviteToken] = React.useState('');
+  const [joinToken, setJoinToken] = React.useState('');
+  const [busy, setBusy] = React.useState('');
+  const [createFirmName, setCreateFirmName] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+
+  const call = async (slot, ...args) => {
+    if (!b || typeof b[slot] !== 'function') {
+      return { ok:false, error:`bridge.${slot} unavailable` };
+    }
+    try {
+      const raw = b[slot](...args);
+      const out = (raw && typeof raw.then === 'function') ? await raw : raw;
+      if (typeof out === 'string') {
+        try { return JSON.parse(out); } catch (e) { return { ok:true, raw:out }; }
+      }
+      return out || { ok:false, error:'empty response' };
+    } catch (e) { return { ok:false, error:String(e) }; }
+  };
+
+  const refresh = React.useCallback(async () => {
+    const s = await call('brain_status');
+    setStatus(s);
+    const f = await call('brain_firm_seats');
+    if (f && f.ok) {
+      setFirm({ firm_id: f.firm_id, firm_name: f.firm_name });
+      setSeats(Array.isArray(f.seats) ? f.seats : []);
+    } else {
+      setFirm(null); setSeats([]);
+    }
+  }, [b]);
+
+  React.useEffect(() => {
+    let cancel = false;
+    if (!cancel) refresh();
+    const id = setInterval(() => { if (!cancel) refresh(); }, 4000);
+    return () => { cancel = true; clearInterval(id); };
+  }, [refresh]);
+
+  const flashMsg = (m) => { setMsg(m); setTimeout(() => setMsg(''), 4000); flash && flash(); };
+
+  const onCreateFirm = async () => {
+    const name = (createFirmName || '').trim();
+    if (!name) { flashMsg('Enter firm name first'); return; }
+    setBusy('create-firm');
+    const r = await call('brain_firm_create', name, '', 0);
+    setBusy('');
+    flashMsg(r && r.ok ? `Firm "${r.name || name}" created · ${r.firm_id || ''}` : `Failed: ${r && r.error || 'unknown'}`);
+    refresh();
+  };
+  const onIssueInvite = async () => {
+    setBusy('invite');
+    const r = await call('brain_firm_invite_create', 'seat', 24);
+    setBusy('');
+    if (r && r.ok) { setInviteToken(r.token || ''); flashMsg('Invite token created · 24h TTL'); }
+    else { flashMsg(`Invite failed: ${r && r.error || 'unknown'}`); }
+  };
+  const onAcceptInvite = async () => {
+    const t = (joinToken || '').trim();
+    if (!t) { flashMsg('Paste an invite token first'); return; }
+    setBusy('join');
+    const r = await call('brain_firm_invite_accept', t, '');
+    setBusy('');
+    if (r && r.ok) { flashMsg(`Joined firm ${r.firm_id} as ${r.role}`); setJoinToken(''); }
+    else { flashMsg(`Join failed: ${r && r.error || 'unknown'}`); }
+    refresh();
+  };
+  const onLeaveFirm = async () => {
+    if (!confirm('Leave the current firm? Your local seat record is removed.')) return;
+    setBusy('leave');
+    await call('brain_firm_leave');
+    setBusy('');
+    refresh();
+  };
+  const onRescan = async () => {
+    setBusy('rescan');
+    const r = await call('brain_wiring_announce');
+    setBusy('');
+    flashMsg(r && r.ok !== false ? 'Wiring announced to brain · MCPs registered' : `Failed: ${r && r.error}`);
+  };
+  const onCopyInvite = () => {
+    if (!inviteToken) return;
+    try { navigator.clipboard.writeText(inviteToken); flashMsg('Invite token copied'); } catch (e) {}
+  };
+
+  const Row = ({ label, sub, children }) => (
+    <div style={{ display:'flex', alignItems:'center', gap:14,
+      padding:'12px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13, color:LM.ink, fontFamily:LM.sans }}>{label}</div>
+        {sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>}
+      </div>
+      {children}
+    </div>
+  );
+  const Btn = ({ onClick, children, primary, busy: b2, danger }) => (
+    <button onClick={onClick} disabled={!!busy && busy !== b2} style={{
+      padding:'6px 12px', borderRadius:5,
+      border:`1px solid ${primary ? LM.accent : danger ? `${LM.err}66` : LM.line}`,
+      background: primary ? LM.accentDim : danger ? 'transparent' : LM.bgPanel,
+      color: primary ? LM.accent : danger ? LM.err : LM.ink,
+      cursor: busy ? 'wait' : 'pointer',
+      fontFamily:LM.mono, fontSize:10.5,
+    }}>
+      {busy === b2 ? '...' : children}
+    </button>
+  );
+
+  const isAvailable = status && status.health && status.health.ok;
+  const hLast = (status && status.last_hit) || {};
+  const skillsN = (status && status.health && status.health.skills) || hLast.skills_n || 0;
+  const factsN = (status && status.health && status.health.facts) || hLast.facts_n || 0;
+  const dbPath = (status && status.health && status.health.db_path) || '';
+
+  return (
+    <React.Fragment>
+      <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+        letterSpacing:'0.18em', marginTop:20, marginBottom:6, display:'flex',
+        alignItems:'center', gap:8 }}>
+        <span>BRAIN</span>
+        <span style={{
+          width:8, height:8, borderRadius:'50%',
+          background: isAvailable ? LM.ok : LM.err,
+        }}/>
+        <span style={{ color:isAvailable ? LM.ok : LM.err, letterSpacing:'0.06em' }}>
+          {isAvailable ? `LIVE · ${skillsN} skills · ${factsN} facts` : 'OFFLINE'}
+        </span>
+      </div>
+
+      <Row label="Daemon"
+           sub={`personal-brain MCP on :8473. ${dbPath || 'no db path reported'}`}>
+        <div style={{ display:'flex', gap:6 }}>
+          <Btn onClick={refresh} busy="refresh">Refresh</Btn>
+          <Btn onClick={onRescan} busy="rescan">Rescan wiring</Btn>
+        </div>
+      </Row>
+
+      {/* FIRM */}
+      <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
+        letterSpacing:'0.18em', marginTop:18, marginBottom:6 }}>FIRM</div>
+
+      {!firm ? (
+        <Row label="Create or join firm"
+             sub="Firm = shared brain across architects. Create one as admin, or paste an invite token to join.">
+          <div style={{ display:'flex', flexDirection:'column', gap:6, minWidth:280 }}>
+            <div style={{ display:'flex', gap:6 }}>
+              <input placeholder="Firm name (e.g. ArchHub Studio)"
+                value={createFirmName}
+                onChange={e => setCreateFirmName(e.target.value)}
+                style={{ flex:1, padding:'5px 8px', borderRadius:4,
+                  border:`1px solid ${LM.line}`, background:LM.bgPanel,
+                  color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
+              <Btn onClick={onCreateFirm} busy="create-firm" primary>Create firm</Btn>
+            </div>
+            <div style={{ display:'flex', gap:6 }}>
+              <input placeholder="Paste invite token here"
+                value={joinToken}
+                onChange={e => setJoinToken(e.target.value)}
+                style={{ flex:1, padding:'5px 8px', borderRadius:4,
+                  border:`1px solid ${LM.line}`, background:LM.bgPanel,
+                  color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
+              <Btn onClick={onAcceptInvite} busy="join">Join</Btn>
+            </div>
+          </div>
+        </Row>
+      ) : (
+        <React.Fragment>
+          <Row label={`Firm: ${firm.firm_name || firm.firm_id}`}
+               sub={firm.firm_id}>
+            <Btn onClick={onLeaveFirm} busy="leave" danger>Leave firm</Btn>
+          </Row>
+          <Row label="Seats"
+               sub={`${seats.length} seat${seats.length === 1 ? '' : 's'} synced via firm graph`}>
+            <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.ink,
+              minWidth:200, textAlign:'right' }}>
+              {seats.length === 0 ? <span style={{ color:LM.inkMuted }}>—</span> :
+                seats.map((s, i) => (
+                  <div key={i}>
+                    {s.user_id} <span style={{ color:LM.inkMuted }}>({s.role})</span>
+                  </div>
+                ))}
+            </div>
+          </Row>
+          <Row label="Issue invite token"
+               sub="Hand to a teammate via any channel · 24h TTL · signed">
+            <Btn onClick={onIssueInvite} busy="invite" primary>Create invite</Btn>
+          </Row>
+          {inviteToken && (
+            <div style={{ padding:'8px 12px', background:LM.bgPanel,
+              border:`1px dashed ${LM.accent}`, borderRadius:6, marginTop:6 }}>
+              <div style={{ fontFamily:LM.mono, fontSize:9.5,
+                color:LM.accent, letterSpacing:'0.1em', marginBottom:4 }}>
+                INVITE TOKEN · share via secure channel
+              </div>
+              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.ink,
+                wordBreak:'break-all', maxHeight:60, overflow:'auto' }}>
+                {inviteToken}
+              </div>
+              <button onClick={onCopyInvite} style={{
+                marginTop:6, padding:'4px 8px', borderRadius:4,
+                border:`1px solid ${LM.line}`, background:LM.bg, color:LM.ink,
+                cursor:'pointer', fontFamily:LM.mono, fontSize:10,
+              }}>Copy to clipboard</button>
+            </div>
+          )}
+        </React.Fragment>
+      )}
+
+      {msg && (
+        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:10,
+          color:LM.accent }}>{msg}</div>
+      )}
+    </React.Fragment>
+  );
+};
+
 const Settings = ({ onClose }) => {
   const [hostNodeV2, setHostNodeV2] = React.useState(() => {
     try { const v = localStorage.getItem('archhub.hostnode.v2');

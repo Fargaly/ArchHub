@@ -6792,16 +6792,24 @@ window.__archhubCanvasFlavor = _readCanvasFlavor;
 window.__archhubSetCanvasFlavor = _setCanvasFlavor;
 
 // ─── AgDR-0024 — Host node v2 feature flag (S1: REST) ───────────────
-// localStorage.archhub.host_node_v2 = 'on' | 'off' (default 'off').
+// localStorage.archhub.host_node_v2 = 'on' | 'off' (default 'on' — 2026-05-25).
 // When ON, connector master nodes render via HostNodeV2Body — the
 // Direction A + ComfyUI op grid. When OFF, existing ConnectorOpBody
-// renders (today's UX, unchanged). Flip is instant; the next render
-// reads the flag. Founder signed off the design 2026-05-21 on
-// `host-node-direction-a-comfyui-v2-ecosystem.html`.
+// renders (legacy UX). Flip is instant; the next render reads the flag.
+// Founder signed off the design 2026-05-21 on
+// `host-node-direction-a-comfyui-v2-ecosystem.html` (AgDR-0024, all 11
+// constraints "agreed...go"). 2026-05-25 — default flipped to ON per
+// "where are the fucking previous signed off prototypes that should've
+// been shipped" — the design has been built since May 21; it shipped
+// behind a flag the founder never knew to toggle. Default ON now.
 const _readHostNodeV2 = () => {
   try {
-    return (localStorage.getItem('archhub.host_node_v2') || '').toLowerCase() === 'on';
-  } catch (e) { return false; }
+    const raw = (localStorage.getItem('archhub.host_node_v2') || '').toLowerCase();
+    // Empty / never-set → default to 'on'. Explicit 'off' still respected
+    // for users who actively opt out.
+    if (raw === '') return true;
+    return raw === 'on';
+  } catch (e) { return true; }
 };
 const _setHostNodeV2 = (on) => {
   const v = !!on;

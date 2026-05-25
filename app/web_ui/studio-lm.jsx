@@ -3717,6 +3717,11 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
         })()}
       </div>
 
+      {/* AgDR-0044 — minimap relocated FROM canvas working area TO the
+          left rail per founder 2026-05-25. Always visible here; the
+          canvas working space stays clean. */}
+      <RailMiniMap/>
+
       <div style={{
         margin:8, padding:'7px 10px', borderRadius:6,
         background:LM.bgSoft, border:`1px solid ${LM.line}`,
@@ -3727,6 +3732,86 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
           <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
           <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// RailMiniMap — minimap embedded in the left Nodes rail bottom area.
+// Reads canvas state from window.__archhub_canvas_state (stashed by
+// NodeCanvas on every render). Click jumps the canvas pan to that
+// world coord via the archhub-minimap-jump window event.
+const RailMiniMap = () => {
+  const [, setBump] = React.useState(0);
+  React.useEffect(() => {
+    const onBump = () => setBump(b => b + 1);
+    window.addEventListener('lm-graph-bump', onBump);
+    const t = setInterval(onBump, 500);
+    return () => { window.removeEventListener('lm-graph-bump', onBump); clearInterval(t); };
+  }, []);
+  const s = (typeof window !== 'undefined' && window.__archhub_canvas_state) || null;
+  if (!s) {
+    return (
+      <div style={{
+        margin:'4px 8px 0', height:90,
+        background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:5,
+        display:'grid', placeItems:'center',
+        fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em',
+      }}>OPEN SESSION FOR MAP</div>
+    );
+  }
+  const W = 2400, H = 1400;
+  const MAP_W = 168, MAP_H = 90;
+  const nodes = s.nodes || [];
+  const positions = s.positions || {};
+  const pan = s.pan || { x: 0, y: 0 };
+  const zoom = s.zoom || 1;
+  const vw = s.viewportW || 1000;
+  const vh = s.viewportH || 600;
+  const vx = -pan.x / zoom;
+  const vy = -pan.y / zoom;
+  const sx = MAP_W / W;
+  const sy = MAP_H / H;
+  const jump = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    try { window.dispatchEvent(new CustomEvent('archhub-minimap-jump', {
+      detail: { x: px / sx, y: py / sy },
+    })); } catch (e2) {}
+  };
+  return (
+    <div style={{ margin:'4px 8px 0', display:'flex', flexDirection:'column', gap:3 }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+        letterSpacing:'0.14em', padding:'0 2px' }}>MAP · CLICK TO JUMP</div>
+      <div onClick={jump} style={{
+        width:MAP_W, height:MAP_H, background:LM.bg,
+        border:`1px solid ${LM.line}`, borderRadius:4,
+        position:'relative', cursor:'crosshair', overflow:'hidden',
+      }}>
+        {nodes.map(n => {
+          const p = positions[n.id] || { x: n.x, y: n.y };
+          const w = Math.max(2, (n.w || 220) * sx);
+          const h = Math.max(2, (n.h || 110) * sy);
+          return (
+            <div key={n.id} style={{
+              position:'absolute',
+              left: Math.round(p.x * sx),
+              top:  Math.round(p.y * sy),
+              width: w, height: h,
+              background: LM.accent + '88', borderRadius:1,
+            }}/>
+          );
+        })}
+        <div style={{
+          position:'absolute',
+          left: Math.round(vx * sx),
+          top:  Math.round(vy * sy),
+          width:  Math.round(vw / zoom * sx),
+          height: Math.round(vh / zoom * sy),
+          border:`1px solid ${LM.accent}`, background:LM.accent + '14',
+          pointerEvents:'none',
+        }}/>
       </div>
     </div>
   );
@@ -4965,16 +5050,38 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
 
   const [pan, setPan] = React.useState({ x: 14, y: 12 });
   const [zoom, setZoom] = React.useState(0.66);
-  // Founder 2026-05-25 (workshop signal): minimap moved OUT of canvas
-  // working area. Default OFF; user opts in via footer "◻ map" pill.
-  const [minimapOn, setMinimapOn] = React.useState(() => {
-    try { return localStorage.getItem('archhub.minimap') === 'on'; } catch (e) { return false; }
-  });
+  // RailMiniMap (left rail bottom) listens to archhub-minimap-jump to
+  // re-center the canvas. Also stashes canvas state on window so the
+  // rail map can read pan/zoom/positions without props.
   React.useEffect(() => {
-    const onToggle = (ev) => setMinimapOn(!!(ev && ev.detail));
-    window.addEventListener('archhub-minimap-toggle', onToggle);
-    return () => window.removeEventListener('archhub-minimap-toggle', onToggle);
-  }, []);
+    const onJump = (ev) => {
+      const d = ev && ev.detail;
+      if (!d) return;
+      const rect = wrapRef.current && wrapRef.current.getBoundingClientRect();
+      if (!rect) return;
+      // Center the click target in the viewport.
+      setPan({
+        x: rect.width / 2 - d.x * zoom,
+        y: rect.height / 2 - d.y * zoom,
+      });
+    };
+    window.addEventListener('archhub-minimap-jump', onJump);
+    return () => window.removeEventListener('archhub-minimap-jump', onJump);
+  }, [zoom]);
+  // Stash canvas state so RailMiniMap (left rail) can render the map
+  // without prop-drilling across the layout. Re-stashed on every render
+  // path that mutates pan/zoom/positions/allNodes/graphBump.
+  React.useEffect(() => {
+    try {
+      const rect = wrapRef.current && wrapRef.current.getBoundingClientRect();
+      window.__archhub_canvas_state = {
+        pan, zoom, positions,
+        nodes: allNodes,
+        viewportW: (rect && rect.width) || 1000,
+        viewportH: (rect && rect.height) || 600,
+      };
+    } catch (e) {}
+  });
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const [nodeMenu, setNodeMenu] = React.useState(null);
   const [wireMenu, setWireMenu] = React.useState(null);
@@ -6247,13 +6354,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         flashToast('▶ Workflow running…');
       }}/>
       <FloatingComposer setLibraryOpen={setLibraryOpen} focusId={focusId}/>
-      {/* Minimap default OFF per founder 2026-05-25 (workshop signal).
-          User opts in via footer "◻ map" pill which flips
-          window.__archhub_minimap_on + dispatches archhub-minimap-toggle. */}
-      {minimapOn && (
-        <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}
-          wrapRef={wrapRef} setPan={setPan}/>
-      )}
+      {/* Minimap moved entirely OUT of canvas working area per founder
+          2026-05-25 ("move it from the main working canvas"). Lives now
+          in the left rail as RailMiniMap, reading from
+          window.__archhub_canvas_state which we stash below. */}
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y}
         onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }}
         onFit={onResetView} onClose={() => setCtxMenu(null)}
@@ -12352,10 +12456,10 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
         <StripItem>{(LM_SESSIONS || []).length} sessions · {(LM_SESSIONS || []).filter(s=>s.state==='running').length} running</StripItem>
       )}
       <GroupSep/>
-      {/* GROUP — DIAGNOSTICS */}
+      {/* GROUP — DIAGNOSTICS · minimap lives in left rail (RailMiniMap)
+          now; footer pill removed since the rail map is always visible. */}
       <MemoryStripItem/>
       <HealthStripItem/>
-      <MinimapToggleStripItem/>
       <div style={{ flex:1 }}/>
       {/* GROUP — ACTIONS */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
@@ -12479,14 +12583,16 @@ const HealthStripItem = () => {
   );
 };
 
-// Minimap visibility toggle. Default OFF. The actual MiniMap component
-// renders only when window.__archhub_minimap_on === true. Stored in
-// localStorage for persistence. Click pill flips state + dispatches
-// archhub-minimap-toggle so the canvas re-renders.
+// Minimap visibility toggle. Default ON per founder 2026-05-25
+// ("WHERE IS THE MAP?"). User can hide via this pill if they want a
+// max-clean canvas. Stored in localStorage for persistence.
 const MinimapToggleStripItem = () => {
   const [on, setOn] = React.useState(() => {
-    try { return localStorage.getItem('archhub.minimap') === 'on'; }
-    catch (e) { return false; }
+    try {
+      const v = localStorage.getItem('archhub.minimap');
+      // Empty/unset → default ON. Only explicit 'off' hides.
+      return v !== 'off';
+    } catch (e) { return true; }
   });
   const flip = () => {
     const v = !on;
@@ -12499,13 +12605,15 @@ const MinimapToggleStripItem = () => {
   return (
     <button onClick={flip}
       data-testid="minimap-toggle"
-      title={on ? 'Hide minimap' : 'Show minimap (PIP)'}
+      title={on ? 'Hide minimap (canvas PIP)' : 'Show minimap (canvas PIP)'}
       style={{
-        background:'transparent', border:0, padding:'0 6px', cursor:'pointer',
-        color: on ? LM.accent : LM.inkMuted,
+        background: on ? LM.accent + '14' : 'transparent',
+        border: on ? `1px solid ${LM.accent}66` : `1px solid transparent`,
+        padding:'1px 7px', borderRadius:3, cursor:'pointer',
+        color: on ? LM.accent : LM.inkSoft,
         fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
-        transition:'color .12s',
-      }}>{on ? '▣ map' : '◻ map'}</button>
+        transition:'color .12s, border-color .12s, background .12s',
+      }}>{on ? 'MAP ▣' : 'MAP ◻'}</button>
   );
 };
 

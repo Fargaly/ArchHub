@@ -3951,11 +3951,46 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       // Home renders in column 2 of the parent grid (column 1 is the
       // 56px icon rail).
       gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
-      padding:'30px 44px 110px', display:'flex', flexDirection:'column', position:'relative',
+      padding:'30px 44px 60px', display:'flex', flexDirection:'column', position:'relative',
     }}>
       <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
-      <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'24px 0 14px' }}>
-        <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
+
+      {/* HERO · composer-first per docs/prototypes/archhub-redesign-2026-05-24.html
+          Prototype A (REFINE picked). Greet + H1 + composer block top-centered. */}
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:14, marginTop:32 }}>
+        <div style={{
+          fontFamily:LM.mono, fontSize:13, color:LM.inkMuted, letterSpacing:'0.04em',
+        }}>Welcome back{window.__archhub_user ? ', ' + window.__archhub_user : ''}</div>
+        <h1 style={{
+          fontFamily:LM.serif, fontSize:36, fontWeight:600, lineHeight:1.1,
+          letterSpacing:'-0.025em', margin:0, textAlign:'center',
+        }}>
+          What are we <span style={{ color:LM.accent, fontStyle:'italic' }}>building</span> today?
+        </h1>
+        {/* Starter chips — 6 pills mapping to the 4 founder-locked use cases
+            + 2 frequent commands. */}
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center', maxWidth:760, marginTop:8 }}>
+          {[
+            {ico:'▣', txt:'Revit → AI hero render'},
+            {ico:'▦', txt:'Photo → host mass'},
+            {ico:'⌖', txt:'Drone → Revit walls'},
+            {ico:'⟁', txt:'Text → ai.plan'},
+            {ico:'⌥', txt:'Tag walls by room'},
+            {ico:'⊞', txt:'Wall takeoff QTO'},
+          ].map((c, i) => (
+            <button key={i} onClick={() => { setTitle(c.txt); }} style={{
+              display:'flex', alignItems:'center', gap:6, padding:'7px 13px',
+              background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:999,
+              fontSize:11, color:LM.inkSoft, cursor:'pointer', fontFamily:LM.sans,
+            }}>
+              <span style={{ color:LM.accent, fontFamily:LM.mono }}>{c.ico}</span>{c.txt}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'40px 0 14px' }}>
+        <h2 style={{ fontFamily:LM.serif, fontSize:22, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Recent</h2>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
           {sessions.length} · CLICK TO OPEN
         </span>
@@ -3987,8 +4022,10 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
             onChanged={() => _setBump(b => b + 1)}/>)}
         </div>
       )}
-      {/* Composer pinned bottom-center — full attach parity with the
-          in-canvas FloatingComposer (paperclip + mic + drag-drop + paste). */}
+      {/* Composer — relocated TOP-CENTERED per archhub-redesign A.
+          Used to be position:fixed bottom; founder picked composer-first
+          hero layout. Full attach parity preserved (paperclip + mic +
+          drag-drop + paste). Rendered above Recent grid. */}
       <form onSubmit={onSubmit} data-no-pan
         onWheel={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
@@ -3996,12 +4033,12 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         onDragLeave={_onDragLeave}
         onDrop={_onDrop}
         style={{
-        position:'fixed', left:'50%', bottom:80, transform:'translateX(-50%)',
-        width:620, maxWidth:'82%',
+        position:'static', order:-1,
+        width:780, maxWidth:'92%', margin:'18px auto 0',
         background:LM.bgPanel,
         border:`1px solid ${dragOver ? LM.accent : LM.accent+'66'}`,
-        borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
-        padding:'10px 13px', zIndex:10,
+        borderRadius:12, boxShadow:`0 8px 24px rgba(0,0,0,.4), 0 0 0 3px ${LM.accentDim}`,
+        padding:'12px 14px', zIndex:1,
       }}>
         {attachments.length > 0 && (
           <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:8 }}>

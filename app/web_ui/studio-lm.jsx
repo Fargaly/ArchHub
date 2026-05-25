@@ -7589,21 +7589,29 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
           <>
             <button onClick={(e) => {
               e.stopPropagation();
-              // Replay = re-cook node with current params. The plan node
-              // persists its prompt+model+ctx on each cook, so rerun
-              // produces a new plan record using the same inputs unless
-              // the user edited params.
+              // True replay (AgDR-0021) — flip config.replay=true so the
+              // executor returns the CACHED plan record without re-calling
+              // the LLM. plan_id is hashed from prompt+model+tools so a
+              // record exists if this node cooked before with same inputs.
+              // Reset replay=false after the call so the next normal cook
+              // mints a fresh record.
               try {
+                if (!n.config) n.config = {};
+                const prev = !!n.config.replay;
+                n.config.replay = true;
                 bridgeCall('run_node', currentSid(), n.id, JSON.stringify(LM_GRAPH));
+                // Restore after the run dispatches (the cook reads config
+                // synchronously, so flipping back here is safe).
+                setTimeout(() => { try { n.config.replay = prev; } catch (e3) {} }, 50);
                 window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
-                  detail: { msg: '▶ replaying ai.plan…', kind:'info' }
+                  detail: { msg: '▶ replaying ai.plan from cache…', kind:'info' }
                 }));
               } catch (e2) {
                 window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
                   detail: { msg: 'replay failed', kind:'err' }
                 }));
               }
-            }} title="Replay last plan" style={{
+            }} title="Replay last plan (cached)" style={{
               padding:'3px 9px', border:`1px solid ${LM.accent}88`, borderRadius:4,
               background:LM.accentDim, color:LM.accent, cursor:'pointer',
               fontFamily:LM.mono, fontSize:10, marginLeft:4,

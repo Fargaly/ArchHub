@@ -27,9 +27,13 @@ from .query import query, neighbors_summary  # noqa: F401
 from .communities import (  # noqa: F401
     detect_communities, annotate_communities, community_stats,
 )
+from .sync import (  # noqa: F401
+    push, pull, merge, sync, JsonFileTransport, Transport,
+)
 
 __all__ = [
     "MemoryGraph", "MemoryNode", "MemoryEdge", "Confidence",
     "default_graph_path", "query", "neighbors_summary",
     "detect_communities", "annotate_communities", "community_stats",
+    "push", "pull", "merge", "sync", "JsonFileTransport", "Transport",
 ]

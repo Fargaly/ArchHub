@@ -1,14 +1,19 @@
 ---
 id: AgDR-0042
 timestamp: 2026-05-24
-status: executing
-founder-signoff: 2026-05-25 — picked D1·C (ship ALL 6 slices) on docs/prototypes/four-decisions-2026-05-25.html + reaffirmed on docs/prototypes/scope-reality-2026-05-25.html (committed to 7-25d realistic spread)
+status: executed
+founder-signoff: 2026-05-25 — picked D1·C (ship ALL 6 slices) on docs/prototypes/four-decisions-2026-05-25.html + reaffirmed on docs/prototypes/scope-reality-2026-05-25.html (committed to 7-25d realistic spread); all 6 slices delivered in ONE session
 category: architecture
 supersedes: none
 builds-on: [AgDR-0038, AgDR-0040, AgDR-0041]
 slices-shipped:
-  - "slice 1/6 — app/memory/graph.py core data model + SQLite store (2026-05-25)"
-slices-remaining: [2, 3, 4, 5, 6]
+  - "slice 1/6 — app/memory/graph.py core data model + SQLite store (37886f0)"
+  - "slice 2/6 — Library + Composer-turn extractors (c8cb065)"
+  - "slice 3/6 — memory.query BFS + memory_query LLM tool (683f39e)"
+  - "slice 4/6 — decision + project extractors (204e286)"
+  - "slice 5/6 — community detection via union-find (8ba0a63)"
+  - "slice 6/6 — firm-shared sync (push/pull/merge + JsonFileTransport) — this commit"
+slices-remaining: []
 ---
 
 # AgDR-0042 — Shared-memory knowledge graph (graphify-style data model)

@@ -4688,11 +4688,28 @@ const BrainChip = ({ compact }) => {
   const [stats, setStats] = React.useState(null);
   React.useEffect(() => {
     let cancelled = false;
-    const pull = async () => {
+    // Direct slot call with a 4s timeout (brain pkg import + first call
+    // can exceed bridgeAsync's default 1.5s ceiling). Re-parse the
+    // JSON envelope ourselves since the slot returns a string.
+    const pull = () => {
       try {
-        const r = await bridgeAsync('get_brain_stats');
-        if (!cancelled) setStats((r && typeof r === 'object') ? r : null);
-      } catch (e) { /* keep last value */ }
+        const b = window.archhub;
+        if (!b || typeof b.get_brain_stats !== 'function') return;
+        const done = (raw) => {
+          if (cancelled) return;
+          let parsed = raw;
+          if (typeof raw === 'string') {
+            try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+          }
+          if (parsed && typeof parsed === 'object' && parsed.ts) {
+            setStats(parsed);
+          }
+        };
+        try {
+          const x = b.get_brain_stats(done);
+          if (x && typeof x.then === 'function') x.then(done);
+        } catch (e) {}
+      } catch (e) {}
     };
     pull();
     const t = setInterval(pull, 4000);

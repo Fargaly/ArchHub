@@ -1,5 +1,184 @@
 # ArchHub — working memory
 
+## DEFINITION-OF-SHIPPED MANDATE (founder, 2026-05-25 — non-negotiable)
+
+"Shipped" has ONE meaning: the founder can launch ArchHub, click around
+for 60 seconds without instructions, and SEE the thing working.
+Anything less is "written," not shipped.
+
+- **User-visible path.** Every shipped feature has a continuous code
+  path from a visible UI affordance (button, panel, command, hotkey)
+  through `bridge.py` to the backend and back. Code that exists only
+  in a module nothing reaches is a draft, not a ship.
+- **60-second discoverability.** A user who has never seen the feature
+  finds it within 60 seconds of opening the app, with no founder
+  coaching. If discovery needs a paragraph of instructions, the
+  feature isn't shipped — the entry point is missing.
+- **Visual proof, not test logs.** Reporting "shipped" REQUIRES a CDP
+  screenshot of the live ArchHub window showing the feature engaged
+  (clicked, opened, executed), captured AFTER restart on the
+  committed HEAD. Unit tests passing ≠ shipped. Server-side logs ≠
+  shipped.
+- **Real interaction.** Claude clicks the affordance via CDP
+  `Runtime.evaluate` or computer-use, observes the resulting DOM /
+  network / state change, and includes the before/after evidence in
+  the report.
+- **Honesty floor.** If any of the above is missing, the word "shipped"
+  is BANNED from the report. Use "wired but not exposed," "merged but
+  unverified," or "drafted" — never "shipped."
+
+## PROTOTYPE-IS-CONTRACT MANDATE (founder, 2026-05-25 — non-negotiable)
+
+When the founder signs off on a prototype (HTML mock, Figma, sketch,
+`docs/prototypes/*`), that artifact IS the spec. The shipped JSX
+mirrors it 1:1 — layout, copy, spacing, colors, icons, motion. No
+"interpretation."
+
+- **Pixel-anchored.** The shipped surface and the signed prototype
+  open side-by-side and look the same. Material differences are bugs,
+  not stylistic choices.
+- **Prototype lives in repo.** Signed prototypes move to
+  `docs/prototypes/signed/<slug>/` with a frozen timestamp + AgDR
+  reference. They are read-only after sign-off — modifications
+  require a new AgDR.
+- **Diff before claiming parity.** Before reporting any
+  prototype-derived feature shipped, run a visual diff: CDP screenshot
+  of the running JSX vs. the prototype render, side-by-side in the
+  report. Drifts > a few px or any copy change require either fixing
+  the JSX or a written deviation note in the AgDR — never silent
+  drift.
+- **Founder's eye is the test.** If the founder opens the app and says
+  "this is not what I signed off on," the prototype wins. Roll forward
+  to parity, not backward to argument.
+
+## NO-OPEN-THREADS MANDATE (founder, 2026-05-25 — non-negotiable)
+
+A loop iteration ends with ZERO open threads. "I'll test it later,"
+"we can wire that up next," "leaving a TODO for the founder" are the
+failure modes the founder banned 2026-05-25.
+
+- **Closed thread definition.** Every change in the iteration is: (a)
+  committed, (b) live-verified on the running app, (c) documented in
+  AgDR or commit body, (d) free of `TODO(founder)`, `XXX`,
+  `FIXME(later)`, and "for testing" stubs in code touched this
+  iteration.
+- **No deferred work to the founder.** Tasks tagged "founder to test,"
+  "founder to confirm visually," "founder to click through" are
+  forbidden in commit messages and reports. Either Claude verifies it
+  via CDP, or the work is not done.
+- **Per-iteration grep gate.** Before declaring loop iteration
+  complete, run `grep -nE "TODO\(founder\)|FOUNDER:|to be tested|verify in app$"
+  -- <files-touched-this-iteration>`. Any hit blocks the "done"
+  report until resolved.
+- **Roadmap reconciliation.** Any item moved from `- [ ]` to `- [x]`
+  in `docs/ROADMAP.md` has a verified-live receipt (screenshot +
+  commit SHA) linked in the iteration summary. Unchecked items don't
+  disappear — they're either kept open or explicitly cancelled with
+  reason.
+
+## PRE-FLIGHT-CHECK MANDATE (founder, 2026-05-25 — non-negotiable)
+
+Before the word "shipped," "done," "delivered," or "complete" appears
+in a report, Claude runs this 7-question check internally. Each answer
+comes from a tool call, not memory. ANY "No" → not shipped.
+
+1. **Built?** Does `git status` show a clean tree AND `git log -1`
+   show the change committed?
+2. **Restarted?** Has ArchHub been killed and relaunched on the
+   committed SHA in this iteration (process PID newer than the commit
+   timestamp)?
+3. **Reachable?** Does CDP `http://localhost:9223/json` return the
+   expected page with the new bundle hash loaded?
+4. **Visible?** Does a CDP `document.querySelector` for the new
+   affordance (data-testid, aria-label, or unique text) return a node
+   with `offsetParent !== null`?
+5. **Clickable?** Does dispatching a click via CDP produce the
+   observable state change (DOM mutation, network call, log line,
+   panel open)?
+6. **Persistent?** After the interaction, does relaunching the app
+   preserve the resulting state (if state-bearing)?
+7. **Discoverable?** Is the entry point reachable from the default
+   open view in ≤ 3 user actions without console / DevTools?
+
+The check runs as `tools/preflight.ps1` — its output is pasted
+verbatim into the report. Reports without the preflight block are
+rejected by the founder by default.
+
+## POST-LOOP-AUDIT MANDATE (founder, 2026-05-25 — non-negotiable)
+
+After every `/loop` iteration, before reporting "done," Claude runs
+the audit below via `tools/loop_audit.ps1`. The audit output IS the
+iteration summary plus a 2-line founder-facing recap.
+
+The audit performs, in order:
+1. `git log --oneline <iteration-start-sha>..HEAD` — every commit in
+   the iteration listed.
+2. `git diff --stat <iteration-start-sha>..HEAD` — every file touched.
+3. For each file touched: `grep -nE
+   "TODO\(founder\)|FOUNDER:|FIXME\(later\)|verify in app$|for testing"`
+   — must be empty.
+4. Process check: ArchHub PID + start time, confirming
+   restart-after-commit.
+5. CDP probe: bundle hash on `http://localhost:9223/json` matches the
+   JSX file hash on disk.
+6. For every roadmap item flipped to `- [x]` this iteration: a CDP
+   screenshot named `proof_<roadmap-id>_<commit-sha>.png` under
+   `proofs/<date>/`.
+7. AgDR check: every architecture-shaped commit links to an `executed`
+   AgDR.
+
+The audit BLOCKS the "done" report when any step fails.
+
+## ROLLBACK-PROTOCOL MANDATE (founder, 2026-05-25 — non-negotiable)
+
+When the founder opens the app and the thing Claude called "shipped"
+is missing, broken, or different from the prototype, the response is
+NOT a TODO and NOT an apology — it's an immediate rollback-or-finish.
+
+- **Acknowledge in one line.** "The N preflight checks I claimed
+  passed did not actually pass — re-running now." No paragraphs, no
+  excuses.
+- **Re-run preflight live, paste result.** The founder sees the actual
+  Y/N grid that should have been run the first time.
+- **Decision: finish or revert.** Within the SAME response cycle,
+  either (a) close the gap and re-verify end-to-end with CDP proof,
+  or (b) revert the misleading commit with `git revert <sha>` and
+  re-open the roadmap item. No third option ("I'll fix it next
+  iteration") is permitted.
+- **Update the failure log.** Append a one-line entry to
+  `docs/FAILURE_LOG.md`: date, claim, gap found, resolution. The log
+  is read at the start of every loop iteration so the same gap class
+  doesn't recur.
+- **No new feature work** until the gap is closed. Loop pauses;
+  founder doesn't have to ask.
+
+## WORKSHOP-GATE MANDATE (founder, 2026-05-25 — non-negotiable)
+
+Claude STOPS shipping and convenes a workshop (multi-hat,
+AgDR-anchored) when ANY of the trigger conditions below fire.
+Shipping over a fired trigger is itself a process violation.
+
+Trigger conditions:
+- **Ambiguity hit.** A spec / prototype has two plausible readings
+  and resolving silently would risk the prototype-is-contract
+  mandate.
+- **Cross-surface change.** A change touches ≥ 3 of:
+  `studio-lm.jsx`, `bridge.py`, `tool_engine.py`, a new connector,
+  the workflow runner, or the canvas substrate.
+- **Founder frustration signal.** The founder uses any of: "fed up,"
+  "different shit," "open threads," "not what I signed off,"
+  "fucking" + critique. STOP, convene, do not patch.
+- **Repeat regression.** A bug whose class has been "fixed" before
+  reappears. Engineering mandate says fix the mechanism — that
+  requires design, not another patch.
+- **Preflight fails twice in a row** on the same feature.
+- **Loop iteration produced zero verified ships.** The loop is
+  spinning without landing. Stop, audit, design.
+
+Workshop output is an AgDR (per existing AGDR mandate) + a closed
+thread of next actions. Only after the AgDR ships `executed` and the
+founder confirms does shipping resume.
+
 ## AUTOMATION MANDATE (founder, 2026-05-22 — non-negotiable)
 
 Never hand the founder a checklist of manual steps. The founder is a

@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — workshop 2026-05-25 · the contract</title>
+<style>
+:root{
+  /* Default theme: ArchHub Dark */
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --bg4:#1c1c22; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --frost:#90c0ff;
+  --grid-line:rgba(255,255,255,0.04);
+}
+[data-theme="blueprint"]{
+  --bg:#0c1424; --bg2:#0f1a30; --bg3:#13243f; --bg4:#1a3050; --line:#1e3c5e;
+  --ink:#e0eaff; --ink2:#8aa5d4; --ink3:#5a779e;
+  --accent:#5fb9ff; --accent2:#a5dbff;
+  --grid-line:rgba(95,185,255,0.08);
+}
+[data-theme="vellum"]{
+  --bg:#f5efe2; --bg2:#ede5d2; --bg3:#e0d6bb; --bg4:#d4c8a6; --line:#bca97a;
+  --ink:#2a2419; --ink2:#5c5240; --ink3:#8b7c5e;
+  --accent:#a8530f; --accent2:#cd711b;
+  --ok:#3d7a3a; --warn:#a87d1c; --err:#9f3434;
+  --grid-line:rgba(80,60,30,0.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;transition:background .25s, color .25s;}
+h1{font-size:30px;line-height:1.15;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:22px;margin-bottom:14px;letter-spacing:-0.01em}
+h3{font-size:15px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+strong{color:var(--ink)}
+small{color:var(--ink3);font-size:11px}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:12px 22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+[data-theme="vellum"] nav.top{background:rgba(245,239,226,0.94)}
+[data-theme="blueprint"] nav.top{background:rgba(12,20,36,0.94)}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 10px;border-radius:8px;font-size:11px;
+  border:1px solid transparent;cursor:pointer}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+nav.top .theme-switch{margin-left:auto;display:flex;gap:6px}
+nav.top .theme-switch button{background:var(--bg2);border:1px solid var(--line);
+  color:var(--ink2);padding:5px 10px;font-size:10px;border-radius:6px;
+  cursor:pointer;font-family:inherit;letter-spacing:0.06em;text-transform:uppercase}
+nav.top .theme-switch button.on{background:var(--accent);color:#000;border-color:var(--accent)}
+
+header.head{max-width:1240px;margin:0 auto;padding:36px 22px 16px}
+section.proto{max-width:1240px;margin:0 auto;padding:36px 22px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+.contract-banner{background:linear-gradient(90deg,rgba(232,116,58,0.12),rgba(232,116,58,0.04));
+  border:1px solid var(--accent);border-radius:10px;padding:14px 18px;margin-top:14px;
+  font-size:12px;color:var(--ink)}
+.contract-banner strong{color:var(--accent2)}
+
+/* ── HAT cards row ─────────────────────────────────────────────── */
+.hats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:16px}
+.hat{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;position:relative}
+.hat .h{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.hat .h .dot{width:10px;height:10px;border-radius:50%}
+.hat .h .n{font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace;text-transform:uppercase;letter-spacing:0.1em}
+.hat h3{font-size:13px;margin-bottom:4px}
+.hat p{font-size:11px;line-height:1.4;color:var(--ink2);margin:0}
+.hat.white .dot{background:#f0f0f0;border:1px solid var(--ink3)}
+.hat.red .dot{background:var(--err)}
+.hat.black .dot{background:#222}
+.hat.yellow .dot{background:var(--warn)}
+.hat.green .dot{background:var(--ok)}
+.hat.blue .dot{background:var(--blue)}
+.hat.rd .dot{background:linear-gradient(135deg,var(--purple),var(--teal))}
+
+/* ── PROTOTYPE — Home Screen mock ─────────────────────────────── */
+.app-frame{background:var(--bg);border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;margin-top:16px;box-shadow:0 12px 60px rgba(0,0,0,0.4)}
+.titlebar{background:var(--bg2);border-bottom:1px solid var(--line);
+  padding:8px 14px;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--ink2)}
+.titlebar .traffic{display:flex;gap:6px}
+.titlebar .traffic span{width:11px;height:11px;border-radius:50%}
+.titlebar .traffic span:nth-child(1){background:#ff5f57}
+.titlebar .traffic span:nth-child(2){background:#febc2e}
+.titlebar .traffic span:nth-child(3){background:#28c840}
+.titlebar .crumb{color:var(--ink);font-family:ui-monospace,monospace;font-size:11px}
+
+.workspace{display:grid;grid-template-columns:64px 280px 1fr 320px;min-height:640px}
+.workspace[data-layout="compact"]{grid-template-columns:48px 220px 1fr 280px}
+.workspace[data-layout="pro"]{grid-template-columns:48px 0 1fr 0}
+
+/* RAIL — far left icon bar */
+.rail{background:var(--bg2);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .ricon{width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+  border-radius:8px;cursor:pointer;font-family:ui-monospace,monospace;font-size:11px;
+  color:var(--ink2);position:relative}
+.rail .ricon:hover{background:var(--bg3);color:var(--ink)}
+.rail .ricon.on{color:var(--accent);background:rgba(232,116,58,0.08)}
+.rail .ricon .lbl{position:absolute;left:46px;top:50%;transform:translateY(-50%);
+  background:var(--bg3);border:1px solid var(--line);padding:4px 8px;border-radius:5px;
+  font-size:10px;color:var(--ink);white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .15s;z-index:5}
+.rail .ricon:hover .lbl{opacity:1}
+.rail .spacer{flex:1}
+
+/* SIDEBAR — Library (memory-graph-aware) */
+.sidebar{background:var(--bg2);border-right:1px solid var(--line);
+  overflow:hidden;display:flex;flex-direction:column}
+.sidebar .head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.sidebar .head .label{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink2);flex:1}
+.sidebar .head .ct{font-size:10px;color:var(--ink3);font-family:ui-monospace,monospace}
+.sidebar .search{padding:8px 12px;border-bottom:1px solid var(--line)}
+.sidebar .search input{width:100%;background:var(--bg3);border:1px solid var(--line);
+  border-radius:6px;color:var(--ink);padding:7px 10px;font-family:inherit;font-size:12px}
+.sidebar .search input:focus{outline:none;border-color:var(--accent)}
+.sidebar .scroll{overflow:auto;flex:1;padding:6px 8px}
+.comm{margin-bottom:8px}
+.comm .ctit{padding:6px 8px;font-size:9px;color:var(--ink3);letter-spacing:0.12em;
+  text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.comm .ctit .cct{margin-left:auto;color:var(--ink2);font-family:ui-monospace,monospace}
+.libitem{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:grab;
+  font-size:11px;color:var(--ink);position:relative}
+.libitem:hover{background:var(--bg3)}
+.libitem .icon{width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;
+  font-family:ui-monospace,monospace;font-size:10px;background:var(--bg4);color:var(--ink2);flex-shrink:0}
+.libitem .icon.skill{color:var(--accent2);background:rgba(232,116,58,0.15)}
+.libitem .icon.ai{color:var(--purple);background:rgba(163,123,217,0.12)}
+.libitem .icon.cap{color:var(--frost);background:rgba(144,192,255,0.10)}
+.libitem .nm{flex:1;font-family:ui-monospace,monospace;font-size:10.5px}
+.libitem .freq{font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace}
+
+/* CANVAS — main work area */
+.canvas{background:var(--bg);position:relative;overflow:hidden;
+  background-image:radial-gradient(circle,var(--grid-line) 1px,transparent 1px);background-size:24px 24px}
+.canvas-tools{position:absolute;top:14px;left:14px;display:flex;gap:6px;z-index:10}
+.canvas-tools button{background:var(--bg2);border:1px solid var(--line);color:var(--ink2);
+  padding:6px 10px;font-size:10px;border-radius:6px;cursor:pointer;font-family:ui-monospace,monospace;
+  letter-spacing:0.06em}
+.canvas-tools button:hover{color:var(--ink);border-color:var(--ink3)}
+.canvas-tools button.run{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+
+/* Home view inside canvas */
+.home-view{padding:60px 40px;display:flex;flex-direction:column;align-items:center;gap:20px}
+.home-view h1{font-size:34px;font-weight:700;letter-spacing:-0.025em;text-align:center}
+.home-view .sub{color:var(--ink2);font-size:14px;text-align:center;max-width:520px;margin-bottom:12px}
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:760px}
+.tile{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:22px;
+  cursor:pointer;transition:transform .12s, border-color .12s, background .12s;position:relative;overflow:hidden}
+.tile:hover{transform:translateY(-2px);border-color:var(--accent);background:var(--bg3)}
+.tile .badge{position:absolute;top:14px;right:14px;font-size:9px;
+  color:var(--accent);letter-spacing:0.12em;text-transform:uppercase}
+.tile .glyph{font-size:32px;line-height:1;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.tile .glyph .arrow{color:var(--ink3);font-size:20px}
+.tile .glyph .glyph2{color:var(--accent2)}
+.tile h3{font-size:18px;margin-bottom:8px;color:var(--ink);letter-spacing:-0.01em}
+.tile p{font-size:12px;color:var(--ink2);line-height:1.5;margin-bottom:14px}
+.tile .meta{display:flex;gap:14px;font-size:10px;color:var(--ink3);font-family:ui-monospace,monospace}
+.tile .meta span::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--accent);margin-right:4px;vertical-align:middle}
+
+/* Live canvas (workspace post-tile-click) — mocked nodes + wires */
+.live-canvas{position:absolute;inset:0;padding:80px 40px 50px}
+.live-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:32px;align-items:center;justify-items:center}
+.lnode{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;
+  min-width:140px;max-width:180px;position:relative;font-size:11px}
+.lnode .lhead{font-size:9px;color:var(--ink3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px}
+.lnode .ltitle{font-weight:600;color:var(--ink);font-size:12px;margin-bottom:4px}
+.lnode .lsub{font-size:10px;color:var(--ink2);font-family:ui-monospace,monospace}
+.lnode .lcost{position:absolute;top:8px;right:10px;font-size:9px;color:var(--accent2);font-family:ui-monospace,monospace}
+.lnode.aiplan{min-width:200px;padding:16px;background:linear-gradient(135deg,var(--bg2),var(--bg3));
+  border-color:var(--accent);box-shadow:0 6px 24px rgba(232,116,58,0.15)}
+.lnode.aiplan .lhead{color:var(--accent)}
+.lnode.aiplan .mini{display:flex;gap:4px;margin-top:8px}
+.lnode.aiplan .mini span{flex:1;height:6px;border-radius:2px;background:var(--bg4)}
+.lnode.aiplan .mini span.done{background:var(--ok)}
+.lnode.aiplan .mini span.now{background:var(--accent);animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.lwire{position:relative;height:2px;background:linear-gradient(90deg,var(--ink3),transparent,var(--ink3) 70%,transparent);
+  background-size:24px 100%;animation:flow 1.2s linear infinite}
+@keyframes flow{0%{background-position:0 0}100%{background-position:24px 0}}
+.lwire.live{background:linear-gradient(90deg,var(--accent),transparent,var(--accent) 50%,transparent);
+  background-size:18px 100%}
+
+/* COMPOSER — bottom centerpiece */
+.composer{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);
+  width:min(720px,calc(100% - 80px));background:var(--bg2);border:1px solid var(--line);
+  border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:12px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.3)}
+.composer .glyph{color:var(--accent);font-family:ui-monospace,monospace;font-size:18px}
+.composer .chips{display:flex;gap:5px;flex-shrink:0}
+.composer .chip{background:var(--bg3);border:1px solid var(--line);color:var(--ink);
+  padding:3px 7px;font-size:10px;border-radius:4px;font-family:ui-monospace,monospace;
+  display:flex;align-items:center;gap:4px}
+.composer .chip .x{color:var(--ink3);cursor:pointer}
+.composer .chip.file{color:var(--frost);border-color:rgba(144,192,255,0.3)}
+.composer .chip.skill{color:var(--accent2);border-color:rgba(232,116,58,0.3)}
+.composer input{flex:1;background:transparent;border:0;color:var(--ink);outline:none;
+  font-family:inherit;font-size:14px}
+.composer .send{background:var(--accent);color:#000;border:0;padding:6px 14px;
+  border-radius:6px;font-weight:600;font-size:11px;cursor:pointer;letter-spacing:0.04em}
+
+/* RIGHT RAIL — Inspector + Health */
+.rightrail{background:var(--bg2);border-left:1px solid var(--line);overflow:hidden;
+  display:flex;flex-direction:column}
+.rightrail .tabs{display:flex;border-bottom:1px solid var(--line);background:var(--bg)}
+.rightrail .tab{flex:1;padding:10px 8px;font-size:10px;color:var(--ink2);text-align:center;
+  cursor:pointer;letter-spacing:0.1em;text-transform:uppercase;border-right:1px solid var(--line)}
+.rightrail .tab.on{color:var(--ink);background:var(--bg2);border-bottom:2px solid var(--accent)}
+.rightrail .tab:last-child{border-right:0}
+.rightrail .body{padding:12px 14px;overflow:auto;flex:1}
+.kv{display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--line)}
+.kv .k{color:var(--ink2);font-family:ui-monospace,monospace}
+.kv .v{color:var(--ink);font-family:ui-monospace,monospace}
+
+/* STATUS BAR — bottom of frame */
+.statusbar{background:var(--bg2);border-top:1px solid var(--line);padding:6px 14px;
+  display:flex;align-items:center;gap:14px;font-size:10px;color:var(--ink2);
+  font-family:ui-monospace,monospace}
+.statusbar .seg{display:flex;align-items:center;gap:4px;cursor:pointer}
+.statusbar .seg:hover{color:var(--ink)}
+.statusbar .seg .dot{width:6px;height:6px;border-radius:50%}
+.statusbar .seg.ok .dot{background:var(--ok)}
+.statusbar .seg.warn .dot{background:var(--warn)}
+.statusbar .seg.live .dot{background:var(--ok);animation:pulse 1.5s ease-in-out infinite}
+.statusbar .spacer{flex:1}
+.statusbar .cost{color:var(--accent2);font-weight:600}
+
+/* CMD-K palette mock */
+.cmdk-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.5);
+  backdrop-filter:blur(6px);display:none;align-items:flex-start;justify-content:center;
+  padding-top:80px;z-index:30}
+.cmdk-overlay.on{display:flex}
+.cmdk{width:560px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,0.5)}
+.cmdk input{width:100%;background:transparent;border:0;color:var(--ink);
+  padding:16px 18px;font-family:inherit;font-size:15px;outline:none;border-bottom:1px solid var(--line)}
+.cmdk .gr{padding:6px 0}
+.cmdk .grl{padding:4px 18px;font-size:9px;color:var(--ink3);letter-spacing:0.12em;text-transform:uppercase}
+.cmdk .row{padding:8px 18px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12px}
+.cmdk .row:hover, .cmdk .row.sel{background:var(--bg3)}
+.cmdk .row.sel{background:rgba(232,116,58,0.08);border-left:2px solid var(--accent)}
+.cmdk .row .icon{width:20px;height:20px;border-radius:4px;background:var(--bg4);
+  display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace;font-size:10px;color:var(--ink2)}
+.cmdk .row .lbl{flex:1;color:var(--ink)}
+.cmdk .row .meta{font-size:9px;color:var(--ink3);font-family:ui-monospace,monospace;
+  background:var(--bg3);padding:2px 6px;border-radius:3px;letter-spacing:0.06em}
+
+/* ── PLAN TABLES ───────────────────────────────────────────────── */
+.sprint{margin-top:16px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.sprint h3{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:14px}
+.sprint .pill{font-size:9px;background:var(--accent);color:#000;padding:2px 6px;border-radius:3px;letter-spacing:0.06em;text-transform:uppercase;font-weight:700}
+.sprint table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+.sprint th{text-align:left;padding:6px 8px;background:var(--bg3);color:var(--ink2);font-weight:600;
+  font-size:9px;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--line)}
+.sprint td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink2)}
+.sprint td.proof{color:var(--ok);font-family:ui-monospace,monospace}
+.sprint td.eff{color:var(--accent2);font-family:ui-monospace,monospace;white-space:nowrap}
+.sprint td.shi{color:var(--ink);font-family:ui-monospace,monospace}
+
+/* Mandate cards */
+.mandates{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:14px}
+.mandate{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;border-left:3px solid var(--accent)}
+.mandate h4{color:var(--ink);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px}
+.mandate p{font-size:11px;line-height:1.5;margin:0;color:var(--ink2)}
+.mandate .chk{font-family:ui-monospace,monospace;font-size:10px;color:var(--ok);margin-top:6px}
+
+/* Verdict row */
+.verdict{margin-top:20px;background:var(--bg2);border:1px solid var(--accent);border-radius:12px;padding:18px}
+.verdict h3{margin-bottom:8px}
+.verdict-buttons{display:flex;gap:10px;flex-wrap:wrap}
+.verdict-buttons button{background:var(--bg3);border:1px solid var(--line);color:var(--ink);
+  padding:10px 16px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12px;flex:1;min-width:160px}
+.verdict-buttons button:hover{border-color:var(--accent)}
+.verdict-buttons button.on{background:var(--accent);color:#000;border-color:var(--accent);font-weight:700}
+
+footer{max-width:1240px;margin:0 auto;padding:32px 22px;color:var(--ink3);font-size:11px;text-align:center}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <span class="brand">arch<span>hub</span> · workshop</span>
+  <a class="chip" href="#audit">audit</a>
+  <a class="chip" href="#proto">prototype</a>
+  <a class="chip" href="#plan">plan</a>
+  <a class="chip" href="#mandates">mandates</a>
+  <a class="chip" href="#verdict">verdict</a>
+  <div class="theme-switch">
+    <button class="on" data-theme="dark">DARK</button>
+    <button data-theme="blueprint">BLUEPRINT</button>
+    <button data-theme="vellum">VELLUM</button>
+  </div>
+</nav>
+
+<header class="head">
+  <h1>The Workshop — 2026-05-25</h1>
+  <p>7 hats council. Real R&amp;D. The prototype below is the contract.</p>
+  <div class="contract-banner">
+    <strong>CONTRACT:</strong> the JSX shipped in Sprint 1 + 2 (Days 1–7) renders pixel-anchored to the prototype below.
+    No "interpretation". If founder opens app + screen does not match this page, the work is not shipped.
+    Per <strong>PROTOTYPE-IS-CONTRACT</strong> mandate (drafted by Hat 6, see §Mandates).
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="proto" id="audit">
+  <div class="tagline">workshop · 7 hats council</div>
+  <h2>What each hat found</h2>
+  <div class="hats">
+    <div class="hat white">
+      <div class="h"><span class="dot"></span><span class="n">hat 1 · white · facts</span></div>
+      <h3>Backend 100%, surface 10%</h3>
+      <p>67 typed primitives all registered. ai.plan: zero JSX references. memory graph: zero UI consumers. Host-node v2: built but localStorage-gated OFF, no settings toggle. ReactFlow: architecturally locked but never installed (stub).</p>
+    </div>
+    <div class="hat red">
+      <div class="h"><span class="dot"></span><span class="n">hat 2 · red · pain</span></div>
+      <h3>Trust debt, not tech debt</h3>
+      <p>"Shipped" means founder sees + touches the change. Test counts, AgDR flips, commits ≠ shipped. He is 1–2 invisible-ship cycles from quitting. Cheapest win: reopen last month's promised nodes, put them on canvas.</p>
+    </div>
+    <div class="hat black">
+      <div class="h"><span class="dot"></span><span class="n">hat 3 · black · risk</span></div>
+      <h3>4 perf root causes</h3>
+      <p>10,335-line JSX monolith. <code>graphBump</code> god-counter re-renders everything. 63 unbatched <code>saveCurrentGraph()</code> calls. Zero panel resize / theme / keybind config. Babel-standalone compiles in browser.</p>
+    </div>
+    <div class="hat yellow">
+      <div class="h"><span class="dot"></span><span class="n">hat 4 · yellow · works</span></div>
+      <h3>Substrate is the asset</h3>
+      <p>16 connectors / 116 ops / 79 grammar primitives / 6-provider LLM router / memory graph end-to-end / AgDR-0041 robustness pack / 2473 tests. Don't rebuild — <strong>surface</strong> it.</p>
+    </div>
+    <div class="hat green">
+      <div class="h"><span class="dot"></span><span class="n">hat 5 · green · creative</span></div>
+      <h3>60-sec perception flip</h3>
+      <p>4 use case tiles on home. Composer chat as fat 56px centerpiece. Status bar showing connectors / cost. Cmd+K. Wire-flow animations. ai.plan as hero node 2.5× size. Memory-aware Library with community sections.</p>
+    </div>
+    <div class="hat blue">
+      <div class="h"><span class="dot"></span><span class="n">hat 6 · blue · process</span></div>
+      <h3>7 new mandates</h3>
+      <p>Definition of Shipped · Prototype-Is-Contract · No Open Threads · Pre-flight Check (7 questions) · Post-loop Audit · Rollback Protocol · Workshop Gate. Scripts: <code>tools/preflight.ps1</code>, <code>tools/loop_audit.ps1</code>.</p>
+    </div>
+    <div class="hat rd">
+      <div class="h"><span class="dot"></span><span class="n">hat 7 · R&amp;D · scan</span></div>
+      <h3>Match Linear in 4 weeks</h3>
+      <p>Steal: Qt-ADS docking (VS Code/OBS) · @-mention chips (Cursor) · Cmd+K palette w/ recency (Linear) · Ctrl+B bypass / Ctrl+G group (ComfyUI) · cursor-centered zoom (Figma). Wedge: chat-driven graph mutation with visible diffs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="proto" id="proto">
+  <div class="tagline">prototype · this IS what gets shipped</div>
+  <h2>The new ArchHub — pixel-anchored mock</h2>
+  <p>Open with any of three themes (DARK / BLUEPRINT / VELLUM in nav). Click tiles. Open Cmd+K (<kbd>⌘K</kbd>) palette button below. This mockup is the JSX contract for Sprint 1 + 2.</p>
+
+  <div class="app-frame">
+    <div class="titlebar">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <span class="crumb">archhub · home · auto</span>
+    </div>
+
+    <div class="workspace" id="ws-frame">
+      <!-- RAIL -->
+      <div class="rail">
+        <div class="ricon on">⌂<span class="lbl">Home · ⌘0</span></div>
+        <div class="ricon">▤<span class="lbl">Canvas · ⌘1</span></div>
+        <div class="ricon">⌬<span class="lbl">Library · ⌘2</span></div>
+        <div class="ricon">★<span class="lbl">Skills · ⌘3</span></div>
+        <div class="ricon">⊕<span class="lbl">Memory graph · ⌘4</span></div>
+        <div class="ricon">◷<span class="lbl">Plans · ⌘5</span></div>
+        <div class="spacer"></div>
+        <div class="ricon" onclick="openCmdK()">⌘K<span class="lbl">Command palette</span></div>
+        <div class="ricon">⚙<span class="lbl">Settings</span></div>
+      </div>
+
+      <!-- SIDEBAR — memory-aware Library -->
+      <div class="sidebar">
+        <div class="head">
+          <span class="label">Library</span>
+          <span class="ct">79 · 3 skills</span>
+        </div>
+        <div class="search"><input placeholder="Search nodes, skills, capabilities…"/></div>
+        <div class="scroll">
+          <div class="comm">
+            <div class="ctit">▾ Recently used · 7d <span class="cct">12</span></div>
+            <div class="libitem"><span class="icon skill">★</span><span class="nm">skill.revit_hero_render</span><span class="freq">●●●</span></div>
+            <div class="libitem"><span class="icon cap">⌖</span><span class="nm">host.import_mesh</span><span class="freq">●●●</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">vision.describe</span><span class="freq">●●</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">render.comfyui</span><span class="freq">●●</span></div>
+          </div>
+          <div class="comm">
+            <div class="ctit">▾ Your Revit cluster <span class="cct">12</span></div>
+            <div class="libitem"><span class="icon cap">⌖</span><span class="nm">host.export_viewport</span><span class="freq">●</span></div>
+            <div class="libitem"><span class="icon cap">⌖</span><span class="nm">host.read_walls</span><span class="freq">●</span></div>
+            <div class="libitem"><span class="icon cap">⌖</span><span class="nm">host.run_script</span><span class="freq">●</span></div>
+          </div>
+          <div class="comm">
+            <div class="ctit">▾ AI / Vision stack <span class="cct">7</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">llm.qwen</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">render.image_edit</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">anim.wan_i2v</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">mesh.from_image</span></div>
+          </div>
+          <div class="comm">
+            <div class="ctit">▾ Composer + decisions <span class="cct">42</span></div>
+            <div class="libitem"><span class="icon ai">▣</span><span class="nm">ai.plan</span><span class="freq">●●●</span></div>
+            <div class="libitem"><span class="icon cap">◉</span><span class="nm">agdr:0041 graph-robust</span></div>
+            <div class="libitem"><span class="icon cap">◉</span><span class="nm">agdr:0042 memory</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CANVAS · HOME view first -->
+      <div class="canvas" id="canvas-pane">
+        <div class="home-view" id="home-view">
+          <h1>What are we building today?</h1>
+          <p class="sub">Pick one of your 4 missions. Each spins up the canvas pre-wired with the right nodes, asks for the missing parameter, and cooks end-to-end.</p>
+          <div class="tiles">
+            <div class="tile" onclick="loadLive(this, 'revit')">
+              <div class="badge">use case A</div>
+              <div class="glyph">▭<span class="arrow">→</span><span class="glyph2">✦</span></div>
+              <h3>Revit → AI hero render</h3>
+              <p>Active 3D view + depth-map → SDXL + ControlNet → Qwen-Image upscale. Hero shot for the deck in ~41 s.</p>
+              <div class="meta"><span>$0.025</span><span>~41s</span><span>5 nodes</span></div>
+            </div>
+            <div class="tile" onclick="loadLive(this, 'photo')">
+              <div class="badge">use case B</div>
+              <div class="glyph">◐<span class="arrow">→</span><span class="glyph2">▦</span></div>
+              <h3>Photo → host mass model</h3>
+              <p>Drop a precedent photo. Qwen-VL anchor → Hunyuan3D → Rhino/Revit/Max/Blender via host param.</p>
+              <div class="meta"><span>$0.05</span><span>~30s</span><span>4 nodes</span></div>
+            </div>
+            <div class="tile" onclick="loadLive(this, 'drone')">
+              <div class="badge">use case C</div>
+              <div class="glyph">◬<span class="arrow">→</span><span class="glyph2">▤</span></div>
+              <h3>Drone shots → Revit walls</h3>
+              <p>Folder of drone images → 3DGS → facade-region labelling → typed Revit walls + openings.</p>
+              <div class="meta"><span>$0.08</span><span>~12m</span><span>5 nodes</span></div>
+            </div>
+            <div class="tile" onclick="loadLive(this, 'plan')">
+              <div class="badge">use case D</div>
+              <div class="glyph">⟐<span class="arrow">→</span><span class="glyph2">▦</span></div>
+              <h3>Text → ai.plan workflow</h3>
+              <p>Describe the goal in chat. Composer mints an ai.plan with 5–9 steps. Approve → cooks gated each step.</p>
+              <div class="meta"><span>$0.42</span><span>~2m</span><span>variable</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live canvas after tile click -->
+        <div class="live-canvas" id="live-view" style="display:none">
+          <div class="canvas-tools">
+            <button>+ add node</button>
+            <button>fit</button>
+            <button>−</button><button>+</button>
+            <button class="run">▶ Cook</button>
+          </div>
+          <div class="live-grid">
+            <div class="lnode">
+              <div class="lhead">▭ host.export_viewport</div>
+              <div class="ltitle">viewport</div>
+              <div class="lsub">view: "3D · Hero"</div>
+              <span class="lcost">$0</span>
+            </div>
+            <div class="lwire live"></div>
+            <div class="lnode aiplan">
+              <div class="lhead">⟐ ai.plan · hero render</div>
+              <div class="ltitle">Compose render pipeline</div>
+              <div class="lsub">step 2 of 5 · ~12s left</div>
+              <div class="mini">
+                <span class="done"></span><span class="now"></span><span></span><span></span><span></span>
+              </div>
+              <span class="lcost">$0.42</span>
+            </div>
+            <div class="lwire"></div>
+            <div class="lnode">
+              <div class="lhead">▣ render.comfyui</div>
+              <div class="ltitle">SDXL + Depth</div>
+              <div class="lsub">workflow: hero_v3.json</div>
+              <span class="lcost">$0</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:32px;align-items:center;justify-items:center;margin-top:32px">
+            <div></div><div></div>
+            <div class="lnode">
+              <div class="lhead">▣ render.image_edit</div>
+              <div class="ltitle">Qwen-Image upscale</div>
+              <div class="lsub">target: 4K</div>
+              <span class="lcost">$0.025</span>
+            </div>
+            <div class="lwire"></div>
+            <div class="lnode">
+              <div class="lhead">▦ output.parameter</div>
+              <div class="ltitle">image_path</div>
+              <div class="lsub">./renders/hero_v1.jpg</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COMPOSER bar (always visible) -->
+        <div class="composer">
+          <span class="glyph">⟐</span>
+          <div class="chips">
+            <span class="chip file">@hero_view.rvt<span class="x">×</span></span>
+            <span class="chip skill">@skill.revit_hero<span class="x">×</span></span>
+          </div>
+          <input placeholder="Describe the render — golden hour, contextual, photoreal…"/>
+          <button class="send">Send ⏎</button>
+        </div>
+      </div>
+
+      <!-- RIGHT RAIL · Inspector + Health -->
+      <div class="rightrail">
+        <div class="tabs">
+          <div class="tab on">Inspector</div>
+          <div class="tab">Health</div>
+          <div class="tab">Plans</div>
+        </div>
+        <div class="body">
+          <h4 style="color:var(--accent2)">ai.plan · selected</h4>
+          <div class="kv"><span class="k">id</span><span class="v">plan_a3f9b21c</span></div>
+          <div class="kv"><span class="k">model</span><span class="v">claude-sonnet-4-5</span></div>
+          <div class="kv"><span class="k">cost · est</span><span class="v">$0.42</span></div>
+          <div class="kv"><span class="k">steps · done / total</span><span class="v">2 / 5</span></div>
+          <div class="kv"><span class="k">elapsed</span><span class="v">28s</span></div>
+          <div style="margin-top:14px">
+            <h4>Sub-canvas</h4>
+            <div style="background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:8px;font-family:ui-monospace,monospace;font-size:10px;line-height:1.7;color:var(--ink2)">
+              <div style="color:var(--ok)">✓ 1. export viewport</div>
+              <div style="color:var(--ok)">✓ 2. analyse depth</div>
+              <div style="color:var(--accent)">▶ 3. queue ComfyUI</div>
+              <div>4. poll → upscale</div>
+              <div>5. write file</div>
+            </div>
+          </div>
+          <div style="margin-top:14px">
+            <h4>Tags · community</h4>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              <span style="background:rgba(232,116,58,0.12);color:var(--accent);font-size:10px;padding:2px 6px;border-radius:3px">render workflows</span>
+              <span style="background:rgba(144,192,255,0.12);color:var(--frost);font-size:10px;padding:2px 6px;border-radius:3px">revit</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CMD-K OVERLAY -->
+      <div class="cmdk-overlay" id="cmdk-overlay" onclick="if(event.target===this) closeCmdK()">
+        <div class="cmdk">
+          <input placeholder="Type a command, search nodes, jump to a session…" autofocus/>
+          <div class="gr">
+            <div class="grl">recent</div>
+            <div class="row sel"><span class="icon">★</span><span class="lbl">Spawn Revit → AI hero render</span><span class="meta">⌘1</span></div>
+            <div class="row"><span class="icon">⟐</span><span class="lbl">Re-run last cook</span><span class="meta">⌘R</span></div>
+            <div class="row"><span class="icon">▣</span><span class="lbl">Insert ai.plan node</span><span class="meta">⌘.</span></div>
+          </div>
+          <div class="gr">
+            <div class="grl">memory · matches "revit"</div>
+            <div class="row"><span class="icon">★</span><span class="lbl">skill.revit_hero_render</span><span class="meta">score 32</span></div>
+            <div class="row"><span class="icon">⌖</span><span class="lbl">host.read_walls</span><span class="meta">score 18</span></div>
+            <div class="row"><span class="icon">⌖</span><span class="lbl">host.export_viewport</span><span class="meta">score 16</span></div>
+          </div>
+          <div class="gr">
+            <div class="grl">commands</div>
+            <div class="row"><span class="icon">⚙</span><span class="lbl">Switch theme → Blueprint</span><span class="meta">⌘⇧T</span></div>
+            <div class="row"><span class="icon">▤</span><span class="lbl">Toggle Perform mode</span><span class="meta">⌘⇧P</span></div>
+            <div class="row"><span class="icon">⌫</span><span class="lbl">Close all panels</span><span class="meta">⌘0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATUS BAR -->
+    <div class="statusbar">
+      <div class="seg live"><span class="dot"></span>broker :7300</div>
+      <div class="seg ok"><span class="dot"></span>9 / 9 hosts</div>
+      <div class="seg ok"><span class="dot"></span>Revit · 1 doc</div>
+      <div class="seg ok"><span class="dot"></span>Speckle · 3 streams</div>
+      <div class="seg warn"><span class="dot"></span>ComfyUI · idle</div>
+      <div class="spacer"></div>
+      <div class="seg">last cook 1.2s</div>
+      <div class="seg cost">session $0.34</div>
+      <div class="seg">197 memory nodes · 176 communities</div>
+    </div>
+  </div>
+
+  <p style="margin-top:12px;text-align:center;font-size:11px;color:var(--ink3)">
+    Click a tile to load the live canvas. Click <kbd>⌘K</kbd> icon on the left rail to open the command palette.
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="proto" id="plan">
+  <div class="tagline">plan · 3 sprints · 4 weeks</div>
+  <h2>The build plan</h2>
+
+  <div class="sprint">
+    <h3><span class="pill">sprint 0 · today</span> Process · the rails before the trains</h3>
+    <p style="margin:6px 0 0">4 hours. New mandates land in CLAUDE.md. Preflight + post-loop audit scripts under <code>tools/</code>. <code>docs/FAILURE_LOG.md</code> + <code>prototypes/signed/</code> directories created. AgDR-0043 ships with founder sign-off recorded.</p>
+  </div>
+
+  <div class="sprint">
+    <h3><span class="pill">sprint 1 · day 1-2</span> The 60-second perception flip</h3>
+    <table>
+      <thead><tr><th>Move</th><th>Lands as</th><th>Effort</th><th>CDP proof</th></tr></thead>
+      <tbody>
+        <tr><td>4 use case tiles on Home</td><td class="shi">Home grid · 4 large cards · click → live canvas</td><td class="eff">1 day</td><td class="proof">screenshot · tile click → canvas with nodes</td></tr>
+        <tr><td>Composer chat as fat 56px centerpiece</td><td class="shi">Floating bar canvas-bottom-center · ⌘K focus</td><td class="eff">1 day</td><td class="proof">⌘K → input focused · ghost-node preview</td></tr>
+        <tr><td>Resizable left/right panels + saved layout</td><td class="shi">2 drag handles · CSS vars · localStorage</td><td class="eff">4-6 hours</td><td class="proof">drag handle · layout survives restart</td></tr>
+        <tr><td>Status bar at canvas bottom</td><td class="shi">12px strip · broker / hosts / cost / memory count</td><td class="eff">1 day</td><td class="proof">screenshot · all 7 segments live</td></tr>
+        <tr><td>Debounce saveCurrentGraph() 250ms</td><td class="shi">single scheduler · 63 call sites converge</td><td class="eff">2 hours</td><td class="proof">perf HUD · save calls drop 80%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sprint">
+    <h3><span class="pill">sprint 2 · day 3-7</span> Make memory + composer visible</h3>
+    <table>
+      <thead><tr><th>Move</th><th>Lands as</th><th>Effort</th><th>CDP proof</th></tr></thead>
+      <tbody>
+        <tr><td>Cmd+K command palette w/ recency + fuzzy</td><td class="shi">overlay modal · top-ranked node/skill/command/session</td><td class="eff">2 days</td><td class="proof">⌘K opens · type "revit" → ranked results</td></tr>
+        <tr><td>Memory-aware Library (community sections)</td><td class="shi">Library panel re-renders as collapsible groups + similarity</td><td class="eff">1.5 days</td><td class="proof">memory_query results render as section list</td></tr>
+        <tr><td>ai.plan as hero node (2.5× size · mini sub-canvas)</td><td class="shi">custom AiPlanBody · step indicator · cost chip</td><td class="eff">1.5 days</td><td class="proof">drop ai.plan → unique larger node renders</td></tr>
+        <tr><td>Wire animation during cook (flowing dashes)</td><td class="shi">SVG/CSS conic-gradient · phase color</td><td class="eff">2 days</td><td class="proof">cook fires → wires animate live</td></tr>
+        <tr><td>Theme system · DARK / BLUEPRINT / VELLUM</td><td class="shi">CSS vars · ⌘⇧T cycle · persist</td><td class="eff">1-2 days</td><td class="proof">theme cycles · persists restart</td></tr>
+        <tr><td>@-mention chips in Composer</td><td class="shi">contenteditable · cmdk picker · chip pills</td><td class="eff">3 days</td><td class="proof">type @ → picker · chip lands · removeable</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sprint">
+    <h3><span class="pill">sprint 3 · week 2-3</span> Architecture · perf · the structural ones</h3>
+    <table>
+      <thead><tr><th>Move</th><th>Why</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Split studio-lm.jsx into 8-10 files via <code>window.ArchHubUI</code></td><td>devtools nav · per-file Babel cache · lazy-load modals</td><td class="eff">3-4 days</td></tr>
+        <tr><td>Kill graphBump god-counter · useReducer + selectors</td><td>streaming chat no longer re-renders canvas · drag 60fps</td><td class="eff">3-5 days</td></tr>
+        <tr><td>Imperative drag via useRef Map + DOM transform</td><td>drag 60fps with 50+ nodes</td><td class="eff">1 day</td></tr>
+        <tr><td>Keyboard shortcuts JSON config + rebind UI</td><td>customizable mandate · documents what exists</td><td class="eff">1 day</td></tr>
+        <tr><td>Perform Mode · ⌘⇧P · hides chrome for client demos</td><td>architects present to clients · author UI embarrassing</td><td class="eff">half day</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="proto" id="mandates">
+  <div class="tagline">process · CLAUDE.md additions</div>
+  <h2>7 new mandates · drafted by Hat 6</h2>
+  <div class="mandates">
+    <div class="mandate">
+      <h4>① Definition of Shipped</h4>
+      <p>"Shipped" = founder can launch ArchHub + click around for 60s + SEE the thing working. User-visible path. 60-second discoverability. CDP screenshot proof. Real interaction. Tests passing ≠ shipped.</p>
+    </div>
+    <div class="mandate">
+      <h4>② Prototype-Is-Contract</h4>
+      <p>Signed prototype IS the spec. Shipped JSX mirrors it 1:1. Prototype moves to <code>prototypes/signed/</code>, read-only post-signoff. Visual diff before claiming parity.</p>
+    </div>
+    <div class="mandate">
+      <h4>③ No Open Threads</h4>
+      <p>Loop ends with ZERO open threads. Banned: <code>TODO(founder)</code> · "test later" · "ship X first". Per-iteration grep gate. Tasks tagged "founder verifies" are forbidden.</p>
+    </div>
+    <div class="mandate">
+      <h4>④ Pre-flight Check</h4>
+      <p>7-question Y/N gate before "shipped" word allowed. Built? Restarted? Reachable? Visible? Clickable? Persistent? Discoverable? Output pasted verbatim into report.</p>
+    </div>
+    <div class="mandate">
+      <h4>⑤ Post-loop Audit</h4>
+      <p>Script <code>tools/loop_audit.ps1</code>. git log · diff stat · TODO grep · PID check · CDP bundle hash · proof screenshots · AgDR linkage. Audit BLOCKS "done" report on any fail.</p>
+    </div>
+    <div class="mandate">
+      <h4>⑥ Rollback Protocol</h4>
+      <p>Founder finds gap → no TODO, no apology · acknowledge in one line · re-run preflight live · finish OR <code>git revert</code> in SAME response · append <code>docs/FAILURE_LOG.md</code> · no new work until gap closed.</p>
+    </div>
+    <div class="mandate">
+      <h4>⑦ Workshop Gate</h4>
+      <p>STOP shipping + convene workshop on: spec ambiguity · cross-surface change (≥3 of jsx/bridge/tool_engine/connector/runner) · founder-frustration signal · repeat regression · preflight fails 2× · loop with zero verified ships.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="proto" id="verdict">
+  <div class="tagline">decision · sign the contract</div>
+  <h2>Sign off → I execute exactly this</h2>
+  <p>The prototype above is the contract. Plan is locked into Sprint 0 → 1 → 2 → 3. Mandates land in CLAUDE.md immediately. Pick one:</p>
+  <div class="verdict">
+    <div class="verdict-buttons" id="verdict">
+      <button data-v="ship">SHIP IT · execute Sprint 0 + 1 today</button>
+      <button data-v="revise">REVISE · open prototype in canvas + tell me what changes</button>
+      <button data-v="hold">HOLD · review tomorrow</button>
+    </div>
+    <div id="verdict-out" style="margin-top:12px;color:var(--accent2);font-family:ui-monospace,monospace;font-size:11px;min-height:18px"></div>
+  </div>
+</section>
+
+<footer>
+  ArchHub · workshop 2026-05-25 · 7 hats council · prototype-is-contract<br>
+  saved to <code>docs/prototypes/signed/workshop-2026-05-25.html</code>
+</footer>
+
+<script>
+// Theme switcher
+document.querySelectorAll('.theme-switch button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.theme-switch button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const t = b.dataset.theme;
+    if (t === 'dark') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+  };
+});
+
+// Tile click → live canvas
+function loadLive(el, kind) {
+  document.getElementById('home-view').style.display = 'none';
+  document.getElementById('live-view').style.display = 'block';
+  document.querySelector('.titlebar .crumb').textContent = 'archhub · canvas · ' + kind + '_hero';
+}
+
+// Cmd-K
+function openCmdK() { document.getElementById('cmdk-overlay').classList.add('on'); }
+function closeCmdK() { document.getElementById('cmdk-overlay').classList.remove('on'); }
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'k' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openCmdK(); }
+  if (e.key === 'Escape') closeCmdK();
+});
+
+// Verdict
+document.querySelectorAll('#verdict button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#verdict button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const v = b.dataset.v;
+    localStorage.setItem('archhub.workshop.verdict', v);
+    const txt = {
+      ship: '✓ SHIP IT — locked. Claude executes Sprint 0 (mandates) + Sprint 1 (4 tiles, composer centerpiece, resizable panels, status bar, debounce-save) starting next /loop.',
+      revise: '✎ REVISE — open prototype, send change requests. Claude updates this file, re-presents.',
+      hold: '⏸ HOLD — verdict shelved. Re-open tomorrow.',
+    };
+    document.getElementById('verdict-out').textContent = txt[v];
+  };
+});
+// Restore
+const v = localStorage.getItem('archhub.workshop.verdict');
+if (v) document.querySelector(`#verdict button[data-v="${v}"]`)?.click();
+</script>
+</body>
+</html>

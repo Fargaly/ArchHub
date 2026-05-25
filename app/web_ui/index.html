@@ -6,7 +6,15 @@
 <title>ArchHub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<!-- Founder 2026-05-25: NON-BLOCKING font load. Was hanging the page
+     white when network/firewall couldn't reach fonts.googleapis.com
+     (Kaspersky 21.22 ghost + DLL hook + new outbound block tested).
+     The `media=print` trick lets the page render with fallback fonts
+     (Georgia / system-ui / monospace) immediately, then swaps when
+     the real font sheet arrives. `noscript` keeps it for non-JS. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'; this.onload=null;" />
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" /></noscript>
 <style>
   html, body {
     margin:0; padding:0; height:100%; width:100%;

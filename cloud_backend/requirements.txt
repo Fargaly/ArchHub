@@ -1,6 +1,6 @@
 fastapi==0.136.3
 uvicorn[standard]==0.48.0
-stripe==11.5.0
+stripe==15.1.0
 httpx==0.28.1
 # pydantic relaxed from ==2.9.2: the Tests CI job co-installs this file
 # with app/requirements.txt into ONE env, and specklepy there pulls

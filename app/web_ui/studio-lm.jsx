@@ -7571,7 +7571,12 @@ const CanvasMenu = ({ x, y, onAddNode, onFit, onClose, onClearAll, onPaste, onZo
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocketDown, onSocketContextMenu, onNodeContextMenu }) => {
+// React.memo'd at end of file so re-renders are skipped when none of
+// {n, focused, selected, dimmed, expanded} changed. Without memo, every
+// graphBump re-renders ALL nodes even when only one moved → ~200 wasted
+// re-renders per drag frame on a 30-node graph. Founder 2026-05-25:
+// "STILL FUCKING LAGGING". This is the biggest single-file perf win.
+const _NodeRenderer_inner = ({ n, focused, selected, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocketDown, onSocketContextMenu, onNodeContextMenu }) => {
   // Founder demand #15: spread defaults so a graph from disk with missing
   // arrays (older sessions, hand-edited JSON) doesn't crash the renderer.
   n = { ins:[], outs:[], messages:[], params:[], ...n };
@@ -7798,6 +7803,30 @@ const NodeRenderer = ({ n, focused, selected, dimmed, expanded, onToggleExpand, 
     </div>
   );
 };
+
+// Custom comparator — skip re-render unless visual props actually changed.
+// `n` is mutated in place across the codebase (preview_off, frozen,
+// state, ms, etc.) so we deep-equal the cheap visible scalars rather
+// than reference-check the whole node object.
+const NodeRenderer = React.memo(_NodeRenderer_inner, (prev, next) => {
+  if (prev.focused !== next.focused) return false;
+  if (prev.selected !== next.selected) return false;
+  if (prev.dimmed !== next.dimmed) return false;
+  if (prev.expanded !== next.expanded) return false;
+  const a = prev.n, b = next.n;
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.id !== b.id) return false;
+  if (a.x !== b.x || a.y !== b.y || a.w !== b.w || a.h !== b.h) return false;
+  if (a.state !== b.state || a.ms !== b.ms) return false;
+  if (a.title !== b.title || a.sub !== b.sub) return false;
+  if (a.bypass !== b.bypass || a.frozen !== b.frozen
+      || a.preview_off !== b.preview_off || a.pinned !== b.pinned) return false;
+  if ((a.ins && a.ins.length) !== (b.ins && b.ins.length)) return false;
+  if ((a.outs && a.outs.length) !== (b.outs && b.outs.length)) return false;
+  // Equal enough — skip render.
+  return true;
+});
 
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkMuted : LM.ok;

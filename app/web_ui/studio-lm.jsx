@@ -9133,6 +9133,29 @@ const MiniMap = ({ pan, zoom, positions, allNodes, wrapRef, setPan }) => {
 const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
+  // AgDR-0014 library metadata — index of {type → {side_effects, status,
+  // category, name}}. Fetched once on mount via bridge.library_list_node_types.
+  // Used to overlay side-effect pills (pure/host_write/network) on
+  // library item rows per AgDR-0014 design system. Hat 1 caught:
+  // "AgDR-0014 library design system never built — no side-effect pills,
+  // no status lifecycle, all design-only".
+  const [libMeta, setLibMeta] = React.useState({});
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await bridgeAsync('library_list_node_types', '');
+        if (cancelled) return;
+        const items = (r && r.items) || [];
+        const idx = {};
+        items.forEach(it => {
+          if (it && it.type) idx[it.type] = it;
+        });
+        setLibMeta(idx);
+      } catch (e) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // AgDR-0042 memory graph wire — when search query non-empty, also
   // query memory.query (community-aware BFS) for ranked hits.
   // Hat 1 caught: "memory graph 6 slices shipped, ZERO JSX consumer".
@@ -9289,19 +9312,47 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                   <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.06em' }}>{c.role}</span>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-                  {items.map(i => (
-                    <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }} style={{
-                      background:LM.bg, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${c.col}`,
-                      borderRadius:6, padding:'8px 11px', textAlign:'left', cursor:'pointer',
-                      color:LM.ink, fontFamily:LM.sans,
-                      display:'flex', flexDirection:'column', gap:2,
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'88'; e.currentTarget.style.borderLeftColor = c.col; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.borderLeftColor = c.col; }}>
-                      <span style={{ fontSize:12.5, fontWeight:500, fontFamily:LM.mono }}>{i.title}</span>
-                      <span style={{ fontSize:11, color:LM.inkSoft }}>{i.sub}</span>
-                    </button>
-                  ))}
+                  {items.map(i => {
+                    // AgDR-0014 — lookup side_effects/status by type
+                    // when grammar kind matches a library entry.
+                    const k = i._grammar && i._grammar.kind;
+                    const meta = (k && libMeta[k]) || null;
+                    const sfx = meta && meta.side_effects;
+                    const stat = meta && meta.status;
+                    return (
+                      <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }} style={{
+                        background:LM.bg, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${c.col}`,
+                        borderRadius:6, padding:'8px 11px', textAlign:'left', cursor:'pointer',
+                        color:LM.ink, fontFamily:LM.sans,
+                        display:'flex', flexDirection:'column', gap:3,
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'88'; e.currentTarget.style.borderLeftColor = c.col; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.borderLeftColor = c.col; }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                          <span style={{ fontSize:12.5, fontWeight:500, fontFamily:LM.mono, flex:1 }}>{i.title}</span>
+                          {/* AgDR-0014 side-effect pill */}
+                          {sfx && (
+                            <span style={{
+                              fontFamily:LM.mono, fontSize:8.5, padding:'1px 5px', borderRadius:3,
+                              letterSpacing:'0.06em', textTransform:'uppercase',
+                              ...(sfx === 'pure' ? { background:'#1a221b', color:LM.ok }
+                                : sfx === 'host_write' ? { background:'#231f14', color:LM.warn }
+                                : sfx === 'network' ? { background:'#161d2a', color:LM.blue }
+                                : { background:LM.bgSoft, color:LM.inkMuted }),
+                            }}>{sfx === 'host_write' ? 'host' : sfx === 'network' ? 'net' : sfx}</span>
+                          )}
+                          {/* AgDR-0014 status lifecycle chip — only shown when non-default */}
+                          {stat && stat !== 'registered' && (
+                            <span style={{
+                              fontFamily:LM.mono, fontSize:8.5, padding:'1px 5px', borderRadius:3,
+                              background:LM.accentDim, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase',
+                            }}>{stat}</span>
+                          )}
+                        </div>
+                        <span style={{ fontSize:11, color:LM.inkSoft }}>{i.sub}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             );

@@ -1,0 +1,28 @@
+[project]
+name = "personal-brain-mcp"
+version = "0.1.0"
+description = "Ambient agent substrate — memory + skills + setups + secrets MCP server"
+authors = [{name = "ArchHub", email = "founder@archhub.io"}]
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+readme = "README.md"
+dependencies = [
+    "fastmcp>=0.4.0",
+    "pydantic>=2.0",
+    "anyio>=4.0",
+]
+
+[project.optional-dependencies]
+embed = ["fastembed>=0.3.0", "faiss-cpu>=1.7.4", "numpy>=1.24"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[project.scripts]
+personal-brain = "personal_brain.server:main"
+personal-brain-stdio = "personal_brain.server:main_stdio"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/personal_brain"]

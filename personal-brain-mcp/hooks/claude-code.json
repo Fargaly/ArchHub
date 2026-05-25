@@ -1,0 +1,46 @@
+{
+  "_comment": "Personal Brain MCP — drop-in for ~/.claude/settings.json. Slice 3 ships an installer that merges this into the user's existing config without clobbering.",
+  "mcpServers": {
+    "brain": {
+      "command": "personal-brain",
+      "args": [],
+      "env": {
+        "BRAIN_OWNER_USER": "${USER}"
+      }
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "mcp_tool",
+        "server": "brain",
+        "tool": "brain.wiring_announce",
+        "_note": "Announces this device's MCPs + secret refs. Returns scope hints used by subsequent context calls."
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "mcp_tool",
+        "server": "brain",
+        "tool": "brain.context",
+        "_note": "Returns relevant skills + facts + wiring + secret refs filtered by scope ACL. Inject result.injection into system_prompt."
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "mcp_tool",
+        "server": "brain",
+        "tool": "brain.write",
+        "_note": "Persist memory ops (ADD/UPDATE/DELETE/NOOP) with immutable provenance."
+      }
+    ],
+    "Stop": [
+      {
+        "type": "mcp_tool",
+        "server": "brain",
+        "tool": "brain.skill_mint",
+        "_note": "Submit trace at turn end. Reflexion worker scores novelty + success; mints skill via Voyager+SkillWeaver pipeline (Slice 5)."
+      }
+    ]
+  }
+}

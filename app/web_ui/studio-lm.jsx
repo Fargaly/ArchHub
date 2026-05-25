@@ -9193,6 +9193,27 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
   const [attachments, setAttachments] = React.useState([]);
   const [recording, setRecording] = React.useState(false);
   const [dragOver, setDragOver] = React.useState(false);
+  // USER-AGENCY MANDATE — Composer mode (Plan/Auto/YOLO).
+  // - Plan : default. Every AI write to a host is approval-gated.
+  // - Auto : reads run free; writes still approval-gated.
+  // - YOLO : everything runs auto-approved (opt-in, reversible via Speckle).
+  // Persisted in localStorage. Read by the action dispatcher + the
+  // backend gate (when the gate-wiring AgDR lands).
+  const [mode, setMode] = React.useState(() => {
+    try { return localStorage.getItem('archhub.composer_mode') || 'plan'; }
+    catch (e) { return 'plan'; }
+  });
+  const setM = (m) => {
+    setMode(m);
+    try { localStorage.setItem('archhub.composer_mode', m); } catch (e) {}
+    try { window.__archhub_composer_mode = m; } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+      detail: { msg: m === 'plan'  ? 'Plan mode · all writes gated'
+                  : m === 'auto'  ? 'Auto mode · reads free, writes gated'
+                                  : 'YOLO mode · every action auto-runs (reversible)',
+                 kind: m === 'yolo' ? 'warn' : 'info' } })); } catch (e) {}
+  };
+  React.useEffect(() => { try { window.__archhub_composer_mode = mode; } catch (e) {} }, [mode]);
   const inputRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
   const recogRef = React.useRef(null);
@@ -9201,7 +9222,8 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
     try {
       window.dispatchEvent(new CustomEvent('lm-composer-action', {
         detail: { action, raw, focusId,
-                   attachments: (opts && opts.attachments) || [] },
+                   attachments: (opts && opts.attachments) || [],
+                   mode: mode },  // USER-AGENCY MANDATE — gates downstream writes.
       }));
     } catch (e) {}
   };
@@ -9437,6 +9459,40 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
                     animation: recording ? 'lmPulse 1s ease-in-out infinite' : 'none' }}>
           {recording ? '● rec' : '🎤'}
         </button>
+        {/* USER-AGENCY MANDATE — Composer mode picker. Tooltip on each
+            tells what the mode does. YOLO carries an err-tinted glow so
+            it never feels neutral. */}
+        <div role="radiogroup" aria-label="Composer mode"
+          data-testid="composer-mode-picker"
+          style={{ display:'flex', gap:2, padding:2, border:`1px solid ${LM.line}`, borderRadius:5, background:LM.bg }}>
+          {[
+            { id:'plan', lbl:'P', tip:'Plan · all writes gated (default)' },
+            { id:'auto', lbl:'A', tip:'Auto · reads free, writes gated' },
+            { id:'yolo', lbl:'Y', tip:'YOLO · auto-runs everything (reversible)' },
+          ].map(m => {
+            const active = mode === m.id;
+            const isYolo = m.id === 'yolo';
+            return (
+              <button key={m.id} type="button"
+                role="radio" aria-checked={active}
+                onClick={(e) => { e.stopPropagation(); setM(m.id); }}
+                title={m.tip}
+                style={{
+                  padding:'2px 7px', minWidth:18,
+                  border:0, borderRadius:3,
+                  background: active
+                    ? (isYolo ? LM.err + '33' : LM.accentDim)
+                    : 'transparent',
+                  color: active
+                    ? (isYolo ? LM.err : LM.accent)
+                    : LM.inkMuted,
+                  fontFamily:LM.mono, fontSize:10, fontWeight:600,
+                  cursor:'pointer',
+                  boxShadow: active && isYolo ? `0 0 8px ${LM.err}55` : 'none',
+                }}>{m.lbl}</button>
+            );
+          })}
+        </div>
         <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
         <button onClick={submit} style={{ padding:'4px 11px', background:LM.accent, color:'#fff', border:0, borderRadius:5, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
       </div>

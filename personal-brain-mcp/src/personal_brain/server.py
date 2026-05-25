@@ -374,18 +374,82 @@ def build_server(
         description=(
             "Apply Mem0-style memory ops (ADD/UPDATE/DELETE/NOOP) with "
             "immutable provenance attached. Wire to PostToolUse so the brain "
-            "captures every tool outcome as memory in real time."
+            "captures every tool outcome as memory in real time. Slice 11: "
+            "every non-USER-scope write is gated by acl.can_write_to_scope; "
+            "operations that fail ACL are rejected with a typed reason — "
+            "the rest of the batch still applies."
         ),
     )
     def brain_write(ops: list[dict[str, Any]]) -> dict[str, Any]:
+        from .acl import Identity, Scope as AclScope, can_write_to_scope
+        from .firm import current_firm_id, current_seat
         parsed: list[WriteOp] = []
+        denied: list[dict[str, Any]] = []
+
+        # Build actor identity from local firm membership
+        seat = current_seat(store)
+        actor = Identity(
+            user_id=(seat.user_id if seat else default_owner),
+            firm_id=(seat.firm_id if seat else None),
+            is_maintainer=False,  # `global` writes are out-of-band
+        )
+
         for raw in ops:
             try:
-                parsed.append(WriteOp.model_validate(raw))
+                op = WriteOp.model_validate(raw)
             except Exception as ex:
                 return {"error": f"invalid write op: {ex}", "ops_applied": 0}
+
+            # Slice 11 — ACL gate: every non-USER write checked.
+            # User-scope writes pass through (owner-only enforced at search).
+            if op.fragment is not None:
+                scope_val = (
+                    op.fragment.scope.value
+                    if hasattr(op.fragment.scope, "value")
+                    else str(op.fragment.scope)
+                )
+                if scope_val != "user":
+                    try:
+                        target_scope = AclScope(scope_val)
+                    except ValueError:
+                        denied.append({
+                            "op_id": op.fragment.id,
+                            "reason": f"unknown scope '{scope_val}'",
+                        })
+                        continue
+                    decision = can_write_to_scope(
+                        actor=actor,
+                        target_scope=target_scope,
+                        target_project_id=op.fragment.project_id,
+                        target_firm_id=op.fragment.firm_id,
+                    )
+                    if not decision.allow:
+                        denied.append({
+                            "op_id": op.fragment.id,
+                            "scope": scope_val,
+                            "reason": decision.reason,
+                        })
+                        continue
+                    if decision.redaction_required and scope_val in ("community", "global"):
+                        # Community/global writes must go through brain.promote
+                        # (which applies redaction) — refuse direct writes.
+                        denied.append({
+                            "op_id": op.fragment.id,
+                            "scope": scope_val,
+                            "reason": (
+                                f"direct write to '{scope_val}' scope blocked — "
+                                "use brain.promote with redaction"
+                            ),
+                        })
+                        continue
+            parsed.append(op)
+
         resp = apply_write(store=store, ops=parsed)
-        return resp.model_dump(mode="json")
+        result = resp.model_dump(mode="json")
+        if denied:
+            result["acl_denied"] = denied
+            result["acl_denied_count"] = len(denied)
+        return result
 
     @mcp.tool(
         name="brain.skill_mint",
@@ -572,6 +636,126 @@ def build_server(
             "write_ms": resp.write_ms,
             "audit_logged": True,
         }
+
+    # ─────────────────── firm identity (Slice 9) ────────────────────
+
+    @mcp.tool(
+        name="brain.firm_create",
+        description=(
+            "Create a new firm on this device. Caller becomes the root "
+            "admin. Returns the firm identity (firm_id + name + public "
+            "key). The private key is held LOCAL only — other devices "
+            "join via signed invite tokens. Idempotent: re-running "
+            "without `force=true` returns the existing firm."
+        ),
+    )
+    def brain_firm_create(
+        name: str,
+        created_by: Optional[str] = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        from .firm import create_firm, current_firm
+        existing = current_firm(store)
+        if existing is not None and not force:
+            return {
+                "ok": True, "already_exists": True,
+                "firm_id": existing.firm_id, "name": existing.name,
+                "root_pub": existing.root_pub,
+            }
+        identity = create_firm(
+            store, name=name, created_by=created_by or default_owner,
+        )
+        return {
+            "ok": True,
+            "firm_id": identity.firm_id, "name": identity.name,
+            "root_pub": identity.root_pub,
+            "is_admin": True,
+        }
+
+    @mcp.tool(
+        name="brain.firm_invite_create",
+        description=(
+            "Create a signed invite token to add a teammate to the "
+            "current firm. Only the firm admin (the device that holds "
+            "root_priv) can issue tokens. Token is a base64url payload "
+            "+ ed25519 signature; expires in `ttl_hours`. Share by "
+            "any channel (paste, QR, message); recipient passes to "
+            "`brain.firm_invite_accept`."
+        ),
+    )
+    def brain_firm_invite_create(
+        role: str = "seat",
+        ttl_hours: int = 24,
+    ) -> dict[str, Any]:
+        from .firm import create_invite_token
+        try:
+            envelope = create_invite_token(
+                store, role=role, ttl_hours=ttl_hours,
+            )
+            return {"ok": True, "token": envelope, "role": role,
+                     "ttl_hours": ttl_hours}
+        except RuntimeError as ex:
+            return {"ok": False, "error": str(ex)}
+
+    @mcp.tool(
+        name="brain.firm_invite_accept",
+        description=(
+            "Accept an invite token to join a firm. Verifies signature "
+            "+ expiry; on success materialises firm identity (public "
+            "key only — not admin priv) and records the local seat. "
+            "Idempotent: re-running with the same token is a no-op."
+        ),
+    )
+    def brain_firm_invite_accept(
+        token: str,
+        user_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from .firm import accept_invite_token
+        try:
+            seat = accept_invite_token(
+                store, envelope=token, user_id=user_id or default_owner,
+            )
+            return {
+                "ok": True, "firm_id": seat.firm_id, "user_id": seat.user_id,
+                "role": seat.role, "invited_by": seat.invited_by,
+            }
+        except RuntimeError as ex:
+            return {"ok": False, "error": str(ex)}
+
+    @mcp.tool(
+        name="brain.firm_seats",
+        description=(
+            "List all seats in the current firm (synced via the firm-"
+            "scope graph). Returns [] when not in a firm."
+        ),
+    )
+    def brain_firm_seats() -> dict[str, Any]:
+        from .firm import current_firm, list_seats
+        f = current_firm(store)
+        if f is None:
+            return {"ok": True, "firm_id": None, "seats": []}
+        seats = list_seats(store)
+        return {
+            "ok": True, "firm_id": f.firm_id, "firm_name": f.name,
+            "seats": [
+                {"user_id": s.user_id, "role": s.role,
+                  "joined_at": s.joined_at, "invited_by": s.invited_by}
+                for s in seats
+            ],
+        }
+
+    @mcp.tool(
+        name="brain.firm_leave",
+        description=(
+            "Leave the current firm on this device. The seat record "
+            "remains visible on other seats until next sync, then gets "
+            "pruned."
+        ),
+    )
+    def brain_firm_leave() -> dict[str, Any]:
+        from .firm import leave_firm
+        leave_firm(store)
+        return {"ok": True}
 
     @mcp.tool(
         name="brain.health",

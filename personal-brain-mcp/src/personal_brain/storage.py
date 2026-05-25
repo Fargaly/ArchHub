@@ -179,6 +179,21 @@ CREATE TABLE IF NOT EXISTS brain_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS reputation (
+    contributor_id TEXT PRIMARY KEY,
+    accepted_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    quarantine_count INTEGER NOT NULL DEFAULT 0,
+    avg_quality_score REAL NOT NULL DEFAULT 0.5,
+    sybil_risk REAL NOT NULL DEFAULT 0.0,
+    domains_json TEXT NOT NULL DEFAULT '{}',
+    identity_json TEXT NOT NULL DEFAULT '{}',
+    vouches_json TEXT NOT NULL DEFAULT '[]',
+    stake_json TEXT NOT NULL DEFAULT '{}',
+    first_seen TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 """
 
 
@@ -619,6 +634,98 @@ class BrainStore:
                 (fragment_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── reputation (Slice 15) ───────────────────────────────────────────
+
+    def upsert_reputation(self, peer_dict: dict[str, Any]) -> bool:
+        """Upsert a PeerV2-shaped reputation row. `peer_dict` should
+        contain: contributor_id, accepted_count, rejected_count,
+        quarantine_count, avg_quality_score, sybil_risk, domains,
+        identity, vouches, stake, first_seen."""
+        cid = peer_dict["contributor_id"]
+        with self._lock:
+            existed = self._conn.execute(
+                "SELECT 1 FROM reputation WHERE contributor_id = ?", (cid,),
+            ).fetchone() is not None
+            self._conn.execute(
+                """INSERT INTO reputation (
+                    contributor_id, accepted_count, rejected_count,
+                    quarantine_count, avg_quality_score, sybil_risk,
+                    domains_json, identity_json, vouches_json, stake_json,
+                    first_seen
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(contributor_id) DO UPDATE SET
+                    accepted_count = excluded.accepted_count,
+                    rejected_count = excluded.rejected_count,
+                    quarantine_count = excluded.quarantine_count,
+                    avg_quality_score = excluded.avg_quality_score,
+                    sybil_risk = excluded.sybil_risk,
+                    domains_json = excluded.domains_json,
+                    identity_json = excluded.identity_json,
+                    vouches_json = excluded.vouches_json,
+                    stake_json = excluded.stake_json,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                """,
+                (
+                    cid,
+                    int(peer_dict.get("accepted_count", 0)),
+                    int(peer_dict.get("rejected_count", 0)),
+                    int(peer_dict.get("quarantine_count", 0)),
+                    float(peer_dict.get("avg_quality_score", 0.5)),
+                    float(peer_dict.get("sybil_risk", 0.0)),
+                    json.dumps(peer_dict.get("domains", {})),
+                    json.dumps(peer_dict.get("identity", {})),
+                    json.dumps(peer_dict.get("vouches", [])),
+                    json.dumps(peer_dict.get("stake", {})),
+                    peer_dict.get("first_seen") or "",
+                ),
+            )
+            return not existed
+
+    def get_reputation(self, contributor_id: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM reputation WHERE contributor_id = ?",
+                (contributor_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "contributor_id": row["contributor_id"],
+            "accepted_count": row["accepted_count"],
+            "rejected_count": row["rejected_count"],
+            "quarantine_count": row["quarantine_count"],
+            "avg_quality_score": row["avg_quality_score"],
+            "sybil_risk": row["sybil_risk"],
+            "domains": json.loads(row["domains_json"]),
+            "identity": json.loads(row["identity_json"]),
+            "vouches": json.loads(row["vouches_json"]),
+            "stake": json.loads(row["stake_json"]),
+            "first_seen": row["first_seen"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_reputations(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM reputation ORDER BY updated_at DESC",
+            ).fetchall()
+        return [
+            {
+                "contributor_id": r["contributor_id"],
+                "accepted_count": r["accepted_count"],
+                "rejected_count": r["rejected_count"],
+                "quarantine_count": r["quarantine_count"],
+                "avg_quality_score": r["avg_quality_score"],
+                "sybil_risk": r["sybil_risk"],
+                "domains": json.loads(r["domains_json"]),
+                "identity": json.loads(r["identity_json"]),
+                "vouches": json.loads(r["vouches_json"]),
+                "stake": json.loads(r["stake_json"]),
+                "first_seen": r["first_seen"],
+                "updated_at": r["updated_at"],
+            } for r in rows
+        ]
 
     # ── meta ─────────────────────────────────────────────────────────────
 

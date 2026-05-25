@@ -179,6 +179,89 @@ Workshop output is an AgDR (per existing AGDR mandate) + a closed
 thread of next actions. Only after the AgDR ships `executed` and the
 founder confirms does shipping resume.
 
+## ANTI-LIE MANDATE (founder, 2026-05-25 — non-negotiable, applies to EVERY session forever)
+
+The failure mode this mandate kills: Claude treats "code compiles + unit
+tests pass + module imports" as "feature done." It is NOT. That is the
+exact lie the founder banned 2026-05-25 with "you didn't really build
+it, just gave me a false I finished it." Every future session — current
+or any future Claude invocation — runs the LIE-CHECK below before using
+the words "shipped," "done," "complete," "delivered," "finished," or
+"wired" in ANY report.
+
+Rules:
+
+- **Code in modules ≠ shipped.** A Python file that imports, a function
+  that has tests, a class with green pytest — these are PRIMITIVES.
+  Nothing is shipped until: (a) a user can click a button or type a
+  command that triggers the feature, (b) the runtime that USES the
+  primitive is actually running, (c) state observably changes in a
+  surface the user can see.
+
+- **Tests pass ≠ feature works.** Tests run code in isolation. The
+  feature is the user-visible end of a chain that the test never
+  exercises. Test-only verification proves the primitive; it does NOT
+  prove the runtime.
+
+- **"Defined" ≠ "running."** A FastAPI app defined in a module is not
+  a server until a process listens on a port. A scheduled-sync function
+  is not sync until a thread calls it on a schedule. A reputation
+  registry is not persistent until it writes to disk. Check the verb:
+  is there a process? a thread? a cron? a button? If no — primitives,
+  not feature.
+
+- **LIE-CHECK (the gate).** Before "shipped/done/complete" appears in
+  any report, Claude runs this internally:
+
+  1. **WHO clicks WHERE to use this?** Name the affordance. If the
+     answer is "no UI yet" → not shipped.
+  2. **WHAT process runs the runtime?** Name the daemon / cron / hook.
+     If "you'd have to call this function manually" → not shipped.
+  3. **WHERE does observable state land?** Name the file / row / pixel.
+     If "in the tests it does but in the running app you'd never see
+     it" → not shipped.
+  4. **HAS that observable state been verified live this iteration?**
+     `curl` / CDP / log tail / file inspection. If "I assume it would
+     work" → not shipped.
+  5. **WHO ELSE has reproduced it?** The founder. A teammate. A second
+     process. If only "tests in my head" → not shipped.
+
+  ANY "No" → demote language to one of: "primitives shipped · runtime
+  pending," "code merged · UI pending," "tested in isolation · live
+  wire pending," "module defined · not invoked yet."
+
+- **Honesty floor — REQUIRED phrasing when not actually shipped.**
+  Never just "Slice X done" or "feature done." Use the precise phrase
+  that names what's missing:
+    - "primitives shipped · runtime worker NOT BUILT"
+    - "code in modules · NO UI surface yet"
+    - "FastAPI server defined · no daemon process listens"
+    - "transport works in unit tests · production sync not scheduled"
+  Founder reads this exact phrase and knows what's real.
+
+- **Final-report self-audit.** Every report that says any of the BANNED
+  words runs a 5-row audit table in the same message:
+
+  | Feature | Primitive ✓ | Runtime ✓ | UI ✓ | Live-verified ✓ | Cross-process / device verified ✓ |
+  |---------|-------------|-----------|------|-----------------|------------------------------------|
+
+  Any row with a `✗` blocks the BANNED word for that feature.
+
+- **Penalty.** When the founder catches a lie, the response is NOT an
+  apology. The response is: (a) update this mandate to harden the
+  check, (b) demote every false claim in the previous report with the
+  honest-phrase replacement, (c) build the actually-missing pieces,
+  (d) re-report only with the audit table green.
+
+- **This mandate applies to ALL sessions.** Claude Code, Cursor agents,
+  ChatGPT, Codex, Gemini CLI, ArchHub Composer, custom agents — every
+  AI working on this repo runs the lie-check before claiming completion.
+  Human contributors run it too (manually). PRs with "shipped" in the
+  body without the audit table get auto-rejected.
+
+The mandate is the COST of broken trust. Trust is rebuilt one verified
+delivery at a time, never one assertion at a time.
+
 ## BRAIN-FIRST MANDATE (founder, 2026-05-25 — non-negotiable)
 
 Every Claude Code session, every AI agent, every human collaborator on

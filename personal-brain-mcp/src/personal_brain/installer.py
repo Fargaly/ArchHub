@@ -70,10 +70,43 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def _brain_command() -> dict[str, Any]:
-    """The MCP server entry every client writes."""
+    """The MCP server entry every client writes.
+
+    Resolution priority:
+      1. `personal-brain.exe` on PATH (works after `pip install` if
+         Python's Scripts dir is on PATH).
+      2. Discovered `personal-brain.exe` in Python's `sysconfig` scripts dir
+         even when that dir is not on PATH (very common on Windows).
+      3. Fallback to `<current_python> -m personal_brain.server` — always
+         works as long as the package is importable.
+    """
+    import shutil
+    import sys
+    import sysconfig
+
+    on_path = shutil.which("personal-brain")
+    if on_path:
+        return {
+            "command": on_path,
+            "args": [],
+            "env": {"BRAIN_OWNER_USER": "${USER}"},
+        }
+
+    scripts_dir = sysconfig.get_path("scripts")
+    if scripts_dir:
+        for candidate in ("personal-brain.exe", "personal-brain"):
+            p = Path(scripts_dir) / candidate
+            if p.exists():
+                return {
+                    "command": str(p),
+                    "args": [],
+                    "env": {"BRAIN_OWNER_USER": "${USER}"},
+                }
+
+    # Final fallback: invoke via the running interpreter
     return {
-        "command": "personal-brain",
-        "args": [],
+        "command": sys.executable,
+        "args": ["-m", "personal_brain.server"],
         "env": {"BRAIN_OWNER_USER": "${USER}"},
     }
 

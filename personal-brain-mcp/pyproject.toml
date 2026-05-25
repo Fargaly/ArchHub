@@ -19,6 +19,7 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
 [project.scripts]
 personal-brain = "personal_brain.server:main"
 personal-brain-stdio = "personal_brain.server:main_stdio"
+personal-brain-federation = "personal_brain.federation_server:main_cli"
 
 [build-system]
 requires = ["hatchling"]

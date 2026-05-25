@@ -273,27 +273,69 @@ def _import_pattern_to_store(
 # ─────────────────────── entrypoint ────────────────────────────────────
 
 
-def main(argv: Optional[list[str]] = None) -> int:  # pragma: no cover
+def main(argv: Optional[list[str]] = None) -> int:
+    """Start the federation HTTP server. Daemon entry point.
+
+    Pulls firm_id from local brain identity when not passed explicitly,
+    so admins don't have to memorise their firm_id. Persists in brain_meta
+    that the server is running on `port` so the main daemon + UI know
+    where to find it.
+    """
     import argparse
-    import uvicorn  # type: ignore
-    parser = argparse.ArgumentParser(prog="brain-federation")
+    parser = argparse.ArgumentParser(prog="personal-brain-federation")
     parser.add_argument("--port", type=int, default=8474)
     parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--firm-id", type=str, default="default")
-    parser.add_argument("--actor-url", type=str,
-                         default="http://127.0.0.1:8474/actor")
-    parser.add_argument("--base-url", type=str,
-                         default="http://127.0.0.1:8474")
+    parser.add_argument("--firm-id", type=str, default=None,
+                         help="Override firm_id; default = current firm from brain")
+    parser.add_argument("--actor-url", type=str, default=None,
+                         help="Public actor URL; default = http://host:port/actor")
+    parser.add_argument("--base-url", type=str, default=None,
+                         help="Public base URL; default = http://host:port")
     parser.add_argument("--db", type=str, default=None)
     args = parser.parse_args(argv)
 
+    try:
+        import uvicorn  # type: ignore
+    except ImportError:
+        print("uvicorn not installed. `pip install 'personal-brain-mcp[server]'`")
+        return 1
+
     store = BrainStore.open(args.db)
+
+    # Resolve firm_id from local identity when not passed
+    firm_id = args.firm_id
+    if not firm_id:
+        try:
+            from .firm import current_firm_id
+            firm_id = current_firm_id(store) or "default"
+        except Exception:
+            firm_id = "default"
+
+    base_url = args.base_url or f"http://{args.host}:{args.port}"
+    actor_url = args.actor_url or f"{base_url}/actor"
+
     app = create_app(
-        store, firm_id=args.firm_id,
-        actor_url=args.actor_url, base_url=args.base_url,
+        store, firm_id=firm_id,
+        actor_url=actor_url, base_url=base_url,
     )
-    uvicorn.run(app, host=args.host, port=args.port)
+
+    # Record the running daemon's coordinates so the main brain process +
+    # UI can discover them.
+    try:
+        store.set_meta("federation.host", args.host)
+        store.set_meta("federation.port", str(args.port))
+        store.set_meta("federation.firm_id", firm_id)
+        store.set_meta("federation.base_url", base_url)
+    except Exception:
+        pass
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
+
+
+def main_cli(argv: Optional[list[str]] = None) -> int:
+    """Alias for entry_points / pyproject."""
+    return main(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover

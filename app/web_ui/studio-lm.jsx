@@ -6015,8 +6015,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             // source node's `cooked.value` to derive a Grasshopper-style
             // data-shape: scalar (thin) / list (thick) / tree (thick
             // dashed). Falls back to thin when nothing cooked yet.
+            // Perf 2026-05-25: was O(N) .find per wire on every render —
+            // M wires × N nodes = O(M·N) per frame. nodeById is a dict
+            // already in scope; O(1) lookup.
             const srcId = w.raw && w.raw.from && w.raw.from[0];
-            const src = srcId && (allNodes || []).find(n => n.id === srcId);
+            const src = srcId && nodeById[srcId];
             const cv = src && src.cooked && src.cooked.value;
             let shape = 'scalar';
             if (Array.isArray(cv)) {

@@ -395,6 +395,65 @@ class BrainStore:
                     (fragment_id,),
                 )
 
+    def list_fragments(
+        self,
+        *,
+        scope_filter: Optional[Iterable[Scope]] = None,
+        kinds: Optional[Iterable[FragmentKind]] = None,
+        owner_user: Optional[str] = None,
+        since: Optional[str] = None,
+        limit: int = 1000,
+    ) -> list[Fragment]:
+        """Enumerate fragments by filter — NO FTS query.
+
+        Used by Brain #32 dataset export (HuggingFace-style training-data
+        dump) — needs full enumeration, not text-relevance ranking. The
+        FTS-based `search_fragments` requires a text query and ranks by
+        FTS relevance; this method walks the table by filter only.
+
+        Filters:
+          - scope_filter: only fragments in these scopes
+          - kinds: only fragments of these kinds (fact/skill/etc)
+          - owner_user: USER-scope rows must match this owner (other
+            scopes pass through — ACL gating happens upstream)
+          - since: ISO8601 timestamp; only fragments created at or after
+          - limit: cap (default 1000; pass a large number for full dump)
+
+        Ordered by created_at DESC so the most-recent first if you want
+        only the last N.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scope_filter is not None:
+            scope_list = list(scope_filter)
+            if scope_list:
+                placeholders = ",".join("?" * len(scope_list))
+                clauses.append(f"scope IN ({placeholders})")
+                params.extend(s.value for s in scope_list)
+        if kinds is not None:
+            kind_list = list(kinds)
+            if kind_list:
+                placeholders = ",".join("?" * len(kind_list))
+                clauses.append(f"kind IN ({placeholders})")
+                params.extend(k_.value for k_ in kind_list)
+        if owner_user is not None:
+            clauses.append("(scope != 'user' OR owner_user = ?)")
+            params.append(owner_user)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        where = " AND ".join(clauses) if clauses else "1=1"
+        sql = f"""
+            SELECT * FROM fragments
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [_row_to_fragment(r) for r in rows]
+
     def count_fragments(self, scope: Optional[Scope] = None) -> int:
         with self._lock:
             if scope is None:
@@ -501,23 +560,45 @@ class BrainStore:
 
     def list_skills(
         self,
+        scope: Optional[Scope] = None,
+        limit: int = 100,
         *,
         scope_filter: Optional[Iterable[Scope]] = None,
         owner_user: Optional[str] = None,
-        limit: int = 100,
     ) -> list[Skill]:
+        """List skills, optionally filtered by scope.
+
+        Two call styles:
+          • `list_skills(scope=Scope.COMMUNITY, limit=100)` — content-ecosystem
+            export path (CONTENT-ECOSYSTEM-2026-05-26.md §2). Used by
+            `brain.skill_export` MCP tool for static-site builds.
+          • `list_skills(scope_filter=[...], owner_user="x", limit=100)` —
+            multi-scope ACL-aware path. Preserved for prior callers.
+
+        Ordering: most-recently-used first; ties broken by NULL-last so newly
+        minted unused skills still surface for the website export.
+        """
         clauses = []
         params: list[Any] = []
-        if scope_filter is not None:
-            scope_list = list(scope_filter)
-            placeholders = ",".join("?" * len(scope_list))
+        # Build effective scope filter — `scope` positional wins if both given.
+        effective_scopes: Optional[list[Scope]] = None
+        if scope is not None:
+            effective_scopes = [scope]
+        elif scope_filter is not None:
+            effective_scopes = list(scope_filter)
+        if effective_scopes:
+            placeholders = ",".join("?" * len(effective_scopes))
             clauses.append(f"scope IN ({placeholders})")
-            params.extend(s.value for s in scope_list)
+            params.extend(s.value for s in effective_scopes)
         if owner_user is not None:
             clauses.append("(scope != 'user' OR owner_user = ?)")
             params.append(owner_user)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        sql = f"SELECT * FROM skills{where} ORDER BY last_used_at DESC NULLS LAST LIMIT ?"
+        sql = (
+            f"SELECT * FROM skills{where} "
+            "ORDER BY last_used_at IS NULL, last_used_at DESC, minted_at DESC "
+            "LIMIT ?"
+        )
         params.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
@@ -726,6 +807,196 @@ class BrainStore:
                 "updated_at": r["updated_at"],
             } for r in rows
         ]
+
+    # ── doc backlink graph (Track C, AgDR-0042 docs extractor) ─────────
+
+    def doc_links(self, file: str) -> dict[str, Any]:
+        """Backlink graph for a documentation file.
+
+        Honest scope (per ANTI-LIE): scaffolded + tests green. Backlink
+        mining IS NOT production-grade — it walks fragments of
+        kind=document and looks for forward references in
+        Fragment.text / extra.deps / extra.artifacts using simple
+        substring matching on the doc slug + path.
+
+        Real graph backlinks would query a dedicated edge table
+        (`memory_edges` per AgDR-0042) that this slice does not yet
+        populate from the docs extractor. Production version SQL hint:
+
+            SELECT source FROM memory_edges
+            WHERE target = ? AND relation IN
+                ('cites','depends_on','references','linked_from');
+
+        Returns:
+            {ok, file, backlinks: [doc_slug, ...],
+             forward_links: [doc_slug, ...],
+             freshness_score: 0.0..1.0,
+             note: "scaffolded"}
+        """
+        # Normalise: support both 'docs/X.md' and bare 'X' slug.
+        slug = file.replace("\\", "/").rsplit("/", 1)[-1]
+        if slug.endswith(".md"):
+            slug = slug[:-3]
+        path_token = file.replace("\\", "/")
+
+        backlinks: list[str] = []
+        forward_links: list[str] = []
+        my_extra: dict[str, Any] = {}
+        my_freshness: Optional[float] = None
+
+        with self._lock:
+            # All document fragments — scan O(n_docs); fine for n<10k.
+            rows = self._conn.execute(
+                "SELECT id, text, subject, object, extra_json "
+                "FROM fragments WHERE kind = ?",
+                (FragmentKind.DOCUMENT.value,),
+            ).fetchall()
+
+        for r in rows:
+            rid = r["id"]
+            text = r["text"] or ""
+            subj = r["subject"] or ""
+            obj = r["object"] or ""
+            try:
+                extra = json.loads(r["extra_json"]) if r["extra_json"] else {}
+            except Exception:
+                extra = {}
+            # The doc itself
+            if rid == f"doc:{slug}" or subj == path_token or subj == slug:
+                my_extra = extra
+                fs = extra.get("freshness_score")
+                if isinstance(fs, (int, float)):
+                    my_freshness = float(fs)
+                # forward_links come from this fragment's extra.deps
+                deps = extra.get("deps") or []
+                if isinstance(deps, list):
+                    forward_links.extend(str(d) for d in deps if d)
+                continue
+            # Backlink heuristic: some OTHER doc text mentions our path/slug.
+            haystack = f"{text} {obj}"
+            if path_token in haystack or f"docs/{slug}.md" in haystack:
+                # Pull the other doc's slug from its subject if available.
+                other_slug = subj.rsplit("/", 1)[-1]
+                if other_slug.endswith(".md"):
+                    other_slug = other_slug[:-3]
+                backlinks.append(other_slug or rid)
+
+        # Default freshness if doc not yet indexed: 0.5 (unknown).
+        score = my_freshness if my_freshness is not None else 0.5
+        score = max(0.0, min(1.0, score))
+        return {
+            "ok": True,
+            "file": file,
+            "backlinks": sorted(set(backlinks)),
+            "forward_links": sorted(set(forward_links)),
+            "freshness_score": score,
+            "note": "scaffolded — substring backlink mining; not full graph",
+        }
+
+    # ── a11y prefs (Track E, accessibility audit 2026-05-26) ────────────
+
+    DEFAULT_A11Y_PREFS = {
+        "font_size": "medium",          # small | medium | large | xlarge
+        "contrast": "normal",           # normal | high
+        "reduce_motion": False,
+        "screen_reader_optimised": False,
+    }
+
+    def a11y_prefs(
+        self,
+        mode: str,
+        prefs: Optional[dict[str, Any]] = None,
+        owner_user: str = "founder",
+    ) -> dict[str, Any]:
+        """Get / set per-user accessibility preferences.
+
+        Stored as a single `Fragment(kind=SETUP, predicate="a11y",
+        scope=USER, owner_user=<owner>)` whose ``object`` is the JSON-
+        encoded prefs payload. One fragment per user; ``set`` overwrites.
+
+        Args:
+            mode: ``"get"`` or ``"set"``.
+            prefs: required for ``set`` — dict with any subset of
+                ``font_size``, ``contrast``, ``reduce_motion``,
+                ``screen_reader_optimised``. Unknown keys are kept (no
+                schema enforcement at the storage layer); missing keys
+                fall back to the defaults on subsequent ``get``.
+            owner_user: per-user scope. Defaults to ``"founder"``.
+
+        Returns:
+            ``{"ok": True, "prefs": <dict>, "mode": <mode>}`` on success.
+            ``{"ok": False, "error": "..."}`` on bad input.
+
+        Raises:
+            ValueError: when ``mode`` is not ``"get"`` or ``"set"``.
+        """
+        if mode not in ("get", "set"):
+            raise ValueError(
+                f"a11y_prefs mode must be 'get' or 'set', got {mode!r}"
+            )
+
+        fragment_id = f"a11y:{owner_user}"
+
+        if mode == "set":
+            if not isinstance(prefs, dict):
+                return {
+                    "ok": False,
+                    "error": "set mode requires a prefs dict",
+                }
+            # Merge against current (so partial updates don't drop keys).
+            current = self._a11y_load(owner_user)
+            merged = {**current, **prefs}
+
+            now = datetime.now(timezone.utc)
+            frag = Fragment(
+                id=fragment_id,
+                kind=FragmentKind.SETUP,
+                text=f"a11y prefs for {owner_user}: "
+                     f"font={merged.get('font_size','?')} "
+                     f"contrast={merged.get('contrast','?')} "
+                     f"motion={'reduced' if merged.get('reduce_motion') else 'normal'} "
+                     f"sr={'on' if merged.get('screen_reader_optimised') else 'off'}",
+                subject=owner_user,
+                predicate="a11y",
+                object=json.dumps(merged, sort_keys=True),
+                scope=Scope.USER,
+                visibility=Visibility.PRIVATE,
+                owner_user=owner_user,
+                confidence=Confidence.EXTRACTED,
+                provenance=Provenance(
+                    contributing_agent="settings-dialog",
+                    contributing_user=owner_user,
+                    created_at=now,
+                ),
+                last_used_at=now,
+            )
+            self.write_fragment(frag)
+            return {"ok": True, "mode": "set", "prefs": merged}
+
+        # mode == "get"
+        loaded = self._a11y_load(owner_user)
+        return {"ok": True, "mode": "get", "prefs": loaded}
+
+    def _a11y_load(self, owner_user: str) -> dict[str, Any]:
+        """Return the current a11y prefs for ``owner_user`` merged on
+        top of :pyattr:`DEFAULT_A11Y_PREFS`. Empty store → defaults."""
+        fragment_id = f"a11y:{owner_user}"
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT object FROM fragments "
+                "WHERE id = ? AND predicate = ? AND owner_user = ?",
+                (fragment_id, "a11y", owner_user),
+            ).fetchone()
+        merged = dict(self.DEFAULT_A11Y_PREFS)
+        if not row or not row["object"]:
+            return merged
+        try:
+            stored = json.loads(row["object"])
+            if isinstance(stored, dict):
+                merged.update(stored)
+        except Exception:
+            pass
+        return merged
 
     # ── meta ─────────────────────────────────────────────────────────────
 

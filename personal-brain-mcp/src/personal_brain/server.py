@@ -865,6 +865,145 @@ def build_server(
             "owner_user_default": default_owner,
         }
 
+    # ── Content ecosystem tools (CONTENT-ECOSYSTEM-2026-05-26.md) ──────
+    @mcp.tool(
+        name="brain.skill_export",
+        description=(
+            "Export skills as markdown for static-site builds. "
+            "scope: 'community'|'firm'|'project'|'user'|'global'. "
+            "Returns list of {id, name, description, body, scope, "
+            "reputation, contributor} dicts."
+        ),
+    )
+    def brain_skill_export(
+        scope: str = "community",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        try:
+            scope_enum = Scope(scope)
+        except ValueError:
+            return {"ok": False, "error": f"invalid scope: {scope}"}
+        skills = store.list_skills(scope=scope_enum, limit=limit) \
+            if hasattr(store, "list_skills") else []
+        out = []
+        for sk in skills:
+            out.append({
+                "id": sk.id,
+                "name": sk.name,
+                "description": sk.description,
+                "body": sk.body,
+                "scope": sk.scope.value if hasattr(sk.scope, "value") else str(sk.scope),
+                "triggers": list(sk.triggers or []),
+                "requires_mcps": list(sk.requires_mcps or []),
+                "examples": list(sk.examples or []),
+                "contributor": sk.owner_user,
+                "firm_id": sk.firm_id,
+            })
+        return {
+            "ok": True,
+            "count": len(out),
+            "scope": scope,
+            "skills": out,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @mcp.tool(
+        name="brain.dataset_export",
+        description=(
+            "Brain #32 (founder ask 2026-05-26): export fragments as a "
+            "HuggingFace-style training dataset. Writes JSONL primary + "
+            "optional parquet (if pyarrow installed) + manifest.json. "
+            "Defaults to USER scope only — never escalates without "
+            "explicit scope_filter. Used to seed collective model "
+            "training (Brain #33 north star)."
+        ),
+    )
+    def brain_dataset_export(
+        out_dir: str,
+        dataset_name: str = "brain-facts",
+        scopes: Optional[list[str]] = None,
+        kinds: Optional[list[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10_000,
+        owner_user: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from pathlib import Path as _P
+        from . import dataset_export as _de
+        from .models import Fragment as _F, FragmentKind, Scope as _S
+
+        try:
+            scope_filter = [_S(s) for s in (scopes or ["user"])]
+        except ValueError as ex:
+            return {"ok": False, "error": f"invalid scope: {ex}"}
+        kind_filter = None
+        if kinds:
+            try:
+                kind_filter = [FragmentKind(k) for k in kinds]
+            except ValueError as ex:
+                return {"ok": False, "error": f"invalid kind: {ex}"}
+        try:
+            manifest = _de.export_fragments(
+                store,
+                _P(out_dir),
+                dataset_name=dataset_name,
+                scope_filter=scope_filter,
+                kinds=kind_filter,
+                since=since,
+                limit=int(limit),
+                owner_user=owner_user or default_owner,
+            )
+            return manifest
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+    @mcp.tool(
+        name="brain.doc_links",
+        description=(
+            "Backlinks for a documentation file. file: path relative to "
+            "repo root. Returns {backlinks: [...], forward_links: [...], "
+            "freshness_score: 0.0–1.0}."
+        ),
+    )
+    def brain_doc_links(file: str) -> dict[str, Any]:
+        if hasattr(store, "doc_links"):
+            return store.doc_links(file)
+        return {
+            "ok": True,
+            "file": file,
+            "backlinks": [],
+            "forward_links": [],
+            "freshness_score": 1.0,
+            "note": "store.doc_links not implemented yet",
+        }
+
+    @mcp.tool(
+        name="brain.a11y_prefs",
+        description=(
+            "Get or set per-user accessibility preferences. mode: 'get'|"
+            "'set'. prefs (set only): {font_size, contrast, reduce_motion, "
+            "screen_reader_optimised}. User-scope, syncs cross-device."
+        ),
+    )
+    def brain_a11y_prefs(
+        mode: str = "get",
+        prefs: Optional[dict[str, Any]] = None,
+        owner_user: Optional[str] = None,
+    ) -> dict[str, Any]:
+        owner = owner_user or default_owner
+        if hasattr(store, "a11y_prefs"):
+            return store.a11y_prefs(mode=mode, prefs=prefs, owner_user=owner)
+        return {
+            "ok": True,
+            "mode": mode,
+            "prefs": prefs or {
+                "font_size": "medium",
+                "contrast": "normal",
+                "reduce_motion": False,
+                "screen_reader_optimised": False,
+            },
+            "note": "store.a11y_prefs not implemented yet",
+        }
+
     return mcp
 
 

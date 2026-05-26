@@ -1,19 +1,20 @@
-"""AgDR-0022 P2.a — ReactFlow scaffold groundwork tests.
+"""AgDR-0022 P2.a — ReactFlow scaffold groundwork (INVERTED 2026-05-26).
 
-This sub-slice ships the FEATURE FLAG + STUB without the ReactFlow
-library yet. P2.b adds the real RF nodes. Tests here pin:
+Original purpose: pin the existence of the ReactFlow feature flag +
+stub component so the P2.b sub-slice could land RF nodes safely.
 
-  • localStorage key `archhub.canvas` reads + writes via
-    `_readCanvasFlavor` / `_setCanvasFlavor`.
-  • Stub component `NodeCanvasRF_Stub` exists + renders the
-    placeholder copy + "Back to custom canvas" button.
-  • Token-binding mandate: stub uses only `LM.*` references, NO
-    hex literals (AgDR-0015 Phase 2 invariant).
-  • Default flavor is `custom` so today's UX is unchanged.
+Inverted purpose (per AgDR-0048 supersede + AgDR-0047 §C3 + Q1 founder
+pick 2026-05-26): pin the **REMOVAL** of every ReactFlow scaffold
+artifact, so a future agent cannot accidentally resurrect the stub or
+the inert flavor toggle. Custom canvas (NodeView + WireLayer) is the
+substrate of record.
+
+The original AgDR-0022 doc stays on disk (status: proposed) as the
+historical record of the abandoned migration; this test no longer
+asserts its contents — only the doc presence is sanity-checked.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 JSX = Path(__file__).resolve().parents[1] / "app" / "web_ui" / "studio-lm.jsx"
@@ -23,103 +24,69 @@ def _src() -> str:
     return JSX.read_text(encoding="utf-8")
 
 
-def test_canvas_flavor_reader_defined():
+# ── Inverted assertions: these symbols must NOT appear in the JSX. ──
+
+def test_canvas_flavor_reader_removed():
     src = _src()
-    assert "_readCanvasFlavor" in src
-    assert "_setCanvasFlavor" in src
-    assert "'archhub.canvas'" in src
+    assert "const _readCanvasFlavor" not in src, (
+        "AgDR-0048 supersede: `_readCanvasFlavor` was removed. "
+        "Custom canvas is the substrate of record; the flavor toggle "
+        "was inert and is gone."
+    )
+    assert "const _setCanvasFlavor" not in src, (
+        "AgDR-0048 supersede: `_setCanvasFlavor` was removed alongside "
+        "the reader. ReactFlow was never installed; the toggle wrote "
+        "to a localStorage key nothing read."
+    )
 
 
-def test_canvas_flavor_default_is_custom():
-    """Reader returns 'custom' when localStorage is empty / invalid."""
+def test_canvas_flavor_window_exports_removed():
     src = _src()
-    # The reader's fallback path returns 'custom'.
-    assert "return 'custom'" in src
-    # Default arm uses the explicit string.
-    assert "'reactflow' : 'custom'" in src
+    # The literal assignment statements that exposed the flavor
+    # reader / setter on `window` are gone. The substring may still
+    # appear in deprecation comments, so we check the assignment shape
+    # specifically (matches `window.__archhub<X> = ` followed by the
+    # local symbol name).
+    assert "window.__archhubCanvasFlavor = _readCanvasFlavor" not in src
+    assert "window.__archhubSetCanvasFlavor = _setCanvasFlavor" not in src
 
 
-def test_canvas_flavor_writer_emits_event():
-    """`_setCanvasFlavor` dispatches `archhub-canvas-flavor`
-    so the canvas mount can re-read without a page refresh."""
+def test_nodecanvas_rf_stub_removed():
     src = _src()
-    assert "archhub-canvas-flavor" in src
-    assert "dispatchEvent" in src
+    assert "NodeCanvasRF_Stub" not in src, (
+        "AgDR-0048 supersede + AgDR-0047 §C3 (deleted 2026-05-26 per "
+        "Q1): the placeholder stub is gone. Custom NodeView shipped "
+        "every feature ReactFlow would have offered; the stub was "
+        "kept only for this test, now inverted."
+    )
+    assert 'data-testid="reactflow-canvas-stub"' not in src
 
 
-def test_canvas_flavor_exposes_window_globals():
-    """Both reader + writer attach to `window.*` so CDP audits + the
-    Settings panel can flip the flag without importing the JSX module."""
+def test_archhub_canvas_storage_key_gone():
     src = _src()
-    assert "window.__archhubCanvasFlavor" in src
-    assert "window.__archhubSetCanvasFlavor" in src
+    # The localStorage key the flavor toggle wrote to is no longer
+    # referenced anywhere in the JSX bundle.
+    assert "'archhub.canvas'" not in src
+    assert '"archhub.canvas"' not in src
 
 
-def test_nodecanvas_rf_stub_component_defined():
-    src = _src()
-    assert "NodeCanvasRF_Stub" in src
-    # Stub carries a testid for live DOM probes.
-    assert 'data-testid="reactflow-canvas-stub"' in src
+# ── Historical record: the original AgDR doc stays on disk. ───────
 
-
-def test_nodecanvas_rf_stub_copies_have_agdr_reference():
-    """Stub user-facing copy MUST reference the AgDR — so the
-    founder can trace WHY they're seeing the placeholder."""
-    src = _src()
-    assert "AgDR-0022" in src
-    # Also surfaces the "no restart needed" assurance.
-    assert "flip back" in src.lower() or "switch back" in src.lower()
-
-
-def test_nodecanvas_rf_stub_uses_only_lm_tokens_no_hex_literals():
-    """AgDR-0015 Phase 2 invariant: every new ReactFlow-side render
-    binds to `LM.*` tokens. NO hex literals (`#abc`/`#abcdef`)
-    inside the `NodeCanvasRF_Stub` body."""
-    src = _src()
-    # Find the stub function body — between `const NodeCanvasRF_Stub`
-    # and the next `const`/`function` at module scope.
-    start = src.find("const NodeCanvasRF_Stub")
-    assert start >= 0, "stub not found"
-    # End at the next module-scope `const` declaration.
-    rest = src[start:]
-    # Bounded body: the next module-scope `const ` after the stub
-    # function definition. Use a simple closing-marker search.
-    end_marker = "const CanvasHint"
-    end = rest.find(end_marker)
-    assert end >= 0, "stub body end marker not found"
-    body = rest[:end]
-    # The ONLY hex literal we tolerate is '#fff' (the button-text
-    # white — explicitly chosen for accent contrast). Whitelist it.
-    hex_matches = re.findall(r"#[0-9a-fA-F]{3,6}\b", body)
-    bad = [h for h in hex_matches if h.lower() not in ("#fff", "#ffffff")]
-    assert not bad, (
-        f"NodeCanvasRF_Stub uses hex literals (AgDR-0015 Phase 2 "
-        f"forbids — token-bind via LM.*): {bad}")
-
-
-def test_nodecanvas_rf_stub_has_back_to_custom_button():
-    """Founder UX requirement: a one-click "back to custom" path
-    so the flag-flip is genuinely reversible."""
-    src = _src()
-    # Either button text variant is acceptable.
-    has_back = ("Back to custom canvas" in src
-                or "back to custom" in src.lower())
-    assert has_back
-
-
-def test_agdr_0022_doc_exists():
-    """The AgDR for this slice must exist + reference the sub-slice
-    ordering."""
+def test_agdr_0022_doc_still_exists_as_history():
+    """The AgDR-0022 file remains on disk as the historical record of
+    the abandoned ReactFlow scaffold. Status `proposed` per ledger."""
     agdr = (Path(__file__).resolve().parents[1] / "docs" / "agdr"
             / "AgDR-0022-reactflow-scaffold-migration.md")
     assert agdr.exists()
+
+
+def test_agdr_0048_supersede_doc_exists():
+    """The supersede AgDR is on disk + names the renumber chain
+    (renumbered 0045 → 0046 → 0048 during 2026-05-25/26 work)."""
+    agdr = (Path(__file__).resolve().parents[1] / "docs" / "agdr"
+            / "AgDR-0048-supersede-reactflow-lock.md")
+    assert agdr.exists()
     text = agdr.read_text(encoding="utf-8")
-    # Sub-slice contract anchors.
-    assert "P2.a" in text
-    assert "P2.b" in text
-    assert "P2.c" in text
-    assert "P2.d" in text
-    # Coexistence model.
-    assert "archhub.canvas" in text
-    # Token mandate.
-    assert "LM.*" in text or "LM_" in text
+    assert "renumbered_from" in text
+    assert "AgDR-0045" in text
+    assert "AgDR-0046" in text

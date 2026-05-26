@@ -278,6 +278,48 @@
         </div>
       </div>
 
+      <div class="brain-box missing">
+        <span class="lbl">MULTIMODAL (geometry + pictures) <span class="pill missing">missing</span></span>
+        <span class="stat">founder ask 2026-05-26</span>
+        <div class="body">
+          Brain stores TEXT facts today. Founder wants it to also understand
+          <b>geometry</b> (BReps, meshes, extrusions, walls, slabs — the
+          actual model primitives flowing through wires) and <b>pictures</b>
+          (renders, sketches, viewport snapshots, reference images).
+          Indexed by perceptual hash + vision embedding so "find me last
+          month's facade studies that look like this" is one query.
+          <b>Planned slice.</b>
+        </div>
+      </div>
+
+      <div class="brain-box missing">
+        <span class="lbl">DATASET EXPORT <span class="pill missing">missing</span></span>
+        <span class="stat">founder ask 2026-05-26</span>
+        <div class="body">
+          Every successful trajectory + its inputs + outputs is already
+          a labeled (input, output, outcome) tuple in the brain. Wire it
+          to an exporter: "give me all successful wall-classify runs with
+          image inputs and labeled outputs" → emits a HuggingFace-style
+          dataset on disk + optional cloud upload. Foundation for the
+          collective-model slice below. <b>Planned slice.</b>
+        </div>
+      </div>
+
+      <div class="brain-box missing">
+        <span class="lbl">COLLECTIVE MODEL TRAINING <span class="pill missing">missing</span></span>
+        <span class="stat">founder ask 2026-05-26 (future)</span>
+        <div class="body">
+          Once N users opt their FIRM-scope facts into the shareable pool
+          (privacy-respecting per Q10), aggregate datasets cross
+          contribute threshold → fine-tune a domain-specific model
+          hosted by ArchHub (e.g. <code>archhub-walls-v1</code>,
+          <code>archhub-revit-actions-v1</code>). Inference is free for
+          contributors; usage-billed for non-contributors. Tomorrow's
+          mode shifts: not "the brain helps the AI" but "the brain
+          becomes the AI." <b>North star slice.</b>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -367,6 +409,21 @@
     <td>Per-AI: ✓ all major coding AIs hit the same brain via MCP. Per-user firm-wide: opt-in (your Q10 pick); needs the privacy-respecting sharing research you also requested.</td>
     <td><span class="pill partial">partial</span></td>
   </tr>
+  <tr>
+    <td><b>Understand geometry &amp; pictures</b> (2026-05-26 ask)</td>
+    <td>Brain stores TEXT facts only today. Geometry (BReps, meshes, walls) + image (renders, sketches, viewport snapshots) facts need a new multimodal type with perceptual-hash + vision-embedding index. Backend slice: extend <code>brain.write</code> + <code>brain.context</code> with binary blob storage + CLIP-style embedding lookup.</td>
+    <td><span class="pill missing">missing</span></td>
+  </tr>
+  <tr>
+    <td><b>Produce training datasets</b> (2026-05-26 ask)</td>
+    <td>Every successful trajectory in the brain is already a labeled (input, output, outcome) tuple. Slice: add <code>brain.dataset_export(filter)</code> → HuggingFace-style on-disk dataset + optional cloud upload. Foundation for collective-model training.</td>
+    <td><span class="pill missing">missing</span></td>
+  </tr>
+  <tr>
+    <td><b>Train ArchHub-hosted models from collective memory</b> (north star)</td>
+    <td>Once enough firms opt-in (privacy-respecting pool) and contribute datasets cross the training threshold, fine-tune a domain model hosted by ArchHub. Contributors get free inference; non-contributors pay usage. Brain stops being the assistant of the AI and starts being the AI.</td>
+    <td><span class="pill missing">missing</span></td>
+  </tr>
 </table>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
@@ -415,12 +472,54 @@
     <td>SHARE node config gets a "shareable scope" picker; brain.context filters at retrieval.</td>
     <td>~2 days research + prototype</td>
   </tr>
+  <tr>
+    <td>4</td>
+    <td><b>Multimodal facts</b> — extend brain to store + index geometry (BReps / meshes / wall lists from the wire flow) and pictures (renders, sketches, viewport snapshots). Backend: binary blob column + perceptual-hash index + CLIP-style vision embedding. Query: <code>brain.find_similar(image_or_geometry)</code>.</td>
+    <td>"Find similar facades I've drawn" returns ranked thumbnails in the brain panel. Wires carrying geometry auto-tag the brain fact with the geometry hash.</td>
+    <td>~4 days backend + 1 day UI</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><b>Dataset export</b> — every successful trajectory is already labeled. Add <code>brain.dataset_export({skill, scope, since, format})</code> → writes a HuggingFace-style on-disk dataset (parquet + manifest) + optional cloud-archive upload. Foundation for Slice 6.</td>
+    <td>New "Export dataset" button on each skill card in the brain visualizer. Shows estimated row count + size before export.</td>
+    <td>~2 days</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td><b>Collective model training</b> (north star) — when enough firms opt-in and their pooled datasets cross threshold, fine-tune ArchHub-hosted domain models (<code>archhub-walls-v1</code>, <code>archhub-revit-actions-v1</code>, etc). Contributors get free inference; non-contributors pay usage. Brain stops assisting the AI — it becomes the AI for the AEC niche.</td>
+    <td>Settings → Brain → "Contributor" panel: shows your firm's datasets contributed + inference credits earned. Cloud dashboard shows aggregate training jobs running.</td>
+    <td>~weeks (research + infra + first model)</td>
+  </tr>
 </table>
 
 <p style="color:var(--inkSoft); margin-top:18px;">
-  Slice 1 (visualizer) starts immediately. The other two queue after the dead
-  code delete + your other Q-picks. No more "should I do this?" — you'll see
-  the work land.
+  Slices 1-3 are the unlock for the founder-visible brain. Slices 4-6 are the
+  vision the founder added 2026-05-26 — geometry + pictures, dataset export,
+  collective model. Slices 1-5 are concrete + executable; Slice 6 is north
+  star (queues after enough firm-scope data accumulates). No more "should I
+  do this?" — you'll see the work land.
+</p>
+
+<h3>The north-star economic flywheel</h3>
+<p>
+  Slice 6 isn't just a feature — it's the moat. The flywheel:
+</p>
+<ol style="color:var(--inkSoft); margin:0 0 14px 22px; padding:0;">
+  <li>Users do work in ArchHub. Every successful trajectory + its geometry
+      + its images becomes a labeled dataset row, scoped + privacy-tagged.</li>
+  <li>Firms opt-in some of their data to the collective pool
+      (Q10 sharing research determines exactly which fields cross).</li>
+  <li>When N firms × M rows crosses training threshold, ArchHub fine-tunes
+      a domain model. The model is GOOD at AEC tasks because the training
+      data IS AEC tasks, not generic internet text.</li>
+  <li>Inference is free for contributors (revenue-share of accuracy);
+      paid usage for non-contributors. Two reasons to contribute: better
+      model quality + free inference.</li>
+  <li>Better model → more users → more data → better model. The flywheel.</li>
+</ol>
+<p style="color:var(--inkSoft);">
+  ArchHub becomes the only AEC-native AI that's actually trained on AEC
+  work — not a wrapper over GPT-4 doing its best to fake domain expertise.
 </p>
 
 <div class="footer">

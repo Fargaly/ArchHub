@@ -822,180 +822,10 @@ const _lm_uid = () => {
        + window.__archhub_uid_counter.toString(36).padStart(2, '0')
        + Math.floor(Math.random() * 36).toString(36);
 };
-const _LM_GRAPH_DEMO_DEAD = { nodes: [
-    { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
-      title:'Revit 2025', sub:'Tower-A_central.rvt · L03',
-      outs:[
-        { id:'view', label:'active view', t:'view', val:'L03 · 1:50' },
-        { id:'sel',  label:'selection',   t:'selection', val:'23 walls' },
-      ],
-    },
-    { id:'ai_intent', cat:'ai', x:24, y:200, w:300, h:188,
-      title:'Conversation', sub:'Claude Sonnet 4.5 · 412ms',
-      ins: [{ id:'ctx', label:'context', t:'view' }],
-      outs:[{ id:'intent', label:'intent', t:'intent', val:'dim ≥800mm, ext first' }],
-      messages:[
-        { who:'F', me:true, time:'14:31', text:'Open Tower-A_central.rvt and go to Level 03.' },
-        { who:'C', time:'14:31', text:'Opened. 47 walls, 12 doors, 8 windows on this level.' },
-        { who:'F', me:true, time:'14:32', text:'Dimension all walls in active view at 1:50. Exterior first, then partitions ≥ 800 mm.' },
-        { who:'C', time:'14:32', text:'Filtering exterior first, then interior ≥ 800. Skipping shorter ones — noise floor on Level 03.' },
-        { who:'F', me:true, time:'14:33', text:'Use the outer face as snap anchor, 240 mm offset is fine.' },
-        { who:'C', time:'14:33', text:'Noted — snap_to=outer_face, offset_mm=240. Starting exterior pass.' },
-        { who:'F', me:true, time:'14:34', text:'Also: skip the short bathroom partitions even if they\'re over 800.' },
-        { who:'C', time:'14:34', text:'Got it — also excluding category=plumbing_fixture neighbors. Filter updated.' },
-      ],
-    },
-    { id:'read_walls', cat:'read', x:360, y:60, w:220, h:96,
-      title:'list_walls', sub:'revit.list_walls(view)',
-      result:'47 walls', ms:'120ms',
-      ins:[{ id:'view', label:'view', t:'view' }],
-      outs:[{ id:'walls', label:'walls', t:'walls' }],
-    },
-    { id:'filter_ext', cat:'filter', x:360, y:190, w:220, h:118,
-      title:'where exterior', sub:'predicate · element.is_exterior',
-      result:'23 of 47', ms:'40ms',
-      ins:[
-        { id:'in',   label:'walls', t:'walls' },
-        { id:'rule', label:'rule',  t:'intent' },
-      ],
-      outs:[{ id:'out', label:'matches', t:'walls' }],
-    },
-    { id:'filter_long', cat:'filter', x:360, y:340, w:220, h:90,
-      title:'where length ≥ 800', sub:'predicate · length_mm ≥ 800',
-      result:'14 of 24', ms:'18ms',
-      ins:[{ id:'in', label:'walls', t:'walls' }],
-      outs:[{ id:'out', label:'matches', t:'walls' }],
-    },
-    { id:'annotate', cat:'annotate', x:620, y:48, w:360, h:340,
-      title:'Place exterior dimensions',
-      sub:'revit.create_dimensions · stage 1 of 2',
-      state:'running', progress:0.74, runtime:'3.1 / 4.2s',
-      ins:[
-        { id:'walls', label:'walls', t:'walls' },
-        { id:'view',  label:'view',  t:'view' },
-      ],
-      outs:[{ id:'dims', label:'dimensions', t:'dims', val:'17 / 23 placed' }],
-      params:[
-        { k:'scale',     v:'1:50',       type:'select' },
-        { k:'align',     v:'parallel',   type:'select' },
-        { k:'offset_mm', v:240, min:60, max:600, step:10, type:'slider' },
-        { k:'snap_to',   v:'outer face', type:'select' },
-      ],
-    },
-    { id:'annotate2', cat:'annotate', x:620, y:420, w:240, h:110,
-      title:'Place interior dimensions',
-      sub:'stage 2 of 2 · queued',
-      state:'queued',
-      ins:[{ id:'walls', label:'walls (≥800)', t:'walls' }],
-      outs:[{ id:'dims', label:'dimensions', t:'dims' }],
-    },
-    { id:'save', cat:'output', x:1010, y:170, w:260, h:160,
-      title:'Save as Skill',
-      sub:'2 stages · 4 tool calls · 8.9s',
-      ins:[
-        { id:'trace', label:'trace', t:'trace' },
-        { id:'dims',  label:'dims',  t:'dims' },
-      ],
-      params:[
-        { k:'name',      v:'Dimension active walls', type:'text' },
-        { k:'arguments', v:'scale, min_length',      type:'text' },
-      ],
-    },
-    // ─── category showcase ─ transform / logic / compose ───
-    { id:'tx_marks', cat:'transform', x:620, y:560, w:260, h:122,
-      title:'set wall marks', sub:'revit.set_param · "Mark" = auto',
-      ins:[{ id:'walls', label:'walls', t:'walls' }],
-      outs:[{ id:'walls', label:'walls', t:'walls' }],
-      params:[
-        { k:'parameter', v:'Mark', type:'select' },
-        { k:'pattern',   v:'W-···', type:'text' },
-      ],
-    },
-    { id:'lg_if', cat:'logic', x:1010, y:360, w:260, h:118,
-      title:'if review needed', sub:'predicate · issues > 0',
-      result:'→ yes · 8 issues', ms:'2ms',
-      ins:[{ id:'in', label:'result', t:'dims' }],
-      outs:[
-        { id:'yes', label:'yes', t:'dims' },
-        { id:'no',  label:'no',  t:'dims' },
-      ],
-    },
-    { id:'cm_sched', cat:'compose', x:1300, y:60, w:280, h:204,
-      title:'build wall schedule', sub:'revit.create_schedule',
-      result:'24 rows · 6 columns', ms:'140ms',
-      ins:[{ id:'walls', label:'walls', t:'walls' }],
-      outs:[{ id:'sheet', label:'sheet', t:'sheets' }],
-      params:[
-        { k:'group_by',  v:'type',                  type:'select' },
-        { k:'sort_by',   v:'length desc',           type:'select' },
-        { k:'columns',   v:'type, level, length…',  type:'text' },
-        { k:'totals',    v:'area, count',           type:'text' },
-      ],
-    },
-    { id:'cm_pdf', cat:'output', x:1300, y:300, w:280, h:118,
-      title:'publish PDF set', sub:'→ Dropbox / project-share',
-      ins:[
-        { id:'sheet', label:'sheet', t:'sheets' },
-        { id:'dims',  label:'review', t:'dims' },
-      ],
-      params:[
-        { k:'destination', v:'Dropbox · /Tower-A/issues', type:'text' },
-        { k:'name',        v:'L03_walls_2026-05-13.pdf',  type:'text' },
-      ],
-    },
-    // ─── second conversation ─ demonstrates concurrent AI sessions in one workspace
-    { id:'ai_qa', cat:'ai', x:1640, y:340, w:300, h:188,
-      title:'QA review conversation', sub:'Claude Sonnet 4.5 · ~520ms',
-      ins:[
-        { id:'ctx',  label:'context', t:'sheets' },
-        { id:'dims', label:'dims',    t:'dims' },
-      ],
-      outs:[{ id:'intent', label:'review', t:'intent', val:'7 issues, 2 high' }],
-      messages:[
-        { who:'C', time:'14:35', text:'Reviewing the new schedule against the dimension run…' },
-        { who:'C', time:'14:35', text:'2 walls in the table have length 0 — likely deleted but still tagged. Flagging.' },
-        { who:'F', me:true, time:'14:35', text:'Drop those rows, keep the rest.' },
-        { who:'C', time:'14:36', text:'Updated schedule → 24 rows, totals re-computed.' },
-      ],
-    },
-    // ─── second host ─ demonstrates host→host wiring
-    { id:'spk', cat:'host', x:1640, y:60, w:240, h:140,
-      title:'Speckle', sub:'tower-a/main',
-      ins:[
-        { id:'sheet', label:'sheet',  t:'sheets' },
-        { id:'view',  label:'model',  t:'view' },
-      ],
-      outs:[
-        { id:'commit', label:'commit',  t:'trace', val:'cbb8e2 · 14 files' },
-        { id:'url',    label:'permalink',t:'file' },
-      ],
-    },
-  ],
-  wires: [
-    { from:['revit','view'],         to:['ai_intent','ctx']   },
-    { from:['revit','view'],         to:['read_walls','view'] },
-    { from:['read_walls','walls'],   to:['filter_ext','in']   },
-    { from:['ai_intent','intent'],   to:['filter_ext','rule'] },
-    { from:['filter_ext','out'],     to:['filter_long','in']  },
-    { from:['filter_ext','out'],     to:['annotate','walls']  },
-    { from:['revit','view'],         to:['annotate','view']   },
-    { from:['filter_long','out'],    to:['annotate2','walls'] },
-    { from:['annotate','dims'],      to:['save','dims']       },
-    { from:['filter_long','out'],    to:['save','trace']      },
-    // showcase wires
-    { from:['filter_ext','out'],     to:['tx_marks','walls']  },
-    { from:['tx_marks','walls'],     to:['cm_sched','walls']  },
-    { from:['cm_sched','sheet'],     to:['cm_pdf','sheet']    },
-    { from:['annotate','dims'],      to:['lg_if','in']        },
-    { from:['lg_if','yes'],          to:['cm_pdf','dims']     },
-    // second conversation — fed by schedule + dimensions
-    { from:['cm_sched','sheet'],     to:['ai_qa','ctx']       },
-    { from:['annotate','dims'],      to:['ai_qa','dims']      },
-    // host → host — Revit's view + the published sheet flow into Speckle
-    { from:['cm_sched','sheet'],     to:['spk','sheet']       },
-    { from:['revit','view'],         to:['spk','view']        },
-  ],
-};
+// AgDR-0047 §C4 (deleted 2026-05-26 per Q1 founder pick): the ~170-line
+// `_LM_GRAPH_DEMO_DEAD` demo graph that lived here was zero-ref demo data
+// (no JSX consumer · pure visual reference). Recoverable from git history
+// at commit before this delete if anyone ever needs a hand-shaped reference.
 
 // ─── Connector op catalogue — hydrated from bridge.get_connectors().
 // Each entry: { host, display_name, mechanism, ops:[{op_id,host,kind,
@@ -1092,28 +922,19 @@ const StudioLM = () => {
       try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
     });
   }, []);
-  // Sync escape hatch — forces an immediate re-render in the current
-  // microtask. Use SPARINGLY (modal close, undo/redo seam). Most call
-  // sites should use bumpGraph which now coalesces.
-  const bumpGraphSync = React.useCallback(() => setGraphBump(b => b + 1), []);
-  // Back-compat alias — existing AgDR-0032 callers keep working.
-  const bumpGraphRaf = bumpGraph;
-  // ─── AgDR-0024 — expose bumpGraph so external mutators (CDP demos,
-  // test harnesses, future bridge slots) can force the canvas to
-  // re-render after splicing into `window.LM_GRAPH` directly. Safe
-  // because bumpGraph is referentially stable + has no side effects.
+  // AgDR-0047 §C4 (deleted 2026-05-26 per Q1): the sync escape hatch
+  // (zero callers) and the cosmetic Raf alias were dead — bumpGraph
+  // itself coalesces via rAF. Their window-global counterpart is gone
+  // too. The canonical `window.__archhubBumpGraph` export survives
+  // per AgDR-0024.
   React.useEffect(() => {
     window.__archhubBumpGraph = bumpGraph;
-    window.__archhubBumpGraphRaf = bumpGraphRaf;
     return () => {
       if (window.__archhubBumpGraph === bumpGraph) {
         try { delete window.__archhubBumpGraph; } catch (e) {}
       }
-      if (window.__archhubBumpGraphRaf === bumpGraphRaf) {
-        try { delete window.__archhubBumpGraphRaf; } catch (e) {}
-      }
     };
-  }, [bumpGraph, bumpGraphRaf]);
+  }, [bumpGraph]);
 
   const session = openId ? (LM_SESSIONS || []).find(s => s.id === openId) : null;
 
@@ -1626,7 +1447,10 @@ const StudioLM = () => {
       }
       // AgDR-0032 — coalesce chunk-driven re-renders to one per
       // animation frame (was: full canvas re-render per chunk = lag).
-      bumpGraphRaf();
+      // AgDR-0047 §C4 (2026-05-26): `bumpGraph` itself coalesces via rAF,
+      // so the dedicated `bumpGraphRaf` alias was removed. Same behavior,
+      // one symbol.
+      bumpGraph();
     };
     const onDone = (sid) => {
       (LM_GRAPH.nodes || []).forEach(n => {
@@ -1659,8 +1483,9 @@ const StudioLM = () => {
         r.push(step);
         msgs[lastIx] = { ...cur, reasoning: r };
       }
-      // AgDR-0032 — coalesce reasoning-step bumps too.
-      bumpGraphRaf();
+      // AgDR-0032 — coalesce reasoning-step bumps too (via bumpGraph
+      // rAF; the `bumpGraphRaf` alias was removed per AgDR-0047 §C4).
+      bumpGraph();
     };
     const wires = [];
     const wire = (name, fn) => {
@@ -7706,38 +7531,11 @@ const _injectTokenVars = (() => {
   } catch (e) { document.body.setAttribute('data-theme', 'forge'); }
 })();
 
-// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0048) ───
-// AgDR-0048 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
-// + AgDR-0022 in full. Custom canvas IS the substrate of record; the stub
-// below + helpers are KEPT only so `test_reactflow_p2a_groundwork.py`
-// doesn't break, but neither is wired into any render path. They render
-// nothing in production. Treat the entire block as deprecated.
-//
-// Why: ReactFlow was never installed; the custom NodeView shipped
-// every feature ReactFlow would have offered (typed wires, groups,
-// HostNodeV2, ai.plan hero, broken-wire dialog). Migration cost
-// (3-5 days, full rewrite) >> value (zero new capability). See
-// docs/agdr/AgDR-0048-supersede-reactflow-lock.md
-// (renumber chain 0045→0046→0048; founder's AgDR-0046 is the
-// brain-settings-rebuild-workshop, not this one).
-const _readCanvasFlavor = () => {
-  try {
-    const v = (localStorage.getItem('archhub.canvas') || '').toLowerCase();
-    return v === 'reactflow' ? 'reactflow' : 'custom';
-  } catch (e) {
-    return 'custom';
-  }
-};
-const _setCanvasFlavor = (name) => {
-  const v = (name || '').toLowerCase() === 'reactflow' ? 'reactflow' : 'custom';
-  try { localStorage.setItem('archhub.canvas', v); } catch (e) {}
-  // Fire a custom event so the canvas mount can re-read without a
-  // page refresh.
-  try { window.dispatchEvent(new CustomEvent('archhub-canvas-flavor', { detail: v })); } catch (e) {}
-  return v;
-};
-window.__archhubCanvasFlavor = _readCanvasFlavor;
-window.__archhubSetCanvasFlavor = _setCanvasFlavor;
+// AgDR-0047 §C3 + AgDR-0048 (deleted 2026-05-26 per Q1): the ReactFlow
+// scaffold helpers (readCanvasFlavor + setCanvasFlavor + their window-
+// global exports + the NodeCanvasRF stub component) are all gone. Custom
+// canvas (NodeView + WireLayer) is the substrate of record per AgDR-0048.
+// ReactFlow was never installed; the flavor toggle was always inert.
 
 // ─── AgDR-0024 — Host node v2 feature flag (S1: REST) ───────────────
 // localStorage.archhub.host_node_v2 = 'on' | 'off' (default 'on' — 2026-05-25).
@@ -7767,47 +7565,6 @@ const _setHostNodeV2 = (on) => {
 };
 window.__archhubHostNodeV2 = _readHostNodeV2;
 window.__archhubSetHostNodeV2 = _setHostNodeV2;
-
-// Stub component — renders a placeholder when the user flips to
-// `reactflow` BEFORE the P2.b sub-slice lands the library + nodes.
-// Tells the founder exactly what's missing + the "back to custom"
-// flip path.
-const NodeCanvasRF_Stub = ({ onSwitchBack }) => {
-  return (
-    <div data-testid="reactflow-canvas-stub" style={{
-      position:'absolute', inset:0,
-      background: LM.bgCanvas, color: LM.ink,
-      display:'grid', placeItems:'center',
-      fontFamily: LM.serif, fontSize: 18,
-    }}>
-      <div style={{ maxWidth: 460, textAlign:'center',
-        padding: '24px 28px', background: LM.bgPanel,
-        border: `1px solid ${LM.line}`,
-        borderRadius: 10,
-        boxShadow: '0 12px 36px rgba(0,0,0,.5)' }}>
-        <div style={{ fontFamily:LM.mono, fontSize:10,
-          color:LM.accent, letterSpacing:'0.18em',
-          marginBottom:10 }}>REACTFLOW CANVAS — PREVIEW</div>
-        <div style={{ marginBottom:14 }}>
-          Migration ships across P2.a → P2.d sub-slices (AgDR-0022).
-        </div>
-        <div style={{ fontFamily:LM.sans, fontSize:12,
-          color:LM.inkSoft, marginBottom:18, lineHeight:1.5 }}>
-          The custom canvas remains the default until parity ships.
-          You can flip back any time — no app restart.
-        </div>
-        <button onClick={onSwitchBack} style={{
-          padding:'7px 18px',
-          background: LM.accent, color: '#fff',
-          border: `1px solid ${LM.accent}`,
-          borderRadius: 5,
-          fontFamily: LM.mono, fontSize: 11,
-          cursor:'pointer',
-        }} aria-label="Switch back to custom canvas">← Back to custom canvas</button>
-      </div>
-    </div>
-  );
-};
 
 // Hint strip — sits above composer, auto-fades after first interaction or 6s
 // One-time per session: once dismissed, never returns.

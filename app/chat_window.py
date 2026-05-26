@@ -1674,11 +1674,11 @@ class ChatWindow(QMainWindow):
         sign_in_action.triggered.connect(self._open_settings)
         # v1.3.2 round-2 cut: 'Connectors…' menu item removed. The rail
         # HOSTS section already shows every connector with an inline
-        # toggle (live state · port · click-to-activate), and the
-        # 'Add Host' button is the primary discovery surface. The modal
-        # was REDUNDANT chrome. _open_connectors is retained below so
-        # programmatic / palette callers keep working. To revive the
-        # menu line, re-add an action that wires self._open_connectors.
+        # toggle, and the 'Add Host' button is the primary discovery
+        # surface. The modal was REDUNDANT chrome. AgDR-0047 §C6 +
+        # Q1 founder pick 2026-05-26 also deleted the helper method
+        # `_open_connectors` — connector panel reachable via
+        # onboarding.py + Studio Settings → Providers.
 
         # Skills + sessions
         skills_action = menu.addAction("Skills…")
@@ -1700,10 +1700,9 @@ class ChatWindow(QMainWindow):
         # Reality Check used to live here as a modal smoke-test entry.
         # Removed in the v1.3.1 dead-surface pass — the Studio shell's
         # Telemetry page now embeds RealityCheckPanel with live 24h
-        # sparklines, which is the supported surface. `_open_reality_check`
-        # is retained below so command-palette / programmatic callers
-        # keep working. To revive the menu line, re-add an action that
-        # wires to self._open_reality_check.
+        # sparklines, which is the supported surface. AgDR-0047 §C6 +
+        # Q1 founder pick 2026-05-26 also deleted the helper method
+        # `_open_reality_check` — use the Telemetry page route.
 
         about_action = menu.addAction("About ArchHub")
         about_action.triggered.connect(self._show_about)
@@ -2779,14 +2778,10 @@ class ChatWindow(QMainWindow):
         else:
             self.status_right.setText("Add API keys in Settings to start chatting")
 
-    def _open_connectors(self) -> None:
-        # TODO(shadow-audit): orphan since v1.3.2. No menu line and no
-        # palette / programmatic caller wires to this. Remove after
-        # confirming no external caller depends on it (the modal is
-        # still reachable via onboarding.py "Open connector settings").
-        dlg = ConnectorPanel(self.manager, self, router=self.router)
-        dlg.exec()
-        self._refresh_status()
+    # AgDR-0047 §C6 (deleted 2026-05-26 per Q1): `_open_connectors` was
+    # orphan since v1.3.2 — no menu line, no palette caller. The
+    # connector panel remains reachable via onboarding.py and the
+    # Studio Settings page (Providers section).
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.router, self)
@@ -3142,13 +3137,9 @@ class ChatWindow(QMainWindow):
         dlg = PricingDialog(self)
         dlg.exec()
 
-    def _open_reality_check(self) -> None:
-        # TODO(shadow-audit): orphan since v1.3.1. Telemetry page
-        # embeds RealityCheckPanel for the live surface. Remove after
-        # confirming no external caller depends on it.
-        from reality_check_panel import RealityCheckDialog
-        dlg = RealityCheckDialog(self.router, self)
-        dlg.exec()
+    # AgDR-0047 §C6 (deleted 2026-05-26 per Q1): `_open_reality_check`
+    # was orphan since v1.3.1. The Telemetry page already embeds
+    # RealityCheckPanel for the live surface — that's the supported route.
 
     # ---- model picker -----------------------------------------------------
 

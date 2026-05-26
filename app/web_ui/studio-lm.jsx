@@ -220,6 +220,11 @@ const WIRE = {
   conversation: LM.purple,
   intent:     LM.purple,
   prediction: LM.purple,
+  // Control flow
+  exec:       '#ffffff',             // white (Unreal-style)
+  cron:       LM.inkMuted,
+  trigger:    LM.inkMuted,
+  event:      LM.inkMuted,
   tool_result: LM.purple,
   // Files
   file:       LM.cyan,
@@ -232,10 +237,45 @@ const WIRE = {
   document:   LM.warn,
   model:      LM.warn,
   project:    LM.warn,
-  // Control flow
-  exec:       LM.warn,
-  event:      LM.warn,
-  trace:      LM.inkSoft,             // legacy
+  // Misc legacy
+  trace:      LM.inkSoft,
+};
+
+// AgDR-0012 §232-233 migration · Stage 4 (Q4 2026-05-26): same colour
+// palette, indexed by Speckle-protocol type strings. The wire renderer
+// prefers SPECKLE_WIRE[w.speckle_type] when present, falls back to
+// WIRE[w.t] for legacy graphs without speckle_type enrichment.
+const SPECKLE_WIRE = {
+  // archhub.* namespace (control / canvas-internal)
+  'archhub.any':              LM.inkSoft,
+  'archhub.bridge.host':      LM.warn,
+  'archhub.bridge.document':  LM.warn,
+  'archhub.bridge.model':     LM.warn,
+  'archhub.bridge.project':   LM.warn,
+  'archhub.ai.prompt':        LM.purple,
+  'archhub.ai.message':       LM.purple,
+  'archhub.ai.conversation':  LM.purple,
+  'archhub.ai.intent':        LM.purple,
+  'archhub.ai.completion':    LM.purple,
+  'archhub.ai.tool_result':   LM.purple,
+  'archhub.aec.selection':    '#9b59b6',
+  'archhub.io.file':          LM.cyan,
+  'archhub.io.path':          LM.cyan,
+  'archhub.io.image':         LM.cyan,
+  'archhub.io.csv':           LM.cyan,
+  'archhub.control.exec':     '#ffffff',
+  'archhub.control.cron':     LM.inkMuted,
+  'archhub.control.trigger':  LM.inkMuted,
+  'archhub.control.event':    LM.inkMuted,
+  // Objects.* namespace (Speckle-native data shapes)
+  'Objects.Primitive.String':       LM.inkSoft,
+  'Objects.Primitive.Number':       '#e3b950',
+  'Objects.Primitive.Boolean':      LM.ok,
+  'Objects.Other.Object':           LM.inkSoft,
+  'Objects.Other.List':             '#6a9bcc',
+  'Objects.Other.IFC':              LM.cyan,
+  'Objects.BuiltElements.Base':     '#9b59b6',
+  'Objects.Geometry.Base':          LM.accent,
 };
 
 // ──────────────────────── DATA ────────────────────────
@@ -2815,8 +2855,13 @@ const IconRail = ({ panel, setPanel, onHome, onSettings }) => {
 
 const RailIcon = ({ active, onClick, title, label, children }) => {
   const [hover, setHover] = React.useState(false);
+  // Track E (Accessibility, 2026-05-26): aria-label so screen readers
+  // announce the rail destination instead of just the icon glyph.
+  // Falls back to `label` (the small caption beneath the icon) when
+  // no explicit `title` is set.
+  const ariaLabel = title || label || 'navigation item';
   return (
-    <button onClick={onClick} title={title} style={{
+    <button onClick={onClick} title={title} aria-label={ariaLabel} style={{
       width:'100%', minHeight:48, padding:'4px 0', border:0,
       background: active ? LM.accentDim : (hover ? LM.bgSoft : 'transparent'),
       color: active ? LM.accent : (hover ? LM.ink : LM.inkSoft),
@@ -5946,7 +5991,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           {wires.map(w => {
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
-            const color = WIRE[w.t] || LM.inkSoft;
+            // AgDR-0012 §232-233 migration · Stage 4 (2026-05-26):
+            // prefer Speckle-protocol type when the wire carries one
+            // (enriched at Workflow.to_dict per Stage 3). Fall back to
+            // legacy PortType key for graphs without enrichment.
+            const color = (w.speckle_type && SPECKLE_WIRE[w.speckle_type])
+                       || WIRE[w.t]
+                       || LM.inkSoft;
             const isSel = selectedWire === w.i;
             // SLICE D (AgDR-0007): fancy-wire shape encoding — read the
             // source node's `cooked.value` to derive a Grasshopper-style
@@ -9720,9 +9771,12 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
           }}/>
         <button onClick={(e) => { e.stopPropagation(); fileInputRef.current && fileInputRef.current.click(); }}
           title="Attach file or image"
+          aria-label="Attach file or image"
           style={{ ...smallBtn(), padding:'3px 9px', color:LM.inkSoft }}>📎</button>
         <button onClick={(e) => { e.stopPropagation(); toggleRecord(); }}
           title={recording ? 'Stop recording' : 'Voice input (browser SpeechRecognition)'}
+          aria-label={recording ? 'Stop voice recording' : 'Start voice input'}
+          aria-pressed={recording}
           style={{ ...smallBtn(), padding:'3px 9px',
                     color: recording ? LM.err : LM.inkSoft,
                     background: recording ? LM.err+'22' : 'transparent',
@@ -9745,6 +9799,7 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
             return (
               <button key={m.id} type="button"
                 role="radio" aria-checked={active}
+                aria-label={m.tip}
                 onClick={(e) => { e.stopPropagation(); setM(m.id); }}
                 title={m.tip}
                 style={{
@@ -9763,8 +9818,12 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
             );
           })}
         </div>
-        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
-        <button onClick={submit} style={{ padding:'4px 11px', background:LM.accent, color:'#fff', border:0, borderRadius:5, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }}
+          aria-label="Open node library"
+          style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+        <button onClick={submit}
+          aria-label="Send message"
+          style={{ padding:'4px 11px', background:LM.accent, color:'#fff', border:0, borderRadius:5, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
       </div>
       {showHelp && (
         <div style={{

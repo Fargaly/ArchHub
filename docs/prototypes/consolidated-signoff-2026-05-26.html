@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>What's changing · 2026-05-26 · pick yes/no per row</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --line:#26262e;
+    --accent:#d97757; --accentDim:#2a1812; --accentHi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --bad:#d96e6e; --blue:#7898d6;
+    --speckle:#3a6acc; --purple:#a98cd6;
+    --serif:'Instrument Serif', Georgia, serif;
+    --sans:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.55; }
+  .wrap { max-width:1080px; margin:0 auto; padding:36px 28px 80px; }
+
+  h1 { font-family:var(--serif); font-size:46px; line-height:1.05; letter-spacing:-0.02em; margin:0 0 6px; }
+  h1 em { color:var(--accent); font-style:italic; }
+  .subline { color:var(--inkSoft); font-size:16px; margin:0 0 28px; }
+
+  .card {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:12px;
+    padding:24px 28px; margin:18px 0;
+  }
+  .card .q-row { display:flex; align-items:flex-start; gap:14px; margin-bottom:14px; }
+  .card .q-num {
+    flex:0 0 auto; width:44px; height:44px; border-radius:50%;
+    background:var(--accentDim); border:2px solid var(--accent);
+    color:var(--accent); display:flex; align-items:center; justify-content:center;
+    font-family:var(--serif); font-size:20px; font-weight:600;
+  }
+  .card .q-body { flex:1; }
+  .card .q-headline {
+    font-family:var(--serif); font-size:24px; line-height:1.2;
+    color:var(--ink); margin:4px 0 6px;
+  }
+  .card .q-why {
+    color:var(--inkSoft); font-size:14.5px; margin:0 0 0 0; padding:0;
+  }
+  .card .badges { display:flex; gap:6px; margin-top:8px; }
+  .pill {
+    display:inline-block; padding:3px 9px; border-radius:11px;
+    font-family:var(--mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase;
+  }
+  .pill.time-min  { background:#1a221b; color:var(--ok); }
+  .pill.time-hour { background:#231f14; color:var(--warn); }
+  .pill.time-day  { background:#1a161d; color:var(--purple); }
+  .pill.time-now  { background:#1a221b; color:var(--ok); }
+  .pill.rec       { background:var(--accentDim); color:var(--accent); border:1px solid #d9775766; }
+  .pill.risk-low  { background:#1a221b; color:var(--ok); }
+  .pill.risk-med  { background:#231f14; color:var(--warn); }
+  .pill.risk-high { background:#251515; color:var(--bad); }
+
+  /* visual mock blocks */
+  .visual {
+    display:grid; grid-template-columns:1fr 28px 1fr; gap:0;
+    align-items:stretch; margin:18px 0;
+  }
+  .v-side {
+    background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    padding:14px 16px; min-height:140px;
+  }
+  .v-side h4 {
+    font-family:var(--mono); font-size:10px; letter-spacing:0.16em;
+    text-transform:uppercase; margin:0 0 10px; color:var(--inkMuted);
+  }
+  .v-arrow {
+    display:flex; align-items:center; justify-content:center;
+    color:var(--accent); font-size:22px;
+  }
+  .v-side.now h4 { color:var(--inkMuted); }
+  .v-side.after h4 { color:var(--ok); }
+  .v-side.after { border-color:#7ec18e44; }
+
+  /* mock UI elements */
+  .mock-sidebar { font-family:var(--mono); font-size:12px; }
+  .mock-sidebar .item { padding:6px 10px; border-radius:4px; margin:2px 0; background:var(--bgSoft); }
+  .mock-sidebar .item.dim { color:var(--inkMuted); text-decoration:line-through; }
+  .mock-sidebar .item.active { background:var(--accentDim); color:var(--accent); }
+  .mock-footer {
+    background:#0a0a0c; border:1px solid var(--line); border-radius:5px;
+    padding:6px 10px; font-family:var(--mono); font-size:10.5px;
+    color:var(--inkSoft); display:flex; gap:8px; align-items:center;
+  }
+  .mock-footer .pill-spk { background:#0e1730; color:var(--speckle); padding:1px 7px; border-radius:3px; font-size:10px; border:1px solid #3a6acc55; }
+  .mock-status { font-family:var(--mono); font-size:11px; }
+  .mock-status .row { display:flex; gap:8px; margin:3px 0; align-items:center; }
+  .mock-status .badge { padding:1px 6px; border-radius:3px; font-size:9.5px; }
+  .mock-status .badge.appr { background:#231f14; color:var(--warn); }
+  .mock-status .badge.exec { background:#1a221b; color:var(--ok); }
+  .mock-code {
+    font-family:var(--mono); font-size:11px; line-height:1.6;
+    color:var(--inkSoft); padding:4px 0;
+  }
+  .mock-code .ln { color:var(--inkMuted); margin-right:8px; }
+  .mock-code .dead { color:var(--inkMuted); text-decoration:line-through; opacity:0.55; }
+  .mock-code .keep { color:var(--ink); }
+  .mock-canvas {
+    height:100px; background:var(--bg); border:1px dashed var(--line); border-radius:5px;
+    position:relative;
+    background-image: radial-gradient(circle at 1px 1px, #1a1a20 1px, transparent 0);
+    background-size: 14px 14px;
+  }
+  .mock-canvas .node {
+    position:absolute; padding:4px 7px; background:var(--bgPanel);
+    border:1px solid var(--line); border-top:2px solid var(--accent);
+    border-radius:4px; font-family:var(--mono); font-size:9.5px;
+    color:var(--ink);
+  }
+  .mock-canvas svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .mock-canvas .dot {
+    position:absolute; width:8px; height:8px; border-radius:50%;
+    background:var(--speckle); border:2px solid var(--bg); box-shadow:0 0 6px var(--speckle);
+  }
+  .mock-doc {
+    font-family:var(--mono); font-size:10.5px; padding:2px 0;
+  }
+  .mock-doc .ic { color:var(--inkMuted); margin-right:5px; }
+  .mock-doc .strike { color:var(--inkMuted); text-decoration:line-through; }
+  .mock-doc .crown { color:var(--ok); }
+  .mock-prompt {
+    font-family:var(--mono); font-size:10px;
+    background:#0a0a0c; border:1px solid var(--line); border-radius:4px;
+    padding:8px 10px; color:var(--inkSoft); line-height:1.5;
+  }
+  .mock-prompt .tag { color:var(--accent); }
+  .mock-prompt .val { color:var(--blue); }
+
+  /* answer row */
+  .answer {
+    background:var(--bgSoft); border:1px solid var(--line); border-radius:7px;
+    padding:12px 16px; margin:14px 0 4px;
+  }
+  .answer label { cursor:pointer; display:block; padding:5px 0; font-size:14.5px; }
+  .answer label:hover { color:var(--accentHi); }
+  .answer input { margin-right:8px; cursor:pointer; transform:scale(1.1); }
+  .answer .picked { color:var(--ok); font-weight:500; }
+
+  /* per-card comment */
+  .comment {
+    margin:8px 0 0; padding:10px 14px;
+    background:var(--bg); border:1px dashed var(--line); border-radius:7px;
+  }
+  .comment-label {
+    display:block; font-family:var(--mono); font-size:10px;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--inkMuted);
+    margin-bottom:6px;
+  }
+  .comment-label .opt { color:var(--inkMuted); font-weight:normal; }
+  .comment textarea {
+    width:100%; min-height:44px; resize:vertical;
+    background:var(--bgSoft); border:1px solid var(--line); border-radius:5px;
+    color:var(--ink); font-family:var(--sans); font-size:13.5px; line-height:1.45;
+    padding:8px 12px;
+  }
+  .comment textarea:focus {
+    outline:none; border-color:var(--accent);
+    box-shadow:0 0 0 2px var(--accentDim);
+  }
+  .comment textarea::placeholder { color:var(--inkMuted); font-style:italic; }
+
+  details { background:transparent; border:none; margin-top:10px; }
+  details summary {
+    cursor:pointer; font-family:var(--mono); font-size:10px;
+    color:var(--inkMuted); letter-spacing:0.12em; text-transform:uppercase;
+    padding:4px 0;
+  }
+  details summary:hover { color:var(--accentHi); }
+  details code, details .src {
+    font-family:var(--mono); font-size:11px; color:var(--inkSoft);
+    background:var(--bgSoft); padding:1px 6px; border-radius:3px;
+  }
+  details p { color:var(--inkSoft); font-size:12.5px; margin:6px 0; }
+
+  blockquote {
+    margin:14px 0; padding:10px 14px; background:var(--bgSoft);
+    border-left:3px solid var(--accent); border-radius:0 5px 5px 0;
+    font-family:var(--serif); font-style:italic; font-size:15px; color:var(--ink);
+  }
+
+  /* sticky sign banner */
+  .sign-zone {
+    background:#1a221b; border:2px solid #7ec18e44; border-radius:12px;
+    padding:24px 28px; margin-top:42px;
+  }
+  .sign-zone h2 { font-family:var(--serif); font-size:28px; margin:0 0 10px; }
+  .btn-primary {
+    font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+    padding:14px 28px; background:var(--ok); color:#082011; border:none;
+    border-radius:6px; cursor:pointer; margin-top:14px; font-weight:600;
+  }
+  .btn-primary:hover { background:#9ad4a8; }
+  input[type=text] {
+    font-family:inherit; background:var(--bg); border:1px solid var(--line);
+    color:var(--ink); padding:8px 12px; border-radius:5px; width:280px; font-size:14px;
+  }
+
+  .footer { font-family:var(--mono); font-size:10px; color:var(--inkMuted); letter-spacing:0.06em; margin-top:60px; padding-top:16px; border-top:1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div style="font-family:var(--mono); font-size:11px; color:var(--inkMuted); letter-spacing:0.18em; text-transform:uppercase; margin-bottom:8px;">Founder sign-off · 2026-05-26</div>
+<h1>What's <em>changing</em>, in pictures</h1>
+<p class="subline">
+  12 yes/no picks. Each one shows you what's there now and what changes after you sign.
+  Defaults already on the recommended pick — only override the rows you disagree with.
+  Capture at the bottom and paste back to me.
+</p>
+
+<blockquote>
+  "tell me what you are going to change · how you are going to do things · why · treat me as not technical · visually telling me what will change and happen exactly"
+  <br><span style="font-size:11px; font-family:var(--mono); color:var(--inkMuted); font-style:normal;">— founder, 2026-05-26 ~10:00</span>
+</blockquote>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 1 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">1</div>
+    <div class="q-body">
+      <div class="q-headline">Delete code we already replaced but never removed?</div>
+      <div class="q-why">~9 chunks of dead code from features that were redesigned. Cleaner repo means future AI sessions don't waste time reading 100s of lines that never run.</div>
+      <div class="badges">
+        <span class="pill time-min">~30 min</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: yes</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Right now</h4>
+      <div class="mock-code">
+        <div><span class="ln">7491</span><span class="dead">// ReactFlow scaffold (never installed)</span></div>
+        <div><span class="ln">7503</span><span class="dead">const _readCanvasFlavor = () =&gt; …</span></div>
+        <div><span class="ln">7555</span><span class="dead">const NodeCanvasRF_Stub = () =&gt;</span></div>
+        <div><span class="ln">1098</span><span class="dead">const bumpGraphSync = () =&gt; …</span></div>
+        <div><span class="ln"> 825</span><span class="dead">const _LM_GRAPH_DEMO_DEAD = {…}</span></div>
+        <div><span class="ln">2782</span><span class="dead">def _open_connectors(self): …</span></div>
+        <div><span class="ln">3145</span><span class="dead">def _open_reality_check(self):</span></div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>After you sign</h4>
+      <div class="mock-code">
+        <div><span class="ln">7491</span><span class="keep">// Custom canvas IS the substrate.</span></div>
+        <div><span class="ln">7492</span><span class="keep">const NodeView = …</span></div>
+        <div><span class="ln">7493</span><span class="keep">const WireLayer = …</span></div>
+        <div style="margin-top:18px; color:var(--ok); font-size:11px;">— 7 dead blocks removed · ~280 lines<br>— 1 test inverted (asserts stub is gone)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q1" value="yes" checked/> <span class="picked">Yes, delete the dead code</span> (recommended)</label>
+    <label><input type="radio" name="q1" value="no"/> No, leave it — flag with `@deprecated` comments only</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §C3/§C4/§C5/§C6 · fork F4 · pick A)</summary>
+    <p>Aggressive removal of: <code>workflows_panel.py</code>, <code>ChatWindow._open_connectors</code>, <code>_open_reality_check</code>, <code>NodeCanvasRF_Stub</code>, <code>_readCanvasFlavor</code> / <code>_setCanvasFlavor</code>, <code>bumpGraphSync</code>, <code>bumpGraphRaf</code>, <code>_LM_GRAPH_DEMO_DEAD</code>. Updates <code>tests/test_reactflow_p2a_groundwork.py</code> to assert the stub is GONE (inverted test).</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 2 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">2</div>
+    <div class="q-body">
+      <div class="q-headline">Mix small speed fixes with cleanup work, or do all speed work first?</div>
+      <div class="q-why">"Mix" means you'll feel improvements this week (ship 4 cheap perf wins → ship doc cleanup → ship harder perf work). "All speed first" means you wait for everything to bake.</div>
+      <div class="badges">
+        <span class="pill time-day">ongoing rhythm</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: mix</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Option A · perf first</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>Week 1 · all perf · nothing else lands</div>
+        <div>Week 2 · still perf · docs growing stale</div>
+        <div>Week 3 · finally docs + cleanup</div>
+        <div style="color:var(--warn); margin-top:8px;">You wait 2 weeks for any cleanup.</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Option C · mix (recommended)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>Day 1-2 · 4 cheap perf wins land</div>
+        <div>Day 3-4 · doc/log cleanup batched</div>
+        <div>Day 5+ · harder perf work</div>
+        <div style="color:var(--ok); margin-top:8px;">You feel speed-up + see cleaner repo in days, not weeks.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q2" value="mix" checked/> <span class="picked">Mix — cheap perf wins, then cleanup, then hard perf</span> (recommended)</label>
+    <label><input type="radio" name="q2" value="perf"/> All speed work first, cleanup waits</label>
+    <label><input type="radio" name="q2" value="docs"/> All cleanup first, speed waits</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §D · fork F1 · pick C interleave)</summary>
+    <p>Slice order under F1.C: ship D1+D2+D4+D7 (RailMiniMap interval kill, NodeCanvas state-stash dep array, Workspace.allNodes memo, nodeById memo bust) → ship A3+B1+B2 (status drift reconciliation, boot.log path, central logging) → ship D5/D6 (SVG path memo, imperative drag if still needed).</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 3 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">3</div>
+    <div class="q-body">
+      <div class="q-headline">Keep 49 unused backend hooks but label them "no UI yet"?</div>
+      <div class="q-why">49 backend functions exist with no visible button or screen. They look "shipped" in the code but you can't reach them. Labeling them makes the gap honest without breaking what works.</div>
+      <div class="badges">
+        <span class="pill time-hour">~1 hour</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: keep + label</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Right now</h4>
+      <div class="mock-code">
+        <div><span class="keep">def get_memory_stats():</span></div>
+        <div><span style="color:var(--inkMuted); margin-left:24px;">return {...}</span></div>
+        <div style="margin-top:6px;"><span class="keep">def list_memory_facts():</span></div>
+        <div><span style="color:var(--inkMuted); margin-left:24px;">return [...]</span></div>
+        <div style="color:var(--warn); margin-top:10px; font-size:10.5px;">⚠ 49 functions like this · no UI calls them</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>After you sign</h4>
+      <div class="mock-code">
+        <div><span style="color:var(--warn);">  # UI consumer pending — AgDR-0051</span></div>
+        <div><span class="keep">def get_memory_stats():</span></div>
+        <div><span style="color:var(--inkMuted); margin-left:24px;">return {...}</span></div>
+        <div style="color:var(--ok); margin-top:10px; font-size:10.5px;">✓ All 49 labeled · CI test fails if anyone adds a 50th orphan without a plan</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q3" value="keep" checked/> <span class="picked">Keep them + add "UI pending" label + CI guard</span> (recommended)</label>
+    <label><input type="radio" name="q3" value="delete"/> Delete them entirely (dead code)</label>
+    <label><input type="radio" name="q3" value="build"/> Build all 49 UI screens (multi-week)</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §C7 · fork F2 · pick C)</summary>
+    <p>49 slots in <code>bridge.py</code> have zero JSX callers — primitives shipped, UI absent. Pick C adds a per-slot <code># JSX consumer pending — AgDR-NNNN</code> annotation + a <code>bridge_slot_health</code> test that fails CI when an orphan slot has no inline reference to a planned AgDR.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 4 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">4</div>
+    <div class="q-body">
+      <div class="q-headline">Officially leave the wire-type system as it is, instead of rewriting 33 files?</div>
+      <div class="q-why">An old plan said "rewrite the wire-type code." That rewrite never happened. The current code works. Either we burn 2-3 days rewriting for no new feature, or we say "the old plan is retracted" in a single document.</div>
+      <div class="badges">
+        <span class="pill time-min">~5 min</span>
+        <span class="pill risk-low">low risk (just a doc)</span>
+        <span class="pill rec">recommended: retract the rewrite</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Right now (contradiction)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>📄 plan: "rewrite 33 files"</div>
+        <div>📁 reality: 33 files still old way</div>
+        <div style="color:var(--bad); margin-top:8px;">Future agents see the plan + might start rewriting</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>After you sign</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>📄 plan: "old way kept · rewrite cancelled"</div>
+        <div>📁 reality: 33 files unchanged</div>
+        <div style="color:var(--ok); margin-top:8px;">No more contradiction. No accidental rewrite next week.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q4" value="retract" checked/> <span class="picked">Retract the rewrite plan in one document (5 min)</span> (recommended)</label>
+    <label><input type="radio" name="q4" value="rewrite"/> Actually do the 33-file rewrite (2-3 days, no new feature)</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §C8 · fork F3 · pick C)</summary>
+    <p>AgDR-0012 §232-233 declared "PortType deprecated, migrate to speckle_type" but the migration never executed. 33 source files still use PortType, 4 use speckle_type. Pick C writes a small AgDR that supersedes the §232-233 lines: "PortType stays — speckle_type is for wire transport only." Revisit when wire transport gets attention.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 5 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">5</div>
+    <div class="q-body">
+      <div class="q-headline">Wait on the big "drag is jankier than we want" rewrite until smaller fixes ship?</div>
+      <div class="q-why">There are ~7 smaller speed wins. They might make the canvas feel fast enough on their own. The big rewrite is a 2-day surgery — try the cheap stuff first, escalate only if you still feel lag.</div>
+      <div class="badges">
+        <span class="pill time-now">no work now</span>
+        <span class="pill risk-low">defers a high-risk change</span>
+        <span class="pill rec">recommended: defer</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>"Do it now"</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>🧪 2-3 days surgery</div>
+        <div>⚠ every drag/wire/select regresses</div>
+        <div>📊 may not even be needed</div>
+        <div style="color:var(--bad); margin-top:8px;">Highest risk, biggest single win.</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>"Defer" (recommended)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>⚡ ship 7 cheap wins first</div>
+        <div>📊 measure: is canvas fast now?</div>
+        <div>✓ yes → done. no → escalate.</div>
+        <div style="color:var(--ok); margin-top:8px;">Cheaper, reversible, founder-eye-tested.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q5" value="defer" checked/> <span class="picked">Defer — measure after the cheap wins ship</span> (recommended)</label>
+    <label><input type="radio" name="q5" value="now"/> Do the big rewrite now</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §D · fork F5 · D6 imperative-drag refactor · pick C)</summary>
+    <p>D6 in the perf inventory = "full React state cycle per drag pixel · setPositions clones N-entry dict + O(N²) Alt-overlap check." Architecture shift to imperative <code>node.style.transform = translate(x,y)</code> during drag, commit React state on mouseup. Defer until D1/D2/D4/D5/D7/D8/D9 ship.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 6 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">6</div>
+    <div class="q-body">
+      <div class="q-headline">Mark 13 backend tasks as "shipped" — they already work, just need the label?</div>
+      <div class="q-why">13 of your decision records say "approved" instead of "shipped." The code is live + tested + you've used it for weeks. Flipping the label makes your status ledger truthful.</div>
+      <div class="badges">
+        <span class="pill time-min">~5 min</span>
+        <span class="pill risk-low">no code change</span>
+        <span class="pill rec">recommended: flip all 13</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Right now (status ledger)</h4>
+      <div class="mock-status">
+        <div class="row"><span class="badge appr">approved</span><span>host-node-v2</span></div>
+        <div class="row"><span class="badge appr">approved</span><span>roslyn-isolation</span></div>
+        <div class="row"><span class="badge appr">approved</span><span>cold-start-lag fix</span></div>
+        <div class="row"><span class="badge appr">approved</span><span>connector-hot-reload</span></div>
+        <div class="row"><span class="badge appr">approved</span><span>library-item-actions</span></div>
+        <div style="color:var(--inkMuted); font-size:10px; margin-top:6px;">… 8 more like this</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>After you sign</h4>
+      <div class="mock-status">
+        <div class="row"><span class="badge exec">shipped</span><span>host-node-v2</span></div>
+        <div class="row"><span class="badge exec">shipped</span><span>roslyn-isolation</span></div>
+        <div class="row"><span class="badge exec">shipped</span><span>cold-start-lag fix</span></div>
+        <div class="row"><span class="badge exec">shipped</span><span>connector-hot-reload</span></div>
+        <div class="row"><span class="badge exec">shipped</span><span>library-item-actions</span></div>
+        <div style="color:var(--ok); font-size:10px; margin-top:6px;">✓ all 13 reflect reality</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q6" value="all" checked/> <span class="picked">Flip all 13 in one pass</span> (recommended)</label>
+    <label><input type="radio" name="q6" value="review"/> Show me each one before flipping</label>
+    <label><input type="radio" name="q6" value="skip"/> Skip — leave them as "approved"</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0047 §A3)</summary>
+    <p>AgDRs 0024-0036 currently carry <code>status: approved</code>. Functionally shipped + CDP-verified weeks ago, but flip needs founder OK per AGDR MANDATE. List: host-node-v2, roslyn-isolation-all-connectors, studio-lm-cold-start-lag, connector-hot-reload, library-item-actions, connector-build-pair-shim, csc-probe-modern-roslyn-fallback, archhub-mcp-server, composer-stream-coalesce, skill-tombstone-delete, daily-maintenance-audit-bot, bridge-slots-never-block-ui-thread, non-blocking-slot-mechanism.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 7 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">7</div>
+    <div class="q-body">
+      <div class="q-headline">Save wire history to the brain in small batches (every ~10 sec) instead of every single change?</div>
+      <div class="q-why">Heavy work like cooking a 50-node graph fires ~10 wire updates per second. Recording every one to the brain = waste. Batching every 5 changes OR every 10 seconds gives 80% of the value at 5% of the cost.</div>
+      <div class="badges">
+        <span class="pill time-hour">~1 hour</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: batch</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Real-time (every event)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>09:00:01.001 → write</div>
+        <div>09:00:01.102 → write</div>
+        <div>09:00:01.205 → write</div>
+        <div>09:00:01.309 → write</div>
+        <div style="color:var(--bad); margin-top:8px;">~10/sec · brain saturated</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Batched (recommended)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>09:00:10 → write (5 events)</div>
+        <div>09:00:20 → write (3 events)</div>
+        <div>09:00:30 → write (4 events)</div>
+        <div style="color:var(--ok); margin-top:8px;">~1 every 10s · same memory captured</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q7" value="batch" checked/> <span class="picked">Batch every 5 events or 10 seconds</span> (recommended)</label>
+    <label><input type="radio" name="q7" value="realtime"/> Real-time (every single event)</label>
+    <label><input type="radio" name="q7" value="hourly"/> Hourly snapshot only</label>
+  </div>
+
+  <details>
+    <summary>technical details (Prototype B Surface 6 W2 · FB1 · pick B)</summary>
+    <p>Hook into <code>SpeckleWire.send()</code> success path. Best-effort <code>brain.write([fact])</code> with debounce buffer flushed every 5 events OR 10s. Failure-tolerant via <code>ResilientBrainClient</code>.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 8 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">8</div>
+    <div class="q-body">
+      <div class="q-headline">When the AI sees your project state, show short summaries instead of full JSON?</div>
+      <div class="q-why">Every message you type, the AI gets a "what's in your project right now" briefing. The full JSON version costs ~80 tokens per wire. The compact line version costs ~12 tokens per wire — AI still gets what it needs, you pay less per message.</div>
+      <div class="badges">
+        <span class="pill time-min">~30 min</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: short summary</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Full JSON (~80 tok/wire)</h4>
+      <div class="mock-prompt">
+<span class="tag">&lt;wire&gt;</span>
+  <span class="tag">id:</span> <span class="val">"walls-revit-to-ai"</span>,
+  <span class="tag">version:</span> <span class="val">"v0024"</span>,
+  <span class="tag">count:</span> <span class="val">4</span>,
+  <span class="tag">size_bytes:</span> <span class="val">1232</span>,
+  <span class="tag">ts:</span> <span class="val">"14:32:08"</span>
+<span class="tag">&lt;/wire&gt;</span>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Compact (~12 tok/wire)</h4>
+      <div class="mock-prompt">
+walls v0024 · 4 · 14:32
+doors v0017 · 12 · 14:30
+slabs v0009 · 1 · 13:55
+      </div>
+      <div style="color:var(--ok); font-size:11px; margin-top:8px;">Same info, 85% fewer tokens.</div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q8" value="compact" checked/> <span class="picked">Compact line per wire</span> (recommended)</label>
+    <label><input type="radio" name="q8" value="json"/> Full JSON (more verbose)</label>
+    <label><input type="radio" name="q8" value="idonly"/> Just version IDs (cheapest, least context)</label>
+  </div>
+
+  <details>
+    <summary>technical details (Prototype B Surface 6 W3 · FB2 · pick B)</summary>
+    <p>Extends <code>brain.context</code> handler to include wire-version facts in the pre_prompt payload when scope is PROJECT. Compact format <code>{label} v{version} · {count} · {ts}</code> per wire.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 9 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">9</div>
+    <div class="q-body">
+      <div class="q-headline">If a saved workflow points to a version that's gone, refuse to run it instead of silently using the latest?</div>
+      <div class="q-why">When you save a workflow as a skill, it pins exact versions of its inputs. If those versions get deleted later and we silently grab "whatever's latest," your saved workflow becomes a different workflow without telling you. Stopping early with an error gives you a chance to fix it.</div>
+      <div class="badges">
+        <span class="pill time-min">~30 min</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: refuse + show error</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Silent fallback</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>▶ run skill "wall-classify"</div>
+        <div>… pin v0024 not found</div>
+        <div style="color:var(--warn);">… silently use v0029 (latest)</div>
+        <div>✓ done (but different result)</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Strict refuse</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>▶ run skill "wall-classify"</div>
+        <div>… pin v0024 not found</div>
+        <div style="color:var(--bad);">✗ stop: "Version v0024 gone.</div>
+        <div style="color:var(--bad);">     Rebuild pin?" [button]</div>
+      </div>
+      <div style="color:var(--ok); font-size:11px; margin-top:8px;">No silent drift. You decide.</div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q9" value="strict" checked/> <span class="picked">Refuse + show error with "rebuild pin" button</span> (recommended)</label>
+    <label><input type="radio" name="q9" value="warn"/> Warn but use the latest (silent fallback)</label>
+    <label><input type="radio" name="q9" value="ask"/> Ask me every time (modal prompt)</label>
+  </div>
+
+  <details>
+    <summary>technical details (Prototype B Surface 6 W4 · FB3 · pick A)</summary>
+    <p>Extends skill_mint trace shape to capture <code>speckle_pins: {wire_id: version}</code>. Runner reads pins on replay; strict mode raises <code>SkillPinNotFoundError</code> with rebuild affordance instead of falling back to latest.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 10 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">10</div>
+    <div class="q-body">
+      <div class="q-headline">Make "share with my firm" an explicit opt-in checkbox instead of automatic?</div>
+      <div class="q-why">If we auto-broadcast every local Speckle server you spawn, your machine's address leaks to everyone in your firm. Opt-in keeps you in control — you tick a box when you want others to see it.</div>
+      <div class="badges">
+        <span class="pill time-hour">~1 hour</span>
+        <span class="pill risk-low">low risk</span>
+        <span class="pill rec">recommended: opt-in</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>"Auto" broadcast</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>spawn share.server</div>
+        <div style="color:var(--warn);">→ auto-announce to firm</div>
+        <div>3 teammates see your endpoint</div>
+        <div style="color:var(--bad); margin-top:8px;">No consent. Accidental sharing.</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Opt-in (recommended)</h4>
+      <div style="font-family:var(--mono); font-size:11px; color:var(--inkSoft); line-height:1.7;">
+        <div>spawn share.server</div>
+        <div>SHARE node config:</div>
+        <div style="margin-left:14px;">☐ broadcast to firm</div>
+        <div style="color:var(--ok); margin-top:8px;">You decide. Per-server toggle.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q10" value="optin" checked/> <span class="picked">Opt-in checkbox per server</span> (recommended)</label>
+    <label><input type="radio" name="q10" value="auto"/> Auto-broadcast every time</label>
+    <label><input type="radio" name="q10" value="never"/> Never broadcast (manual firm config only)</label>
+  </div>
+
+  <details>
+    <summary>technical details (Prototype B Surface 6 W6 · FB4 · pick B)</summary>
+    <p>SHARE node config gains a <code>broadcast_to_firm: bool</code> field defaulting false. When enabled, <code>share.server</code> startup calls <code>brain.wiring_announce({mcps:{speckle_local:url}})</code> scoped to FIRM.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 11 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">11</div>
+    <div class="q-body">
+      <div class="q-headline">Accept the native Brain tab as the production version — it replaces the broken JSX one?</div>
+      <div class="q-why">You opened Settings 2026-05-26 and the brain panel was missing/lagged. Three failures stacked. Parallel session shipped a native Qt tab that works (5th tab in Settings dialog). Your eye-check was "great although design is a total shit · for now it will do."</div>
+      <div class="badges">
+        <span class="pill time-now">instant (annotation only)</span>
+        <span class="pill risk-low">already live</span>
+        <span class="pill rec">recommended: accept</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>Failed JSX BrainSection</h4>
+      <div class="mock-sidebar">
+        <div class="item">Profile</div>
+        <div class="item">Providers</div>
+        <div class="item">Models</div>
+        <div class="item dim">[nothing rendered] ⚠</div>
+      </div>
+      <div style="color:var(--bad); font-size:10.5px; margin-top:8px;">Cache served stale bundle · panel never reached DOM · lagged when it did render.</div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>Native PyQt Brain tab</h4>
+      <div class="mock-sidebar">
+        <div class="item">Profile</div>
+        <div class="item">Providers</div>
+        <div class="item">Models</div>
+        <div class="item">Appearance</div>
+        <div class="item active">Brain ✓</div>
+      </div>
+      <div style="color:var(--ok); font-size:10.5px; margin-top:8px;">CDP-verified live. Loads instant. Design polish tracked separately.</div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q11" value="accept" checked/> <span class="picked">Accept native tab as production · polish tracked separately</span> (recommended)</label>
+    <label><input type="radio" name="q11" value="polish"/> Accept AND open a design-polish slice now</label>
+    <label><input type="radio" name="q11" value="rebuild"/> Reject — go back to fixing the JSX route</label>
+  </div>
+
+  <details>
+    <summary>technical details (FAILURE_LOG row 6 · AgDR-0046 supersede)</summary>
+    <p>FAILURE_LOG row 6 flipped to <code>partially-closed</code>; AgDR-0046 status to <code>superseded-by-shipped-native</code>. Native <code>BrainTab</code> in <code>app/settings_dialog.py</code> bypasses JSX cache entirely. Live runtime verified via <code>proofs/2026-05-26/brain_tab_final_084027.png</code> + <code>now_mon1_084935.png</code>. Founder eye-check 2026-05-26: <i>"great although the design is a total shit... but for now it will do."</i></p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 12 -->
+<div class="card">
+  <div class="q-row">
+    <div class="q-num">12</div>
+    <div class="q-body">
+      <div class="q-headline">Keep the visual/render/sketch spec you signed off on May 24 — and stop me from re-inventing it?</div>
+      <div class="q-why">You spent time signing off the 1590-line <code>assimilation-deepdive-2026-05-24</code> spec that already maps 50+ visual/render/sketch nodes. I proposed a new 18-node "alternative" yesterday. You called it out — *"WTF are you doing with visualization?"* This pick formally closes that mistake.</div>
+      <div class="badges">
+        <span class="pill time-now">instant (annotation only)</span>
+        <span class="pill risk-low">already done</span>
+        <span class="pill rec">recommended: keep canonical</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="visual">
+    <div class="v-side now">
+      <h4>What I did wrong</h4>
+      <div class="mock-doc">
+        <div><span class="crown">👑</span> assimilation-deepdive (1590 lines · 50+ nodes)</div>
+        <div style="color:var(--bad);">+ visual-render-sketch (225 lines · 18 nodes ← duplicate)</div>
+        <div style="color:var(--inkMuted); font-size:10px; margin-top:6px;">Two specs covering the same ground.</div>
+      </div>
+    </div>
+    <div class="v-arrow">→</div>
+    <div class="v-side after">
+      <h4>After you sign</h4>
+      <div class="mock-doc">
+        <div><span class="crown">👑</span> assimilation-deepdive (canonical)</div>
+        <div><span class="strike">⊘ visual-render-sketch (WITHDRAWN banner)</span></div>
+        <div style="color:var(--ok); font-size:10px; margin-top:6px;">Single source of truth restored.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="answer">
+    <label><input type="radio" name="q12" value="keep" checked/> <span class="picked">Keep assimilation-deepdive as canonical · withdraw my duplicate</span> (recommended)</label>
+    <label><input type="radio" name="q12" value="frame"/> Wrap assimilation-deepdive as a phased execution plan (new doc)</label>
+    <label><input type="radio" name="q12" value="merge"/> Merge any genuinely-novel ideas from my duplicate first, then withdraw</label>
+  </div>
+
+  <details>
+    <summary>technical details (AgDR-0049 disposition)</summary>
+    <p>Prototype A <code>visual-render-sketch-library-2026-05-26.html</code> already carries WITHDRAWN banner citing the duplication. <code>assimilation-deepdive-2026-05-24.html</code> restored to active <code>docs/prototypes/</code>. AgDR-0049 was never written. FAILURE_LOG entry <code>prototype-a-duplicated-assimilation-deepdive</code> records the class-of-failure ("don't trust shallow ref-count grep when the founder remembers the file"). This pick is the formal close.</p>
+  </details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<div class="sign-zone" id="sign">
+  <h2>Sign + capture</h2>
+  <p style="margin:0 0 14px; color:var(--ink);">
+    Defaults reflect the recommended pick on every row. Click <b>Capture picks</b> below
+    → JSON drops into the panel + copies to clipboard. Paste it back to me, I execute in
+    this order:
+  </p>
+  <ol style="margin:0 0 14px 22px; padding:0; color:var(--inkSoft); font-size:13.5px;">
+    <li>13 status flips (Q6) · 5 min · zero risk</li>
+    <li>Accept native Brain tab (Q11) + canonical spec (Q12) · annotations · 5 min</li>
+    <li>Retract the wire-type rewrite (Q4) · 5 min · just a doc</li>
+    <li>Delete dead code (Q1) · 30 min</li>
+    <li>Cheap perf wins (per Q2 mix) · 1-2 hours</li>
+    <li>Cleanup batch + bridge slot labels (Q3) · 1-2 hours</li>
+    <li>Brain × speckle wiring (Q7-Q10) · ~3 hours total</li>
+    <li>Speckle panel + footer pill shipping · half-day</li>
+    <li>(Q5) re-measure: is the canvas fast now? If yes, done. If no, escalate.</li>
+  </ol>
+
+  <table style="margin:14px 0;">
+    <tr><td style="padding:6px 0; color:var(--inkSoft);">signature</td><td style="padding:6px 0;"><input type="text" placeholder="founder · 2026-05-26"/></td></tr>
+  </table>
+
+  <button class="btn-primary" onclick="capturePicks()">✓ Capture picks → console + clipboard</button>
+  <pre id="output" style="background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:12px 14px; font-family:var(--mono); font-size:11px; color:var(--inkSoft); margin-top:14px; white-space:pre-wrap; max-height:280px; overflow:auto;">Click "Capture picks" to dump the selected payload here.</pre>
+</div>
+
+<script>
+// Inject a "Comment (optional)" textarea after every .answer block so the
+// founder can annotate any pick they want without us pre-building 12 copies
+// of the same HTML.
+document.addEventListener('DOMContentLoaded', () => {
+  const answers = document.querySelectorAll('.answer');
+  answers.forEach((node, idx) => {
+    const qid = `q${idx + 1}`;
+    const wrap = document.createElement('div');
+    wrap.className = 'comment';
+    wrap.innerHTML = `
+      <label class="comment-label" for="${qid}_comment">
+        Comment <span class="opt">(optional · why you picked this, what you want different, anything I should know)</span>
+      </label>
+      <textarea id="${qid}_comment" name="${qid}_comment"
+                placeholder="e.g. 'do this last' · 'wait, let me see X first' · 'fine but use vendor Y'"></textarea>
+    `;
+    node.parentNode.insertBefore(wrap, node.nextSibling);
+  });
+});
+
+function capturePicks() {
+  function rv(name) {
+    const el = document.querySelector(`input[name="${name}"]:checked`);
+    return el ? el.value : null;
+  }
+  function cm(qid) {
+    const el = document.querySelector(`textarea[name="${qid}_comment"]`);
+    const t = el ? el.value.trim() : '';
+    return t.length ? t : null;
+  }
+  function pick(qid, key) {
+    return { decision: rv(qid), comment: cm(qid) };
+  }
+  const sig = document.querySelector('.sign-zone input[type=text]');
+  const picks = {
+    q1_delete_dead_code:           pick('q1'),
+    q2_slice_ordering:             pick('q2'),
+    q3_orphan_bridge_slots:        pick('q3'),
+    q4_wire_type_rewrite:          pick('q4'),
+    q5_big_drag_rewrite:           pick('q5'),
+    q6_13_status_flips:            pick('q6'),
+    q7_brain_write_cadence:        pick('q7'),
+    q8_brain_context_format:       pick('q8'),
+    q9_skill_replay_strict:        pick('q9'),
+    q10_firm_broadcast:            pick('q10'),
+    q11_native_brain_tab:          pick('q11'),
+    q12_visual_render_canonical:   pick('q12'),
+    signature:                     sig ? sig.value.trim() : '',
+    captured_at:                   new Date().toISOString()
+  };
+  const json = JSON.stringify(picks, null, 2);
+  document.getElementById('output').textContent = json;
+  try { navigator.clipboard.writeText(json); } catch (e) {}
+}
+</script>
+
+<div class="footer">
+  v2 · <code>docs/prototypes/consolidated-signoff-2026-05-26.html</code> · picture-first
+  rewrite per FOUNDER-SPEAK MANDATE (CLAUDE.md line 3+, added 2026-05-26).
+</div>
+
+</div>
+</body>
+</html>

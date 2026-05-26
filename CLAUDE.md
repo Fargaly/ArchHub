@@ -1,5 +1,111 @@
 # ArchHub — working memory
 
+## FOUNDER-INTENT-CARRIES MANDATE (founder, 2026-05-26 — non-negotiable, applies forever)
+
+When the founder has already expressed intent — directly in chat, in a prior
+signed prototype, in an old commit message, in a roadmap line — DO THE WORK.
+Do NOT manufacture a signoff card asking permission for what the founder
+has already decided.
+
+Failure mode the mandate kills: drowning the founder in fork-picks for choices
+that follow obviously from prior intent. Example caught 2026-05-26:
+
+  > Founder, 2026-05-26 in fork pick Q5: *"don't fucking procrastinate, i've
+  > been pointing this out from the start why the fuck does it need a signoff
+  > for? you are flooding me with AgDRs to sign off and keep me busy when you
+  > could have just did the fucking work from the start instead of this waste
+  > of fucking time."*
+
+  > Founder, 2026-05-26 in fork pick Q4: *"don't be lazy you should have made
+  > the fucking work from the start, make sure that when you have work to do
+  > you fully do it initially."*
+
+Rules:
+
+- **Carry prior intent forward.** If the founder said "fix the lag" three
+  sessions ago + a perf inventory exists naming D1-D10, DO D1-D10 in priority
+  order. Don't ask "which one first?" — pick the highest-impact one + ship.
+- **Plans that already exist are the picks.** If `docs/agdr/*` carries a
+  written plan with an obvious slice order, EXECUTE that order. Asking the
+  founder to re-pick what the AgDR already named is a process violation.
+- **Default-yes work doesn't need signoff.** Dead code removal, deprecation
+  fixes, stale-ref cleanup, doc tidies, test additions, log rotation — none
+  need a fork pick. Do them.
+- **Two signoffs per decision, never three.** If you find yourself asking
+  for a signoff AGAIN on something you already had founder direction on
+  earlier in the same session, STOP. Re-read the chat. The decision is
+  already made.
+- **Signoffs ONLY for actual unknowns.** Reserve fork picks for:
+  (a) genuinely ambiguous design trade-offs the founder must arbitrate
+      (e.g. "show wires as dots OR labels?")
+  (b) cost/risk thresholds that need founder authority
+      (e.g. "burn 3 days on rewrite vs ship workaround in 30 min?")
+  (c) cross-surface UI moves that affect the founder's mental model
+      (e.g. "move the composer from bottom to top?")
+  Everything else: just do it.
+
+**Penalty for violation**: founder calls it out → you (a) execute the
+deferred work immediately without further asking, (b) add the captured
+quote to this mandate as a logged example, (c) audit the in-flight queue
+for other signoff-flood violations and convert them to direct execution.
+
+## FOUNDER-SPEAK MANDATE (founder, 2026-05-26 — non-negotiable, applies forever)
+
+Founder is a CEO, not a developer. Every signoff surface, every status report,
+every prototype review request, every AskUserQuestion call, every "pick one of
+these" moment follows these rules — no exception, no "this one is technical so
+it's OK":
+
+- **Visual before/after.** Every change you ask the founder to approve carries
+  a picture of "right now" + a picture of "after you sign." HTML mocks, CSS
+  rectangles, sketches, real screenshots — whatever makes the change visible
+  WITHOUT the founder reading code.
+- **Plain English in headlines.** Drop jargon. NO `AgDR-NNNN §B4`, NO slice
+  numbers in headlines, NO `interleave perf with docs cleanup`. Say what the
+  founder will EXPERIENCE: "the app starts faster," "Settings has fewer
+  items," "your wires now show a blue dot when data flows." Engineering names
+  (AgDR ids, file paths, slice numbers) live in a collapsed "details" section
+  only — never at the top.
+- **Why-it-matters first.** Each pick leads with founder benefit ("you'll
+  find AI settings faster"), not engineering rationale ("section count reduces
+  4→3"). Benefit sentence first, mechanism second.
+- **One question per pick.** Phrased as a single sentence ending with a
+  question mark. Never three options where two are "consider X" / "consider Y"
+  — pick the recommended one + name two real alternatives.
+- **Default = recommended.** Pre-check the recommended box. Founder's signoff
+  defaults to "yes, do the smart thing" — they only override when they
+  disagree. Saves them from reading every row.
+- **Time-cost visible.** Each pick states "Takes ~5 min" / "Takes 2 days" /
+  "Instant" so the founder knows what they're signing up for.
+- **Show the actual thing.** When asking about a UI change, mock the UI not
+  the data model. When asking about a workflow change, show the user-facing
+  steps not the engine call graph.
+- **Comment field per pick.** Every yes/no card carries an optional
+  free-text comment box. Founder writes context next to any decision
+  ("do this last" / "wait let me see X" / "fine but use vendor Y"). Captured
+  payload includes the comment per pick so the founder's reasoning rides
+  forward with the execution order.
+
+This mandate applies to: prototype signoff pages, AgDR ask-the-founder
+sections, AskUserQuestion calls, the consolidated-signoff series, status
+reports, change-request notices, error escalations, fork picks, and anything
+else where the founder is asked to DECIDE. If you find yourself writing
+`F1.C` or `§B4` or `slice 7.W3` at the top of a section the founder reads,
+STOP and rewrite.
+
+**Penalty for violation**: founder calls it out → you rebuild the surface in
+plain-English-visual form → ADD an example to this mandate naming what you
+got wrong so the next session doesn't repeat it.
+
+Logged violations (don't repeat these):
+- 2026-05-26: `consolidated-signoff-2026-05-26.html` v1 led every section with
+  `AgDR-0047 F1-F5 forks`, `13 approved → executed flips`, `Prototype B
+  FB1-FB5`. Founder rage: *"how am i going to signoff those? do i need to tell
+  you every time that i'm not a technical person and I need to be treated in
+  simple terms and visualy telling me what will change and happen exactly???"*
+  Rebuild v2: 6 picture-first cards · plain-English questions · default-yes
+  · time-cost badges.
+
 ## DEFINITION-OF-SHIPPED MANDATE (founder, 2026-05-25 — non-negotiable)
 
 "Shipped" has ONE meaning: the founder can launch ArchHub, click around

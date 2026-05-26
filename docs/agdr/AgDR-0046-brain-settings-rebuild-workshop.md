@@ -33,6 +33,15 @@ builds-on: [AgDR-0044, AgDR-0045]
 > design pass (Qt design language polish, not a JSX rebuild). No new
 > AgDR is being minted for the polish — per
 > NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES, the existing surface lives first.
+>
+> **2026-05-26 Q11 founder pick = polish (override of recommended
+> "accept as-is")**: founder explicitly opened the design-polish slice
+> NOW (not deferred). Polish work tracked as task #25 — rebuild
+> BrainTab Qt aesthetic 1:1 against
+> `signed/brain-settings-2026-05-25/index.html` + extend to full
+> design audit across SettingsDialog per founder's Q3 comment
+> ("settings ui is a total shit"). Slice queues after Q1 (done) +
+> Q6 (in flight).
 
 # Brain Settings — rebuild per signed prototype · 1:1 · cache-busted · perf-budgeted
 

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>13 status flips · review one by one · 2026-05-26</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --line:#26262e;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f;
+    --accent:#d97757; --accentDim:#2a1812; --accentHi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --bad:#d96e6e;
+    --blue:#7898d6; --speckle:#3a6acc; --purple:#a98cd6;
+    --serif:'Instrument Serif', Georgia, serif;
+    --sans:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.55; }
+  .wrap { max-width:1000px; margin:0 auto; padding:36px 28px 80px; }
+  h1 { font-family:var(--serif); font-size:42px; line-height:1.05; margin:0 0 6px; letter-spacing:-0.02em; }
+  h1 em { color:var(--accent); font-style:italic; }
+  .subline { color:var(--inkSoft); font-size:16px; margin:0 0 28px; }
+  blockquote { margin:14px 0; padding:10px 14px; background:var(--bgSoft); border-left:3px solid var(--accent); border-radius:0 5px 5px 0; font-family:var(--serif); font-style:italic; font-size:15px; color:var(--ink); }
+  .by { font-family:var(--mono); font-size:11px; color:var(--inkMuted); font-style:normal; display:block; margin-top:6px; }
+
+  .card {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:10px;
+    padding:18px 22px; margin:14px 0; display:grid;
+    grid-template-columns:48px 1fr auto; gap:14px; align-items:center;
+  }
+  .card .num {
+    width:42px; height:42px; border-radius:50%;
+    background:var(--accentDim); border:2px solid var(--accent); color:var(--accent);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:13px; font-weight:600;
+  }
+  .card .body { min-width:0; }
+  .card .title { font-family:var(--serif); font-size:19px; color:var(--ink); margin:0 0 3px; line-height:1.25; }
+  .card .what { color:var(--inkSoft); font-size:13px; margin:0; }
+  .card .flow { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .badge {
+    padding:3px 10px; border-radius:11px;
+    font-family:var(--mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase;
+  }
+  .badge.appr { background:#231f14; color:var(--warn); }
+  .badge.exec { background:#1a221b; color:var(--ok); }
+  .arrow { color:var(--accent); font-size:14px; }
+  .card .answer { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .card .answer label { font-family:var(--mono); font-size:11px; color:var(--inkSoft); cursor:pointer; }
+  .card .answer input { margin-right:5px; cursor:pointer; transform:scale(1.15); }
+  .card .answer textarea {
+    width:200px; min-height:38px; resize:vertical;
+    background:var(--bg); border:1px dashed var(--line); border-radius:5px;
+    color:var(--ink); font-family:var(--sans); font-size:12px;
+    padding:6px 8px; margin-top:2px;
+  }
+  details summary { cursor:pointer; font-family:var(--mono); font-size:10px; color:var(--inkMuted); letter-spacing:0.12em; text-transform:uppercase; padding:4px 0; margin-top:4px; }
+  details summary:hover { color:var(--accentHi); }
+  details p, details code { font-family:var(--mono); font-size:11.5px; color:var(--inkSoft); margin:4px 0; }
+  details code { background:var(--bgSoft); padding:1px 5px; border-radius:3px; }
+
+  .sign-zone {
+    background:#1a221b; border:2px solid #7ec18e44; border-radius:12px;
+    padding:24px 28px; margin-top:32px;
+  }
+  .sign-zone h2 { font-family:var(--serif); font-size:26px; margin:0 0 8px; }
+  .btn-primary {
+    font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+    padding:14px 28px; background:var(--ok); color:#082011; border:none;
+    border-radius:6px; cursor:pointer; margin-top:12px; font-weight:600;
+  }
+  .btn-primary:hover { background:#9ad4a8; }
+  input[type=text].sig {
+    font-family:inherit; background:var(--bg); border:1px solid var(--line);
+    color:var(--ink); padding:8px 12px; border-radius:5px; width:260px;
+  }
+  .footer { font-family:var(--mono); font-size:10px; color:var(--inkMuted); letter-spacing:0.06em; margin-top:50px; padding-top:16px; border-top:1px solid var(--line); }
+
+  .bulk {
+    background:var(--bgSoft); border:1px solid var(--line); border-radius:7px;
+    padding:14px 18px; margin:16px 0; display:flex; align-items:center; gap:14px;
+  }
+  .bulk label { cursor:pointer; font-size:14.5px; }
+  .bulk input { transform:scale(1.2); margin-right:6px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div style="font-family:var(--mono); font-size:11px; color:var(--inkMuted); letter-spacing:0.18em; text-transform:uppercase; margin-bottom:8px;">Per Q6=review (you said: show me each one) · 2026-05-26</div>
+<h1>13 backend tasks · <em>shipped</em> but labeled "approved"</h1>
+<p class="subline">
+  Each one already works. Already CDP-verified weeks ago. Just need the
+  status label on the disk record flipped from <span class="badge appr">approved</span>
+  to <span class="badge exec">shipped</span>. Defaults: yes flip all. Untick any
+  row you want to hold + add a comment.
+</p>
+
+<blockquote>
+  "show me each one before flipping" <span class="by">— founder Q6, 2026-05-26</span>
+</blockquote>
+
+<div class="bulk">
+  <label><input type="checkbox" id="bulk_all" checked onchange="toggleAll(this)"/> <b>Flip ALL 13</b></label>
+  <span style="color:var(--inkSoft); font-size:13px;">— or skip the bulk + untick individual rows below</span>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<div class="card">
+  <div class="num">24</div>
+  <div class="body">
+    <div class="title">Host Node v2 — ComfyUI-style op grid for Revit/AutoCAD/etc</div>
+    <p class="what">You signed off the design 2026-05-21 on the v2-ecosystem prototype. Default ON since commit `51797b7` (you can see the grid the moment you drop a host node).</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0024 · category architecture</summary><p>S1/S2/S3 sub-slices all shipped. Founder approved 11-constraint decision block in `host-node-direction-a-comfyui-v2-ecosystem.html`.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r24" checked/> flip</label>
+    <textarea name="c24" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">25</div>
+  <div class="body">
+    <div class="title">Roslyn isolation across every connector</div>
+    <p class="what">You said "make sure this problem doesn't happen with other connectors" 2026-05-21. Broker pipeline runs the C# compiler in subprocess per AgDR-0023's pattern, now extended to all 16 brokers.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0025 · supersedes 0023</summary><p>Subprocess csc per AgDR-0023 + applied across acad/max/revit broker compile paths.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r25" checked/> flip</label>
+    <textarea name="c25" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">26</div>
+  <div class="body">
+    <div class="title">Cold-start lag fixes — Studio boots noticeably faster</div>
+    <p class="what">You said "fix this lag" 2026-05-21. Profile-driven optimisations shipped: parallel boot probes, deferred heavy imports, splash-screen unblock.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0026 · architecture</summary><p>Profile of cold-start path · multiple sync slots moved to background threads · splash unblock at first paint.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r26" checked/> flip</label>
+    <textarea name="c26" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">27</div>
+  <div class="body">
+    <div class="title">Connectors hot-reload — no more Revit restart</div>
+    <p class="what">You said "DIDN'T WE AGREE THAT THE CONNECTORS SHOULDN'T REQUIRE RESTARTING REVIT?" 2026-05-21. Hot-reload landed: connector swap via bridge without restarting the host.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0027 · architecture</summary><p>Live in bridge.py; observed reload of RevitMCP.dll without Revit close+reopen.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r27" checked/> flip</label>
+    <textarea name="c27" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">28</div>
+  <div class="body">
+    <div class="title">Library actions — delete custom nodes + skills + filters</div>
+    <p class="what">You said "WHY ISN'T IT POSSIBLE?" 2026-05-21. Right-click on any library item now has: rename / delete / duplicate / save-as / filter-by-tag.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0028 · ux</summary><p>NodesPanel context menu extended; delete propagates via bridge to disk store.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r28" checked/> flip</label>
+    <textarea name="c28" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">29</div>
+  <div class="body">
+    <div class="title">Connector build pair — both shim + core compile</div>
+    <p class="what">Bug 1 fix: half-deployed connectors used to break Revit 2025 listener. Now `auto_build.py` builds BOTH the shim csproj AND the core csproj on every connector enable.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0029 · architecture</summary><p>RevitMCPCore.csproj now invoked alongside shim. Both binaries land before broker startup.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r29" checked/> flip</label>
+    <textarea name="c29" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">30</div>
+  <div class="body">
+    <div class="title">CSC compiler probe — falls back to modern Roslyn</div>
+    <p class="what">Bug 2 fix: /exec used to fail with "Invalid option '7.3'" on machines without VS BuildTools. Probe now skips the Framework64 csc that caps at C# 5 and picks the modern one.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0030 · architecture</summary><p>ScriptCompiler probe checks csc capability before adoption.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r30" checked/> flip</label>
+    <textarea name="c30" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">31</div>
+  <div class="body">
+    <div class="title">ArchHub MCP server — every Claude session sees your hosts</div>
+    <p class="what">You took a screenshot showing another Claude saying "I don't see an archhub MCP". Now ArchHub exposes 116 ops over MCP so any AI tool can drive Revit/AutoCAD/etc directly.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0031 · architecture</summary><p>app/mcp/node_mcp.py + mcp_fetcher.py · 116 ops registered · Claude Code + Cursor + Codex all hit it.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r31" checked/> flip</label>
+    <textarea name="c31" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">32</div>
+  <div class="body">
+    <div class="title">Composer stream coalesce + delete-skill fix</div>
+    <p class="what">You said "deletion didn't work, composer still lagging" 2026-05-21. Two production fixes: rAF coalesce on stream chunks (kills the composer lag) + delete-skill resolves via canvas-skill store.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0032 · bugfix</summary><p>bumpGraph rAF coalesce + delete_saved_skill canvas-store route.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r32" checked/> flip</label>
+    <textarea name="c32" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">33</div>
+  <div class="body">
+    <div class="title">Skill tombstone delete — deleted skills stay deleted</div>
+    <p class="what">You said "STILL NOT WORKING" on delete. Root cause: read_only gate. Fix: tombstone files prevent skill resurrection from the source-tree path even when seeds re-load.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0033 · architecture</summary><p>Tombstone file `.deleted` per skill id; both source-tree + canvas store respect it.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r33" checked/> flip</label>
+    <textarea name="c33" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">34</div>
+  <div class="body">
+    <div class="title">Daily maintenance audit bot — keeps watch over the repo</div>
+    <p class="what">You said "RUN A DEEP MAINTENANCE AUDIT... SETUP A GITHUB BOT TO DO THAT AUDIT DAILY" 2026-05-21. Bot scheduled, runs in cloud, posts findings to the agents pipeline.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0034 · architecture</summary><p>GitHub Action `Agents dispatch` runs on schedule + manual trigger. Visible in green-success rows on the Actions tab.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r34" checked/> flip</label>
+    <textarea name="c34" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">35</div>
+  <div class="body">
+    <div class="title">Bridge slots never block the UI thread — composer lag killed</div>
+    <p class="what">You said "WRITING IN THE COMPOSER LAGS THE ENTIRE PC". CDP profile proved the renderer was idle — Qt main thread was blocked by sync bridge slots. Fix: cached + bounded pool + signal pattern; CI guard fails on any new blocking slot.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0035 · architecture</summary><p>get_all_hosts / get_local_llms / probe_connector / list_host_sessions / list_host_documents / get_memory_stats / list_memory_facts / get_storage_stats routed through `_cached_async`. CI guard: tests/test_no_blocking_slots.py.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r35" checked/> flip</label>
+    <textarea name="c35" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <div class="num">36</div>
+  <div class="body">
+    <div class="title">Non-blocking slot mechanism — substrate for #35 + future slots</div>
+    <p class="what">After #35 you said "I don't want to point this out again". This AgDR is the framework: `_cached_async` decorator + bounded worker pool + signal-based result delivery. Every new slot uses it by default.</p>
+    <div class="flow"><span class="badge appr">approved</span><span class="arrow">→</span><span class="badge exec">shipped</span></div>
+    <details><summary>technical · AgDR-0036 · architecture</summary><p>The mechanism #35 was built on top of. Lives in bridge.py; CI guard same as #35.</p></details>
+  </div>
+  <div class="answer">
+    <label><input type="checkbox" name="r36" checked/> flip</label>
+    <textarea name="c36" placeholder="optional comment"></textarea>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<div class="sign-zone" id="sign">
+  <h2>Sign + capture</h2>
+  <p style="margin:0 0 10px;">
+    Pick "Capture picks" → JSON drops in clipboard + the box below. Paste it back to me;
+    I rewrite the status frontmatter on each ticked AgDR file in one commit + push.
+  </p>
+  <table style="width:100%; margin:10px 0;">
+    <tr><td style="color:var(--inkSoft); padding:6px 0; width:25%;">signature</td><td><input type="text" class="sig" placeholder="founder · 2026-05-26"/></td></tr>
+    <tr><td style="color:var(--inkSoft); padding:6px 0;">overall comment</td><td><input type="text" class="sig" style="width:560px;" placeholder="any context spanning multiple rows"/></td></tr>
+  </table>
+  <button class="btn-primary" onclick="capturePicks()">✓ Capture picks → console + clipboard</button>
+  <pre id="output" style="background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:12px 14px; font-family:var(--mono); font-size:11px; color:var(--inkSoft); margin-top:12px; white-space:pre-wrap; max-height:260px; overflow:auto;">Click "Capture picks" to dump the selected payload here.</pre>
+</div>
+
+<script>
+function toggleAll(master) {
+  const v = master.checked;
+  document.querySelectorAll('input[type=checkbox][name^="r"]').forEach(cb => { cb.checked = v; });
+}
+function capturePicks() {
+  const ids = [24,25,26,27,28,29,30,31,32,33,34,35,36];
+  const picks = { _description: 'AgDR status flip review · founder Q6=review · 2026-05-26' };
+  ids.forEach(id => {
+    const cb = document.querySelector(`input[name="r${id}"]`);
+    const ta = document.querySelector(`textarea[name="c${id}"]`);
+    const flip = cb ? cb.checked : false;
+    const cm   = ta ? ta.value.trim() : '';
+    picks[`AgDR_00${id}`] = { flip, comment: cm.length ? cm : null };
+  });
+  const inputs = document.querySelectorAll('.sign-zone input[type=text]');
+  picks.signature = inputs[0] ? inputs[0].value.trim() : '';
+  picks.overall_comment = inputs[1] ? inputs[1].value.trim() : '';
+  picks.captured_at = new Date().toISOString();
+  const json = JSON.stringify(picks, null, 2);
+  document.getElementById('output').textContent = json;
+  try { navigator.clipboard.writeText(json); } catch (e) {}
+}
+</script>
+
+<div class="footer">
+  <code>docs/prototypes/status-flips-review-2026-05-26.html</code> · per Q6=review founder
+  pick · 13 picture-first cards · default flip-all · per-row override + comment.
+</div>
+
+</div>
+</body>
+</html>

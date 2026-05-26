@@ -3614,10 +3614,13 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
 const RailMiniMap = () => {
   const [, setBump] = React.useState(0);
   React.useEffect(() => {
+    // AgDR-0047 §D D1 (2026-05-26 perf slice): dropped 500ms setInterval
+    // that forced a global re-render every half-second idle. The
+    // `lm-graph-bump` event fires whenever the graph actually changes
+    // (via bumpGraph rAF coalesce), so the interval was pure overhead.
     const onBump = () => setBump(b => b + 1);
     window.addEventListener('lm-graph-bump', onBump);
-    const t = setInterval(onBump, 500);
-    return () => { window.removeEventListener('lm-graph-bump', onBump); clearInterval(t); };
+    return () => { window.removeEventListener('lm-graph-bump', onBump); };
   }, []);
   const s = (typeof window !== 'undefined' && window.__archhub_canvas_state) || null;
   if (!s) {

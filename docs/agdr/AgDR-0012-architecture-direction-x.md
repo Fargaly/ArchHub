@@ -243,6 +243,24 @@ before any `library.create_node_type` — enforced as Anthropic `strict: true`.
   `Objects.Geometry.Line`, `Objects.Data.DataObject`) instead of ArchHub's
   current `PortType`. The `PortType` enum is deprecated — kept only for
   back-compat on saved graphs that pre-date M1.
+  > **AMENDED 2026-05-26 per Q4 founder pick = rewrite:** the strict
+  > "PortType deprecated" framing here was wrong. PortType serves the
+  > CANVAS-INTERNAL type system (25 values incl. EXEC/CRON/TRIGGER/EVENT
+  > control flow that have no Speckle equivalent); speckle_type serves
+  > the WIRE-TRANSPORT protocol. They're different layers. Migration
+  > shipped 2026-05-26 as a dual-system bridge (AgDR-0047 §C8 resolution):
+  > **(1)** `PortType.to_speckle_type()` + `.from_speckle_type()`
+  > bidirectional adapter with archhub.* namespace for non-Speckle types,
+  > Objects.* for Speckle-native data shapes (commit 37ea0a7);
+  > **(2)** `Port.to_dict()` emits both `type` (legacy) and `speckle_type`
+  > (new) so consumers can prefer the new key (commit 37ea0a7);
+  > **(3)** `Workflow.to_dict()` enriches each edge with `speckle_type`
+  > derived from the source port (commit e629a64);
+  > **(4)** JSX wire renderer prefers `SPECKLE_WIRE[w.speckle_type]`,
+  > falls back to legacy `WIRE[w.t]` (commit 435854b). PortType enum
+  > stays alive as the canvas substrate; speckle_type is the wire-format
+  > identifier. No 33-file rewrite needed — the dual-bridge architecture
+  > resolves the contradiction without destroying the canvas type system.
 
 ### Canvas substrate — ReactFlow
 

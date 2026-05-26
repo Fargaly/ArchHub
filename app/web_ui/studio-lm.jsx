@@ -5918,9 +5918,30 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const fromNode = nodeById[w.from[0]];
     const toNode   = nodeById[w.to[0]];
     const touches = w.from[0] === focusId || w.to[0] === focusId;
+    // AgDR-0047 §D D5 perf (2026-05-26): pre-compute the SVG `d` path
+    // + color + shape so the per-frame .map() in the render path is a
+    // pure read. Was: 50 wires × 60fps = ~6000 string allocs/sec just
+    // for `d`. Now: d/color/shape/shapeDash/shapeW computed once per
+    // wires-memo-rebuild (nodeById / focusId / graphBump dep set).
+    const dx = Math.max(40, Math.abs(to.x - from.x) * 0.5);
+    const d = `M${from.x},${from.y} C${from.x+dx},${from.y} ${to.x-dx},${to.y} ${to.x},${to.y}`;
+    const color = (w.speckle_type && SPECKLE_WIRE[w.speckle_type])
+               || WIRE[from.t]
+               || LM.inkSoft;
+    // Grasshopper-style data-shape from src cooked value (AgDR-0007).
+    const cv = fromNode && fromNode.cooked && fromNode.cooked.value;
+    let shape = 'scalar';
+    if (Array.isArray(cv)) {
+      shape = (cv.length > 0 && Array.isArray(cv[0])) ? 'tree' : 'list';
+    }
+    const shapeW = shape === 'tree' ? 3.6
+                 : shape === 'list' ? 2.8 : 1.6;
+    const shapeDash = (shape === 'tree' || from.t === 'any')
+                    ? '8 5' : null;
     return {
       i, x1: from.x, y1: from.y, x2: to.x, y2: to.y, raw: w,
       t: from.t,
+      d, color, shape, shapeW, shapeDash,
       animated: (fromNode && fromNode.state === 'running') ||
                 (toNode && toNode.state === 'running'),
       focused: touches,
@@ -6051,37 +6072,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             </filter>
           </defs>
           {wires.map(w => {
-            const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
-            const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
-            // AgDR-0012 §232-233 migration · Stage 4 (2026-05-26):
-            // prefer Speckle-protocol type when the wire carries one
-            // (enriched at Workflow.to_dict per Stage 3). Fall back to
-            // legacy PortType key for graphs without enrichment.
-            const color = (w.speckle_type && SPECKLE_WIRE[w.speckle_type])
-                       || WIRE[w.t]
-                       || LM.inkSoft;
+            // AgDR-0047 §D D5 perf (2026-05-26): d/color/shape/shapeW/
+            // shapeDash now pre-computed in the wires useMemo above.
+            // Only the selection-dependent + opacity bits stay here.
+            const { d, color, shapeW, shapeDash } = w;
             const isSel = selectedWire === w.i;
-            // SLICE D (AgDR-0007): fancy-wire shape encoding — read the
-            // source node's `cooked.value` to derive a Grasshopper-style
-            // data-shape: scalar (thin) / list (thick) / tree (thick
-            // dashed). Falls back to thin when nothing cooked yet.
-            // Perf 2026-05-25: was O(N) .find per wire on every render —
-            // M wires × N nodes = O(M·N) per frame. nodeById is a dict
-            // already in scope; O(1) lookup.
-            const srcId = w.raw && w.raw.from && w.raw.from[0];
-            const src = srcId && nodeById[srcId];
-            const cv = src && src.cooked && src.cooked.value;
-            let shape = 'scalar';
-            if (Array.isArray(cv)) {
-              shape = (cv.length > 0 && Array.isArray(cv[0])) ? 'tree' : 'list';
-            }
-            const shapeW = shape === 'tree' ? 3.6
-                         : shape === 'list' ? 2.8 : 1.6;
             const strokeW = isSel ? 3.6
                          : (w.focused ? Math.max(shapeW, 2.6) : shapeW);
-            // any-typed wires render dashed regardless of shape (AgDR-0001).
-            const shapeDash = (shape === 'tree' || w.t === 'any')
-                            ? '8 5' : null;
             const op = isSel ? 1 : (w.focused ? 1 : 0.5);
             return (
               <g key={w.i}>

@@ -120,3 +120,96 @@ def test_round_trip_through_to_dict_and_from_dict():
         d = p.to_dict()
         back = Port.from_dict(d)
         assert back.type is pt, f"{pt} lost identity through dict round-trip"
+
+
+# ── Stage 3: wire metadata enrichment ───────────────────────────────
+
+def test_workflow_to_dict_enriches_edges_with_speckle_type():
+    """Stage 3: Workflow.to_dict() emits `speckle_type` on each edge
+    derived from the source node's source port type. JSX wire renderer
+    can read it directly without doing the node + port lookup itself."""
+    from workflows.graph import Node, Edge, Workflow
+    wf = Workflow.new("test")
+    src = Node(
+        id="src", type="connector.run", label="Revit",
+        inputs=[],
+        outputs=[Port(name="walls", type=PortType.ELEMENT)],
+    )
+    dst = Node(
+        id="dst", type="ai.classify", label="Classify",
+        inputs=[Port(name="input", type=PortType.ELEMENT)],
+        outputs=[],
+    )
+    wf.add_node(src)
+    wf.add_node(dst)
+    wf.add_edge(Edge(
+        id="e1", src_node="src", src_port="walls",
+        dst_node="dst", dst_port="input",
+    ))
+    d = wf.to_dict()
+    assert len(d["edges"]) == 1
+    edge_d = d["edges"][0]
+    assert edge_d["speckle_type"] == "Objects.BuiltElements.Base"
+
+
+def test_workflow_to_dict_edge_speckle_type_for_control_flow():
+    """Control-flow port types emit the archhub.* namespace so JSX
+    can colour exec wires differently from data wires."""
+    from workflows.graph import Node, Edge, Workflow
+    wf = Workflow.new("test")
+    src = Node(
+        id="trig", type="control.cron", label="Daily",
+        inputs=[],
+        outputs=[Port(name="fire", type=PortType.TRIGGER, exec=True)],
+    )
+    dst = Node(
+        id="run", type="connector.run", label="Run",
+        inputs=[Port(name="exec", type=PortType.EXEC, exec=True)],
+        outputs=[],
+    )
+    wf.add_node(src)
+    wf.add_node(dst)
+    wf.add_edge(Edge(
+        id="e1", src_node="trig", src_port="fire",
+        dst_node="run", dst_port="exec",
+    ))
+    d = wf.to_dict()
+    assert d["edges"][0]["speckle_type"] == "archhub.control.trigger"
+
+
+def test_workflow_to_dict_edge_speckle_type_omitted_when_src_missing():
+    """If the source node or port doesn't exist, the enrichment skips
+    silently. Consumers tolerate missing key per Stage 2 contract."""
+    from workflows.graph import Edge, Workflow
+    wf = Workflow.new("test")
+    # No nodes added — orphan edge
+    wf.add_edge(Edge(
+        id="orphan", src_node="ghost", src_port="x",
+        dst_node="phantom", dst_port="y",
+    ))
+    d = wf.to_dict()
+    assert "speckle_type" not in d["edges"][0]
+
+
+def test_workflow_round_trip_preserves_edges_and_enrichment():
+    """Workflow → JSON → Workflow round-trip; verify edges keep their
+    src/dst routing AND the re-serialised form still carries
+    speckle_type enrichment."""
+    from workflows.graph import Node, Edge, Workflow
+    wf = Workflow.new("test")
+    wf.add_node(Node(
+        id="a", type="x", label="A",
+        outputs=[Port(name="out", type=PortType.STRING)],
+    ))
+    wf.add_node(Node(
+        id="b", type="y", label="B",
+        inputs=[Port(name="in", type=PortType.STRING)],
+    ))
+    wf.add_edge(Edge(
+        id="e", src_node="a", src_port="out", dst_node="b", dst_port="in",
+    ))
+    json_text = wf.to_json()
+    wf2 = Workflow.from_json(json_text)
+    assert len(wf2.edges) == 1
+    d2 = wf2.to_dict()
+    assert d2["edges"][0]["speckle_type"] == "Objects.Primitive.String"

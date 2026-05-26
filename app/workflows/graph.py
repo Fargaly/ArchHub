@@ -334,12 +334,33 @@ class Workflow:
         return [e for e in self.edges if e.src_node == node_id]
 
     # ---- serialization -----
+    def _enriched_edge_dict(self, edge: "Edge") -> dict:
+        """AgDR-0012 §232-233 migration · Stage 3 (Q4 2026-05-26):
+        emit `speckle_type` per edge by deriving it from the source
+        node's source port. Edge struct stays slim (no new field);
+        the enrichment happens at serialization time so consumers
+        like the JSX wire renderer can read it directly without a
+        node + port lookup of their own.
+
+        Falls back gracefully: if src node / src port can't be
+        resolved, the key is omitted (back-compat — consumers must
+        tolerate missing key per Stage 2 contract).
+        """
+        d = edge.to_dict()
+        src_node = self.get_node(edge.src_node)
+        if src_node is not None:
+            port = next((p for p in src_node.outputs
+                          if p.name == edge.src_port), None)
+            if port is not None:
+                d["speckle_type"] = port.type.to_speckle_type()
+        return d
+
     def to_dict(self) -> dict:
         return {
             "id": self.id, "name": self.name, "description": self.description,
             "schema_version": self.schema_version,
             "nodes":    [n.to_dict() for n in self.nodes],
-            "edges":    [e.to_dict() for e in self.edges],
+            "edges":    [self._enriched_edge_dict(e) for e in self.edges],
             "triggers": [t.to_dict() for t in self.triggers],
             "inputs":   [p.to_dict() for p in self.inputs],
             "outputs":  [p.to_dict() for p in self.outputs],

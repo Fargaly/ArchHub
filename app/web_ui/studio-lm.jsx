@@ -5182,6 +5182,46 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
 
+  // AgDR-0047 §D D10 perf (2026-05-26): cache wrapRef rect to avoid
+  // forced-layout flushes on every mouse-move / drop / drag tick. The
+  // raw getBoundingClientRect() reads at ~12 sites in this component
+  // each force the browser to flush pending layout. ResizeObserver +
+  // scroll listener invalidate on real layout changes; reads from
+  // `wrapRectRef.current` are O(1).
+  const wrapRectRef = React.useRef(null);
+  const getWrapRect = React.useCallback(() => {
+    if (wrapRectRef.current) return wrapRectRef.current;
+    if (!wrapRef.current) return null;
+    const r = wrapRef.current.getBoundingClientRect();
+    wrapRectRef.current = r;
+    return r;
+  }, []);
+  React.useEffect(() => {
+    if (!wrapRef.current) return;
+    const update = () => {
+      try {
+        if (wrapRef.current) {
+          wrapRectRef.current = wrapRef.current.getBoundingClientRect();
+        }
+      } catch (e) {}
+    };
+    update();
+    let ro = null;
+    try {
+      if (typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(update);
+        ro.observe(wrapRef.current);
+      }
+    } catch (e) {}
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      try { if (ro) ro.disconnect(); } catch (e) {}
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
   // Window-level toast bridge — handlers in StudioLM root dispatch
   // `lm-canvas-toast` so feedback shows here. Previously orphaned: events
   // fired but no listener rendered them. Founder bug: spawn happens but
@@ -5210,9 +5250,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }, [allNodes]);
 
   // ─── Convert client coords → canvas coords (the world space) ────────
+  // AgDR-0047 §D D10 (2026-05-26): rect read via getWrapRect cache —
+  // toCanvasCoords is called per mouse-move during drag (~60Hz).
   const toCanvasCoords = (clientX, clientY) => {
-    if (!wrapRef.current) return { x: clientX, y: clientY };
-    const rect = wrapRef.current.getBoundingClientRect();
+    const rect = getWrapRect();
+    if (!rect) return { x: clientX, y: clientY };
     return {
       x: (clientX - rect.left - pan.x) / zoom,
       y: (clientY - rect.top  - pan.y) / zoom,

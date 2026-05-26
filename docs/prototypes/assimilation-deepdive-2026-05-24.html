@@ -613,6 +613,13 @@ section.proto{max-width:1280px;margin:0 auto;padding:48px 24px;border-bottom:1px
         <div class="fam-row"><div class="nm">render.tiled_diffusion</div><div class="desc">Stitch 8K+ from tiled passes</div><div class="src comfy">COMFY</div></div>
         <div class="fam-row"><div class="nm">render.style_transfer</div><div class="desc">A.style → B.content</div><div class="src comfy">COMFY</div></div>
         <div class="fam-row"><div class="nm">render.qwen_image</div><div class="desc">Qwen-Image txt2img / edit · $0.02 / img</div><div class="src alibaba">ALI</div></div>
+        <!-- ── Merged 2026-05-26 from withdrawn `visual-render-sketch-library-2026-05-26.html` per Q12 founder pick ── -->
+        <div class="fam-row"><div class="nm">render.preset</div><div class="desc"><strong>Lumion / D5 / Enscape preset pick</strong> · 3rd-party AEC viz host</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">render.queue</div><div class="desc">Batch queue with progress · multi-image submission</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">render.viewset</div><div class="desc">Pick views from Revit/Rhino · multi-view source</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">render.compose</div><div class="desc">Layout multiple renders on a single sheet</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">render.upscale_magnific</div><div class="desc">Magnific Creative · vendor variant of render.upscale</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">render.upscale_topaz</div><div class="desc">Topaz AI Gigapixel · vendor variant of render.upscale</div><div class="src new">NEW · merged 2026-05-26</div></div>
       </div>
     </div>
 
@@ -697,6 +704,21 @@ section.proto{max-width:1280px;margin:0 auto;padding:48px 24px;border-bottom:1px
         <div class="fam-row"><div class="nm">view.table</div><div class="desc">List of dicts → table</div><div class="src new">NEW</div></div>
         <div class="fam-row"><div class="nm">view.console</div><div class="desc">Stream log lines · timestamped</div><div class="src have">HAVE</div></div>
         <div class="fam-row"><div class="nm">view.status_badge</div><div class="desc">OK / warn / err state on a wire</div><div class="src new">NEW</div></div>
+      </div>
+    </div>
+
+    <!-- 12b. IN-HOST VIEW + SKETCH AUTHORING — merged 2026-05-26 from Prototype A per Q12 -->
+    <div class="fam">
+      <div class="fam-h"><div class="ic">✎</div><div class="info"><h3>12b · In-host view + sketch authoring</h3><div class="sub">create + manipulate the actual Revit/Rhino views and sketches the renders need</div></div><div class="count">7 nodes</div></div>
+      <div class="fam-body">
+        <div class="fam-row"><div class="nm">view.create</div><div class="desc">New 3D / plan / section view in Revit · host-side</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">view.crop</div><div class="desc">Apply crop region to current view from selection · host-side</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">view.layout_place</div><div class="desc">Drop view on a sheet at coordinates · host-side</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">view.thumbnail</div><div class="desc">Snapshot PNG of current view · feeds render.viewset / vision.*</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">sketch.plane</div><div class="desc">Create sketch plane in Revit/Rhino · for in-host annotation</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">sketch.export_svg</div><div class="desc">Vector export for Illustrator · post-process pipeline hand-off</div><div class="src new">NEW · merged 2026-05-26</div></div>
+        <div class="fam-row"><div class="nm">sketch.canvas</div><div class="desc">Freehand WebGL pad attached to node · deferred multi-week sub-project</div><div class="src new">NEW · merged 2026-05-26 (deferred)</div></div>
+        <div class="fam-row"><div class="nm">img.material_swatch</div><div class="desc">Material thumbnails from a palette name · feeds img.* + render.lora</div><div class="src new">NEW · merged 2026-05-26</div></div>
       </div>
     </div>
 

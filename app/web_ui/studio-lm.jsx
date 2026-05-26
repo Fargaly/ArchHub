@@ -4790,11 +4790,18 @@ const BrainChip = ({ compact }) => {
 // dispatch so the existing popover renders.
 const HomeGraphHealthChip = () => {
   const [counts, setCounts] = React.useState({ err:0, warn:0, total:0 });
+  // AgDR-0047 §D D8 perf (2026-05-26): hash + skip mirror of
+  // GraphHealthBadge — Home chip polls on the same `lm-graph-bump`
+  // event so it shouldn't re-validate unchanged graph state either.
+  const lastHashRef = React.useRef(null);
   React.useEffect(() => {
     let cancelled = false;
     const pull = async () => {
       try {
-        const res = await bridgeAsync('graph_validate', JSON.stringify(LM_GRAPH || { nodes:[], wires:[] }));
+        const payload = JSON.stringify(LM_GRAPH || { nodes:[], wires:[] });
+        if (payload === lastHashRef.current) return;
+        lastHashRef.current = payload;
+        const res = await bridgeAsync('graph_validate', payload);
         if (cancelled) return;
         if (res && res.status === 'ok') {
           setCounts({
@@ -7080,14 +7087,22 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
   const [counts, setCounts] = React.useState({ err: 0, warn: 0 });
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  // AgDR-0047 §D D8 perf (2026-05-26): hash + skip when graph unchanged.
+  // graphBump fires on every wire bump (incl rAF-coalesced streaming),
+  // so the validator was hitting the bridge even when the graph hadn't
+  // actually mutated. Cache the serialised payload + skip the slot call
+  // when identical to the previous one.
+  const lastHashRef = React.useRef(null);
 
   React.useEffect(() => {
     let cancelled = false;
     const t = setTimeout(async () => {
+      const payload = JSON.stringify(LM_GRAPH);
+      if (payload === lastHashRef.current) return;
+      lastHashRef.current = payload;
       setBusy(true);
       try {
-        const res = await bridgeAsync('graph_validate',
-          JSON.stringify(LM_GRAPH));
+        const res = await bridgeAsync('graph_validate', payload);
         if (cancelled) return;
         if (res && res.status === 'ok') {
           setIssues(res.issues || []);

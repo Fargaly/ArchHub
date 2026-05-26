@@ -4715,6 +4715,13 @@ const BrainChip = ({ compact }) => {
     // can exceed bridgeAsync's default 1.5s ceiling). Re-parse the
     // JSON envelope ourselves since the slot returns a string.
     const pull = () => {
+      // AgDR-0047 §D D9 perf (2026-05-26): skip the poll when the
+      // window/tab isn't visible. ArchHub minimised to tray = no need
+      // to keep hammering the brain daemon every 4s.
+      try {
+        if (typeof document !== 'undefined'
+            && document.visibilityState === 'hidden') return;
+      } catch (e) {}
       try {
         const b = window.archhub;
         if (!b || typeof b.get_brain_stats !== 'function') return;
@@ -12518,7 +12525,15 @@ const PerfHud = () => {
   React.useEffect(() => {
     if (!open) return;
     baselineRef.current = { saveCalls: (window.__archhub_perf||{}).saveCalls || 0, t: Date.now() };
-    const t = setInterval(() => setTick(x => x + 1), 1000);
+    // AgDR-0047 §D D9 perf (2026-05-26): pause the 1s tick while window
+    // is hidden — no point computing fps for a minimised window.
+    const t = setInterval(() => {
+      try {
+        if (typeof document !== 'undefined'
+            && document.visibilityState === 'hidden') return;
+      } catch (e) {}
+      setTick(x => x + 1);
+    }, 1000);
     return () => clearInterval(t);
   }, [open]);
   if (!open) return null;
@@ -12560,6 +12575,11 @@ const MemoryStripItem = () => {
   React.useEffect(() => {
     let cancelled = false;
     const pull = async () => {
+      // AgDR-0047 §D D9 perf (2026-05-26): skip when window/tab hidden.
+      try {
+        if (typeof document !== 'undefined'
+            && document.visibilityState === 'hidden') return;
+      } catch (e) {}
       try {
         const r = await bridgeAsync('memory_stats');
         if (cancelled) return;

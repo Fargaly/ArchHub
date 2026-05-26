@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -31,7 +31,7 @@ def _path_for(workflow: Workflow) -> Path:
 
 # ---------------------------------------------------------------------------
 def save_workflow(workflow: Workflow) -> Path:
-    workflow.updated_at = datetime.utcnow().isoformat()
+    workflow.updated_at = datetime.now(timezone.utc).isoformat()
     path = _path_for(workflow)
     path.write_text(workflow.to_json(), encoding="utf-8")
     return path

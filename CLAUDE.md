@@ -179,6 +179,115 @@ Workshop output is an AgDR (per existing AGDR mandate) + a closed
 thread of next actions. Only after the AgDR ships `executed` and the
 founder confirms does shipping resume.
 
+## NEVER-ASK-PICK-ONE MANDATE (founder, 2026-05-26 — non-negotiable)
+
+Banned forever: presenting the founder a menu of `A / B / C / pick one`
+when the items are all work to be done. The founder said 2026-05-26:
+*"whenever you ask me to select between a set of tasks... be sure I'll
+always tell you to do all of them.... don't ask that again."*
+
+Rules:
+
+- **When listing pending work, assume "all of them."** Never end a
+  report with "pick A or B." Proceed through all items unless one is a
+  judgement call that genuinely requires the founder's eye (UX
+  direction, architecture lock, business priority).
+- **Spawn parallel sub-agents.** Tasks that touch different files /
+  domains run in parallel. One sub-agent per file-ownership group
+  (e.g. one owns `studio-lm.jsx`, one owns `settings_dialog.py`, etc).
+  Multiple Agent tool calls in a single message = concurrent execution.
+- **Sequence only when forced.** Agents serialise only when they would
+  produce merge conflicts on the same file. Document the wave plan in
+  the report.
+- **Founder sees: the wave plan + the spawn batch + the aggregated
+  results.** Never a "should I do X or Y first?" question.
+- **Judgement calls are different.** Questions of style, vision,
+  architecture lock, or business priority MAY ask the founder. Asking
+  "do you want me to delete this file or move it?" is a judgement
+  call. Asking "should I close gap 1 or gap 2?" is the banned pattern.
+
+## NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES MANDATE (founder, 2026-05-26 — non-negotiable)
+
+The flood-of-AgDRs failure mode is banned. Founder, 2026-05-26: *"don't
+ever create a fucking AgDR again without properly making sure that
+previous work is made."*
+
+Rules:
+
+- **Before writing a new AgDR**, every AgDR with `status: executing` or
+  `status: executed` whose Artifacts list references a UI affordance OR
+  an `app/*` code path must be VERIFIED LIVE in the running app — CDP
+  screenshot of the affordance in use, OR a signed-off mss native
+  capture. If not verified, the new AgDR is blocked and the gap closes
+  first.
+- **Signoffs persist.** When the founder has signed off on a prototype,
+  a fork, a slice, or a direction, that signoff REMAINS valid until a
+  new signoff explicitly supersedes it. Do NOT re-ask for the same
+  signoff in a different wrapper.
+- **No AgDR that proposes redesigning what is already signed off.** If
+  the gap is "code doesn't match signed prototype," the gap is closed
+  by code, not by another design AgDR.
+- **Penalty.** Founder catches a fresh AgDR while a prior one's
+  affordance is still invisible → this mandate hardens + the new AgDR
+  is deleted (not just demoted) and the cited prior work ships first.
+
+## CONSOLIDATE-WITH-ALL-MANDATES MANDATE (founder, 2026-05-26 — non-negotiable)
+
+Every proposal — code change, AgDR, prototype, plan — must be checked
+against EVERY other mandate in this file BEFORE being presented to the
+founder. Cross-mandate conflicts must be surfaced + resolved in the
+proposal itself, not discovered later by the founder.
+
+The pre-proposal checklist (run internally; show the result in the
+proposal):
+
+1. DEFINITION-OF-SHIPPED — does this propose work that lacks a
+   user-visible affordance? → demote to "drafts" until UI lands.
+2. PROTOTYPE-IS-CONTRACT — does this touch a surface with a signed
+   prototype? → mirror the prototype 1:1 or note the deviation in
+   the same proposal.
+3. NO-OPEN-THREADS — does this leave TODOs or "next session" gaps?
+4. PRE-FLIGHT-CHECK — answer all 7 questions for the proposal.
+5. ROLLBACK-PROTOCOL — what's the revert path if it lands wrong?
+6. WORKSHOP-GATE — does any trigger fire? If yes, workshop first.
+7. AUTOMATION — is any step manual that the machine could do?
+8. SESSION-CLOSE — commit + document + restart + CDP verify plan.
+9. ENGINEERING — does this fix the root or the symptom?
+10. AGDR — is an AgDR actually required (architecture-shaped)?
+11. LIBRARY-FIRST + USER-AGENCY — does this respect those locks?
+12. BRAIN-FIRST — has the brain been queried for relevant context?
+13. ANTI-LIE — does the proposal use any of the banned words without
+    the audit table green?
+14. NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES — are all prior AgDRs live?
+
+Any cross-mandate conflict found = name it in the proposal + propose
+resolution. Silent conflicts are violations.
+
+## BIG-PICTURE-PLAN-BEFORE-EXECUTION MANDATE (founder, 2026-05-26 — non-negotiable)
+
+No code change without a big-picture plan recorded first. The plan
+names: the surface the founder will see, the chain of components from
+that surface down to the engine, which mandates apply, which prior
+signed work is being preserved vs replaced, and the verification
+strategy.
+
+Plan template (kept short — under 10 lines for small changes):
+
+```
+TARGET SURFACE: <where founder clicks / sees>
+CHAIN:          <UI → bridge → engine; name each file + line>
+TOUCHED:        <files this change edits>
+PRESERVED:      <prior signed work this change does NOT touch>
+REPLACES:       <prior signed work this change supersedes (cite signoff)>
+MANDATES:       <list which mandates apply + how>
+VERIFY:         <CDP / mss screenshot path + acceptance test>
+ROLLBACK:       <how to undo if wrong>
+```
+
+The plan precedes the first file edit. Founder sees it BEFORE the work
+ships. Plans for trivial changes (one-line fix) can be one sentence;
+plans for cross-surface changes are full template.
+
 ## ANTI-LIE MANDATE (founder, 2026-05-25 — non-negotiable, applies to EVERY session forever)
 
 The failure mode this mandate kills: Claude treats "code compiles + unit

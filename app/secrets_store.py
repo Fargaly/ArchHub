@@ -70,22 +70,66 @@ _ENV_VAR_MAP = {
     "google":    ["GOOGLE_API_KEY", "GOOGLE_GENERATIVEAI_API_KEY"],
 }
 
+# Per-call breadcrumb showing where the last loaded key came from.
+# Read by Settings → Secrets UI (agent-3-owned) to render the source row.
+# Shape: {"source": "alias|keyring|file|env|none", "resolver": str|None,
+#         "last4": str|None}
+provider_meta: dict = {}
+
+
+def _set_meta(provider: str, source: str, resolver: str | None,
+              value: str | None) -> None:
+    global provider_meta
+    last4 = None
+    if value:
+        last4 = ("..." + value[-4:]) if len(value) >= 4 else ("..." + value)
+    provider_meta = {
+        "provider": provider,
+        "source": source,
+        "resolver": resolver,
+        "last4": last4,
+    }
+
+
 def load_api_key(provider: str) -> str | None:
-    # 1. Keyring / obfuscated file (user-entered via Settings)
+    # 1. ResolverRegistry alias path (op://, wcm://, env://, file://, inline:)
+    #    — refs only, never plain values. Per BRAIN-FIRST mandate.
+    try:
+        from resolver_registry import ResolverRegistry  # local import to dodge cycle
+        reg = ResolverRegistry()
+        result = reg.resolve_alias(provider)
+        if "value" in result:
+            _set_meta(provider, source="alias",
+                      resolver=result.get("resolver"),
+                      value=result["value"])
+            return result["value"]
+    except Exception:
+        # Registry missing or import error — fall through to legacy.
+        pass
+
+    # 2. Legacy keyring / obfuscated file (user-entered via Settings)
     kr = _try_keyring()
     if kr:
         try:
             v = kr.get_password(SERVICE, provider)
-            if v: return v
-        except Exception: pass
+            if v:
+                _set_meta(provider, source="keyring", resolver=None, value=v)
+                return v
+        except Exception:
+            pass
     stored = _file_load(provider)
     if stored:
+        _set_meta(provider, source="file", resolver=None, value=stored)
         return stored
-    # 2. Environment-variable fallback (auto-detected, no Settings entry needed)
+
+    # 3. Environment-variable fallback (auto-detected, no Settings needed)
     for env_name in _ENV_VAR_MAP.get(provider, []):
         v = os.environ.get(env_name)
         if v:
+            _set_meta(provider, source="env", resolver=env_name, value=v)
             return v
+
+    _set_meta(provider, source="none", resolver=None, value=None)
     return None
 
 def delete_api_key(provider: str) -> None:

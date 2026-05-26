@@ -13,14 +13,16 @@ supersedes:
   - AgDR-0001 §7.2 (add-node UX as primary entry → demoted to fallback; composer becomes primary)
   - AgDR-0007 §"Wire colour key" (PortType lowercased keys → replaced by Speckle-type colour mapping)
 superseded_sections:
-  - "ReactFlow is the canvas substrate" → superseded by AgDR-0046 (custom canvas is the substrate of record; ReactFlow never installed)
+  - "ReactFlow is the canvas substrate" → superseded by AgDR-0048 (custom canvas is the substrate of record; ReactFlow never installed — renumber chain 0045→0046→0048)
   - "LIBRARY-FIRST mandate" enforcement details → details refined by AgDR-0013 / AgDR-0014 (library-first gate + library design system)
   - "Speckle wire transport" details → refined by AgDR-0016 (speckle-share-adapter-router-gate)
 ---
 
 > **DOC BANNER — partial supersede 2026-05-25:**
 > The "ReactFlow is the canvas substrate" line below is no longer
-> the architecture lock — see `AgDR-0046-supersede-reactflow-lock.md`.
+> the architecture lock — see `AgDR-0048-supersede-reactflow-lock.md`
+> (renumber chain 0045→0046→0048; founder's AgDR-0046 is the brain
+> settings rebuild workshop, not this one).
 > Custom canvas (`NodeView` + `WireLayer`) is the substrate of record.
 > Other sections of this AgDR remain in force.
 

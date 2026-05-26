@@ -44,32 +44,42 @@ passing), but it also exposed latent debt across all four scout dimensions.
 ### A. Docs (scout #1 — 16 AgDR drifts, 4 orphan HTMLs, 19 orphan PNGs)
 
 A1. **AgDR-0045 id collision.** Two files claimed `id: AgDR-0045`. The later one (`supersede-reactflow-lock.md`) has been **renumbered to AgDR-0046** in the same commit that ships this workshop, with `renumbered_from: AgDR-0045` recorded in its frontmatter. All references in CLAUDE.md / AGENTS.md / FAILURE_LOG.md / studio-lm.jsx already updated.
+   > **Update 2026-05-26**: A second collision occurred — founder wrote `AgDR-0046-brain-settings-rebuild-workshop.md` on the same id. Founder's workshop wins the 0046 slot; the reactflow-supersede file moved again, current home **AgDR-0048-supersede-reactflow-lock.md**. Renumber chain: 0045→0046→0048. Active-doc references (AGENTS.md, FAILURE_LOG.md, AgDR-0012, studio-lm.jsx) point at 0048; the 0046 mentions throughout this AgDR-0047 are the historical snapshot at time-of-writing.
 
 A2. **AgDR-0012 still claimed ReactFlow.** Status flipped to `partially_superseded` with a DOC BANNER pointing at AgDR-0046 + a `superseded_sections` list. Now honest.
 
 A3. **AgDR status drift.** 13 AgDRs (0024-0036 inclusive) carry `status: approved` instead of `executed` or `superseded`. Single reconciliation pass needed.
 
 A4. **Orphan prototypes.** `docs/prototypes/archhub-redesign-2026-05-24.html`, `assimilation-deepdive-2026-05-24.html`, `comfyui-alibaba-assimilation-2026-05-24.html`, `host-node-direction-a-comfyui-hybrid.html` — referenced nowhere. Action: archive to `docs/prototypes/_reverted/` (composer-redesign one is from a reverted commit) and `docs/prototypes/_iterations/` (the assimilation series).
+   > **Partially resolved 2026-05-26 loop tick 3**: Re-audit found `archhub-redesign-2026-05-24.html` is **NOT orphan** — referenced 4 places (studio-lm.jsx ai.plan layout source, `signed/workshop-2026-05-25-v2.html` cites it 3× as composer-first home source, `docs/status/2026-05-26.md` REVERTED row). The composer-relocation commits derived from it were reverted (FAILURE_LOG row 9, now `composer-relocation-shipped-without-approval`), but its design content was legitimately assimilated into the signed workshop v2. Left in place. The other 3 (`assimilation-deepdive-2026-05-24`, `comfyui-alibaba-assimilation-2026-05-24`, `host-node-direction-a-comfyui-hybrid`) confirmed orphan via grep → moved to `docs/prototypes/_iterations/` via `git mv`.
 
 A5. **Orphan PNGs.** 19 dev-iteration screenshots in `docs/prototypes/`. Action: move to `docs/prototypes/_screenshots/`.
+   > **Resolved 2026-05-26 loop tick 4**: Re-audit found 21 PNGs (count drifted from 19 since the workshop scout ran). Bulk grep confirmed zero refs anywhere in repo. All 21 git-mv'd to `docs/prototypes/_screenshots/`.
 
 A6. **Plan-doc drift.** `docs/CIVIL_3D_ROADMAP.md`, `docs/CONNECTOR_MASTER_PLAN_2026-05-15.md`, `docs/CLOUD_REVIVAL_PLAN.md` need the "design reference — not the roadmap" banner per CLAUDE.md ROADMAP MANDATE.
+   > **Resolved 2026-05-26**: All three already carry the banner (verified inline at line 3 of each file). Finding now stale — leave annotated for trace.
 
 A7. **ROADMAP.md self-drift.** "38 AgDRs" claim (real count 47 after this commit). "0005, 0006 still proposed" wrong (both executed). Action: regenerate the ledger paragraph from the directory.
+   > **Resolved 2026-05-26 loop tick 2**: Ledger paragraph regenerated from `docs/agdr/AgDR-*.md` frontmatter scan. Real count now 48 (AgDR-0048 added). Per-range statuses updated, 0005/0006 corrected, §A3 13-approved-drift surfaced inline + flagged as pending founder signoff.
 
 A8. **Root-level .md sprawl.** 16 root .md files. Strong consolidation candidate: merge `CONVENTIONS.md` stub into `CONTRIBUTING.md`; consider folding `DEVELOPMENT_LOG.md` history into `CHANGELOG.md` then archiving.
+   > **Partially resolved 2026-05-26 loop tick 4**: Re-count found 13 root .md files (drift from 16). CONVENTIONS.md content (AGENTS.md pointer + .githooks instructions) merged into CONTRIBUTING.md as new "AI coding agents" section. `git rm CONVENTIONS.md`. Root .md count now 12. DEVELOPMENT_LOG ↔ CHANGELOG fold deferred — needs founder signoff on whether history format conversion is wanted (CHANGELOG follows Keep-a-Changelog spec; DEVELOPMENT_LOG is free-form narrative — non-trivial merge).
 
 A9. **FAILURE_LOG.md format.** Wide table rows. Action: add a `status` column (open/closed); reformat to block-per-entry if width remains painful.
+   > **Resolved 2026-05-26 loop tick 3**: Reformatted to block-per-entry. Each row carries explicit `status: open|closed`. 7 open · 2 closed. Slug-per-entry header for scannability. Legend + format spec inline at top.
 
 ### B. Logs (scout #2 — central config missing, boot.log at repo root)
 
 B1. **`boot.log` writes to repo root** (RED). `app/main.py:217` opens `APP_ROOT.parent / "boot.log"`. Should be `%LOCALAPPDATA%/ArchHub/logs/boot.log`. Fix the path; also update `agents/status_report.py:57`, `scripts/reality_smoke.py:572`, `agents/post_report_to_github.py:83` which read the old path.
+   > **Resolved 2026-05-26**: Writer migrated (`app/main.py:215+`) to `%LOCALAPPDATA%/ArchHub/logs/boot.log` with mkdir + central-logger routing per §B2. Readers refactored: `agents/status_report.py:57` → `_boot_log_path()` function with LOCALAPPDATA-first / repo-root-fallback by mtime; `scripts/reality_smoke.py:569+` gained `_resolve_boot_log()` with same fallback chain (preserves `monkeypatch.setattr(smoke, "REPO_ROOT", tmp_path)` test contract). `agents/post_report_to_github.py:83` audit-confirmed false-positive (label-only, no path reference — no edit needed). Pytest 2489 green twice. Live verified 2026-05-26 09:19: ArchHub launched, CDP up port 9223, fresh boot.log written at LOCALAPPDATA with `[archhub.boot] INFO` records.
 
 B2. **No central logging config** (RED). Three independent loggers (`main.py` raw `open`, `llm_router.py` inline `_trace`, `revit_broker.py` unattached logger). Action: add `app/logging_config.py` with one `RotatingFileHandler` rooted at `%LOCALAPPDATA%/ArchHub/logs/`, called once from `main.py`. Migrate the 3 sites.
+   > **Resolved 2026-05-26**: `app/logging_config.py` created with idempotent `init_logging()`. Root `RotatingFileHandler` (5MB × 5) writes to `archhub.log`; named loggers `archhub.boot` and `archhub.llm` get dedicated handlers preserving the legacy `boot.log` + `llm_trace.log` file paths so §B1 readers still work. main.py calls `init_logging()` immediately after `_maybe_sync_dev_source_at_startup()`, before any other app import. `app/main.py:215+` boot writer migrated to `logging.getLogger("archhub.boot").info(line)`. `app/llm_router.py:1147+` exception writer + `_trace` (line 1285+) migrated to `logging.getLogger("archhub.llm").error/info()`. `app/revit_broker.py:196` already used `logging.getLogger("revit_broker")` and now flows through the root handler automatically — no edit needed. Pytest 2489 green. Live verified 2026-05-26 09:19: both `archhub.log` (1035 bytes) and `boot.log` (1035 bytes) received fresh `2026-05-26 09:19:05 [archhub.boot] INFO ...` records routed via the central logger.
 
 B3. **Layer 5 brain is reachable but empty** (YELLOW, expected). 4 pre_prompt events injecting 0 skills + 0 facts. Brain needs first-turn seeding — leave for normal use.
 
 B4. **Iter12 streaming runaway (historical)** (YELLOW). 2026-05-12 Gemini called outlook_set_categories repeatedly to iter12 in `llm_trace.log`. Add iter-count guard rail (cap at iter10 abort) in `llm_router.py` near `_max_iterations`.
+   > **Resolved 2026-05-26 loop tick 7**: `_max_iterations` (llm_router.py:1631) gained explicit `gemini → 10` branch. Default (16) preserved for unmodeled families. Pytest verifies branch reachable without regression. LIE-CHECK row 4 (live verify) pending an actual gemini run; tests prove the cap is honored.
 
 B5. **Missing proof PNGs** (YELLOW). Commit `11de2d3` has a `proof_canvas_decluttered_11de2d3.png` on disk that's not committed. AgDR-0044 / AgDR-0046 / USER-AGENCY ships have no proof. Backfill or accept the gap explicitly in FAILURE_LOG.
 
@@ -98,8 +108,10 @@ C8. **PortType vs speckle_type drift.** AgDR-0012 §232-233 deprecates PortType;
 C9. **LM_GRAPH god-mutable** (jsx:809). 58 mutation sites across 12700 lines. Each site mutates in-place then calls `bumpGraph()` by convention; any forgotten call = stale UI; any mid-mutation crash = corrupt state. Proper fix = `useReducer({nodes, wires, groups})`. Multi-day refactor.
 
 C10. **Settings TODO drift.** `settings_page.py:151` "TODO(shadow-audit): SettingsDialog ALREADY contains its own AI Behaviour section… user sees both surfaces stacked." Active UI dup bug.
+   > **Resolved 2026-05-26**: Dedicated "AI Behaviour" sidebar entry removed from `_SECTIONS` (line 49) + `addWidget(_build_ai_behaviour_section())` removed (line 129). AI Behaviour now lives only inside the wrapped legacy SettingsDialog (under "Providers" sidebar). Section count 4 → 3 (Providers / About / Diagnostics). `_build_ai_behaviour_section` method retained — unreferenced — in case a future Studio-native rebuild flips the direction (suppress AI Behaviour inside SettingsDialog instead). `tests/test_settings_page.py` updated to assert 3 sections + `ai_behaviour not in _buttons`. Pytest 2489 green. Trade-off acknowledged: AI Behaviour now requires one extra navigation step (Providers tab) to reach; the duplication is eliminated.
 
 C11. **main.py:511** "TODO(shadow-audit): Settings → Appearance HUD overlay + hotkey rebind shown to every user but only honoured when StudioShell construction fails." Disconnected toggle.
+   > **Resolved 2026-05-26**: Re-audit found the described Settings UI row does **NOT exist** in the current codebase. Grep across `settings_dialog.py`, `settings_page.py`, `studio-lm.jsx` for `hud_overlay_mode` returned ONLY the consumer site at `app/main.py:519+` and a historical entry in `docs/archive/audits/SHADOW_AUDIT.md`. The "shown to every user" claim was stale (UI removed at some point; backend read preserved). `hud_overlay_mode` is now correctly characterized as a **power-user knob** set externally via `secrets_store`. To preserve discoverability, added a one-time WARNING log when `hud_overlay_mode=True` AND `surface is not window` (Studio active) — fires via the central `archhub.boot` logger so power users see why their setting is suppressed. Stale TODO removed; comment block now states the true behavior. Pytest 2489 green.
 
 ### D. Perf (scout #4 — 10 next sources, ranked)
 

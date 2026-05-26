@@ -960,7 +960,7 @@ class ArchHubBridge(QObject):
         title is whatever the user typed (or "Untitled" if blank).
         Returns a JSON object with `id` (fresh slug) + `title`."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             from session_io import SESSIONS_DIR
             SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
             t = (title or "").strip() or "Untitled session"
@@ -978,7 +978,7 @@ class ArchHubBridge(QObject):
                 "id":    slug,
                 "name":  t,
                 "graph": {"nodes": [], "wires": []},
-                "saved_at": datetime.utcnow().isoformat() + "Z",
+                "saved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
             (SESSIONS_DIR / f"{slug}.archhub-session.json").write_text(
                 json.dumps(payload, indent=2), encoding="utf-8",
@@ -1302,8 +1302,8 @@ class ArchHubBridge(QObject):
                     "text/plain": ".txt",
                 }
                 stem += ext_map.get(mime or "", ".bin")
-            from datetime import datetime
-            stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+            from datetime import datetime, timezone
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
             path = stash_dir / f"{stamp}_{stem}"
             path.write_bytes(base64.b64decode(data))
             return _safe_json({"ok": True, "path": str(path),
@@ -3282,7 +3282,7 @@ class ArchHubBridge(QObject):
         try:
             import re as _re
             from pathlib import Path
-            from datetime import datetime
+            from datetime import datetime, timezone
             from session_io import SESSIONS_DIR
             sid = (session_id or "").strip()
             if not sid:
@@ -3313,7 +3313,7 @@ class ArchHubBridge(QObject):
             payload["id"]       = new_slug
             payload["name"]     = base_title
             payload["title"]    = base_title
-            payload["saved_at"] = datetime.utcnow().isoformat() + "Z"
+            payload["saved_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             (SESSIONS_DIR / f"{new_slug}.archhub-session.json").write_text(
                 json.dumps(payload, indent=2, ensure_ascii=False),
                 encoding="utf-8",
@@ -3533,7 +3533,7 @@ class ArchHubBridge(QObject):
         try:
             import os as _os
             import zipfile
-            from datetime import datetime
+            from datetime import datetime, timezone
             from pathlib import Path
             from session_io import SESSIONS_DIR
 
@@ -3551,7 +3551,7 @@ class ArchHubBridge(QObject):
                 downloads.mkdir(parents=True, exist_ok=True)
             except Exception:
                 downloads = home
-            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             zip_path = downloads / f"archhub-export-{ts}.zip"
 
             def _add_dir(z: zipfile.ZipFile, root: Path, arc_prefix: str) -> None:

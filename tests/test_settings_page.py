@@ -7,6 +7,11 @@ Verifies the page structure without painting:
   * Section ids round-trip to the right widget
   * About section renders version/build kv pairs
   * Diagnostics section enumerates connector families
+
+AgDR-0047 §C10 (2026-05-26): the "AI Behaviour" dedicated sidebar
+entry was removed because the legacy SettingsDialog wrapped inside
+"Providers" already exposes the same controls. Section count dropped
+from 4 → 3. Tests updated to match.
 """
 from __future__ import annotations
 
@@ -34,34 +39,36 @@ def page(qapp):
 
 
 class TestSettingsPage:
-    def test_four_sections_present(self, page):
+    def test_three_sections_present(self, page):
+        """AgDR-0047 §C10: AI Behaviour dedicated section removed; lives inside Providers."""
         from settings_page import _SECTIONS
-        assert len(_SECTIONS) == 4
+        assert len(_SECTIONS) == 3
         ids = {sid for sid, _ in _SECTIONS}
-        assert ids == {"providers", "ai_behaviour",
-                        "about", "diagnostics"}
+        assert ids == {"providers", "about", "diagnostics"}
+        # The dedicated builder is retained for future Studio-native
+        # rebuild but no longer registered in the sidebar.
+        assert "ai_behaviour" not in ids
 
     def test_default_selection_is_providers(self, page):
         assert page.stack.currentIndex() == 0
         assert page._buttons["providers"].isChecked()
-        for sid in ("ai_behaviour", "about", "diagnostics"):
+        for sid in ("about", "diagnostics"):
             assert not page._buttons[sid].isChecked()
 
     def test_select_about_flips_stack(self, page):
         page._select("about")
-        assert page.stack.currentIndex() == 2
+        assert page.stack.currentIndex() == 1
         assert page._buttons["about"].isChecked()
         assert not page._buttons["providers"].isChecked()
 
     def test_select_diagnostics_flips_stack(self, page):
         page._select("diagnostics")
-        assert page.stack.currentIndex() == 3
+        assert page.stack.currentIndex() == 2
         assert page._buttons["diagnostics"].isChecked()
 
-    def test_select_ai_behaviour_flips_stack(self, page):
-        page._select("ai_behaviour")
-        assert page.stack.currentIndex() == 1
-        assert page._buttons["ai_behaviour"].isChecked()
+    def test_ai_behaviour_not_in_sidebar(self, page):
+        """AgDR-0047 §C10: dedicated AI Behaviour section was removed."""
+        assert "ai_behaviour" not in page._buttons
 
     def test_select_unknown_section_is_noop(self, page):
         idx_before = page.stack.currentIndex()

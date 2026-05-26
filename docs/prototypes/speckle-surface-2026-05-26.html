@@ -141,7 +141,22 @@
   that DO NOT add cognitive overhead for users who don't care.
 </p>
 
-<h2>Surface 1 · Wire color encoding (live)</h2>
+<div style="background:#2a1812; border:2px solid #d97757; border-radius:8px; padding:14px 20px; margin:20px 0 32px; color:#ece8e0;">
+  <div style="font-family:'JetBrains Mono', ui-monospace, monospace; font-size:11px; letter-spacing:0.18em; color:#e8896a; margin-bottom:6px;">⚑ FOUNDER NARROWED 2026-05-26</div>
+  <div style="font-size:13.5px; line-height:1.55;">
+    Founder approval scope: <b>Surface 3 (footer pill) + Surface 4 (Speckle panel)</b> only.
+    Plus a new <b>Surface 6 below</b>: brain ↔ speckle wiring.
+    <br><br>
+    <b>Withdrawn from this prototype</b>: Surface 1 (per-wire midpoint dots — too much
+    canvas clutter), Surface 2 (Inspector "Wire" tab — out of scope), Surface 5 (ADAPTER
+    badge — optional / deferred). Sections kept below for context; do NOT ship them.
+    <br><br>
+    Quote: <i>"from all those forks i only approve of the footer and speckle panel
+    associated with it · figure out how this connects with the brain system."</i>
+  </div>
+</div>
+
+<h2 style="opacity:0.45;">Surface 1 · Wire color encoding (live) <span style="color:#d97757; font-size:11px; font-family:monospace; vertical-align:middle;">⊘ WITHDRAWN</span></h2>
 <p>
   Today's wires use slice-D type colours (any/element/list/number/...).
   We add a <b>transport-state</b> overlay: a small <span class="pill speckle">●</span>
@@ -207,7 +222,7 @@
   </div>
 </div>
 
-<h2>Surface 2 · Inspector "Wire" tab when wire selected</h2>
+<h2 style="opacity:0.45;">Surface 2 · Inspector "Wire" tab when wire selected <span style="color:#d97757; font-size:11px; font-family:monospace; vertical-align:middle;">⊘ WITHDRAWN</span></h2>
 <div class="frame">
   <div class="insp">
     <div class="row"><div class="k">wire id</div><div class="v">w:walls→ai.classify</div></div>
@@ -295,7 +310,7 @@ v0.0020  13:48  walls (5)
   </div>
 </div>
 
-<h2>Surface 5 (optional) · ADAPTER category badge per host pair</h2>
+<h2 style="opacity:0.45;">Surface 5 (optional) · ADAPTER category badge per host pair <span style="color:#d97757; font-size:11px; font-family:monospace; vertical-align:middle;">⊘ WITHDRAWN</span></h2>
 <p>
   The ADAPTER category already exists. Surface a small <code>R→A</code> / <code>R→3DS</code>
   badge above adapter nodes on the canvas indicating which host-pair they bridge.
@@ -304,14 +319,138 @@ v0.0020  13:48  walls (5)
 
 <hr/>
 
-<h2>Forks for signoff</h2>
+<h2>Surface 6 · Brain × Speckle wiring <span style="color:#7ec18e; font-size:11px; font-family:monospace; vertical-align:middle;">⚑ FOUNDER ADDED 2026-05-26</span></h2>
+<p>
+  Founder ask: <i>"figure out how this connects with the brain system."</i>
+  The brain (personal-brain-mcp, AgDR-0044) owns scoped memory (USER / PROJECT / FIRM)
+  + facts + skills. Speckle owns per-wire Version history + DiskTransport state per
+  project. Today they don't know about each other. Six wiring points unify them
+  without surrendering brain's scope discipline or Speckle's invisible-by-default
+  behavior.
+</p>
+
+<div class="frame">
+  <h3>W1 · Unified project identity</h3>
+  <p style="margin:0;">
+    <code>brain._infer_project_id(cwd, git_remote)</code> already exists
+    (<code>personal-brain-mcp/src/personal_brain/server.py</code>). Speckle's DiskTransport
+    writes to <code>.speckle/&lt;project&gt;/</code>. <b>Unify</b>: pass
+    <code>brain.context.project_id</code> into <code>speckle_wire.set_project()</code>
+    so both systems agree on what "project" means. No drift. No double-prompting the user
+    "which project?".
+  </p>
+
+  <h3>W2 · Speckle Version → brain fact (write-through)</h3>
+  <p style="margin:0;">
+    Every successful <code>Operations.send</code> on a wire (in <code>speckle_wire.py</code>)
+    fires <code>brain.write([{op:"ADD", kind:"fact", scope:"project", payload:{wire_id,
+    version, sender, count, ts}}])</code>. Brain becomes the queryable index over
+    Speckle history. Cost: one cheap MCP call per wire commit. Failure-tolerant via
+    ResilientBrainClient circuit breaker.
+  </p>
+
+  <h3>W3 · brain.context pre-injects current wire pins</h3>
+  <p style="margin:0;">
+    When the founder types in Composer, <code>brain.context</code> (already fires per
+    UserPromptSubmit hook in <code>~/.claude/settings.json</code>) returns recent
+    wire-version facts for the active project. The LLM sees
+    <code>&lt;brain_context&gt;walls v0024 · doors v0017 · slabs v0009&lt;/brain_context&gt;</code>
+    silently. No prompt change. The LLM can write <code>receive("walls", "v0024")</code>
+    with grounded knowledge.
+  </p>
+
+  <h3>W4 · Skill mint captures Speckle Version pins</h3>
+  <p style="margin:0;">
+    On graph cook success, <code>brain.skill_mint(trace)</code> is already called via the
+    Stop hook. <b>Extend</b> the trace to include <code>speckle_pins: {wire_id: version}</code>
+    for every wire the cook touched. A minted skill is deterministically replayable:
+    next time it runs, it <code>receive()</code>s the exact pinned Versions, not "latest."
+    This is what makes a workflow a workflow vs. a one-shot.
+  </p>
+
+  <h3>W5 · Speckle panel gains BRAIN MEMORY section</h3>
+  <p style="margin:0;">
+    The panel (Surface 4 above) gets a new section under HISTORY:
+  </p>
+  <pre style="background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:10px 14px; font-family:var(--mono); font-size:10.5px; color:var(--inkSoft); margin:8px 0 0;">BRAIN MEMORY · project p-664-doubletree · last 5 facts
+─────────────────────────────────────────────────────
+14:32  walls v0024 accepted ← conversation "Level 2 audit"
+14:18  walls v0022 rejected ← founder said "too few"
+13:55  doors v0017 source-of-truth pinned to skill `door-tag-pass`
+13:30  slabs v0009 used by render.archviz composite
+13:12  walls v0020 minted skill `wall-classify-load-bearing`</pre>
+  <p style="margin-top:8px;">
+    Read-only. Lets the founder see WHY each Version exists in narrative form rather than
+    raw monotonic <code>v0001..v0024</code>. Backed by <code>brain.context({scope:"project",
+    kinds:["fact"], filter:{wire_id}, limit:5})</code>.
+  </p>
+
+  <h3>W6 · Cross-machine SHARE auto-config via brain wiring_announce</h3>
+  <p style="margin:0;">
+    When a <code>share.server</code> node lazy-starts a local Speckle server, it calls
+    <code>brain.wiring_announce({mcps:{"speckle_local":"http://&lt;host&gt;:&lt;port&gt;"}})</code>.
+    Other machines in the same FIRM scope receive that endpoint in their
+    <code>brain.context</code> and can <code>share.subscribe</code> with one click instead
+    of manual URL paste. No central registry; brain IS the registry per AgDR-0044.
+  </p>
+</div>
+
+<h3>Where in code (slice S7 — new)</h3>
+<table>
+  <tr><th>Slice</th><th>What</th><th>Files</th><th>Risk</th></tr>
+  <tr><td><code>S7.W1</code></td><td>Pass brain's <code>project_id</code> into the <code>SpeckleWire(project_dir=...)</code> constructor at session-open time. Implementation: bridge.py session-open handler reads <code>brain.context.project_id</code>, resolves to <code>~/.archhub/projects/&lt;project_id&gt;/</code>, instantiates SpeckleWire with that path. Fallback: today's <code>default_project_dir()</code> when brain unreachable. NOTE: no new <code>set_project</code> method needed — constructor already accepts <code>project_dir</code> (verified speckle_wire.py:114).</td><td><code>app/bridge.py</code> (session open) · NO changes needed to <code>app/speckle_wire.py</code> (constructor already typed correctly)</td><td>L</td></tr>
+  <tr><td><code>S7.W2</code></td><td>Hook <code>speckle_wire.Operations.send</code> success path → <code>brain.write([fact])</code>. Best-effort, swallowed errors.</td><td><code>app/speckle_wire.py</code></td><td>L</td></tr>
+  <tr><td><code>S7.W3</code></td><td>Extend <code>brain.context</code> handler in <code>brain_resilient.py</code> to include wire-version facts in the pre_prompt payload when scope is PROJECT.</td><td><code>app/brain_resilient.py</code> + <code>personal-brain-mcp/src/personal_brain/server.py</code></td><td>L-M</td></tr>
+  <tr><td><code>S7.W4</code></td><td>Extend skill_mint trace shape to record <code>speckle_pins</code>; runner reads pins on replay.</td><td><code>app/workflows/runner.py</code> + <code>personal-brain-mcp/.../server.py</code></td><td>M</td></tr>
+  <tr><td><code>S7.W5</code></td><td>Add BRAIN MEMORY section to SpeckleExplorerModal (S5 above). Reads <code>brain.context</code> at modal-open.</td><td><code>app/web_ui/studio-lm.jsx</code> (SpeckleExplorerModal)</td><td>L</td></tr>
+  <tr><td><code>S7.W6</code></td><td>SHARE node start → <code>brain.wiring_announce({mcps:{...}})</code>; SHARE subscribe reads from <code>brain.context.firm_mcps</code>.</td><td><code>app/speckle_server.py</code> + <code>app/connectors/share_runner.py</code></td><td>M</td></tr>
+</table>
+
+<hr/>
+
+<h2>Forks for signoff — REVISED 2026-05-26 after founder narrowing</h2>
+<p style="color:var(--ok);">
+  <b>Founder pre-approved 2026-05-26</b>: F4 (footer pill format A · <code>spk ● disk · p-664 · v0024</code>),
+  F5 (panel modal A · matches Memory Explorer + ai.plan History contracts). F1/F2/F3 are
+  withdrawn with the surfaces above. New brain-wiring forks below.
+</p>
 <table>
   <tr><th>Fork</th><th>Pick</th><th>Trade-off</th></tr>
-  <tr><td><b>F1</b> — wire dot density</td><td>A. Dot on EVERY wire (this prototype)<br/>B. Dot only on selected/hovered wire<br/>C. Recommended: <b>A</b> · low visual weight; the founder's complaint is invisibility.</td><td>Always-on adds 1 div per wire to the DOM but matches the founder's "show me" ask.</td></tr>
-  <tr><td><b>F2</b> — Wire labels on canvas</td><td>A. Always show <code>● disk · N walls</code><br/>B. Show on hover only<br/>C. Show under setting toggle<br/>D. Recommended: <b>B</b> · always-on labels would clutter the canvas working space (the same complaint that moved health + minimap to the footer).</td><td>Hover-only protects the canvas focus; always-on shouts the spine.</td></tr>
-  <tr><td><b>F3</b> — Inspector "Wire" tab vs floating popover</td><td>A. New tab on existing Inspector (this prototype)<br/>B. Floating tooltip on wire-hover<br/>C. Both<br/>D. Recommended: <b>A</b> · tab follows existing Inspector contract; founder dragged us toward that pattern repeatedly.</td><td>Tab needs Inspector to be visible (it is for selected-node sessions); tooltip works canvas-only.</td></tr>
-  <tr><td><b>F4</b> — Footer pill format</td><td>A. <code>spk ● disk · p-664 · v0.0024</code> (this prototype)<br/>B. <code>● 24 versions · 4.7 MB</code> (no Speckle branding)<br/>C. Recommended: <b>A</b> · brands the spine so founder + future agents see it.</td><td>"spk" + version is informational + clickable; the no-brand version reads as just stats.</td></tr>
-  <tr><td><b>F5</b> — Speckle panel modal vs side-drawer</td><td>A. Modal (this prototype)<br/>B. Right-side drawer under Conversation panel<br/>C. Recommended: <b>A</b> · modal matches Memory Explorer + ai.plan History contracts.</td><td>Modal is consistent with existing panels; drawer would compete with the conversation panel.</td></tr>
+  <tr><td><b>FB1</b> — W2 brain write-through cadence</td>
+      <td>
+        <label><input type="radio" name="fb1" value="a"/> A. Fire <code>brain.write</code> on every wire commit (real-time)</label><br/>
+        <label><input type="radio" name="fb1" value="b" checked/> B. Batch every 5 commits OR 10s, whichever first (debounced)</label><br/>
+        <label><input type="radio" name="fb1" value="c"/> C. Hourly snapshot only (low cost · stale-tolerant)</label>
+      </td>
+      <td>Real-time = perfect brain knowledge but ~10/s MCP calls during a heavy cook. Batch is 80% of the value at 5% of cost. Hourly loses session-grain queries.</td></tr>
+  <tr><td><b>FB2</b> — W3 brain.context wire-pin verbosity in pre_prompt</td>
+      <td>
+        <label><input type="radio" name="fb2" value="a"/> A. Full JSON per wire (<code>{wire_id, version, count, ts}</code>)</label><br/>
+        <label><input type="radio" name="fb2" value="b" checked/> B. Compact line per wire (<code>walls v0024 · 4 · 14:32</code>)</label><br/>
+        <label><input type="radio" name="fb2" value="c"/> C. Just the latest version id, no metadata</label>
+      </td>
+      <td>LLM token cost — A burns ~80 tok/wire, B ~12 tok/wire, C ~3 tok/wire. B is the sweet spot: LLM gets enough context to reference without bloating the prompt.</td></tr>
+  <tr><td><b>FB3</b> — W4 skill replay strictness when a pinned Version is missing</td>
+      <td>
+        <label><input type="radio" name="fb3" value="a" checked/> A. STRICT — fail with "Version v0024 not found; pin needs rebuild"</label><br/>
+        <label><input type="radio" name="fb3" value="b"/> B. WARN-AND-USE-LATEST — non-deterministic fallback</label><br/>
+        <label><input type="radio" name="fb3" value="c"/> C. ASK user per replay (modal prompt)</label>
+      </td>
+      <td>STRICT preserves the contract that "minted skill = deterministic." WARN drifts silently. ASK is correct but interrupts flow. Recommend A; offer "rebuild pins" affordance in the modal.</td></tr>
+  <tr><td><b>FB4</b> — W6 firm-scoped MCP announce</td>
+      <td>
+        <label><input type="radio" name="fb4" value="a"/> A. AUTO — every <code>share.server</code> start announces to firm scope</label><br/>
+        <label><input type="radio" name="fb4" value="b" checked/> B. OPT-IN — checkbox in the SHARE node config "broadcast to firm"</label><br/>
+        <label><input type="radio" name="fb4" value="c"/> C. NEVER — manual firm config only</label>
+      </td>
+      <td>AUTO is frictionless but leaks per-machine endpoints across the firm. OPT-IN preserves user agency (USER-AGENCY MANDATE). NEVER drops the W6 value.</td></tr>
+  <tr><td><b>FB5</b> — Footer pill click action</td>
+      <td>
+        <label><input type="radio" name="fb5" value="a" checked/> A. Open SpeckleExplorerModal (Surface 4)</label><br/>
+        <label><input type="radio" name="fb5" value="b"/> B. Jump straight to BRAIN MEMORY section (W5)</label><br/>
+        <label><input type="radio" name="fb5" value="c"/> C. Toggle a small floating tooltip showing the 5 latest brain facts</label>
+      </td>
+      <td>A is consistent (one click → full panel). B optimizes for the memory-first workflow but adds a second click for non-brain users. C is lightweight but adds a new UI pattern.</td></tr>
 </table>
 
 <h2>What this prototype does NOT add</h2>
@@ -325,28 +464,46 @@ v0.0020  13:48  walls (5)
 <h2>The slice plan (post-signoff)</h2>
 <table>
   <tr><th>Slice</th><th>What</th><th>Files</th><th>Risk</th></tr>
-  <tr><td><code>S1</code></td><td>Bridge slot <code>get_wire_transport_state(wire_id)</code> returning `{transport, project, latest_version, size}` from <code>speckle_wire.py</code></td><td><code>app/bridge.py</code> + <code>app/speckle_wire.py</code></td><td>L</td></tr>
-  <tr><td><code>S2</code></td><td>JSX wire dot — small midpoint indicator per wire reading the new slot. F1=A → always show, F2=B → label on hover.</td><td><code>studio-lm.jsx</code> (WireLayer · ~30 lines)</td><td>L</td></tr>
-  <tr><td><code>S3</code></td><td>Inspector "Wire" tab. Triggered by <code>selectedWire !== null</code> in NodeCanvas state.</td><td><code>studio-lm.jsx</code> (Inspector · new component · ~80 lines)</td><td>L-M</td></tr>
-  <tr><td><code>S4</code></td><td>Footer SpeckleStripItem pill. Polls <code>get_speckle_summary()</code> bridge slot.</td><td><code>studio-lm.jsx</code> + <code>bridge.py</code></td><td>L</td></tr>
-  <tr><td><code>S5</code></td><td>SpeckleExplorerModal. Mounted at StudioLM root. Listens for <code>lm-speckle-explorer-open</code>.</td><td><code>studio-lm.jsx</code> · ~250 lines</td><td>L</td></tr>
-  <tr><td><code>S6</code></td><td>(Optional, F5 = A pick.) Optional ADAPTER host-pair badge.</td><td><code>studio-lm.jsx</code> · ~20 lines</td><td>L</td></tr>
+  <tr><td><code>S1</code></td><td>Bridge slot <code>get_wire_transport_state(wire_id)</code> + <code>get_speckle_summary()</code> returning <code>{transport, project, latest_version, size, peers}</code> from <code>speckle_wire.py</code>. Backs both S4 + S5. KEEP.</td><td><code>app/bridge.py</code> + <code>app/speckle_wire.py</code></td><td>L</td></tr>
+  <tr><td style="opacity:0.4;"><code>S2</code> ⊘</td><td style="opacity:0.4;"><s>JSX wire dot — Surface 1 withdrawn. SKIP.</s></td><td style="opacity:0.4;">—</td><td style="opacity:0.4;">—</td></tr>
+  <tr><td style="opacity:0.4;"><code>S3</code> ⊘</td><td style="opacity:0.4;"><s>Inspector "Wire" tab — Surface 2 withdrawn. SKIP.</s></td><td style="opacity:0.4;">—</td><td style="opacity:0.4;">—</td></tr>
+  <tr><td><code>S4</code></td><td>Footer SpeckleStripItem pill. Reads <code>get_speckle_summary()</code> slot from S1. Click → emits <code>lm-speckle-explorer-open</code> custom event. KEEP (approved).</td><td><code>app/web_ui/studio-lm.jsx</code> (FooterStrip pattern) + <code>app/bridge.py</code></td><td>L</td></tr>
+  <tr><td><code>S5</code></td><td>SpeckleExplorerModal. Mounted at StudioLM root. Listens for <code>lm-speckle-explorer-open</code>. Models on existing MemoryExplorerModal (jsx:10696) + AiPlanHistoryModal (jsx:10885). KEEP (approved). NOTE: BRAIN MEMORY section (W5) lands here too.</td><td><code>app/web_ui/studio-lm.jsx</code> · ~250 lines (new component)</td><td>L</td></tr>
+  <tr><td style="opacity:0.4;"><code>S6</code> ⊘</td><td style="opacity:0.4;"><s>ADAPTER badge — Surface 5 withdrawn. SKIP.</s></td><td style="opacity:0.4;">—</td><td style="opacity:0.4;">—</td></tr>
 </table>
+<p style="margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--inkMuted);">
+  Effective shipping slices after founder narrowing: <b>S1 + S4 + S5 + S7.W1..W6 = 9 slices total</b>. Risk: 6 L + 3 M.
+</p>
 
 <hr/>
 
-<h2>SIGNOFF (founder fills)</h2>
+<h2>SIGNOFF — REVISED 2026-05-26 (real checkboxes · founder asked "not selectable")</h2>
 <table>
   <tr><th>Field</th><th>Value</th></tr>
-  <tr><td>Prototype reviewed</td><td>☐ yes / ☐ revise</td></tr>
-  <tr><td>F1 pick</td><td>☐ A · ☐ B</td></tr>
-  <tr><td>F2 pick</td><td>☐ A · ☐ B · ☐ C</td></tr>
-  <tr><td>F3 pick</td><td>☐ A · ☐ B · ☐ C</td></tr>
-  <tr><td>F4 pick</td><td>☐ A · ☐ B</td></tr>
-  <tr><td>F5 pick</td><td>☐ A · ☐ B</td></tr>
-  <tr><td>Approve AgDR-0050 draft</td><td>☐ yes (status → executed once code lands)<br/>☐ revise prototype</td></tr>
-  <tr><td>Signature + date</td><td>__________ · 2026-05-__</td></tr>
+  <tr><td>Surfaces 3 + 4 (footer pill · Speckle panel)</td>
+      <td><label><input type="checkbox" id="s_surfaces"/> approved (pre-confirmed 2026-05-26)</label></td></tr>
+  <tr><td>Surface 6 (W1-W6 brain × speckle wiring)</td>
+      <td><label><input type="checkbox" id="s_w16"/> approved · proceed to AgDR-0050 + slices S7.W1..W6</label></td></tr>
+  <tr><td>FB1 — W2 write-through cadence</td>
+      <td><label><input type="checkbox"/> A real-time</label> · <label><input type="checkbox" checked/> B batched 5/10s</label> · <label><input type="checkbox"/> C hourly</label></td></tr>
+  <tr><td>FB2 — W3 pre_prompt verbosity</td>
+      <td><label><input type="checkbox"/> A JSON</label> · <label><input type="checkbox" checked/> B compact</label> · <label><input type="checkbox"/> C id-only</label></td></tr>
+  <tr><td>FB3 — W4 skill replay strictness</td>
+      <td><label><input type="checkbox" checked/> A STRICT</label> · <label><input type="checkbox"/> B WARN</label> · <label><input type="checkbox"/> C ASK</label></td></tr>
+  <tr><td>FB4 — W6 firm announce</td>
+      <td><label><input type="checkbox"/> A AUTO</label> · <label><input type="checkbox" checked/> B OPT-IN</label> · <label><input type="checkbox"/> C NEVER</label></td></tr>
+  <tr><td>FB5 — footer pill click</td>
+      <td><label><input type="checkbox" checked/> A open modal</label> · <label><input type="checkbox"/> B → BRAIN MEMORY</label> · <label><input type="checkbox"/> C tooltip</label></td></tr>
+  <tr><td>Approve AgDR-0050 draft (post-narrowing)</td>
+      <td><label><input type="checkbox" id="s_agdr"/> yes · status → executed once code lands</label></td></tr>
+  <tr><td>Signature + date</td><td><input type="text" placeholder="founder · 2026-05-__" style="font-family:inherit; background:transparent; border:1px solid var(--line); color:var(--ink); padding:4px 8px; width:240px;"/></td></tr>
 </table>
+<p style="margin-top:10px; font-family:var(--mono); font-size:10px; color:var(--inkMuted);">
+  Defaults pre-selected reflect the recommended pick per fork. Override any box by clicking.
+  Real <code>input</code> elements — they ARE clickable in any browser. The "isn't selectable"
+  complaint 2026-05-26 was against the prior <code>☐</code>-glyph mocks; this iteration uses
+  real HTML checkboxes.
+</p>
 
 <div class="footer">
   Prototype B · `docs/prototypes/speckle-surface-2026-05-26.html` · status: proposed.<br/>

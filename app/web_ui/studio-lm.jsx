@@ -4330,6 +4330,8 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
         <BrainChip/>
+        <HomeGraphHealthChip/>
+        <HomePlanHistoryChip/>
       </div>
       <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'24px 0 14px' }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
@@ -4893,6 +4895,116 @@ const BrainChip = ({ compact }) => {
         transition: 'background .12s, border-color .12s, color .12s',
       }}>
       {label}
+    </button>
+  );
+};
+
+// AgDR-0041 — Home-view graph health chip. Mirrors the footer
+// HealthStripItem (which renders on every view via ServerStrip) but
+// makes the validator state visible at the Home top bar so the founder
+// sees errors before opening a session. Polls bridge.graph_validate on
+// the LAST opened session graph (LM_GRAPH). Click opens MemoryExplorer
+// is conceptually unrelated — here clicking opens the footer pill via
+// dispatch so the existing popover renders.
+const HomeGraphHealthChip = () => {
+  const [counts, setCounts] = React.useState({ err:0, warn:0, total:0 });
+  React.useEffect(() => {
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const res = await bridgeAsync('graph_validate', JSON.stringify(LM_GRAPH || { nodes:[], wires:[] }));
+        if (cancelled) return;
+        if (res && res.status === 'ok') {
+          setCounts({
+            err: res.errors || 0,
+            warn: res.warnings || 0,
+            total: (res.issues || []).length,
+          });
+        }
+      } catch (e) {}
+    };
+    pull();
+    const t = setInterval(pull, 4000);
+    const onBump = () => pull();
+    window.addEventListener('lm-graph-bump', onBump);
+    return () => { cancelled = true; clearInterval(t);
+      window.removeEventListener('lm-graph-bump', onBump); };
+  }, []);
+  const col = counts.err > 0 ? LM.err
+            : counts.warn > 0 ? LM.warn
+            : LM.ok;
+  const hit = counts.total > 0;
+  const label = counts.err > 0
+    ? `◆ graph · ${counts.err}e ${counts.warn}w`
+    : counts.warn > 0
+      ? `◆ graph · ${counts.warn} warn`
+      : `◆ graph · healthy`;
+  return (
+    <button data-testid="home-graph-health-chip"
+      title={`Graph health · ${counts.err} errors · ${counts.warn} warnings · open footer pill for details`}
+      onClick={(e) => {
+        e.stopPropagation();
+        // Surface the existing footer HealthStripItem popover. There's
+        // no direct toggle event; the footer pill is on every view so
+        // the user clicks the footer to expand. We flash a hint here.
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'Graph health · footer pill bottom-right', kind:'info' } })); } catch (e2) {}
+      }}
+      style={{
+        display:'flex', alignItems:'center', gap:6,
+        padding:'6px 12px',
+        background: hit ? col + '14' : LM.bg,
+        border:`1px solid ${hit ? col + '66' : LM.line}`,
+        borderRadius:6, cursor:'pointer',
+        color: col,
+        fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
+        whiteSpace:'nowrap',
+        transition:'background .12s, border-color .12s, color .12s',
+      }}>{label}</button>
+  );
+};
+
+// AgDR-0021 — Home-view plan history chip. Fires the existing
+// `lm-aiplan-history-open` event handled by AiPlanHistoryModal (mounted
+// on every view via StudioLM root). Shows record count when the bridge
+// surfaces any plans cached on disk.
+const HomePlanHistoryChip = () => {
+  const [n, setN] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const r = await bridgeAsync('get_plan_history', '', 100);
+        if (cancelled) return;
+        const recs = (r && r.records) || [];
+        setN(recs.length);
+      } catch (e) { if (!cancelled) setN(null); }
+    };
+    pull();
+    const t = setInterval(pull, 8000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  const hit = n != null && n > 0;
+  return (
+    <button data-testid="home-plan-history-chip"
+      title="Open ai.plan history — replay any past plan"
+      onClick={(e) => {
+        e.stopPropagation();
+        try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open',
+          { detail:{} })); } catch (e2) {}
+      }}
+      style={{
+        display:'flex', alignItems:'center', gap:6,
+        padding:'6px 12px',
+        background: hit ? LM.accentDim : LM.bg,
+        border:`1px solid ${hit ? LM.accent + '66' : LM.line}`,
+        borderRadius:6, cursor:'pointer',
+        color: hit ? LM.accent : LM.inkSoft,
+        fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
+        whiteSpace:'nowrap',
+        transition:'background .12s, border-color .12s, color .12s',
+      }}>
+      {n == null ? '◷ plans · …' : `◷ plans · ${n}`}
     </button>
   );
 };
@@ -6803,6 +6915,98 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             LM_GRAPH.wires = (LM_GRAPH.wires || []).filter((_, i) => i !== wireMenu.idx);
             setSelectedWire(null);
             saveCurrentGraph(); bumpGraph && bumpGraph(); flashToast('Wire deleted');
+          }}
+          dstFrozen={(() => {
+            const dstId = wireMenu.wire && wireMenu.wire.to && wireMenu.wire.to[0];
+            const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
+            return !!(dst && (dst.frozen || (dst.config && dst.config.frozen)));
+          })()}
+          dstBypassed={(() => {
+            const dstId = wireMenu.wire && wireMenu.wire.to && wireMenu.wire.to[0];
+            const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
+            return !!(dst && (dst.bypassed || (dst.config && dst.config.bypass)));
+          })()}
+          onSwapTarget={async () => {
+            // AgDR-0041 P2 — swap the wire's destination node with a
+            // type-compatible replacement from the library. Uses
+            // bridge.library_suggest_swaps + the existing WirePromote
+            // node-picker event so the user picks among ranked options.
+            const wire = (LM_GRAPH.wires || [])[wireMenu.idx];
+            if (!wire) { setWireMenu(null); return; }
+            const dstId = wire.to && wire.to[0];
+            const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
+            if (!dst) { setWireMenu(null); flashToast('Target node missing', 'err'); return; }
+            const dstType = String(dst.kind || dst.type || dst.custom_type || '').toLowerCase();
+            if (!dstType) { setWireMenu(null); flashToast('Target node has no type', 'err'); return; }
+            flashToast(`Searching swaps for ${dstType}…`);
+            let suggestions = null;
+            try {
+              suggestions = await bridgeAsync('library_suggest_swaps', dstType, 8);
+            } catch (e) {
+              setWireMenu(null);
+              flashToast('Swap search failed: ' + e, 'err'); return;
+            }
+            const list = (suggestions && suggestions.results) || [];
+            if (!list.length) {
+              setWireMenu(null);
+              flashToast(`No swap candidates for ${dstType}`, 'info'); return;
+            }
+            // Hand the picker the ranked list; clicking a row replaces the
+            // dst node's type-shaped fields in place (keeps id + position
+            // + connected wires intact).
+            setWireMenu(null);
+            try {
+              window.dispatchEvent(new CustomEvent('lm-wire-promote', {
+                detail: {
+                  x: 0, y: 0,
+                  from: { nodeId: dstId, sockId: null, type: dstType },
+                  suggestions: list,
+                  swapTargetId: dstId,
+                },
+              }));
+            } catch (e) {}
+          }}
+          onFreezeTarget={async () => {
+            const wire = (LM_GRAPH.wires || [])[wireMenu.idx];
+            if (!wire) { setWireMenu(null); return; }
+            const dstId = wire.to && wire.to[0];
+            const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
+            if (!dst) { setWireMenu(null); flashToast('Target node missing', 'err'); return; }
+            const next = !(dst.frozen || (dst.config && dst.config.frozen));
+            try {
+              const res = await bridgeAsync('node_freeze', dstId, !!next);
+              if (res && res.status !== 'error') {
+                // Optimistic merge — runner-side state persists separately;
+                // store the flag on the node so the badge renders today.
+                dst.frozen = next;
+                dst.config = { ...(dst.config || {}), frozen: next };
+                saveCurrentGraph(); bumpGraph && bumpGraph();
+                flashToast(next ? `Froze ${dst.title || dstId}` : `Unfroze ${dst.title || dstId}`);
+              } else {
+                flashToast((res && res.error) || 'node_freeze failed', 'err');
+              }
+            } catch (e) { flashToast('node_freeze failed: ' + e, 'err'); }
+            setWireMenu(null);
+          }}
+          onBypassTarget={async () => {
+            const wire = (LM_GRAPH.wires || [])[wireMenu.idx];
+            if (!wire) { setWireMenu(null); return; }
+            const dstId = wire.to && wire.to[0];
+            const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
+            if (!dst) { setWireMenu(null); flashToast('Target node missing', 'err'); return; }
+            const next = !(dst.bypassed || (dst.config && dst.config.bypass));
+            try {
+              const res = await bridgeAsync('node_bypass', dstId, !!next);
+              if (res && res.status !== 'error') {
+                dst.bypassed = next;
+                dst.config = { ...(dst.config || {}), bypass: next };
+                saveCurrentGraph(); bumpGraph && bumpGraph();
+                flashToast(next ? `Bypassed ${dst.title || dstId}` : `Un-bypassed ${dst.title || dstId}`);
+              } else {
+                flashToast((res && res.error) || 'node_bypass failed', 'err');
+              }
+            } catch (e) { flashToast('node_bypass failed: ' + e, 'err'); }
+            setWireMenu(null);
           }}/>
       )}
       {wireFieldPicker && (
@@ -6855,11 +7059,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
 //                   surface upstream_error on next cook)
 //   cancel        → keep the node, no-op
 //
-// Insert-adapter + swap-downstream are scaffolded as disabled buttons
-// for D2·A 2/3 — the recovery actions need library_suggest_swaps
-// integration + a node-picker; planned for D2·A 3/3 alongside the
-// right-click swap-with menu. Listed here so the user sees the
-// recovery surface today.
+// Insert-adapter is now active (wired through library_suggest_swaps in
+// the onConfirm handler above — picks the top-scored adapter for the
+// first broken pair, spawns it midway between src+dst, re-routes the
+// two new wires, and drops the original). Swap-downstream is exposed
+// on the wire right-click menu (Swap target / Freeze / Bypass) — see
+// the WireMenu below.
 const BrokenWireDialog = ({ info, onClose }) => {
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -7277,7 +7482,9 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onBypass, onRena
 };
 
 // ─── Right-click on wire → menu (founder demand #8) ─────────────
-const WireMenu = ({ x, y, onDisconnect, onPickSource, onPickDest, onClose }) => {
+const WireMenu = ({ x, y, onDisconnect, onPickSource, onPickDest,
+                     onSwapTarget, onFreezeTarget, onBypassTarget,
+                     dstFrozen, dstBypassed, onClose }) => {
   React.useEffect(() => {
     const dismiss = () => onClose();
     document.addEventListener('click', dismiss);
@@ -7288,9 +7495,20 @@ const WireMenu = ({ x, y, onDisconnect, onPickSource, onPickDest, onClose }) => 
       document.removeEventListener('keydown', onKey);
     };
   }, [onClose]);
+  // AgDR-0041 — graph-property items operate on the wire's destination
+  // node (the typical "what comes after this wire" semantic).
+  //   Swap target  → bridge.library_suggest_swaps + node-picker
+  //   Freeze      → bridge.node_freeze (toggles ❄ badge + runner cache)
+  //   Bypass      → bridge.node_bypass (toggles ○ badge + pass-through)
   const items = [
     { i:'⇄', t:'Pick source field…',      on:onPickSource },
     { i:'⇆', t:'Pick destination field…', on:onPickDest },
+    { sep:true },
+    { i:'⇋', t:'Swap target…',            on:onSwapTarget },
+    { i:'❄', t:dstFrozen ? 'Unfreeze target' : 'Freeze target',
+        on:onFreezeTarget },
+    { i:'○', t:dstBypassed ? 'Un-bypass target' : 'Bypass target',
+        on:onBypassTarget },
     { sep:true },
     { i:'⊝', t:'Disconnect',              on:onDisconnect, danger:true },
   ];
@@ -7488,8 +7706,8 @@ const _injectTokenVars = (() => {
   } catch (e) { document.body.setAttribute('data-theme', 'forge'); }
 })();
 
-// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0046) ───
-// AgDR-0046 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
+// ─── AgDR-0022 — ReactFlow scaffold (SUPERSEDED 2026-05-25 by AgDR-0048) ───
+// AgDR-0048 supersedes AgDR-0012's "ReactFlow is the canvas substrate" lock
 // + AgDR-0022 in full. Custom canvas IS the substrate of record; the stub
 // below + helpers are KEPT only so `test_reactflow_p2a_groundwork.py`
 // doesn't break, but neither is wired into any render path. They render
@@ -7499,7 +7717,9 @@ const _injectTokenVars = (() => {
 // every feature ReactFlow would have offered (typed wires, groups,
 // HostNodeV2, ai.plan hero, broken-wire dialog). Migration cost
 // (3-5 days, full rewrite) >> value (zero new capability). See
-// docs/agdr/AgDR-0046-supersede-reactflow-lock.md.
+// docs/agdr/AgDR-0048-supersede-reactflow-lock.md
+// (renumber chain 0045→0046→0048; founder's AgDR-0046 is the
+// brain-settings-rebuild-workshop, not this one).
 const _readCanvasFlavor = () => {
   try {
     const v = (localStorage.getItem('archhub.canvas') || '').toLowerCase();
@@ -10007,6 +10227,37 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
             return <LibCatBtn key={cat} id={cat} label={c.label || cat}
               icon={c.icon} col={c.col} active={filter===cat} onSelect={setFilter}/>;
           })}
+          {/* AgDR-0042 — Memory graph entry. Opens MemoryExplorerModal
+              which renders memory_stats (kinds + top communities) and
+              the live memory_query BFS search. Listed below the type
+              categories because Memory is cross-cutting, not a node
+              type. */}
+          <div style={{ height:1, background:LM.lineSoft, margin:'8px 4px' }}/>
+          <button onClick={() => {
+              try { window.dispatchEvent(new CustomEvent('lm-memory-explorer-open',
+                { detail:{} })); } catch (e) {}
+            }}
+            data-testid="library-memory-tab"
+            title="Memory graph · communities + skills + capabilities"
+            style={{
+              width:'100%', display:'flex', alignItems:'center', gap:10,
+              padding:'8px 10px', borderRadius:5,
+              background:LM.bgSoft, border:`1px solid ${LM.line}`,
+              borderLeft:`2px solid ${LM.accent}`,
+              color:LM.ink, cursor:'pointer', textAlign:'left',
+              fontFamily:LM.sans, fontSize:11.5,
+              marginBottom:4,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; }}
+            onMouseLeave={e => { e.currentTarget.style.background = LM.bgSoft; }}>
+            <span style={{ color:LM.accent, fontSize:13, lineHeight:1 }}>⊕</span>
+            <div style={{ display:'flex', flexDirection:'column', gap:1, flex:1, minWidth:0 }}>
+              <span style={{ fontWeight:500 }}>Memory</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+                COMMUNITIES · SKILLS
+              </span>
+            </div>
+          </button>
         </div>
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
@@ -12034,230 +12285,11 @@ const FullParam = ({ p, node, onChange }) => {
 // JSX cache controls, prefs reset. Founder feedback 2026-05-25:
 // "no DevTools to flip toggles, must be a panel".
 // ──────────────────────── BRAIN SETTINGS · AgDR-0044/0045 ──────────
-// Mounted as a section inside Settings. Surfaces personal-brain-mcp
-// daemon health + Firm tab (create/invite/join) + Communities tab
-// (subscribe/list) + Promote-to-shared on demand. All actions proxy
-// through bridge.brain_* slots which hit the brain MCP daemon.
-const BrainSection = ({ flash }) => {
-  const b = (typeof window !== 'undefined') ? window.archhub : null;
-  const [status, setStatus] = React.useState(null);
-  const [firm, setFirm] = React.useState(null);
-  const [seats, setSeats] = React.useState([]);
-  const [inviteToken, setInviteToken] = React.useState('');
-  const [joinToken, setJoinToken] = React.useState('');
-  const [busy, setBusy] = React.useState('');
-  const [createFirmName, setCreateFirmName] = React.useState('');
-  const [msg, setMsg] = React.useState('');
-
-  const call = async (slot, ...args) => {
-    if (!b || typeof b[slot] !== 'function') {
-      return { ok:false, error:`bridge.${slot} unavailable` };
-    }
-    try {
-      const raw = b[slot](...args);
-      const out = (raw && typeof raw.then === 'function') ? await raw : raw;
-      if (typeof out === 'string') {
-        try { return JSON.parse(out); } catch (e) { return { ok:true, raw:out }; }
-      }
-      return out || { ok:false, error:'empty response' };
-    } catch (e) { return { ok:false, error:String(e) }; }
-  };
-
-  const refresh = React.useCallback(async () => {
-    const s = await call('brain_status');
-    setStatus(s);
-    const f = await call('brain_firm_seats');
-    if (f && f.ok) {
-      setFirm({ firm_id: f.firm_id, firm_name: f.firm_name });
-      setSeats(Array.isArray(f.seats) ? f.seats : []);
-    } else {
-      setFirm(null); setSeats([]);
-    }
-  }, [b]);
-
-  React.useEffect(() => {
-    let cancel = false;
-    if (!cancel) refresh();
-    const id = setInterval(() => { if (!cancel) refresh(); }, 4000);
-    return () => { cancel = true; clearInterval(id); };
-  }, [refresh]);
-
-  const flashMsg = (m) => { setMsg(m); setTimeout(() => setMsg(''), 4000); flash && flash(); };
-
-  const onCreateFirm = async () => {
-    const name = (createFirmName || '').trim();
-    if (!name) { flashMsg('Enter firm name first'); return; }
-    setBusy('create-firm');
-    const r = await call('brain_firm_create', name, '', 0);
-    setBusy('');
-    flashMsg(r && r.ok ? `Firm "${r.name || name}" created · ${r.firm_id || ''}` : `Failed: ${r && r.error || 'unknown'}`);
-    refresh();
-  };
-  const onIssueInvite = async () => {
-    setBusy('invite');
-    const r = await call('brain_firm_invite_create', 'seat', 24);
-    setBusy('');
-    if (r && r.ok) { setInviteToken(r.token || ''); flashMsg('Invite token created · 24h TTL'); }
-    else { flashMsg(`Invite failed: ${r && r.error || 'unknown'}`); }
-  };
-  const onAcceptInvite = async () => {
-    const t = (joinToken || '').trim();
-    if (!t) { flashMsg('Paste an invite token first'); return; }
-    setBusy('join');
-    const r = await call('brain_firm_invite_accept', t, '');
-    setBusy('');
-    if (r && r.ok) { flashMsg(`Joined firm ${r.firm_id} as ${r.role}`); setJoinToken(''); }
-    else { flashMsg(`Join failed: ${r && r.error || 'unknown'}`); }
-    refresh();
-  };
-  const onLeaveFirm = async () => {
-    if (!confirm('Leave the current firm? Your local seat record is removed.')) return;
-    setBusy('leave');
-    await call('brain_firm_leave');
-    setBusy('');
-    refresh();
-  };
-  const onRescan = async () => {
-    setBusy('rescan');
-    const r = await call('brain_wiring_announce');
-    setBusy('');
-    flashMsg(r && r.ok !== false ? 'Wiring announced to brain · MCPs registered' : `Failed: ${r && r.error}`);
-  };
-  const onCopyInvite = () => {
-    if (!inviteToken) return;
-    try { navigator.clipboard.writeText(inviteToken); flashMsg('Invite token copied'); } catch (e) {}
-  };
-
-  const Row = ({ label, sub, children }) => (
-    <div style={{ display:'flex', alignItems:'center', gap:14,
-      padding:'12px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, color:LM.ink, fontFamily:LM.sans }}>{label}</div>
-        {sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>}
-      </div>
-      {children}
-    </div>
-  );
-  const Btn = ({ onClick, children, primary, busy: b2, danger }) => (
-    <button onClick={onClick} disabled={!!busy && busy !== b2} style={{
-      padding:'6px 12px', borderRadius:5,
-      border:`1px solid ${primary ? LM.accent : danger ? `${LM.err}66` : LM.line}`,
-      background: primary ? LM.accentDim : danger ? 'transparent' : LM.bgPanel,
-      color: primary ? LM.accent : danger ? LM.err : LM.ink,
-      cursor: busy ? 'wait' : 'pointer',
-      fontFamily:LM.mono, fontSize:10.5,
-    }}>
-      {busy === b2 ? '...' : children}
-    </button>
-  );
-
-  const isAvailable = status && status.health && status.health.ok;
-  const hLast = (status && status.last_hit) || {};
-  const skillsN = (status && status.health && status.health.skills) || hLast.skills_n || 0;
-  const factsN = (status && status.health && status.health.facts) || hLast.facts_n || 0;
-  const dbPath = (status && status.health && status.health.db_path) || '';
-
-  return (
-    <React.Fragment>
-      <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-        letterSpacing:'0.18em', marginTop:20, marginBottom:6, display:'flex',
-        alignItems:'center', gap:8 }}>
-        <span>BRAIN</span>
-        <span style={{
-          width:8, height:8, borderRadius:'50%',
-          background: isAvailable ? LM.ok : LM.err,
-        }}/>
-        <span style={{ color:isAvailable ? LM.ok : LM.err, letterSpacing:'0.06em' }}>
-          {isAvailable ? `LIVE · ${skillsN} skills · ${factsN} facts` : 'OFFLINE'}
-        </span>
-      </div>
-
-      <Row label="Daemon"
-           sub={`personal-brain MCP on :8473. ${dbPath || 'no db path reported'}`}>
-        <div style={{ display:'flex', gap:6 }}>
-          <Btn onClick={refresh} busy="refresh">Refresh</Btn>
-          <Btn onClick={onRescan} busy="rescan">Rescan wiring</Btn>
-        </div>
-      </Row>
-
-      {/* FIRM */}
-      <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-        letterSpacing:'0.18em', marginTop:18, marginBottom:6 }}>FIRM</div>
-
-      {!firm ? (
-        <Row label="Create or join firm"
-             sub="Firm = shared brain across architects. Create one as admin, or paste an invite token to join.">
-          <div style={{ display:'flex', flexDirection:'column', gap:6, minWidth:280 }}>
-            <div style={{ display:'flex', gap:6 }}>
-              <input placeholder="Firm name (e.g. ArchHub Studio)"
-                value={createFirmName}
-                onChange={e => setCreateFirmName(e.target.value)}
-                style={{ flex:1, padding:'5px 8px', borderRadius:4,
-                  border:`1px solid ${LM.line}`, background:LM.bgPanel,
-                  color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
-              <Btn onClick={onCreateFirm} busy="create-firm" primary>Create firm</Btn>
-            </div>
-            <div style={{ display:'flex', gap:6 }}>
-              <input placeholder="Paste invite token here"
-                value={joinToken}
-                onChange={e => setJoinToken(e.target.value)}
-                style={{ flex:1, padding:'5px 8px', borderRadius:4,
-                  border:`1px solid ${LM.line}`, background:LM.bgPanel,
-                  color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
-              <Btn onClick={onAcceptInvite} busy="join">Join</Btn>
-            </div>
-          </div>
-        </Row>
-      ) : (
-        <React.Fragment>
-          <Row label={`Firm: ${firm.firm_name || firm.firm_id}`}
-               sub={firm.firm_id}>
-            <Btn onClick={onLeaveFirm} busy="leave" danger>Leave firm</Btn>
-          </Row>
-          <Row label="Seats"
-               sub={`${seats.length} seat${seats.length === 1 ? '' : 's'} synced via firm graph`}>
-            <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.ink,
-              minWidth:200, textAlign:'right' }}>
-              {seats.length === 0 ? <span style={{ color:LM.inkMuted }}>—</span> :
-                seats.map((s, i) => (
-                  <div key={i}>
-                    {s.user_id} <span style={{ color:LM.inkMuted }}>({s.role})</span>
-                  </div>
-                ))}
-            </div>
-          </Row>
-          <Row label="Issue invite token"
-               sub="Hand to a teammate via any channel · 24h TTL · signed">
-            <Btn onClick={onIssueInvite} busy="invite" primary>Create invite</Btn>
-          </Row>
-          {inviteToken && (
-            <div style={{ padding:'8px 12px', background:LM.bgPanel,
-              border:`1px dashed ${LM.accent}`, borderRadius:6, marginTop:6 }}>
-              <div style={{ fontFamily:LM.mono, fontSize:9.5,
-                color:LM.accent, letterSpacing:'0.1em', marginBottom:4 }}>
-                INVITE TOKEN · share via secure channel
-              </div>
-              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.ink,
-                wordBreak:'break-all', maxHeight:60, overflow:'auto' }}>
-                {inviteToken}
-              </div>
-              <button onClick={onCopyInvite} style={{
-                marginTop:6, padding:'4px 8px', borderRadius:4,
-                border:`1px solid ${LM.line}`, background:LM.bg, color:LM.ink,
-                cursor:'pointer', fontFamily:LM.mono, fontSize:10,
-              }}>Copy to clipboard</button>
-            </div>
-          )}
-        </React.Fragment>
-      )}
-
-      {msg && (
-        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:10,
-          color:LM.accent }}>{msg}</div>
-      )}
-    </React.Fragment>
-  );
-};
+// (BrainSection removed 2026-05-26 — was unmounted in an earlier wave;
+// function body lived here as dead code. Brain UI lives in the native
+// PyQt SettingsDialog. The brain_* slots in bridge.py still exist for
+// the native dialog; nothing in studio-lm.jsx references them after
+// this deletion.)
 
 const Settings = ({ onClose }) => {
   const [hostNodeV2, setHostNodeV2] = React.useState(() => {
@@ -12419,8 +12451,11 @@ const Settings = ({ onClose }) => {
             }}>Reload</button>
           </Row>
 
-          {/* AgDR-0044/0045 — Brain section (BrainSection self-contained) */}
-          <BrainSection flash={_flash}/>
+          {/* Brain section moved to native PyQt SettingsDialog tab
+              (app/settings_dialog.py BrainTab). The JSX fallback modal
+              is only reached when bridge.open_settings isn't wired,
+              which is never in production — keeping brain UI here would
+              be invisible dead code. */}
 
           <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
             letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>DANGER</div>

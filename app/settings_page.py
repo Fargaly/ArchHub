@@ -44,9 +44,17 @@ T = _LivePalette()
 
 # Section catalog — (id, label, builder_method). Builder lives on
 # SettingsPage to keep self._router available.
+#
+# AgDR-0047 §C10 fix (2026-05-26): "AI Behaviour" sidebar entry removed.
+# The legacy SettingsDialog wrapped inside "Providers" already exposes
+# the same AI Behaviour surface (thinking-effort + per-tool combos);
+# keeping a dedicated section here stacked the same controls in two
+# panels. The dedicated builder `_build_ai_behaviour_section` is kept
+# below — unreferenced — in case a future Studio-native rebuild wants
+# to switch direction (suppress AI Behaviour inside SettingsDialog
+# instead). For now, single source of truth: Providers.
 _SECTIONS: list[tuple[str, str]] = [
     ("providers", "Providers"),
-    ("ai_behaviour", "AI Behaviour"),
     ("about", "About"),
     ("diagnostics", "Diagnostics"),
 ]
@@ -125,8 +133,10 @@ class SettingsPage(QWidget):
         bh.addWidget(self.stack, 1)
 
         # Build each section once + add to stack in declared order.
+        # AgDR-0047 §C10: `_build_ai_behaviour_section` deliberately not
+        # added — the wrapped SettingsDialog inside Providers already
+        # exposes AI Behaviour. See _SECTIONS comment above.
         self.stack.addWidget(self._build_providers_section())
-        self.stack.addWidget(self._build_ai_behaviour_section())
         self.stack.addWidget(self._build_about_section())
         self.stack.addWidget(self._build_diagnostics_section())
 

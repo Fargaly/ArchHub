@@ -16,10 +16,11 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
-    QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
-    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFormLayout, QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 from secrets_store import (
@@ -180,12 +181,73 @@ def _qbrush(hex_str: str):
     return QBrush(QColor(hex_str))
 
 
-def _add_title(layout, title: str, blurb: str) -> None:
-    """Add an h1 + muted subtitle pair to the given layout."""
+def _add_title(layout, title: str, blurb: str, scope: str = "") -> None:
+    """Add an h1 + muted subtitle pair to the given layout. If `scope`
+    is given, a small chip ([USER] / [PROJECT] / [FIRM] / [DEVICE]) is
+    placed next to the title to tell the founder where these settings
+    live."""
+    head = QHBoxLayout(); head.setSpacing(8); head.setContentsMargins(0, 0, 0, 0)
     t = QLabel(title); t.setObjectName("h1")
-    layout.addWidget(t)
+    head.addWidget(t)
+    if scope:
+        head.addWidget(_make_scope_chip(scope))
+    head.addStretch(1)
+    layout.addLayout(head)
     s = QLabel(blurb); s.setObjectName("muted"); s.setWordWrap(True)
     layout.addWidget(s)
+
+
+def _make_scope_chip(scope: str) -> QLabel:
+    """Render a small rounded scope chip. Scope is one of:
+    USER / PROJECT / FIRM / DEVICE. Visual-only — does not change
+    persistence."""
+    label = (scope or "").strip().upper()
+    chip = QLabel(label)
+    chip.setObjectName("scopeChip")
+    chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    chip.setStyleSheet(
+        f"QLabel#scopeChip {{"
+        f" background:{TOKENS['bg']};"
+        f" color:{TOKENS['accent']};"
+        f" border:1px solid {TOKENS['accent']};"
+        f" border-radius:8px;"
+        f" padding:1px 7px;"
+        f" font-size:9px;"
+        f" font-weight:700;"
+        f" letter-spacing:0.10em;"
+        f"}}"
+    )
+    return chip
+
+
+def _groupbox_with_chip(title: str, scope: str = "") -> QGroupBox:
+    """A QGroupBox whose title carries a small scope chip on the right
+    side. Same dark chrome as a plain QGroupBox."""
+    grp = QGroupBox(title)
+    if not scope:
+        return grp
+    chip = _make_scope_chip(scope)
+    chip.setParent(grp)
+    chip.setStyleSheet(chip.styleSheet() + " QLabel#scopeChip { margin-top:-1px; }")
+    # Place the chip in the top-right inside the group margin.
+    def _position():
+        try:
+            chip.adjustSize()
+            x = max(8, grp.width() - chip.width() - 12)
+            chip.move(x, 2)
+            chip.raise_()
+        except Exception:
+            pass
+    # QGroupBox emits resizeEvent — hook via eventFilter would be heavy;
+    # use a short-circuit: re-position on show + on resize via a tiny
+    # subclass-by-override.
+    _orig_resize = grp.resizeEvent
+    def _resize(ev):
+        _orig_resize(ev)
+        _position()
+    grp.resizeEvent = _resize  # type: ignore[assignment]
+    _position()
+    return grp
 
 
 def _local_appdata() -> Path:
@@ -198,6 +260,32 @@ def _profile_path() -> Path:
 
 def _theme_path() -> Path:
     return _local_appdata() / "theme.json"
+
+
+def _brain_tuning_path() -> Path:
+    """Where BrainTab persists local toggle state when the daemon
+    doesn't expose a `brain.settings_*` tool (which it doesn't today).
+    Founder picked: %LOCALAPPDATA%/ArchHub/brain/tuning.json."""
+    return _local_appdata() / "brain" / "tuning.json"
+
+
+def _load_brain_tuning() -> dict:
+    p = _brain_tuning_path()
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8") or "{}") or {}
+    except Exception:
+        return {}
+
+
+def _save_brain_tuning(data: dict) -> None:
+    p = _brain_tuning_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data or {}, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _fmt_bytes(b: int) -> str:
@@ -217,6 +305,65 @@ def _cloud_client():
         return _cc
     except Exception:
         return None
+
+
+def _detect_brain_agent(slug: str) -> dict:
+    """Detect whether a given MCP-client agent has the brain wired into
+    its config. Returns {'name','path','state','detail'} with state in
+    {'wired','unwired','not_detected'}.
+
+    Detection is conservative: file must exist (else not_detected); if
+    file exists, search for 'personal-brain' or 'brain' MCP entry to
+    declare 'wired'. ChatGPT desktop is always 'unwired' (OAuth pending).
+    """
+    home = Path(os.path.expanduser("~"))
+    if slug == "claude_code":
+        cfg = home / ".claude" / "settings.json"
+        name = "Claude Code"
+        detail = "~/.claude/settings.json · hooks + stdio"
+    elif slug == "cursor":
+        cfg = home / ".cursor" / "mcp.json"
+        name = "Cursor"
+        detail = "~/.cursor/mcp.json · HTTP"
+    elif slug == "codex":
+        cfg = home / ".codex" / "config.toml"
+        name = "Codex CLI"
+        detail = "~/.codex/config.toml · stdio"
+    elif slug == "gemini":
+        cfg = home / ".gemini" / "settings.json"
+        name = "Gemini CLI"
+        detail = "~/.gemini/settings.json · session inject"
+    elif slug == "archhub_composer":
+        # In-process — Layer 5 in app/llm_router.py.
+        cfg = Path(__file__).resolve().parent / "llm_router.py"
+        name = "ArchHub Composer"
+        detail = "app/llm_router.py · Layer 5 hooks · in-process"
+        return {
+            "name": name, "path": str(cfg), "detail": detail,
+            "state": "wired" if cfg.is_file() else "unwired",
+        }
+    elif slug == "chatgpt_desktop":
+        return {
+            "name": "ChatGPT desktop", "path": "OAuth 2.1 + PKCE",
+            "detail": "Requires public HTTPS endpoint",
+            "state": "unwired",
+        }
+    else:
+        return {"name": slug, "path": "", "detail": "", "state": "not_detected"}
+
+    if not cfg.is_file():
+        return {"name": name, "path": str(cfg), "detail": detail,
+                "state": "not_detected"}
+    try:
+        raw = cfg.read_text(encoding="utf-8", errors="ignore").lower()
+    except Exception:
+        raw = ""
+    wired = ("personal-brain" in raw) or ("personal_brain" in raw) \
+            or ("8473" in raw and "mcp" in raw)
+    return {
+        "name": name, "path": str(cfg), "detail": detail,
+        "state": "wired" if wired else "unwired",
+    }
 
 
 def _read_version() -> str:
@@ -286,7 +433,8 @@ class GeneralTab(QWidget):
 
         _add_title(outer, "General",
                     "Identity, appearance, default model. All values stay "
-                    "on this machine.")
+                    "on this machine.",
+                    scope="USER")
 
         prof = QGroupBox("Profile")
         pf = QFormLayout(prof); pf.setSpacing(8); pf.setContentsMargins(12, 18, 12, 12)
@@ -317,6 +465,28 @@ class GeneralTab(QWidget):
         mf.addWidget(hint)
         self._model = QComboBox(); mf.addWidget(self._model)
         outer.addWidget(modg)
+
+        # ── Canvas behaviour (closes FAILURE_LOG agdr-0024-hostnodev2-
+        # localstorage-gated-off — DEVICE scope: this is a per-machine
+        # canvas render preference, not a profile setting).
+        canvas_grp = QGroupBox("Canvas behaviour")
+        cgf = QVBoxLayout(canvas_grp); cgf.setSpacing(8); cgf.setContentsMargins(12, 18, 12, 12)
+        cgf_hint = QLabel(
+            "<b>HostNode v2</b> is the per-AgDR-0024 connector-node design "
+            "(op-grid + typed wires + floating verb bar). It's the canon "
+            "render path; default ON. Toggle off only to A/B against the v1 "
+            "fallback during host-debugging."
+        )
+        cgf_hint.setObjectName("muted"); cgf_hint.setWordWrap(True)
+        cgf.addWidget(cgf_hint)
+        self._host_node_v2 = QCheckBox("Use HostNode v2 design for connector nodes")
+        # Default ON to match the JSX-side default (studio-lm.jsx
+        # _readHostNodeV2 returns true when the value is empty).
+        saved_v2 = load_setting("host_node_v2")
+        self._host_node_v2.setChecked(bool(saved_v2) if saved_v2 is not None else True)
+        self._host_node_v2.toggled.connect(self._on_host_node_v2)
+        cgf.addWidget(self._host_node_v2)
+        outer.addWidget(canvas_grp)
 
         outer.addStretch(1)
 
@@ -384,6 +554,35 @@ class GeneralTab(QWidget):
                 sel = i
         self._model.setCurrentIndex(sel)
         self._model.blockSignals(False)
+
+    def _on_host_node_v2(self, on: bool) -> None:
+        """Persist the HostNode v2 preference and (best-effort) flip
+        the JSX-side localStorage flag so the canvas reflects the
+        change without a manual reload.
+
+        Bridge gap (documented per founder spec): the JS side reads its
+        value from <code>localStorage['archhub.host_node_v2']</code> via
+        <code>window.__archhubSetHostNodeV2</code>. Bridge has no
+        <code>set_pref</code> / <code>run_js</code> slot to flip that
+        from Python. The Qt-side checkbox + secrets_store save is the
+        SAFE persisted value; JSX reads default-ON, so toggling here
+        guarantees correctness on the NEXT reload. Live-flip via the
+        bridge can land later as a small <code>set_pref</code> slot."""
+        save_setting("host_node_v2", bool(on))
+        # Best-effort: drive JSX via the bridge if a JS-eval slot ever
+        # appears. Today none exists — silent no-op is the right thing.
+        bridge = (getattr(self._parent_dlg, "bridge", None)
+                  or getattr(self._parent_dlg, "_bridge", None))
+        run_js = getattr(bridge, "run_js", None) if bridge else None
+        if callable(run_js):
+            try:
+                run_js(
+                    "try { window.__archhubSetHostNodeV2 && "
+                    f"window.__archhubSetHostNodeV2({str(bool(on)).lower()}); }} "
+                    "catch (e) {}"
+                )
+            except Exception:
+                pass
 
     def _save(self) -> None:
         # Profile JSON.
@@ -514,7 +713,8 @@ class ProvidersTab(QWidget):
         _add_title(outer, "Providers",
                     "ArchHub never asks you to type or paste an API key. "
                     "Click <b>Sign in</b>, copy the key from the provider's "
-                    "site, and ArchHub will detect it on your clipboard.")
+                    "site, and ArchHub will detect it on your clipboard.",
+                    scope="USER")
 
         # Status banner — uses bridge.get_provider_stats.
         self._banner = QLabel("")
@@ -591,7 +791,8 @@ class HostsTab(QWidget):
         _add_title(outer, "Hosts",
                     "Desktop and SaaS apps ArchHub can talk to. State is "
                     "detected from running processes / installed apps. Toggle "
-                    "a host off if you don't want ArchHub to attach to it.")
+                    "a host off if you don't want ArchHub to attach to it.",
+                    scope="DEVICE")
 
         self._table = _make_table(list(self.COLS))
         outer.addWidget(self._table, 1)
@@ -723,7 +924,8 @@ class MemoryTab(QWidget):
         _add_title(outer, "Memory",
                     "Facts ArchHub remembers across sessions. Auto-capture "
                     "pulls explicit statements ('I prefer SI units') out of "
-                    "chats; you can also add or remove facts manually.")
+                    "chats; you can also add or remove facts manually.",
+                    scope="USER")
 
         # Stats banner — cloud_client.memory_stats via bridge.
         self._banner = QLabel("")
@@ -927,7 +1129,8 @@ class PermissionsTab(QWidget):
 
         _add_title(outer, "Permissions",
                     "Decide which tool calls run silently, prompt, or are "
-                    "blocked. Defaults are sane (writes ask, reads auto).")
+                    "blocked. Defaults are sane (writes ask, reads auto).",
+                    scope="USER")
 
         # Thinking effort lives in the same neighbourhood — the model's
         # reasoning depth is also a "behaviour" knob.
@@ -1084,7 +1287,8 @@ class StorageTab(QWidget):
         _add_title(outer, "Storage",
                     "Local-first — everything lives under "
                     "<code>%LOCALAPPDATA%\\ArchHub</code>. Nothing is "
-                    "uploaded unless you sign in to a cloud relay.")
+                    "uploaded unless you sign in to a cloud relay.",
+                    scope="DEVICE")
 
         # Usage list.
         usage_grp = QGroupBox("Disk usage")
@@ -1297,7 +1501,8 @@ class ShortcutsTab(QWidget):
 
         _add_title(outer, "Shortcuts",
                     "The keys that matter. Custom bindings ship in a later "
-                    "release — for now this is the canon.")
+                    "release — for now this is the canon.",
+                    scope="USER")
 
         mono = QFont(); mono.setFamily("JetBrains Mono"); mono.setPointSize(10)
         for group_label, items in self.SHORTCUTS:
@@ -1342,7 +1547,8 @@ class AboutTab(QWidget):
 
         _add_title(outer, "About",
                     "What ArchHub is running, where to file issues, who owns "
-                    "the data. Select any value to copy it.")
+                    "the data. Select any value to copy it.",
+                    scope="DEVICE")
 
         # Build / runtime panel.
         info_grp = QGroupBox("Build")
@@ -1407,6 +1613,912 @@ class AboutTab(QWidget):
         outer.addStretch(1)
 
 
+# ── Tab: Brain (AgDR-0044 · personal-brain-mcp) ──────────────────────────
+class BrainTab(QWidget):
+    """Native Qt brain settings — daemon status · firm identity · invite
+    flow · seats list · communities · tuning. Replaces the JSX
+    BrainSection (which lived in the fallback modal that never opens).
+
+    All MCP calls hit the local daemon at http://127.0.0.1:8473/mcp via
+    stateless HTTP — the same wire Layer 5 uses. Timeout-bounded so a
+    dead daemon never blocks the UI thread.
+    """
+
+    DAEMON_URL = "http://127.0.0.1:8473/mcp"
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(10)
+
+        _add_title(outer, "Brain",
+                    "Shared memory + skills + setups across every AI you use. "
+                    "Lives in a local daemon (port 8473) that ArchHub talks to "
+                    "and that survives ArchHub being closed.",
+                    scope="FIRM")
+
+        # ── status card ──────────────────────────────────────────────
+        st = QGroupBox("Status")
+        sv = QVBoxLayout(st); sv.setSpacing(8); sv.setContentsMargins(12, 18, 12, 12)
+        status_row = QHBoxLayout(); status_row.setSpacing(10)
+        self._pulse = QLabel("●"); self._pulse.setObjectName("muted")
+        self._pulse.setStyleSheet("font-size:14px;")
+        self._status_text = QLabel("probing daemon…")
+        self._status_text.setObjectName("muted")
+        status_row.addWidget(self._pulse)
+        status_row.addWidget(self._status_text, 1)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh)
+        status_row.addWidget(refresh_btn)
+        sv.addLayout(status_row)
+
+        # Stat tiles row
+        tiles = QHBoxLayout(); tiles.setSpacing(8)
+        self._tile_skills = self._make_tile("Skills", "—")
+        self._tile_facts = self._make_tile("Facts", "—")
+        self._tile_wirings = self._make_tile("MCPs", "—")
+        self._tile_lastmint = self._make_tile("Last mint", "—")
+        for t in (self._tile_skills, self._tile_facts, self._tile_wirings, self._tile_lastmint):
+            tiles.addWidget(t)
+        sv.addLayout(tiles)
+
+        # db path label
+        self._db_path = QLabel("db_path: —")
+        self._db_path.setObjectName("mono")
+        self._db_path.setWordWrap(True)
+        sv.addWidget(self._db_path)
+        outer.addWidget(st)
+
+        # ── firm card ─────────────────────────────────────────────────
+        fm = QGroupBox("Firm")
+        fv = QVBoxLayout(fm); fv.setSpacing(10); fv.setContentsMargins(12, 18, 12, 12)
+
+        self._firm_label = QLabel("No firm yet")
+        self._firm_label.setStyleSheet(f"color:{TOKENS['muted']};")
+        fv.addWidget(self._firm_label)
+
+        # Create-firm row
+        create_row = QHBoxLayout(); create_row.setSpacing(6)
+        self._create_name = QLineEdit()
+        self._create_name.setPlaceholderText("Firm name (e.g. ArchHub Studio)")
+        self._create_btn = QPushButton("Create firm")
+        self._create_btn.setObjectName("primary")
+        self._create_btn.clicked.connect(self._on_create_firm)
+        create_row.addWidget(self._create_name, 1)
+        create_row.addWidget(self._create_btn)
+        self._create_row_widget = QWidget()
+        self._create_row_widget.setLayout(create_row)
+        fv.addWidget(self._create_row_widget)
+
+        # Join-firm row
+        join_row = QHBoxLayout(); join_row.setSpacing(6)
+        self._join_token = QLineEdit()
+        self._join_token.setPlaceholderText("Paste invite token to join an existing firm")
+        self._join_btn = QPushButton("Join")
+        self._join_btn.clicked.connect(self._on_join_firm)
+        join_row.addWidget(self._join_token, 1)
+        join_row.addWidget(self._join_btn)
+        self._join_row_widget = QWidget()
+        self._join_row_widget.setLayout(join_row)
+        fv.addWidget(self._join_row_widget)
+
+        # Invite-create row (shown when in firm as admin)
+        invite_row = QHBoxLayout(); invite_row.setSpacing(6)
+        self._invite_btn = QPushButton("Create invite token (24h)")
+        self._invite_btn.setObjectName("primary")
+        self._invite_btn.clicked.connect(self._on_create_invite)
+        self._invite_btn.setVisible(False)
+        self._leave_btn = QPushButton("Leave firm")
+        self._leave_btn.clicked.connect(self._on_leave_firm)
+        self._leave_btn.setVisible(False)
+        invite_row.addWidget(self._invite_btn)
+        invite_row.addWidget(self._leave_btn)
+        invite_row.addStretch(1)
+        self._invite_row_widget = QWidget()
+        self._invite_row_widget.setLayout(invite_row)
+        fv.addWidget(self._invite_row_widget)
+
+        # Invite token preview
+        self._invite_preview = QLabel("")
+        self._invite_preview.setObjectName("mono")
+        self._invite_preview.setWordWrap(True)
+        self._invite_preview.setVisible(False)
+        self._invite_preview.setStyleSheet(
+            f"border:1px dashed {TOKENS['accent']}; padding:8px; "
+            f"border-radius:6px; background:{TOKENS['bg']}; "
+            f"color:{TOKENS['text']}; font-family:{TOKENS['mono']};"
+        )
+        fv.addWidget(self._invite_preview)
+        self._copy_invite_btn = QPushButton("Copy token")
+        self._copy_invite_btn.setVisible(False)
+        self._copy_invite_btn.clicked.connect(self._on_copy_invite)
+        fv.addWidget(self._copy_invite_btn)
+
+        # Seats list
+        seats_label = QLabel("Seats")
+        seats_label.setStyleSheet(f"color:{TOKENS['muted']}; padding-top:6px;")
+        fv.addWidget(seats_label)
+        self._seats_list = QListWidget()
+        self._seats_list.setMaximumHeight(110)
+        fv.addWidget(self._seats_list)
+
+        outer.addWidget(fm)
+
+        # ── communities card ────────────────────────────────────────
+        cm = QGroupBox("Communities")
+        cv = QVBoxLayout(cm); cv.setSpacing(8); cv.setContentsMargins(12, 18, 12, 12)
+        sub_row = QHBoxLayout(); sub_row.setSpacing(6)
+        self._sub_url = QLineEdit()
+        self._sub_url.setPlaceholderText("Peer firm outbox URL (e.g. https://peer.example/actor)")
+        self._sub_btn = QPushButton("Subscribe")
+        self._sub_btn.clicked.connect(self._on_subscribe)
+        sub_row.addWidget(self._sub_url, 1)
+        sub_row.addWidget(self._sub_btn)
+        cv.addLayout(sub_row)
+        self._comm_list = QListWidget()
+        self._comm_list.setMaximumHeight(90)
+        cv.addWidget(self._comm_list)
+        outer.addWidget(cm)
+
+        # ── connected agents card ──────────────────────────────────
+        ag = QGroupBox("Connected agents")
+        av = QVBoxLayout(ag); av.setSpacing(6); av.setContentsMargins(12, 18, 12, 12)
+        ag_hint = QLabel(
+            "Each agent's config is scanned for a <code>personal-brain</code> "
+            "MCP entry. <b>wired</b> = the agent fires brain.context on every "
+            "prompt; <b>unwired</b> = installed but not yet routed; "
+            "<b>not detected</b> = no config on this device."
+        )
+        ag_hint.setObjectName("muted"); ag_hint.setWordWrap(True)
+        av.addWidget(ag_hint)
+        self._agent_list = QListWidget()
+        self._agent_list.setStyleSheet(
+            f"QListWidget {{ background:{TOKENS['bg']}; "
+            f"border:1px solid {TOKENS['border']}; border-radius:6px; }}"
+        )
+        self._agent_list.setMinimumHeight(170)
+        av.addWidget(self._agent_list)
+
+        ag_btn_row = QHBoxLayout(); ag_btn_row.setSpacing(6)
+        self._chatgpt_setup_btn = QPushButton("Set up ChatGPT desktop…")
+        self._chatgpt_setup_btn.clicked.connect(self._on_chatgpt_setup)
+        rescan_btn = QPushButton("Rescan agents")
+        rescan_btn.clicked.connect(self._render_agents)
+        ag_btn_row.addWidget(self._chatgpt_setup_btn)
+        ag_btn_row.addStretch(1)
+        ag_btn_row.addWidget(rescan_btn)
+        av.addLayout(ag_btn_row)
+        outer.addWidget(ag)
+
+        # ── tuning & safety card ────────────────────────────────────
+        tn = QGroupBox("Tuning & safety")
+        tv = QVBoxLayout(tn); tv.setSpacing(8); tv.setContentsMargins(12, 18, 12, 12)
+        tn_hint = QLabel(
+            "R1–R4 are the four reliability rails described in "
+            "<code>personal-brain-mcp/src/personal_brain</code>. Defaults are "
+            "ON — turn off only if a rail is misbehaving. State is persisted "
+            "to <code>%LOCALAPPDATA%/ArchHub/brain/tuning.json</code>."
+        )
+        tn_hint.setObjectName("muted"); tn_hint.setWordWrap(True)
+        tv.addWidget(tn_hint)
+        tuning = _load_brain_tuning()
+        self._tune_r1 = QCheckBox("R1 · Adaptive skill-mint floor (calibration.py)")
+        self._tune_r2 = QCheckBox("R2 · Echo Trap defense (exploration.py)")
+        self._tune_r3 = QCheckBox("R3 · Resilience wrapper (liveness.py)")
+        self._tune_r4 = QCheckBox("R4 · Bayesian reputation (reputation.py)")
+        for cb, key in (
+            (self._tune_r1, "r1_calibration"),
+            (self._tune_r2, "r2_echo_trap"),
+            (self._tune_r3, "r3_resilience"),
+            (self._tune_r4, "r4_reputation"),
+        ):
+            # Default ON per founder spec.
+            cb.setChecked(bool(tuning.get(key, True)))
+            cb.toggled.connect(
+                lambda v, k=key: self._persist_tuning(k, bool(v))
+            )
+            tv.addWidget(cb)
+
+        critic_row = QHBoxLayout(); critic_row.setSpacing(8)
+        critic_lbl = QLabel("LLM critic:")
+        self._critic_pick = QComboBox()
+        for label, val in (
+            ("Heuristic (zero LLM)",          "heuristic"),
+            ("Anthropic claude-sonnet-4-6",   "anthropic"),
+            ("OpenAI gpt-5",                   "openai"),
+            ("Hybrid (heuristic ratify, LLM refine)", "hybrid"),
+        ):
+            self._critic_pick.addItem(label, val)
+        cur = tuning.get("llm_critic") or "anthropic"
+        idx = self._critic_pick.findData(cur)
+        if idx >= 0:
+            self._critic_pick.setCurrentIndex(idx)
+        self._critic_pick.currentIndexChanged.connect(
+            lambda _i: self._persist_tuning(
+                "llm_critic", self._critic_pick.currentData() or "heuristic"
+            )
+        )
+        critic_row.addWidget(critic_lbl)
+        critic_row.addWidget(self._critic_pick, 1)
+        tv.addLayout(critic_row)
+        outer.addWidget(tn)
+
+        # ── danger card (red border, bottom) ───────────────────────
+        dz = QGroupBox("Danger zone")
+        dz.setStyleSheet(
+            f"QGroupBox {{ background:{TOKENS['card']}; "
+            f"border:1px solid {TOKENS['bad']}; border-radius:10px; "
+            f"margin-top:14px; padding:14px 12px 10px 12px; "
+            f"color:{TOKENS['text']}; }}"
+            f"QGroupBox::title {{ subcontrol-origin:margin; "
+            f"subcontrol-position:top left; left:10px; padding:0 6px; "
+            f"color:{TOKENS['bad']}; font-weight:600; }}"
+        )
+        dv = QVBoxLayout(dz); dv.setSpacing(8); dv.setContentsMargins(12, 18, 12, 12)
+        dv.addWidget(self._danger_row(
+            "Export brain",
+            "Download the full SQLite + skill markdowns. Restorable on any device.",
+            self._on_export_brain,
+        ))
+        dv.addWidget(self._danger_row(
+            "Clear cache",
+            "Wipes the resilient-client journal + cached context. Daemon untouched.",
+            self._on_clear_brain_cache,
+        ))
+        dv.addWidget(self._danger_row(
+            "Reset brain",
+            "Wipes everything. Skills, facts, wiring, secrets refs, audit log. Cannot be undone.",
+            self._on_reset_brain,
+        ))
+        outer.addWidget(dz)
+
+        # Footer hint
+        hint = QLabel(
+            "All actions hit the local brain daemon at "
+            "<code>127.0.0.1:8473/mcp</code>. If the status is offline, "
+            "the daemon isn't running."
+        )
+        hint.setObjectName("muted"); hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        outer.addStretch(1)
+
+        # Probe on construction
+        self._render_agents()
+        self._refresh()
+
+    # ── widgets ──────────────────────────────────────────────────────
+
+    def _make_tile(self, label: str, value: str) -> QWidget:
+        w = QFrame()
+        w.setStyleSheet(
+            f"background:{TOKENS['card']}; border:1px solid {TOKENS['border']}; "
+            f"border-radius:8px; padding:10px;"
+        )
+        lv = QVBoxLayout(w); lv.setContentsMargins(8, 6, 8, 6); lv.setSpacing(2)
+        value_lbl = QLabel(value)
+        value_lbl.setStyleSheet("font-size:22px; font-weight:600;")
+        label_lbl = QLabel(label)
+        label_lbl.setObjectName("muted")
+        label_lbl.setStyleSheet("font-size:10px; letter-spacing:0.08em; text-transform:uppercase;")
+        lv.addWidget(value_lbl); lv.addWidget(label_lbl)
+        # Cache the value label so we can update later
+        w._value_lbl = value_lbl  # type: ignore[attr-defined]
+        return w
+
+    # ── HTTP helpers ─────────────────────────────────────────────────
+
+    def _mcp_call(self, tool: str, args: dict | None = None,
+                  *, timeout: float = 2.0) -> dict:
+        """POST a tools/call to the brain daemon. Returns the parsed
+        structuredContent (or {'ok': False, 'error': ...} on failure).
+        Timeout-bounded so a dead daemon never freezes the dialog."""
+        import urllib.error
+        import urllib.request
+        import json as _json
+        import time as _time
+        body = _json.dumps({
+            "jsonrpc": "2.0", "id": int(_time.time() * 1000),
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args or {}},
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                self.DAEMON_URL, data=body, method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8")
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                 TimeoutError, OSError) as ex:
+            return {"ok": False, "error": f"daemon unreachable: {ex}"}
+
+        # SSE parse
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                obj = _json.loads(line[5:].strip())
+            except _json.JSONDecodeError:
+                continue
+            result = obj.get("result") or {}
+            if isinstance(result, dict):
+                sc = result.get("structuredContent")
+                if sc is not None:
+                    return sc
+                content = result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    txt = content[0].get("text", "")
+                    try:
+                        return _json.loads(txt)
+                    except Exception:
+                        return {"ok": False, "text": txt}
+            return result
+        return {"ok": False, "error": "no SSE data line in response"}
+
+    # ── refresh / render ─────────────────────────────────────────────
+
+    def _refresh(self) -> None:
+        """Pull health + firm seats + (TODO) communities. Update UI."""
+        # 1. health
+        health = self._mcp_call("brain.health", {})
+        if health.get("ok"):
+            self._pulse.setText("●")
+            self._pulse.setStyleSheet(f"font-size:14px; color:{TOKENS['good']};")
+            self._status_text.setText(
+                f"LIVE · daemon v{health.get('version', '?')} · "
+                f"{health.get('skills', 0)} skills · {health.get('facts', 0)} facts"
+            )
+            self._status_text.setStyleSheet(f"color:{TOKENS['good']};")
+            self._db_path.setText(f"db_path: {health.get('db_path', '—')}")
+            self._tile_skills._value_lbl.setText(str(health.get("skills", 0)))
+            self._tile_facts._value_lbl.setText(str(health.get("facts", 0)))
+            self._tile_wirings._value_lbl.setText(str(health.get("wiring_active", 0)))
+        else:
+            self._pulse.setText("●")
+            self._pulse.setStyleSheet(f"font-size:14px; color:{TOKENS['bad']};")
+            err = health.get("error", "unknown")
+            self._status_text.setText(f"OFFLINE — {err[:120]}")
+            self._status_text.setStyleSheet(f"color:{TOKENS['bad']};")
+            self._db_path.setText(
+                "db_path: — (daemon down · run "
+                "`personal-brain --http 8473` or restart ArchHub)"
+            )
+            return
+
+        # 2. firm
+        seats = self._mcp_call("brain.firm_seats", {})
+        self._render_firm(seats)
+
+    def _render_firm(self, seats_resp: dict) -> None:
+        self._seats_list.clear()
+        if not seats_resp.get("ok") or not seats_resp.get("firm_id"):
+            # Not in any firm — show create/join rows, hide invite/leave
+            self._firm_label.setText("No firm yet — create one or paste an invite token.")
+            self._firm_label.setStyleSheet(f"color:{TOKENS['muted']};")
+            self._create_row_widget.setVisible(True)
+            self._join_row_widget.setVisible(True)
+            self._invite_row_widget.setVisible(False)
+            return
+
+        firm_name = seats_resp.get("firm_name") or seats_resp.get("firm_id")
+        firm_id = seats_resp.get("firm_id")
+        self._firm_label.setText(
+            f"<b>{firm_name}</b>   <span style='color:{TOKENS['muted']};'>{firm_id}</span>"
+        )
+        self._firm_label.setStyleSheet("")
+        self._create_row_widget.setVisible(False)
+        self._join_row_widget.setVisible(False)
+        self._invite_row_widget.setVisible(True)
+
+        for seat in seats_resp.get("seats", []) or []:
+            user_id = seat.get("user_id", "?")
+            role = seat.get("role", "seat")
+            item = QListWidgetItem(f"{user_id}   ({role})")
+            self._seats_list.addItem(item)
+
+    # ── handlers ─────────────────────────────────────────────────────
+
+    def _on_create_firm(self) -> None:
+        name = (self._create_name.text() or "").strip()
+        if not name:
+            QMessageBox.warning(self, "Firm name required",
+                                 "Enter a firm name first.")
+            return
+        r = self._mcp_call("brain.firm_create", {"name": name})
+        if r.get("ok"):
+            QMessageBox.information(
+                self, "Firm created",
+                f"Firm '{r.get('name', name)}' created.\n"
+                f"ID: {r.get('firm_id', '?')}\n\n"
+                f"You are the admin · share invite tokens from this tab.",
+            )
+            self._refresh()
+        else:
+            QMessageBox.critical(self, "Create failed",
+                                  r.get("error", "unknown error"))
+
+    def _on_join_firm(self) -> None:
+        token = (self._join_token.text() or "").strip()
+        if not token:
+            QMessageBox.warning(self, "Token required",
+                                 "Paste an invite token first.")
+            return
+        r = self._mcp_call("brain.firm_invite_accept", {"token": token})
+        if r.get("ok"):
+            QMessageBox.information(
+                self, "Joined firm",
+                f"Joined firm {r.get('firm_id', '?')} as {r.get('role', 'seat')}",
+            )
+            self._join_token.clear()
+            self._refresh()
+        else:
+            QMessageBox.critical(self, "Join failed",
+                                  r.get("error", "unknown error"))
+
+    def _on_create_invite(self) -> None:
+        r = self._mcp_call("brain.firm_invite_create",
+                            {"role": "seat", "ttl_hours": 24})
+        if r.get("ok"):
+            token = r.get("token", "")
+            self._invite_preview.setText(token)
+            self._invite_preview.setVisible(True)
+            self._copy_invite_btn.setVisible(True)
+        else:
+            QMessageBox.critical(self, "Invite create failed",
+                                  r.get("error", "unknown error"))
+
+    def _on_copy_invite(self) -> None:
+        QGuiApplication.clipboard().setText(self._invite_preview.text())
+        QMessageBox.information(self, "Copied",
+                                 "Invite token copied to clipboard.")
+
+    def _on_leave_firm(self) -> None:
+        reply = QMessageBox.question(
+            self, "Leave firm",
+            "Leave the current firm? Your local seat record is removed.",
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._mcp_call("brain.firm_leave", {})
+        self._refresh()
+
+    def _on_subscribe(self) -> None:
+        url = (self._sub_url.text() or "").strip()
+        if not url:
+            QMessageBox.warning(self, "URL required",
+                                 "Paste a peer firm outbox URL first.")
+            return
+        # Brain MCP doesn't yet expose community subscribe as a tool —
+        # the community module is daemon-internal. Show a clear note
+        # for now; Slice C wires this through.
+        QMessageBox.information(
+            self, "Subscribe (deferred)",
+            f"Community subscribe to {url[:60]}… is wired in the "
+            f"community module but not yet exposed as an MCP tool. "
+            f"Tracked in the runtime queue; reachable via "
+            f"`personal_brain.community.subscribe()` from the CLI.",
+        )
+
+    # ── connected agents ─────────────────────────────────────────────
+
+    AGENT_SLUGS = (
+        "claude_code", "cursor", "codex", "gemini",
+        "archhub_composer", "chatgpt_desktop",
+    )
+
+    def _render_agents(self) -> None:
+        """Re-scan each agent's config + repaint the list rows."""
+        self._agent_list.clear()
+        for slug in self.AGENT_SLUGS:
+            info = _detect_brain_agent(slug)
+            state = info.get("state", "not_detected")
+            if state == "wired":
+                badge = "wired"; colour = TOKENS["good"]
+            elif state == "unwired":
+                badge = "unwired"; colour = TOKENS["muted"]
+            else:
+                badge = "not detected"; colour = TOKENS["muted"]
+            text = f"  {info['name']:<22}  {info['detail']:<50}  [{badge}]"
+            item = QListWidgetItem(text)
+            item.setForeground(_qbrush(colour))
+            item.setToolTip(info.get("path", ""))
+            self._agent_list.addItem(item)
+
+    def _on_chatgpt_setup(self) -> None:
+        """OAuth flow is deferred — show what's needed so the founder
+        sees the gap honestly instead of clicking a button that lies."""
+        QMessageBox.information(
+            self, "ChatGPT desktop · setup deferred",
+            "ChatGPT desktop requires:\n"
+            "  • A public HTTPS endpoint pointing at the brain daemon\n"
+            "  • OAuth 2.1 + PKCE registration with OpenAI\n"
+            "  • Brain federation server running\n\n"
+            "Tracked in the brain roadmap; OAuth path not yet wired. "
+            "Other 5 agents (Claude Code, Cursor, Codex, Gemini, ArchHub "
+            "Composer) connect directly with no OAuth.",
+        )
+
+    # ── tuning persistence ───────────────────────────────────────────
+
+    def _persist_tuning(self, key: str, value) -> None:
+        """First try the daemon (in case a future build exposes
+        `brain.settings_set`). On failure, fall back to a local
+        tuning.json — the founder still gets a working toggle."""
+        try:
+            r = self._mcp_call("brain.settings_set", {"key": key, "value": value})
+        except Exception:
+            r = {"ok": False}
+        if r.get("ok"):
+            return
+        # Daemon doesn't expose a settings tool — keep local copy.
+        data = _load_brain_tuning()
+        data[key] = value
+        _save_brain_tuning(data)
+
+    # ── danger zone handlers ─────────────────────────────────────────
+
+    def _danger_row(self, label: str, blurb: str, on_click) -> QFrame:
+        row = QFrame()
+        row.setStyleSheet(
+            f"QFrame {{ background:{TOKENS['card']}; "
+            f"border:1px solid {TOKENS['border']}; border-radius:6px; }}"
+        )
+        rl = QHBoxLayout(row); rl.setContentsMargins(12, 10, 12, 10); rl.setSpacing(10)
+        col = QVBoxLayout(); col.setSpacing(2)
+        l1 = QLabel(label); l1.setStyleSheet("font-weight:600;")
+        l2 = QLabel(blurb); l2.setObjectName("muted"); l2.setWordWrap(True)
+        col.addWidget(l1); col.addWidget(l2)
+        rl.addLayout(col, 1)
+        btn = QPushButton(label); btn.setObjectName("danger")
+        btn.clicked.connect(on_click)
+        rl.addWidget(btn)
+        return row
+
+    def _on_export_brain(self) -> None:
+        # Try the daemon first; if no export tool, point at the SQLite
+        # file location so the founder can grab it manually.
+        r = self._mcp_call("brain.export", {})
+        if r.get("ok") and r.get("path"):
+            QMessageBox.information(
+                self, "Brain export",
+                f"Exported to:\n{r['path']}",
+            )
+            return
+        db_hint = _local_appdata() / "brain" / "brain.db"
+        QMessageBox.information(
+            self, "Brain export",
+            "Daemon doesn't expose a brain.export tool yet. The full "
+            "SQLite file lives at:\n\n"
+            f"  {db_hint}\n\n"
+            "Copy it (and the skills/ markdown directory next to it) to "
+            "back up your brain. Restore by stopping the daemon, replacing "
+            "the file, and restarting.",
+        )
+
+    def _on_clear_brain_cache(self) -> None:
+        if QMessageBox.question(
+            self, "Clear brain cache?",
+            "Wipe the resilient-client journal + cached context? "
+            "The daemon and its DB are untouched.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        r = self._mcp_call("brain.cache_clear", {})
+        if r.get("ok"):
+            QMessageBox.information(self, "Brain cache",
+                                     "Cache cleared.")
+            return
+        # No daemon tool — best-effort wipe of the local journal file.
+        try:
+            jrn = _local_appdata() / "brain" / "client_journal.jsonl"
+            if jrn.is_file():
+                jrn.unlink()
+        except Exception:
+            pass
+        QMessageBox.information(self, "Brain cache",
+                                 "Local cache cleared (daemon tool "
+                                 "unavailable — wiped client journal).")
+
+    def _on_reset_brain(self) -> None:
+        if QMessageBox.question(
+            self, "Reset brain?",
+            "This wipes EVERYTHING — skills, facts, wiring, secrets refs, "
+            "audit log. There is no undo. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        r = self._mcp_call("brain.reset", {"confirm": True})
+        if r.get("ok"):
+            QMessageBox.information(self, "Brain reset",
+                                     "Brain wiped. Daemon restart recommended.")
+            self._refresh()
+            return
+        QMessageBox.warning(
+            self, "Brain reset (unavailable)",
+            "Daemon doesn't expose a brain.reset tool. To wipe the "
+            "brain manually: stop the daemon, delete "
+            f"{_local_appdata() / 'brain' / 'brain.db'}, restart the "
+            "daemon.",
+        )
+
+
+# ── Tab: Secrets & Keys ──────────────────────────────────────────────────
+class SecretsTab(QWidget):
+    """One table of every secret ArchHub references — resolver source +
+    masked last-4 + Set / Replace + Test.
+
+    Source of truth: secrets_store.load_api_key for known providers,
+    environment variables for the rest. The brain mandate (CLAUDE.md
+    line 425) says ArchHub stores `op://` references in the brain —
+    never values. This tab makes that contract visible to the founder.
+    """
+
+    # (slug, label, env_var, kind) — kind drives the test probe
+    KEY_ROWS = [
+        ("openrouter",  "OpenRouter",        "OPENROUTER_API_KEY", "llm"),
+        ("anthropic",   "Anthropic",         "ANTHROPIC_API_KEY",  "llm"),
+        ("openai",      "OpenAI",            "OPENAI_API_KEY",     "llm"),
+        ("google",      "Google",            "GOOGLE_API_KEY",     "llm"),
+        ("speckle",     "Speckle token",     "SPECKLE_TOKEN",      "speckle"),
+        ("github",      "GitHub PAT",        "GITHUB_TOKEN",       "github"),
+        ("notion",      "Notion token",      "NOTION_TOKEN",       "notion"),
+    ]
+
+    COLS = ("Provider", "Source", "Value", "Actions")
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(10)
+
+        _add_title(outer, "Keys & Secrets",
+                    "Every credential ArchHub knows about — resolver source "
+                    "and a masked last-4. Set a value inline, or paste an "
+                    "<code>op://</code> reference to keep the value in your "
+                    "secret manager.",
+                    scope="DEVICE")
+
+        # Banner — restates the brain mandate so the founder reads it
+        # every time he opens this tab.
+        banner = QLabel(
+            "ArchHub never stores secret values in the brain — only "
+            "<code>op://</code> references. Resolved at tool-call time."
+        )
+        banner.setWordWrap(True)
+        banner.setStyleSheet(
+            f"background:{TOKENS['card']}; "
+            f"border:1px solid {TOKENS['accent']}; "
+            f"border-radius:8px; padding:10px 14px; "
+            f"color:{TOKENS['text']};"
+        )
+        outer.addWidget(banner)
+
+        self._table = _make_table(list(self.COLS))
+        outer.addWidget(self._table, 1)
+
+        # Refresh
+        btn_row = QHBoxLayout()
+        rb = QPushButton("Refresh")
+        rb.clicked.connect(self.refresh)
+        btn_row.addStretch(1); btn_row.addWidget(rb)
+        outer.addLayout(btn_row)
+
+        self.refresh()
+
+    # ── helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _mask_value(val: str) -> str:
+        if not val:
+            return "(empty)"
+        if val.lower().startswith("op://"):
+            return val
+        if len(val) <= 6:
+            return "…" + val[-2:]
+        return f"{val[:3]}…{val[-4:]}"
+
+    @staticmethod
+    def _resolver_source(slug: str, env_var: str) -> tuple[str, str]:
+        """Return (source_label, value) for the given key. Honours
+        the BRAIN-FIRST mandate: op:// > 1Password > WCM > .env >
+        inline file > none."""
+        try:
+            stored = load_api_key(slug)
+        except Exception:
+            stored = None
+        if stored and stored.startswith("op://"):
+            return ("1Password (op://)", stored)
+        # Try Windows Credential Manager via keyring.
+        try:
+            import keyring
+            kr_val = keyring.get_password("ArchHub", slug)
+            if kr_val:
+                return ("WCM (keyring)", kr_val)
+        except Exception:
+            pass
+        # Environment variable (.env / system env).
+        env_val = os.environ.get(env_var, "") if env_var else ""
+        if env_val:
+            return (".env / system env", env_val)
+        # Inline file (secrets_store obfuscated file).
+        if stored:
+            return ("inline (local file)", stored)
+        return ("not set", "")
+
+    # ── refresh / render ─────────────────────────────────────────────
+
+    def refresh(self) -> None:
+        self._table.setRowCount(len(self.KEY_ROWS))
+        for i, (slug, label, env, kind) in enumerate(self.KEY_ROWS):
+            source, value = self._resolver_source(slug, env)
+
+            name_it = QTableWidgetItem(label)
+            name_it.setData(Qt.ItemDataRole.UserRole, slug)
+            self._table.setItem(i, 0, name_it)
+
+            src_it = QTableWidgetItem(source)
+            src_it.setForeground(_qbrush(
+                TOKENS["good"] if value else TOKENS["muted"]
+            ))
+            self._table.setItem(i, 1, src_it)
+
+            val_it = QTableWidgetItem(self._mask_value(value))
+            val_it.setForeground(_qbrush(TOKENS["muted"]))
+            val_it.setFont(QFont("JetBrains Mono", 9))
+            self._table.setItem(i, 2, val_it)
+
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(4, 2, 4, 2); cl.setSpacing(4)
+            set_btn = QPushButton("Set / replace")
+            set_btn.clicked.connect(
+                lambda _, s=slug, lbl=label: self._on_set(s, lbl)
+            )
+            test_btn = QPushButton("Test")
+            test_btn.clicked.connect(
+                lambda _, s=slug, lbl=label, k=kind: self._on_test(s, lbl, k)
+            )
+            test_btn.setEnabled(bool(value))
+            cl.addStretch(1); cl.addWidget(set_btn); cl.addWidget(test_btn)
+            self._table.setCellWidget(i, 3, cell)
+
+    # ── handlers ─────────────────────────────────────────────────────
+
+    def _on_set(self, slug: str, label: str) -> None:
+        dlg = _SetSecretDialog(slug, label, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self._parent_dlg.notify_changed()
+
+    def _on_test(self, slug: str, label: str, kind: str) -> None:
+        # Anthropic gets a real probe; the others are honest stubs.
+        _, value = self._resolver_source(slug, "")
+        if not value:
+            QMessageBox.warning(self, f"Test {label}",
+                                 "No value resolved — set the key first.")
+            return
+        if value.startswith("op://"):
+            QMessageBox.information(
+                self, f"Test {label}",
+                "op:// references are resolved at tool-call time by the "
+                "1Password CLI. Run `op signin` if you haven't already; "
+                "ArchHub will pick the value up on the next request.",
+            )
+            return
+        if slug == "anthropic":
+            ok, msg = self._probe_anthropic(value)
+            if ok:
+                QMessageBox.information(self, f"Test {label}",
+                                         f"Anthropic live · {msg}")
+            else:
+                QMessageBox.warning(self, f"Test {label}",
+                                     f"Probe failed: {msg}")
+            return
+        QMessageBox.information(
+            self, f"Test {label}",
+            f"Stub probe — {label} value is resolved ({self._mask_value(value)}). "
+            "A live ping for this provider isn't wired yet (only Anthropic "
+            "has a real test today)."
+        )
+
+    @staticmethod
+    def _probe_anthropic(api_key: str) -> tuple[bool, str]:
+        """Tiny GET against the Anthropic /v1/models list. 5s timeout
+        so a slow network doesn't freeze the dialog."""
+        import urllib.error
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/models",
+                method="GET",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as r:
+                if 200 <= r.status < 300:
+                    return True, f"HTTP {r.status}"
+                return False, f"HTTP {r.status}"
+        except urllib.error.HTTPError as ex:
+            return False, f"HTTP {ex.code} — {ex.reason}"
+        except (urllib.error.URLError, TimeoutError, OSError) as ex:
+            return False, str(ex)[:120]
+
+
+class _SetSecretDialog(QDialog):
+    """Tiny modal for SecretsTab — paste a raw value or an op://
+    reference. On Save: writes via secrets_store.save_api_key for
+    known providers; otherwise drops into secrets_store.save_setting
+    keyed by '<slug>_token' so the value survives restart."""
+
+    def __init__(self, slug: str, label: str, parent: QWidget):
+        super().__init__(parent)
+        self.slug = slug
+        self.setWindowTitle(f"Set {label}")
+        self.setStyleSheet(DIALOG_QSS)
+        self.setMinimumWidth(440)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(20, 18, 20, 14); v.setSpacing(8)
+        head = QLabel(f"<b>{label}</b>")
+        v.addWidget(head)
+        blurb = QLabel(
+            "Paste the raw token <i>or</i> a <code>op://vault/item/field</code> "
+            "reference. ArchHub stores op:// references verbatim and resolves "
+            "them at tool-call time."
+        )
+        blurb.setWordWrap(True); blurb.setObjectName("muted")
+        v.addWidget(blurb)
+
+        self._edit = QPlainTextEdit()
+        self._edit.setPlaceholderText("sk-… OR op://vault/item/field")
+        self._edit.setMaximumHeight(80)
+        v.addWidget(self._edit)
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        bb.accepted.connect(self._on_save)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def _on_save(self) -> None:
+        val = (self._edit.toPlainText() or "").strip()
+        if not val:
+            QMessageBox.warning(self, "Empty value",
+                                 "Paste a token or op:// reference first.")
+            return
+        try:
+            from secrets_store import save_api_key, save_setting
+            # Known LLM providers go through the standard slot; the
+            # others live in settings.json (same secret_store file).
+            known = {"openrouter", "anthropic", "openai", "google"}
+            if self.slug in known:
+                save_api_key(self.slug, val)
+            else:
+                save_setting(f"{self.slug}_token", val)
+        except Exception as ex:
+            QMessageBox.warning(self, "Save failed", str(ex))
+            return
+        self.accept()
+
+
 # ── Dialog shell ─────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
     """ArchHub settings — eight tabs, every button fires a real bridge slot.
@@ -1422,8 +2534,10 @@ class SettingsDialog(QDialog):
     TABS = [
         ("General",     GeneralTab),
         ("Providers",   ProvidersTab),
+        ("Secrets",     SecretsTab),
         ("Hosts",       HostsTab),
         ("Memory",      MemoryTab),
+        ("Brain",       BrainTab),
         ("Permissions", PermissionsTab),
         ("Storage",     StorageTab),
         ("Shortcuts",   ShortcutsTab),

@@ -1139,15 +1139,13 @@ class LLMRouter:
             except Exception as ex:
                 last_error = ex
                 try:
-                    import os as _os, time as _t
-                    from pathlib import Path as _P
-                    _lp = (_P(_os.environ.get("LOCALAPPDATA", str(_P.home())))
-                           / "ArchHub" / "logs")
-                    _lp.mkdir(parents=True, exist_ok=True)
-                    with open(_lp / "llm_trace.log", "a", encoding="utf-8") as _fh:
-                        _fh.write(f"{_t.strftime('%Y-%m-%d %H:%M:%S')} "
-                                  f"[{provider}] EXCEPTION "
-                                  f"{type(ex).__name__}: {str(ex)[:600]}\n")
+                    # AgDR-0047 §B2: route through central logger
+                    # (handler registered in app/logging_config.py).
+                    import logging as _logging
+                    _logging.getLogger("archhub.llm").error(
+                        f"[{provider}] EXCEPTION "
+                        f"{type(ex).__name__}: {str(ex)[:600]}"
+                    )
                 except Exception:
                     pass
                 # Local CLI providers (claude_cli / codex_cli) failing —
@@ -1281,19 +1279,19 @@ class LLMRouter:
         # branch. Prior version defined _trace at line 1339 which left
         # the Layer 5 init blocks raising UnboundLocalError under any
         # init failure path (caught 2026-05-25, test_tool_filter gemini
-        # route). Writes to %LOCALAPPDATA%/ArchHub/logs/llm_trace.log.
+        # route).
+        #
+        # AgDR-0047 §B2: routes through the central `archhub.llm` logger
+        # (handler registered in app/logging_config.py at
+        # %LOCALAPPDATA%/ArchHub/logs/llm_trace.log with rotation). The
+        # provider:model_name prefix is preserved in the message body so
+        # existing log-tail tooling still sees it.
         def _trace(msg: str) -> None:
             try:
-                import os, time as _t
-                from pathlib import Path as _P
-                p = (_P(os.environ.get("LOCALAPPDATA",
-                                         str(_P.home())))
-                     / "ArchHub" / "logs")
-                p.mkdir(parents=True, exist_ok=True)
-                with open(p / "llm_trace.log", "a",
-                           encoding="utf-8") as fh:
-                    fh.write(f"{_t.strftime('%Y-%m-%d %H:%M:%S')} "
-                              f"[{provider}:{model_name}] {msg}\n")
+                import logging as _logging
+                _logging.getLogger("archhub.llm").info(
+                    f"[{provider}:{model_name}] {msg}"
+                )
             except Exception:
                 pass
 
@@ -1630,12 +1628,20 @@ class LLMRouter:
 
     @staticmethod
     def _max_iterations(model_name: str) -> int:
-        """Per-model tool-use loop cap. Bigger models get more rope."""
+        """Per-model tool-use loop cap. Bigger models get more rope.
+
+        Gemini-class models cap at 10 per AgDR-0047 §B4 — observed
+        2026-05-12 looping `outlook_set_categories` to iter12 in
+        `llm_trace.log`. The lower cap aborts the runaway earlier
+        before it burns a full default budget on duplicate calls.
+        """
         m = (model_name or "").lower()
         if "opus" in m:
             return 32
         if "sonnet" in m or "gpt-4o" in m or "claude-4" in m:
             return 24
+        if "gemini" in m:
+            return 10
         return 16
 
     def _build_system_prompt(self) -> str:

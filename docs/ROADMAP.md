@@ -17,36 +17,49 @@
 > The four design/architecture memos are NOT roadmaps — they are listed
 > under "Design references" and kept for rationale only.
 
-## AgDR ledger — reconciliation (2026-05-22)
+## AgDR ledger — reconciliation (2026-05-26)
 
-38 AgDRs in `docs/agdr/`.  State as of the 2026-05-22 finalize pass:
+**48 AgDRs** in `docs/agdr/` (regenerated 2026-05-26 from frontmatter scan).
+State by range:
 
-- **AgDR-0001-0012** — node-system redesign slices.  `executed`
-  (0005, 0006 still `proposed` — group collapse / nesting; code
-  shipped via later slices, status not flipped).
-- **AgDR-0013-0022** — autonomous-loop slices (library gate, design
-  system, Speckle, typed-AI, node-to-code, ai.plan, ReactFlow
-  scaffold).  Status `proposed`.  Code + tests for these DID ship
-  during the autonomous loop (`tests/test_library*.py`,
-  `test_typed_ai_nodes.py`, `test_ai_plan_node.py`,
-  `test_code_nodes.py`, `test_speckle*.py`,
-  `test_reactflow_p2a_groundwork.py`, etc. — all green).  The status
-  was never flipped because the 2026-05-21 scope-creep correction
-  (`docs/archive/audits/SCOPE-AUDIT-2026-05-21.md`) put them under review.  Per the
-  AGDR MANDATE, `proposed → executed` needs explicit founder
-  sign-off — they stay `proposed` until the founder signs each off
-  or supersedes it.  NOT silent drift — documented here.
-- **AgDR-0023-0036** — Roslyn isolation, cold-start lag, hot-reload,
-  library actions, build pipeline, csc probe, MCP, composer/delete
-  fixes, drag-drop, audit bot, the UI-freeze-class kill.
-  `approved`/`executed` — all shipped + CDP-verified this session.
-- **AgDR-0023** superseded by AgDR-0025.
-- **AgDR-0037** — was a second AgDR-0032 (id collision); renumbered
-  2026-05-22.
-- **AgDR-0038** — Composer Capability Nodes: the modular node-creation
-  mechanism (the Composer mints + wires node types as data; completes
-  `app/workflows/custom_nodes.py`).  `proposed` — founder-directed
-  2026-05-22 via the handoff PR.  Slices tracked under M3.
+- **AgDR-0001-0011** — node-system redesign slices.  All `executed`
+  (including 0005, 0006 — both flipped after group collapse / nesting
+  shipped in later slices).
+- **AgDR-0012** — architecture lock Direction X.  `partially_superseded`:
+  ReactFlow-substrate clause → AgDR-0048 · LIBRARY-FIRST details →
+  AgDR-0013/0014 · Speckle wire details → AgDR-0016.
+- **AgDR-0013, 0014, 0016, 0018-0021** — `executed` (library-first
+  enforcement, design system, speckle adapter router, adapter batch 2,
+  typed-AI nodes, node-to-code, ai.plan canvas node).
+- **AgDR-0015, 0017, 0022** — `proposed` (visual UI design system,
+  revit speckle ops, reactflow scaffold).  0022 is moot — superseded
+  in spirit by AgDR-0048 which adopts custom canvas as substrate.
+- **AgDR-0023** — `superseded by AgDR-0025` (revitmcp roslyn isolation
+  rolled into the broader connector-wide AgDR-0025).
+- **AgDR-0024-0036** — 13 AgDRs (host-node v2, roslyn isolation
+  all-connectors, cold-start lag, hot-reload, library actions, build
+  pipeline shim, csc probe, archhub-mcp, composer stream coalesce,
+  skill tombstone delete, daily maintenance, bridge slot non-blocking,
+  non-blocking slot mechanism).  All `approved` — functionally shipped
+  + CDP-verified, but status flip `approved → executed` is **pending
+  founder signoff** per AGDR MANDATE (bulk reconciliation task on the
+  AgDR-0047 workshop backlog).
+- **AgDR-0037** — `executed`.  Was a second AgDR-0032 (id collision);
+  renumbered 2026-05-22.  Documents ScriptCompiler .NET 8 host
+  viability.
+- **AgDR-0038-0042** — `executed` (composer capability nodes,
+  default-screen home & splash, modular logic nodes, graph robustness,
+  shared-memory knowledge graph).
+- **AgDR-0043** — `proposed`: workshop · deliver the surface.
+- **AgDR-0044, 0045** — `executed` (personal-brain-mcp daemon,
+  settings × brain unified).
+- **AgDR-0046** — `proposed`: brain-settings rebuild workshop.
+  Pending founder signoff; blocks BrainSection JSX.
+- **AgDR-0047** — `proposed`: repo overhaul workshop.  Pending founder
+  signoff on F1-F5 forks; blocks 11-slice plan including the perf
+  slices + dead-JSX removal.
+- **AgDR-0048** — `executed`: supersedes AgDR-0012's ReactFlow lock +
+  AgDR-0022 in full.  Renumber chain 0045→0046→0048.
 
 ## Shipped — milestone arc
 

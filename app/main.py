@@ -27,6 +27,17 @@ def _maybe_sync_dev_source_at_startup() -> None:
 
 _maybe_sync_dev_source_at_startup()
 
+# AgDR-0047 §B2: central logging init. Must run BEFORE any other app
+# import that might call `logging.getLogger(__name__)`, so the root
+# RotatingFileHandler is registered before the first log record fires.
+# Idempotent — safe to re-call from subprocess / test contexts.
+try:
+    from logging_config import init_logging
+    init_logging()
+except Exception:
+    # Logging-init failure must never block the app boot.
+    pass
+
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -212,11 +223,17 @@ def _startup_self_test() -> None:
     except Exception as ex:
         lines.append(f"{'tools registered':<16}: ERR — {ex}")
 
-    # Append to boot.log.
+    # AgDR-0047 §B1 + §B2: route boot diagnostics through the central
+    # logger. Handler is registered in `app/logging_config.py` at
+    # `%LOCALAPPDATA%/ArchHub/logs/boot.log` with rotation (5 MB × 5).
+    # Readers (`agents/status_report.py` + `scripts/reality_smoke.py`)
+    # tolerate both the LOCALAPPDATA path AND the legacy repo-root
+    # path via mtime fallback.
     try:
-        log_path = APP_ROOT.parent / "boot.log"
-        with open(str(log_path), "a", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        import logging as _logging
+        _boot_log = _logging.getLogger("archhub.boot")
+        for _ln in lines:
+            _boot_log.info(_ln)
     except Exception:
         pass
 
@@ -499,22 +516,41 @@ def main() -> int:
     scheduler = TriggerScheduler(on_fire=_on_trigger_fire, tick_seconds=30.0)
     scheduler.start()
 
-    # HUD overlay chrome — opt-in via Settings → Appearance. Default
-    # is OFF: chat opens as a normal window so it doesn't obstruct
-    # Revit / AutoCAD work.
+    # HUD overlay chrome — power-user only. Default OFF: chat opens as
+    # a normal window so it doesn't obstruct Revit / AutoCAD work.
     #
     # Overlay only applies when the bare ChatWindow is the surface.
     # When the Studio shell wraps it, the shell IS the chrome — overlay
     # would conflict (it grabs `window` as its host). Skip overlay if
     # `surface is not window`.
     #
-    # TODO(shadow-audit): Settings → Appearance → "Use HUD overlay
-    # chrome" + hotkey rebind are SHOWN to every user, but persist a
-    # setting that's only honoured when the StudioShell construction
-    # fails. For 99% of users (Studio is the default), this is a
-    # disconnected toggle. Either hide the row when wrapped, or wire
-    # Studio-shell-aware overlay support.
+    # AgDR-0047 §C11 audit (2026-05-26): the prior shadow-audit TODO
+    # warned the Settings → Appearance row was "shown to every user but
+    # only honoured when StudioShell construction fails." Re-audit
+    # confirms NO Settings UI row exists today (verified by grep across
+    # settings_dialog.py, settings_page.py, studio-lm.jsx — zero
+    # references to `hud_overlay_mode`). The setting is therefore a
+    # power-user knob set externally via secrets_store, never via the
+    # standard UI. The "disconnected toggle" class of failure is closed.
+    # When a power user does enable `hud_overlay_mode` but Studio is the
+    # surface, we log a one-time WARNING so the silent suppression is
+    # discoverable from the central log (`archhub.log`).
     overlay_controller = None
+    try:
+        from secrets_store import load_setting
+        _hud_setting = bool(load_setting("hud_overlay_mode"))
+    except Exception:
+        _hud_setting = False
+    if _hud_setting and surface is not window:
+        try:
+            import logging as _logging
+            _logging.getLogger("archhub.boot").warning(
+                "hud_overlay_mode=True but surface is Studio shell — "
+                "overlay suppressed (overlay only applies to bare "
+                "ChatWindow surface; see app/main.py)."
+            )
+        except Exception:
+            pass
     if surface is window:
         try:
             from secrets_store import load_setting

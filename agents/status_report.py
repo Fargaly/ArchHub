@@ -54,8 +54,33 @@ TASKS_DIR = DATA_ROOT / "tasks"
 OUTPUTS_DIR = DATA_ROOT / "outputs"
 LOGS_DIR = DATA_ROOT / "logs"
 HEARTBEAT_PATH = DATA_ROOT / "heartbeat.txt"
-BOOT_LOG_PATH = REPO_ROOT / "boot.log"
 ROADMAP_PATH = REPO_ROOT / "docs" / "ROADMAP.md"
+
+
+def _boot_log_path() -> Path:
+    """Resolve the boot.log path per AgDR-0047 §B1 fallback chain.
+
+    Writer (app/main.py) emits to ``%LOCALAPPDATA%/ArchHub/logs/boot.log``.
+    Reader candidates: that LOCALAPPDATA path AND ``REPO_ROOT/boot.log``
+    (back-compat during migration). Pick the candidate with the most
+    recent mtime among those that exist. If neither exists, return the
+    LOCALAPPDATA candidate (consumers handle non-existence themselves).
+    """
+    candidates = [
+        Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+        / "ArchHub" / "logs" / "boot.log",
+        REPO_ROOT / "boot.log",
+    ]
+    existing = [c for c in candidates if c.exists()]
+    if not existing:
+        return candidates[0]
+    return max(existing, key=lambda p: p.stat().st_mtime)
+
+
+# Back-compat constant — kept so any external import doesn't break, but
+# always evaluated lazily via the resolver. Some callers read this at
+# module import, so we return the FRESHEST candidate at import time.
+BOOT_LOG_PATH = _boot_log_path()
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +476,7 @@ def _tail_lines(path: Path, n: int) -> list[str]:
 
 
 def _section_errors() -> dict:
-    boot_tail = _tail_lines(BOOT_LOG_PATH, n=5)
+    boot_tail = _tail_lines(_boot_log_path(), n=5)
     # "ERR" / "Error" / "Traceback" markers — boot.log lines that look
     # interesting. Don't over-engineer; the founder reads them anyway.
     err_lines = [l for l in boot_tail

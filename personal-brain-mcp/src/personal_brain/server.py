@@ -757,6 +757,99 @@ def build_server(
         leave_firm(store)
         return {"ok": True}
 
+    # ─────────────────── community (Slice 14 MCP wires) ────────────────
+
+    @mcp.tool(
+        name="brain.community_subscribe",
+        description=(
+            "Subscribe to a peer firm's federation outbox. Records a "
+            "Subscription (actor_url + display_name) in the local brain "
+            "store; the CommunityPoller subsequently pulls "
+            "`<actor_url>/outbox` activities, runs reputation + redaction "
+            "gates, and imports accepted patterns at scope=community. "
+            "Idempotent — re-subscribing overwrites the display_name."
+        ),
+    )
+    def brain_community_subscribe(
+        actor_url: str,
+        display_name: str = "",
+        owner_user: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from . import community as _community
+        owner = owner_user or default_owner
+        sub = _community.subscribe(
+            store,
+            actor_url=actor_url,
+            display_name=display_name,
+            owner_user=owner,
+        )
+        return {
+            "ok": True,
+            "subscription": {
+                "actor_url": sub.actor_url,
+                "display_name": sub.display_name,
+                "subscribed_at": sub.subscribed_at,
+            },
+        }
+
+    @mcp.tool(
+        name="brain.community_unsubscribe",
+        description=(
+            "Remove a community subscription by actor_url. Returns "
+            "`removed: True` when the row existed; `False` when no such "
+            "subscription was registered. Previously-imported community-"
+            "scope fragments stay — only the polling link is severed."
+        ),
+    )
+    def brain_community_unsubscribe(actor_url: str) -> dict[str, Any]:
+        from . import community as _community
+        removed = _community.unsubscribe(store, actor_url)
+        return {"ok": True, "removed": bool(removed)}
+
+    @mcp.tool(
+        name="brain.community_list",
+        description=(
+            "List all peer firm outboxes this device currently subscribes "
+            "to. Each entry includes display_name, subscribed_at, and "
+            "last_poll_at + last_accepted / quarantined / rejected counters "
+            "updated by the CommunityPoller after every tick."
+        ),
+    )
+    def brain_community_list() -> dict[str, Any]:
+        from . import community as _community
+        subs = _community.list_subscriptions(store)
+        return {
+            "ok": True,
+            "subscriptions": [
+                {
+                    "actor_url": s.actor_url,
+                    "display_name": s.display_name,
+                    "subscribed_at": s.subscribed_at,
+                    "last_poll_at": s.last_poll_at,
+                    "last_accepted": s.last_accepted,
+                    "last_quarantined": s.last_quarantined,
+                    "last_rejected": s.last_rejected,
+                }
+                for s in subs
+            ],
+        }
+
+    @mcp.tool(
+        name="brain.community_poll_now",
+        description=(
+            "Manually trigger one CommunityPoller.tick() across all current "
+            "subscriptions. Lazily instantiates a singleton poller (with a "
+            "FederationDriver bound to the local firm_id) on first call; "
+            "subsequent calls reuse it. Returns a list of PollResult dicts "
+            "(activities_fetched, accepted, quarantined, rejected, error)."
+        ),
+    )
+    def brain_community_poll_now() -> dict[str, Any]:
+        from dataclasses import asdict as _asdict
+        poller = _get_or_create_community_poller(store)
+        results = poller.tick()
+        return {"ok": True, "results": [_asdict(r) for r in results]}
+
     @mcp.tool(
         name="brain.health",
         description="Diagnostic: counts of skills, facts, wiring entries, brain db path.",
@@ -776,6 +869,36 @@ def build_server(
 
 
 # ─────────────────────── helpers ───────────────────────────────────────
+
+
+# Module-global cache: one CommunityPoller per BrainStore id. The poller
+# holds a FederationDriver bound to the current firm_id; we lazily build
+# it on first brain.community_poll_now invocation so the daemon doesn't
+# pay the cost when no one is using the community tier.
+_COMMUNITY_POLLERS: dict[int, Any] = {}
+
+
+def _get_or_create_community_poller(store: BrainStore) -> Any:
+    """Lazy singleton: build a CommunityPoller bound to this store + the
+    current firm identity. Cached by store id() so repeat invocations
+    reuse the same driver + reputations dict.
+    """
+    from .community import CommunityPoller
+    from .federation import FederationDriver
+    from .firm import current_firm_id
+
+    cached = _COMMUNITY_POLLERS.get(id(store))
+    if cached is not None:
+        return cached
+    firm_id = current_firm_id(store) or "default"
+    driver = FederationDriver(
+        firm_id=firm_id,
+        actor_url="http://127.0.0.1:8474/actor",
+        base_url="http://127.0.0.1:8474",
+    )
+    poller = CommunityPoller(store, driver)
+    _COMMUNITY_POLLERS[id(store)] = poller
+    return poller
 
 
 def _scope_filter_for(

@@ -566,11 +566,30 @@ def check_github_open_prs(args: argparse.Namespace) -> CheckResult:
 # ---------------------------------------------------------------------------
 # LOCAL DESKTOP checks
 # ---------------------------------------------------------------------------
+def _resolve_boot_log() -> "Path | None":
+    """AgDR-0047 §B1 fallback chain. Writer (app/main.py) emits to
+    %LOCALAPPDATA%/ArchHub/logs/boot.log; reader also tolerates the
+    legacy REPO_ROOT/boot.log so a fresh install + tests that
+    monkey-patch REPO_ROOT both work. Pick the candidate with the
+    most recent mtime among those that exist.
+    """
+    import os as _os
+    candidates = [
+        Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
+        / "ArchHub" / "logs" / "boot.log",
+        REPO_ROOT / "boot.log",
+    ]
+    existing = [c for c in candidates if c.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda p: p.stat().st_mtime)
+
+
 @check("local.boot_log", "Local desktop")
 def check_local_boot_log(args: argparse.Namespace) -> CheckResult:
     """boot.log exists + last entry within 24h?"""
-    boot = REPO_ROOT / "boot.log"
-    if not boot.exists():
+    boot = _resolve_boot_log()
+    if boot is None:
         return CheckResult("local.boot_log", "Local desktop",
                            STATUS_FAIL, "boot.log not found")
     try:

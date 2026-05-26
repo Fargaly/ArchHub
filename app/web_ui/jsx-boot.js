@@ -21,6 +21,71 @@
 (function () {
   'use strict';
 
+  // Dev-mode detection (founder 2026-05-26 — after the
+  // brainsection-cache-prototype-perf-triple-failure: launching
+  // ArchHub appeared to load a stale JSX bundle because the running
+  // process had pinned the prior transpile in memory before the file
+  // edit landed. The hash-keyed cache should miss correctly on new
+  // hashes, but the founder must NEVER have to clear localStorage
+  // manually. Dev mode bypasses the read path entirely while still
+  // writing the new transpile back so the next non-dev launch
+  // warm-starts.
+  //
+  // Triggers (any one is sufficient):
+  //   1) URL contains ?dev=1
+  //   2) localStorage['archhub.dev_mode'] === 'true'
+  //   3) hostname is 127.0.0.1 / localhost (ArchHub runs file:// so
+  //      this is usually false — present for browser-served dev).
+  function detectDevMode() {
+    try {
+      const href = (typeof location !== 'undefined' && location.href) || '';
+      if (href.indexOf('?dev=1') !== -1 || href.indexOf('&dev=1') !== -1) {
+        return true;
+      }
+    } catch (e) {}
+    try {
+      if (localStorage.getItem('archhub.dev_mode') === 'true') return true;
+    } catch (e) {}
+    try {
+      const h = (typeof location !== 'undefined' && location.hostname) || '';
+      if (h === '127.0.0.1' || h === 'localhost') return true;
+    } catch (e) {}
+    return false;
+  }
+  const __archhubDevMode = detectDevMode();
+
+  // Settings UI helper: future toggle in Settings dialog can call this
+  // without remembering the key string.
+  window.__archhubSetDevMode = function (on) {
+    try { localStorage.setItem('archhub.dev_mode', String(!!on)); }
+    catch (e) { console.warn('[jsx-boot] could not persist dev_mode:', e); }
+  };
+  window.__archhubGetDevMode = function () { return !!__archhubDevMode; };
+
+  // Global escape hatch: wipe every jsx_cache_v1_* key. Hookable from
+  // Settings -> Clear cache button.
+  window.__archhubClearJsxCache = function () {
+    let cleared = 0;
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.indexOf('jsx_cache_v1_') === 0) keys.push(key);
+      }
+      keys.forEach(function (key) {
+        try { localStorage.removeItem(key); cleared++; } catch (e) {}
+      });
+    } catch (e) {
+      console.warn('[jsx-boot] clear cache failed:', e);
+    }
+    console.log('[jsx-boot] cleared ' + cleared + ' jsx_cache_v1_* entries');
+    return cleared;
+  };
+
+  if (__archhubDevMode) {
+    console.log('[jsx-boot] dev mode active — cache reads bypassed (writes still occur)');
+  }
+
   // SHA-256 via WebCrypto.  Returns a hex string.  Async.
   async function sha256(text) {
     const enc = new TextEncoder();
@@ -89,13 +154,18 @@
     const src = await fetchText(file);
     const hash = await sha256(src);
     const cacheKey = 'jsx_cache_v1_' + file.replace(/\W/g, '_') + '_' + hash;
-    const cached = lsGet(cacheKey);
+    // Dev mode: skip the read path entirely, but still write back so
+    // the next non-dev launch warm-starts.
+    const cached = __archhubDevMode ? null : lsGet(cacheKey);
     let compiled, fromCache;
     if (cached) {
       compiled = cached;
       fromCache = true;
     } else {
       fromCache = false;
+      if (__archhubDevMode) {
+        console.log('[jsx-boot] dev mode — bypassing cache for ' + file);
+      }
       if (typeof window.Babel === 'undefined') {
         throw new Error('Babel-standalone not loaded');
       }

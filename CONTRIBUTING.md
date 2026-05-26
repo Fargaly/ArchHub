@@ -41,3 +41,17 @@ anyone for a review or a merge — the pipeline does it.
   built-in guard for public repos).
 
 Either way the rules above are identical and enforced automatically.
+
+## AI coding agents
+
+ArchHub is built primarily by AI coding agents (Claude Code, Aider,
+Continue, Codex, Antigravity, Cursor, etc.). Every agent MUST read
+[`AGENTS.md`](./AGENTS.md) before any edit — it carries the full
+project conventions, the protected-files list, and the cross-vendor
+mandate set ArchHub enforces.
+
+Source-controlled `.githooks/pre-commit` + `.githooks/pre-push` block
+edits to `payload/sources/**/*.cs` unless `ARCHHUB_ALLOW_CS_EDIT=1` is
+set in the env. Don't bypass with `--no-verify`. Run
+`tools/setup_hooks.ps1` (or `tools/setup_hooks.sh`) once per clone to
+wire `core.hooksPath = .githooks`.

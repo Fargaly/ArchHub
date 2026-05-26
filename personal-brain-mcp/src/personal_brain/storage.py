@@ -302,15 +302,27 @@ class BrainStore:
             existed = self._conn.execute(
                 "SELECT 1 FROM fragments WHERE id = ?", (fragment.id,)
             ).fetchone() is not None
+            # Serialise embedding to a tightly-packed BLOB so the SQLite
+            # column stays compact. struct.pack(<N>d) gives 8 bytes per
+            # float — a 512-dim CLIP vector = 4096 bytes.
+            embedding_blob = None
+            if fragment.embedding:
+                import struct as _struct
+                embedding_blob = _struct.pack(
+                    f"<{len(fragment.embedding)}d",
+                    *fragment.embedding,
+                )
+
             self._conn.execute(
                 """INSERT INTO fragments(
                     id, kind, text, subject, predicate, object,
                     scope, visibility, owner_user, project_id, firm_id,
                     confidence, provenance_json, valid_from, valid_until,
+                    embedding_blob,
                     success_count, fail_count, last_used_at, half_life_days,
                     extra_json,
                     perceptual_hash, blob_path, blob_mime, blob_bytes
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     text=excluded.text,
                     subject=excluded.subject,
@@ -329,6 +341,7 @@ class BrainStore:
                     blob_path=excluded.blob_path,
                     blob_mime=excluded.blob_mime,
                     blob_bytes=excluded.blob_bytes,
+                    embedding_blob=excluded.embedding_blob,
                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 """,
                 (
@@ -339,6 +352,7 @@ class BrainStore:
                     fragment.confidence.value,
                     fragment.provenance.model_dump_json(),
                     _iso(fragment.valid_from), _iso(fragment.valid_until),
+                    embedding_blob,
                     fragment.success_count, fragment.fail_count,
                     _iso(fragment.last_used_at), fragment.half_life_days,
                     json.dumps(fragment.extra or {}),
@@ -1141,7 +1155,26 @@ def _row_to_fragment(row: sqlite3.Row) -> Fragment:
         blob_path=_safe_row_get(row, "blob_path"),
         blob_mime=_safe_row_get(row, "blob_mime"),
         blob_bytes=_safe_row_get(row, "blob_bytes", default=0) or 0,
+        embedding=_unpack_embedding(_safe_row_get(row, "embedding_blob")),
     )
+
+
+def _unpack_embedding(blob) -> Optional[list[float]]:
+    """Reverse of the struct.pack in write_fragment.
+
+    `blob` is either None / b'' / a packed sequence of doubles. The
+    length tells us the dimensionality (bytes / 8). Returns None
+    when the blob is empty or unparseable."""
+    if not blob:
+        return None
+    try:
+        import struct as _struct
+        n = len(blob) // 8
+        if n == 0:
+            return None
+        return list(_struct.unpack(f"<{n}d", blob))
+    except Exception:
+        return None
 
 
 def _safe_row_get(row: sqlite3.Row, key: str, *, default=None):

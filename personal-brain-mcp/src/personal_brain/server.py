@@ -908,6 +908,74 @@ def build_server(
         }
 
     @mcp.tool(
+        name="brain.find_similar",
+        description=(
+            "Brain #31 multimodal (founder ask 2026-05-26): rank stored "
+            "IMAGE / GEOMETRY fragments by similarity to a query. Accepts "
+            "query_phash (hex string) and/or query_embedding (list of "
+            "floats). Returns up to `k` hits with phash_distance + "
+            "embedding_cosine + combined rank_score. Defaults to USER scope; "
+            "kinds default to [IMAGE, GEOMETRY]."
+        ),
+    )
+    def brain_find_similar(
+        query_phash: Optional[str] = None,
+        query_embedding: Optional[list[float]] = None,
+        scopes: Optional[list[str]] = None,
+        kinds: Optional[list[str]] = None,
+        k: int = 5,
+        max_phash: int = 50,
+        max_candidates: int = 500,
+        owner_user: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from .similarity import find_similar as _find_similar
+        from .models import Scope as _S, FragmentKind as _K
+        try:
+            scope_filter = [_S(s) for s in (scopes or ["user"])]
+        except ValueError as ex:
+            return {"ok": False, "error": f"invalid scope: {ex}"}
+        kind_filter = None
+        if kinds:
+            try:
+                kind_filter = [_K(k_) for k_ in kinds]
+            except ValueError as ex:
+                return {"ok": False, "error": f"invalid kind: {ex}"}
+        if not query_phash and not query_embedding:
+            return {"ok": False, "error": "need query_phash or query_embedding"}
+        try:
+            hits = _find_similar(
+                store,
+                query_phash=query_phash,
+                query_embedding=query_embedding,
+                kinds=kind_filter,
+                scope_filter=scope_filter,
+                owner_user=owner_user or default_owner,
+                k=int(k),
+                max_candidates=int(max_candidates),
+                max_phash=int(max_phash),
+            )
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        return {
+            "ok": True,
+            "count": len(hits),
+            "hits": [
+                {
+                    "id": h.fragment.id,
+                    "kind": h.fragment.kind.value,
+                    "scope": h.fragment.scope.value,
+                    "text": h.fragment.text,
+                    "perceptual_hash": h.fragment.perceptual_hash,
+                    "blob_path": h.fragment.blob_path,
+                    "phash_distance": h.phash_distance,
+                    "embedding_cosine": h.embedding_cosine,
+                    "rank_score": round(h.rank_score, 4),
+                }
+                for h in hits
+            ],
+        }
+
+    @mcp.tool(
         name="brain.dataset_export",
         description=(
             "Brain #32 (founder ask 2026-05-26): export fragments as a "

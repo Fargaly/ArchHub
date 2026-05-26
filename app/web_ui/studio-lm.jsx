@@ -1473,17 +1473,43 @@ const StudioLM = () => {
   React.useEffect(() => {
     const b = window.archhub;
     if (!b) return;
-    const onChunk = (sid, piece) => {
-      // Find the most recent streaming assistant message in the focused AI node.
+    // AgDR-0047 §D D3 perf (2026-05-26): cache the streaming target
+    // node + message index across chunks. Was: two O(N) scans per
+    // chunk × 30-80 chunks/sec → hundreds of property reads per chunk.
+    // Now: first chunk locates the streaming node, subsequent chunks
+    // hit the cached ref directly. Cleared on onDone.
+    const streamRef = { conv: null, msgIx: -1 };
+    const findStreamTarget = () => {
       const conv = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai' && (n.messages || []).some(m => m.streaming))
                 || (LM_GRAPH.nodes || []).find(n => n.cat === 'ai');
-      if (!conv) return;
+      if (!conv) return null;
       const msgs = conv.messages || [];
-      const lastIx = msgs.findIndex(m => m.streaming);
-      if (lastIx >= 0) {
-        msgs[lastIx] = { ...msgs[lastIx], text: (msgs[lastIx].text === '…' ? '' : msgs[lastIx].text) + piece };
+      const ix = msgs.findIndex(m => m.streaming);
+      return { conv, msgIx: ix };  // ix=-1 = no streaming msg yet (push path)
+    };
+    const onChunk = (sid, piece) => {
+      // Cache lookup — re-find only when cache invalid OR the cached
+      // target lost its streaming flag (cancellation / external reset).
+      let cur = streamRef.conv;
+      let ix = streamRef.msgIx;
+      const cached = cur
+        && ix >= 0
+        && (cur.messages || [])[ix]
+        && (cur.messages || [])[ix].streaming;
+      if (!cached) {
+        const t = findStreamTarget();
+        if (!t) return;
+        streamRef.conv = t.conv;
+        streamRef.msgIx = t.msgIx;
+        cur = t.conv;
+        ix = t.msgIx;
+      }
+      const msgs = cur.messages || [];
+      if (ix >= 0) {
+        msgs[ix] = { ...msgs[ix], text: (msgs[ix].text === '…' ? '' : msgs[ix].text) + piece };
       } else {
         msgs.push({ me:false, text:piece, streaming:true, time:new Date().toISOString().slice(11,16) });
+        streamRef.msgIx = msgs.length - 1;
       }
       // AgDR-0032 — coalesce chunk-driven re-renders to one per
       // animation frame (was: full canvas re-render per chunk = lag).
@@ -1496,6 +1522,11 @@ const StudioLM = () => {
       (LM_GRAPH.nodes || []).forEach(n => {
         (n.messages || []).forEach(m => { if (m.streaming) delete m.streaming; });
       });
+      // AgDR-0047 §D D3: clear the streaming ref on done — the next
+      // streaming session re-locates from scratch (could be a different
+      // ai node entirely).
+      streamRef.conv = null;
+      streamRef.msgIx = -1;
       saveCurrentGraph(); bumpGraph();
     };
     const onError = (sid, err) => {

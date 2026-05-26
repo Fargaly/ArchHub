@@ -46,6 +46,14 @@ class FragmentKind(str, Enum):
     WIRING = "wiring"
     TRACE = "trace"
     SPATIAL = "spatial"
+    DOCUMENT = "document"  # docs/*.md indexed via extractors/docs.py (Track C)
+    # Brain #31 multimodal (founder ask 2026-05-26): geometry + pictures.
+    # GEOMETRY = BRep / mesh / wall-list / etc flowing on wires (Speckle
+    # Base subtree serialised). IMAGE = render / sketch / viewport snapshot
+    # / reference photo. Both indexed by perceptual_hash + CLIP-style
+    # vision embedding (Fragment.embedding field; vision index in slice 2).
+    GEOMETRY = "geometry"
+    IMAGE = "image"
 
 
 class WriteOpType(str, Enum):
@@ -115,6 +123,21 @@ class Fragment(BaseModel):
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
     embedding: Optional[list[float]] = Field(default=None, repr=False)
+    # Brain #31 multimodal (2026-05-26): perceptual hash for cheap
+    # similarity lookup BEFORE running the more expensive CLIP-style
+    # embedding match. Empty for non-multimodal kinds. 64-bit pHash
+    # rendered as a 16-char hex string keeps the storage cheap + index-
+    # friendly. Geometry uses a derived hash (volume / aabb / vertex
+    # count). Images use phash.
+    perceptual_hash: Optional[str] = Field(default=None, max_length=64)
+    # Brain #31 multimodal: blob payload pointer when the fragment carries
+    # binary content (geometry serialisation / image bytes). Points to a
+    # sidecar file under `<brain_root>/blobs/<sha256[:2]>/<sha256>.{ext}`
+    # so SQLite stays small and the blob can be re-uploaded to cloud
+    # archive (Brain #32 day-2) independently.
+    blob_path: Optional[str] = Field(default=None, max_length=512)
+    blob_mime: Optional[str] = Field(default=None, max_length=64)
+    blob_bytes: int = 0
     success_count: int = 0
     fail_count: int = 0
     last_used_at: Optional[datetime] = None

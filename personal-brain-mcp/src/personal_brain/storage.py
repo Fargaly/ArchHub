@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS fragments (
     last_used_at TEXT,
     half_life_days REAL NOT NULL DEFAULT 30.0,
     extra_json TEXT,
+    -- Brain #31 multimodal columns (2026-05-26 founder ask):
+    perceptual_hash TEXT,          -- 64-bit pHash hex / geometry derived hash
+    blob_path TEXT,                -- sidecar blob pointer (sha256-addressed)
+    blob_mime TEXT,                -- 'application/octet-stream' / 'image/png' / etc
+    blob_bytes INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -253,6 +258,29 @@ class BrainStore:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(_SCHEMA)
+        # Brain #31 multimodal — add columns to pre-existing DBs that
+        # were created before the schema gained them. Idempotent;
+        # ignores `duplicate column name` errors.
+        for col_sql in (
+            "ALTER TABLE fragments ADD COLUMN perceptual_hash TEXT",
+            "ALTER TABLE fragments ADD COLUMN blob_path TEXT",
+            "ALTER TABLE fragments ADD COLUMN blob_mime TEXT",
+            "ALTER TABLE fragments ADD COLUMN blob_bytes INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                conn.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # column already present
+        # Index for cheap perceptual-hash lookup (Brain #31 slice 2
+        # similarity query rides this).
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fragments_phash "
+                "ON fragments(perceptual_hash) "
+                "WHERE perceptual_hash IS NOT NULL"
+            )
+        except sqlite3.OperationalError:
+            pass
         return cls(conn, Path(str(path)))
 
     def close(self) -> None:
@@ -280,8 +308,9 @@ class BrainStore:
                     scope, visibility, owner_user, project_id, firm_id,
                     confidence, provenance_json, valid_from, valid_until,
                     success_count, fail_count, last_used_at, half_life_days,
-                    extra_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    extra_json,
+                    perceptual_hash, blob_path, blob_mime, blob_bytes
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     text=excluded.text,
                     subject=excluded.subject,
@@ -296,6 +325,10 @@ class BrainStore:
                     last_used_at=excluded.last_used_at,
                     half_life_days=excluded.half_life_days,
                     extra_json=excluded.extra_json,
+                    perceptual_hash=excluded.perceptual_hash,
+                    blob_path=excluded.blob_path,
+                    blob_mime=excluded.blob_mime,
+                    blob_bytes=excluded.blob_bytes,
                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 """,
                 (
@@ -309,6 +342,10 @@ class BrainStore:
                     fragment.success_count, fragment.fail_count,
                     _iso(fragment.last_used_at), fragment.half_life_days,
                     json.dumps(fragment.extra or {}),
+                    fragment.perceptual_hash,
+                    fragment.blob_path,
+                    fragment.blob_mime,
+                    int(fragment.blob_bytes or 0),
                 ),
             )
             return not existed
@@ -1098,7 +1135,23 @@ def _row_to_fragment(row: sqlite3.Row) -> Fragment:
         last_used_at=_parse_iso(row["last_used_at"]),
         half_life_days=row["half_life_days"],
         extra=extra,
+        # Brain #31 multimodal columns (optional · None for older rows
+        # before the schema migration ran).
+        perceptual_hash=_safe_row_get(row, "perceptual_hash"),
+        blob_path=_safe_row_get(row, "blob_path"),
+        blob_mime=_safe_row_get(row, "blob_mime"),
+        blob_bytes=_safe_row_get(row, "blob_bytes", default=0) or 0,
     )
+
+
+def _safe_row_get(row: sqlite3.Row, key: str, *, default=None):
+    """Tolerant column getter — returns `default` when the column
+    isn't present on the row (e.g. pre-migration DB queried before
+    ALTER TABLE ran or against a fts/select that didn't include it)."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 def _row_to_skill(row: sqlite3.Row) -> Skill:

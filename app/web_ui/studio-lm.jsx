@@ -4448,8 +4448,17 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
 
 // ──────────────────────── WORKSPACE ────────────────────────
 const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, removeUserNode, bumpGraph, graphBump, onHome, onCreateSession }) => {
-  const allNodes = [...(LM_GRAPH.nodes || []), ...(userNodes || [])];
-  const focusNode = allNodes.find(n => n.id === focusId);
+  // AgDR-0047 §D D4 perf (2026-05-26): memoize allNodes so the spread
+  // doesn't allocate a new array on every parent render. Mirrors the
+  // same memo already in NodeCanvas (jsx:5044).
+  const allNodes = React.useMemo(
+    () => [...(LM_GRAPH.nodes || []), ...(userNodes || [])],
+    [userNodes, graphBump],
+  );
+  const focusNode = React.useMemo(
+    () => allNodes.find(n => n.id === focusId),
+    [allNodes, focusId],
+  );
   // Conversation-panel collapse state lifted here so the parent grid
   // template can shrink the right column to 28px (vs 320px expanded).
   // Per-session key, persisted in localStorage so re-open restores it.

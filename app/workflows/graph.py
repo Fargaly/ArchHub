@@ -74,6 +74,84 @@ class PortType(str, Enum):
     TRIGGER    = "trigger"
     EVENT      = "event"
 
+    # ── AgDR-0012 §232-233 migration · Q4 founder pick 2026-05-26 ──────
+    # Bidirectional adapter to / from Speckle's protocol type string.
+    # Speckle-native shapes use the official `Objects.*` namespace; control
+    # flow + canvas-internal types use an `archhub.*` namespace so the
+    # round-trip is lossless. Stage 1 of the staged migration: the helpers
+    # land WITHOUT changing wire behaviour — wires + colour + coercion
+    # still read PortType. Stages 2-6 (separate commits) move consumers to
+    # read speckle_type first, fall back to PortType for back-compat.
+    def to_speckle_type(self) -> str:
+        """Return the Speckle-protocol type string for this PortType."""
+        return _PORT_TO_SPECKLE.get(self, f"archhub.unknown.{self.value}")
+
+    @classmethod
+    def from_speckle_type(cls, speckle_type: Optional[str]) -> "PortType":
+        """Map a Speckle protocol type back to the canvas PortType.
+        Unknown / missing string → ANY (matches AgDR-0012 §312 deprecation
+        path: legacy receivers always succeed on unknown types)."""
+        if not speckle_type:
+            return cls.ANY
+        return _SPECKLE_TO_PORT.get(speckle_type, cls.ANY)
+
+
+# Direction A of the AgDR-0012 §232-233 mapping. The strings are the
+# stable wire-format identifiers; ArchHub's own non-Speckle types live
+# under the `archhub.*` namespace so a future replay tool can ingest a
+# .speckle JSON dump and reconstruct a canvas graph deterministically.
+_PORT_TO_SPECKLE: dict = {
+    # Primitives
+    None: "archhub.any",  # placeholder if a PortType lookup ever misses
+}
+
+
+def _build_port_to_speckle_map() -> dict:
+    """Module-level helper. Defined as a function so it runs AFTER the
+    enum is fully constructed (otherwise the enum members aren't
+    available at class-body time)."""
+    return {
+        # Primitives
+        PortType.ANY:        "archhub.any",
+        PortType.STRING:     "Objects.Primitive.String",
+        PortType.NUMBER:     "Objects.Primitive.Number",
+        PortType.BOOLEAN:    "Objects.Primitive.Boolean",
+        PortType.OBJECT:     "Objects.Other.Object",
+        PortType.LIST:       "Objects.Other.List",
+        # Bridge
+        PortType.HOST:       "archhub.bridge.host",
+        PortType.DOCUMENT:   "archhub.bridge.document",
+        PortType.MODEL:      "archhub.bridge.model",
+        PortType.PROJECT:    "archhub.bridge.project",
+        # AI
+        PortType.PROMPT:     "archhub.ai.prompt",
+        PortType.MESSAGE:    "archhub.ai.message",
+        PortType.CONVERSATION: "archhub.ai.conversation",
+        PortType.INTENT:     "archhub.ai.intent",
+        PortType.COMPLETION: "archhub.ai.completion",
+        PortType.TOOL_RESULT: "archhub.ai.tool_result",
+        # AEC entities — these MAP to Speckle's built-element family
+        PortType.ELEMENT:    "Objects.BuiltElements.Base",
+        PortType.SELECTION:  "archhub.aec.selection",
+        # Files / IO
+        PortType.FILE:       "archhub.io.file",
+        PortType.PATH:       "archhub.io.path",
+        PortType.IMAGE:      "archhub.io.image",
+        PortType.IFC:        "Objects.Other.IFC",
+        PortType.CSV:        "archhub.io.csv",
+        # Geometry — true Speckle geometry namespace
+        PortType.GEOMETRY:   "Objects.Geometry.Base",
+        # Control flow — archhub-only; no Speckle equivalent
+        PortType.EXEC:       "archhub.control.exec",
+        PortType.CRON:       "archhub.control.cron",
+        PortType.TRIGGER:    "archhub.control.trigger",
+        PortType.EVENT:      "archhub.control.event",
+    }
+
+
+_PORT_TO_SPECKLE = _build_port_to_speckle_map()
+_SPECKLE_TO_PORT: dict = {v: k for k, v in _PORT_TO_SPECKLE.items()}
+
 
 @dataclass
 class Port:
@@ -87,15 +165,29 @@ class Port:
     multiple: bool = False     # True = input accepts multiple wires
 
     def to_dict(self) -> dict:
+        # AgDR-0012 §232-233 migration · Stage 2 (2026-05-26): emit
+        # `speckle_type` alongside the legacy `type` field. Old readers
+        # ignore the new key; new readers prefer it.
         return {"name": self.name, "type": self.type.value,
+                "speckle_type": self.type.to_speckle_type(),
                 "description": self.description, "required": self.required,
                 "default": self.default,
                 "exec": self.exec, "multiple": self.multiple}
 
     @staticmethod
     def from_dict(d: dict) -> "Port":
+        # AgDR-0012 §232-233 migration · Stage 2 reader: prefer
+        # speckle_type when present; fall back to legacy type for back-compat.
+        if "speckle_type" in d and d["speckle_type"]:
+            port_type = PortType.from_speckle_type(d["speckle_type"])
+            # If the speckle_type was unknown the fallback returns ANY —
+            # in that case respect the legacy `type` if it's there.
+            if port_type is PortType.ANY and "type" in d:
+                port_type = PortType(d.get("type", "any"))
+        else:
+            port_type = PortType(d.get("type", "any"))
         return Port(name=d["name"],
-                    type=PortType(d.get("type", "any")),
+                    type=port_type,
                     description=d.get("description", ""),
                     required=d.get("required", False),
                     default=d.get("default"),

@@ -536,8 +536,11 @@ class CanvasScene(QGraphicsScene):
             id=uuid.uuid4().hex[:10],
             type=src.type,
             label=src.label,
-            inputs=[Port(**p.to_dict()) for p in src.inputs],
-            outputs=[Port(**p.to_dict()) for p in src.outputs],
+            # Use Port.from_dict not Port(**...) — to_dict now emits
+            # speckle_type (Q4 §232-233 migration Stage 2) which is not
+            # a Port constructor field. from_dict handles the new key.
+            inputs=[Port.from_dict(p.to_dict()) for p in src.inputs],
+            outputs=[Port.from_dict(p.to_dict()) for p in src.outputs],
             config=dict(src.config or {}),
             position={
                 "x": (src.position or {}).get("x", 0) + 24,

@@ -5078,8 +5078,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return () => window.removeEventListener('archhub-minimap-jump', onJump);
   }, [zoom]);
   // Stash canvas state so RailMiniMap (left rail) can render the map
-  // without prop-drilling across the layout. Re-stashed on every render
-  // path that mutates pan/zoom/positions/allNodes/graphBump.
+  // without prop-drilling across the layout.
+  //
+  // AgDR-0047 §D D2 (2026-05-26 perf slice): added explicit dep array.
+  // Previously this effect had NO deps → ran after EVERY render
+  // including 60Hz drag frames, calling getBoundingClientRect() each
+  // time (forced layout) + allocating a new state object that triggered
+  // a downstream RailMiniMap re-render every frame.
   React.useEffect(() => {
     try {
       const rect = wrapRef.current && wrapRef.current.getBoundingClientRect();
@@ -5090,7 +5095,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         viewportH: (rect && rect.height) || 600,
       };
     } catch (e) {}
-  });
+  }, [pan, zoom, positions, allNodes]);
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const [nodeMenu, setNodeMenu] = React.useState(null);
   const [wireMenu, setWireMenu] = React.useState(null);

@@ -200,7 +200,7 @@ def _document_info(file: str = "") -> OpResult:
         "import scriptcontext as sc\n"
         "_doc = sc.doc\n"
         "result = {\n"
-        "    'file': rs.DocumentPath() + (rs.DocumentName() or ''),\n"
+        "    'file': (rs.DocumentPath() or '') + (rs.DocumentName() or ''),\n"
         "    'name': rs.DocumentName() or '(unsaved)',\n"
         "    'source': 'rhino',\n"
         "    'modified': bool(rs.IsDocumentModified()),\n"
@@ -231,7 +231,7 @@ def _list_layers(file: str = "") -> OpResult:
         "        'name': _ln,\n"
         "        'visible': bool(rs.LayerVisible(_ln)),\n"
         "        'locked': bool(rs.LayerLocked(_ln)),\n"
-        "        'color': [_c[0], _c[1], _c[2]] if _c else None,\n"
+        "        'color': ([int(_c.R), int(_c.G), int(_c.B)] if _c is not None else None),\n"
         "        'object_count': len(rs.ObjectsByLayer(_ln) or []),\n"
         "    })\n"
     )

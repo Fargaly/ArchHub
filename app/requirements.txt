@@ -17,4 +17,4 @@ specklepy>=3.2.6,<4
 # that exposes ArchHub to other Claude sessions. Hard-imported at
 # module load; tests/test_archhub_mcp_server.py runs its --selftest.
 # Same implicit-local / missing-in-CI class as cryptography + specklepy.
-mcp>=1.27.1,<2
+mcp>=1.27.2,<2

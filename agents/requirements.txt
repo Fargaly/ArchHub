@@ -1,7 +1,7 @@
 # Cloud-daemon deps. Kept minimal so the Fly container stays small
 # and rebuilds are fast. Pinned majors only — patch versions float
 # so security fixes flow without manual bumps.
-anthropic>=0.104.1
+anthropic>=0.105.2
 httpx>=0.28.1
 pyyaml>=6.0.3
 fastapi>=0.136.3

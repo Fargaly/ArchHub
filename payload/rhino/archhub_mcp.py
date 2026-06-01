@@ -1,3 +1,10 @@
+#! python 3
+# ^ Rhino-8 engine selector — MUST be line 1. This addon is CPython-3 only
+#   (uses `from __future__ import annotations`, `http.server`, PEP-526
+#   variable annotations). Rhino 8's default `_-RunPythonScript` engine is
+#   IronPython 2.7, under which this file is a hard SyntaxError and the
+#   server never binds. The `#! python 3` shebang forces the CPython-3
+#   interpreter so the bridge actually starts. Do not remove.
 """ArchHub Rhino MCP bridge — HTTP server inside Rhino's embedded Python.
 
 Drop this file into your Rhino scripts folder, then in Rhino run:
@@ -279,6 +286,15 @@ def stop():
     print("[ArchHub] Rhino MCP bridge stopped")
 
 
-# Auto-start when this module is executed by Rhino's PythonScript runner.
-if _IN_RHINO and __name__ == "__main__":
-    start()
+# Auto-start whenever this module is loaded inside Rhino — whether it was
+# RUN as a script (`_-RunPythonScript` → __name__ == "__main__") OR IMPORTED
+# by Rhino's PythonScript auto-load search path (__name__ == "archhub_mcp").
+# The old guard required __main__, so library auto-load silently never armed
+# the server. start() is idempotent (re-entry is a no-op), so a double
+# trigger is harmless. Wrapped so a bind failure (e.g. port already taken by
+# another Rhino instance) can never break Rhino's own load sequence.
+if _IN_RHINO:
+    try:
+        start()
+    except Exception as _start_ex:  # pragma: no cover - Rhino runtime only
+        print(f"[ArchHub] Rhino MCP bridge failed to start: {_start_ex}")

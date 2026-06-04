@@ -64,15 +64,32 @@ def test_solo_user_gets_byo_required(monkeypatch):
     assert exc.value.detail["plan"] == "solo"
 
 
-def test_studio_user_gets_byo_required_when_proxy_off(monkeypatch):
-    """Even paid Studio plans see byo_required when PROXY_LIVE=0 —
-    accidental traffic cannot burn down the dev balance."""
-    monkeypatch.setattr("config.PROXY_LIVE", False)
+def test_studio_default_byo_mode_gets_byo_required(monkeypatch):
+    """Model C: a Studio workspace defaults to byo_key AI mode, so it
+    sees byo_key_required regardless of PROXY_LIVE — the user's own key
+    carries inference, no credit is touched."""
+    monkeypatch.setattr("config.PROXY_LIVE", True)
     u = _user("st1@example.com", "studio")
     with pytest.raises(HTTPException) as exc:
         _call(u)
     assert exc.value.status_code == 402
     assert exc.value.detail["error"] == "byo_key_required"
+    assert exc.value.detail["ai_mode"] == "byo_key"
+
+
+def test_studio_hosted_mode_blocked_when_proxy_off(monkeypatch):
+    """Model C: a Studio workspace switched to HOSTED mode still can't
+    burn the dev balance when PROXY_LIVE=0 — it gets hosted_unavailable.
+    This is the dev-budget protection the old byo gate provided."""
+    import db
+    monkeypatch.setattr("config.PROXY_LIVE", False)
+    u = _user("st-hosted@example.com", "studio")
+    db.set_user_ai_mode(u["id"], "hosted")
+    u = db.get_user_by_email("st-hosted@example.com")
+    with pytest.raises(HTTPException) as exc:
+        _call(u)
+    assert exc.value.status_code == 402
+    assert exc.value.detail["error"] == "hosted_unavailable"
     assert exc.value.detail["proxy_live"] is False
 
 

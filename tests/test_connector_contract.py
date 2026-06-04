@@ -154,3 +154,108 @@ def test_policy_derives_from_op_metadata(connectors):
         assert ai_behaviour._default_policy_for(_tool_name(a_read)) == "allow"
     if an_action is not None:
         assert ai_behaviour._default_policy_for(_tool_name(an_action)) == "ask"
+
+
+# ── build_ops() failure must be HONEST, never a silent zero ──────────
+class _BrokenOpsConnector(Connector):
+    """A connector whose build_ops() raises — models a host whose
+    capability layer is broken (bad import, host SDK threw, etc.)."""
+    host = "broken"
+    display_name = "Broken Host"
+    mechanism = "rest"
+
+    def probe(self) -> dict:
+        # Probe says the host itself is reachable/live — the ONLY thing
+        # wrong is build_ops(). This is the trap: without the fix the
+        # host would report "live" + zero ops, indistinguishable from a
+        # healthy host that genuinely exposes nothing.
+        return {"status": "live", "note": "host reachable", "detail": {}}
+
+    def build_ops(self) -> list:
+        raise RuntimeError("simulated build_ops explosion")
+
+
+class _HealthyEmptyConnector(Connector):
+    """Control: build_ops() succeeds but legitimately returns no ops.
+    This host must NOT be reported as errored — empty-but-ok is honest."""
+    host = "healthyempty"
+    display_name = "Healthy Empty Host"
+    mechanism = "rest"
+
+    def probe(self) -> dict:
+        return {"status": "live", "note": "", "detail": {}}
+
+    def build_ops(self) -> list:
+        return []
+
+
+def test_build_ops_failure_does_not_raise_to_caller():
+    """ops() must swallow the raise (so connector enumeration / all_ops
+    never crashes) — but only by recording the error, never by hiding
+    it. The call returns a list, it does not propagate the exception."""
+    c = _BrokenOpsConnector()
+    ops = c.ops()                      # must not raise
+    assert ops == []                   # no fabricated ops
+    # memoised: a second call is still safe and still empty.
+    assert c.ops() == []
+
+
+def test_build_ops_failure_is_reported_as_errored_not_zero_ops():
+    """THE bug guard: a connector whose build_ops() raises must be
+    reported as BROKEN (loaded_dead + ops_error), not as a clean
+    zero-op host. Before the fix, ops() swallowed the exception and
+    to_dict() reported the probe's 'live' status with an empty op list
+    — a broken host masquerading as a feature-less healthy one."""
+    c = _BrokenOpsConnector()
+
+    # ops_status() tells the honest story directly.
+    status = c.ops_status()
+    assert status["ok"] is False, "broken build_ops must report ok=False"
+    assert status["count"] == 0
+    assert "simulated build_ops explosion" in status["error"]
+    assert "RuntimeError" in status["error"]
+
+    # to_dict() — the catalogue/status surface the bridge serialises —
+    # must NOT echo the probe's 'live'. It must downgrade to an honest
+    # broken status and carry the error.
+    d = c.to_dict()
+    assert d["status"] in _VALID_STATUS
+    assert d["status"] == "loaded_dead", (
+        f"broken host reported {d['status']!r}, expected 'loaded_dead' — "
+        "a build_ops failure must surface as broken, not as live/zero")
+    assert d["status"] != "live", "broken host must never report 'live'"
+    assert d["ops_error"], "to_dict() must expose the build_ops error"
+    assert "build_ops failed" in d["note"]
+    assert d["ops"] == []
+
+
+def test_probe_failure_status_is_preserved_over_ops_error():
+    """If probe ALSO reports a stronger failure (missing/unauthorized),
+    that more-specific status wins — but the ops_error is still carried
+    so the build break is never invisible."""
+    class _MissingAndBroken(_BrokenOpsConnector):
+        host = "missingbroken"
+        def probe(self) -> dict:
+            return {"status": "missing", "note": "host not installed",
+                    "detail": {}}
+
+    d = _MissingAndBroken().to_dict()
+    assert d["status"] == "missing", (
+        "a missing host stays missing — not masked as loaded_dead")
+    assert d["ops_error"], "ops_error must still be surfaced"
+
+
+def test_healthy_empty_connector_is_not_reported_as_errored():
+    """Guard against over-correction: a connector that genuinely returns
+    [] from a SUCCESSFUL build_ops() is honest and must keep its probe
+    status with no ops_error. Only a RAISE is an error."""
+    c = _HealthyEmptyConnector()
+    status = c.ops_status()
+    assert status["ok"] is True
+    assert status["count"] == 0
+    assert status["error"] == ""
+
+    d = c.to_dict()
+    assert d["status"] == "live", "empty-but-ok host keeps its real status"
+    assert d["ops_error"] == ""
+    assert d["ops"] == []

@@ -16,3 +16,10 @@ If you need to edit any .cs in `payload/sources/`:
 3. Commit with `ARCHHUB_ALLOW_CS_EDIT=1 git commit ...`.
 
 Never use `--no-verify` to bypass the hooks.
+
+CLAUDE.md is the long-form ruleset — read it for full context.
+
+Brain: connect to the personal-brain daemon (http://127.0.0.1:8473/mcp)
+before work — see AGENTS.md → BRAIN-FIRST. If this client has no auto
+hook, run tools/brainwrap or call brain.health + brain.context yourself
+first.

@@ -86,9 +86,21 @@ class TestGrammarShape:
         # 3 SHARE primitives. ADAPTER batch 1 + 2 → +6; AgDR-0019
         # typed AI split → +4 (with `ai` master hidden); AgDR-0020
         # SLICE L → +1 (`code`); AgDR-0021 M4 foundation → +1
-        # (`ai_plan`). Cap raised to 80 (still under the 80-node
-        # decorative catalogue ceiling).
-        assert len(ng.PRIMITIVES) <= 80
+        # (`ai_plan`). stem-rebuild Phase-0 → +1 (`assert`, the verify
+        # gate / branch primitive — like the `join` cell). Cap raised
+        # 80 → 81 (still well under the 80-node decorative catalogue
+        # *intent*; this is a deliberate, grounded primitive, not filler).
+        # stem-rebuild Phase-0 → +1 (`list_files`, the READ-ONLY fs.list IO
+        # read cell — a real grounded primitive like `join`/`assert`, not
+        # filler). Cap raised 81 → 82.
+        # stem-rebuild Phase-0 batch 2 → +3 (`read_file` = fs.read single-file
+        # read; `dedupe` = data.dedupe duplicate-row drop; `json_codec` =
+        # data.json parse/stringify codec). Three real grounded stem cells like
+        # `join`/`assert`/`list_files`, not filler. Cap raised 82 → 85.
+        # stem-rebuild Phase-0 IO-write → +2 (`write_file` = fs.write text
+        # write; `move_file` = fs.move rename/relocate). Two real grounded
+        # stem cells like the read pair, not filler. Cap raised 85 → 87.
+        assert len(ng.PRIMITIVES) <= 87
 
 
 class TestEngineTypeResolution:

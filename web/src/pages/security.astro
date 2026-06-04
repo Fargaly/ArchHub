@@ -1,0 +1,29 @@
+---
+import Base from '../layouts/Base.astro';
+---
+<Base title="Security" description="ArchHub is local-first. Your project data never leaves your machine unless you choose to share it.">
+  <h1>Security</h1>
+
+  <h2>Local-first by design</h2>
+  <p>
+    ArchHub is a desktop application. Your projects, your brain, your skills —
+    they all live on your machine. The cloud backend is opt-in for
+    collaboration, billing, and shared LLM proxy on paid tiers; even then it
+    holds <strong>references</strong>, never resolved secrets.
+  </p>
+
+  <h2>What lives where</h2>
+  <ul>
+    <li><strong>Your machine</strong>: brain.db (skills + facts), .speckle/ commits (project state), 1Password / Windows Credential Manager refs to your API keys.</li>
+    <li><strong>Cloud (Fly.io)</strong>: identity, plan tier, firm membership, billing state. Per-user brain replica synced via Loro CRDT — references only, no PII bodies.</li>
+    <li><strong>Never on cloud</strong>: resolved API keys, project drawings, full chat transcripts (unless you opt-in to telemetry).</li>
+  </ul>
+
+  <h2>Trust + compliance</h2>
+  <p>
+    See <code>CAIQ_LITE.md</code> + <code>TRUST_CENTER.md</code> in the repo
+    for the full statement. GDPR delete is a one-button operation in
+    Settings → Account — your cloud brain replica gets purged immediately
+    and your auth tokens invalidated.
+  </p>
+</Base>

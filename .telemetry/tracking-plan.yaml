@@ -1,0 +1,749 @@
+meta:
+  product: ArchHub
+  version: 1
+  created: 2026-05-26
+  updated: 2026-05-26
+  owner: founder (A.FARGALY) + future product-analytics owner
+  destinations:
+    - posthog          # primary product analytics, opt-in, eu.i.posthog.com
+    - sentry           # crash + error only, opt-in, shares consent flag
+  pii_policy: traits_only
+  internal_user_policy: by_flag           # is_internal trait set on owner email-domain match; tracking layer skips when true
+  naming_convention: object.action_snake_case
+  property_conventions:
+    identifiers: "*_id"
+    counts: "*_count"
+    bucketed_values: "*_bucket"
+    short_categorical: "*_class"
+    booleans: "is_* | has_*"
+    timestamps: "*_at"
+    enums: snake_case_values
+  privacy_commitments:                    # from landing/security.html — must inherit everywhere
+    - "never transmit user prompts or model responses"
+    - "never transmit project file paths or names"
+    - "never transmit API keys"
+    - "PII redacted at source (pii_redactor)"
+    - "EU host (eu.i.posthog.com) for GDPR"
+  scope:
+    desktop_client: true
+    cloud_backend: true
+    landing_site: true
+
+entities:
+
+  user:
+    id_property: user_id
+    id_format: "usr_*"                    # cloud-issued on sign-up; desktop-only users carry only distinct_id until they sign in
+    anonymous_id_property: distinct_id
+    anonymous_id_format: "UUID4 (install-scoped, persisted in Windows Credential Manager)"
+    alias_trigger: "on user.signed_in — posthog.identify(user_id) auto-aliases the prior distinct_id"
+    traits:
+      - name: email
+        type: string
+        pii: true
+        required: true
+        update_pattern: on_change
+      - name: name
+        type: string
+        pii: true
+        required: false
+        update_pattern: on_change
+      - name: created_at
+        type: datetime
+        required: true
+        update_pattern: one_time
+      - name: first_value_action_at
+        type: datetime
+        required: false
+        update_pattern: one_time              # set on the first successful skill.run for this user, ever
+      - name: last_active_at
+        type: datetime
+        required: false
+        update_pattern: on_change             # set on every app.launched
+      - name: install_first_seen_at
+        type: datetime
+        required: false
+        update_pattern: one_time              # set on the first app.launched for this distinct_id
+      - name: plan
+        type: string
+        enum: [free, pro, studio, enterprise]
+        required: true
+        update_pattern: on_change
+      - name: role
+        type: string
+        enum: [member, admin, owner, none]    # "none" = desktop-only user with no cloud account
+        required: true
+        update_pattern: on_change
+      - name: account_id
+        type: string
+        required: false
+        update_pattern: on_change
+      - name: skill_count_owned
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: skill_runs_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: workflows_run_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: composer_turns_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: hosts_active_30d
+        type: string                       # JSON array — host families with ≥1 successful host.op_executed in last 30d
+        required: false
+        update_pattern: scheduled
+      - name: providers_configured
+        type: string                       # JSON array — providers with a non-null key
+        required: false
+        update_pattern: on_change
+      - name: install_count
+        type: integer
+        required: false
+        update_pattern: scheduled          # number of devices aliased to this user_id
+      - name: is_internal
+        type: boolean
+        required: true
+        update_pattern: one_time           # true if signup email domain matches the internal-domain list
+
+groups:
+
+  - type: account
+    id_property: account_id
+    id_format: "acc_*"
+    is_top_level: true
+    parent_type: null
+    traits:
+      - name: name
+        type: string
+        pii: true                          # firm name is identifying
+        required: true
+        update_pattern: on_change
+      - name: created_at
+        type: datetime
+        required: true
+        update_pattern: one_time
+      - name: plan
+        type: string
+        enum: [free, pro, studio, enterprise]
+        required: true
+        update_pattern: on_change
+      - name: billing_provider
+        type: string
+        enum: [stripe, polar, none]
+        required: true
+        update_pattern: on_change
+      - name: seat_limit
+        type: integer
+        required: true
+        update_pattern: on_change
+      - name: seats_used
+        type: integer
+        required: true
+        update_pattern: scheduled
+      - name: seats_pending_invite
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: mrr_usd
+        type: number
+        required: false
+        update_pattern: scheduled          # hourly cadence for billing-critical
+      - name: trial_status
+        type: string
+        enum: [none, in_trial, trial_expired, past_due, active, cancelled]
+        required: true
+        update_pattern: on_change
+      - name: trial_ends_at
+        type: datetime
+        required: false
+        update_pattern: on_change
+      - name: first_value_account_at
+        type: datetime
+        required: false
+        update_pattern: one_time           # set on the first successful skill.run by any member of the account
+      - name: skill_runs_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: active_users_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: workflows_run_30d
+        type: integer
+        required: false
+        update_pattern: scheduled
+      - name: hosts_active_30d
+        type: string                       # JSON array — union across all members
+        required: false
+        update_pattern: scheduled
+      - name: relay_managed
+        type: boolean
+        required: true
+        update_pattern: on_change          # Studio+ tier — provider keys live on the relay
+      - name: self_hosted_relay
+        type: boolean
+        required: true
+        update_pattern: on_change          # Enterprise tier
+      - name: is_internal
+        type: boolean
+        required: true
+        update_pattern: one_time           # true if any owner email is on the internal-domain list
+    triggers:
+      - on: account.created                # cloud_backend creates a company
+      - on: account.plan_changed
+      - on: account.seat_invited
+      - on: account.renamed
+      - on: scheduled.daily_snapshot
+      - on: scheduled.hourly_billing       # mrr_usd, seats_used
+
+snapshot_sync:
+  daily:
+    - { entity: user,    trait: skill_runs_30d,        source: "COUNT skill.run success per user, last 30d" }
+    - { entity: user,    trait: workflows_run_30d,     source: "COUNT workflow.run_completed per user, last 30d" }
+    - { entity: user,    trait: composer_turns_30d,    source: "COUNT composer.turn_completed per user, last 30d" }
+    - { entity: user,    trait: hosts_active_30d,      source: "DISTINCT host where host.op_executed status=success, last 30d" }
+    - { entity: user,    trait: skill_count_owned,     source: "COUNT skills owned by user from cloud db" }
+    - { entity: user,    trait: install_count,         source: "COUNT distinct distinct_ids aliased to user_id" }
+    - { entity: account, trait: active_users_30d,      source: "DISTINCT user_id with any event in account, last 30d" }
+    - { entity: account, trait: skill_runs_30d,        source: "COUNT skill.run success across account, last 30d" }
+    - { entity: account, trait: workflows_run_30d,     source: "COUNT workflow.run_completed across account, last 30d" }
+    - { entity: account, trait: hosts_active_30d,      source: "DISTINCT host across account, last 30d" }
+    - { entity: account, trait: seats_pending_invite,  source: "COUNT pending invites in cloud db" }
+  hourly:
+    - { entity: account, trait: mrr_usd,               source: "Sum of active subscription MRR from billing system" }
+    - { entity: account, trait: seats_used,            source: "COUNT active users in account" }
+
+events:
+
+  # ─── Lifecycle ──────────────────────────────────────────────────────────────
+
+  - name: app.launched
+    category: lifecycle
+    group_level: user
+    description: ArchHub desktop client started a launch cycle. Fired once per process from `main.py` after Qt + the bridge initialise, regardless of consent state — but the wrapper drops the event when consent is null/false.
+    expected_frequency: low                # ~1/launch
+    properties:
+      - { name: silent,                    type: boolean,  required: true,  description: "true on the consent-not-yet-granted branch — the wrapper will no-op until consent flips, so the event functionally arrives later" }
+      - { name: is_first_launch,           type: boolean,  required: true }
+      - { name: app_version,               type: string,   required: true }
+      - { name: os,                        type: string,   enum: [windows, macos, linux], required: true }
+      - { name: os_version,                type: string,   required: false }
+      - { name: python_version,            type: string,   required: false }
+      - { name: install_age_days,          type: integer,  required: false }
+      - { name: launch_reason,             type: string,   enum: [user, auto_update_restart, crash_restart, scheduled_task], required: false }
+
+  - name: app.shutdown
+    category: lifecycle
+    group_level: user
+    description: Desktop client exiting. Fired from `atexit` hook so the wrapper flushes in-flight events. Pair with `app.launched` for session duration analysis.
+    expected_frequency: low
+    properties:
+      - { name: launch_duration_minutes,   type: integer,  required: true }
+      - { name: was_clean_shutdown,        type: boolean,  required: true,  description: "false when shutdown path was an unhandled exception (mirror the Sentry crash record)" }
+
+  - name: user.signed_up
+    category: lifecycle
+    group_level: account
+    description: Cloud-side account creation. Fired from `cloud_backend/auth.py` after a fresh user_id is issued.
+    expected_frequency: low
+    properties:
+      - { name: signup_source,             type: string,   enum: [organic, landing_cta, invite, marketplace, api, oauth], required: true }
+      - { name: auth_method,               type: string,   enum: [magic_link, oauth_google, oauth_github, password_legacy], required: true }
+      - { name: is_invited,                type: boolean,  required: true }
+      - { name: invited_by_user_id,        type: string,   required: false }
+      - { name: utm_source,                type: string,   required: false }
+      - { name: utm_campaign,              type: string,   required: false }
+
+  - name: user.signed_in
+    category: lifecycle
+    group_level: user
+    description: Successful sign-in to the cloud relay. Fired from `app/sign_in.py` (desktop) AND `cloud_backend/auth.py` (web). On desktop, fires `posthog.identify(user_id)` first to alias the install UUID to the cloud user_id.
+    expected_frequency: medium             # users sign in on each new device/install
+    properties:
+      - { name: auth_method,               type: string,   enum: [magic_link, oauth_google, oauth_github, password_legacy, session_resume], required: true }
+      - { name: surface,                   type: string,   enum: [desktop, web_dashboard, web_landing], required: true }
+      - { name: is_new_device,             type: boolean,  required: true,  description: "true when the install UUID is being aliased for the first time" }
+
+  - name: activation.first_skill_run
+    category: lifecycle
+    group_level: user
+    description: The user's FIRST successful `skill.run` ever. The single most important activation signal — fired exactly once per user_id and never replayed.
+    expected_frequency: low
+    properties:
+      - { name: skill_id,                  type: string,   required: true }
+      - { name: skill_mode,                type: string,   enum: [private, shared, marketplace], required: true }
+      - { name: days_since_signup,         type: integer,  required: true }
+      - { name: via,                       type: string,   enum: [composer, library_panel, marketplace, sample_seed], required: true }
+
+  - name: telemetry.opted_in
+    category: lifecycle
+    group_level: user
+    description: User opted into telemetry. May fire multiple times if user toggles off then on.
+    expected_frequency: low
+    properties:
+      - { name: source,                    type: string,   enum: [first_run_dialog, settings_dialog, privacy_panel], required: true }
+
+  # ─── Core value: canvas + composer + run ────────────────────────────────────
+
+  - name: node.placed
+    category: core_value
+    group_level: user
+    description: User dropped a node on the canvas. The category adoption signal — answers "are people actually using the AI node? the host nodes? the math nodes?"
+    expected_frequency: high
+    properties:
+      - { name: node_kind,                 type: string,   enum: [input, connector, ai, logic, math, text, shape, output, watch, trigger, note, skill, code, adapter, share, reroute], required: true }
+      - { name: node_subtype,              type: string,   required: true,  description: "Typed primitive (e.g. host.revit, host.excel, number, ai_chat, math.add)" }
+      - { name: via,                       type: string,   enum: [palette, composer, wire_drop, tab_overlay, duplicate, paste], required: true }
+      - { name: workflow_node_count,       type: integer,  required: true,  description: "Canvas node count after this placement — cheap to compute, useful for canvas-complexity cohorts" }
+
+  - name: workflow.run_started
+    category: core_value
+    group_level: user
+    description: User pressed Run (or a trigger fired). Open the run window — every later run.* event joins via workflow_run_id.
+    expected_frequency: medium
+    properties:
+      - { name: workflow_run_id,           type: string,   required: true,  description: "UUID minted client-side; primary key joining started→completed/failed and any node.error" }
+      - { name: node_count,                type: integer,  required: true }
+      - { name: wire_count,                type: integer,  required: true }
+      - { name: has_ai_node,               type: boolean,  required: true }
+      - { name: has_host_node,             type: boolean,  required: true }
+      - { name: host_families_used,        type: string,   required: false, description: "JSON array, capped at 5 distinct host families to bound cardinality" }
+      - { name: trigger,                   type: string,   enum: [manual_run, composer, trigger_node, schedule, webhook], required: true }
+      - { name: is_skill_invocation,       type: boolean,  required: true,  description: "true when the run is a skill being invoked from chat — joins to skill.run" }
+
+  - name: workflow.run_completed
+    category: core_value
+    group_level: user
+    description: Workflow finished successfully. Pair with run_started via workflow_run_id.
+    expected_frequency: medium
+    properties:
+      - { name: workflow_run_id,           type: string,   required: true }
+      - { name: duration_ms,               type: integer,  required: true }
+      - { name: nodes_cooked_count,        type: integer,  required: true }
+      - { name: nodes_cached_count,        type: integer,  required: true,  description: "Nodes whose output was reused from cache (dirty-skip)" }
+      - { name: llm_tokens_bucket,         type: string,   enum: [none, under_1k, under_10k, under_100k, over_100k], required: true }
+      - { name: llm_calls_count,           type: integer,  required: true }
+      - { name: host_ops_count,            type: integer,  required: true }
+
+  - name: workflow.run_failed
+    category: core_value
+    group_level: user
+    description: Workflow stopped on an unrecoverable error. The reliability signal.
+    expected_frequency: medium
+    properties:
+      - { name: workflow_run_id,           type: string,   required: true }
+      - { name: duration_ms,               type: integer,  required: true }
+      - { name: failed_node_kind,          type: string,   required: false, description: "Same enum as node.placed.node_kind. Null if the failure is graph-level (cycle / missing wire)." }
+      - { name: failed_node_subtype,       type: string,   required: false }
+      - { name: error_class,               type: string,   required: true,  description: "Short categorical: timeout | host_offline | host_error | llm_provider_blocked | invalid_config | type_mismatch | sandbox_violation | unknown. NEVER the raw error message." }
+      - { name: nodes_cooked_count,        type: integer,  required: true }
+
+  - name: node.error
+    category: core_value
+    group_level: user
+    description: A single node failed inside a run. Multiple `node.error` events may join to one `workflow.run_failed` (or even to a `workflow.run_completed` if downstream recovered).
+    expected_frequency: medium
+    properties:
+      - { name: workflow_run_id,           type: string,   required: true }
+      - { name: node_kind,                 type: string,   required: true }
+      - { name: node_subtype,              type: string,   required: true }
+      - { name: error_class,               type: string,   required: true }
+
+  - name: composer.turn_completed
+    category: core_value
+    group_level: user
+    description: One AI Composer turn finished. The chat-driving-graph signal — the path described in VISION.md.
+    expected_frequency: medium
+    properties:
+      - { name: turn_id,                   type: string,   required: true }
+      - { name: provider,                  type: string,   enum: [anthropic, openai, google, openrouter, lm_studio, ollama, firm_relay], required: true }
+      - { name: model_class,               type: string,   required: true,  description: "Model family bucketed: claude_sonnet | claude_opus | claude_haiku | gpt_4o | gpt_4o_mini | gemini_pro | local_unknown — bound cardinality, never raw model id with version suffix" }
+      - { name: mode,                      type: string,   enum: [plan, auto, yolo], required: true }
+      - { name: tool_calls_count,          type: integer,  required: true }
+      - { name: graph_mutations_count,     type: integer,  required: true,  description: "Sum of node spawns + wires + edits + deletes the turn made" }
+      - { name: duration_ms,               type: integer,  required: true }
+      - { name: input_token_bucket,        type: string,   enum: [under_1k, under_10k, under_100k, over_100k], required: true }
+      - { name: output_token_bucket,       type: string,   enum: [under_1k, under_10k, under_100k, over_100k], required: true }
+      - { name: is_vision,                 type: boolean,  required: true }
+      - { name: ended_with,                type: string,   enum: [final_message, tool_pending_approval, user_aborted, error], required: true }
+
+  - name: composer.tool_call
+    category: core_value
+    group_level: user
+    description: One agent tool invocation inside a Composer turn. Critical for measuring how often Plan/Auto modes get blocked by the user-agency approval gate.
+    expected_frequency: high
+    properties:
+      - { name: turn_id,                   type: string,   required: true }
+      - { name: tool_name,                 type: string,   enum: [spawn_host, spawn_node, wire, focus, rename, delete, run, library_search, library_create], required: true }
+      - { name: status,                    type: string,   enum: [success, error, user_denied, user_approved, auto_approved], required: true }
+      - { name: required_approval,         type: boolean,  required: true }
+
+  - name: host.op_executed
+    category: core_value
+    group_level: user
+    description: A connector op ran against a real host. The connector-adoption signal — answers "which of the 116 ops actually get used."
+    expected_frequency: high
+    properties:
+      - { name: host,                      type: string,   enum: [revit, autocad, max, blender, rhino, speckle, outlook, teams, notion, lm_studio, antigravity, photoshop, illustrator, indesign, word, excel, powerpoint, dropbox], required: true }
+      - { name: op,                        type: string,   required: true,  description: "Op id (e.g. revit.list_walls). Bounded — the 116-op surface is the cardinality cap." }
+      - { name: status,                    type: string,   enum: [success, host_offline, unauthorized, host_error, timeout, ok_with_warning], required: true }
+      - { name: duration_ms,               type: integer,  required: true }
+      - { name: result_size_bucket,        type: string,   enum: [empty, small, medium, large], required: false,  description: "small=<10, medium=<1000, large=≥1000. Bounded; never the raw list. Null when the op returns no listable result." }
+      - { name: invoked_by,                type: string,   enum: [user_canvas_run, composer, skill, trigger, healthcheck], required: true }
+
+  - name: skill.saved
+    category: core_value
+    group_level: user
+    description: User saved a canvas selection as a Skill.
+    expected_frequency: low
+    properties:
+      - { name: skill_id,                  type: string,   required: true }
+      - { name: mode,                      type: string,   enum: [private, shared], required: true }
+      - { name: node_count,                type: integer,  required: true }
+      - { name: has_ai_node,               type: boolean,  required: true }
+      - { name: has_host_node,             type: boolean,  required: true }
+      - { name: category,                  type: string,   required: false, description: "User-tagged category at save time" }
+      - { name: source,                    type: string,   enum: [selection, whole_canvas, composer_compose], required: true }
+
+  - name: skill.loaded
+    category: core_value
+    group_level: user
+    description: User dropped a saved Skill onto a canvas (or the agent did via composer).
+    expected_frequency: medium
+    properties:
+      - { name: skill_id,                  type: string,   required: true }
+      - { name: skill_mode,                type: string,   enum: [private, shared, marketplace], required: true }
+      - { name: via,                       type: string,   enum: [palette, composer_match, marketplace, drag_drop], required: true }
+
+  - name: skill.promoted_to_shared
+    category: core_value
+    group_level: account
+    description: A private Skill was promoted to firm-shared.
+    expected_frequency: low
+    properties:
+      - { name: skill_id,                  type: string,   required: true }
+      - { name: age_days,                  type: integer,  required: true }
+      - { name: run_count_before_promotion, type: integer, required: false }
+
+  - name: skill.run
+    category: core_value
+    group_level: user
+    description: A saved Skill executed. KEEP from current state (renamed from `skill_run`). The fastest weather-vane for product value.
+    expected_frequency: high
+    properties:
+      - { name: skill_id,                  type: string,   required: true }
+      - { name: success,                   type: boolean,  required: true }
+      - { name: elapsed_ms,                type: integer,  required: true }
+      - { name: is_retry,                  type: boolean,  required: true }
+      - { name: error_class,               type: string,   required: false, description: "RENAMED from error_kind. Categorical, never the raw message body." }
+      - { name: invoked_via,               type: string,   enum: [canvas_run, composer, palette, trigger], required: true }
+
+  - name: vision.image_pasted
+    category: core_value
+    group_level: user
+    description: User pasted an image onto a vision node. Vision-input usage is one of ArchHub's headline differentiators.
+    expected_frequency: low
+    properties:
+      - { name: source,                    type: string,   enum: [clipboard, file_drop, drag_from_browser], required: true }
+      - { name: image_size_bucket,         type: string,   enum: [small_under_500kb, medium_under_5mb, large_over_5mb], required: true }
+      - { name: mime,                      type: string,   enum: [image_png, image_jpeg, image_webp, image_gif, image_other], required: true }
+
+  - name: marketplace.pack_installed
+    category: core_value
+    group_level: user
+    description: User installed a marketplace Skill pack.
+    expected_frequency: low
+    properties:
+      - { name: pack_id,                   type: string,   required: true }
+      - { name: pack_version,              type: string,   required: true }
+      - { name: author_id,                 type: string,   required: true }
+      - { name: was_signed,                type: boolean,  required: true,  description: "Ed25519 signature valid — non-signed installs go to a separate audit log too" }
+      - { name: price_tier,                type: string,   enum: [free, paid, beta], required: true }
+
+  - name: marketplace.pack_uninstalled
+    category: core_value
+    group_level: user
+    description: User removed a marketplace Skill pack. Negative-signal companion to `marketplace.pack_installed`.
+    expected_frequency: low
+    properties:
+      - { name: pack_id,                   type: string,   required: true }
+      - { name: pack_version,              type: string,   required: true }
+      - { name: install_age_days,          type: integer,  required: false }
+
+  - name: feedback.submitted
+    category: core_value
+    group_level: user
+    description: User clicked thumbs up/down on a chat reply. RENAMED from `user_feedback` and the free-form comment string is REMOVED — only the boolean has_comment and a bucketed length leave the machine, per the security.html commitment.
+    expected_frequency: low
+    properties:
+      - { name: direction,                 type: string,   enum: [up, down], required: true }
+      - { name: has_comment,               type: boolean,  required: true }
+      - { name: comment_length_bucket,     type: string,   enum: [none, short_under_50, medium_under_200, long_over_200], required: true }
+      - { name: message_id,                type: string,   required: true }
+      - { name: skill_id,                  type: string,   required: false }
+
+  # ─── Configuration ──────────────────────────────────────────────────────────
+
+  - name: provider.key_configured
+    category: configuration
+    group_level: user
+    description: User added or updated an LLM provider key in Settings.
+    expected_frequency: low
+    properties:
+      - { name: provider,                  type: string,   enum: [anthropic, openai, google, openrouter, lm_studio, ollama, firm_relay], required: true }
+      - { name: source,                    type: string,   enum: [settings_dialog, first_run_wizard, onboarding_dialog, oauth_callback], required: true }
+      - { name: is_first_provider,         type: boolean,  required: true }
+
+  - name: provider.key_removed
+    category: configuration
+    group_level: user
+    description: User cleared a provider key.
+    expected_frequency: low
+    properties:
+      - { name: provider,                  type: string,   required: true }
+      - { name: source,                    type: string,   enum: [settings_dialog, sign_out, key_invalidated], required: true }
+
+  - name: provider.blocked
+    category: configuration
+    group_level: user
+    description: LLM router cooled off a provider after a failure class. RENAMED from `provider_blocked`. Free-form `reason` REPLACED with a bounded `reason_class` enum to remove the PII surface in the existing event.
+    expected_frequency: low
+    properties:
+      - { name: provider,                  type: string,   required: true }
+      - { name: reason_class,              type: string,   enum: [rate_limit, auth_invalid, server_error, timeout, content_filter, network, unknown], required: true }
+      - { name: cooldown_seconds,          type: integer,  required: true }
+
+  - name: host.toggled
+    category: configuration
+    group_level: user
+    description: User toggled a host pill on or off in the host-pill row.
+    expected_frequency: low
+    properties:
+      - { name: host,                      type: string,   required: true }
+      - { name: to_state,                  type: string,   enum: [on, off], required: true }
+      - { name: trigger,                   type: string,   enum: [user_click, auto_probe, sign_in_sync], required: true }
+
+  - name: connector.installed
+    category: configuration
+    group_level: user
+    description: ArchHub deployed a host add-in (Revit .addin, AcadMCP .dll, etc.) into the host's add-in directory.
+    expected_frequency: low
+    properties:
+      - { name: host,                      type: string,   required: true }
+      - { name: host_version,              type: string,   required: false }
+      - { name: connector_version,         type: string,   required: true }
+      - { name: mechanism,                 type: string,   enum: [broker, com, http, python_runner, rest], required: true }
+      - { name: install_status,            type: string,   enum: [success, host_not_found, permission_denied, version_mismatch, failed_unknown], required: true }
+
+  - name: setting.changed
+    category: configuration
+    group_level: user
+    description: One Settings key changed. Single consolidated event — distinguish via `setting_key` rather than minting one event per setting.
+    expected_frequency: low
+    properties:
+      - { name: setting_key,               type: string,   required: true,  description: "Bounded enum-shape — theme | update_channel | brain_endpoint | posthog_consent | sentry_consent | composer_mode_default | provider_default | …" }
+      - { name: scope,                     type: string,   enum: [user, app, account], required: true }
+      - { name: value_class,               type: string,   required: false, description: "Bucketed category for the new value (e.g. light|dark|system). NEVER the raw value for free-form settings." }
+
+  - name: onboarding.step_completed
+    category: configuration
+    group_level: user
+    description: User completed one step of the first-run flow. Powers the activation funnel.
+    expected_frequency: low
+    properties:
+      - { name: step,                      type: string,   enum: [welcome, provider_keys, ollama_install, host_detection, first_canvas, first_skill, sample_run, dismissed], required: true }
+      - { name: step_index,                type: integer,  required: true }
+      - { name: elapsed_ms,                type: integer,  required: true,  description: "Time since the previous step (or app launch for step 1)" }
+      - { name: skipped,                   type: boolean,  required: true }
+
+  # ─── Billing & seats ────────────────────────────────────────────────────────
+
+  - name: trial.started
+    category: billing
+    group_level: account
+    description: A trial began.
+    expected_frequency: low
+    properties:
+      - { name: trial_tier,                type: string,   enum: [pro, studio], required: true }
+      - { name: trial_days,                type: integer,  required: true }
+      - { name: source,                    type: string,   enum: [self_service, sales_assisted, in_app_upsell], required: true }
+
+  - name: trial.expired
+    category: billing
+    group_level: account
+    description: A trial ended without conversion.
+    expected_frequency: low
+    properties:
+      - { name: trial_tier,                type: string,   required: true }
+      - { name: days_used,                 type: integer,  required: true }
+      - { name: converted,                 type: boolean,  required: true,  description: "false on expiry; the conversion case fires plan.changed instead" }
+
+  - name: plan.changed
+    category: billing
+    group_level: account
+    description: Account plan changed. Single event for upgrades, downgrades, and reactivations — distinguish via `direction`.
+    expected_frequency: low
+    properties:
+      - { name: from_plan,                 type: string,   enum: [free, pro, studio, enterprise, trial_pro, trial_studio], required: true }
+      - { name: to_plan,                   type: string,   enum: [free, pro, studio, enterprise], required: true }
+      - { name: direction,                 type: string,   enum: [upgraded, downgraded, reactivated], required: true }
+      - { name: billing_provider,          type: string,   enum: [stripe, polar], required: true }
+      - { name: mrr_delta_usd,             type: number,   required: false }
+
+  - name: subscription.cancelled
+    category: billing
+    group_level: account
+    description: Subscription cancelled. Pair with `plan.changed` (to=free) when downgrade is the actual outcome; cancelled-then-reactivated is two events.
+    expected_frequency: low
+    properties:
+      - { name: from_plan,                 type: string,   required: true }
+      - { name: days_active,               type: integer,  required: true }
+      - { name: billing_provider,          type: string,   required: true }
+      - { name: reason_class,              type: string,   enum: [user_initiated, payment_failed, fraud_block, downgrade_to_free, support_request, sunset], required: true }
+
+  - name: seat.invited
+    category: billing
+    group_level: account
+    description: One or more seats invited.
+    expected_frequency: low
+    properties:
+      - { name: invite_count,              type: integer,  required: true }
+      - { name: role,                      type: string,   enum: [member, admin, owner], required: true }
+      - { name: source,                    type: string,   enum: [admin_dashboard, csv_import, api], required: true }
+
+  - name: seat.accepted
+    category: billing
+    group_level: account
+    description: An invitee accepted their seat. Joins `seat.invited` via account_id + invitee email hash.
+    expected_frequency: low
+    properties:
+      - { name: role,                      type: string,   required: true }
+      - { name: time_since_invite_days,    type: integer,  required: true }
+
+  - name: seat.removed
+    category: billing
+    group_level: account
+    description: A seat was removed (admin action or user-initiated leave).
+    expected_frequency: low
+    properties:
+      - { name: role,                      type: string,   required: true }
+      - { name: source,                    type: string,   enum: [admin_action, user_left, automatic_cleanup], required: true }
+      - { name: tenure_days,               type: integer,  required: true }
+
+  - name: quota.warning
+    category: billing
+    group_level: account
+    description: Account hit a soft quota threshold.
+    expected_frequency: low
+    properties:
+      - { name: quota_name,                type: string,   enum: [llm_tokens, llm_requests, seats, skills_saved, marketplace_installs], required: true }
+      - { name: used_percent_bucket,       type: integer,  enum: [80, 90, 95], required: true }
+      - { name: period,                    type: string,   enum: [day, month, lifetime], required: true }
+
+  - name: quota.exhausted
+    category: billing
+    group_level: account
+    description: Account hit a hard quota and the next request was blocked.
+    expected_frequency: low
+    properties:
+      - { name: quota_name,                type: string,   required: true }
+      - { name: period,                    type: string,   required: true }
+      - { name: attempts_blocked_count,    type: integer,  required: true }
+
+  # ─── Landing (acquisition funnel) ───────────────────────────────────────────
+
+  - name: landing.page_viewed
+    category: navigation
+    group_level: null                      # anonymous, pre-signup
+    description: Landing page or sub-page viewed. ONE event for all landing pages — distinguish via `page`. NOT for in-app pages (which don't exist in a single-window desktop app).
+    expected_frequency: medium
+    properties:
+      - { name: page,                      type: string,   enum: [home, features, pricing, community, security, changelog], required: true,  description: "Astro routes from web/src/pages/ — superseded the old static landing/index.html (track-A migration, 2026-05-28)" }
+      - { name: referrer_class,            type: string,   enum: [direct, organic_search, paid_search, social, email, community, internal, unknown], required: true }
+      - { name: utm_source,                type: string,   required: false }
+      - { name: utm_medium,                type: string,   required: false }
+      - { name: utm_campaign,              type: string,   required: false }
+      - { name: device_class,              type: string,   enum: [desktop, tablet, mobile], required: true }
+
+  - name: landing.cta_clicked
+    category: navigation
+    group_level: null
+    description: A call-to-action on the landing site was clicked.
+    expected_frequency: medium
+    properties:
+      - { name: cta_id,                    type: string,   required: true,  description: "Stable id encoded into the DOM (e.g. hero_download, navbar_signup, pricing_pro_buy, footer_github). Bounded by what's actually on the page." }
+      - { name: destination,               type: string,   enum: [download_exe, winget_command_copied, scoop_command_copied, choco_command_copied, github_repo, signup_page, docs, waitlist_form, anchor_section, external_link], required: true }
+      - { name: page,                      type: string,   required: true }
+
+  - name: landing.download_started
+    category: navigation
+    group_level: null
+    description: Direct-download link clicked. Joins `landing.cta_clicked` when the CTA was a download button.
+    expected_frequency: low
+    properties:
+      - { name: package_format,            type: string,   enum: [exe, winget, scoop, choco, dmg, appimage, tarball], required: true }
+      - { name: os,                        type: string,   enum: [windows, macos, linux, unknown], required: true }
+      - { name: release_channel,           type: string,   enum: [stable, beta, nightly], required: true }
+      - { name: app_version,               type: string,   required: true }
+
+  - name: landing.signup_started
+    category: lifecycle
+    group_level: null
+    description: User clicked through to the signup flow. Pair with `user.signed_up` to compute landing→signup conversion.
+    expected_frequency: low
+    properties:
+      - { name: source_page,               type: string,   required: true }
+      - { name: auth_method,               type: string,   enum: [magic_link, oauth_google, oauth_github], required: false }
+
+  - name: landing.waitlist_joined
+    category: lifecycle
+    group_level: null
+    description: User joined the Studio or Enterprise waitlist via the GitHub-issue link.
+    expected_frequency: low
+    properties:
+      - { name: tier,                      type: string,   enum: [studio, enterprise], required: true }
+
+  # ─── Errors & quality ───────────────────────────────────────────────────────
+
+  - name: error.surfaced
+    category: error
+    group_level: user
+    description: An error was rendered to the user (toast, dialog, inline). NOT every internal exception — only those the user sees. Crashes go to Sentry; this is the user-perceived-error counterpart.
+    expected_frequency: low
+    properties:
+      - { name: error_class,               type: string,   required: true,  description: "Same enum vocabulary as workflow.run_failed.error_class plus surface-specific classes (network, license, update_blocked, brain_unreachable)." }
+      - { name: surface,                   type: string,   enum: [toast, dialog, panel, inline, status_bar], required: true }
+      - { name: source_module,             type: string,   required: true,  description: "Originating module slug — bounded categorical." }
+      - { name: is_user_actionable,        type: boolean,  required: true }
+
+  - name: update.applied
+    category: lifecycle
+    group_level: user
+    description: Auto-updater installed a new version.
+    expected_frequency: low
+    properties:
+      - { name: from_version,              type: string,   required: true }
+      - { name: to_version,                type: string,   required: true }
+      - { name: source,                    type: string,   enum: [auto_background, manual_check, installer_run], required: true }
+      - { name: required_restart,          type: boolean,  required: true }
+
+
+coverage_check:
+  lifecycle: "app launch / signup / sign-in / activation / opt-in / update — covered. Sign-out + session-duration covered via app.shutdown."
+  core_value: "Canvas placement, workflow run, AI composer turn + tool-call gating, host op execution, skill save/load/run, vision, marketplace, feedback — covered."
+  collaboration: "Skill sharing covered via skill.saved.mode=shared + skill.promoted_to_shared + marketplace.pack_installed. Seat sharing via seat.* events."
+  configuration: "Provider keys, host toggle, connector install, settings change, onboarding — covered."
+  billing: "Trial / plan changes / cancellation / seats / quotas — covered."
+  group_levels: "User-level for in-canvas + provider/setting events; account-level for billing + seat events; null for pre-signup landing events."
+  privacy: "No event property carries prompts, file paths, project names, raw error messages, or raw user-typed text. PII restricted to identify() traits only."
+  observability_holes:
+    - "No event for cloud-relay request volume per account; the relay backend should add `relay.request` directly from cloud_backend/proxy.py."
+    - "Brain (personal-brain-mcp) interactions are not in the plan v1 — defer to v2 once usage is clearer."
+    - "Pet / HUD overlay produces no analytical signal worth measuring at v1."

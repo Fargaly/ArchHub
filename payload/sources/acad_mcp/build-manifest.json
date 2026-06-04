@@ -1,5 +1,5 @@
 {
-  "$comment": "AgDR-0029 — AcadMCP build manifest. Today AcadMCP is a single DLL; if/when AgDR-0027-equivalent split lands (acad_mcp_core/), that dir gets its own manifest and auto_build aggregates both.",
+  "$comment": "AgDR-0029 \u2014 AcadMCP build manifest. Today AcadMCP is a single DLL; if/when AgDR-0027-equivalent split lands (acad_mcp_core/), that dir gets its own manifest and auto_build aggregates both.",
   "host": "acad",
   "role": "monolithic",
   "expected_artifacts": [
@@ -7,5 +7,7 @@
   ],
   "addin_manifests": [],
   "record_shas_on_build": true,
-  "sha256": {}
+  "sha256": {
+    "AcadMCP.dll": "3f975c6d6be1037c624bf573401279470636765ebf09f1f8f222d5e23ae66e9c"
+  }
 }

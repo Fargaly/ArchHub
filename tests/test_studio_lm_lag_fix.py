@@ -57,9 +57,18 @@ def test_index_html_no_cdn_urls():
 
 def test_index_html_loads_vendored_files():
     text = INDEX.read_text(encoding="utf-8")
+    # React/ReactDOM are always needed → still eagerly loaded.
     assert 'src="vendor/react.production.min.js"' in text
     assert 'src="vendor/react-dom.production.min.js"' in text
-    assert 'src="vendor/babel.min.js"' in text
+    # Phase 3 (boot-lag root fix, 2026-06-01): babel.min.js is NO LONGER loaded
+    # synchronously here. It was 3 MB read+parsed on EVERY launch (even cache
+    # hits, where it went unused). The loader now prefers the precompiled
+    # on-disk artifacts and lazily <script>-injects babel.min.js ONLY on the
+    # in-browser fallback path. So index.html must NOT statically include it.
+    assert 'src="vendor/babel.min.js"' not in text, (
+        "babel.min.js must NOT be eagerly loaded in index.html — Phase 3 makes "
+        "it lazy (jsx-boot.js injects it only on the precompiled-miss fallback)"
+    )
 
 
 def test_index_html_uses_production_react_not_dev():
@@ -84,8 +93,10 @@ def test_jsx_boot_loader_present():
     assert "SHA-256" in src
     # Babel fallback on cache miss.
     assert "Babel.transform" in src
-    # Boot order — shared-data → studio-lm → app-boot.
-    assert "'shared-data.jsx'" in src
+    # Boot order — studio-lm → app-boot. shared-data.jsx was removed
+    # 2026-05-31 (140 lines of stale demo data, zero live consumers); it
+    # must NOT be fetched/compiled/eval'd on boot anymore.
+    assert "'shared-data.jsx'" not in src
     assert "'studio-lm.jsx'" in src
     assert "'app-boot.jsx'" in src
 
@@ -120,7 +131,7 @@ def test_agdr_0026_exists():
     p = DOCS / "agdr" / "AgDR-0026-studio-lm-cold-start-lag.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     # The decision names the three concrete fix phases.
     assert "Vendor" in text
     assert "production" in text.lower()

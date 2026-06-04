@@ -15,21 +15,23 @@ Configuration:
   DASHSCOPE_API_KEY (env or settings) — Alibaba sk-... key
   DASHSCOPE_BASE    optional, default https://dashscope-intl.aliyuncs.com
 
-Operations (Tier 0 — text + vision text; Tier 1 will add image-gen +
-video-gen async polling):
+Operations:
   dashscope.probe          — verify key + endpoint reachable
   dashscope.complete       — text generation (Qwen3 series)
   dashscope.vision_describe — Qwen3-VL Plus on an image URL or base64
-  dashscope.image_edit     — Qwen-Image edit (image-to-image)
+  dashscope.text2image     — Wan / Qwen-Image text-to-image; returns task_id
+  dashscope.image_edit     — Qwen multi-image edit (base + up to 2 refs)
   dashscope.wan_i2v_async  — kick a Wan i2v job; returns task_id
-  dashscope.wan_poll       — poll a Wan task_id for completion
+  dashscope.task_poll      — poll any async task_id for completion + result URLs
 
 Honest-status contract: every method returns OpResult. Network /
 auth / quota failures emit ok=False; downstream sees upstream_error.
 """
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import urllib.error
 import urllib.parse
@@ -164,28 +166,110 @@ def _vision_describe(*, image_url: str, prompt: str = "Describe this image.",
                      value_preview=text[:80])
 
 
-def _image_edit(*, prompt: str, image_url: str,
-                  model: str = "qwen-image-edit",
-                  n: int = 1) -> OpResult:
+def _to_image_ref(s: str) -> str:
+    """Normalise an image argument the API will accept. Local file paths are
+    read + base64-encoded into a data URI; http(s) URLs and existing data URIs
+    pass through untouched."""
+    if not s:
+        return s
+    if s.startswith(("http://", "https://", "data:")):
+        return s
+    if os.path.exists(s):
+        mime = mimetypes.guess_type(s)[0] or "image/png"
+        with open(s, "rb") as f:
+            b = base64.b64encode(f.read()).decode("ascii")
+        return f"data:{mime};base64,{b}"
+    return s  # let the API reject anything that isn't a real ref
+
+
+def _image_edit(*, prompt: str, image: str, reference_image: str = "",
+                  reference_image_2: str = "",
+                  model: str = "qwen-image-edit-plus",
+                  size: str = "", negative_prompt: str = "",
+                  n: int = 1, download_dir: str = "") -> OpResult:
+    """Reference-guided image edit. Pass a base `image` plus up to two
+    reference images (paths, URLs, or data URIs) and an instruction. Uses the
+    Qwen multimodal edit endpoint (synchronous, 1-3 images in). When
+    download_dir is set, result image(s) are saved there and the paths
+    returned — the result URLs expire in 24h, so download is immediate."""
+    imgs = [x for x in (image, reference_image, reference_image_2) if x]
+    if not imgs:
+        return OpResult.fail("at least one image required",
+                              "dashscope.image_edit")
+    if len(imgs) > 3:
+        return OpResult.fail("max 3 images (1 base + 2 references)",
+                              "dashscope.image_edit")
+    content: list = [{"image": _to_image_ref(x)} for x in imgs]
+    content.append({"text": prompt})
+    params: dict = {"n": int(n), "watermark": False}
+    if size:
+        params["size"] = size
+    if negative_prompt:
+        params["negative_prompt"] = negative_prompt
     body = {
         "model": model,
-        "input": {"prompt": prompt, "ref_img": image_url},
-        "parameters": {"n": int(n)},
+        "input": {"messages": [{"role": "user", "content": content}]},
+        "parameters": params,
     }
     code, resp = _http("POST",
-                        "/api/v1/services/aigc/image2image/image-synthesis",
-                        body, timeout=120,
-                        extra_headers={"X-DashScope-Async": "enable"})
+                        "/api/v1/services/aigc/multimodal-generation/generation",
+                        body, timeout=180)
     if code >= 400 or code == 0:
         return OpResult.fail(f"HTTP {code}: {resp}", "dashscope.image_edit")
-    # Async — returns a task_id; caller polls dashscope.task_poll.
+    urls: list = []
+    try:
+        for blk in resp["output"]["choices"][0]["message"]["content"]:
+            if isinstance(blk, dict) and blk.get("image"):
+                urls.append(blk["image"])
+    except Exception:
+        pass
+    if not urls:
+        return OpResult.fail(f"no image in response: {resp}",
+                              "dashscope.image_edit")
+    saved: list = []
+    if download_dir:
+        rid = str(resp.get("request_id", "edit"))[:8]
+        os.makedirs(download_dir, exist_ok=True)
+        for i, u in enumerate(urls):
+            dst = os.path.join(download_dir, f"edit_{rid}_{i}.png")
+            try:
+                urllib.request.urlretrieve(u, dst)
+                saved.append(dst)
+            except Exception as ex:
+                saved.append(f"DLfail:{ex}")
+    return OpResult(ok=True, op_id="dashscope.image_edit",
+                     value={"images": urls, "saved": saved, "raw": resp},
+                     value_preview=(f"edited · {len(urls)} image(s)"
+                                     + (f" · saved {len(saved)}" if saved
+                                        else "")))
+
+
+def _text2image(*, prompt: str, negative_prompt: str = "",
+                  model: str = "wan2.2-t2i-flash",
+                  size: str = "1024*1024", n: int = 1) -> OpResult:
+    """Text-to-image (Wan / Qwen-Image). Async — returns task_id; poll
+    with dashscope.task_poll, whose raw payload carries results[].url on
+    completion. The text-to-image endpoint always runs async, so the
+    X-DashScope-Async header is mandatory (the API 400s without it)."""
+    body = {
+        "model": model,
+        "input": {"prompt": prompt,
+                   "negative_prompt": negative_prompt or ""},
+        "parameters": {"size": size, "n": int(n)},
+    }
+    code, resp = _http("POST",
+                        "/api/v1/services/aigc/text2image/image-synthesis",
+                        body, timeout=60,
+                        extra_headers={"X-DashScope-Async": "enable"})
+    if code >= 400 or code == 0:
+        return OpResult.fail(f"HTTP {code}: {resp}", "dashscope.text2image")
     try:
         task_id = resp["output"]["task_id"]
     except Exception:
         task_id = None
-    return OpResult(ok=True, op_id="dashscope.image_edit",
-                     value={"task_id": task_id, "raw": resp},
-                     value_preview=f"task queued · {task_id}")
+    return OpResult(ok=True, op_id="dashscope.text2image",
+                     value={"task_id": task_id, "model": model, "raw": resp},
+                     value_preview=f"t2i task queued · {task_id}")
 
 
 def _wan_i2v_async(*, image_url: str, prompt: str = "",
@@ -295,20 +379,60 @@ class DashscopeConnector(Connector):
                                                  "qwen-vl-max"]),
                          ],
                          output_type="string", fn=_vision_describe),
-            ConnectorOp(op_id="dashscope.image_edit", host="dashscope",
-                         kind="action", label="Image edit (async)",
-                         description=("Qwen-Image edit — image-to-image with "
-                                       "a prompt. Returns task_id; poll with "
-                                       "dashscope.task_poll."),
+            ConnectorOp(op_id="dashscope.text2image", host="dashscope",
+                         kind="action", label="Text to image (async)",
+                         description=("Wan / Qwen-Image text-to-image. Turns a "
+                                       "text prompt into an image. Returns "
+                                       "task_id; poll with dashscope.task_poll "
+                                       "for the result URL."),
                          inputs=[
                              ParamSpec(id="prompt", label="Prompt",
                                         type="text", required=True),
-                             ParamSpec(id="image_url", label="Source image URL",
-                                        type="text", required=True),
+                             ParamSpec(id="negative_prompt",
+                                        label="Negative prompt", type="text"),
                              ParamSpec(id="model", label="Model",
-                                        type="text", default="qwen-image-edit"),
+                                        type="choice", default="wan2.2-t2i-flash",
+                                        options=["wan2.2-t2i-flash",
+                                                 "wan2.2-t2i-plus",
+                                                 "wanx2.1-t2i-turbo",
+                                                 "wanx2.1-t2i-plus",
+                                                 "qwen-image"]),
+                             ParamSpec(id="size", label="Size (w*h)",
+                                        type="text", default="1024*1024"),
                              ParamSpec(id="n", label="Variations",
                                         type="number", default=1),
+                         ],
+                         output_type="object", fn=_text2image),
+            ConnectorOp(op_id="dashscope.image_edit", host="dashscope",
+                         kind="action", label="Image edit (reference-guided)",
+                         description=("Qwen multi-image edit. Base image + up "
+                                       "to 2 reference images (paths, URLs, or "
+                                       "data URIs) + an instruction. Synchronous; "
+                                       "saves result to download_dir."),
+                         inputs=[
+                             ParamSpec(id="prompt", label="Instruction",
+                                        type="text", required=True),
+                             ParamSpec(id="image", label="Base image (path/URL)",
+                                        type="text", required=True),
+                             ParamSpec(id="reference_image",
+                                        label="Reference image 1", type="text"),
+                             ParamSpec(id="reference_image_2",
+                                        label="Reference image 2", type="text"),
+                             ParamSpec(id="model", label="Model",
+                                        type="choice",
+                                        default="qwen-image-edit-plus",
+                                        options=["qwen-image-edit-plus",
+                                                 "qwen-image-edit-max",
+                                                 "qwen-image-2.0-pro",
+                                                 "qwen-image-edit"]),
+                             ParamSpec(id="size", label="Size (w*h, optional)",
+                                        type="text"),
+                             ParamSpec(id="negative_prompt",
+                                        label="Negative prompt", type="text"),
+                             ParamSpec(id="n", label="Variations",
+                                        type="number", default=1),
+                             ParamSpec(id="download_dir", label="Save to folder",
+                                        type="text"),
                          ],
                          output_type="object", fn=_image_edit),
             ConnectorOp(op_id="dashscope.wan_i2v_async", host="dashscope",

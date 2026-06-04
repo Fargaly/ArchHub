@@ -481,5 +481,10 @@ def test_grammar_count_includes_batch_2_adapters():
     assert "excel_to_revit_params" in adapter_kinds
     assert len(adapter_kinds) == 6
     # Cap from test_node_grammar.test_grammar_is_small (≤80 post
-    # AgDR-0019 typed AI split + AgDR-0021 ai_plan + code typed split).
-    assert len(ng.PRIMITIVES) <= 80
+    # AgDR-0019 typed AI split + AgDR-0021 ai_plan + code typed split;
+    # +1 → 81 for stem-rebuild Phase-0 `verify.assert`).
+    # +1 → 82: stem-rebuild Phase-0 `fs.list` (READ-ONLY IO read cell).
+    # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
+    # + data.json) — cap bumped in lockstep with their node_grammar entries.
+    # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(ng.PRIMITIVES) <= 87

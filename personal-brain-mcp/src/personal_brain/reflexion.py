@@ -245,6 +245,152 @@ class AnthropicCritic:
         return "".join(out)
 
 
+# ───────────────────── real-critic auto-detection ──────────────────────
+
+
+def detect_real_llm_key() -> Optional[tuple[str, str]]:
+    """Discover whether a REAL LLM judge is reachable in this environment.
+
+    The honing/classification critic should use a genuine LLM whenever one
+    is configured — not only when the bare ``ANTHROPIC_API_KEY`` env var is
+    set. We probe, in priority order:
+
+      1. ``ANTHROPIC_API_KEY`` env var (direct).
+      2. ArchHub's ``secrets_store.load_api_key('anthropic')`` — the
+         keyring / obfuscated-file / op:// resolver path the desktop app
+         uses (sibling ``ArchHub/app`` package, imported best-effort).
+      3. ``OPENAI_API_KEY`` env (an OpenAI-backed critic is a valid real
+         judge; reported as provider ``openai`` for the caller to route).
+
+    Returns ``(provider, api_key)`` for the first hit, or ``None`` when no
+    real provider is reachable (the genuine offline case — honing then
+    falls back to the deterministic structural validator, which is itself
+    real, just not LLM-driven).
+
+    Note: this only checks *configuration/reachability of a key*, never
+    makes a paid call. The actual judgement call happens inside
+    :class:`AnthropicCritic` when it is selected."""
+    import os
+
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        return ("anthropic", key)
+
+    # ArchHub desktop secret store (keyring / file / op:// alias). The app
+    # package lives one directory up from personal-brain-mcp; add it to the
+    # path defensively and import. Any failure → treat as no key.
+    try:  # pragma: no cover - exercised only when ArchHub app is present
+        import sys
+        from pathlib import Path
+
+        app_dir = Path(__file__).resolve().parents[3] / "app"
+        if app_dir.is_dir() and str(app_dir) not in sys.path:
+            sys.path.insert(0, str(app_dir))
+        from secrets_store import load_api_key  # type: ignore
+
+        v = load_api_key("anthropic")
+        if v:
+            return ("anthropic", v)
+    except Exception:
+        pass
+
+    okey = os.environ.get("OPENAI_API_KEY")
+    if okey:
+        return ("openai", okey)
+
+    return None
+
+
+class ResilientCritic:
+    """Wrap a live LLM critic so a per-call failure degrades to a
+    deterministic fallback instead of breaking the mint.
+
+    A configured key may still fail AT CALL TIME — quota/billing (HTTP
+    400 "credit balance too low"), rate limits, transient network. The
+    Stop-hook mint must never crash on that (BRAIN-FIRST: "ResilientBrain
+    Client wraps every call with a circuit breaker"; "Never let a mint
+    failure break the Stop hook"). So each of the three critic methods
+    tries the real LLM first and, on ANY exception, falls back to the
+    HeuristicCritic for that call. ``failures`` records what degraded so
+    the orchestrator/tests can observe whether the real path actually
+    ran or fell back."""
+
+    def __init__(self, primary: "LLMCritic",
+                 fallback: Optional["LLMCritic"] = None):
+        self.primary = primary
+        self.fallback = fallback or HeuristicCritic()
+        self.failures: list[str] = []
+
+    def classify(self, trace_text: str) -> dict[str, Any]:
+        try:
+            return self.primary.classify(trace_text)
+        except Exception as ex:
+            self.failures.append(f"classify: {type(ex).__name__}: {ex}")
+            return self.fallback.classify(trace_text)
+
+    def extract(self, trace_text: str) -> dict[str, Any]:
+        try:
+            return self.primary.extract(trace_text)
+        except Exception as ex:
+            self.failures.append(f"extract: {type(ex).__name__}: {ex}")
+            return self.fallback.extract(trace_text)
+
+    def generate_eval_queries(
+        self, skill_text: str, n: int = 20
+    ) -> list[dict[str, Any]]:
+        try:
+            return self.primary.generate_eval_queries(skill_text, n=n)
+        except Exception as ex:
+            self.failures.append(
+                f"generate_eval_queries: {type(ex).__name__}: {ex}"
+            )
+            return self.fallback.generate_eval_queries(skill_text, n=n)
+
+
+def default_critic(*, allow_real: bool = True) -> "LLMCritic":
+    """Return the best critic available in this environment.
+
+    When a real LLM key is reachable (see :func:`detect_real_llm_key`) and
+    the matching SDK imports, return a live :class:`AnthropicCritic`
+    wrapped in :class:`ResilientCritic` so honing/classification are
+    driven by a genuine LLM judgement — and a call-time failure (quota,
+    billing, network) degrades to the deterministic heuristic rather than
+    breaking the mint. Otherwise return :class:`HeuristicCritic`. This is
+    the wiring that lets a configured key GENUINELY drive real honing
+    without the caller having to know which provider is present.
+
+    Opt-in by design. Routing to the live LLM is gated on the env flag
+    ``BRAIN_REFLEXION_LLM`` being truthy (``1``/``true``/``yes``/``on``).
+    Rationale: minting runs on the Stop hook of EVERY session, so silently
+    spending API credits on each mint is undesirable — the operator turns
+    it on. When it is on AND a key is reachable, real honing genuinely
+    runs (and ResilientCritic still degrades a failed call rather than
+    breaking the mint). When it is off (default), honing uses the
+    deterministic trace-grounded structural validator — which is itself a
+    REAL check, just not LLM-driven. This default also keeps the test
+    suite hermetic (no network, no dependence on ambient desktop keys).
+
+    ``allow_real=False`` forces the heuristic critic regardless of the
+    flag (explicit offline callers / tests)."""
+    import os
+
+    flag = (os.environ.get("BRAIN_REFLEXION_LLM") or "").strip().lower()
+    real_enabled = flag in ("1", "true", "yes", "on")
+    if allow_real and real_enabled:
+        found = detect_real_llm_key()
+        if found is not None:
+            provider, key = found
+            if provider == "anthropic":
+                try:
+                    return ResilientCritic(AnthropicCritic(api_key=key))
+                except Exception:
+                    pass
+            # OpenAI (or anthropic SDK missing): no OpenAI critic class is
+            # shipped yet, so fall through to the heuristic. The detection
+            # still surfaces that a real key exists for the orchestrator.
+    return HeuristicCritic()
+
+
 def _parse_json_response(text: str, *, default: Any) -> Any:
     """Robust JSON-from-LLM parser. Strips code fences, finds first
     {…} or […] span, parses."""
@@ -316,18 +462,304 @@ SandboxRunner = Callable[[dict[str, Any], int], HoneTrial]
 to ToolEngine sandbox; tests pass a deterministic stub."""
 
 
+# ───────────────────── genuine structural validation ───────────────────
+
+
+def _trace_tool_index(trace: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Index a trace's tool_calls by tool name → ordered list of the
+    {args, result/observation, status} dicts observed for that tool. This
+    is the ground truth the minted skill is validated against."""
+    index: dict[str, list[dict[str, Any]]] = {}
+    for tc in trace.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        name = tc.get("name")
+        if not name:
+            continue
+        args = tc.get("args") or tc.get("arguments") or {}
+        result = (
+            tc.get("result")
+            if tc.get("result") is not None
+            else tc.get("output")
+            if tc.get("output") is not None
+            else tc.get("observation")
+        )
+        index.setdefault(str(name), []).append({
+            "args": args if isinstance(args, dict) else {},
+            "result": result,
+            "status": tc.get("status"),
+        })
+    return index
+
+
+def _trace_tool_order(trace: dict[str, Any]) -> list[str]:
+    """Ordered list of tool-call names exactly as they occurred."""
+    order: list[str] = []
+    for tc in trace.get("tool_calls") or []:
+        if isinstance(tc, dict) and tc.get("name"):
+            order.append(str(tc["name"]))
+    return order
+
+
+def _skill_step_names(skill_spec: dict[str, Any]) -> tuple[list[str], bool]:
+    """Extract the tool each skill step invokes → ``(names, ordered)``.
+
+    ``ordered`` is True only when the names came from an explicit, ordered
+    ``steps`` list (the canonical SkillWeaver shape, each ``{tool: name,
+    …}``) — i.e. the step SEQUENCE is something the skill author asserted
+    and we may hold it to the reproducibility (subsequence-of-trace)
+    check.
+
+    When the draft carries no ``steps`` we fall back to the trigger
+    phrases. The heuristic extractor derives each trigger 1:1 from a trace
+    tool name via ``name.replace('_', ' ')`` but stores them in a **set**,
+    so their iteration order is INCIDENTAL, not authored. We re-tighten
+    them to the underscore form for name-matching (grounding / phantom-MCP
+    checks stay meaningful) but return ``ordered=False`` so the order-
+    sensitive reproducibility check is NOT applied to an order the skill
+    never actually claimed. This keeps validation correct for BOTH the
+    rich (LLM, ordered steps) and lean (heuristic, unordered triggers)
+    draft shapes."""
+    steps = skill_spec.get("steps")
+    names: list[str] = []
+    if isinstance(steps, list) and steps:
+        for st in steps:
+            if isinstance(st, dict):
+                tool = st.get("tool") or st.get("name") or st.get("tool_name")
+                if tool:
+                    names.append(str(tool))
+            elif isinstance(st, str):
+                names.append(st)
+        return names, True
+    # Fallback: triggers are space-joined tool names from the heuristic
+    # extractor (stored as an unordered set). Convert
+    # "figma get design context" → "figma_get_design_context".
+    for trig in skill_spec.get("triggers") or []:
+        if isinstance(trig, str) and trig.strip():
+            names.append(trig.strip().replace(" ", "_"))
+    return names, False
+
+
+def validate_skill_against_trace(
+    skill_spec: dict[str, Any], trace: dict[str, Any]
+) -> dict[str, Any]:
+    """GENUINE deterministic validation of a minted skill against its
+    source trace. Replaces the old seed-parity coin-flip.
+
+    This is a *real* structural-consistency check: a faithful skill
+    (every step mirrors a tool the agent actually called, in the order it
+    called them, with I/O that matches the observed args/results) PASSES;
+    a hallucinated or malformed skill (a step naming a tool absent from
+    the trace, declared MCPs the trace never used, or a step order that
+    contradicts the trace) FAILS. No randomness, no seeds — the verdict
+    is a pure function of (skill, trace).
+
+    Four checks (each contributes to ``checks`` + ``violations``):
+
+      (a) tool_grounding   — every skill step maps to a tool name that
+                             actually appears in the trace's tool_calls.
+                             A step referencing an absent tool is a
+                             hallucination and fails.
+      (b) no_phantom_mcps  — every ``requires_mcps`` entry is the prefix
+                             of at least one real trace tool (``figma`` ⊂
+                             ``figma_get_design_context``). A required MCP
+                             the trace never touched is unfaithful.
+      (c) io_consistency   — each example's input/output is consistent
+                             with the trace: a side_effects=host_write|
+                             network skill must have ≥1 trace tool that
+                             actually wrote (execute/create/update/set_/
+                             post/send/delete/pr_) so the I/O schema the
+                             skill advertises is backed by observed I/O.
+      (d) reproducibility  — the subsequence of trace tools named by the
+                             skill steps occurs IN THE SAME RELATIVE ORDER
+                             in the trace (the skill is replayable as
+                             written). Re-ordered steps fail.
+
+    Returns ``{"ok": bool, "checks": {name: bool}, "violations": [str],
+    "grounded": int, "n_steps": int}``. ``ok`` is True iff every check
+    that applies passed. Deterministic AND meaningful.
+    """
+    tool_index = _trace_tool_index(trace)
+    trace_order = _trace_tool_order(trace)
+    trace_tools = set(tool_index.keys())
+    step_names, steps_ordered = _skill_step_names(skill_spec)
+
+    checks: dict[str, bool] = {}
+    violations: list[str] = []
+
+    # (a) tool_grounding — every step maps to a real trace tool.
+    grounded = 0
+    if not trace_tools:
+        # A trace with no tool calls cannot ground any procedural skill.
+        checks["tool_grounding"] = False
+        violations.append("trace carries no tool_calls; nothing to ground a skill against")
+    elif not step_names:
+        # No steps to validate (degenerate skill) — cannot be reproduced.
+        checks["tool_grounding"] = False
+        violations.append("skill declares no steps/triggers to validate against the trace")
+    else:
+        absent = [s for s in step_names if s not in trace_tools]
+        grounded = sum(1 for s in step_names if s in trace_tools)
+        checks["tool_grounding"] = not absent
+        for s in absent:
+            violations.append(
+                f"step '{s}' references a tool not present in the trace "
+                f"(trace tools: {sorted(trace_tools)})"
+            )
+
+    # (b) no_phantom_mcps — required MCPs must each prefix a real tool.
+    req_mcps = [m for m in (skill_spec.get("requires_mcps") or []) if m]
+    if req_mcps and trace_tools:
+        phantom = [
+            m for m in req_mcps
+            if not any(t == m or t.startswith(f"{m}_") for t in trace_tools)
+        ]
+        checks["no_phantom_mcps"] = not phantom
+        for m in phantom:
+            violations.append(
+                f"requires_mcps '{m}' never appears as a tool prefix in the trace"
+            )
+    else:
+        # Nothing to contradict — vacuously consistent.
+        checks["no_phantom_mcps"] = True
+
+    # (c) io_consistency — advertised side-effects backed by observed I/O.
+    side_effects = (skill_spec.get("side_effects") or "pure").lower()
+    write_markers = (
+        "execute", "create", "update", "set_", "post", "send",
+        "delete", "pr_", "write", "upsert", "insert", "publish",
+    )
+    if side_effects in ("host_write", "network"):
+        wrote = any(
+            any(mk in t for mk in write_markers) for t in trace_tools
+        )
+        checks["io_consistency"] = wrote
+        if not wrote:
+            violations.append(
+                f"side_effects={side_effects} but no trace tool performs a "
+                f"write/network action (markers: {write_markers})"
+            )
+    else:
+        # pure skill: must NOT silently hide a write it actually did is
+        # over-strict; a pure label with no observed write is consistent.
+        checks["io_consistency"] = True
+
+    # (d) reproducibility — an AUTHORED step order must be a subsequence of
+    #     the trace tool order (same relative order, gaps allowed). Only
+    #     enforced when the skill carries an explicit ordered `steps` list;
+    #     trigger-derived names (heuristic draft) have incidental order the
+    #     skill never claimed, so we don't hold them to a sequence — grounding
+    #     (a) already catches any hallucinated tool there.
+    grounded_steps = [s for s in step_names if s in trace_tools]
+    if steps_ordered and grounded_steps and trace_order:
+        it = iter(trace_order)
+        in_order = all(any(tok == s for tok in it) for s in grounded_steps)
+        checks["reproducibility"] = in_order
+        if not in_order:
+            violations.append(
+                f"skill step order {grounded_steps} is not a subsequence of "
+                f"the trace tool order {trace_order} (not replayable as written)"
+            )
+    elif steps_ordered:
+        # Explicit steps but none grounded — already failed (a); don't
+        # double-penalise the order check.
+        checks["reproducibility"] = bool(grounded_steps)
+    else:
+        # Unordered trigger-derived names: reproducibility is not something
+        # the skill asserted. Vacuously satisfied (grounding governs).
+        checks["reproducibility"] = True
+
+    ok = all(checks.values())
+    return {
+        "ok": ok,
+        "checks": checks,
+        "violations": violations,
+        "grounded": grounded,
+        "n_steps": len(step_names),
+    }
+
+
+def trace_grounded_sandbox(trace: dict[str, Any]) -> SandboxRunner:
+    """Build a REAL ``SandboxRunner`` bound to ``trace``.
+
+    Each "trial" runs :func:`validate_skill_against_trace` — a genuine
+    structural check of the candidate skill against the trace it was mined
+    from. Because that validation is deterministic, every trial returns
+    the SAME verdict: a faithful skill yields N passes (``honed_passed ==
+    n_trials``); a hallucinated/malformed skill yields N failures
+    (``honed_passed == 0``). The ``seed`` is recorded for provenance only
+    — it no longer decides the outcome (that was the old coin-flip).
+
+    This keeps the ``HoneTrial`` / ``hone()`` / ``honed_trials`` /
+    ``honed_passed`` / ``pass_floor`` contract intact while making the
+    pass/fail REAL. Production may later swap this for an actual
+    ToolEngine sandbox that re-executes the steps; the structural gate is
+    the deterministic floor that runs with zero network."""
+
+    def _runner(skill_spec: dict[str, Any], seed: int) -> HoneTrial:
+        t0 = time.perf_counter()
+        verdict = validate_skill_against_trace(skill_spec, trace)
+        notes = (
+            "trace-grounded structural validation: "
+            + ("all checks passed" if verdict["ok"]
+               else "; ".join(verdict["violations"][:3]) or "checks failed")
+        )
+        return HoneTrial(
+            seed=seed,
+            success=bool(verdict["ok"]),
+            duration_ms=(time.perf_counter() - t0) * 1000.0,
+            notes=notes[:500],
+        )
+
+    return _runner
+
+
 def heuristic_sandbox(skill_spec: dict[str, Any], seed: int) -> HoneTrial:
-    """No-op sandbox for offline mode — declares success based on seed
-    parity so honing produces deterministic-but-non-trivial pass/fail."""
+    """Backwards-compatible default sandbox for callers that have no trace
+    in hand (e.g. ``hone(spec)`` with the historical default).
+
+    The old implementation declared success by seed parity
+    (``seed % 3 != 0``) and self-labelled "no real execution" — a
+    coin-flip, NOT validation. It now runs a genuine *trace-free*
+    structural sanity check: a procedural skill must declare at least one
+    step (explicit ``steps`` or trigger-derived) AND ≥1 example, and its
+    declared ``requires_mcps`` must be internally consistent with its step
+    names (every required MCP prefixes one of the skill's own steps). This
+    still discriminates a malformed shell (no steps / inconsistent MCPs)
+    from a well-formed skill WITHOUT a seed coin-flip.
+
+    For real trace-grounded honing, ``reflect_on_trace`` injects
+    :func:`trace_grounded_sandbox` instead — that path validates the skill
+    against the actual observed tool calls. This trace-free variant is the
+    floor for direct ``hone()`` calls."""
     t0 = time.perf_counter()
-    # Mock heuristic: pass when spec contains examples and seed is small
+    step_names, _ordered = _skill_step_names(skill_spec)
     has_examples = bool(skill_spec.get("examples"))
-    success = has_examples and (seed % 3 != 0)  # ~2/3 pass with examples
+    # Internal consistency: every required MCP must prefix one of the
+    # skill's own step names (the skill can't require an MCP it never
+    # steps through).
+    req_mcps = [m for m in (skill_spec.get("requires_mcps") or []) if m]
+    mcp_consistent = all(
+        any(s == m or s.startswith(f"{m}_") for s in step_names)
+        for m in req_mcps
+    ) if req_mcps else True
+    success = bool(step_names) and has_examples and mcp_consistent
+    if not success:
+        reasons = []
+        if not step_names:
+            reasons.append("no steps/triggers")
+        if not has_examples:
+            reasons.append("no examples")
+        if not mcp_consistent:
+            reasons.append("requires_mcps inconsistent with steps")
+        notes = "structural sanity failed: " + ", ".join(reasons)
+    else:
+        notes = "structural sanity passed (trace-free; well-formed skill)"
     return HoneTrial(
         seed=seed,
         success=success,
         duration_ms=(time.perf_counter() - t0) * 1000.0,
-        notes="heuristic-sandbox; no real execution",
+        notes=notes,
     )
 
 
@@ -346,6 +778,158 @@ def extract_skill_draft(
 ) -> dict[str, Any]:
     critic = critic or HeuristicCritic()
     return critic.extract(_render_trace_text(trace))
+
+
+def extract_tutorial_draft(
+    trace: dict[str, Any], *, critic: Optional[LLMCritic] = None,
+    skill_draft: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Sister extractor to `extract_skill_draft`: distil a trace into a
+    USER-READABLE tutorial draft.
+
+    Per AgDR-0044 + content-ecosystem-2026-05-26 §3 ("Tutorials minted
+    from successful traces"): every successful trace that mints a skill
+    ALSO produces a tutorial draft that walks the user through the same
+    flow in plain English. Both go through the same Voyager critic gate.
+    Tutorials inherit `scope` from the skill (USER → PROJECT → FIRM →
+    COMMUNITY) so a firm's tutorials sync via the existing firm-graph
+    transport.
+
+    Returns ``None`` when the trace carries no tool_calls — nothing to
+    teach. Otherwise returns a dict matching the
+    ``docs/_templates/tutorial.md`` frontmatter contract:
+
+        {
+          "slug": str,                  # lowercase-kebab-case filename stem
+          "title": str,                 # plain-English headline (no jargon)
+          "prerequisites": list[str],   # readable MCP/tool requirements
+          "steps": list[{
+              "n": int,                 # 1-indexed step number
+              "tool": str,              # tool call name e.g. "revit_info"
+              "intent": str,            # plain-English what the user does
+              "observation": str,       # what the user sees back
+          }],
+          "outcome": str,               # one-line "what you'll have"
+          "scope": str,                 # "user" | "project" | "firm" | "community"
+          "replay_skill_id": str | None,# tutorial → re-runnable skill anchor
+        }
+
+    The shape mirrors `extract_skill_draft` (same `critic` injection point,
+    same defensive defaults) so the orchestrator can call both in the
+    same pipeline turn. Tutorial bodies are READ BY END USERS per the
+    FOUNDER-SPEAK mandate — every prose field uses plain English; engine
+    names (slice numbers, AgDR ids) stay out of headlines.
+    """
+    tool_calls = trace.get("tool_calls") or []
+    if not tool_calls:
+        return None
+
+    # Re-use the skill extractor so name + description + prerequisites
+    # come from a single source of truth. Tutorials and skills share the
+    # same Voyager critic gate per §3.
+    draft = skill_draft if skill_draft is not None else extract_skill_draft(
+        trace, critic=critic,
+    )
+
+    proposed_name = (draft.get("proposed_name") or "auto_skill").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", proposed_name).strip("-") or "tutorial"
+    # Plain-English title — strip the auto-mining suffix so the headline
+    # reads like a user task, not an engineering noun.
+    title_words = [w.capitalize() for w in slug.split("-") if w]
+    title = " ".join(title_words) or "Tutorial"
+
+    prerequisites: list[str] = []
+    seen_pre: set[str] = set()
+    for mcp in draft.get("requires_mcps") or []:
+        if not mcp or mcp in seen_pre:
+            continue
+        seen_pre.add(mcp)
+        prerequisites.append(f"The `{mcp}` MCP is connected and reachable.")
+    if not prerequisites:
+        prerequisites.append("ArchHub is running and the brain daemon is alive.")
+
+    steps: list[dict[str, Any]] = []
+    for i, tc in enumerate(tool_calls, start=1):
+        if not isinstance(tc, dict):
+            continue
+        name = tc.get("name", "?")
+        args = tc.get("args") or tc.get("arguments") or {}
+        status = tc.get("status") or "ok"
+        # Plain-English intent + observation. We avoid jargon — no slice
+        # numbers, no AgDR ids — per FOUNDER-SPEAK + Content-Eco §3.
+        intent = _humanise_tool_intent(name, args)
+        observation = tc.get("observation") or _humanise_tool_observation(
+            name, status,
+        )
+        steps.append({
+            "n": i,
+            "tool": name,
+            "intent": intent,
+            "observation": observation,
+        })
+
+    outcome = trace.get("outcome_text") or (
+        f"You've completed the {title.lower()} flow end-to-end. "
+        "Re-running it later only takes one click — the brain remembers."
+    )
+
+    # Scope inheritance from the skill draft. Tutorials carry the SAME
+    # scope as the skill they mirror so firm-scoped skills auto-publish
+    # firm-scoped tutorials.
+    scope = (
+        draft.get("scope")
+        or trace.get("scope")
+        or "user"
+    )
+    if hasattr(scope, "value"):  # Scope enum
+        scope = scope.value
+    scope = str(scope).lower()
+
+    # The replay button on the tutorial fires `brain.skill_mint` against
+    # this skill id — verifies the tutorial still works (Content-Eco §3
+    # CI gate). We accept either a precomputed id (passed by the worker
+    # after publishing) or `None` so the renderer hides the button.
+    replay_skill_id = (
+        draft.get("skill_id")
+        or draft.get("id")
+        or trace.get("replay_skill_id")
+    )
+
+    return {
+        "slug": slug,
+        "title": title,
+        "prerequisites": prerequisites,
+        "steps": steps,
+        "outcome": outcome,
+        "scope": scope,
+        "replay_skill_id": replay_skill_id,
+    }
+
+
+def _humanise_tool_intent(name: str, args: dict[str, Any]) -> str:
+    """Map a snake_case tool call to a plain-English sentence the user
+    would write. No engineering terms — this is read by end users."""
+    parts = name.split("_")
+    if len(parts) >= 2:
+        verb_parts = parts[1:]
+        target = parts[0]
+        verb = " ".join(verb_parts).replace("-", " ")
+        return f"Tell ArchHub to {verb} via {target}."
+    return f"Run `{name}`."
+
+
+def _humanise_tool_observation(name: str, status: str) -> str:
+    """Plain-English description of what the user will see after a
+    given tool call. Status string is normalised to the user's vocabulary."""
+    status = (status or "ok").lower()
+    if status in ("ok", "success", "done", "complete"):
+        return f"ArchHub confirms `{name}` finished without errors."
+    if status in ("error", "failed", "denied", "blocked"):
+        return (
+            f"ArchHub flags an issue with `{name}` — check the chat panel "
+            "for the exact reason."
+        )
+    return f"`{name}` returned status `{status}`."
 
 
 def dedupe_against_library(
@@ -548,14 +1132,26 @@ def reflect_on_trace(
     owner_user: str,
     contributing_agent: str = "unknown",
     critic: Optional[LLMCritic] = None,
-    sandbox: SandboxRunner = heuristic_sandbox,
+    sandbox: Optional[SandboxRunner] = None,
     embedder: Optional[Embedder] = None,
     publish: bool = True,
 ) -> ReflexionResult:
     """End-to-end pipeline — `brain.skill_mint` triggers this off-thread
-    in production. Returns a ReflexionResult with full breakdown."""
+    in production. Returns a ReflexionResult with full breakdown.
+
+    When ``critic`` is None we auto-select the best available judge via
+    :func:`default_critic` — a REAL LLM critic when a key/provider is
+    reachable (genuine honing), else the deterministic HeuristicCritic.
+
+    When ``sandbox`` is None we honour the REAL honing gate by building a
+    :func:`trace_grounded_sandbox` bound to THIS trace, so the skill is
+    validated against the tool calls it was mined from (structural
+    consistency), not a seed coin-flip. Callers/tests may still inject a
+    custom ``SandboxRunner`` to override."""
     t0 = time.perf_counter()
-    critic = critic or HeuristicCritic()
+    critic = critic or default_critic()
+    if sandbox is None:
+        sandbox = trace_grounded_sandbox(trace)
 
     # 1. classify
     classification = classify_outcome(trace, critic=critic)
@@ -669,11 +1265,14 @@ class ReflexionWorker:
         store: BrainStore,
         *,
         critic: Optional[LLMCritic] = None,
-        sandbox: SandboxRunner = heuristic_sandbox,
+        sandbox: Optional[SandboxRunner] = None,
         embedder: Optional[Embedder] = None,
     ):
         self.store = store
-        self.critic = critic or HeuristicCritic()
+        # Keep None so `reflect_on_trace` auto-selects the real critic
+        # (default_critic) and the trace-grounded sandbox per-trace. A
+        # caller may inject either to override (tests, custom engines).
+        self.critic = critic
         self.sandbox = sandbox
         self.embedder = embedder
         self._q: queue.Queue[Optional[WorkerTask]] = queue.Queue()

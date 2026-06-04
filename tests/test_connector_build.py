@@ -293,7 +293,7 @@ def test_agdr_0029_exists_and_approved():
     p = root / "docs" / "agdr" / "AgDR-0029-connector-build-pair-shim-and-core.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     # Signed forks.
     assert "A3 — Both glob + manifest gate" in text
     assert "B2 — SHA-256 in manifest" in text

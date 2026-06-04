@@ -91,6 +91,45 @@ register(
 
 
 # ── transform.apply ───────────────────────────────────────────────────
+def _transform_pluck(value: Any, config: dict) -> dict:
+    """`pluck` — project a SUBSET of fields from each dict row.
+
+    Distinct from `pick` (which extracts ONE field into a flat list):
+    pluck returns a NEW list of dicts, each containing ONLY the requested
+    `fields`, optionally renamed via `rename` (old -> new).
+
+    Deterministic choices (documented in config_schema):
+      - a row missing a requested field OMITS that key (tolerant);
+      - a NON-DICT row is SKIPPED — pluck projects dict fields and a
+        non-dict has none (the row simply does not appear in the output).
+
+    TOTAL-TOLERANT: a non-list input, or an empty / non-list `fields`,
+    returns the {"status": "error", ...} typed shape this executor already
+    uses for bad config — never a raise.
+    """
+    if not isinstance(value, (list, tuple)):
+        return {"status": "error",
+                "error": "pluck needs a list of rows, got "
+                         f"{type(value).__name__}"}
+    fields = config.get("fields")
+    if not isinstance(fields, (list, tuple)) or not fields:
+        return {"status": "error",
+                "error": "pluck needs a non-empty `fields` list"}
+    rename = config.get("rename")
+    if not isinstance(rename, dict):
+        rename = {}
+    out: list = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue  # non-dict row has no fields to project — skipped
+        projected = {}
+        for f in fields:
+            if f in row:
+                projected[rename.get(f, f)] = row[f]
+        out.append(projected)
+    return {"value": out, "count": len(out)}
+
+
 def _transform_executor(config: dict, inputs: dict, ctx) -> dict:
     value = inputs.get("value")
     config = config or {}
@@ -108,6 +147,8 @@ def _transform_executor(config: dict, inputs: dict, ctx) -> dict:
     if op == "pick":
         return {"value": [it.get(field) if isinstance(it, dict) else it
                           for it in items]}
+    if op == "pluck":
+        return _transform_pluck(value, config)
     if op == "unique":
         out: list = []
         for it in items:
@@ -131,15 +172,23 @@ def _transform_executor(config: dict, inputs: dict, ctx) -> dict:
 register(
     NodeSpec(
         type="transform.apply", category="data", display_name="Transform",
-        description="Map / reshape data: count, pick, first, last, "
+        description="Map / reshape data: count, pick, pluck, first, last, "
                     "unique, sort, flatten, identity.",
         inputs=[Port(name="value", type=PortType.ANY, required=True)],
         outputs=[Port(name="value", type=PortType.ANY)],
         config_schema={
             "op":    {"type": "string",
                       "enum": ["identity", "count", "first", "last",
-                               "pick", "unique", "sort", "flatten"]},
+                               "pick", "pluck", "unique", "sort", "flatten"]},
             "field": {"type": "string"},
+            "fields": {"type": "array",
+                       "description": "For op=pluck: the field names to keep "
+                                      "in each projected row dict."},
+            "rename": {"type": "object",
+                       "description": "For op=pluck: optional {old: new} map "
+                                      "renaming kept fields. A non-dict row "
+                                      "is skipped; a missing field is "
+                                      "omitted."},
         },
         icon="⤳",
     ),

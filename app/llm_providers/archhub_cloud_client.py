@@ -25,9 +25,12 @@ from .openai_client import OpenAIClient
 
 
 # Default base. Override via env for staging / local backend tests.
+# Same host fix as cloud_client.DEFAULT_BASE: `cloud.archhub.io` does not
+# resolve; the live OpenAI-compatible chat proxy is on `archhub-cloud.fly.dev`
+# (POST /v1/chat/completions). Overridable via ARCHHUB_CLOUD_LLM_BASE.
 import os
 DEFAULT_BASE_URL = os.environ.get(
-    "ARCHHUB_CLOUD_LLM_BASE", "https://cloud.archhub.io/v1"
+    "ARCHHUB_CLOUD_LLM_BASE", "https://archhub-cloud.fly.dev/v1"
 )
 
 

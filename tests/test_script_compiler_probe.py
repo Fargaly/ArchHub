@@ -181,7 +181,7 @@ def test_agdr_0030_exists_and_approved():
     p = DOCS / "agdr" / "AgDR-0030-csc-probe-modern-roslyn-fallback.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     assert "A1 — BuildTools" in text
     assert "B3 — Bundle ONCE" in text
     assert "C3 — Both eager" in text

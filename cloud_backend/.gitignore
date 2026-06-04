@@ -1,8 +1,14 @@
 .env
 __pycache__/
 *.pyc
+# SQLite stores — NEVER commit live/dev data. The `*.db` glob covers
+# everything; the explicit line documents intent for the primary store
+# so it can't be force-added back by accident. (gap 6, 2026-05-31)
 *.db
+archhub_cloud.db
 *.db-journal
+*.db-wal
+*.db-shm
 .pytest_cache/
 .venv/
 venv/

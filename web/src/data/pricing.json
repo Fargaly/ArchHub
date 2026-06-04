@@ -1,0 +1,57 @@
+{
+  "model": "C",
+  "currency": "usd",
+  "annual_discount": 0.2,
+  "ai_modes": [
+    "byo_key",
+    "hosted"
+  ],
+  "default_ai_mode": "byo_key",
+  "credit_pack": {
+    "price_usd": 10,
+    "messages": 1000,
+    "rollover_days": 60
+  },
+  "tiers": [
+    {
+      "id": "solo",
+      "name": "Solo",
+      "price_per_seat": 19,
+      "price_per_seat_annual": 15.2,
+      "min_seats": 1,
+      "max_seats": 1,
+      "is_company": false,
+      "sso": false,
+      "blurb": "Individual architect / freelancer.",
+      "price_id_configured": false
+    },
+    {
+      "id": "studio",
+      "name": "Studio",
+      "price_per_seat": 39,
+      "price_per_seat_annual": 31.2,
+      "min_seats": 1,
+      "max_seats": null,
+      "is_company": true,
+      "sso": false,
+      "blurb": "A practice / project team \u2014 seats \u00e0 la carte.",
+      "price_id_configured": false
+    },
+    {
+      "id": "firm",
+      "name": "Firm",
+      "price_per_seat": 29,
+      "price_per_seat_annual": 23.2,
+      "min_seats": 10,
+      "max_seats": null,
+      "is_company": true,
+      "sso": true,
+      "blurb": "Large firm / enterprise \u2014 volume per-seat, 10+ seats, SSO + audit.",
+      "price_id_configured": false
+    }
+  ],
+  "source": "cloud_backend/config.py :: public_pricing()",
+  "extracted_from": [
+    "cloud_backend\\config.py"
+  ]
+}

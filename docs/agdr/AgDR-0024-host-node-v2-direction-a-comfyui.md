@@ -4,7 +4,7 @@ timestamp: 2026-05-21T00:00:00Z
 agent: claude-code (Sonnet)
 session: founder approved host-node-direction-a-comfyui-v2-ecosystem.html
 trigger: Founder sign-off 2026-05-21 — "agreed...go" on the 11-constraint decision block in the v2 prototype
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

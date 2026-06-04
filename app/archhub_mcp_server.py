@@ -39,6 +39,77 @@ import mcp.types as mcp_types                 # noqa: E402
 sys.path.append(_APP_DIR)
 
 
+# ── Secret resolution at launch (2026-06-03) ────────────────────────
+# Secrets are stored as op:// REFERENCES, never inline plaintext (a live
+# DASHSCOPE_API_KEY was found inlined in .claude.json). The dashscope
+# connector reads os.environ["DASHSCOPE_API_KEY"] raw, so we resolve any
+# op:// env reference to its real value HERE, once, before the stdio loop
+# serves any tool call. Resolution mirrors the repo's canonical resolver
+# (personal_brain.secret_resolver): 1Password CLI -> Windows Credential
+# Manager (keyring) -> OP_<VAULT>_<ITEM>_<FIELD> env fallback. A non-op://
+# value passes through unchanged (plaintext still works during migration).
+# Values are NEVER logged.
+_SECRET_ENV_KEYS = ("DASHSCOPE_API_KEY",)
+
+
+def _resolve_secret_env() -> None:
+    """Resolve op:// references in known secret env vars in place."""
+    resolve = None
+    try:
+        _src = os.path.abspath(
+            os.path.join(_APP_DIR, os.pardir, "personal-brain-mcp", "src"))
+        if os.path.isdir(_src) and _src not in sys.path:
+            sys.path.append(_src)
+        from personal_brain.secret_resolver import resolve_secret as resolve
+    except Exception:
+        resolve = None
+    if resolve is None:
+        import shutil as _sh
+        import subprocess as _sp
+
+        def resolve(ref):  # self-contained equivalent of secret_resolver
+            if not ref or not ref.startswith("op://"):
+                return ref
+            parts = ref[len("op://"):].split("/")
+            if len(parts) < 3 or not all(parts[:3]):
+                return ref
+            vault, item, field = parts[0], parts[1], parts[2]
+            if _sh.which("op"):
+                try:
+                    p = _sp.run(["op", "read", ref], capture_output=True,
+                                text=True, timeout=5.0)
+                    if p.returncode == 0 and (p.stdout or "").strip():
+                        return p.stdout.strip()
+                except (OSError, _sp.SubprocessError):
+                    pass
+            try:
+                import keyring  # Windows Credential Manager backend
+                v = keyring.get_password(vault + "/" + item, field)
+                if v and v.strip():
+                    return v.strip()
+            except Exception:
+                pass
+
+            def _n(s):
+                return s.upper().replace("/", "_").replace("-", "_")
+
+            return os.environ.get(
+                "OP_%s_%s_%s" % (_n(vault), _n(item), _n(field)))
+
+    for _k in _SECRET_ENV_KEYS:
+        _cur = os.environ.get(_k)
+        if not _cur or not _cur.startswith("op://"):
+            continue
+        try:
+            _val = resolve(_cur)
+        except Exception:
+            _val = None
+        if _val and _val != _cur:
+            os.environ[_k] = _val  # resolved real value (never logged)
+        # If unresolvable, leave the op:// ref; the connector then reports
+        # "DASHSCOPE_API_KEY not set" rather than using a bogus literal.
+
+
 # ── connector op → MCP tool translation ─────────────────────────────
 
 # JSON-Schema type for each ArchHub ParamSpec.type.
@@ -148,6 +219,7 @@ def _selftest() -> int:
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
+    _resolve_secret_env()  # op:// env refs -> real values before serving
     try:
         asyncio.run(_serve())
     except KeyboardInterrupt:

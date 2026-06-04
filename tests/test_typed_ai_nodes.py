@@ -145,10 +145,22 @@ def test_grammar_count_after_ai_split():
     the HARDCODED grammar (master nodes hidden). Synthesized entries
     (AgDR-0041: Tier 1/2 typed primitives + shipped Skills) are
     uncapped because they ARE real registered executors."""
-    assert len(ng.PRIMITIVES) <= 80
+    # +1 → 81: stem-rebuild Phase-0 added `verify.assert` (the per-node
+    # verify gate / branch primitive), like the `join` cell before it.
+    # +1 → 82: stem-rebuild Phase-0 added `fs.list` (READ-ONLY IO read cell).
+    # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
+    # + data.json) — cap bumped in lockstep with their node_grammar entries.
+    # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(ng.PRIMITIVES) <= 87
     payload = ng.grammar_payload()
     hardcoded = [p for p in payload if not p.get("_source")]
-    assert len(hardcoded) <= 70
+    # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile
+    # + verify cells, both real palette primitives.
+    # +1 → 73: stem-rebuild Phase-0 `fs.list` (visible READ-ONLY IO read cell).
+    # +3 → 76: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe +
+    # data.json), real palette primitives.
+    # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(hardcoded) <= 78
     # Adapter (6) + share (3) + AI typed (4) → at least 13 AgDR-derived
     # primitives in the visible payload. Count only HARDCODED entries
     # so this assertion is not perturbed by Tier 2 typed primitives

@@ -172,7 +172,7 @@ class Session:
         self.parameters[param.name] = param
         if self.on_parameter_added:
             try: self.on_parameter_added(param)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — registered UI observer; a listener raising must not corrupt the model mutation
         return param
 
     def update_parameter(self, name: str, value: Any) -> list[ChainStep]:
@@ -185,7 +185,7 @@ class Session:
         param.value = value
         if self.on_parameter_changed:
             try: self.on_parameter_changed(param)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — registered UI observer; a listener raising must not corrupt the model mutation
         return self._mark_downstream_dirty(name)
 
     def get(self, name: str, default: Any = None) -> Any:
@@ -198,7 +198,7 @@ class Session:
         self.chain.append(step)
         if self.on_step_added:
             try: self.on_step_added(step)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — registered UI observer; a listener raising must not corrupt the model mutation
         return step
 
     def get_step(self, step_id: str) -> Optional[ChainStep]:
@@ -215,7 +215,7 @@ class Session:
             step.error = error
         if self.on_step_status:
             try: self.on_step_status(step)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — registered UI observer; a listener raising must not corrupt the model mutation
 
     def attach_output(self, step: ChainStep, output: StepOutput) -> None:
         step.output = output

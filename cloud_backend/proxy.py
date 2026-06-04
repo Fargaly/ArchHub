@@ -90,28 +90,78 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
             },
         )
 
-    # ── Tier + ops gate (2026-05-24). Quota check above wins when the
-    # actor is genuinely burnt out (more actionable upgrade message).
-    # This gate then enforces: Free / Solo run BYO key, only Studio +
-    # Firm get cloud-proxied LLM access, AND only when PROXY_LIVE is
-    # on (founder flips after funding upstream provider balances).
-    # Until then every paid request gets a clear BYO_REQUIRED — so
-    # accidental traffic can't burn down the dev balance.
+    # ── AI-mode gate (Model C, founder 2026-05-31) ───────────────────
+    # Each workspace chooses how AI is powered:
+    #
+    #   byo_key (default) — the user pastes their OWN provider key in the
+    #     desktop. The hosted proxy does NOT serve their inference and
+    #     NEVER decrements a hosted credit: there is no hosted limit, the
+    #     user's key carries it. We return an honest byo_key_required 402
+    #     so the client falls back to the local key.
+    #
+    #   hosted — WE run the LLM, metered against credit packs. Requires a
+    #     paid plan + the global PROXY_LIVE switch (so accidental traffic
+    #     can't burn the dev balance before the founder funds upstream
+    #     balances). At 0 credits we return an honest out_of_credits 402
+    #     prompting a top-up; otherwise one credit is decremented per
+    #     conversation turn at end-of-stream.
     plan = (user.get("plan") or "trial").lower().strip()
-    if not config.PROXY_LIVE or plan not in config.PROXY_ENABLED_PLANS:
+    ai_mode = db.ai_mode_for_actor(user)
+    actor = "company" if user.get("current_company_id") else "user"
+
+    if ai_mode != "hosted":
+        # byo_key (or anything unrecognised → default byo_key): decline
+        # hosted inference, no credit touched. The client uses its own
+        # key. This is the "byo_key → no hosted limit, AI cost $0" path.
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "byo_key_required",
+                "ai_mode": ai_mode,
+                "plan":  plan,
+                "reason": ("This workspace runs in BYO-key mode — paste "
+                           "your own provider key in ArchHub → Settings → "
+                           "LLM, or switch the workspace to Hosted AI to "
+                           "use credits."),
+                "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
+            },
+        )
+
+    # Hosted mode from here. Gate on plan + the global live switch.
+    if not config.PROXY_LIVE or plan not in config.PROXY_ENABLED_PLANS:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "hosted_unavailable",
+                "ai_mode": "hosted",
                 "plan":  plan,
                 "proxy_live":   config.PROXY_LIVE,
                 "allowed_plans": sorted(config.PROXY_ENABLED_PLANS),
-                "reason": ("Cloud LLM proxy is in private beta. Your plan "
-                           "either runs BYO key (Free / Solo) or the proxy "
-                           "is not enabled yet. Paste your own provider key "
-                           "in ArchHub → Settings → LLM to keep working "
-                           "while we onboard cloud-proxy customers."),
+                "reason": ("Hosted AI is in private beta or your plan isn't "
+                           "eligible yet. Paste your own provider key in "
+                           "ArchHub → Settings → LLM (BYO-key mode) to keep "
+                           "working while we onboard hosted customers."),
                 "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
+            },
+        )
+
+    # Hosted credit gate — honest 402 at zero, prompting a top-up.
+    credits = db.credit_balance_for_actor(user)
+    if credits <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "out_of_credits",
+                "ai_mode": "hosted",
+                "actor": actor,
+                "credit_balance": 0,
+                "credit_pack": dict(config.CREDIT_PACK),
+                "reason": ("You're out of hosted-AI credits. Top up a pack "
+                           f"(${config.CREDIT_PACK['price_usd']} = "
+                           f"{config.CREDIT_PACK['messages']:,} messages) to "
+                           "keep using Hosted AI — or switch the workspace "
+                           "to BYO-key mode."),
+                "topup_url": f"{config.PUBLIC_URL.rstrip('/')}/billing/credits",
             },
         )
 
@@ -178,6 +228,12 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
                 except Exception:
                     pass
         # End-of-stream: decrement + log. Actor-aware (company vs user).
+        # We only reach here in hosted mode (byo_key / out-of-credits are
+        # rejected before the stream starts), so spend ONE hosted credit
+        # per conversation turn — Model C bills per-turn, not per HTTP
+        # call, because a tool-use loop is many calls. The legacy
+        # msg_used bump stays for the fair-use ceiling + usage analytics.
+        db.consume_credit_for_actor(user, 1)
         db.increment_usage_for_actor(user, 1)
         cost = _COST_PER_MTOK_USD.get(model, {"in": 1.0, "out": 4.0})
         cost_micros = int(

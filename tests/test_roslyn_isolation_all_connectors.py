@@ -134,7 +134,7 @@ def test_agdr_0025_exists():
     p = DOCS / "agdr" / "AgDR-0025-roslyn-isolation-all-connectors.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     # Scope is BROADER than AgDR-0023 — covers all connectors.
     assert "RevitMCP" in text and "AcadMCP" in text
     # Names the shared file path.

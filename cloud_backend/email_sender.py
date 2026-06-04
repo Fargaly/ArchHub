@@ -20,11 +20,33 @@ RESEND_URL = "https://api.resend.com/emails"
 
 
 async def _send(*, to: str, subject: str, text: str, html: str) -> bool:
-    """POST one email to Resend. Returns True on accepted (2xx). In dev
-    (no RESEND_API_KEY) logs to stdout and returns True so the local
-    UX still flows."""
+    """POST one email to Resend. Returns True on accepted (2xx).
+
+    Delivery-key handling (gap 5, 2026-05-31):
+      - PRODUCTION (ENV=production) with no RESEND_API_KEY → return FALSE.
+        The caller (auth.register_via_email → /register) turns a False
+        into a 502 email_send_failed instead of a silent 202. We never
+        pretend an email was sent in prod when no provider is wired.
+        (The startup gate in config.assert_production_ready already
+        refuses to boot in this state — this is belt-and-suspenders for
+        any path that reaches send with the key unset.)
+      - DEV (ENV unset) with no RESEND_API_KEY → log to stdout and return
+        True so local sign-in still flows. The log line is loud + tagged
+        UNDELIVERED so it's unmistakable that nothing actually went out.
+    """
     if not config.RESEND_API_KEY:
-        print(f"[email] would send to {to}: {subject}", flush=True)
+        if config.is_production():
+            print(
+                f"[email] PRODUCTION send ABORTED — RESEND_API_KEY unset; "
+                f"NOT delivered to {to}: {subject}",
+                flush=True,
+            )
+            return False
+        print(
+            f"[email] DEV stub — NOT actually sent (RESEND_API_KEY unset). "
+            f"Would deliver to {to}: {subject}",
+            flush=True,
+        )
         return True
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

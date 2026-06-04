@@ -29,7 +29,7 @@ fi
 # Inspect the changes staged for this commit only — pre-commit runs
 # before the commit object exists, so we diff index vs HEAD.
 STAGED_CS=$(git diff --cached --name-only --diff-filter=ACMR \
-            -- 'payload/sources/**/*.cs' 2>/dev/null || true)
+            -- ':(glob)payload/sources/**/*.cs' 2>/dev/null || true)
 
 if [[ -n "$STAGED_CS" ]]; then
     cat >&2 <<'EOF'
@@ -64,6 +64,32 @@ To inspect what changed before deciding:
 ═══════════════════════════════════════════════════════════════════════
 EOF
     exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
+# AgDR-0050 — no-brain-on-commit floor (ADDITIVE; runs AFTER the .cs guard).
+# Invokes tools/brain_commit_gate.py as a SECOND, independent check. The gate
+# warns by default (exit 0, never blocks) and only blocks when the committer
+# opts in with ARCHHUB_BRAIN_COMMIT_GATE=block. Default is WARN:
+# leave ARCHHUB_BRAIN_COMMIT_GATE unset (or =warn). =block is the opt-in.
+#
+# Fail-open is absolute here too: if python is missing, the gate file is
+# absent, or the invocation errors for any reason, the hook STILL allows the
+# commit. We capture the gate's exit code without letting `set -e` abort the
+# hook, and only ever propagate a genuine block (exit 1) from the gate itself.
+# (The gate already fails open internally when the brain daemon is down.)
+PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
+if command -v "$PYTHON_BIN" >/dev/null 2>&1 \
+   && [ -f tools/brain_commit_gate.py ]; then
+    GATE_RC=0
+    "$PYTHON_BIN" tools/brain_commit_gate.py || GATE_RC=$?
+    # Only the gate's deliberate block (exit 1, opt-in via =block) stops the
+    # commit. Any other non-zero is an invocation failure → fail open.
+    if [ "$GATE_RC" = "1" ]; then
+        exit 1
+    fi
+else
+    echo "[brain-commit-gate] python or gate script unavailable — fail-open, not blocking." >&2
 fi
 
 exit 0

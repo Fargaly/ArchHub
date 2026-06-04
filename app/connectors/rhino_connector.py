@@ -356,6 +356,113 @@ def _set_layer_visibility(layer: str = "", visible: bool = True) -> OpResult:
     return res
 
 
+# ── AgDR-0041 Property 1 — typed-host primitives (host swap) ─────────
+# Resolved from workflows/nodes/host_typed.py so "Export viewport" /
+# "Import mesh" do REAL Rhino work — same wire, swap the host param.
+# Both route through the existing rhino_runner HTTP surface; bridge
+# offline → honest OpResult.fail, never a fabricated value.
+
+def _export_viewport(view: str = "", width: int = 2048,
+                     height: int = 1536, output_path: str = "") -> OpResult:
+    """`rhino.export_viewport` — capture the active Rhino viewport to a
+    PNG via the runner's /screenshot route. Returns {image, depth, view,
+    path}. `depth` is None (no depth pass on the Rhino bridge) — honest,
+    not fabricated. `view` switches the active viewport first when given."""
+    op_id = "rhino.export_viewport"
+    if not _bridge_live():
+        return OpResult.fail(
+            "Rhino bridge not reachable — open Rhino and load the ArchHub "
+            "addon.", op_id)
+    want_view = str(view or "").strip()
+    if want_view:
+        # Best-effort: switch the active viewport to the named one.
+        snippet = (
+            "import rhinoscriptsyntax as rs\n"
+            f"_v = {want_view!r}\n"
+            "try:\n"
+            "    rs.CurrentView(_v)\n"
+            "except Exception:\n"
+            "    pass\n"
+            "result = rs.CurrentView()\n"
+        )
+        sw = _run_snippet(snippet)
+        if not sw.ok:
+            return OpResult.fail(sw.error or "could not switch view", op_id)
+    try:
+        env = _runner.screenshot(output_path=(output_path or None),
+                                 width=int(width or 2048),
+                                 height=int(height or 1536))
+    except Exception as ex:
+        return OpResult.fail(f"Rhino screenshot failed: {ex}", op_id)
+    if not isinstance(env, dict) or env.get("status") == "error":
+        msg = (env or {}).get("error", "screenshot failed") \
+            if isinstance(env, dict) else "screenshot failed"
+        return OpResult.fail(msg, op_id)
+    saved = env.get("output_path") or env.get("path") or output_path
+    value = {"image": saved, "depth": None,
+             "view": want_view or env.get("view", ""), "path": saved}
+    return OpResult(ok=True, value=value, op_id=op_id,
+                    value_preview=f"viewport → {str(saved)[-40:]}")
+
+
+def _import_mesh(mesh: Any = None, name: str = "",
+                 layer: str = "") -> OpResult:
+    """`rhino.import_mesh` — import a .glb/.obj/.ply/.3dm mesh file into
+    the active Rhino document via `rs.Command("_-Import")`. DESTRUCTIVE.
+    Accepts a path string or an upstream geometry dict carrying a path."""
+    op_id = "rhino.import_mesh"
+    path = ""
+    if isinstance(mesh, str):
+        path = mesh.strip()
+    elif isinstance(mesh, dict):
+        for k in ("path", "file", "filepath", "url", "value"):
+            v = mesh.get(k)
+            if isinstance(v, str) and v.strip():
+                path = v.strip()
+                break
+    if not path:
+        return OpResult.fail(
+            "import_mesh needs a mesh file path (.glb/.obj/.ply/.3dm) on "
+            "the `mesh` input — got "
+            f"{type(mesh).__name__} with no resolvable path.", op_id)
+    if not _bridge_live():
+        return OpResult.fail(
+            "Rhino bridge not reachable — open Rhino and load the ArchHub "
+            "addon.", op_id)
+    lyr = str(layer or "").strip()
+    code = (
+        "import rhinoscriptsyntax as rs\n"
+        "import os\n"
+        f"_path = {path!r}\n"
+        f"_layer = {lyr!r}\n"
+        "if not os.path.exists(_path):\n"
+        "    result = {'ok': False, 'error': 'mesh file not found: ' "
+        "+ _path}\n"
+        "else:\n"
+        "    _before = set(str(o) for o in (rs.AllObjects() or []))\n"
+        "    if _layer:\n"
+        "        if _layer not in (rs.LayerNames() or []):\n"
+        "            rs.AddLayer(_layer)\n"
+        "        rs.CurrentLayer(_layer)\n"
+        "    _ok = rs.Command('_-Import \"' + _path + '\" _Enter', False)\n"
+        "    _after = set(str(o) for o in (rs.AllObjects() or []))\n"
+        "    _new = list(_after - _before)\n"
+        "    result = {'ok': bool(_ok), 'imported': len(_new),\n"
+        "              'path': _path, 'layer': _layer}\n"
+    )
+    res = _run_snippet(code)
+    if not res.ok:
+        return OpResult.fail(res.error or "import failed", op_id)
+    val = res.value if isinstance(res.value, dict) else {}
+    if not val.get("ok", False):
+        return OpResult.fail(val.get("error", "import failed"), op_id)
+    res.op_id = op_id
+    res.value_preview = (f"{val.get('imported', 0)} object(s) imported"
+                         + (f" → {val.get('layer')}" if val.get("layer")
+                            else ""))
+    return res
+
+
 # ── connector ────────────────────────────────────────────────────────
 class RhinoConnector(Connector):
     """Rhino, driven through the ArchHub MCP bridge via `rhino_runner`."""
@@ -485,6 +592,46 @@ class RhinoConnector(Connector):
                 output_type="any",
                 destructive=True,
                 fn=_set_layer_visibility,
+            ),
+            # ── AgDR-0041 P1 — typed-host primitives ────────────────
+            ConnectorOp(
+                op_id="rhino.export_viewport", host="rhino", kind="read",
+                label="Export viewport",
+                description="Capture the active Rhino viewport to a PNG "
+                            "via the bridge /screenshot route.",
+                inputs=[
+                    ParamSpec("view", "Viewport name", "text", default="",
+                              help="Optional viewport to switch to first. "
+                                   "Empty = current viewport."),
+                    ParamSpec("width", "Width px", "number", default=2048,
+                              help="Output image width in pixels."),
+                    ParamSpec("height", "Height px", "number", default=1536,
+                              help="Output image height in pixels."),
+                    ParamSpec("output_path", "Output path", "text",
+                              default="",
+                              help="Where to write the PNG. Empty = host "
+                                   "default."),
+                ],
+                output_type="any",
+                fn=_export_viewport,
+            ),
+            ConnectorOp(
+                op_id="rhino.import_mesh", host="rhino", kind="action",
+                label="Import mesh",
+                description="Import a .glb/.obj/.ply/.3dm mesh file into "
+                            "the active document via _-Import.",
+                inputs=[
+                    ParamSpec("mesh", "Mesh", "any", required=True,
+                              help="Mesh file path or an upstream geometry "
+                                   "dict carrying a path/file/url."),
+                    ParamSpec("name", "Name", "text", default="",
+                              help="Name hint for the imported object(s)."),
+                    ParamSpec("layer", "Layer", "text", default="",
+                              help="Target layer (created if missing)."),
+                ],
+                output_type="any",
+                destructive=True,
+                fn=_import_mesh,
             ),
         ]
 

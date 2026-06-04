@@ -77,7 +77,7 @@ class _LivePalette:
 # Read persisted theme pref before first palette access so the first
 # QSS build uses dark when that's the user's preference.
 try: _load_theme_pref()
-except Exception: pass
+except Exception: pass  # audit: deliberate-fail-soft — theme-pref load at import; falls back to the default palette on absence
 T = _LivePalette()
 
 # v1.3.3 — Memory nav added between Skills (what the model can do) and

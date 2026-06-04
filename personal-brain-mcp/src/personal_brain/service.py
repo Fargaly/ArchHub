@@ -52,6 +52,39 @@ def _brain_command() -> str:
     return f'"{sys.executable}" -m personal_brain.server'
 
 
+def _build_daemon_argv(port: int = DEFAULT_PORT, db: Optional[str] = None) -> list[str]:
+    """argv (list, no shell) for the brain daemon child process."""
+    exe = shutil.which("personal-brain")
+    argv = [exe] if exe else [sys.executable, "-m", "personal_brain.server"]
+    argv += ["--http", str(port)]
+    if db:
+        argv += ["--db", db]
+    return argv
+
+
+def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, Any]:
+    """Foreground KeepAlive loop — Windows parity with launchd `KeepAlive`
+    and systemd `Restart=on-failure`. Spawns the brain daemon as a child and
+    RESPAWNS it whenever it exits, with exponential backoff on repeated fast
+    failures. Runs until killed; this is the autostart target on Windows so
+    the brain stays ALWAYS alive across daemon crashes, not just relaunching
+    at logon (founder 2026-06-02: "the brain should be ALWAYS ALIVE")."""
+    argv = _build_daemon_argv(port, db)
+    # CREATE_NO_WINDOW so each respawn doesn't flash a console.
+    creationflags = 0x08000000 if sys.platform == "win32" else 0
+    backoff = 2
+    while True:
+        started = time.monotonic()
+        try:
+            proc = subprocess.Popen(argv, creationflags=creationflags)
+        except Exception:
+            time.sleep(min(backoff, 30)); backoff = min(backoff * 2, 30); continue
+        proc.wait()  # block until the daemon exits / crashes
+        # If it ran a healthy while, reset backoff; if it died fast, back off.
+        backoff = 2 if (time.monotonic() - started) > 30 else min(backoff * 2, 30)
+        time.sleep(min(backoff, 30))
+
+
 # ─────────────────────── Windows (Task Scheduler) ──────────────────────
 
 
@@ -69,9 +102,10 @@ def _windows_install(
     otherwise. User-level install survives a normal login + works for
     everything the brain needs (it binds 127.0.0.1, no privileged ports).
     """
-    brain = _brain_command()
-    args = f'--http {port}' + (f' --db "{db}"' if db else '')
-    full_cmd = f'{brain} {args}'
+    # Autostart the SUPERVISOR (KeepAlive loop), not the bare daemon, so a
+    # daemon crash respawns immediately instead of waiting for the next logon.
+    args = f'supervise --port {port}' + (f' --db "{db}"' if db else '')
+    full_cmd = f'"{sys.executable}" -m personal_brain.service {args}'
 
     cmd = [
         "schtasks", "/create",
@@ -434,6 +468,10 @@ def run(
     db: Optional[str] = None,
     elevated: bool = False,
 ) -> dict[str, Any]:
+    # `supervise` is platform-agnostic + BLOCKS (runs the KeepAlive loop until
+    # killed). Handle before the platform dispatch.
+    if action == "supervise":
+        return _supervise(port=port, db=db)
     plat = _platform()
     fn = _DISPATCH.get((plat, action))
     if fn is None:
@@ -455,7 +493,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="personal-brain service")
     parser.add_argument("action",
                          choices=["install", "uninstall", "status",
-                                  "start", "stop"])
+                                  "start", "stop", "supervise"])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--db", type=str, default=None)
     parser.add_argument("--elevated", action="store_true",

@@ -38,14 +38,18 @@ def test_quota_remaining_clamps_at_zero():
 
 
 def test_update_user_plan_resets_used():
-    import db
+    import db, config
     u = db.get_or_create_user("upgrader@studio.com")
     db.increment_usage(u["id"], 10)
     db.update_user_plan(u["id"], plan="solo")
     u2 = db.get_user(u["id"])
     assert u2["plan"] == "solo"
+    # A plan change opens a fresh billing period: msg_used resets to 0
+    # and msg_limit is re-derived from the canonical PLAN_QUOTAS (Model
+    # C: this is the fair-use ceiling — hosted billing flows through
+    # credit packs). Read the number from config so it tracks the source.
     assert u2["msg_used"] == 0
-    assert u2["msg_limit"] == 500
+    assert u2["msg_limit"] == config.PLAN_QUOTAS["solo"]
 
 
 def test_pkce_code_roundtrip():

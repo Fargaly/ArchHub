@@ -105,6 +105,29 @@ the current chat session:
   by default. Composer has Plan / Auto / YOLO modes. YOLO is opt-in
   and every action remains reversible via Speckle Versions.
 
+### BRAIN-FIRST (all vendors)
+
+The brain is the shared memory + skills + setups + secrets-refs layer
+(AgDR-0044). It is a `personal-brain-mcp` daemon at
+`http://127.0.0.1:8473/mcp`. Working without it = working blind:
+re-solving solved problems, ignoring founder context, minting duplicate
+skills. This is NOT Claude-only — every vendor connects.
+
+- **Before you touch any file**, probe `brain.health` (proceed on
+  `"ok":true`) and call `brain.context` to pull relevant prior work.
+- **After every meaningful tool call**, call `brain.write`
+  (ADD/UPDATE/DELETE/NOOP) so memory grows as you work.
+- **At session end**, call `brain.skill_mint` with the trace so good
+  trajectories become reusable skills.
+- **Secrets are references only** — `op://vault/...`, never resolved
+  values in brain memory.
+- **No auto-firing hook in your client?** Then you MUST make these calls
+  yourself. Run the `personal-brain` installer to wire your client, or
+  launch through the brainwrap launcher (`tools/brainwrap`) which fires
+  the health / context / write / skill_mint calls for you. Claude Code
+  fires them via its hooks; Cursor / Codex / Antigravity / Gemini and
+  any other client without a hook do it manually or via brainwrap.
+
 ---
 
 ## 4. Cross-surface change detector

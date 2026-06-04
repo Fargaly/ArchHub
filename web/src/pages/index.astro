@@ -1,0 +1,33 @@
+---
+import Base from '../layouts/Base.astro';
+// Connector + operation counts come from the committed build-info.json,
+// derived from the REAL app/connectors/ source by scripts/build-info.js
+// (npm run refresh-content). No hand-typed, drift-prone numbers.
+import buildInfo from '../data/build-info.json';
+const connectors = buildInfo.connectors ?? 0;
+const operations = buildInfo.operations ?? 0;
+---
+<Base title="ArchHub — AI workspace for AEC" description="The graph-first AI workspace for architects, engineers, and contractors. One canvas, every tool you already use, wired together.">
+  <h1>ArchHub</h1>
+  <p>
+    <strong>Graph-first AI workspace for AEC professionals.</strong>
+    Wire your hosts, conversations, filters, and connector operations on a
+    single canvas. Your work happens locally; your knowledge stays yours.
+  </p>
+
+  <h2>The three pillars</h2>
+  <ul>
+    <li><strong>Canvas</strong> — every action is a node, every node is replayable.</li>
+    <li><strong>Composer</strong> — chat with the project; AI edits the graph, you approve.</li>
+    <li><strong>Brain</strong> — persistent memory + skills that grow with your firm.</li>
+  </ul>
+
+  <h2>What's inside</h2>
+  <p>
+    {connectors} connectors, {operations} operations. Revit · AutoCAD · Speckle ·
+    Excel · Blender · Rhino · 3ds Max · Procore · Outlook · Notion — wired into
+    one canvas. Every wire is auditable, every skill is reusable across projects.
+  </p>
+
+  <p><a href="/features">Explore features →</a> <a href="/pricing">See pricing →</a> <a href="/brain">See the brain graph →</a></p>
+</Base>

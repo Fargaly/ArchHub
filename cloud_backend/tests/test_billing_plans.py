@@ -30,19 +30,45 @@ class TestPlansEndpoint:
         names = [t["tier"] for t in data["tiers"]]
         assert names == ["solo", "studio", "firm"]
 
-    def test_each_tier_has_quota(self, client):
+    def test_each_tier_has_per_seat_price(self, client):
+        # Model C: every tier carries a per-seat price + an annual
+        # (−20%) per-seat equivalent.
         r = client.get("/v1/billing/plans")
         for t in r.json()["tiers"]:
-            assert isinstance(t["monthly_quota"], int)
-            assert t["monthly_quota"] >= 0
+            assert isinstance(t["price_per_seat"], (int, float))
+            assert t["price_per_seat"] > 0
+            assert t["price_per_seat_annual"] < t["price_per_seat"]
 
-    def test_studio_and_firm_carry_seats(self, client):
+    def test_model_c_tier_prices(self, client):
+        # The founder-approved numbers: Solo $19, Studio $39/seat,
+        # Firm $29/seat.
         r = client.get("/v1/billing/plans")
         by_tier = {t["tier"]: t for t in r.json()["tiers"]}
-        # Solo is single-user; seats is None.
-        assert by_tier["solo"]["seats"] is None
-        assert by_tier["studio"]["seats"] == 5
-        assert by_tier["firm"]["seats"] == 25
+        assert by_tier["solo"]["price_per_seat"] == 19
+        assert by_tier["studio"]["price_per_seat"] == 39
+        assert by_tier["firm"]["price_per_seat"] == 29
+
+    def test_seat_floors(self, client):
+        # Solo = exactly 1 seat; Studio à la carte (min 1); Firm min 10.
+        r = client.get("/v1/billing/plans")
+        by_tier = {t["tier"]: t for t in r.json()["tiers"]}
+        assert by_tier["solo"]["min_seats"] == 1
+        assert by_tier["solo"]["max_seats"] == 1
+        assert by_tier["studio"]["min_seats"] == 1
+        assert by_tier["studio"]["max_seats"] is None
+        assert by_tier["firm"]["min_seats"] == 10
+
+    def test_exposes_credit_pack_and_ai_modes(self, client):
+        # The BYO/Hosted choice + the $10 = 1,000-msg credit pack are
+        # part of the public catalog.
+        data = client.get("/v1/billing/plans").json()
+        assert data["model"] == "C"
+        assert set(data["ai_modes"]) == {"byo_key", "hosted"}
+        assert data["default_ai_mode"] == "byo_key"
+        assert data["credit_pack"]["price_usd"] == 10
+        assert data["credit_pack"]["messages"] == 1000
+        assert data["credit_pack"]["rollover_days"] == 60
+        assert data["annual_discount"] == 0.20
 
     def test_returns_provider_id(self, client):
         r = client.get("/v1/billing/plans")

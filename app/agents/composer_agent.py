@@ -12,6 +12,100 @@ import json
 from typing import Any, Callable, Optional
 
 
+# ── Composer modes (USER-AGENCY MANDATE) ──────────────────────────────
+# Plan (default) — every host WRITE is gated pending approval; reads run.
+# Auto           — reads run automatically; writes still gated.
+# YOLO           — everything runs free (opt-in, reversible).
+# This is the backend half the founder's "all writes gated" chip promised
+# but never had (ia-critique-ai-stemcells-2026-06-03 §4: "nothing reads
+# detail.mode … composer_agent.py has no gate"). The gate physically
+# lives here — the ai.agent cell that decides what it may write.
+MODE_PLAN = "plan"
+MODE_AUTO = "auto"
+MODE_YOLO = "yolo"
+_VALID_MODES = (MODE_PLAN, MODE_AUTO, MODE_YOLO)
+_DEFAULT_MODE = MODE_PLAN   # default-gated, matching the chip + mandate
+
+# The canvas primitives that MUTATE host / canvas state — these are the
+# "writes" the Plan/Auto modes gate. `run_node` / `run_workflow` cook
+# nodes (which call connector WRITE ops + mutate outputs); `set_node_param`
+# / `add_wire` / `spawn_node` mutate the graph. The pure-READ primitives
+# (`query_graph`, `chat`) are never gated. Keep this list aligned with
+# TOOL_SCHEMA below.
+WRITE_TOOLS = frozenset({
+    "spawn_node", "add_wire", "set_node_param", "run_node", "run_workflow",
+})
+# Pure reads — always allowed, in every mode.
+READ_TOOLS = frozenset({"query_graph", "chat"})
+
+
+def normalize_mode(mode: str | None) -> str:
+    """Coerce an arbitrary mode string to one of the three valid modes.
+    Unknown / empty → the default-gated Plan mode (fail SAFE — never
+    silently fall through to running writes)."""
+    m = (mode or "").strip().lower()
+    return m if m in _VALID_MODES else _DEFAULT_MODE
+
+
+def _is_write_tool(name: str) -> bool:
+    return (name or "") in WRITE_TOOLS
+
+
+def mode_gates_write(mode: str, tool_name: str) -> bool:
+    """True iff a write by `tool_name` must be GATED (blocked pending
+    approval) under `mode`. Plan + Auto gate every write; YOLO gates
+    nothing. Reads are never gated."""
+    if not _is_write_tool(tool_name):
+        return False
+    m = normalize_mode(mode)
+    if m == MODE_YOLO:
+        return False
+    # Plan AND Auto both gate writes (Auto only auto-runs READS).
+    return True
+
+
+def gated_action(tool_name: str, args: Any, mode: str) -> dict:
+    """Build the typed-error approval action that REPLACES a blocked
+    write. Per USER-AGENCY ("approval surfaces are typed errors with
+    named recoveries"), this is not a freeform retry — it carries a
+    typed `approval_required` shape with named recovery verbs the JSX
+    surfaces as buttons. The write does NOT execute; it is queued."""
+    return {
+        "tool": tool_name,
+        "args": args if isinstance(args, dict) else {},
+        "result": None,
+        # The gate marker the JSX consumer keys on (Wave A2). When
+        # present, the JSX does NOT replay the write — it shows the
+        # approval surface instead.
+        "gated": True,
+        "mode": normalize_mode(mode),
+        "approval": {
+            "type": "approval_required",
+            "tool": tool_name,
+            "reason": (
+                f"Plan mode gates host writes. '{tool_name}' was queued "
+                f"for your approval instead of running."
+            ),
+            # Named recoveries (typed, not freeform) — the JSX renders
+            # these as buttons; each maps to a concrete next step.
+            "recoveries": [
+                {"id": "approve_once",
+                 "label": "Approve & run once",
+                 "detail": "Run this one write now, keep gating the rest."},
+                {"id": "switch_auto",
+                 "label": "Switch to Auto",
+                 "detail": "Auto-run reads; keep gating writes."},
+                {"id": "switch_yolo",
+                 "label": "Switch to YOLO",
+                 "detail": "Run everything without gating (reversible)."},
+                {"id": "discard",
+                 "label": "Discard",
+                 "detail": "Drop this queued write."},
+            ],
+        },
+    }
+
+
 # Tool catalog — JSON schema that Claude sees. Each tool maps to one
 # bridge slot (or a small helper on top of one).
 TOOL_SCHEMA = [
@@ -201,6 +295,7 @@ def run_agent_step(
     focused_node_id: str = "",
     router: Any = None,
     max_iters: int = 4,
+    mode: str = _DEFAULT_MODE,
 ) -> dict:
     """One step of the composer agent. Returns a list of actions for
     the JSX side to execute, plus the final assistant text.
@@ -212,20 +307,33 @@ def run_agent_step(
             is currently anchored to, if any.
         router: The LLMRouter instance (or compatible duck-typed
             client) that owns `.complete(history=..., model=...,
-            on_chunk=..., on_tool_invocation=..., tool_schemas=...)`.
+            on_chunk=..., on_tool_invocation=..., extra_tools=...)`
+            (`tool_schemas=` is accepted as a back-compat alias).
         max_iters: Reserved for the future tool-loop bound. The actual
             loop is driven by the router today; we just cap our own
             invocation count via the callbacks.
+        mode: Composer mode — "plan" (default, gates writes), "auto"
+            (auto reads, gates writes), or "yolo" (runs free). This is
+            the USER-AGENCY gate: in Plan/Auto, a host-WRITE tool the
+            LLM calls is NOT emitted as an executable action — it is
+            replaced by a typed `approval_required` action queued for
+            the user. Defaults to Plan (fail-safe gated) so an absent /
+            unknown mode never silently runs writes.
 
     Returns:
-        Dict with keys `actions` (list of tool-invocation dicts) and
-        `text` (final assistant text). On failure, includes `error`.
+        Dict with keys `actions` (list of tool-invocation dicts), `text`
+        (final assistant text), `mode` (the normalized mode), and
+        `gated` (count of writes blocked pending approval). On failure,
+        includes `error`.
     """
+    mode = normalize_mode(mode)
     if not router:
         return {
             "actions": [],
             "text": "no router configured",
             "error": "missing_dep",
+            "mode": mode,
+            "gated": 0,
         }
 
     # Build a conversation [{role, content}] history. A leading
@@ -244,23 +352,50 @@ def run_agent_step(
     # canvas mutates in real time. The router handles the actual
     # tool-loop (Claude is already set up for tool-use via providers).
     actions: list = []
+    gated_count = [0]   # mutable closure cell — # writes blocked this turn
 
     def _on_inv(inv: Any) -> None:
         try:
             name = (
-                getattr(inv, "name", None)
+                getattr(inv, "tool_name", None)   # real ToolInvocation attr
+                or getattr(inv, "name", None)
                 or getattr(inv, "tool", None)
                 or "?"
             )
             args = (
-                getattr(inv, "args", None)
-                or getattr(inv, "arguments", None)
+                getattr(inv, "arguments", None)   # real ToolInvocation attr
+                or getattr(inv, "args", None)
                 or {}
             )
+            # USER-AGENCY GATE — the real backend gate the "all writes
+            # gated" chip promised. In Plan/Auto mode, a host-WRITE tool
+            # does NOT become an executable canvas action: we replace it
+            # with a typed approval_required action (named recoveries),
+            # queued for the user, and never surface the write's result
+            # back. YOLO (and all READ tools) pass straight through.
+            if mode_gates_write(mode, name):
+                gated_count[0] += 1
+                actions.append(gated_action(name, args, mode))
+                return
             result = getattr(inv, "result", None)
-            actions.append(
-                {"tool": name, "args": args, "result": result}
-            )
+            action = {"tool": name, "args": args, "result": result}
+            # SPAWN-ID CONTRACT (JSX half reads action.node_id): the router
+            # ALLOCATES the new node id when spawn_node fires and returns it
+            # in the ack (inv.result["node_id"], mirrored onto inv.arguments).
+            # Surface it at the TOP LEVEL of the action so the JSX replay
+            # (onAgentStep -> spawn_host_chat) places the node under THIS
+            # id — making the id the model saw == the id on the canvas, so a
+            # follow-up add_wire/run_node referencing it resolves. Absent
+            # (older router / non-spawn tool) → omitted; JSX falls back to
+            # minting its own id (back-compat).
+            _node_id = None
+            if isinstance(result, dict):
+                _node_id = result.get("node_id")
+            if not _node_id and isinstance(args, dict):
+                _node_id = args.get("node_id")
+            if _node_id:
+                action["node_id"] = _node_id
+            actions.append(action)
         except Exception:
             actions.append({"tool": "?", "args": {}, "result": None})
 
@@ -271,24 +406,38 @@ def run_agent_step(
             text_buf.append(piece)
 
     try:
-        # NOTE: this calls the real router with our tool catalog. The
-        # router's _execute_tool dispatcher needs to recognise these
-        # tool names — if it doesn't yet, the LLM still gets the
-        # schema and decides "no tool call" and returns plain text.
+        # Hand the canvas primitives to the router as CLIENT-SIDE tools.
+        # `extra_tools` merges TOOL_SCHEMA into the provider tool surface
+        # for this call, so the LLM ACTUALLY SEES spawn_node / run_node /
+        # add_wire / … and can call them. When it does, the router routes
+        # the invocation to our `_on_inv` callback (it does NOT try to run
+        # these through ToolEngine, which doesn't own them) and feeds a
+        # neutral ack back to the model so its tool-use loop continues. We
+        # collect each invocation in `actions` and the JSX side replays
+        # them against the live canvas. (Before 2026-06-03 this passed
+        # `tool_schemas=` to a signature that never accepted it → TypeError
+        # → the tool-LESS fallback below → the LLM never saw the tools and
+        # the whole orchestration path was dead. The router now supports
+        # the kwarg natively; `tool_schemas` is still accepted as an
+        # alias.)
         response = router.complete(
             history=history,
             model="auto",
             on_chunk=_on_chunk,
             on_tool_invocation=_on_inv,
-            tool_schemas=TOOL_SCHEMA,
+            extra_tools=TOOL_SCHEMA,
         )
         text = (
             getattr(response, "text", "") or "".join(text_buf)
         ).strip()
     except TypeError:
-        # Older router signature with no tool_schemas kwarg — fall
-        # back to the plain complete() path. The LLM won't see the
-        # canvas tools but at least the chat reply still streams.
+        # Defensive only: a STALE router build whose complete() predates
+        # the extra_tools/tool_schemas kwarg. The supported router accepts
+        # it (see app/llm_router.complete), so this path should never run
+        # in a current tree — but if the composer is wired to an older
+        # duck-typed client we degrade to a tool-LESS chat reply rather
+        # than crashing the compose turn. The canvas won't mutate on this
+        # path; the reply still streams.
         try:
             response = router.complete(
                 history=history,
@@ -304,12 +453,17 @@ def run_agent_step(
                 "actions": [],
                 "text": "",
                 "error": f"{type(ex).__name__}: {ex}",
+                "mode": mode,
+                "gated": gated_count[0],
             }
     except Exception as ex:
         return {
             "actions": [],
             "text": "",
             "error": f"{type(ex).__name__}: {ex}",
+            "mode": mode,
+            "gated": gated_count[0],
         }
 
-    return {"actions": actions, "text": text}
+    return {"actions": actions, "text": text,
+            "mode": mode, "gated": gated_count[0]}

@@ -1,0 +1,71 @@
+{
+  "exported_at": "2026-05-31T19:04:38.152957+00:00",
+  "scope": "community",
+  "count": 3,
+  "source": "brain.list_skills(scope=COMMUNITY) via tools/export_web_data.py",
+  "note": "3 community skill(s) exported from the live brain.",
+  "skills": [
+    {
+      "id": "sk-05d81a35100cbd02-community",
+      "name": "fix_apply_flow_community",
+      "description": "Auto-mined skill: apply then step_1 then step_2 via fix based on a successful past trajectory (3 tool calls). Refine the description after a few uses; the worker hones triggers and examples over time.",
+      "scope": "community",
+      "contributor": "founder",
+      "triggers": [
+        "fix step 2",
+        "fix step 1",
+        "fix apply"
+      ],
+      "requires_mcps": [
+        "fix"
+      ],
+      "success_count": 0,
+      "fail_count": 0,
+      "honed_trials": 3,
+      "honed_passed": 2,
+      "minted_at": "2026-05-30T13:26:20.786202+00:00",
+      "last_used_at": null
+    },
+    {
+      "id": "sk-05d81a35100cbd02-project-community",
+      "name": "fix_apply_flow_proj_community",
+      "description": "Auto-mined skill: apply then step_1 then step_2 via fix based on a successful past trajectory (3 tool calls). Refine the description after a few uses; the worker hones triggers and examples over time.",
+      "scope": "community",
+      "contributor": "founder",
+      "triggers": [
+        "fix step 2",
+        "fix step 1",
+        "fix apply"
+      ],
+      "requires_mcps": [
+        "fix"
+      ],
+      "success_count": 0,
+      "fail_count": 0,
+      "honed_trials": 3,
+      "honed_passed": 2,
+      "minted_at": "2026-05-30T13:26:20.786202+00:00",
+      "last_used_at": null
+    },
+    {
+      "id": "sk-d8cb0dbc7cf152d4-community",
+      "name": "perf_apply_flow_community",
+      "description": "Auto-mined skill: apply then step_1 via perf based on a successful past trajectory (2 tool calls). Refine the description after a few uses; the worker hones triggers and examples over time.",
+      "scope": "community",
+      "contributor": "founder",
+      "triggers": [
+        "perf apply",
+        "perf step 1"
+      ],
+      "requires_mcps": [
+        "perf"
+      ],
+      "success_count": 0,
+      "fail_count": 0,
+      "honed_trials": 3,
+      "honed_passed": 2,
+      "minted_at": "2026-05-30T13:26:20.781496+00:00",
+      "last_used_at": null
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "git_sha": "b11bdc8",
+  "git_date": "2026-05-31T11:01:18+04:00",
+  "generated_at": "2026-05-31T07:21:06.577Z",
+  "source": "scripts/build-info.js (npm run refresh-content)",
+  "connectors": 19,
+  "operations": 152,
+  "connectors_source": "app/connectors/*_connector.py (distinct op_id host prefixes + ids)"
+}

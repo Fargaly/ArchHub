@@ -9,7 +9,6 @@ prove the wrappers actually mutate persistent storage.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -19,24 +18,29 @@ from personal_brain.storage import BrainStore
 
 
 def _call(mcp, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Invoke an MCP tool via FastMCP's `call_tool` and unwrap the JSON
-    payload. FastMCP returns a ToolResult with a `.structured_content`
-    or `.content` block — both work here because all 4 community tools
-    return dict payloads."""
-    result = asyncio.run(mcp.call_tool(name, arguments or {}))
-    # FastMCP ≥ 2 ToolResult exposes `.structured_content` for dict returns
-    sc = getattr(result, "structured_content", None)
+    """Invoke an MCP tool via the in-house `call_tool` and unwrap the JSON
+    payload. InHouseMCP.call_tool is SYNCHRONOUS and returns the `tools/call`
+    RESULT envelope as a plain dict ({"content": [...], "structuredContent":
+    {...}, "isError": bool}) — all 4 community tools return dict payloads, so
+    we read structuredContent (with a text-content fallback)."""
+    result = mcp.call_tool(name, arguments or {})
+    # In-house dict envelope (camelCase keys); object-attribute fallbacks kept.
+    sc = result.get("structuredContent") if isinstance(result, dict) \
+        else getattr(result, "structured_content", None)
     if sc is not None:
         return sc
-    data = getattr(result, "data", None)
+    data = result.get("data") if isinstance(result, dict) \
+        else getattr(result, "data", None)
     if data is not None:
         return data
-    # Fallback: content list with TextContent JSON
-    content = getattr(result, "content", None)
+    # Fallback: content list with text JSON
+    content = result.get("content") if isinstance(result, dict) \
+        else getattr(result, "content", None)
     if content:
         import json as _json
         for item in content:
-            txt = getattr(item, "text", None)
+            txt = item.get("text") if isinstance(item, dict) \
+                else getattr(item, "text", None)
             if txt:
                 try:
                     return _json.loads(txt)

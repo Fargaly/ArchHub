@@ -30,6 +30,7 @@ Deploy:
 from __future__ import annotations
 
 import time
+import urllib.parse
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +42,7 @@ import billing
 import companies
 import config
 import db
+import google_auth
 import marketplace
 import proxy
 
@@ -67,6 +69,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup() -> None:
+    # Fail loud BEFORE serving traffic if ENV=production but a required
+    # secret (auth/email/billing) is unset. No-op when ENV is unset, so
+    # the dev-tolerant boot + /healthz stay green pre-secrets. Runs first
+    # so a misconfigured prod box never reaches init_schema / serving.
+    config.assert_production_ready()
     db.init_schema()
 
 
@@ -103,13 +110,32 @@ class RegisterReq(BaseModel):
 
 class ExchangeReq(BaseModel):
     code: str = Field(min_length=10, max_length=200)
-    # Empty verifier allowed for browser-direct flows (db.consume_code
-    # gates on the stored code_challenge being empty, see 2026-05-24).
+    # PKCE verifier. For a code issued WITH a non-empty challenge
+    # (desktop client), the exchange MUST present a matching verifier —
+    # main enforces a real min_length on that path (see `exchange`
+    # below) so a challenged code can't be redeemed with an empty
+    # verifier. Browser-direct codes are issued with an EMPTY challenge
+    # (magic-link is the one-time, 5-min secret); those legitimately
+    # pass an empty verifier, so the field default stays "".
     code_verifier: str = Field(default="", max_length=200)
+
+
+class LogoutReq(BaseModel):
+    # When true, revoke EVERY token the caller holds ("sign out of all
+    # devices"). Default false = revoke only the current bearer token.
+    all_sessions: bool = False
 
 
 class CheckoutReq(BaseModel):
     tier: str
+    # Model C: per-seat checkout. seats is clamped to the tier floor
+    # server-side (Firm ≥ 10); annual selects the −20% price id.
+    seats: int | None = Field(default=None, ge=1, le=100000)
+    annual: bool = False
+
+
+class AiModeReq(BaseModel):
+    ai_mode: str = Field(pattern="^(byo_key|hosted)$")
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +155,47 @@ def _require_user(authorization: str | None) -> dict:
     if user is None:
         raise HTTPException(status_code=401, detail="invalid_token")
     return user
+
+
+# Loopback hosts a desktop client's OAuth return server can legitimately
+# bind to. The Google start route only forwards the minted one-time code
+# to a redirect that resolves to one of these — never an arbitrary host.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+
+def _is_loopback_redirect(redirect: str) -> bool:
+    """True iff `redirect` is a syntactically-valid http(s) URL whose host
+    is loopback (127.0.0.1 / localhost / ::1).
+
+    This is the open-redirect guard for /v1/auth/google/start: the Google
+    callback ends up 302-ing a freshly-minted one-time auth code to this
+    target, so an attacker-supplied off-host redirect would leak the code.
+    Restricting to loopback means the code can only ever bounce back to a
+    server running on the user's OWN machine (the desktop client's
+    `http://127.0.0.1:<port>/cb` loopback), never to a remote host.
+
+    An empty redirect is NOT loopback (callers treat "" as "no redirect
+    supplied" and keep the unchanged browser-finish behaviour); this
+    helper only judges a non-empty value.
+    """
+    if not redirect:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(redirect)
+    except ValueError:
+        # urlparse raises on e.g. an out-of-range IPv6 zone — treat as
+        # unparseable → not loopback (reject) rather than 500.
+        return False
+    # Scheme must be http/https — block javascript:, data:, file:, custom
+    # app schemes, and scheme-relative ("//evil.com") or relative values
+    # (which have no host and could be reinterpreted by the browser).
+    if parsed.scheme not in ("http", "https"):
+        return False
+    # `hostname` is lower-cased + strips an IPv6 [...] bracket and any
+    # :port / userinfo, so "127.0.0.1:8731" → "127.0.0.1" and credentials
+    # like "user@evil.com" can't smuggle a fake host past the check.
+    host = (parsed.hostname or "").lower()
+    return host in _LOOPBACK_HOSTS
 
 
 # ---------------------------------------------------------------------------
@@ -168,14 +235,137 @@ async def register(req: RegisterReq) -> dict:
     return {"status": "accepted"}
 
 
+# PKCE verifiers are 43-128 chars of unreserved-charset entropy
+# (RFC 7636 §4.1). The desktop client sends a 32-byte urlsafe verifier
+# (~43 chars). We re-impose this floor — lost when ExchangeReq.code_verifier
+# dropped its min_length — but CONDITIONALLY: only a NON-EMPTY verifier is
+# length-checked, so the browser-direct empty-verifier path (challenge was
+# empty) still works. The db layer separately rejects an empty verifier
+# against a CHALLENGED code, so the two together mean: a code issued with a
+# challenge cannot be exchanged without a real, matching verifier.
+_PKCE_VERIFIER_MIN_LEN = 43
+
+
 @app.post("/v1/auth/exchange")
 def exchange(req: ExchangeReq) -> dict:
+    verifier = req.code_verifier or ""
+    if verifier and len(verifier) < _PKCE_VERIFIER_MIN_LEN:
+        # A verifier was supplied but is too short to be a real PKCE
+        # secret — reject rather than let a weak/truncated value through.
+        raise HTTPException(status_code=422,
+                            detail="code_verifier_too_short")
     payload = auth.exchange_code(
-        code=req.code, code_verifier=req.code_verifier,
+        code=req.code, code_verifier=verifier,
     )
     if payload is None:
         raise HTTPException(status_code=400, detail="invalid_or_expired")
     return payload
+
+
+# ── Sign in with Google (OAuth2 / OpenID Connect) — ADDITIVE ──────────
+# Two routes that bolt Google sign-in onto the EXISTING user + code +
+# token machinery. They reuse db.get_or_create_user + db.issue_code +
+# /auth/return so a Google sign-in converges on the SAME account (keyed
+# by email) and finishes through the UNCHANGED /v1/auth/exchange path.
+#
+# Disabled-when-unconfigured: with the OAuth vars unset (the CURRENT
+# deployment) both routes return a clean 503 {error:
+# "google_login_unconfigured"} via the GoogleLoginUnconfigured guard —
+# nothing else changes, so this is safe to deploy before the founder
+# supplies credentials.
+@app.get("/v1/auth/google/start")
+def google_start(code_challenge: str = "", redirect: str = "") -> dict:
+    """Step 1: hand the desktop client the Google consent URL.
+
+    The desktop generates a PKCE pair (same as the magic-link path) and
+    passes its `code_challenge` + optional loopback `redirect` (its own
+    `http://127.0.0.1:<port>/cb` return server). Both are packed into a
+    signed, opaque state and returned as {auth_url}; the client opens it
+    with webbrowser.open. After consent the callback 302s the minted
+    one-time code to that loopback so the desktop finishes the existing
+    /v1/auth/exchange. 503 when Google login isn't configured.
+
+    ADDITIVE: `redirect` is OPTIONAL — omit it and the flow lands on the
+    plain browser /auth/return finisher exactly as before.
+
+    Open-redirect guard: a SUPPLIED redirect must be a loopback
+    (127.0.0.1 / localhost / ::1) http(s) URL. Because the callback ends
+    up forwarding a freshly-minted auth code to this target, any other
+    host is rejected (400 google_redirect_not_loopback) so a code can
+    never be bounced to an attacker-controlled URL.
+    """
+    if redirect and not _is_loopback_redirect(redirect):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "google_redirect_not_loopback"})
+    try:
+        url = google_auth.build_authorization_url(
+            code_challenge=code_challenge, redirect=redirect,
+        )
+    except google_auth.GoogleLoginUnconfigured:
+        raise HTTPException(status_code=503,
+                            detail={"error": "google_login_unconfigured"})
+    return {"auth_url": url}
+
+
+@app.get("/v1/auth/google/callback")
+def google_callback(code: str = "", state: str = "",
+                    error: str = "") -> RedirectResponse:
+    """Step 2: Google redirects here after consent.
+
+    Verifies the signed state (CSRF), exchanges the Google `code` for an
+    id_token, VERIFIES it (iss/aud/exp/email_verified + signature), then
+    mints a one-time code bound to the state's PKCE challenge and 302s to
+    {PUBLIC_URL}/auth/return?code=... — the SAME surface the magic-link
+    uses, so the desktop loopback finishes via /v1/auth/exchange.
+
+    503 when unconfigured; 400/401 on any state/exchange/verification
+    failure (an unverified or wrong-aud token NEVER yields a code).
+    """
+    # The user denied consent (or Google returned an error) — surface it
+    # cleanly rather than attempting an exchange with no code.
+    if error:
+        raise HTTPException(status_code=400,
+                            detail={"error": "google_consent_failed",
+                                    "reason": error})
+    try:
+        return_url = google_auth.exchange_callback(code=code, state=state)
+    except google_auth.GoogleLoginUnconfigured:
+        raise HTTPException(status_code=503,
+                            detail={"error": "google_login_unconfigured"})
+    except google_auth.GoogleAuthError as ex:
+        raise HTTPException(status_code=ex.status,
+                            detail={"error": ex.code})
+    return RedirectResponse(url=return_url, status_code=302)
+
+
+@app.post("/v1/auth/logout")
+async def logout(req: Request,
+                 authorization: str | None = Header(None)) -> dict:
+    """Revoke the caller's bearer token. Promised to users on
+    web/.../security.astro; this is the real endpoint behind it.
+
+    Contract (desktop client / browser):
+      POST /v1/auth/logout
+      Authorization: Bearer <token>
+      body (optional): {"all_sessions": false}
+      → 200 {"ok": true, "revoked": <n>}
+    After this, reusing <token> on any authed endpoint returns 401.
+
+    `all_sessions: true` revokes every token the user holds (sign out
+    of all devices). The body is optional — an empty POST defaults to
+    single-token revocation.
+    """
+    token = _bearer(authorization)
+    all_sessions = False
+    if await _has_body(req):
+        try:
+            body = await req.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            all_sessions = bool(body.get("all_sessions", False))
+    return auth.logout(token=token, all_sessions=all_sessions)
 
 
 @app.get("/v1/me")
@@ -183,6 +373,13 @@ def me(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     remaining = max(0, int(user["msg_limit"]) - int(user["msg_used"]))
     return {
+        # user_id (= users.id) lets the desktop bind its LOCAL brain to this
+        # cloud account — the per-user replica dir is keyed on this id, so
+        # the client uses it for /v1/brain/sync + to confirm which brain it
+        # is syncing into. brain_id is the explicit account→brain link
+        # (== user_id), surfaced so the client can assert the slot exists.
+        "user_id": user["id"],
+        "brain_id": user.get("brain_id") or user["id"],
         "email": user["email"],
         "plan": user["plan"],
         "remaining_messages": remaining,
@@ -424,6 +621,133 @@ def memory_ops_list(limit: int = 50,
     return {"results": rows}
 
 
+# ── Brain replica sync (Track D · section 5 of CONTENT-ECOSYSTEM-2026-05-26) ──
+# Per-user server-side brain.db mirror. Desktop client pushes deltas; the
+# cloud merges via BrainReplica + returns the merged view + a new HLC. The
+# privacy contract (BRAIN-FIRST · founder 2026-05-25): ZERO resolved secrets
+# in the replica — bare credential-like strings are rejected at the boundary
+# (brain_replica._fragment_has_secret), while `op://`, `wcm://`, `env://`,
+# `inline:` REFERENCES pass through. Resolution stays on the user's machine.
+import brain_replica
+
+
+def _firm_keys_for_user(user: dict) -> list[str]:
+    """The shared FIRM-replica keys this user may read (Slice-17 fanout).
+
+    A firm == a cloud `company` the user is a member of. We key the shared
+    firm replica on the company id, so every member of a company converges
+    their FIRM-scope brain through the SAME shared replica. Resolved
+    server-side from `company_members` — NEVER trusted from the wire — so a
+    user can only ever read firm replicas they actually belong to. Solo users
+    (no company) get an empty list and keep a pure per-user backup.
+    """
+    try:
+        companies = db.list_companies_for_user(user["id"])
+    except Exception:
+        return []
+    return [str(c["id"]) for c in companies if c.get("id")]
+
+
+@app.post("/v1/brain/sync")
+async def brain_sync(req: Request,
+                      authorization: str | None = Header(None)) -> dict:
+    """Push a delta from desktop brain → cloud replica, with Slice-17 scope
+    fanout, and return the caller's MERGED delta + the cloud's new HLC.
+
+    Body: {since_hlc?: str, delta: {fragments: [...], wiring: [...]}}
+
+    Fanout (reuses the per-replica HLC/CRDT merge, no parallel sync):
+      * USER/PROJECT fragments land in the caller's private per-user replica.
+      * FIRM fragments converge through a SHARED replica keyed by the
+        company id — every member of the company sees them.
+      * COMMUNITY fragments converge through a SHARED replica keyed by the
+        fragment's community_id (the cloud_relay community transport).
+    The merged read unions the user's own replica with every firm replica
+    they belong to + every community replica they just pushed into / are a
+    member of — so device B pulls device A's firm/community facts, while
+    USER scope stays private per user (per-user-isolation contract intact).
+    """
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400,
+                             detail={"error": "body must be a JSON object"})
+    delta = body.get("delta") or {}
+    if not isinstance(delta, dict):
+        raise HTTPException(status_code=400,
+                             detail={"error": "delta must be an object"})
+    since_hlc = (body.get("since_hlc") or "").strip()
+
+    # The contributing teammate is the AUTHENTICATED caller — the cloud knows
+    # who is pushing, so it stamps owner_user authoritatively on every shared
+    # (firm/community) fragment rather than trusting a wire-supplied owner.
+    # This makes a firm fact attributable to the real member who added it,
+    # and means a missing/forged owner_user can't masquerade as someone else.
+    for _f in (delta.get("fragments") or []):
+        if isinstance(_f, dict) and (_f.get("scope") or "").lower() in (
+                "firm", "community"):
+            _f["owner_user"] = user["id"]
+
+    # Firm read-set: every company the user belongs to (server-resolved).
+    firm_keys = _firm_keys_for_user(user)
+    # Community read-set: the caller may name the communities it belongs to
+    # (these are brain-side groups the cloud has no membership table for —
+    # the join-code already authorised the device). We additionally union
+    # whatever community keys this very delta contributed to (below), so a
+    # first-ever push immediately round-trips. Keys are sanitised in the
+    # replica layer; an unsafe one is skipped, never fatal.
+    community_keys = body.get("community_keys") or []
+    if not isinstance(community_keys, list):
+        community_keys = []
+    community_keys = [str(k) for k in community_keys if k]
+
+    try:
+        replica = brain_replica.BrainReplica.open(
+            user_id=user["id"],
+            firm_keys=firm_keys,
+            community_keys=community_keys,
+        )
+        merge_result = replica.apply_delta(delta)
+        # Build the FULL read-set for the merged export, unioning:
+        #  (a) company-membership firm keys (resolved server-side above),
+        #  (b) firm/community keys this user has EVER contributed to (durable,
+        #      so a later empty pull still round-trips device A's facts),
+        #  (c) keys this very delta just touched, and
+        #  (d) community keys the caller declared membership of this call.
+        replica.firm_keys = sorted(
+            set(replica.firm_keys)
+            | set(replica.contributed_firm_keys())
+            | set(merge_result.get("firm_keys") or []))
+        replica.community_keys = sorted(
+            set(replica.community_keys)
+            | set(replica.contributed_community_keys())
+            | set(merge_result.get("community_keys") or []))
+        merged = replica.export_delta(since_hlc=since_hlc)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail={"error": str(ex)})
+    return {
+        "accepted": merge_result["accepted"],
+        "rejected": merge_result["rejected"],
+        "new_hlc": merge_result["new_hlc"],
+        "merged": merged,
+        # Surfaced so the desktop can show which shared scopes converged.
+        "firm_keys": replica.firm_keys,
+        "community_keys": replica.community_keys,
+    }
+
+
+@app.delete("/v1/brain/sync")
+def brain_sync_delete(authorization: str | None = Header(None)) -> dict:
+    """GDPR right-to-erasure: drop this user's entire cloud replica.
+
+    Caller is expected to also revoke their bearer tokens (handled at the
+    Settings → Account level on the desktop). This endpoint only owns the
+    replica filesystem."""
+    user = _require_user(authorization)
+    removed = brain_replica.BrainReplica.delete(user_id=user["id"])
+    return {"deleted": bool(removed), "user_id": user["id"]}
+
+
 async def _has_body(req: Request) -> bool:
     """FastAPI lets you call .json() on an empty body; we want to
     distinguish that from a JSON object. Returns False when the
@@ -437,34 +761,47 @@ async def _has_body(req: Request) -> bool:
 
 @app.get("/v1/billing/plans")
 def billing_plans() -> dict:
-    """Public plan catalog — used by the desktop app to render the
-    pricing dialog without hardcoding tier metadata client-side.
+    """Public plan catalog (Model C) — used by the desktop app to render
+    the pricing dialog without hardcoding tier metadata client-side.
 
-    Returns whichever provider's tier IDs are configured. Both
-    providers share the same tier names (solo / studio / firm) and
-    quotas, so the desktop UI never needs to know which billing
-    backend is in use.
+    Surfaces the canonical config.public_pricing() snapshot (per-seat
+    prices, annual −20% equivalents, min/max seats, the BYO/Hosted AI
+    modes, the $10/1,000-msg credit pack) PLUS, per tier, whether the
+    active billing provider has a configured price/product id (so the UI
+    can show "Coming soon" until the founder wires the real ids).
     """
+    pricing = config.public_pricing()
     tiers = []
-    for tier_name in ("solo", "studio", "firm"):
-        quota = config.PLAN_QUOTAS.get(tier_name, 0)
-        seats = config.PLAN_SEATS.get(tier_name)
+    for t in pricing["tiers"]:
+        tier_name = t["id"]
         if config.BILLING_PROVIDER == "polar":
             external_id = config.POLAR_PRODUCT_IDS.get(tier_name) or None
         else:
-            external_id = config.PLAN_PRICE_IDS.get(tier_name) or None
+            external_id = config.stripe_price_id(tier_name) or None
         tiers.append({
-            "tier": tier_name,
-            "monthly_quota": quota,
-            "seats": seats,
+            "tier":                  tier_name,
+            "name":                  t["name"],
+            "price_per_seat":        t["price_per_seat"],
+            "price_per_seat_annual": t["price_per_seat_annual"],
+            "min_seats":             t["min_seats"],
+            "max_seats":             t["max_seats"],
+            "is_company":            t["is_company"],
+            "sso":                   t["sso"],
+            "blurb":                 t["blurb"],
             # external_id is null when the price/product hasn't been
             # configured yet — the desktop UI shows "Coming soon".
             "external_id_configured": external_id is not None,
         })
     return {
-        "provider": config.BILLING_PROVIDER,
-        "tiers": tiers,
-        "trial_messages": config.TRIAL_MESSAGES,
+        "provider":        config.BILLING_PROVIDER,
+        "model":           pricing["model"],
+        "currency":        pricing["currency"],
+        "annual_discount": pricing["annual_discount"],
+        "ai_modes":        pricing["ai_modes"],
+        "default_ai_mode": pricing["default_ai_mode"],
+        "credit_pack":     pricing["credit_pack"],
+        "tiers":           tiers,
+        "trial_messages":  config.TRIAL_MESSAGES,
     }
 
 
@@ -494,12 +831,51 @@ def checkout(req: CheckoutReq,
     if req.tier not in valid_tiers:
         raise HTTPException(status_code=400, detail="unknown_tier")
     url = _billing_provider_module().create_checkout_url(
-        user=user, tier=req.tier,
+        user=user, tier=req.tier, annual=req.annual,
     )
     if not url:
         raise HTTPException(status_code=503,
                              detail="checkout_unavailable")
     return {"url": url}
+
+
+@app.get("/v1/billing/ai")
+def billing_ai_status(authorization: str | None = Header(None)) -> dict:
+    """Solo/per-user AI status (Model C): current mode + live hosted
+    credit balance + the credit-pack terms. (Company workspaces use
+    /v1/companies/{id}/ai.)"""
+    user = _require_user(authorization)
+    fresh = db.get_user(user["id"]) or user
+    return {
+        "ai_mode": db._ai_mode_norm(fresh.get("ai_mode")),
+        "credit_balance": db.credit_balance(user_id=user["id"]),
+        "credit_pack": dict(config.CREDIT_PACK),
+        "ai_modes": list(config.AI_MODES),
+    }
+
+
+@app.post("/v1/billing/ai-mode")
+def billing_set_ai_mode(req: AiModeReq,
+                        authorization: str | None = Header(None)) -> dict:
+    """Flip a solo/per-user workspace between byo_key and hosted AI."""
+    user = _require_user(authorization)
+    mode = db.set_user_ai_mode(user["id"], req.ai_mode)
+    return {"ok": True, "ai_mode": mode}
+
+
+@app.post("/v1/billing/credits/checkout")
+def billing_buy_credits(authorization: str | None = Header(None)) -> dict:
+    """One-time Stripe Checkout for a hosted-AI credit pack ($10 =
+    1,000 messages), credited to the solo user's workspace on payment
+    (60-day rollover)."""
+    user = _require_user(authorization)
+    url = billing.create_credit_pack_checkout(
+        user_id=user["id"], billing_email=user.get("email"),
+    )
+    if not url:
+        raise HTTPException(status_code=503,
+                             detail="checkout_unavailable")
+    return {"url": url, "credit_pack": dict(config.CREDIT_PACK)}
 
 
 @app.get("/v1/billing/portal")
@@ -1114,4 +1490,23 @@ def upgrade(tier: str = "studio") -> HTMLResponse:
         f"<p>Open ArchHub → Pricing → {tier.title()} to start "
         f"checkout. Or sign in <a href='/signin' style='color:#d97757'>"
         f"here</a> on the web.</p></body></html>"
+    )
+
+
+@app.get("/billing/credits")
+def billing_credits_landing() -> HTMLResponse:
+    """Hosted-AI credit-pack top-up landing (Model C). The proxy's
+    out_of_credits 402 points users here. Numbers come from
+    config.CREDIT_PACK so the page can't drift from billing."""
+    pack = config.CREDIT_PACK
+    return HTMLResponse(
+        f"<html><body style='font-family:system-ui;padding:60px;"
+        f"max-width:520px;margin:0 auto;color:#ece8e0;background:#0f0f12;'>"
+        f"<h1>Top up hosted AI</h1>"
+        f"<p>A credit pack is <b>${pack['price_usd']} = "
+        f"{pack['messages']:,} messages</b>, and unused credits roll "
+        f"over for {pack['rollover_days']} days. Open ArchHub → "
+        f"Settings → Billing to buy a pack, or switch the workspace to "
+        f"<b>BYO-key</b> mode to use your own provider key.</p>"
+        f"</body></html>"
     )

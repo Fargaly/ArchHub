@@ -108,7 +108,7 @@ def test_agdr_0028_exists():
          / "AgDR-0028-library-item-actions.md")
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     assert "delete_custom_node" in text
     assert "delete_saved_skill" in text
     assert "clear_all_custom_nodes" in text

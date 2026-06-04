@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ArchHub · Brain Graph</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --line: #232a32;
+    --txt: #e6edf3;
+    --muted: #8b98a5;
+    --cap: #4aa8ff;     /* capability */
+    --dec: #ffb86b;     /* decision  */
+    --skill: #7ee787;   /* skill     */
+    --accent: #4aa8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt);
+    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; gap: 18px;
+    padding: 14px 20px; background: linear-gradient(180deg, rgba(11,13,16,.92), rgba(11,13,16,0));
+    pointer-events: none;
+  }
+  header .title { font-size: 17px; font-weight: 650; letter-spacing: .2px; }
+  header .title .dot { color: var(--accent); }
+  header .stat { font-size: 12.5px; color: var(--muted); }
+  header .stat b { color: var(--txt); font-weight: 600; }
+
+  .legend {
+    position: fixed; bottom: 16px; left: 20px; z-index: 5;
+    display: flex; gap: 16px; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    font-size: 12.5px; color: var(--muted);
+  }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle; }
+
+  #tip {
+    position: fixed; z-index: 6; pointer-events: none; display: none;
+    max-width: 320px; padding: 9px 11px; background: #1b2128; color: var(--txt);
+    border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.45); line-height: 1.45;
+  }
+  #tip .k { color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .6px; }
+  #tip .id { color: var(--muted); font-size: 11px; word-break: break-all; margin-top: 3px; }
+  .hint { position: fixed; bottom: 16px; right: 20px; z-index: 5; font-size: 11.5px;
+    color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<header>
+  <span class="title">ArchHub <span class="dot">●</span> Brain Graph</span>
+  <span class="stat" id="s-nodes"><b>—</b> nodes</span>
+  <span class="stat" id="s-edges"><b>—</b> edges</span>
+  <span class="stat" id="s-ts"></span>
+</header>
+<div class="legend">
+  <span><i style="background:#4aa8ff"></i>capability</span>
+  <span><i style="background:#ffb86b"></i>decision</span>
+  <span><i style="background:#7ee787"></i>skill</span>
+</div>
+<div id="tip"></div>
+<div class="hint">drag to pan · scroll to zoom · hover a node</div>
+
+<script>
+const COLORS = { capability: "#4aa8ff", decision: "#ffb86b", skill: "#7ee787" };
+const DEFAULT_COLOR = "#9aa6b2";
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const tip = document.getElementById("tip");
+let DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+let nodes = [], edges = [], byId = new Map();
+let view = { x: 0, y: 0, k: 1 };       // pan + zoom
+let dragging = null, panning = false, last = null;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = innerWidth * DPR;
+  canvas.height = innerHeight * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener("resize", resize);
+
+async function load() {
+  const r = await fetch("./brain-graph-data.json", { cache: "no-store" });
+  const data = await r.json();
+  nodes = data.nodes.map(n => ({
+    ...n,
+    x: (Math.random() - .5) * 600,
+    y: (Math.random() - .5) * 600,
+    vx: 0, vy: 0,
+    r: 4 + Math.sqrt(n.degree || 0) * 3.2,
+  }));
+  byId = new Map(nodes.map(n => [n.id, n]));
+  edges = data.edges.filter(e => byId.has(e.source) && byId.has(e.target));
+  document.getElementById("s-nodes").innerHTML = "<b>" + data.stats.nodes + "</b> nodes";
+  document.getElementById("s-edges").innerHTML = "<b>" + data.stats.edges + "</b> edges";
+  const ts = (data.exported_at || "").slice(0, 16).replace("T", " ");
+  document.getElementById("s-ts").textContent = ts ? "· exported " + ts + "Z" : "";
+  // center view
+  view.x = innerWidth / 2; view.y = innerHeight / 2;
+  for (let i = 0; i < 260; i++) step();   // warm up layout before first paint
+}
+
+// ── force-directed layout (O(n²) is fine for a few hundred nodes) ──
+function step() {
+  const REP = 5200, SPRING = 0.012, LEN = 70, CENTER = 0.0016, DAMP = 0.86;
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy || 0.01;
+      const f = REP / d2;
+      const d = Math.sqrt(d2);
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+  }
+  for (const e of edges) {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    let dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    const f = (d - LEN) * SPRING;
+    const fx = (dx / d) * f, fy = (dy / d) * f;
+    a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+  }
+  for (const n of nodes) {
+    n.vx -= n.x * CENTER; n.vy -= n.y * CENTER;
+    n.vx *= DAMP; n.vy *= DAMP;
+    if (n !== dragging) { n.x += n.vx; n.y += n.vy; }
+  }
+}
+
+function toScreen(n) { return { x: view.x + n.x * view.k, y: view.y + n.y * view.k }; }
+function toWorld(px, py) { return { x: (px - view.x) / view.k, y: (py - view.y) / view.k }; }
+
+function draw() {
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  // edges
+  ctx.lineWidth = 1;
+  for (const e of edges) {
+    const a = toScreen(byId.get(e.source)), b = toScreen(byId.get(e.target));
+    ctx.strokeStyle = e.confidence === "INFERRED" ? "rgba(120,135,150,.18)" : "rgba(120,150,185,.34)";
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  // nodes
+  for (const n of nodes) {
+    const p = toScreen(n);
+    const col = COLORS[n.kind] || DEFAULT_COLOR;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, n.r * Math.sqrt(view.k), 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.globalAlpha = 0.92; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(11,13,16,.9)"; ctx.stroke();
+    // label high-degree nodes when zoomed enough
+    if ((n.degree >= 3 || view.k > 1.5) && view.k > 0.7) {
+      ctx.fillStyle = "#cdd6df"; ctx.font = "11px system-ui";
+      const lbl = (n.label || n.id).slice(0, 28);
+      ctx.fillText(lbl, p.x + n.r * Math.sqrt(view.k) + 4, p.y + 3);
+    }
+  }
+}
+
+// Settle the layout over a fixed budget, then FREEZE — no perpetual
+// rAF burning CPU. Redraw on demand (pan / zoom / drag) via requestDraw().
+let settleLeft = 320;
+let drawQueued = false;
+function requestDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; draw(); });
+}
+function frame() {
+  if (settleLeft > 0 || dragging) {
+    step(); draw();
+    if (!dragging) settleLeft--;
+    requestAnimationFrame(frame);
+  } else {
+    draw();   // final settled paint; loop stops here
+  }
+}
+
+// ── interaction ──
+function pick(px, py) {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i], p = toScreen(n);
+    const rr = (n.r * Math.sqrt(view.k)) + 3;
+    if ((px - p.x) ** 2 + (py - p.y) ** 2 <= rr * rr) return n;
+  }
+  return null;
+}
+canvas.addEventListener("mousedown", ev => {
+  const n = pick(ev.clientX, ev.clientY);
+  if (n) { dragging = n; requestAnimationFrame(frame); } else { panning = true; }
+  last = { x: ev.clientX, y: ev.clientY };
+});
+addEventListener("mousemove", ev => {
+  if (dragging) {
+    const w = toWorld(ev.clientX, ev.clientY);
+    dragging.x = w.x; dragging.y = w.y; dragging.vx = dragging.vy = 0;
+  } else if (panning && last) {
+    view.x += ev.clientX - last.x; view.y += ev.clientY - last.y;
+    last = { x: ev.clientX, y: ev.clientY };
+    requestDraw();
+  }
+  const hit = (!dragging && !panning) ? pick(ev.clientX, ev.clientY) : null;
+  if (hit) {
+    tip.style.display = "block";
+    tip.style.left = (ev.clientX + 14) + "px";
+    tip.style.top = (ev.clientY + 14) + "px";
+    tip.innerHTML = "<div class='k'>" + hit.kind + " · deg " + (hit.degree || 0) +
+      "</div><div>" + (hit.label || hit.id) + "</div><div class='id'>" + hit.id + "</div>";
+  } else { tip.style.display = "none"; }
+});
+addEventListener("mouseup", () => { dragging = null; panning = false; last = null; });
+canvas.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const w = toWorld(ev.clientX, ev.clientY);
+  const f = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+  view.k = Math.max(0.2, Math.min(6, view.k * f));
+  const p = toScreen(w); // keep cursor anchored
+  view.x += ev.clientX - p.x; view.y += ev.clientY - p.y;
+}, { passive: false });
+
+resize();
+load().then(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+# fly.toml — ArchHub marketing/docs site (static Astro build, BusyBox httpd).
+# Consistent with cloud_backend/fly.toml (same Fly org + region pattern).
+#
+# Founder, ONE action to go live:
+#   cd web
+#   fly launch --no-deploy        # first time only: creates the app, asks for a
+#                                 # name; keep this fly.toml. Then:
+#   fly deploy                    # builds the Dockerfile + ships dist/
+#   fly certs add archhub.io      # attach the custom domain (after DNS points
+#                                 # to the Fly app) — domain auth is the founder's.
+#
+# No secrets, no volume, no env needed — it's a pure static site.
+
+app = 'archhub-web'
+primary_region = 'ord'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '5s'
+    method = 'GET'
+    path = '/'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

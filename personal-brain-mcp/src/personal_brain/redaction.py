@@ -47,6 +47,14 @@ _PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\b(sk|ghp|gho|ghu|ghs|ghr)[_\-][A-Za-z0-9_\-]{16,}"), "<secret-key>", "API key prefix"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}"), "<aws-key>", "AWS access key"),
     (re.compile(r"\bya29\.[A-Za-z0-9_-]+"), "<google-token>", "Google OAuth token"),
+    # Embedded-secret coverage (founder 2026-06-02): Google API keys (AIza),
+    # Slack tokens (xoxb-/xoxp-/...), and Stripe live/test (incl. restricted rk_)
+    # keys -- the earlier prefix/startswith gates missed these mid-text. The
+    # <google-token>/<secret-key> placeholders also ride the personal-sync
+    # secret-value filter (PersonalCloudSync._SECRET_VALUE_PATTERNS).
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "<google-token>", "Google API key"),
+    (re.compile(r"\bxox[bpars]-[0-9A-Za-z\-]{10,}"), "<secret-key>", "Slack token"),
+    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"), "<secret-key>", "Stripe/restricted key"),
     # JWT
     (re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{6,}"), "<jwt>", "JWT"),
 

@@ -50,11 +50,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from . import privacy
 from .models import Fragment, FragmentKind, Scope
 from .storage import BrainStore as Store
 
 
 _SCHEMA_VERSION = "1.0"
+
+# Default differential-privacy budget for collective-scope exports. Smaller
+# epsilon = more noise = stronger privacy. 1.0 is a conventional starting
+# point (Apple iOS telemetry ships in this range); callers may override.
+_DEFAULT_COLLECTIVE_EPSILON = 1.0
 
 
 def _fragment_to_row(frag: Fragment) -> dict[str, Any]:
@@ -75,6 +81,12 @@ def _fragment_to_row(frag: Fragment) -> dict[str, Any]:
         "created_at":      created_at,
         "success_count":   frag.success_count or 0,
         "fail_count":      frag.fail_count or 0,
+        # Quality signals for training-set filtering (added 2026-06-02 for
+        # Brain #33 readiness): confidence tier + memory half-life let a
+        # training run drop low-confidence / stale rows. Mirror the kind/scope
+        # enum-or-str pattern above.
+        "confidence":      (frag.confidence.value if hasattr(frag.confidence, "value") else str(frag.confidence)) if getattr(frag, "confidence", None) is not None else "",
+        "half_life_days":  getattr(frag, "half_life_days", None),
         "contributing_agent": (prov.contributing_agent if prov else ""),
         # `extra` serialised to JSON string so parquet can write it
         # (pyarrow can't handle struct types with empty schemas).
@@ -126,6 +138,76 @@ def _scope_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
+def _export_collective_dp(
+    store: Store,
+    out_dir: Path,
+    *,
+    dataset_name: str,
+    scope_filter: list[Scope],
+    kinds: Optional[Iterable[FragmentKind]] = None,
+    since: Optional[str] = None,
+    limit: int = 10_000,
+    owner_user: Optional[str] = None,
+    epsilon: float = _DEFAULT_COLLECTIVE_EPSILON,
+) -> dict[str, Any]:
+    """Collective-scope export — differentially-private AGGREGATES only.
+
+    Never writes ``fragments.jsonl``/``.parquet`` (raw rows). Writes
+    ``aggregates.json`` (DP counts) + ``manifest.json``. This is the only
+    path by which the brain emits anything toward the collective pool, per
+    docs/research/privacy-respecting-knowledge-sharing-2026-05-26.md §D.
+    """
+    frags = store.list_fragments(
+        scope_filter=scope_filter,
+        kinds=kinds,
+        owner_user=owner_user,
+        since=since,
+        limit=limit,
+    )
+    aggregates = privacy.privatize_for_collective(frags, epsilon=epsilon)
+
+    target = Path(out_dir) / dataset_name
+    target.mkdir(parents=True, exist_ok=True)
+
+    agg_path = target / "aggregates.json"
+    agg_path.write_text(
+        json.dumps(aggregates, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    manifest = {
+        "ok": True,
+        "schema_version": _SCHEMA_VERSION,
+        "dataset_name": dataset_name,
+        "mode": "collective_dp",          # signals: DP aggregates, no raw rows
+        "row_count": 0,                    # raw rows intentionally not emitted
+        "differential_privacy": True,
+        "epsilon": epsilon,
+        "mechanism": aggregates.get("mechanism"),
+        "filter": {
+            "scopes": [s.value for s in scope_filter],
+            "kinds":  ([k.value for k in (kinds or [])] if kinds else None),
+            "since":  since,
+            "limit":  limit,
+            "owner_user": owner_user,
+        },
+        "files": {
+            "aggregates": {"path": str(agg_path),
+                           "bytes": agg_path.stat().st_size},
+        },
+        "guarantee": aggregates.get("guarantee"),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
+    manifest_path = target / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    manifest["manifest_path"] = str(manifest_path)
+    manifest["aggregates"] = aggregates
+    return manifest
+
+
 def export_fragments(
     store: Store,
     out_dir: Path,
@@ -136,15 +218,42 @@ def export_fragments(
     since: Optional[str] = None,
     limit: int = 10_000,
     owner_user: Optional[str] = None,
+    epsilon: float = _DEFAULT_COLLECTIVE_EPSILON,
 ) -> dict[str, Any]:
     """Export fragments matching the filter to <out_dir>/<dataset_name>/.
 
     Returns a manifest dict with row count + file paths + byte sizes.
     Caller is responsible for any post-processing (cloud upload, etc).
+
+    **Privacy routing (Q10 layer).** If ``scope_filter`` includes a
+    collective-class scope (COMMUNITY / GLOBAL — the ArchHub-wide pool that
+    feeds Brain #33 model training), raw rows are NEVER written. Instead the
+    export routes through ``privacy.privatize_for_collective`` and emits a
+    differentially-private aggregate (counts by kind/scope, noised) under
+    ``aggregates.json``. This is the runtime that enforces the research-doc
+    guarantee: raw user fragments never reach the collective scope — only DP
+    aggregates do. ``epsilon`` tunes the noise (smaller = stronger privacy).
+    Non-collective exports (USER / PROJECT / FIRM) are unchanged.
     """
     if scope_filter is None:
         # Privacy default — USER-scope only.
         scope_filter = [Scope.USER]
+    scope_filter = list(scope_filter)
+
+    # Q10 privacy gate: a collective-class target never emits raw rows.
+    if any(privacy.is_collective_scope(s) for s in scope_filter):
+        return _export_collective_dp(
+            store,
+            out_dir,
+            dataset_name=dataset_name,
+            scope_filter=scope_filter,
+            kinds=kinds,
+            since=since,
+            limit=limit,
+            owner_user=owner_user,
+            epsilon=epsilon,
+        )
+
     frags = store.list_fragments(
         scope_filter=scope_filter,
         kinds=kinds,

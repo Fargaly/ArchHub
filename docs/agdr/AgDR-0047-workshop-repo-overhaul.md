@@ -4,8 +4,20 @@ timestamp: 2026-05-25T18:30:00Z
 agent: claude-code (Sonnet)
 session: founder workshop · "revise the entire repo bit by bit · docs · logs · architecture · clean the shit · make sure it's working · without fucking things up"
 trigger: founder workshop request 2026-05-25 — "whatever you did isn't appearing in application · find a way to make it work faster · revise the entire repo bit by bit · documentation, logs, architecture, clean the shit"
-status: proposed
-founder-signoff: pending — review forks F1-F5 below before slice work begins
+status: executed
+status-evidence: |
+  Flipped proposed → executed 2026-05-30 (governance reconciliation). The
+  overhaul SHIPPED across the wave-5 task ledger: docs cleanup (stale/duplicate/
+  orphan prototypes archived, tasks #6/#15/#16/#17), logs cleanup + rotation
+  (#7), the architecture-contradiction + dead-code audit (#8), perf slices 1+2
+  (ConversationRail memo + bumpGraph throttle + Workspace memo + RailMiniMap
+  interval kill, tasks #4/#5, CDP-proven per REPO-MAP-2026-05-28 §2), the
+  imperative-drag refactor (§Q5/D6, task #27), the PortType→speckle_type
+  migration (§Q4, task #28), and §A3 AgDR status-drift reconciliation (the 13
+  AgDRs 0024-0036, tasks #34-#38). The §A3 task this AgDR itself names is what
+  THIS reconciliation pass continues. Forks F1-F5 were resolved through the
+  consolidated-signoff v2 flow (FOUNDER-SPEAK rebuild, task #22).
+founder-signoff: resolved — forks F1-F5 carried through consolidated-signoff v2; slices shipped (see status-evidence)
 category: workshop
 projects: [archhub, personal-brain-mcp]
 supersedes: []

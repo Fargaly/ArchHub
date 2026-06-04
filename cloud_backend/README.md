@@ -32,7 +32,18 @@ Plus three convenience routes:
 GET  /signin                browser landing page for desktop PKCE
 GET  /auth/return           magic-link click → desktop loopback redirect
 GET  /healthz               liveness for Fly.io / Cloud Run
+POST /v1/brain/sync         per-user brain replica delta push (Track D §5)
+DELETE /v1/brain/sync       GDPR right-to-erasure for the replica
 ```
+
+### Brain replica — privacy contract (BRAIN-FIRST)
+
+`POST /v1/brain/sync` writes to a per-user `data/replicas/<user_id>/brain.db`.
+**ZERO resolved secrets are persisted in the cloud**: only `op://`, `wcm://`,
+`env://`, `inline:` REFERENCES pass through; bare credential-looking strings
+(`sk-...`, `AKIA...`, `AIza...`, etc.) are rejected at the API boundary, per
+the ResolverRegistry pattern in `app/resolver_registry.py`. GDPR delete via
+`DELETE /v1/brain/sync` removes the user's replica directory in one call.
 
 ---
 

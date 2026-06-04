@@ -1,0 +1,46 @@
+---
+import Base from '../layouts/Base.astro';
+import { readChangelog } from '../lib/changelog.js';
+
+// Real entries, read at BUILD TIME from the repo's CHANGELOG.md (Keep a
+// Changelog format). Shows the most recent releases. No daemon, no network —
+// pure file read. Honest + sourced: every line below exists in CHANGELOG.md.
+const { ok, releases, error } = readChangelog(6);
+---
+<Base title="Changelog" description="Every release of ArchHub, sourced straight from the repo's CHANGELOG.md.">
+  <h1>Changelog</h1>
+  <p>
+    The most recent ArchHub releases, generated at build time from
+    <code>CHANGELOG.md</code> (the repo's single changelog, Keep-a-Changelog
+    format). Each release lists the change groups recorded for it.
+  </p>
+
+  {!ok && (
+    <p class="freshness">Changelog source unavailable: {error}</p>
+  )}
+
+  {ok && releases.length === 0 && (
+    <p class="freshness">No releases parsed from CHANGELOG.md yet.</p>
+  )}
+
+  {ok && releases.map((rel) => (
+    <section>
+      <h2>{rel.version} — {rel.date}</h2>
+      {rel.sections.map((sec) => (
+        <>
+          <h3 style="font-size: 1.05rem; margin: 16px 0 6px;">{sec.heading}</h3>
+          <ul>
+            {sec.bullets.map((b) => (
+              <li>{b}</li>
+            ))}
+          </ul>
+        </>
+      ))}
+    </section>
+  ))}
+
+  <p class="freshness" style="margin-top: 24px;">
+    Showing the {releases.length} most recent releases. See
+    <code>CHANGELOG.md</code> in the repo for the full history.
+  </p>
+</Base>

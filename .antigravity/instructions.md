@@ -17,3 +17,8 @@ in chat.
 Treat AGENTS.md as the law. Treat CLAUDE.md as the long-form Claude
 ruleset (you should also read it for full context). Don't bypass the
 hooks. Don't push to `main` without explicit founder sign-off.
+
+Brain: connect to the personal-brain daemon (http://127.0.0.1:8473/mcp)
+before work — see AGENTS.md → BRAIN-FIRST. If this client has no auto
+hook, run tools/brainwrap or call brain.health + brain.context yourself
+first.

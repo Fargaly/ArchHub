@@ -70,10 +70,32 @@ jobs:
       # Offscreen platform lets PyQt6 init QApplication without a
       # display server — required for any test that imports a widget
       # at module load.
+      #
+      # IGNORE SET — must match the blessed local command in CLAUDE.md
+      # (`pytest tests/ -q --ignore=tests/test_bridge_qt.py
+      # --ignore=tests/test_ui_smoke.py`) AND daily-audit.yml. Previously
+      # this step ran `pytest tests/ -v` with NO --ignore, so the required
+      # gate executed a DIFFERENT set than the blessed dev command +
+      # daily audit (REPO-MAP 2026-05-28 §8: "the required gate and the
+      # blessed dev command test different sets"). The three are now aligned.
+      #   * test_bridge_qt / test_ui_smoke — live Qt/WebEngine harnesses
+      #     that need a real window; skipped headless (kept in the ignore
+      #     set so the contract holds if they're reintroduced).
+      #   * test_ui_cdp_smoke — the canonical CDP proof: it clicks the running
+      #     app over CDP (port 9223). It is now COLLECTED + RUN here (no longer
+      #     --ignore'd) so the proof is a live gate the moment a display is
+      #     present; on a pure-headless runner with no display/GPU it SKIPS
+      #     cleanly (a no-op, not a failure). It can also self-launch the app
+      #     out of process when ARCHHUB_CDP_AUTOLAUNCH=1. CDP works on this
+      #     QtWebEngine build once main.py appends --remote-allow-origins (the
+      #     old "CDP handshake stalls" claim was a misdiagnosis).
       - name: Run app test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -v
+        run: >-
+          pytest tests/ -v
+          --ignore=tests/test_bridge_qt.py
+          --ignore=tests/test_ui_smoke.py
 
       - name: Run cloud backend test suite
         env:

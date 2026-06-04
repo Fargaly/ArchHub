@@ -61,12 +61,26 @@ def scan_bare_except(audit: Audit, path: Path, lines: list[str]) -> None:
     for i, ln in enumerate(lines, 1):
         s = ln.strip()
         if s == "except:" or s.startswith("except:"):
+            # A truly bare `except:` also swallows KeyboardInterrupt /
+            # SystemExit / MemoryError — never a legitimate fail-soft, so
+            # the marker does NOT clear it. Stays a hard HIGH.
             audit.add("HIGH", "bare-except", path, i,
                       "bare `except:` swallows every error including bugs")
-        # `except Exception: pass` on the same or next line.
-        if re.match(r"except\s+Exception\s*:\s*pass\s*$", s):
-            audit.add("MEDIUM", "except-pass", path, i,
-                      "`except Exception: pass` — silent swallow; log it")
+        # `except Exception: pass` — a one-line silent swallow.  Mirroring
+        # the `_SUCCESS_MASK_OK` convention scan_success_mask honors, an
+        # explicit `# audit: deliberate-fail-soft` marker — either trailing
+        # the except line or on the comment line directly above it —
+        # certifies the swallow as a documented, auditable fail-soft and
+        # clears the finding.  The marker must carry an inline rationale so
+        # the choice is auditable, not silent; an undocumented swallow still
+        # flags.
+        if re.match(r"except\s+Exception\s*:\s*pass\b", s):
+            prev = lines[i - 2].strip() if i >= 2 else ""
+            marked = (_SUCCESS_MASK_OK in ln
+                      or (prev.startswith("#") and _SUCCESS_MASK_OK in prev))
+            if not marked:
+                audit.add("MEDIUM", "except-pass", path, i,
+                          "`except Exception: pass` — silent swallow; log it")
 
 
 # AgDR-0036 — the blocking-call patterns.  Beyond direct stdlib
@@ -81,7 +95,7 @@ _BLOCKING_PATTERNS = re.compile(
     r"\.recv\(|time\.sleep|socket\.create_connection|"
     r"requests\.(get|post)|"
     r"\.forward\(|\.probe\(\)|_request\(|"
-    r"detect_all_hosts|detect_all_local_llms|"
+    r"detect_all_hosts|detect_all_local_llms|_probe_host_status|"
     r"list_sessions\(|sessions_count\(|is_reachable\(|"
     r"com_thread\(|GetActiveObject)\b")
 # A recursive glob is a separate, multi-line-safe check.
@@ -140,26 +154,135 @@ def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
     _flush()
 
 
+# A method becomes a periodic poller when it's wired to a QTimer's
+# `timeout` signal OR handed to `QTimer.singleShot(...)`. Those callbacks
+# run ON the Qt GUI thread, so blocking I/O in them freezes the UI exactly
+# like a blocking @pyqtSlot does — but the @pyqtSlot detector never saw
+# them. This pair of patterns harvests the wired callback method names.
+_TIMER_TIMEOUT_CONNECT = re.compile(
+    r"\.timeout\.connect\(\s*self\.([A-Za-z_]\w*)")
+_TIMER_SINGLESHOT = re.compile(
+    r"singleShot\(\s*[^,]+,\s*self\.([A-Za-z_]\w*)")
+
+
+def _timer_callback_names(lines: list[str]) -> set[str]:
+    names: set[str] = set()
+    for ln in lines:
+        for m in _TIMER_TIMEOUT_CONNECT.finditer(ln):
+            names.add(m.group(1))
+        for m in _TIMER_SINGLESHOT.finditer(ln):
+            names.add(m.group(1))
+    return names
+
+
+def scan_blocking_in_timer_callback(audit: Audit, path: Path,
+                                    lines: list[str]) -> None:
+    """Flag any method wired to a QTimer (`.timeout.connect(self.X)` or
+    `QTimer.singleShot(ms, self.X)`) whose body does blocking I/O — directly
+    or one helper-hop down — without an off-thread marker.
+
+    Root: a QTimer callback runs on the Qt GUI thread just like a @pyqtSlot,
+    so a blocking port-scan / HTTP / COM call in it freezes the UI on every
+    tick. The host-pill idle-stall (chat_window._refresh_host_pills, fixed
+    2026-06-02) was exactly this class and the @pyqtSlot-only detector missed
+    it. The off-thread markers (QThread / Thread / .submit / _cached_async /
+    a NESTED singleShot that re-defers) clear the finding."""
+    targets = _timer_callback_names(lines)
+    if not targets:
+        return
+
+    in_fn = False
+    fn_name = ""
+    fn_off_thread = False
+    fn_body: list[tuple[int, str]] = []
+
+    def _flush():
+        nonlocal fn_body, fn_off_thread, fn_name
+        if fn_body and fn_name in targets and not fn_off_thread:
+            for ln_no, txt in fn_body:
+                if _BLOCKING_PATTERNS.search(txt) or _RECURSIVE_GLOB.search(txt):
+                    audit.add("HIGH", "blocking-in-timer-callback", path, ln_no,
+                              f"blocking I/O in QTimer callback "
+                              f"`{fn_name}` — runs on the Qt GUI thread; "
+                              f"freezes the UI on every tick. Fan it onto a "
+                              f"QThread / _bg_pool and repaint via a signal.")
+        fn_body = []
+        fn_off_thread = False
+
+    for i, ln in enumerate(lines, 1):
+        s = ln.strip()
+        dm = re.match(r"def\s+([A-Za-z_]\w*)\s*\(", s)
+        if dm:
+            indent = len(ln) - len(ln.lstrip())
+            # Only treat a top-level (method-depth) def as a new scope; a
+            # nested worker def (e.g. _HostPillsWorker.run) stays inside the
+            # callback body so its off-thread markers still count.
+            if indent <= 4:
+                _flush()
+                in_fn = True
+                fn_name = dm.group(1)
+                continue
+        if in_fn:
+            if any(m in ln for m in _OFFTHREAD):
+                fn_off_thread = True
+            fn_body.append((i, ln))
+    _flush()
+
+
+# A `return status:ok` inside an `except` is normally a mask. But some
+# except blocks are a DELIBERATE, honest fail-OVER / degraded path that
+# does NOT claim the real operation succeeded — it returns a clearly
+# self-labelled degraded result (e.g. a stub response carrying
+# `"stub": True`). Mirroring the `_OFFTHREAD` marker convention the
+# blocking scanners use, an explicit in-source marker on the return's
+# block clears the finding. The marker must be justified inline so the
+# choice is auditable, not silent. Keep this allowlist SHORT — only a
+# genuine documented fail-soft earns it; a real lie never does.
+_SUCCESS_MASK_OK = "audit: deliberate-fail-soft"
+
+
 def scan_success_mask(audit: Audit, path: Path, lines: list[str]) -> None:
     """A `return {"status": "ok"...}` inside an `except` block masks
-    a failure as success."""
+    a failure as success — UNLESS the except block carries the explicit
+    `# audit: deliberate-fail-soft` marker (a documented degraded path
+    that self-labels and does not claim real success)."""
     in_except = False
     except_indent = 0
+    block_lines: list[tuple[int, str]] = []
+
+    def _flush():
+        nonlocal block_lines
+        # The marker anywhere in the except block (a comment line)
+        # certifies the whole block as a deliberate fail-soft.
+        cleared = any(_SUCCESS_MASK_OK in txt for _, txt in block_lines)
+        if not cleared:
+            for ln_no, txt in block_lines:
+                if ('"status": "ok"' in txt or "'status': 'ok'" in txt) \
+                        and "return" in txt:
+                    audit.add("HIGH", "success-mask", path, ln_no,
+                              "returns status:ok from inside an except "
+                              "block — masks a real failure as success")
+        block_lines = []
+
     for i, ln in enumerate(lines, 1):
         s = ln.strip()
         indent = len(ln) - len(ln.lstrip())
         if s.startswith("except"):
+            _flush()
             in_except = True
             except_indent = indent
             continue
         if in_except:
             if s and indent <= except_indent and not s.startswith("#"):
+                _flush()
                 in_except = False
-            elif '"status": "ok"' in ln or "'status': 'ok'" in ln:
-                if "return" in ln:
-                    audit.add("HIGH", "success-mask", path, i,
-                              "returns status:ok from inside an except "
-                              "block — masks a real failure as success")
+                # The dedented line could itself open a new except.
+                if s.startswith("except"):
+                    in_except = True
+                    except_indent = indent
+            else:
+                block_lines.append((i, ln))
+    _flush()
 
 
 def scan_todos(audit: Audit, path: Path, lines: list[str]) -> None:
@@ -250,6 +373,7 @@ def run_audit() -> Audit:
             continue
         scan_bare_except(audit, path, lines)
         scan_blocking_in_slot(audit, path, lines)
+        scan_blocking_in_timer_callback(audit, path, lines)
         scan_success_mask(audit, path, lines)
         scan_todos(audit, path, lines)
         scan_huge_functions(audit, path, lines)

@@ -533,8 +533,19 @@ def _build_dotnet_connector(host_label: str, year: int,
     # same output (Revit needs them paired with the DLL).
     for root in source_roots:
         for addin in root.glob("*.addin"):
-            try: shutil.copy2(addin, output_dir / addin.name)
-            except Exception: pass
+            try:
+                shutil.copy2(addin, output_dir / addin.name)
+            except Exception as e:
+                # Surface, don't swallow. The deploy gate (_verify_build_output
+                # below) checks expected_artifacts + sha256, NOT addin_manifests,
+                # so a failed .addin copy would otherwise be INVISIBLE. Non-fatal
+                # (Revit regenerates the manifest from the registry at activation,
+                # so a missing build-output copy doesn't block loading) — we
+                # continue, but the failure is now logged via on_progress
+                # instead of silently passed.
+                on_progress("Copying manifests", 88,
+                            "WARN: could not copy {} -> output: {}".format(
+                                addin.name, e))
 
     # Deploy gate — verify expected artifacts + optional SHA-256.
     ok, err, missing = _verify_build_output(output_dir, source_roots, host_label)

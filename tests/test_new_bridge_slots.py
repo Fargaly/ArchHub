@@ -170,14 +170,19 @@ def test_delete_session_missing_returns_error(tmp_appdata, bridge_inst):
 # ---------------------------------------------------------------------
 
 def test_set_theme_and_get_theme_round_trip(tmp_appdata, bridge_inst):
+    # The store now speaks the founder-signed BRANDED vocabulary
+    # (forge/blueprint/vellum); the legacy ids are still ACCEPTED on write
+    # but mapped to their branded slot (light->vellum, system->forge) so
+    # the store holds one vocabulary. See test_theme_branded.py for the
+    # full contract.
     out = json.loads(bridge_inst.set_theme("light"))
     assert out["ok"] is True
-    assert out["theme"] == "light"
+    assert out["theme"] == "vellum"
     got = json.loads(bridge_inst.get_theme())
-    assert got["theme"] == "light"
+    assert got["theme"] == "vellum"
     # Switch + re-read
     bridge_inst.set_theme("system")
-    assert json.loads(bridge_inst.get_theme())["theme"] == "system"
+    assert json.loads(bridge_inst.get_theme())["theme"] == "forge"
 
 
 def test_set_theme_rejects_invalid(tmp_appdata, bridge_inst):
@@ -186,8 +191,9 @@ def test_set_theme_rejects_invalid(tmp_appdata, bridge_inst):
 
 
 def test_get_theme_default_when_missing(tmp_appdata, bridge_inst):
+    # Signed branded default (was legacy 'dark' before the branded store).
     got = json.loads(bridge_inst.get_theme())
-    assert got["theme"] == "dark"
+    assert got["theme"] == "forge"
 
 
 # ---------------------------------------------------------------------
@@ -457,7 +463,15 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     # Skills auto-surfaced from the registry/library) are uncapped
     # because they ARE real registered executors, not palette filler.
     hardcoded = [p for p in payload if not p.get("_source")]
-    assert len(hardcoded) <= 70, "a grammar, not a catalogue"
+    # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile
+    # + verify cells (data.join + verify.assert), real palette primitives.
+    # +1 → 73: stem-rebuild Phase-0 `fs.list` (visible READ-ONLY IO read cell).
+    # +3 → 76: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe +
+    # data.json) — 3 grounded palette primitives, cap bumped in lockstep with
+    # their node_grammar Primitive() entries (same pattern as the PRIMITIVES
+    # cap in test_node_grammar.py).
+    # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(hardcoded) <= 78, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
     # Required families now represented by typed-node anchors:
     #   input  → number    · logic   → if      · output → result

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What changed — wave 5 · picture-first</title>
+<style>
+  :root{
+    --dark:#141413; --light:#faf9f5; --mid:#b0aea5; --lgray:#e8e6dc;
+    --orange:#d97757; --blue:#6a9bcc; --green:#788c5d;
+    --shadow:0 1px 3px rgba(20,20,19,.08),0 8px 24px rgba(20,20,19,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--light); color:var(--dark);
+    font-family:"Lora",Georgia,serif; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    background:var(--dark); color:var(--light);
+    padding:40px 32px 32px; border-bottom:4px solid var(--orange);
+  }
+  h1,h2,h3,.tag{font-family:"Poppins",Arial,sans-serif}
+  header h1{margin:0 0 8px; font-size:30px; font-weight:600; letter-spacing:-.5px}
+  header p{margin:0; color:var(--mid); font-size:16px; max-width:760px}
+  .wrap{max-width:980px; margin:0 auto; padding:0 24px 80px}
+  .intro{
+    background:#fff; border:1px solid var(--lgray); border-left:4px solid var(--green);
+    border-radius:12px; padding:20px 24px; margin:28px 0; box-shadow:var(--shadow);
+  }
+  .intro strong{color:var(--green)}
+  .card{
+    background:#fff; border:1px solid var(--lgray); border-radius:16px;
+    margin:24px 0; overflow:hidden; box-shadow:var(--shadow);
+  }
+  .card-head{padding:24px 28px 8px}
+  .num{
+    display:inline-block; width:30px; height:30px; line-height:30px; text-align:center;
+    background:var(--orange); color:#fff; border-radius:50%; font-family:"Poppins",Arial;
+    font-weight:600; font-size:15px; margin-right:10px;
+  }
+  .card h2{display:inline; font-size:21px; font-weight:600; vertical-align:middle}
+  .benefit{margin:14px 0 4px; font-size:16px}
+  .benefit b{color:var(--dark)}
+  .ba{display:grid; grid-template-columns:1fr 44px 1fr; gap:0; align-items:stretch; padding:18px 28px 8px}
+  .pane{border:1px solid var(--lgray); border-radius:12px; padding:16px; background:#fcfbf7}
+  .pane.after{background:#fff; border-color:var(--green)}
+  .pane .lbl{
+    font-family:"Poppins",Arial; font-size:11px; font-weight:600; letter-spacing:1px;
+    text-transform:uppercase; color:var(--mid); margin-bottom:12px;
+  }
+  .pane.after .lbl{color:var(--green)}
+  .arrow{display:flex; align-items:center; justify-content:center; color:var(--orange); font-size:26px}
+  /* settings tab mock */
+  .tabs{display:flex; flex-wrap:wrap; gap:4px}
+  .tab{
+    font-family:"Poppins",Arial; font-size:11px; padding:5px 9px; border-radius:6px;
+    background:var(--lgray); color:var(--dark);
+  }
+  .tab.new{background:var(--green); color:#fff; font-weight:600; box-shadow:0 0 0 3px rgba(120,140,93,.25)}
+  .tab.new2{background:var(--green); color:#fff; font-weight:600}
+  /* generic chips/rows */
+  .row{display:flex; align-items:center; gap:8px; padding:7px 0; font-size:14px; font-family:"Poppins",Arial}
+  .dot{width:9px; height:9px; border-radius:50%; flex:none}
+  .dot.g{background:var(--green)} .dot.r{background:var(--orange)} .dot.b{background:var(--blue)} .dot.gray{background:var(--mid)}
+  .pill{
+    display:inline-block; font-family:"Poppins",Arial; font-size:10px; font-weight:600;
+    padding:2px 8px; border-radius:20px; letter-spacing:.3px;
+  }
+  .pill.fresh{background:rgba(120,140,93,.15); color:var(--green)}
+  .pill.stale{background:rgba(217,119,87,.15); color:var(--orange)}
+  .mock-sign{font-family:"Poppins",Arial; font-size:13px}
+  .mock-sign .btn{display:inline-block; background:var(--dark); color:#fff; padding:7px 14px; border-radius:8px; font-size:12px; font-weight:600}
+  .mock-sign .cloud{margin-top:10px; color:var(--mid); font-size:12px}
+  .mock-sign .cloud.on{color:var(--green)}
+  .tut{border:1px solid var(--lgray); border-radius:10px; padding:10px 12px; background:#fff}
+  .tut h4{font-family:"Poppins",Arial; font-size:13px; margin:0 0 4px}
+  .tut .step{font-size:12px; color:#555; padding:2px 0 2px 16px; position:relative}
+  .tut .step:before{content:"›"; position:absolute; left:2px; color:var(--orange)}
+  .site{border:1px solid var(--lgray); border-radius:10px; overflow:hidden}
+  .site .bar{background:var(--dark); height:22px; display:flex; align-items:center; padding:0 8px; gap:5px}
+  .site .bar i{width:8px; height:8px; border-radius:50%; background:var(--mid); display:inline-block}
+  .site .body{padding:14px; text-align:center}
+  .site .body .hh{font-family:"Poppins",Arial; font-weight:600; font-size:15px; margin:0 0 6px}
+  .site .body .sub{font-size:12px; color:#666; margin:0 0 10px}
+  .site .body .cta{display:inline-block; background:var(--orange); color:#fff; font-family:"Poppins",Arial; font-size:11px; font-weight:600; padding:6px 14px; border-radius:7px}
+  .none{color:var(--mid); font-style:italic; font-size:13px; text-align:center; padding:24px 8px}
+  details{margin:8px 28px 20px; font-size:13px; color:#555}
+  summary{cursor:pointer; font-family:"Poppins",Arial; font-size:12px; color:var(--blue); font-weight:600}
+  details code{background:var(--lgray); padding:1px 5px; border-radius:4px; font-size:12px}
+  .status{font-family:"Poppins",Arial; font-size:11px; font-weight:600; color:var(--green); padding:0 28px 20px}
+  .status .live{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green); margin-right:6px; box-shadow:0 0 0 3px rgba(120,140,93,.2)}
+  footer{max-width:980px; margin:0 auto; padding:24px; color:var(--mid); font-size:13px; text-align:center}
+  .keepbox{background:#fff; border:2px solid var(--green); border-radius:14px; padding:22px 26px; margin:28px 0; box-shadow:var(--shadow)}
+  .keepbox h3{margin:0 0 8px; color:var(--green); font-size:17px}
+  .keepbox p{margin:0; font-size:15px}
+</style>
+</head>
+<body>
+<header>
+  <h1>What changed — and why nothing is being deleted</h1>
+  <p>Five new things were built and saved. A crashed background shell left
+  stale "undo" edits sitting on disk — that's the only reason a delete even
+  came up. I've put those stray undos safely aside. Below is a picture of each
+  of the five things, exactly as they are right now.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="intro">
+    <strong>Plain version:</strong> nothing you see below is going away.
+    All five are already built, tested, and committed. This page just shows
+    you what they look like so you can confirm you want to keep them
+    (you do — they're good) or tell me to pull any one out.
+  </div>
+
+  <!-- 1 Accessibility -->
+  <div class="card">
+    <div class="card-head">
+      <span class="num">1</span><h2>An Accessibility tab in Settings</h2>
+      <p class="benefit"><b>Why it matters:</b> AEC pros stare at dense
+      drawings all day. This lets anyone bump up font size, raise contrast,
+      cut motion, or turn on screen-reader help — so the app fits their eyes,
+      not the other way round.</p>
+    </div>
+    <div class="ba">
+      <div class="pane">
+        <div class="lbl">Before — 10 tabs</div>
+        <div class="tabs">
+          <span class="tab">General</span><span class="tab">Providers</span>
+          <span class="tab">Secrets</span><span class="tab">Hosts</span>
+          <span class="tab">Memory</span><span class="tab">Brain</span>
+          <span class="tab">Permissions</span><span class="tab">Storage</span>
+          <span class="tab">Shortcuts</span><span class="tab">About</span>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pane after">
+        <div class="lbl">After — 11 tabs</div>
+        <div class="tabs">
+          <span class="tab">General</span><span class="tab">Providers</span>
+          <span class="tab">Secrets</span><span class="tab">Hosts</span>
+          <span class="tab">Memory</span><span class="tab">Brain</span>
+          <span class="tab">Permissions</span><span class="tab">Storage</span>
+          <span class="tab">Shortcuts</span>
+          <span class="tab new">Accessibility</span>
+          <span class="tab">About</span>
+        </div>
+        <div style="margin-top:12px">
+          <div class="row"><span class="dot gray"></span>Text size&nbsp;&nbsp;<small style="color:#999">S · M · L · XL</small></div>
+          <div class="row"><span class="dot b"></span>High contrast</div>
+          <div class="row"><span class="dot green"></span>Reduce motion</div>
+          <div class="row"><span class="dot r"></span>Screen-reader optimised</div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="live"></span>Live now · verified in the running app · sits between "Shortcuts" and "About"</div>
+    <details><summary>Technical reference</summary>
+      <code>app/settings_dialog.py</code> adds <code>AccessibilityTab</code> at index 9,
+      backed by a <code>brain.a11y_prefs</code> store that falls back to defaults if the
+      brain is offline. Committed in <code>e712624</code>. 15 tests green.
+    </details>
+  </div>
+
+  <!-- 2 Cloud brain sync -->
+  <div class="card">
+    <div class="card-head">
+      <span class="num">2</span><h2>Your brain backs itself up to the cloud</h2>
+      <p class="benefit"><b>Why it matters:</b> today your memory lives only on
+      this laptop. Lose the laptop, lose the memory. With this, when you sign
+      in, your brain quietly mirrors to your own private cloud copy — so it
+      survives, and follows you to a second machine.</p>
+    </div>
+    <div class="ba">
+      <div class="pane">
+        <div class="lbl">Before — local only</div>
+        <div class="mock-sign">
+          <span class="btn">Sign in</span>
+          <div class="cloud">☁ &nbsp;Brain: this device only</div>
+          <div class="cloud">⚠ &nbsp;No backup</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pane after">
+        <div class="lbl">After — synced + private</div>
+        <div class="mock-sign">
+          <span class="btn">Sign in</span>
+          <div class="cloud on">☁ &nbsp;Brain paired → your cloud copy</div>
+          <div class="cloud on">✓ &nbsp;Backed up · multi-device</div>
+          <div class="cloud" style="color:#999">🔒 Passwords/keys never leave your machine</div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="live" style="background:var(--orange);box-shadow:0 0 0 3px rgba(217,119,87,.2)"></span>Built + tested · the cloud server side isn't switched on live yet (honest note, not hidden)</div>
+    <details><summary>Technical reference</summary>
+      Sign-in fires <code>SignInWorker._pair_brain</code> (<code>app/cloud_auth.py</code>) →
+      <code>POST /v1/brain/sync</code> on the cloud backend, which writes a per-user
+      encrypted replica and rejects any bare secret at the boundary.
+      <code>DELETE /v1/brain/sync</code> is the right-to-erasure path. Commit <code>3e37eea</code>.
+      193 backend tests green. Marked "primitives shipped · runtime not live-verified."
+    </details>
+  </div>
+
+  <!-- 3 Tutorial pipeline -->
+  <div class="card">
+    <div class="card-head">
+      <span class="num">3</span><h2>Do something once → the brain drafts a how-to</h2>
+      <p class="benefit"><b>Why it matters:</b> the steps you take to wire a
+      Revit host or mint a skill are trapped in your head. When you finish a
+      task, the brain now turns that trail into a plain-English recipe a
+      teammate can replay — turning your work into onboarding.</p>
+    </div>
+    <div class="ba">
+      <div class="pane">
+        <div class="lbl">Before</div>
+        <div class="none">Knowledge lives in your head.<br>New teammate starts from zero.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pane after">
+        <div class="lbl">After — auto-drafted tutorial</div>
+        <div class="tut">
+          <h4>📘 Wire a Revit host</h4>
+          <div class="step">Open the Hosts tab</div>
+          <div class="step">Pick "Revit 2025"</div>
+          <div class="step">Confirm the broker port</div>
+          <div class="step">Send a test object</div>
+          <div style="margin-top:6px"><span class="pill fresh">▶ replay</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="live"></span>Live now · 3 starter tutorials shipped (create-firm · mint-first-skill · wire-revit-host)</div>
+    <details><summary>Technical reference</summary>
+      <code>extract_tutorial_draft</code> in <code>personal-brain-mcp/.../reflexion.py</code>
+      distils a trace into a tutorial (slug, steps, replay_skill_id) with snake_case→English
+      humanisers. Companion recorder <code>tools/tutorial_record.py</code> grabs a screenshot
+      per step. Commit <code>7b0be4e</code>. 3 tests green.
+    </details>
+  </div>
+
+  <!-- 4 Docs freshness -->
+  <div class="card">
+    <div class="card-head">
+      <span class="num">4</span><h2>Every doc shows whether it's fresh or stale</h2>
+      <p class="benefit"><b>Why it matters:</b> an out-of-date doc lies to you
+      silently. Now each one carries a fresh/stale badge from an automatic
+      index, so you instantly know which docs to trust and which need a
+      refresh.</p>
+    </div>
+    <div class="ba">
+      <div class="pane">
+        <div class="lbl">Before</div>
+        <div class="row"><span class="dot gray"></span>ROADMAP.md</div>
+        <div class="row"><span class="dot gray"></span>ARCHITECTURE.md</div>
+        <div class="row"><span class="dot gray"></span>brain notes</div>
+        <div class="none" style="padding:10px 0 0">No way to tell what's current</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pane after">
+        <div class="lbl">After — freshness index</div>
+        <div class="row"><span class="dot g"></span>ROADMAP.md <span class="pill fresh">fresh</span></div>
+        <div class="row"><span class="dot g"></span>ARCHITECTURE.md <span class="pill fresh">fresh</span></div>
+        <div class="row"><span class="dot r"></span>brain notes <span class="pill stale">stale · 40d</span></div>
+      </div>
+    </div>
+    <div class="status"><span class="live"></span>Live now · index auto-builds from git history</div>
+    <details><summary>Technical reference</summary>
+      <code>tools/doc_freshness.py</code> walks <code>docs/*.md</code> → writes
+      <code>docs/_meta/{index,freshness}.json</code>; brain-side twin
+      <code>app/memory/extractors/docs.py</code> adds doc nodes + <code>cites</code> edges.
+      Commit <code>ceeafee</code>. doc_links test green.
+    </details>
+  </div>
+
+  <!-- 5 Astro web site -->
+  <div class="card">
+    <div class="card-head">
+      <span class="num">5</span><h2>A public website fed straight from the brain</h2>
+      <p class="benefit"><b>Why it matters:</b> marketing pages drift from
+      what the product actually does. This site's content (features, pricing,
+      skills) is generated from the brain's own truth — so the website can't
+      lie about the product.</p>
+    </div>
+    <div class="ba">
+      <div class="pane">
+        <div class="lbl">Before</div>
+        <div class="none">No public site.<br>No place to send a prospect.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="pane after">
+        <div class="lbl">After — brain-fed landing site</div>
+        <div class="site">
+          <div class="bar"><i></i><i></i><i></i></div>
+          <div class="body">
+            <p class="hh">ArchHub</p>
+            <p class="sub">The graph-first AI workspace for AEC</p>
+            <span class="cta">See features →</span>
+          </div>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:#999; font-family:'Poppins',Arial">pages: features · pricing · community · security · changelog</div>
+      </div>
+    </div>
+    <div class="status"><span class="live"></span>Built · Astro site scaffold + brain-export content pipeline (not yet deployed to a public URL — honest note)</div>
+    <details><summary>Technical reference</summary>
+      <code>web/</code> — Astro 4, content sourced from <code>brain-export.json</code> +
+      <code>pricing.json</code> + <code>skills/</code>; <code>from-brain.js</code> + <code>freshness-footer.js</code>
+      build scripts. Commit <code>b3a0f07</code>.
+    </details>
+  </div>
+
+  <div class="keepbox">
+    <h3>So — what now?</h3>
+    <p>All five are kept and safe. The stray "undo" edits are tucked away in a
+    recoverable stash, untouched. If you want any single one of these five
+    pulled back out, tell me which by number and I'll do just that one. If
+    they all look good, there's nothing to do — they're already in.</p>
+  </div>
+
+</div>
+
+<footer>
+  Prototype · 2026-05-28 · picture-first per FOUNDER-SPEAK · all five committed (SHAs in each card's reference)
+</footer>
+</body>
+</html>

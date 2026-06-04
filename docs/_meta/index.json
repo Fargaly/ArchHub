@@ -1,0 +1,447 @@
+[
+  {
+    "slug": "ACCESSIBILITY-AUDIT-2026-05-26",
+    "title": "ArchHub Accessibility Audit — 2026-05-26",
+    "path": "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
+    "word_count": 1345,
+    "mtime": 1779788386,
+    "deps": [
+      "app/settings_dialog.py",
+      "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
+      "docs/CONTENT-ECOSYSTEM-2026-05-26.md"
+    ]
+  },
+  {
+    "slug": "AGENTS_AUTONOMOUS_LOOP",
+    "title": "Agents — autonomous roadmap loop",
+    "path": "docs/AGENTS_AUTONOMOUS_LOOP.md",
+    "word_count": 732,
+    "mtime": 1779450250,
+    "deps": [
+      "app/main.py",
+      "docs/ROADMAP.md"
+    ]
+  },
+  {
+    "slug": "AZURE_SIGNING_QUICKSTART",
+    "title": "Azure Trusted Signing — quickstart for ArchHub",
+    "path": "docs/AZURE_SIGNING_QUICKSTART.md",
+    "word_count": 781,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "BACKEND_SPEC",
+    "title": "ArchHub Cloud — Backend Spec",
+    "path": "docs/BACKEND_SPEC.md",
+    "word_count": 976,
+    "mtime": 1779450250,
+    "deps": [
+      "app/llm_providers/archhub_cloud_client.py"
+    ]
+  },
+  {
+    "slug": "BILLING_ALTERNATIVES",
+    "title": "Billing alternatives — Stripe vs Polar.sh",
+    "path": "docs/BILLING_ALTERNATIVES.md",
+    "word_count": 881,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "CAIQ_LITE",
+    "title": "CAIQ-Lite — ArchHub answers",
+    "path": "docs/CAIQ_LITE.md",
+    "word_count": 1375,
+    "mtime": 1779450250,
+    "deps": [
+      "docs/IRP.md",
+      "docs/SECURITY_REVIEW_LOG.md",
+      "docs/TRUST_CENTER.md"
+    ]
+  },
+  {
+    "slug": "CANVAS_PLAN",
+    "title": "ArchHub Visual Canvas — Architecture (shipped v1.4)",
+    "path": "docs/CANVAS_PLAN.md",
+    "word_count": 3362,
+    "mtime": 1779450250,
+    "deps": [
+      "app/bridge.py",
+      "app/canvas/__init__.py",
+      "app/canvas/adapter.py",
+      "app/canvas/canvas_panel.py",
+      "app/canvas/layout.py",
+      "app/canvas/new_skill_dialog.py",
+      "app/canvas/node_factory.py",
+      "app/canvas/properties_form.py",
+      "app/chat_window.py",
+      "app/host_detector.py",
+      "app/main.py",
+      "app/mcp/node_mcp.py",
+      "app/settings_dialog.py",
+      "app/skills_panel.py",
+      "app/web_shell.py",
+      "app/workflows/run_worker.py",
+      "docs/NODE_LIBRARY_v2.md",
+      "docs/ROADMAP.md"
+    ]
+  },
+  {
+    "slug": "CIVIL_3D_ROADMAP",
+    "title": "Civil 3D connector roadmap",
+    "path": "docs/CIVIL_3D_ROADMAP.md",
+    "word_count": 779,
+    "mtime": 1779450250,
+    "deps": [
+      "app/acad_broker.py",
+      "docs/ROADMAP.md"
+    ]
+  },
+  {
+    "slug": "CLOUD_REVIVAL_PLAN",
+    "title": "ArchHub — Cloud Revival Plan",
+    "path": "docs/CLOUD_REVIVAL_PLAN.md",
+    "word_count": 2555,
+    "mtime": 1779450250,
+    "deps": [
+      "docs/ROADMAP.md",
+      "docs/SOC2_READINESS.md"
+    ]
+  },
+  {
+    "slug": "CODE_SIGNING",
+    "title": "Code Signing — ArchHub Windows Installer",
+    "path": "docs/CODE_SIGNING.md",
+    "word_count": 1910,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "CONNECTOR_MASTER_PLAN_2026-05-15",
+    "title": "Connector Master Plan — All 18 Hosts Genuinely Working",
+    "path": "docs/CONNECTOR_MASTER_PLAN_2026-05-15.md",
+    "word_count": 6499,
+    "mtime": 1779582513,
+    "deps": [
+      "app/auto_build.py",
+      "app/bridge.py",
+      "app/connector_health.py",
+      "app/connectors/acad_runner.py",
+      "app/connectors/antigravity_runner.py",
+      "app/connectors/base.py",
+      "app/connectors/blender_runner.py",
+      "app/connectors/dropbox_runner.py",
+      "app/connectors/excel_runner.py",
+      "app/connectors/illustrator_runner.py",
+      "app/connectors/indesign_runner.py",
+      "app/connectors/lmstudio_runner.py",
+      "app/connectors/max_runner.py",
+      "app/connectors/notion_runner.py",
+      "app/connectors/outlook_runner.py",
+      "app/connectors/photoshop_runner.py",
+      "app/connectors/powerpoint_runner.py",
+      "app/connectors/registry.py",
+      "app/connectors/revit_runner.py",
+      "app/connectors/rhino_runner.py",
+      "app/connectors/teams_runner.py",
+      "app/connectors/word_runner.py",
+      "app/host_detector.py",
+      "app/local_llm_detector.py",
+      "app/mcp/node_mcp.py",
+      "app/mcp_fetcher.py",
+      "app/outlook_broker.py",
+      "app/speckle_client.py",
+      "app/tool_engine.py",
+      "app/workflows/registry.py",
+      "docs/ROADMAP.md"
+    ]
+  },
+  {
+    "slug": "CONTENT-ECOSYSTEM-2026-05-26",
+    "title": "ArchHub Content Ecosystem · brain-anchored · 2026-05-26",
+    "path": "docs/CONTENT-ECOSYSTEM-2026-05-26.md",
+    "word_count": 1903,
+    "mtime": 1779787825,
+    "deps": [
+      "AgDR-0042",
+      "AgDR-0044",
+      "app/cloud_auth.py",
+      "app/memory/extractors/docs.py",
+      "app/onboarding.py",
+      "app/onboarding_dialog.py",
+      "app/settings_dialog.py",
+      "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
+      "docs/FAILURE_LOG.md"
+    ]
+  },
+  {
+    "slug": "FAILURE_LOG",
+    "title": "FAILURE_LOG",
+    "path": "docs/FAILURE_LOG.md",
+    "word_count": 1093,
+    "mtime": 1779773909,
+    "deps": [
+      "AgDR-0012",
+      "AgDR-0021",
+      "AgDR-0022",
+      "AgDR-0024",
+      "AgDR-0041",
+      "AgDR-0042",
+      "AgDR-0043",
+      "AgDR-0046",
+      "AgDR-0047",
+      "AgDR-0048",
+      "app/settings_dialog.py"
+    ]
+  },
+  {
+    "slug": "GO_LIVE_CHECKLIST",
+    "title": "ArchHub Cloud — Go-Live Checklist",
+    "path": "docs/GO_LIVE_CHECKLIST.md",
+    "word_count": 1229,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "GTM_STRATEGY",
+    "title": "ArchHub — Go-to-Market Strategy",
+    "path": "docs/GTM_STRATEGY.md",
+    "word_count": 1308,
+    "mtime": 1779450250,
+    "deps": [
+      "docs/CODE_SIGNING.md",
+      "docs/SOC2_READINESS.md"
+    ]
+  },
+  {
+    "slug": "MULTI_DEVICE",
+    "title": "Running ArchHub on multiple devices",
+    "path": "docs/MULTI_DEVICE.md",
+    "word_count": 815,
+    "mtime": 1777988704,
+    "deps": []
+  },
+  {
+    "slug": "NODE_GRAMMAR",
+    "title": "ArchHub Node Grammar — typed-node catalogue",
+    "path": "docs/NODE_GRAMMAR.md",
+    "word_count": 1757,
+    "mtime": 1779450250,
+    "deps": [
+      "AgDR-0014",
+      "docs/ROADMAP.md"
+    ]
+  },
+  {
+    "slug": "NODE_LIBRARY_v2",
+    "title": "Node Library v2 — Grasshopper / Dynamo / Speckle informed taxonomy",
+    "path": "docs/NODE_LIBRARY_v2.md",
+    "word_count": 1578,
+    "mtime": 1779450250,
+    "deps": [
+      "app/connectors/procore_runner.py",
+      "app/host_detector.py",
+      "docs/NODE_GRAMMAR.md"
+    ]
+  },
+  {
+    "slug": "PRICING_STATUS",
+    "title": "Pricing Status (Canonical)",
+    "path": "docs/PRICING_STATUS.md",
+    "word_count": 107,
+    "mtime": 1779450277,
+    "deps": []
+  },
+  {
+    "slug": "REALITY_SMOKE",
+    "title": "Reality Smoke Test",
+    "path": "docs/REALITY_SMOKE.md",
+    "word_count": 1220,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "RELIABILITY",
+    "title": "Reliability & Known Limits",
+    "path": "docs/RELIABILITY.md",
+    "word_count": 339,
+    "mtime": 1779450277,
+    "deps": []
+  },
+  {
+    "slug": "REVENUE_MODEL",
+    "title": "ArchHub — Revenue Model",
+    "path": "docs/REVENUE_MODEL.md",
+    "word_count": 1288,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "REVIT_FINISHES_PIPELINE",
+    "title": "Revit Finishes Pipeline — Skills + Workflow",
+    "path": "docs/REVIT_FINISHES_PIPELINE.md",
+    "word_count": 1951,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "ROADMAP",
+    "title": "ArchHub Roadmap — single source of truth",
+    "path": "docs/ROADMAP.md",
+    "word_count": 10581,
+    "mtime": 1779773909,
+    "deps": [
+      "AgDR-0001",
+      "AgDR-0002",
+      "AgDR-0003",
+      "AgDR-0004",
+      "AgDR-0005",
+      "AgDR-0006",
+      "AgDR-0007",
+      "AgDR-0008",
+      "AgDR-0009",
+      "AgDR-0010",
+      "AgDR-0012",
+      "AgDR-0013",
+      "AgDR-0014",
+      "AgDR-0015",
+      "AgDR-0016",
+      "AgDR-0017",
+      "AgDR-0018",
+      "AgDR-0019",
+      "AgDR-0020",
+      "AgDR-0021",
+      "AgDR-0022",
+      "AgDR-0023",
+      "AgDR-0024",
+      "AgDR-0025",
+      "AgDR-0029",
+      "AgDR-0032",
+      "AgDR-0035",
+      "AgDR-0036",
+      "AgDR-0037",
+      "AgDR-0038",
+      "AgDR-0043",
+      "AgDR-0044",
+      "AgDR-0046",
+      "AgDR-0047",
+      "AgDR-0048",
+      "app/bridge.py",
+      "app/connectors/revit_speckle_ops.py",
+      "app/contrast_audit.py",
+      "app/grammar_health.py",
+      "app/library.py",
+      "app/library_gate.py",
+      "app/library_persistence.py",
+      "app/library_seeds.py",
+      "app/library_validator.py",
+      "app/llm_router.py",
+      "app/main.py",
+      "app/plan_history.py",
+      "app/speckle_server.py",
+      "app/speckle_wire.py",
+      "app/tool_engine.py",
+      "app/workflows/custom_nodes.py",
+      "app/workflows/flatten_to_code.py",
+      "app/workflows/nodes/adapter.py",
+      "app/workflows/nodes/ai_plan.py",
+      "app/workflows/nodes/code.py",
+      "app/workflows/nodes/math_text.py",
+      "docs/CANVAS_PLAN.md",
+      "docs/CIVIL_3D_ROADMAP.md",
+      "docs/CLOUD_REVIVAL_PLAN.md",
+      "docs/CONNECTOR_MASTER_PLAN_2026-05-15.md",
+      "docs/NODE_GRAMMAR.md",
+      "docs/NODE_LIBRARY_v2.md",
+      "docs/RUN-REVIT.md"
+    ]
+  },
+  {
+    "slug": "RUN-MCP",
+    "title": "Run the ArchHub MCP server in Claude Code",
+    "path": "docs/RUN-MCP.md",
+    "word_count": 377,
+    "mtime": 1779450250,
+    "deps": [
+      "AgDR-0031",
+      "app/archhub_mcp_server.py"
+    ]
+  },
+  {
+    "slug": "RUN-REVIT",
+    "title": "Running ArchHub alongside other Revit add-ins",
+    "path": "docs/RUN-REVIT.md",
+    "word_count": 383,
+    "mtime": 1779450250,
+    "deps": [
+      "AgDR-0023"
+    ]
+  },
+  {
+    "slug": "SKILLS",
+    "title": "Skills (v1.4)",
+    "path": "docs/SKILLS.md",
+    "word_count": 1747,
+    "mtime": 1779450250,
+    "deps": [
+      "app/skills/library.py",
+      "app/skills/matcher.py",
+      "app/skills/seeds.py",
+      "app/skills/usage.py",
+      "docs/MULTI_DEVICE.md",
+      "docs/NODE_LIBRARY_v2.md"
+    ]
+  },
+  {
+    "slug": "SOC2_READINESS",
+    "title": "ArchHub SOC 2 Type I readiness pack",
+    "path": "docs/SOC2_READINESS.md",
+    "word_count": 1422,
+    "mtime": 1779450250,
+    "deps": [
+      "docs/IRP.md",
+      "docs/ONBOARDING.md",
+      "docs/SECURITY_REVIEW_LOG.md",
+      "docs/VENDORS.md"
+    ]
+  },
+  {
+    "slug": "STATUS_REPORTS",
+    "title": "Status Reports",
+    "path": "docs/STATUS_REPORTS.md",
+    "word_count": 847,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "TRADEMARK_FILING",
+    "title": "ArchHub trademark filing — USPTO TEAS Plus submission pack",
+    "path": "docs/TRADEMARK_FILING.md",
+    "word_count": 1617,
+    "mtime": 1779450250,
+    "deps": []
+  },
+  {
+    "slug": "TRUST_CENTER",
+    "title": "ArchHub Trust Center — source content",
+    "path": "docs/TRUST_CENTER.md",
+    "word_count": 998,
+    "mtime": 1779450250,
+    "deps": [
+      "app/pii_redactor.py",
+      "docs/CAIQ_LITE.md",
+      "docs/SOC2_READINESS.md"
+    ]
+  },
+  {
+    "slug": "USER_GUIDE",
+    "title": "ArchHub — User Guide (v1.4)",
+    "path": "docs/USER_GUIDE.md",
+    "word_count": 2076,
+    "mtime": 1779450250,
+    "deps": [
+      "docs/NODE_LIBRARY_v2.md"
+    ]
+  }
+]

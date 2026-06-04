@@ -139,16 +139,21 @@ register(
 # Inputs:
 #   a, b   — strings (b unused for unary ops)
 # Output:
-#   value  — result string OR boolean (for `match`)
+#   value  — result string OR boolean (for `match`) OR list/dict (regex ops)
 #
 # Ops supported:
 #   concat · split · replace · format · match · upper · lower · trim · length
+#   regex_findall · regex_match · regex_replace · regex_split
 
 
 def _str(x: Any) -> str:
     if x is None:
         return ""
     return str(x)
+
+
+# Ops that operate on a regular-expression `pattern` over the subject `a`.
+_REGEX_OPS = ("regex_findall", "regex_match", "regex_replace", "regex_split")
 
 
 def _text_executor(config: dict, inputs: dict, ctx) -> dict:
@@ -183,9 +188,61 @@ def _text_executor(config: dict, inputs: dict, ctx) -> dict:
             return {"value": a.strip()}
         if op == "length":
             return {"value": len(a)}
+        if op in _REGEX_OPS:
+            return _text_regex(op, a, inputs, config)
         return {"value": None, "error": f"unknown text op: {op!r}"}
     except Exception as ex:
         return {"value": None, "error": f"{type(ex).__name__}: {ex}"}
+
+
+def _text_regex(op: str, a: str, inputs: dict, config: dict) -> dict:
+    """Regex family for text.op — findall / match / replace / split.
+
+    The subject is the same `a` string text.op already reads (already
+    coerced to str by the caller). `pattern` and `repl` come from config,
+    but a wired `pattern` / `repl` input wins (matching how the cell lets
+    wired input beat config). `ignore_case` maps to re.IGNORECASE.
+
+    TOTAL-TOLERANT: a missing pattern, a non-string subject, or an invalid
+    regex (re.error) returns the SAME {"value": None, "error": ...} typed
+    shape every other text.op op returns — never a raise.
+    """
+    # Wired input beats config for pattern + repl.
+    raw_pat = inputs.get("pattern")
+    pattern = raw_pat if raw_pat is not None else config.get("pattern")
+    raw_rep = inputs.get("repl")
+    repl = raw_rep if raw_rep is not None else config.get("repl")
+
+    # The subject must be a string. `a` is already _str()-coerced, but a
+    # non-string wired subject is a typed error, not a silent stringify.
+    subject = inputs.get("a")
+    if subject is not None and not isinstance(subject, str):
+        return {"value": None,
+                "error": f"regex subject must be a string, "
+                         f"got {type(subject).__name__}"}
+
+    if pattern is None or not isinstance(pattern, str) or pattern == "":
+        return {"value": None, "error": "regex op requires a pattern"}
+
+    flags = re.IGNORECASE if config.get("ignore_case") else 0
+    try:
+        if op == "regex_findall":
+            return {"value": re.findall(pattern, a, flags=flags)}
+        if op == "regex_match":
+            m = re.search(pattern, a, flags=flags)
+            if m is None:
+                return {"value": {"matched": False, "groups": [],
+                                  "group0": ""}}
+            return {"value": {"matched": True,
+                              "groups": list(m.groups()),
+                              "group0": m.group(0)}}
+        if op == "regex_replace":
+            return {"value": re.sub(pattern, _str(repl), a, flags=flags)}
+        if op == "regex_split":
+            return {"value": re.split(pattern, a, flags=flags)}
+    except re.error as ex:
+        return {"value": None, "error": f"invalid regex: {ex}"}
+    return {"value": None, "error": f"unknown text op: {op!r}"}
 
 
 register(
@@ -193,7 +250,9 @@ register(
         type="text.op",
         category="text",
         display_name="Text",
-        description="String operations — concat / split / replace / format / match / upper / lower / trim / length.",
+        description="String operations — concat / split / replace / format / "
+                    "match / upper / lower / trim / length, plus regex: "
+                    "regex_findall / regex_match / regex_replace / regex_split.",
         inputs=[
             Port(name="a", type=PortType.ANY, required=True),
             Port(name="b", type=PortType.ANY),
@@ -203,12 +262,26 @@ register(
             "op": {
                 "type": "string",
                 "enum": ["concat", "split", "replace", "format", "match",
-                          "upper", "lower", "trim", "length"],
+                          "upper", "lower", "trim", "length",
+                          "regex_findall", "regex_match", "regex_replace",
+                          "regex_split"],
                 "required": True,
             },
             "separator":   {"type": "string"},
-            "pattern":     {"type": "string"},
+            "pattern":     {"type": "string",
+                            "description": "Regex pattern for match + the "
+                                           "regex_* ops (also the literal "
+                                           "for replace). Wired `pattern` "
+                                           "input wins over this."},
             "replacement": {"type": "string"},
+            "repl":        {"type": "string",
+                            "description": "Replacement for regex_replace "
+                                           "(may use regex backreferences "
+                                           "like \\1). Wired `repl` input "
+                                           "wins over this."},
+            "ignore_case": {"type": "boolean",
+                            "description": "Case-insensitive (re.IGNORECASE) "
+                                           "for the regex_* ops."},
             "template":    {"type": "string"},
         },
         icon="¶",

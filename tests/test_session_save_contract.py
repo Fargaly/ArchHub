@@ -88,6 +88,29 @@ class TestEmptyRejection:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert len(data.get("parameters") or []) == 1
 
+    def test_graph_nodes_only_writes_successfully(self, sessions_dir):
+        """A canvas-authored graph (host / AI nodes) is NOT empty even with
+        no chat messages / parameters / chain. Regression guard for the
+        2026-06-02 "ping rhino saved but empty" bug: the ping spawned a Host
+        + Conversation node but kept the chat in the NODE body (not
+        session.history), so _payload_is_empty wrongly returned True and
+        save_session refused — persisting a nodes:[] stub. A graph with
+        nodes must save."""
+        from session_io import save_session
+        from session import Session
+        s = Session()
+        s.graph = {
+            "nodes": [
+                {"id": "h_rhino", "cat": "host", "title": "Rhino"},
+                {"id": "i_conv", "cat": "ai", "title": "Conversation"},
+            ],
+            "wires": [{"from": ["h_rhino", "view"], "to": ["i_conv", "ctx"]}],
+        }
+        path = save_session(s, "ping rhino")  # must NOT raise EmptySessionError
+        assert path.exists()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert len((data.get("graph") or {}).get("nodes") or []) == 2
+
 
 # ---------------------------------------------------------------------------
 class TestRoundtripVerify:

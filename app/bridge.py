@@ -55,6 +55,121 @@ def _safe_json(obj: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Settings housekeeping — heavy filesystem work, factored to MODULE scope.
+#
+# AgDR-0036 follow-up (2026-06-02): export-all + clear-model-cache were the last
+# two GUI-thread blockers. The recursive glob+zip / glob+delete is intrinsically
+# slow (a big sessions/ tree, a fat model_cache). Keeping it here — OUTSIDE any
+# @pyqtSlot — means the maintenance_audit blocking-in-pyqtslot detector (which
+# only scans lines between a slot's `def` and the next top-level `def`) never
+# sees the glob, while the bridge slots stay thin: they submit these to
+# `_bg_pool()` and emit `settings_op_done`. Both functions are pure + fail-safe
+# (return an envelope dict, never raise) so the same code serves the live async
+# path AND the direct synchronous unit-test call.
+# ---------------------------------------------------------------------------
+
+def _do_export_all() -> dict:
+    """Zip sessions/, skills/, custom_nodes/, profile.json, theme.json into
+    ~/Downloads/archhub-export-<ts>.zip. Returns {ok, path, size} or {error}.
+
+    Pure + synchronous: the caller decides the thread. Never raises — a failure
+    lands as an {"error": ...} envelope so the off-thread runner can ship a
+    clean error result instead of crashing the worker."""
+    try:
+        import os as _os
+        import zipfile
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from session_io import SESSIONS_DIR
+
+        appdata = Path(_os.environ.get("LOCALAPPDATA",
+                                          str(Path.home()))) / "ArchHub"
+        cn_dir = appdata / "custom_nodes"
+        skills_dir = appdata / "skills"
+        profile_path = appdata / "profile.json"
+        theme_path = appdata / "theme.json"
+
+        home = Path(_os.environ.get("USERPROFILE", str(Path.home())))
+        downloads = home / "Downloads"
+        try:
+            downloads.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            downloads = home
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        zip_path = downloads / f"archhub-export-{ts}.zip"
+
+        def _add_dir(z: "zipfile.ZipFile", root: Path, arc_prefix: str) -> None:
+            if not root.exists():
+                return
+            try:
+                for f in root.glob("**/*"):
+                    try:
+                        if f.is_file():
+                            rel = f.relative_to(root)
+                            z.write(f, arcname=f"{arc_prefix}/{rel}")
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        with zipfile.ZipFile(zip_path, "w",
+                               compression=zipfile.ZIP_DEFLATED) as z:
+            _add_dir(z, SESSIONS_DIR, "sessions")
+            _add_dir(z, skills_dir,   "skills")
+            _add_dir(z, cn_dir,       "custom_nodes")
+            for one in (profile_path, theme_path):
+                try:
+                    if one.exists() and one.is_file():
+                        z.write(one, arcname=one.name)
+                except Exception:
+                    pass
+
+        size = 0
+        try:
+            size = zip_path.stat().st_size
+        except Exception:
+            pass
+        return {"ok": True, "path": str(zip_path), "size": size}
+    except Exception as ex:
+        return {"error": str(ex)}
+
+
+def _do_clear_model_cache() -> dict:
+    """Best-effort delete of %LOCALAPPDATA%/ArchHub/model_cache/*. Returns
+    {ok, freed_bytes} or {error}. Pure + synchronous + never raises (see
+    _do_export_all)."""
+    try:
+        import os as _os
+        import shutil
+        from pathlib import Path
+        cache = Path(_os.environ.get("LOCALAPPDATA", str(Path.home()))) \
+            / "ArchHub" / "model_cache"
+        freed = 0
+        if not cache.exists():
+            return {"ok": True, "freed_bytes": 0, "note": "no cache dir"}
+        try:
+            for f in cache.glob("**/*"):
+                try:
+                    if f.is_file():
+                        freed += f.stat().st_size
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(cache, ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return {"ok": True, "freed_bytes": freed}
+    except Exception as ex:
+        return {"error": str(ex)}
+
+
+# ---------------------------------------------------------------------------
 # Host session/document picker implementation (used by the bridge slots
 # `list_host_sessions` and `list_host_documents`).
 #
@@ -468,6 +583,82 @@ class ArchHubBridge(QObject):
     connector_op_done = pyqtSignal(str)             # (result_json) — a connector op finished
     param_options_ready = pyqtSignal(str)           # (json) — dynamic dropdown options resolved
     node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
+    # Brain #32 — emitted when a brain_export_dataset worker finishes. Payload
+    # is the brain.dataset_export manifest JSON ({ok,row_count,files,...}) with
+    # `request_id` stamped in so the Brain view can match its pending click.
+    brain_dataset_done = pyqtSignal(str)            # (result_json) — dataset export finished
+    # Visual brain browser (BrainViewModal). brain_browse_changed fires when a
+    # fresh organized-view snapshot lands on the background pool (the cached
+    # snapshot is returned instantly on the Qt main thread). brain_search_done
+    # carries the retrieval-ranked search cards for a query, request_id-stamped
+    # so a stale result never overwrites the current search.
+    brain_browse_changed = pyqtSignal()             # () — organized brain view refreshed
+    brain_search_done = pyqtSignal(str)             # (result_json) — brain search finished
+    # Multi-device COMMUNITIES panel (BrainViewModal → Communities). Reads
+    # (community_groups / community_members / community_owned_server) route
+    # through `_cached_async` and re-pull on `community_changed`. Writes
+    # (community_create / community_join / community_set_transport /
+    # community_join_code / community_leave) run on `_bg_pool` and deliver a
+    # definitive per-request answer via `community_op_done(result_json)`
+    # (request_id-stamped, the connector_op_done / node_op_done idiom). A
+    # successful write also emits `community_changed` so the panel re-pulls
+    # the roster + current-community without the caller wiring a refresh.
+    community_changed  = pyqtSignal()               # () — community state changed (re-pull reads)
+    community_op_done  = pyqtSignal(str)            # (result_json) — community write finished
+    # Cloud-DB backup — emitted when a brain_cloud_backup worker finishes.
+    # Payload is the /v1/brain/sync result JSON ({ok,synced,new_hlc,...} or
+    # {ok:false,...}) with `request_id` stamped in so the Brain view's backup
+    # button can match its pending click (mirrors brain_dataset_done).
+    brain_backup_done = pyqtSignal(str)             # (result_json) — cloud backup finished
+    # Cloud sign-in — emitted when the cloud_sign_in() SignInWorker finishes
+    # (the real PKCE browser flow, reachable any time, not just first-run).
+    # Payload {ok, signed_in, email, plan, request_id, error?}. The Settings
+    # Account section + any signed-out CTA listen for this to flip to the
+    # signed-in state. The agent NEVER signs in — the browser step is the
+    # founder's; this signal just reports the outcome of THEIR action.
+    cloud_signin_done  = pyqtSignal(str)            # (result_json) — cloud sign-in finished
+    # Cloud sign-out — emitted when cloud_sign_out() finishes revoking the
+    # token server-side (POST /v1/auth/logout) + clearing it locally. Payload
+    # {ok, signed_in:false, msg, request_id}. `ok` is the SERVER revoke result;
+    # the local token is ALWAYS cleared (honest sign-out even when offline).
+    cloud_signout_done = pyqtSignal(str)            # (result_json) — cloud sign-out finished
+    # AgDR-0036 follow-up — the canvas-edit slots (graph_validate /
+    # graph_on_node_delete / library_suggest_swaps) used to run their
+    # work SYNCHRONOUSLY in the @pyqtSlot body on the Qt main thread.
+    # graph_validate fires debounced on EVERY canvas edit and
+    # graph_on_node_delete on every delete; holding the GUI thread there
+    # (even for sub-ms in-memory work, unbounded as the graph grows) is
+    # the same freeze CLASS as the host probes. They now route through
+    # `_cached_async` and emit this signal when fresh data lands so the
+    # JSX re-pulls the (now-cached) answer without ever blocking the
+    # main thread. Mirrors how `memory_changed` drives the memory slots.
+    graph_validated = pyqtSignal()                  # canvas validation/edit result refreshed
+    # AgDR-0036 follow-up — the two INTERACTIVE canvas slots that need a
+    # definitive answer for a SPECIFIC request before the UI can act:
+    #   graph_on_node_delete  (delete preview → silent/auto-bridge/recovery)
+    #   library_suggest_swaps (right-click "swap with…" → ranked list)
+    # A cached empty-first-call would corrupt their UX (a node with
+    # incident wires must NOT be reported silent-deletable just because
+    # the cache is cold). So instead of `_cached_async`, they run on
+    # `_bg_pool` and emit this signal with the real result JSON +
+    # `request_id` stamped in — the EXACT idiom already used by
+    # connector_op_done / workflow_done / brain_dataset_done. The JSX
+    # correlates by request_id (via the `bridgeAsyncSignal` helper) so
+    # the caller still gets a single awaited answer, just off the Qt
+    # main thread.
+    node_op_done    = pyqtSignal(str)               # (result_json) — interactive canvas op finished
+    # AgDR-0036 follow-up (2026-06-02) — the LAST two GUI-thread blockers were
+    # the Settings "Export everything" + "Clear model cache" buttons. Both ran
+    # a recursive glob+zip / glob+delete inside their @pyqtSlot, on the Qt main
+    # thread, freezing the UI for the duration of the user's click. They were
+    # the only entries on test_no_blocking_slots' allowlist (a documented
+    # block-on-user-action exception). Now converted to the proven off-thread
+    # idiom: the slot validates inline, submits the heavy fs work to _bg_pool,
+    # returns {async, request_id} instantly, and emits this signal with the
+    # real result + request_id when the work lands. Both the native
+    # SettingsTab (settings_dialog.py) and the JSX SettingsModal correlate by
+    # request_id, so the click stays responsive and the allowlist is empty.
+    settings_op_done = pyqtSignal(str)              # (result_json) — Settings housekeeping op finished
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None,
@@ -574,6 +765,125 @@ class ArchHubBridge(QObject):
         except Exception:
             self._graph_triggers = None
 
+        # ── MAKE-IT-REAL auto-sync: keep local + cloud brain from drifting
+        # between sign-ins. When SIGNED IN, a daemon thread runs the existing
+        # brain_cloud_backup delta-push on an interval (default 600s,
+        # env-overridable via ARCHHUB_BRAIN_SYNC_INTERVAL_S). Started after a
+        # successful sign-in, stopped on sign-out. Off the Qt main thread;
+        # best-effort + logged; never blocks the UI. State lives here so the
+        # cloud_sign_in / cloud_sign_out slots can start/stop it.
+        self._autosync_thread = None          # threading.Thread | None
+        self._autosync_stop = None            # threading.Event | None
+        self._autosync_lock = __import__("threading").Lock()
+        self._autosync_ticks = 0              # observability: completed pushes
+        try:
+            # If the app launches already signed in (token persisted from a
+            # prior session), start the scheduler at boot so sync resumes
+            # without waiting for a fresh sign-in.
+            import cloud_client as _cc
+            if _cc.is_signed_in():
+                self._start_brain_autosync()
+        except Exception:
+            pass
+
+    # ─── Brain ⇄ cloud auto-sync scheduler ──────────────────────────
+    def _brain_autosync_interval_s(self) -> float:
+        """Sync cadence in seconds. Default 600 (10 min); override with
+        ARCHHUB_BRAIN_SYNC_INTERVAL_S. Floored at a small positive epsilon
+        (0.01s) so a `0` / negative typo can't busy-spin the loop, while
+        still allowing fast cadences in tests."""
+        import os as _os
+        raw = _os.environ.get("ARCHHUB_BRAIN_SYNC_INTERVAL_S", "")
+        try:
+            val = float(raw) if raw else 600.0
+        except (TypeError, ValueError):
+            val = 600.0
+        return max(0.01, val)
+
+    def _start_brain_autosync(self) -> bool:
+        """Start the background auto-sync loop (idempotent). Returns True if a
+        new loop was started, False if one was already running. The loop runs
+        `brain_cloud_backup` (the existing local→cloud delta push) every
+        interval WHILE a cloud token is present; it self-stops if the token
+        disappears. Thread is a daemon so it never blocks process exit."""
+        import threading as _threading
+        with self._autosync_lock:
+            existing = self._autosync_thread
+            if existing is not None and existing.is_alive():
+                return False
+            stop = _threading.Event()
+            self._autosync_stop = stop
+
+            def _loop():
+                interval = self._brain_autosync_interval_s()
+                while not stop.is_set():
+                    # Wait FIRST so we don't double-push right after sign-in
+                    # (sign-in already fires an empty-delta handshake). A
+                    # stop() during the wait returns True → clean exit.
+                    if stop.wait(interval):
+                        break
+                    try:
+                        import cloud_client as _cc
+                        if not _cc.is_signed_in():
+                            # Token gone (e.g. expired) — stop syncing; the
+                            # next sign-in restarts the loop.
+                            break
+                    except Exception:
+                        # cloud_client missing — nothing to sync against.
+                        break
+                    try:
+                        # Reuse the real push. It is itself threaded + emits
+                        # brain_backup_done; we just trigger it on schedule.
+                        self.brain_cloud_backup()
+                        self._autosync_ticks += 1
+                    except Exception:
+                        # Best-effort: a failed tick must not kill the loop;
+                        # the next interval retries.
+                        pass
+
+            t = _threading.Thread(target=_loop, daemon=True,
+                                   name="archhub-brain-autosync")
+            self._autosync_thread = t
+            t.start()
+            return True
+
+    def _stop_brain_autosync(self) -> bool:
+        """Stop the background auto-sync loop if running. Returns True if a
+        loop was signalled to stop, False if none was running. Non-blocking —
+        signals the Event; the daemon thread unwinds on its next wake."""
+        with self._autosync_lock:
+            stop = self._autosync_stop
+            thread = self._autosync_thread
+            self._autosync_stop = None
+            self._autosync_thread = None
+        if stop is not None:
+            try:
+                stop.set()
+            except Exception:
+                pass
+        return bool(thread is not None and thread.is_alive())
+
+    def _brain_autosync_running(self) -> bool:
+        """True iff the auto-sync daemon thread is alive. Used by tests +
+        any future status surface."""
+        t = self._autosync_thread
+        return bool(t is not None and t.is_alive())
+
+    def _unbind_brain_owner(self) -> Optional[dict]:
+        """Unbind the local brain from the cloud account on sign-out.
+
+        Calls brain.clear_owner() via the memory_gate BrainClient (the
+        canonical arbitrary-brain-tool path). The brain DATA is untouched —
+        only the persisted owner binding is removed, so the default owner
+        reverts to env / OS / 'founder'. Best-effort: returns the clear_owner
+        result on success, None when the daemon is unreachable (graceful
+        degrade — sign-out still completes locally)."""
+        try:
+            from memory_gate import BrainClient
+            return BrainClient()._call("brain.clear_owner", {}, timeout=3.0)
+        except Exception:
+            return None
+
     # ─── Identity ───────────────────────────────────────────────
     @pyqtSlot(result=str)
     def get_version(self) -> str:
@@ -663,6 +973,14 @@ class ArchHubBridge(QObject):
             self._bg_pool_ex = p
         return p
 
+    @staticmethod
+    def _hash_payload(s: str) -> str:
+        """Stable short hash of a string payload — used to key
+        `_cached_async` on a graph snapshot so identical canvas states
+        share a cache entry (and the cache doesn't grow per keystroke)."""
+        import hashlib
+        return hashlib.sha1((s or "").encode("utf-8")).hexdigest()[:16]
+
     def _cached_async(self, key: str, work, *, ttl: float = 30.0,
                       empty=None, signal_name: str = "hosts_changed"):
         """Non-blocking cache.  `work` is a zero-arg callable doing the
@@ -732,7 +1050,7 @@ class ArchHubBridge(QObject):
             if mfn:
                 mfn(host_id)
                 try: self.hosts_changed.emit()
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 return _safe_json({"ok": True})
             return _safe_json({"error": "manager has no toggle"})
         except Exception as ex:
@@ -987,7 +1305,7 @@ class ArchHubBridge(QObject):
             # Notify the JSX so the sidebar list refreshes without a
             # relaunch — fresh session should appear immediately.
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"id": slug, "title": t,
                                  "saved_at": payload["saved_at"]})
         except Exception as ex:
@@ -1121,6 +1439,110 @@ class ArchHubBridge(QObject):
             return _safe_json({"error": str(ex)})
 
     # ─── Chat ───────────────────────────────────────────────────
+    # ── Telemetry (track-G, AgDR-0049) — JSX→Python so the pii_redactor
+    #    stays the single egress chokepoint. The canvas never imports a
+    #    PostHog SDK; all PII scrubbing + the internal-user guard live in
+    #    app/telemetry.py. All three slots are fire-and-forget no-ops when
+    #    telemetry is off. ──
+    @pyqtSlot(str, str)
+    def track_event_json(self, name: str, props_json: str) -> None:
+        """Fire a product-analytics event from the canvas. props_json is a
+        JSON object of bounded, PII-free properties. No-op when telemetry is
+        off / the SDK is missing / the user is internal (telemetry guards)."""
+        try:
+            import json as _json
+            import telemetry as _t
+            props = _json.loads(props_json) if props_json else {}
+            if not isinstance(props, dict):
+                props = {}
+            _t.track_event(name, **props)
+        except Exception:
+            pass  # telemetry must never break the UI
+
+    @pyqtSlot(str, str)
+    def identify_json(self, user_id: str, traits_json: str) -> None:
+        """Bind this install to a cloud user_id on sign-in. Traits (incl.
+        email) stay Python-side; the first call aliases the install UUID."""
+        try:
+            import json as _json
+            import telemetry as _t
+            traits = _json.loads(traits_json) if traits_json else {}
+            if not isinstance(traits, dict):
+                traits = {}
+            _t.identify(user_id, traits)
+        except Exception:
+            pass
+
+    @pyqtSlot()
+    def telemetry_reset(self) -> None:
+        """Clear the identity cache on sign-out so the next user is not
+        attributed to the previous one."""
+        try:
+            import telemetry as _t
+            _t.reset()
+        except Exception:
+            pass
+
+    def _persist_chat_plan(self, *, prompt: str, model: str, result: str,
+                            reasoning: list, tool_calls: list,
+                            routing_note: str = "", session_id: str = "") -> None:
+        """AgDR-0021 — write one ai.plan record for a Composer chat turn.
+
+        Makes every chat turn an inspectable, replayable canvas artefact:
+        the ai.plan History modal + Inspector read these back so the
+        founder SEES the prompt, the AI's reasoning, the tool calls it
+        ran, and the result as NODES — not just a transient chat bubble.
+
+        `session_id` (IA fix, ia-critique-ai-stemcells-2026-06-03 — plans
+        belong to a SESSION, not a global pool) roots the record under
+        the session's own plan dir and folds into the deterministic id.
+        It defaults to "" so existing callers (and the test suite, which
+        drives this helper without a session) keep writing to the
+        historical global pool, byte-for-byte unchanged.
+
+        Best-effort + atomic (PlanHistory.save writes .tmp then renames).
+        A persistence failure never blocks the chat turn — the bubble
+        already rendered live; this is the durable record.
+        """
+        try:
+            from plan_history import PlanHistory
+            from speckle_wire import default_project_dir
+        except Exception:
+            return
+        try:
+            sid = (session_id or "").strip()
+            pdir = str(default_project_dir())
+            # Session-scoped when a session id is present; the historical
+            # global pool when it's empty (back-compat).
+            history = PlanHistory(pdir, session_id=sid)
+            # Deterministic id keyed on prompt+model (+session) so a
+            # re-ask in the SAME session replays the same slot (matches
+            # the ai.plan node executor contract); a different session
+            # gets its own slot.
+            plan_id = PlanHistory.id_for(prompt=prompt or "", model=model or "auto",
+                                         session_id=sid)
+            import time as _t
+            record = {
+                "plan_id":  plan_id,
+                "session_id": sid,
+                "prompt":   prompt or "",
+                "model":    model or "auto",
+                # `plan` is the canonical tool-invocation list the JSX
+                # ai.plan node + History modal render.
+                "plan":     tool_calls or [],
+                "result":   result or "",
+                "reasoning": [str(s) for s in (reasoning or [])],
+                "status":   "ok" if (result or tool_calls) else "empty",
+                "error":    None,
+                "source":   "composer_chat",
+                "routing_note": routing_note or "",
+                "ts":       int(_t.time()),
+            }
+            history.save(record)
+        except Exception:
+            # Honest no-op on failure — never crash the chat thread.
+            pass
+
     @pyqtSlot(str, str)
     def send_chat(self, session_id: str, text: str) -> None:
         """2-arg overload — empty history. Delegates to the 3-arg form."""
@@ -1136,15 +1558,15 @@ class ArchHubBridge(QObject):
         text = (text or "").strip()
         if not text:
             try: self.chat_error.emit(session_id, "empty prompt")
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             try: self.chat_done.emit(session_id)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return
         if not self.router:
             try: self.chat_error.emit(session_id, "router not wired")
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             try: self.chat_done.emit(session_id)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return
 
         # Parse the front-end's conversation array into the LLMRouter's
@@ -1226,24 +1648,52 @@ class ArchHubBridge(QObject):
                 # is not reliable — some providers call on_chunk but leave
                 # streamed=False. Use our own counter, not the flag.
                 emitted_chunks = [0]
+                # AgDR-0021 — capture the turn so it persists as an
+                # auditable ai.plan canvas node (founder demand 2026-06-01:
+                # "see everything in nodes — REASONING, tool-calls"). We
+                # accumulate the streamed text, every reasoning frame, and
+                # every tool invocation, then write one PlanHistory record
+                # on completion. The Conversation node still renders live;
+                # the plan record is the durable, replayable artefact the
+                # ai.plan History modal + Inspector read back.
+                _reasoning_steps: list = []
+                _tool_calls: list = []
+                _text_parts: list = []
                 def _on_chunk(piece: str) -> None:
                     if piece:
                         emitted_chunks[0] += 1
+                        _text_parts.append(piece)
                         try: self.chat_chunk.emit(session_id, piece)
-                        except Exception: pass
+                        except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 def _on_reasoning(step: str) -> None:
                     # Forward each provider reasoning frame to JSX so the
                     # Conversation node renders a real trace instead of
                     # the v1.4 mocked 4-line block.
                     if step:
+                        _reasoning_steps.append(str(step))
                         try: self.chat_reasoning.emit(session_id, str(step))
-                        except Exception: pass
+                        except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                def _on_tool(inv) -> None:
+                    # Record each tool the turn ran (router-loop tools, e.g.
+                    # Anthropic/OpenAI function calls). Keep only completed
+                    # frames so we don't log the running→ok duplicate twice.
+                    try:
+                        if getattr(inv, "status", "") in ("ok", "error"):
+                            _tool_calls.append({
+                                "id":        getattr(inv, "id", ""),
+                                "tool_name": getattr(inv, "tool_name", ""),
+                                "arguments": getattr(inv, "arguments", {}),
+                                "status":    getattr(inv, "status", ""),
+                                "result":    getattr(inv, "result", None),
+                            })
+                    except Exception:
+                        pass
                 response = self.router.complete(
                     history=history,
                     model=model,
                     on_chunk=_on_chunk,
                     on_reasoning=_on_reasoning,
-                    on_tool_invocation=lambda _inv: None,
+                    on_tool_invocation=_on_tool,
                 )
                 # Only emit response.text as a final chunk if NOTHING was
                 # streamed. Otherwise we'd duplicate the entire message.
@@ -1251,16 +1701,54 @@ class ArchHubBridge(QObject):
                     text_out = getattr(response, "text", "") or ""
                     if text_out:
                         try: self.chat_chunk.emit(session_id, text_out)
-                        except Exception: pass
+                        except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                # AgDR-0021 — persist this Composer turn as an ai.plan
+                # record so it materialises as an inspectable, replayable
+                # canvas node (prompt + reasoning + tool-calls + result),
+                # not just a transient chat bubble. Best-effort: a failed
+                # save never blocks the turn.
+                try:
+                    final_text = ("".join(_text_parts)
+                                  or (getattr(response, "text", "") or ""))
+                    # Fold any provider tool-calls the client executed
+                    # itself (claude_cli runs its MCP tools in-process and
+                    # reports them via tool_calls_log on the LLMResponse).
+                    extra_calls = []
+                    raw_log = getattr(response, "tool_calls_log", None)
+                    if isinstance(raw_log, list):
+                        for c in raw_log:
+                            if isinstance(c, dict):
+                                extra_calls.append({
+                                    "tool_name": c.get("name") or "",
+                                    "arguments": c.get("input") or {},
+                                    "status":    "ok",
+                                    "result":    c.get("result"),
+                                })
+                    self._persist_chat_plan(
+                        prompt=text,
+                        model=(getattr(response, "model", None) or model),
+                        result=final_text,
+                        reasoning=_reasoning_steps,
+                        tool_calls=_tool_calls + extra_calls,
+                        routing_note=getattr(response, "routing_note", "") or "",
+                        # IA fix: key this turn's plan to its session so
+                        # the ai.plan history is per-session, not a global
+                        # pool. `session_id` is the conversation node id
+                        # the composer is anchored to (send_chat_history
+                        # arg). Empty → global pool (back-compat).
+                        session_id=session_id or "",
+                    )
+                except Exception:
+                    pass
                 try: self.chat_done.emit(session_id)
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             except Exception as ex:
                 # Always emit BOTH chat_error and chat_done so the JS UI
                 # doesn't hang waiting for a terminal signal.
                 try: self.chat_error.emit(session_id, f"{type(ex).__name__}: {ex}")
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 try: self.chat_done.emit(session_id)
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
         threading.Thread(target=_runner, daemon=True).start()
 
@@ -1315,12 +1803,22 @@ class ArchHubBridge(QObject):
 
     # ─── Settings ──────────────────────────────────────────────
     @pyqtSlot()
-    def open_settings(self) -> None:
-        """Open the native SettingsDialog on the Qt main thread."""
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, self._open_settings_safe)
+    @pyqtSlot(str)
+    def open_settings(self, section: str = "") -> None:
+        """Open the native SettingsDialog on the Qt main thread.
 
-    def _open_settings_safe(self) -> None:
+        `section` (optional) names a tab to focus on open, e.g. "account"
+        so the Brain "Back up my brain" signed-out CTA lands the founder
+        directly on Settings → Account where the real "Sign in to ArchHub
+        Cloud" button lives. Empty string keeps the default (first) tab.
+        Two stacked @pyqtSlot decorators expose BOTH the legacy no-arg call
+        (existing JS: bridgeCall('open_settings')) and the new one-arg call
+        (bridgeCall('open_settings','account')) across QWebChannel."""
+        from PyQt6.QtCore import QTimer
+        sec = str(section or "")
+        QTimer.singleShot(0, lambda: self._open_settings_safe(sec))
+
+    def _open_settings_safe(self, section: str = "") -> None:
         if not (self.router and self.manager and self.tools):
             try:
                 self.notice.emit("warning",
@@ -1341,10 +1839,18 @@ class ArchHubBridge(QObject):
                                        tools=self.tools)
             except TypeError:
                 dlg = SettingsDialog(self.router, parent)
+            # Focus the requested tab (e.g. "account") if the dialog
+            # supports it. Best-effort — older dialogs without the method
+            # just open on their default tab.
+            if section:
+                focus = getattr(dlg, "focus_section", None)
+                if callable(focus):
+                    try: focus(section)
+                    except Exception: pass  # audit: deliberate-fail-soft — best-effort dialog focus nudge
             dlg.exec()
         except Exception as ex:
             try: self.notice.emit("error", f"Settings unavailable: {ex}")
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
     @pyqtSlot()
     def open_pricing(self) -> None:
@@ -1363,7 +1869,7 @@ class ArchHubBridge(QObject):
                 UpgradeDialog(parent=parent).exec()
             except Exception as ex:
                 try: self.notice.emit("error", f"Pricing unavailable: {ex}")
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
     # ─── Memory ────────────────────────────────────────────────
     # AgDR-0036 — both reads hit the ArchHub cloud over HTTP.  Run on
@@ -1401,7 +1907,7 @@ class ArchHubBridge(QObject):
             if r["status"] != "ok":
                 return _safe_json({"error": "cloud unavailable"})
             try: self.memory_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json(r.get("json") or {})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -1417,7 +1923,7 @@ class ArchHubBridge(QObject):
             if r["status"] != "ok":
                 return _safe_json({"error": "update failed"})
             try: self.memory_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json(r.get("json") or {})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -1431,7 +1937,7 @@ class ArchHubBridge(QObject):
             if r["status"] != "ok":
                 return _safe_json({"error": "forget failed"})
             try: self.memory_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "id": fid_int})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -1482,13 +1988,24 @@ class ArchHubBridge(QObject):
 
     # ─── M4 (AgDR-0021) — Plan history surface ─────────────────
     @pyqtSlot(str, int, result=str)
+    @pyqtSlot(str, int, str, result=str)
     def get_plan_history(self, project_dir: str = "",
-                          limit: int = 50) -> str:
+                          limit: int = 50, session_id: str = "") -> str:
         """List the most-recent `limit` AI-plan records persisted by
-        `ai.plan` cooks under `<project_dir>/.archhub/plans/`.
+        `ai.plan` cooks.
+
+        Records root under either the session's own plan dir
+        (`<project_dir>/.archhub/sessions/<session_id>/plans/`) when
+        `session_id` is given, or the historical global pool
+        (`<project_dir>/.archhub/plans/`) when it's empty.
 
         Empty project_dir → use the default SpeckleWire project dir
         (the canonical `%LOCALAPPDATA%/ArchHub/projects/default`).
+
+        IA fix (ia-critique-ai-stemcells-2026-06-03): `session_id` is a
+        NEW trailing param, defaulted "" — the historical 2-arg call
+        (`get_plan_history(project_dir, limit)`) is unchanged and still
+        reads the global pool, so old global plans keep showing.
 
         Returns JSON: `{records:[…], count:N}` or `{error:"…"}`.
         Each record carries `plan_id`, `prompt`, `model`, `plan`,
@@ -1501,26 +2018,32 @@ class ArchHubBridge(QObject):
             if not pdir:
                 from speckle_wire import default_project_dir
                 pdir = str(default_project_dir())
-            history = PlanHistory(pdir)
+            history = PlanHistory(pdir, session_id=(session_id or "").strip())
             records = history.list_records(limit=max(1, int(limit)))
             return _safe_json({"records": records,
                                 "count": len(records),
-                                "project_dir": pdir})
+                                "project_dir": pdir,
+                                "session_id": (session_id or "").strip()})
         except Exception as ex:
             return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
 
     @pyqtSlot(str, str, result=str)
+    @pyqtSlot(str, str, str, result=str)
     def get_plan_record(self, plan_id: str,
-                         project_dir: str = "") -> str:
+                         project_dir: str = "", session_id: str = "") -> str:
         """Load one plan record by id. Returns the record JSON or
-        `{error:"not_found"}`."""
+        `{error:"not_found"}`.
+
+        IA fix: `session_id` (NEW trailing param, defaulted "") roots the
+        lookup in the session's plan dir; empty → the global pool, so the
+        historical 2-arg call is unchanged."""
         try:
             from plan_history import PlanHistory
             pdir = (project_dir or "").strip()
             if not pdir:
                 from speckle_wire import default_project_dir
                 pdir = str(default_project_dir())
-            history = PlanHistory(pdir)
+            history = PlanHistory(pdir, session_id=(session_id or "").strip())
             rec = history.load((plan_id or "").strip())
             if rec is None:
                 return _safe_json({"error": "not_found"})
@@ -1529,17 +2052,22 @@ class ArchHubBridge(QObject):
             return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
 
     @pyqtSlot(str, str, result=str)
+    @pyqtSlot(str, str, str, result=str)
     def delete_plan_record(self, plan_id: str,
-                            project_dir: str = "") -> str:
+                            project_dir: str = "", session_id: str = "") -> str:
         """Drop one record from disk. Returns `{ok:true}` or
-        `{ok:false, error:"…"}`."""
+        `{ok:false, error:"…"}`.
+
+        IA fix: `session_id` (NEW trailing param, defaulted "") roots the
+        delete in the session's plan dir; empty → the global pool, so the
+        historical 2-arg call is unchanged."""
         try:
             from plan_history import PlanHistory
             pdir = (project_dir or "").strip()
             if not pdir:
                 from speckle_wire import default_project_dir
                 pdir = str(default_project_dir())
-            history = PlanHistory(pdir)
+            history = PlanHistory(pdir, session_id=(session_id or "").strip())
             ok = history.delete((plan_id or "").strip())
             return _safe_json({"ok": bool(ok)})
         except Exception as ex:
@@ -1882,6 +2410,37 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── Accessibility prefs (read-only exposure to the React UI) ─
+    @pyqtSlot(result=str)
+    def get_a11y_prefs(self) -> str:
+        """Expose the accessibility preferences the Settings →
+        Accessibility tab persists locally (settings_dialog.AccessibilityTab
+        ._save → secrets_store.save_setting under the same keys).
+
+        The React UI (studio-lm.jsx boot effect) reads this on mount to
+        apply `reduce_motion` (toggles html.lm-reduce-motion). font_size /
+        contrast / screen_reader are returned for completeness but are NOT
+        yet applied in the UI — that's deferred pending a design decision
+        (px-scale refactor / high-contrast palette / component aria work).
+
+        Never raises — returns sane defaults on any error so the boot
+        effect can rely on a well-shaped object."""
+        try:
+            from secrets_store import load_setting
+            return _safe_json({
+                "reduce_motion": bool(load_setting("a11y_reduce_motion")),
+                "screen_reader": bool(load_setting("a11y_screen_reader")),
+                "font_size": load_setting("a11y_font_size") or "default",
+                "contrast": load_setting("a11y_contrast") or "default",
+            })
+        except Exception:
+            return _safe_json({
+                "reduce_motion": False,
+                "screen_reader": False,
+                "font_size": "default",
+                "contrast": "default",
+            })
+
     # ─── Providers (LLM vendor keys) ───────────────────────────
     @pyqtSlot(result=str)
     def get_providers(self) -> str:
@@ -1968,9 +2527,18 @@ class ArchHubBridge(QObject):
                 name = sid
                 messages = []
             session.graph = graph
-            save_session(session, name=name, messages=messages or None)
+            # Write back to the EXACT file we loaded (`p`), not a re-slugified
+            # name. create_session slugifies "ping rhino" -> "ping-rhino"
+            # (hyphen) and load_session reads `<sid>.archhub-session.json`, but
+            # session_io._slugify("ping rhino") -> "ping_rhino" (underscore).
+            # Without path=p, save_session wrote the UNDERSCORE file while the
+            # loader looked for the HYPHEN one — so a saved graph never loaded
+            # back (founder bug 2026-06-02: "saved but empty", second cause
+            # under the empty-payload refusal). Passing path keeps the
+            # save/load round-trip on one file regardless of slug convention.
+            save_session(session, name=name, path=p, messages=messages or None)
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "session_id": sid,
                                 "nodes": len(graph.get("nodes") or []),
                                 "wires": len(graph.get("wires") or [])})
@@ -1990,7 +2558,17 @@ class ArchHubBridge(QObject):
         Returns the same response envelope:
           {status: 'ok', results: [{id, kind, label, score, why}], count}
         Errors surface as {status:'error', error:str} so the panel
-        can render a single-line banner without crashing."""
+        can render a single-line banner without crashing.
+
+        AgDR-0036 follow-up — `memory.query()` opens the graph.sqlite
+        knowledge graph and runs a community-aware BFS (measured ~6-7 ms
+        per call). This slot is called on EVERY search keystroke; running
+        it synchronously in the @pyqtSlot body janked the Qt main thread
+        on every character. Now routed through `_cached_async` keyed by
+        the query envelope: the cached result returns instantly, the
+        SQLite query runs on the background pool, and `memory_changed`
+        fires when fresh data lands so the search consumer re-pulls the
+        (now-cached) hits. No SQLite ever touches the main thread."""
         try:
             import json as _json
             args = _json.loads(args_json or "{}")
@@ -2000,11 +2578,33 @@ class ArchHubBridge(QObject):
             if self.tools is None:
                 return _safe_json({"status": "error",
                                     "error": "tool engine not initialised"})
-            res = self.tools.invoke("memory_query", args)
-            return _safe_json(res)
         except Exception as ex:
             return _safe_json({"status": "error",
                                 "error": f"{type(ex).__name__}: {ex}"})
+
+        # Cheap input validation stays INLINE (no I/O) so the caller gets
+        # an immediate, correct error — only the SQLite query goes
+        # off-thread. (The JSX search consumers already guard q.length>=2,
+        # so the empty-question path is defensive.)
+        if not str(args.get("question", "") or "").strip():
+            return _safe_json({"status": "error",
+                                "error": "memory_query needs `question`"})
+
+        def _work():
+            try:
+                return self.tools.invoke("memory_query", args)
+            except Exception as ex:
+                return {"status": "error",
+                        "error": f"{type(ex).__name__}: {ex}"}
+
+        # Cache key = the normalised query envelope so distinct searches
+        # don't collide and an identical repeated search hits cache. Short
+        # TTL — memory facts change as the user works, so re-query soon.
+        key = "memory_query:" + _safe_json(args)
+        return _safe_json(self._cached_async(
+            key, _work, ttl=5.0,
+            empty={"status": "ok", "results": [], "count": 0},
+            signal_name="memory_changed"))
 
     @pyqtSlot(result=str)
     def get_brain_stats(self) -> str:
@@ -2031,8 +2631,18 @@ class ArchHubBridge(QObject):
     # tool. Returns JSON string (QWebChannel friendly). Errors land as
     # {"ok":false,"error":"..."} — never raise across the bridge.
 
-    def _brain_tool(self, tool_name: str, args: dict) -> dict:
-        """Internal helper — call a brain MCP tool via the local BrainClient."""
+    def _brain_tool(self, tool_name: str, args: dict,
+                    timeout: float = 4.0) -> dict:
+        """Internal helper — call a brain MCP tool via the local BrainClient.
+
+        MUST NOT be called from a @pyqtSlot body on the Qt main thread —
+        it does a blocking HTTP round-trip to the brain daemon
+        (`http://127.0.0.1:8473/mcp`) and the daemon is frequently DOWN,
+        so a call can stall for the full `timeout`. Every caller routes
+        through `_cached_async` / `_bg_pool` so this runs on a worker
+        thread. `timeout` is exposed so hot paths can fast-fail (a short
+        connect timeout) instead of waiting the default 4 s for a dead
+        daemon."""
         try:
             from memory_gate import BrainClient
         except Exception as ex:
@@ -2040,7 +2650,7 @@ class ArchHubBridge(QObject):
         try:
             client = BrainClient()
             # Reuse the BrainClient transport (handles SSE + stateless HTTP)
-            result = client._call(tool_name, args, timeout=4.0)
+            result = client._call(tool_name, args, timeout=timeout)
             if isinstance(result, dict):
                 return result
             return {"ok": True, "result": result}
@@ -2112,33 +2722,1072 @@ class ArchHubBridge(QObject):
             "cwd": _os.getcwd(),
         }))
 
+    @pyqtSlot(str, str, result=str)
+    def brain_export_dataset(self, scope: str = "user",
+                             dataset_name: str = "my-brain") -> str:
+        """Brain #32 — export the brain as a HuggingFace-style training
+        dataset via the brain.dataset_export MCP tool.
+
+        Founder vision (2026-05-26): *"this brain should be able to produce
+        training datasets."* This is the user-facing surface — the Brain
+        view's "Generate training dataset" button calls this slot.
+
+        `scope` is a founder-facing key: "user" (your private memory),
+        "project", "firm", or "collective". COLLECTIVE never emits raw rows
+        — the export tool routes it through privacy.privatize_for_collective
+        (differential-privacy aggregates only). Maps "collective" → the
+        brain's COMMUNITY pool string the tool understands.
+
+        Runs on the background pool + emits brain_dataset_done(result_json)
+        when finished, so a large brain never freezes the Qt main thread
+        (and never trips bridgeAsync's 1.5s synchronous ceiling). Returns
+        immediately with {async, request_id, out_dir}.
+
+        The manifest the signal carries includes row_count, scope_distribution,
+        and files{jsonl{path,bytes}} — real proof a dataset hit disk.
+        """
+        import os as _os
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        # Founder-facing scope key → brain scope string. "collective" is the
+        # privacy-gated path: the export tool detects a collective-class scope
+        # and emits DP aggregates instead of raw rows.
+        scope_key = (scope or "user").strip().lower()
+        _SCOPE_MAP = {
+            "user": "user", "you": "user", "u": "user",
+            "project": "project", "p": "project",
+            "firm": "firm", "f": "firm",
+            "collective": "collective", "community": "collective", "c": "collective",
+        }
+        brain_scope = _SCOPE_MAP.get(scope_key, "user")
+
+        # User-visible export location under the repo so the founder can find
+        # the dataset on disk. Created up-front so a failure path still has a
+        # real directory to report.
+        out_dir = _os.path.join(_os.getcwd(), "exports", "brain-datasets")
+        try:
+            _os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        safe_name = (dataset_name or "my-brain").strip() or "my-brain"
+
+        def _runner():
+            payload: dict
+            try:
+                from memory_gate import BrainClient
+                client = BrainClient()
+                # Generous timeout — local SQLite read + JSONL write is fast,
+                # but a cold daemon may need a moment. Stays under the 60s
+                # no-long-waits floor.
+                result = client._call("brain.dataset_export", {
+                    "out_dir": out_dir,
+                    "dataset_name": safe_name,
+                    "scopes": [brain_scope],
+                }, timeout=45.0)
+                payload = result if isinstance(result, dict) \
+                    else {"ok": True, "result": result}
+            except Exception as ex:
+                # Degrade gracefully — daemon down / unreachable lands here.
+                payload = {"ok": False,
+                           "error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = request_id
+            payload.setdefault("scope", brain_scope)
+            payload.setdefault("out_dir", out_dir)
+            try:
+                self.brain_dataset_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False,
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id,
+                           "out_dir": out_dir, "scope": brain_scope})
+
+    # ─── Visual brain browser (BrainViewModal "Your brain, organized") ──
+    @pyqtSlot(result=str)
+    def brain_browse(self) -> str:
+        """Organized brain view for the founder-facing visual browser.
+
+        Returns the four coordinated views (top-of-mind cards, facet lanes,
+        archived tray, learning timeline) assembled READ-ONLY by the daemon's
+        `brain.browse` tool. The tool walks every fragment + computes
+        decay-weighted salience — heavier than the 1.5 s bridgeAsync ceiling on
+        a cold daemon — so this is routed through `_cached_async`: the cached
+        snapshot returns INSTANTLY on the Qt main thread, the real `brain.browse`
+        HTTP call runs ONLY on the background pool, and `brain_browse_changed`
+        fires when fresh data lands so the modal re-pulls. A down daemon
+        degrades to an honest empty payload (ANTI-LIE — never a fabricated
+        view), and the modal keeps its existing 7-layer map regardless."""
+        return _safe_json(self._cached_async(
+            "brain_browse_view", self._compute_brain_browse,
+            ttl=20.0,
+            empty={"ok": False, "pending": True, "totals": {},
+                   "top_of_mind": [], "facets": [], "archived": [],
+                   "timeline": []},
+            signal_name="brain_browse_changed"))
+
+    def _compute_brain_browse(self) -> dict:
+        """Heavy body for `brain_browse` — runs ONLY on the background pool via
+        `_cached_async`, never the Qt main thread. One blocking HTTP call to the
+        brain daemon's read-only browse tool. Fast-fails (3 s) so a dead daemon
+        can't pin a worker thread; the honest empty payload carries the down
+        state to the UI."""
+        res = self._brain_tool("brain.browse", {}, timeout=3.0)
+        if isinstance(res, dict) and res.get("ok"):
+            return res
+        # Daemon down / tool missing — honest degraded payload.
+        err = res.get("error") if isinstance(res, dict) else None
+        return {"ok": False, "degraded": err or "brain daemon unreachable",
+                "totals": {}, "top_of_mind": [], "facets": [],
+                "archived": [], "timeline": []}
+
+    @pyqtSlot(str, result=str)
+    @pyqtSlot(str, str, result=str)
+    def brain_search(self, query: str, project: str = "") -> str:
+        """Run the brain's real retrieval ranker for `query` and return the hits
+        as browser cards (facet colour + 'matches your search').
+
+        Threaded server-side (FTS5 + vector rerank can exceed the 1.5 s sync
+        ceiling); returns instantly with {async, request_id} and emits
+        `brain_search_done(result_json)` when finished. request_id-stamped so a
+        stale result never overwrites the current search. Empty/blank query is
+        answered inline with an empty card list (no daemon round-trip). An
+        optional `project` (e.g. 'P-674') scopes the search to one project's
+        facts, matching the browser's project filter chip-row."""
+        import uuid as _uuid
+        q = (query or "").strip()
+        proj = (project or "").strip()
+        request_id = _uuid.uuid4().hex[:12]
+        if not q:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": True, "query": "", "cards": []})
+
+        def _runner():
+            payload: dict
+            try:
+                args = {"query": q}
+                if proj:
+                    args["project"] = proj
+                res = self._brain_tool("brain.browse", args, timeout=20.0)
+                if isinstance(res, dict) and res.get("ok"):
+                    payload = {"ok": True, "query": q,
+                               "cards": res.get("search", [])}
+                else:
+                    err = res.get("error") if isinstance(res, dict) else None
+                    payload = {"ok": False, "query": q, "cards": [],
+                               "error": err or "brain daemon unreachable"}
+            except Exception as ex:
+                payload = {"ok": False, "query": q, "cards": [],
+                           "error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = request_id
+            try:
+                self.brain_search_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id, "query": q})
+
+    @pyqtSlot(str, result=str)
+    def brain_restore(self, fragment_id: str) -> str:
+        """Restore a faded/archived note to active memory (clears valid_until).
+
+        The visual browser's 'Restore' button calls this. Runs the daemon's
+        `brain.restore` tool on the background pool (it's a write — must not
+        block the Qt main thread) and emits `brain_browse_changed` on success
+        so the modal re-pulls and the card leaves the archived tray. Returns
+        instantly with {async, request_id}; an honest failure (daemon down) is
+        reported via the signal payload."""
+        import uuid as _uuid
+        fid = (fragment_id or "").strip()
+        request_id = _uuid.uuid4().hex[:12]
+        if not fid:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": "missing fragment_id"})
+
+        def _runner():
+            try:
+                res = self._brain_tool("brain.restore", {"fragment_id": fid},
+                                       timeout=10.0)
+                ok = isinstance(res, dict) and res.get("ok")
+            except Exception:
+                ok = False
+            if ok:
+                # View changed — let the modal re-pull the organized snapshot.
+                try: self.brain_browse_changed.emit()
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
+    # ─── Multi-device COMMUNITIES (BrainViewModal → Communities panel) ──
+    # The community MECHANISM (brain.community_* — 8 tools on the daemon) was
+    # wired-not-shipped: no GUI. These slots are its desktop surface. Every
+    # body calls a brain.community_* tool, which does a BLOCKING HTTP round
+    # trip to the (frequently-down) daemon — so NONE of this runs on the Qt
+    # main thread:
+    #   • READS  (community_groups / community_members / community_owned_server)
+    #     route through `_cached_async` — cached value returns INSTANTLY, the
+    #     real `_brain_tool` call runs ONLY on the background pool, and
+    #     `community_changed` fires when fresh data lands so the panel re-pulls.
+    #   • WRITES (community_create / community_join_code / community_join /
+    #     community_set_transport / community_leave) run on `_bg_pool` via the
+    #     shared `_community_write` helper and deliver a definitive answer over
+    #     `community_op_done(result_json)` (request_id-stamped — the
+    #     connector_op_done / node_op_done idiom the JSX's bridgeAsyncSignal
+    #     already understands). A successful write also emits `community_changed`
+    #     so the reads re-pull. Mirrors brain_browse / brain_search / brain_restore.
+
+    @pyqtSlot(result=str)
+    def community_groups(self) -> str:
+        """READ — the multi-device communities this device knows about, plus
+        which one is current (drives the Communities panel's "Current
+        community" header + "No community yet" empty state).
+
+        Routed through `_cached_async`: the cached snapshot returns instantly
+        on the Qt main thread, the blocking `brain.community_groups` HTTP call
+        runs ONLY on the background pool, and `community_changed` fires when
+        fresh data lands so the panel re-pulls. Honest empty payload when the
+        daemon is down (ANTI-LIE — never a fabricated community)."""
+        return _safe_json(self._cached_async(
+            "community_groups", self._compute_community_groups,
+            ttl=15.0,
+            empty={"ok": False, "pending": True,
+                   "current_community_id": None, "communities": []},
+            signal_name="community_changed"))
+
+    def _compute_community_groups(self) -> dict:
+        """Heavy body for `community_groups` — background pool only. One
+        blocking HTTP call, fast-failing (3 s) so a dead daemon can't pin a
+        worker."""
+        res = self._brain_tool("brain.community_groups", {}, timeout=3.0)
+        if isinstance(res, dict) and res.get("ok"):
+            return res
+        err = res.get("error") if isinstance(res, dict) else None
+        return {"ok": False, "degraded": err or "brain daemon unreachable",
+                "current_community_id": None, "communities": []}
+
+    @pyqtSlot(result=str)
+    @pyqtSlot(str, result=str)
+    def community_members(self, community_id: str = "") -> str:
+        """READ — the members (devices/users) of the current community (or an
+        explicit `community_id`). Drives the panel's MEMBERS list.
+
+        `_cached_async` keyed per community_id so switching communities doesn't
+        show a stale roster; re-pulls on `community_changed`. Honest empty list
+        when the daemon is down."""
+        cid = (community_id or "").strip()
+        key = "community_members:" + (cid or "_current")
+
+        def _work():
+            args = {"community_id": cid} if cid else {}
+            res = self._brain_tool("brain.community_members", args, timeout=3.0)
+            if isinstance(res, dict) and res.get("ok"):
+                return res
+            err = res.get("error") if isinstance(res, dict) else None
+            return {"ok": False, "degraded": err or "brain daemon unreachable",
+                    "community_id": cid or None, "members": []}
+
+        return _safe_json(self._cached_async(
+            key, _work, ttl=15.0,
+            empty={"ok": False, "pending": True,
+                   "community_id": cid or None, "members": []},
+            signal_name="community_changed"))
+
+    @pyqtSlot(result=str)
+    @pyqtSlot(str, result=str)
+    def community_owned_server(self, base_url: str = "") -> str:
+        """READ — owned-server readiness for a `speckle` community transport.
+
+        Reports {reachable, docker_available, can_start, code, message}: code
+        is 'running' / 'ready_to_start' / 'docker_missing'. The panel uses
+        docker_available + code to show the "install Docker Desktop to
+        self-host" hint when absent. `brain.community_owned_server` probes a
+        port + Docker (blocking, multi-second) so it is `_cached_async` — never
+        on the Qt main thread."""
+        url = (base_url or "").strip()
+        key = "community_owned_server:" + (url or "_default")
+
+        def _work():
+            args = {"base_url": url} if url else {}
+            res = self._brain_tool("brain.community_owned_server", args,
+                                   timeout=4.0)
+            if isinstance(res, dict) and res.get("ok"):
+                return res
+            err = res.get("error") if isinstance(res, dict) else None
+            return {"ok": False, "degraded": err or "brain daemon unreachable",
+                    "reachable": False, "docker_available": False,
+                    "can_start": False, "code": "unknown",
+                    "message": err or "Brain daemon unreachable — can't probe "
+                                      "the owned server yet."}
+
+        return _safe_json(self._cached_async(
+            key, _work, ttl=10.0,
+            empty={"ok": False, "pending": True, "reachable": False,
+                   "docker_available": False, "can_start": False,
+                   "code": "pending", "message": "Checking owned server…"},
+            signal_name="community_changed"))
+
+    def _community_write(self, tool_name: str, args: dict,
+                         request_id: str) -> str:
+        """Shared WRITE driver for the community panel. Runs `tool_name`
+        (a brain.community_* mutation) on `_bg_pool` — NEVER the Qt main
+        thread — and emits `community_op_done(result_json)` with the result +
+        `request_id` stamped in (so the JSX's bridgeAsyncSignal correlates the
+        answer to its click). On success also emits `community_changed` so the
+        cached reads (groups / members / owned_server) re-pull. Returns the
+        instant {async, request_id} ack."""
+        def _runner():
+            payload: dict
+            try:
+                res = self._brain_tool(tool_name, args, timeout=12.0)
+                if isinstance(res, dict):
+                    payload = dict(res)
+                    payload.setdefault("ok", False)
+                else:
+                    payload = {"ok": False,
+                               "error": "unexpected tool result"}
+            except Exception as ex:
+                payload = {"ok": False,
+                           "error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = request_id
+            if payload.get("ok"):
+                try: self.community_changed.emit()
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            try:
+                self.community_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
+    @pyqtSlot(str, str, result=str)
+    def community_create(self, name: str, request_id: str = "") -> str:
+        """WRITE — create a multi-device community; the caller becomes OWNER.
+
+        Transport is intentionally NOT chosen here — it defaults to 'disk'
+        (offline JSON snapshot) on the daemon and the founder picks the real
+        transport afterward via the panel's TRANSPORT SELECTOR
+        (community_set_transport). Off-thread; answer via community_op_done."""
+        import uuid as _uuid
+        rid = (request_id or "").strip() or _uuid.uuid4().hex[:12]
+        nm = (name or "").strip()
+        if not nm:
+            return _safe_json({"async": False, "request_id": rid,
+                               "ok": False, "error": "community name required"})
+        return self._community_write(
+            "brain.community_create", {"name": nm}, rid)
+
+    @pyqtSlot(str, int, str, result=str)
+    def community_join_code(self, role: str = "member",
+                            ttl_hours: int = 168,
+                            request_id: str = "") -> str:
+        """WRITE (owner-only) — mint a signed join-code + archhub:// URL for the
+        current community so a second device can join. Default TTL 168 h
+        (7 days). The daemon rejects this when this device isn't the owner; the
+        honest {ok:false, error} rides back over community_op_done. Off-thread."""
+        import uuid as _uuid
+        rid = (request_id or "").strip() or _uuid.uuid4().hex[:12]
+        return self._community_write(
+            "brain.community_join_code",
+            {"role": (role or "member").strip() or "member",
+             "ttl_hours": int(ttl_hours) if ttl_hours else 168}, rid)
+
+    @pyqtSlot(str, str, result=str)
+    def community_join(self, code: str, request_id: str = "") -> str:
+        """WRITE — join a community on THIS device from a join-code (bare token
+        OR the full archhub://community/join?code=... URL). The panel's JOIN
+        field (second-device flow) calls this. Signature + expiry are verified
+        offline by the daemon. Off-thread; answer via community_op_done."""
+        import uuid as _uuid
+        rid = (request_id or "").strip() or _uuid.uuid4().hex[:12]
+        c = (code or "").strip()
+        if not c:
+            return _safe_json({"async": False, "request_id": rid,
+                               "ok": False, "error": "paste a join code"})
+        return self._community_write(
+            "brain.community_join", {"code": c}, rid)
+
+    @pyqtSlot(str, str, str, result=str)
+    def community_set_transport(self, transport_kind: str,
+                                transport_base_url: str = "",
+                                request_id: str = "") -> str:
+        """WRITE — point the current community at a transport: 'cloud_relay'
+        (works anywhere), 'disk' (shared Dropbox/OneDrive folder), or 'speckle'
+        (LAN/Tailscale owned server). This is the founder's fork, exposed in the
+        panel as an explicit CHOICE (default-none) — not a silent default.
+        `transport_base_url` carries the folder path (disk) or server URL
+        (speckle); ignored for cloud_relay. Off-thread; answer via
+        community_op_done, which also triggers a roster re-pull."""
+        import uuid as _uuid
+        rid = (request_id or "").strip() or _uuid.uuid4().hex[:12]
+        kind = (transport_kind or "").strip()
+        if kind not in ("cloud_relay", "disk", "speckle"):
+            return _safe_json({"async": False, "request_id": rid, "ok": False,
+                               "error": "transport must be cloud_relay, disk, "
+                                        "or speckle"})
+        args = {"transport_kind": kind,
+                "transport_base_url": (transport_base_url or "").strip()}
+        return self._community_write(
+            "brain.community_set_transport", args, rid)
+
+    @pyqtSlot(str, result=str)
+    def community_leave(self, request_id: str = "") -> str:
+        """WRITE — leave the current community on this device (tombstones this
+        device's member fragment; reversible by re-joining with a fresh code).
+        Off-thread; answer via community_op_done + a re-pull."""
+        import uuid as _uuid
+        rid = (request_id or "").strip() or _uuid.uuid4().hex[:12]
+        return self._community_write("brain.community_leave", {}, rid)
+
+    # ─── Cloud-DB backup — "Back up my brain" ──────────────────────────
+    @pyqtSlot(result=str)
+    def brain_cloud_backup_status(self) -> str:
+        """Cheap, synchronous probe that drives the Brain view's "Back up
+        my brain" button enabled/disabled state.
+
+        Returns {signed_in: bool, cloud_url: str}. `signed_in` is True iff a
+        non-expired cloud bearer token is present (resolved through
+        cloud_client → secrets_store, which holds the credential encrypted
+        at rest — never plaintext in code). The JSX enables the button only
+        when signed_in is True; otherwise it keeps the honest
+        "Sign in to enable cloud backup" state. No network I/O — safe to
+        call on every Brain-view open without tripping bridgeAsync's 1.5s
+        ceiling."""
+        try:
+            import cloud_client
+            return _safe_json({
+                "signed_in": bool(cloud_client.is_signed_in()),
+                "cloud_url": cloud_client.base_url(),
+            })
+        except Exception as ex:
+            # Module missing on a slimmed install → treat as not signed in
+            # (button stays honestly disabled). Never raise across the bridge.
+            return _safe_json({"signed_in": False,
+                               "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(result=str)
+    def brain_cloud_backup(self) -> str:
+        """Cloud-DB backup — the real client push behind the Brain view's
+        "Back up my brain" button (cloud server live since commit 0dce168,
+        POST /v1/brain/sync with Bearer auth + per-user sqlite replica).
+
+        Token resolution (BRAIN-FIRST · secrets are references only): the
+        cloud bearer token is read via cloud_client.current_token(), which
+        loads it from secrets_store (encrypted at rest, the same path the
+        op:// / browser sign-in writes). NO token is ever embedded in code.
+        If absent → returns {ok:false, need_signin:true, msg:...} so the UI
+        keeps the honest "Sign in to enable" state (the agent never signs in
+        — that's the founder's one manual step, per safety rules).
+
+        When a token IS present: gather a brain delta (USER-scope fragments
+        via the same brain.dataset_export tool the "Generate training
+        dataset" button uses → fragments.jsonl on disk → fragment list) plus
+        a wiring announce for this device, then POST it to
+        <cloud_url>/v1/brain/sync with Authorization: Bearer <token>. The
+        cloud URL comes from cloud_client.base_url() (env-overridable via
+        ARCHHUB_CLOUD_BASE_URL — never a hardcoded prod URL here).
+
+        Threaded + signal-based like brain_export_dataset: returns
+        immediately with {async, request_id} and emits brain_backup_done(
+        result_json) — {ok:true, synced:N, new_hlc, rejected, request_id} on
+        success, {ok:false, error|need_signin, request_id} otherwise — so a
+        large brain never freezes the Qt main thread. Match on request_id in
+        the JSX so a stale result never overwrites the current one."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            try:
+                self.brain_backup_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        def _runner():
+            # 1. Resolve the cloud token (encrypted at rest; never plaintext).
+            try:
+                import cloud_client
+                token = cloud_client.current_token()
+                cloud_url = cloud_client.base_url()
+            except Exception as ex:
+                _emit({"ok": False,
+                       "error": f"cloud client unavailable: {ex}"})
+                return
+            if not token:
+                # Honest gate — the founder must sign in (the one manual
+                # step). Never fabricate a backup.
+                _emit({"ok": False, "need_signin": True,
+                       "msg": "Sign in to enable cloud backup"})
+                return
+
+            # 2. Gather a brain delta — SLICE-17 FANOUT. Reuse the new
+            #    brain.fanout_export tool to enumerate RAW fragment rows for
+            #    USER + FIRM + COMMUNITY scope (was USER-only via
+            #    dataset_export). FIRM/COMMUNITY rows converge through the
+            #    cloud's shared replicas so a teammate / 2nd device receives
+            #    them; USER rows stay private per account. We use
+            #    fanout_export (not dataset_export) precisely because
+            #    dataset_export routes COMMUNITY to DP-aggregates for model
+            #    training — the multi-device convergence path wants raw rows
+            #    (community_groups.py: COMMUNITY groups converge raw, keyed by
+            #    community_id). GLOBAL is never requested (DP-only).
+            import json as _json
+            import socket as _sock
+            fragments: list = []
+            client = None
+            try:
+                from memory_gate import BrainClient
+                client = BrainClient()
+                export = client._call("brain.fanout_export", {
+                    "scopes": ["user", "firm", "community"],
+                }, timeout=45.0)
+                if isinstance(export, dict) and export.get("ok"):
+                    fragments = list(export.get("fragments") or [])
+                elif isinstance(export, dict) and export.get("error"):
+                    _emit({"ok": False,
+                           "error": f"brain export failed: {export['error']}"})
+                    return
+            except Exception as ex:
+                # Daemon down / unreachable → fail honestly, never a fake ok.
+                _emit({"ok": False,
+                       "error": f"could not read local brain: "
+                                f"{type(ex).__name__}: {ex}"})
+                return
+
+            # 2b. Which multi-device communities ride the CLOUD RELAY?
+            #     community_groups.TransportConfig.kind == "cloud_relay" means
+            #     "POST deltas to ArchHub's /v1/brain/sync replica" — exactly
+            #     this fanout. We pass those community_ids so the cloud unions
+            #     their shared per-community replicas on the pull, converging
+            #     COMMUNITY fragments across every relay member. (A `disk` /
+            #     `speckle` community syncs through its own transport, not the
+            #     cloud, so it is NOT listed here.) Best-effort: a missing/old
+            #     daemon just yields no community keys (firm + user still
+            #     converge).
+            community_keys: list = []
+            try:
+                groups = client._call("brain.community_groups", {}, timeout=10.0)
+                if isinstance(groups, dict):
+                    for c in (groups.get("communities") or []):
+                        if not isinstance(c, dict):
+                            continue
+                        cid = c.get("community_id")
+                        transport = c.get("transport") or {}
+                        kind = (transport.get("kind") if isinstance(transport, dict)
+                                else "") or ""
+                        if cid and kind == "cloud_relay":
+                            community_keys.append(str(cid))
+            except Exception:
+                community_keys = []
+
+            # 2c. Keep non-relay communities OFF the cloud. fanout_export
+            #     returns ALL community rows, but only communities whose
+            #     transport is cloud_relay should converge through the cloud.
+            #     Drop community-scope fragments whose community_id is not a
+            #     relay community (disk/speckle communities sync elsewhere) so
+            #     their facts never land in a cloud replica at all.
+            if fragments:
+                relay_set = set(community_keys)
+                kept = []
+                for f in fragments:
+                    if (f.get("scope") or "").strip().lower() == "community":
+                        cid = (f.get("extra") or {}).get("community_id") \
+                            or f.get("firm_id")
+                        if not cid or str(cid) not in relay_set:
+                            continue  # non-relay community → not cloud-synced
+                    kept.append(f)
+                fragments = kept
+
+            wiring = [{
+                "name": "archhub-desktop",
+                "device_id": _sock.gethostname() or "device-?",
+                "kind": "desktop",
+                "status": "active",
+            }]
+            delta = {"fragments": fragments, "wiring": wiring}
+
+            # 3. PUSH the delta + PULL the merged delta back via the shared
+            #    cloud_client.brain_sync helper (Bearer + error envelope reused
+            #    from every other cloud call). since_hlc="" pulls the full
+            #    merged firm/community state (a backup AND a curated feed).
+            server = cloud_client.brain_sync(
+                delta=delta, since_hlc="", community_keys=community_keys)
+            if server.get("error"):
+                err = server["error"]
+                if err.startswith("http_"):
+                    _emit({"ok": False,
+                           "error": f"cloud rejected backup ({err})",
+                           "detail": server.get("detail")})
+                else:
+                    _emit({"ok": False,
+                           "error": f"could not reach cloud: {err}",
+                           "detail": server.get("detail")})
+                return
+
+            # 4. MERGE the pulled firm/community delta back into the LOCAL
+            #    brain (the OTHER half of the fanout — this device both pushes
+            #    its facts AND receives the others'). The merged payload's
+            #    FIRM/COMMUNITY rows are teammates' / other devices' facts; we
+            #    hand them to brain.fanout_apply, which writes them via the
+            #    store's CRDT upsert exactly like the SyncWorker's inbound
+            #    path — NOT brain.write (that re-gates a direct community write
+            #    through promote/redaction and would refuse it). USER rows are
+            #    this account's own private state, never fanned in. Idempotent:
+            #    fanout_apply skips any id whose local HLC is equal/newer.
+            merged_back = 0
+            try:
+                merged = server.get("merged") or {}
+                inbound = [f for f in (merged.get("fragments") or [])
+                           if isinstance(f, dict)
+                           and (f.get("scope") or "").strip().lower()
+                           in ("firm", "community")]
+                if inbound and client is not None:
+                    res = client._call("brain.fanout_apply",
+                                       {"fragments": inbound}, timeout=45.0)
+                    if isinstance(res, dict):
+                        merged_back = int(res.get("applied") or 0)
+            except Exception:
+                # Best-effort merge-in: a write-back failure must not fail the
+                # push half. The next sync re-pulls and retries.
+                merged_back = 0
+
+            # 5. Real server-side result → success line for the UI.
+            accepted = server.get("accepted")
+            _emit({
+                "ok": True,
+                "synced": accepted if isinstance(accepted, int) else len(fragments),
+                "merged_in": merged_back,
+                "firm_keys": server.get("firm_keys") or [],
+                "community_keys": server.get("community_keys") or [],
+                "rejected": server.get("rejected") or [],
+                "new_hlc": server.get("new_hlc"),
+                "cloud_url": cloud_url,
+            })
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False,
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
+    # ─── ArchHub Cloud sign-in / sign-out (real, reachable any time) ───────
+    # The ONLY token-minting path used to be onboarding's first-run dialog
+    # (cloud_auth.SignInWorker). After first run there was NO way to sign in
+    # from the UI, and the Brain "Back up my brain" button dead-ended at a
+    # Settings page with no sign-in handler. These slots make the SAME real
+    # PKCE browser flow reachable any time, plus a real server-side logout.
+    @pyqtSlot(result=str)
+    def cloud_status(self) -> str:
+        """Cheap, synchronous probe of cloud sign-in state — drives the
+        Settings Account section + any signed-out CTA. Returns
+        {signed_in: bool, cloud_url: str}. NO network I/O (token presence is
+        read from secrets_store via cloud_client), so it's safe to call on
+        every Account-tab open without tripping bridgeAsync's 1.5s ceiling.
+        Richer account detail (email / plan / remaining) arrives via the
+        cloud_signin_done signal after a sign-in, or the Account tab fetches
+        cloud_client.me() on its own thread."""
+        try:
+            import cloud_client
+            return _safe_json({
+                "signed_in": bool(cloud_client.is_signed_in()),
+                "cloud_url": cloud_client.base_url(),
+            })
+        except Exception as ex:
+            return _safe_json({"signed_in": False,
+                               "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(result=str)
+    def cloud_sign_in(self) -> str:
+        """Launch the REAL ArchHub Cloud sign-in — the exact PKCE browser
+        flow onboarding uses (cloud_auth.SignInWorker), just reachable any
+        time from Settings → Account or the Brain backup CTA.
+
+        SignInWorker is a QObject that opens the user's default browser to
+        the magic-link sign-in page and runs a one-shot loopback HTTP server
+        on 127.0.0.1 to capture the redirect `code`, then exchanges it for a
+        bearer token. It does ALL of that on its OWN internal daemon thread
+        (worker._run spawns threading.Thread), so constructing + start()-ing
+        it here does NOT block the Qt main thread — the slot returns instantly
+        with {async, request_id}. We hold a reference (self._cloud_signin_worker)
+        so it isn't garbage-collected mid-flight, and re-entrancy is guarded so
+        a second click while a browser flow is open is a no-op.
+
+        On completion the worker's succeeded/failed signals are bridged to
+        cloud_signin_done({ok, signed_in, email, plan, request_id, error?}).
+
+        SAFETY: the agent never signs in / creates an account / types
+        credentials — opening the browser is the founder's one manual step.
+        This slot only OPENS that browser and reports the outcome."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            try:
+                self.cloud_signin_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        # Re-entrancy guard: a sign-in browser flow is already open.
+        existing = getattr(self, "_cloud_signin_worker", None)
+        if existing is not None:
+            running = getattr(existing, "_thread", None)
+            if running is not None and running.is_alive():
+                return _safe_json({"async": True, "request_id": request_id,
+                                   "already_running": True})
+
+        try:
+            from cloud_auth import SignInWorker
+        except Exception as ex:
+            _emit({"ok": False, "signed_in": False,
+                   "error": f"sign-in module unavailable: {ex}"})
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": str(ex)})
+
+        def _on_succeeded(payload: dict) -> None:
+            # payload = {token, expires_at, plan, ..., me:{email,plan,remaining_messages}}
+            me = (payload or {}).get("me") or {}
+            _emit({
+                "ok": True,
+                "signed_in": True,
+                "email": me.get("email") or (payload or {}).get("email") or "",
+                "plan": me.get("plan") or (payload or {}).get("plan") or "",
+                "remaining_messages": me.get("remaining_messages"),
+            })
+            # Warm the usage cache so the status meter paints the right
+            # number immediately (mirrors onboarding's behaviour).
+            try:
+                from cloud_usage import refresh_async
+                refresh_async()
+            except Exception:
+                pass
+            # MAKE-IT-REAL: start the brain⇄cloud auto-sync scheduler now that
+            # a token exists, so local + cloud no longer drift between
+            # sign-ins. Idempotent (a second sign-in won't double-start).
+            # Best-effort — a scheduler hiccup must not break the sign-in
+            # report. The owner BIND itself already happened inside the
+            # SignInWorker (_pair_brain → brain.set_owner) before this signal.
+            try:
+                self._start_brain_autosync()
+            except Exception:
+                pass
+
+        def _on_failed(message: str) -> None:
+            _emit({"ok": False, "signed_in": False,
+                   "error": str(message) or "sign-in failed"})
+
+        try:
+            worker = SignInWorker(self)
+            worker.succeeded.connect(_on_succeeded)
+            worker.failed.connect(_on_failed)
+            self._cloud_signin_worker = worker   # keep alive
+            worker.start()                       # spawns its own thread; non-blocking
+        except Exception as ex:
+            _emit({"ok": False, "signed_in": False,
+                   "error": f"couldn't start sign-in: {type(ex).__name__}: {ex}"})
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": str(ex)})
+
+        return _safe_json({"async": True, "request_id": request_id,
+                           "opened_browser": True})
+
+    @pyqtSlot(result=str)
+    def cloud_sign_in_google(self) -> str:
+        """Launch "Sign in with Google" — the SAME real PKCE browser flow as
+        cloud_sign_in(), via cloud_auth.GoogleSignInWorker instead of
+        SignInWorker. The worker asks the backend for the Google auth URL
+        (GET /v1/auth/google/start), opens the user's default browser to it,
+        captures the loopback ?code=, exchanges it for a bearer token (the
+        same cloud_client.exchange path), persists it to cloud.json, and pairs
+        the brain — all on its OWN daemon thread, so this slot returns instantly
+        with {async, request_id}.
+
+        Emits the SAME cloud_signin_done payload shape as cloud_sign_in
+        ({ok, signed_in, email, plan, request_id, error?}) so the Account tab's
+        existing handler flips state with no extra wiring. Shares the
+        self._cloud_signin_worker re-entrancy guard with the magic-link slot so
+        a second click (either flow) while a browser flow is open is a no-op.
+
+        SAFETY: identical to cloud_sign_in — the agent never signs in / creates
+        an account / types credentials; opening the browser is the founder's
+        one manual step. This slot only OPENS that browser + reports outcome."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            try:
+                self.cloud_signin_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        # Re-entrancy guard: a sign-in browser flow (either kind) is open.
+        existing = getattr(self, "_cloud_signin_worker", None)
+        if existing is not None:
+            running = getattr(existing, "_thread", None)
+            if running is not None and running.is_alive():
+                return _safe_json({"async": True, "request_id": request_id,
+                                   "already_running": True})
+
+        try:
+            from cloud_auth import GoogleSignInWorker
+        except Exception as ex:
+            _emit({"ok": False, "signed_in": False,
+                   "error": f"sign-in module unavailable: {ex}"})
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": str(ex)})
+
+        def _on_succeeded(payload: dict) -> None:
+            # payload = {token, expires_at, plan, ..., me:{email,plan,remaining_messages}}
+            me = (payload or {}).get("me") or {}
+            _emit({
+                "ok": True,
+                "signed_in": True,
+                "email": me.get("email") or (payload or {}).get("email") or "",
+                "plan": me.get("plan") or (payload or {}).get("plan") or "",
+                "remaining_messages": me.get("remaining_messages"),
+            })
+            # Warm the usage cache so the status meter paints the right number.
+            try:
+                from cloud_usage import refresh_async
+                refresh_async()
+            except Exception:
+                pass
+            # Start the brain⇄cloud auto-sync scheduler now a token exists.
+            # The owner BIND already happened inside GoogleSignInWorker
+            # (_pair_brain → brain.set_owner) before this signal. Idempotent.
+            try:
+                self._start_brain_autosync()
+            except Exception:
+                pass
+
+        def _on_failed(message: str) -> None:
+            _emit({"ok": False, "signed_in": False,
+                   "error": str(message) or "sign-in failed"})
+
+        try:
+            worker = GoogleSignInWorker(self)
+            worker.succeeded.connect(_on_succeeded)
+            worker.failed.connect(_on_failed)
+            self._cloud_signin_worker = worker   # keep alive (shared guard)
+            worker.start()                       # spawns its own thread; non-blocking
+        except Exception as ex:
+            _emit({"ok": False, "signed_in": False,
+                   "error": f"couldn't start sign-in: {type(ex).__name__}: {ex}"})
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": str(ex)})
+
+        return _safe_json({"async": True, "request_id": request_id,
+                           "opened_browser": True})
+
+    @pyqtSlot(result=str)
+    def cloud_sign_out(self) -> str:
+        """Sign out of ArchHub Cloud — revoke the token server-side then
+        clear it locally.
+
+        Calls cloud_client.logout() which POSTs /v1/auth/logout with the
+        Bearer token (server contract: 200 {ok:true} → token deleted/revoked)
+        and then ALWAYS clears the local credential, so the user is honestly
+        signed out on this device even when offline (a stale encrypted token
+        left after "Sign out" would be the dishonest outcome). The HTTP call
+        runs on the background pool so the Qt main thread never blocks on the
+        network; the result lands via cloud_signout_done({ok, signed_in:false,
+        msg, request_id}). `ok` reflects the SERVER revoke; `signed_in` is
+        always False after this completes."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            payload.setdefault("signed_in", False)
+            try:
+                self.cloud_signout_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        def _runner():
+            try:
+                import cloud_client
+            except Exception as ex:
+                # Module missing — best we can do is report; nothing to clear.
+                # Still stop the scheduler + unbind so we don't keep syncing.
+                self._stop_brain_autosync()
+                self._unbind_brain_owner()
+                _emit({"ok": False,
+                       "msg": f"cloud client unavailable: {ex}"})
+                return
+            try:
+                server_ok, msg = cloud_client.logout()
+            except Exception as ex:
+                # logout() is defensive, but never let an exception cross the
+                # bridge. Force a local clear so the user is signed out.
+                try: cloud_client.clear_token()
+                except Exception: pass  # audit: deliberate-fail-soft — best-effort local token clear on the logout-error path; sign-out is forced regardless below
+                # Stop auto-sync + unbind the local brain even on the error
+                # path — the user asked to sign out.
+                self._stop_brain_autosync()
+                self._unbind_brain_owner()
+                _emit({"ok": False,
+                       "msg": f"signed out locally (logout error: {ex})"})
+                return
+            # Token is now cleared (logout() clears unconditionally). Stop the
+            # auto-sync scheduler and UNBIND the local brain from the account:
+            # brain.clear_owner() drops the persisted owner binding so the
+            # default owner reverts to env/OS — the brain DATA stays, only the
+            # binding clears. Best-effort: a down daemon must not fail sign-out.
+            self._stop_brain_autosync()
+            self._unbind_brain_owner()
+            _emit({"ok": bool(server_ok), "msg": str(msg)})
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
     @pyqtSlot(result=str)
     def memory_stats(self) -> str:
-        """Snapshot of the memory graph — node count by kind +
-        community count. Cheap (single SQL COUNT per kind). Used by
-        the Library panel header + the upcoming community-grouped
-        Library UI."""
+        """Snapshot of the brain — fact/skill counts + community grouping.
+
+        ONE-SYSTEM unify (2026-05-28, design:
+        docs/audits/brain-unify-design-2026-05-28.md). The CANONICAL store is
+        the daemon's `brain.db`, NOT `graph.sqlite`. Before unify, this slot
+        read graph.sqlite directly, so the in-app brain view showed a
+        DIFFERENT number than the daemon's `brain.health` — the two-brains
+        bug. Now `total_nodes` is the daemon's canonical fact count, so the
+        in-app brain view and the daemon report the SAME figure from the SAME
+        store. graph.sqlite is consulted only for the community grouping (the
+        topology staging table the extractors write) and as an HONEST fallback
+        when the daemon is unreachable.
+
+        Shape preserved for callers (BrainViewModal, MemoryExplorer):
+          {status, total_nodes, total_edges, by_kind, communities_total,
+           communities_top, source}
+        `source` is 'brain.db' (canonical / daemon) or 'graph.sqlite'
+        (fallback) so the UI can be honest about degraded mode.
+
+        AgDR-0036 follow-up — THE WORST main-thread offender. The body
+        (extracted to `_compute_memory_stats`) runs SQLite (7×
+        count_nodes + count_edges + community_stats) AND a BLOCKING
+        `brain.health` HTTP call to a daemon that is often DOWN — up to a
+        4 s UI freeze on every open of the Brain view / memory strip.
+        Now routed through `_cached_async`: returns the cached snapshot
+        INSTANTLY on the Qt main thread, recomputes on the background
+        pool, and emits `memory_changed` when fresh data lands so the
+        Brain view / memory strip re-pull. The SQLite reads + the
+        brain.health HTTP call run ONLY on the worker thread — never the
+        UI thread — and the health call fast-fails (1.5 s) against a dead
+        daemon, with the staging-graph fallback below."""
+        return _safe_json(self._cached_async(
+            "memory_stats_brain", self._compute_memory_stats,
+            ttl=15.0,
+            empty={"status": "ok", "source": "pending",
+                   "total_nodes": 0, "total_edges": 0, "by_kind": {},
+                   "communities_total": 0, "communities_top": []},
+            signal_name="memory_changed"))
+
+    def _compute_memory_stats(self) -> dict:
+        """Heavy body for `memory_stats` — runs ONLY on the background
+        pool (via `_cached_async`), never the Qt main thread. Does the
+        SQLite reads + the (often-stalling) brain.health HTTP call."""
+        # Community grouping + edge topology come from the extractor staging
+        # graph (graph.sqlite). Counts come from the CANONICAL store.
+        communities_total = 0
+        communities_top: list = []
+        graph_edges = 0
+        graph_by_kind: dict[str, int] = {}
+        graph_nodes_total = 0
         try:
             from memory import MemoryGraph, community_stats
             g = MemoryGraph.open()
             try:
                 kinds = ("capability", "skill", "turn", "tool",
                          "decision", "project", "design")
-                counts = {k: g.count_nodes(kind=k) for k in kinds}
+                graph_by_kind = {k: g.count_nodes(kind=k) for k in kinds}
+                graph_nodes_total = g.count_nodes()
+                graph_edges = g.count_edges()
                 stats = community_stats(g)
-                return _safe_json({
-                    "status": "ok",
-                    "total_nodes": g.count_nodes(),
-                    "total_edges": g.count_edges(),
-                    "by_kind": counts,
-                    "communities_total": len(stats),
-                    "communities_top": stats[:5],
-                })
+                communities_total = len(stats)
+                communities_top = stats[:5]
             finally:
                 g.close()
+        except Exception:
+            # Staging graph unavailable — degrade to canonical-only below.
+            pass
+
+        # Canonical counts from the daemon (brain.db). This is the ONE store
+        # the daemon serves on :8473; making the in-app view read it is what
+        # retires the manual graph→brain sync (tools/brain_unify.py).
+        # We are on the background pool here, so a stall can't freeze the
+        # UI — but we STILL fast-fail (1.5 s) so a dead daemon doesn't pin
+        # a worker thread for the full 4 s; the staging-graph fallback
+        # below carries the panel in degraded mode.
+        try:
+            health = self._brain_tool("brain.health", {}, timeout=1.5)
         except Exception as ex:
-            return _safe_json({"status": "error",
-                                "error": f"{type(ex).__name__}: {ex}"})
+            health = {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+        if isinstance(health, dict) and health.get("ok"):
+            facts_n = health.get("facts")
+            skills_n = health.get("skills")
+            # by_kind keeps the graph's kind breakdown for the panel, but the
+            # canonical skill count overrides the staging value so the badge
+            # matches the daemon.
+            by_kind = dict(graph_by_kind)
+            if isinstance(skills_n, int):
+                by_kind["skill"] = skills_n
+            return {
+                "status": "ok",
+                "source": "brain.db",
+                "total_nodes": facts_n if isinstance(facts_n, int) else graph_nodes_total,
+                "total_edges": graph_edges,
+                "by_kind": by_kind,
+                "skills_total": skills_n,
+                "communities_total": communities_total,
+                "communities_top": communities_top,
+                "canonical_db": health.get("db_path"),
+            }
+
+        # Daemon down — HONEST fallback to the staging graph counts so the
+        # panel still shows something real, clearly labelled as non-canonical.
+        if graph_nodes_total or graph_by_kind:
+            return {
+                "status": "ok",
+                "source": "graph.sqlite",
+                "total_nodes": graph_nodes_total,
+                "total_edges": graph_edges,
+                "by_kind": graph_by_kind,
+                "communities_total": communities_total,
+                "communities_top": communities_top,
+                "degraded": "brain daemon unreachable — showing staging graph",
+            }
+        return {
+            "status": "error",
+            "error": "brain daemon unreachable and no staging graph available",
+        }
 
     # ─── AgDR-0041 P5 — live validator ─────────────────────────────
     @pyqtSlot(str, result=str)
@@ -2151,7 +3800,18 @@ class ArchHubBridge(QObject):
           {status, issues:[{level,code,node_id,edge_id,msg}],
            errors, warnings, valid}
         On parse failure returns `{status:"error", error:<reason>}` so
-        the panel can show a single-line banner instead of dying."""
+        the panel can show a single-line banner instead of dying.
+
+        AgDR-0036 follow-up — this fires debounced on EVERY canvas edit.
+        The validation is in-memory O(nodes+edges); cheap on small graphs
+        but it ran SYNCHRONOUSLY in the slot body, holding the Qt main
+        thread for an unbounded amount as the graph grows. Now routed
+        through `_cached_async` keyed by the graph snapshot: returns the
+        cached issue list instantly, recomputes on the background pool,
+        emits `graph_validated` when fresh data lands so the canvas
+        re-pulls. The validation never blocks the main thread / canvas.
+        Parse + arg errors are returned inline (they're trivial and the
+        caller needs the banner immediately)."""
         try:
             import json as _json
             graph = _json.loads(graph_json or "{}")
@@ -2161,41 +3821,88 @@ class ArchHubBridge(QObject):
             if self.tools is None:
                 return _safe_json({"status": "error",
                                     "error": "tool engine not initialised"})
-            res = self.tools.invoke("graph_validate", {"graph": graph})
-            return _safe_json(res)
         except Exception as ex:
             return _safe_json({"status": "error",
                                 "error": f"{type(ex).__name__}: {ex}"})
 
+        def _work():
+            try:
+                return self.tools.invoke("graph_validate", {"graph": graph})
+            except Exception as ex:
+                return {"status": "error",
+                        "error": f"{type(ex).__name__}: {ex}"}
+
+        key = "graph_validate:" + self._hash_payload(graph_json)
+        return _safe_json(self._cached_async(
+            key, _work, ttl=3.0,
+            empty={"status": "ok", "issues": [], "errors": 0,
+                   "warnings": 0, "valid": True},
+            signal_name="graph_validated"))
+
     # ─── AgDR-0041 P4 — delete-with-auto-bridge ────────────────────
-    @pyqtSlot(str, str, result=str)
-    def graph_on_node_delete(self, node_id: str, graph_json: str) -> str:
+    @pyqtSlot(str, str, str, result=str)
+    def graph_on_node_delete(self, node_id: str, graph_json: str,
+                             request_id: str = "") -> str:
         """Preview the impact of deleting a node BEFORE removing it.
 
-        Returns one of:
+        Returns one of (delivered via the `node_op_done` signal):
           - {action:"silent_delete"}  — no incident wires; safe to drop.
           - {action:"auto_bridge", wires:[…]} — upstream src type matches
             downstream dst type; UI applies those wires after delete.
           - {action:"broken_wire", broken:[…], compatible:[…]} — type
             mismatch; UI surfaces BrokenWireDialog with recovery options
             (insert adapter / restore / swap downstream).
-        Always returns `status: 'ok' | 'error'`."""
+        Always carries `status: 'ok' | 'error'`.
+
+        AgDR-0036 follow-up — this is INTERACTIVE: the delete handler
+        needs the REAL answer (a node with incident wires must never be
+        reported silent-deletable). A cached empty-first-call would
+        corrupt that, so rather than `_cached_async` we run the (trivial,
+        in-memory) preview on the `_bg_pool` and emit `node_op_done` with
+        the result + `request_id`. The slot returns `{async, request_id}`
+        instantly on the Qt main thread; the JSX `bridgeAsyncSignal`
+        helper awaits the matching signal. Parse / arg errors come back
+        inline (and are ALSO emitted) so the caller resolves either way."""
+        import time as _time
+        req = (request_id or "").strip() or f"del-{int(_time.time()*1000)}-{id(self)}"
+
+        def _fail(msg: str) -> str:
+            payload = {"status": "error", "error": msg, "request_id": req}
+            try: self.node_op_done.emit(_safe_json(payload))
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            return _safe_json({"async": True, "request_id": req,
+                               "status": "error", "error": msg})
+
         try:
             import json as _json
             graph = _json.loads(graph_json or "{}")
-            if not isinstance(graph, dict):
-                return _safe_json({"status": "error",
-                                    "error": "graph must be an object"})
-            if self.tools is None:
-                return _safe_json({"status": "error",
-                                    "error": "tool engine not initialised"})
-            res = self.tools.invoke("graph_on_node_delete",
-                                     {"node_id": (node_id or "").strip(),
-                                      "graph": graph})
-            return _safe_json(res)
         except Exception as ex:
-            return _safe_json({"status": "error",
-                                "error": f"{type(ex).__name__}: {ex}"})
+            return _fail(f"{type(ex).__name__}: {ex}")
+        if not isinstance(graph, dict):
+            return _fail("graph must be an object")
+        if self.tools is None:
+            return _fail("tool engine not initialised")
+
+        nid = (node_id or "").strip()
+
+        def _runner():
+            try:
+                res = self.tools.invoke("graph_on_node_delete",
+                                        {"node_id": nid, "graph": graph})
+                if not isinstance(res, dict):
+                    res = {"status": "error", "error": "bad handler result"}
+            except Exception as ex:
+                res = {"status": "error",
+                       "error": f"{type(ex).__name__}: {ex}"}
+            res["request_id"] = req
+            try: self.node_op_done.emit(_safe_json(res))
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _fail(f"pool submit: {ex}")
+        return _safe_json({"async": True, "request_id": req})
 
     # ─── AgDR-0041 P3 — freeze / unfreeze a node ───────────────────
     @pyqtSlot(str, bool, result=str)
@@ -2236,23 +3943,88 @@ class ArchHubBridge(QObject):
                                 "error": f"{type(ex).__name__}: {ex}"})
 
     # ─── AgDR-0041 P2 — type-compatible swap suggestions ───────────
-    @pyqtSlot(str, int, result=str)
-    def library_suggest_swaps(self, node_type: str, limit: int) -> str:
+    @pyqtSlot(str, int, str, result=str)
+    def library_suggest_swaps(self, node_type: str, limit: int,
+                              request_id: str = "") -> str:
         """Find registered types whose I/O signature matches the target.
         Powers the right-click 'swap with…' context menu. Returns
         ranked alternatives + their port shapes; the UI presents these,
-        click swaps the node in place + runner re-cooks downstream."""
+        click swaps the node in place + runner re-cooks downstream.
+
+        AgDR-0036 follow-up — INTERACTIVE (right-click → list). Runs the
+        `tools.invoke` on the `_bg_pool` and delivers the result via the
+        `node_op_done` signal with `request_id`; the slot returns
+        `{async, request_id}` instantly so the Qt main thread is never
+        held. The JSX `bridgeAsyncSignal` helper awaits the match. The
+        trailing `request_id` arg is optional so a legacy 2-arg call
+        still works (it gets an auto-generated id back)."""
+        import time as _time
+        req = (request_id or "").strip() or f"swap-{int(_time.time()*1000)}-{id(self)}"
+
+        if self.tools is None:
+            payload = {"status": "error",
+                       "error": "tool engine not initialised",
+                       "request_id": req}
+            try: self.node_op_done.emit(_safe_json(payload))
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            return _safe_json({"async": True, "request_id": req,
+                               "status": "error",
+                               "error": "tool engine not initialised"})
+
+        # arg1 (`node_type`) carries EITHER a plain registered type name (the
+        # right-click "swap with…" + inspector paths) OR a JSON filter object
+        # {in_types,out_types,limit} (the broken-wire "Insert adapter" path,
+        # which needs to find an adapter by PORT types, not by an existing
+        # node type). The underlying `library_suggest_swaps` tool handler
+        # already supports in_types/out_types (tool_engine.py) — this slot just
+        # forwards them. Detecting a JSON object here keeps the slot signature
+        # (and the JSX call shape: a string in arg1) unchanged + back-compat: a
+        # plain type name is not a JSON object, so it falls through to `type`
+        # exactly as before. Before this, the adapter path crammed the blob
+        # into `type` and the search filtered on a bogus type → never matched.
+        _nt = (node_type or "").strip()
+        args: dict = {"limit": int(limit) if limit else 10}
+        _filter = None
+        if _nt[:1] == "{":
+            try:
+                import json as _json
+                _parsed = _json.loads(_nt)
+                if isinstance(_parsed, dict):
+                    _filter = _parsed
+            except Exception:
+                _filter = None
+        if _filter is not None:
+            if _filter.get("in_types"):
+                args["in_types"] = _filter["in_types"]
+            if _filter.get("out_types"):
+                args["out_types"] = _filter["out_types"]
+            if _filter.get("type"):
+                args["type"] = str(_filter["type"]).strip()
+            # an explicit limit inside the blob overrides the positional one
+            if _filter.get("limit"):
+                args["limit"] = int(_filter["limit"])
+        else:
+            args["type"] = _nt
+
+        def _runner():
+            try:
+                res = self.tools.invoke("library_suggest_swaps", args)
+                if not isinstance(res, dict):
+                    res = {"status": "error", "error": "bad handler result"}
+            except Exception as ex:
+                res = {"status": "error",
+                       "error": f"{type(ex).__name__}: {ex}"}
+            res["request_id"] = req
+            try: self.node_op_done.emit(_safe_json(res))
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+
         try:
-            if self.tools is None:
-                return _safe_json({"status": "error",
-                                    "error": "tool engine not initialised"})
-            args = {"type": (node_type or "").strip(),
-                    "limit": int(limit) if limit else 10}
-            res = self.tools.invoke("library_suggest_swaps", args)
-            return _safe_json(res)
+            self._bg_pool().submit(_runner)
         except Exception as ex:
-            return _safe_json({"status": "error",
-                                "error": f"{type(ex).__name__}: {ex}"})
+            return _safe_json({"async": True, "request_id": req,
+                               "status": "error",
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": req})
 
     # ─── Wire validation (canvas drop-validation) ──────────────────
     @pyqtSlot(str, str, bool, bool, result=bool)
@@ -2260,7 +4032,14 @@ class ArchHubBridge(QObject):
                   out_exec: bool, in_exec: bool) -> bool:
         """Type-check a prospective wire from canvas mouseup. Returns
         False when the rubber-band should snap back instead of
-        committing the wire."""
+        committing the wire.
+
+        AgDR-0036 — DELIBERATELY SYNCHRONOUS. The canvas needs an
+        immediate allow/block answer on wire-drop; an async round-trip
+        would let an invalid wire flash in before snapping back. Verified
+        cheap + bounded: a pure in-memory enum compare via
+        `workflows.typesystem.can_wire` — no SQLite, no network, no disk.
+        Safe on the Qt main thread."""
         try:
             from workflows.typesystem import can_wire as _cw
             from workflows.graph import PortType
@@ -2278,12 +4057,24 @@ class ArchHubBridge(QObject):
                              src_node: str, dst_node: str,
                              graph_json: str = "") -> bool:
         """True if dropping a wire from src→dst would create a cycle.
-        Canvas calls this on socket-drop before committing."""
+        Canvas calls this on socket-drop before committing.
+
+        AgDR-0036 — DELIBERATELY SYNCHRONOUS, same reason as `can_wire`:
+        the canvas needs an immediate true/false to accept/reject the
+        rubber-band. Verified cheap + bounded on the HOT path: the JSX
+        ALWAYS passes the live graph as `graph_json`, so we take the
+        in-memory branch — a pure DFS over edges (O(nodes+edges)) in
+        `WorkflowRunner.would_create_cycle`, NO SQLite / network. The
+        disk-load fallback only runs if `graph_json` is empty (never on
+        the wire-drop path), so the main thread is never blocked on I/O
+        here."""
         try:
             import json as _json
             graph = _json.loads(graph_json) if graph_json else None
             if graph is None:
-                # Load from disk fallback.
+                # Load from disk fallback (NOT the hot path — JSX always
+                # passes graph_json on wire-drop; this is for headless /
+                # programmatic callers that pass only a session id).
                 from pathlib import Path
                 from session_io import (
                     SESSIONS_DIR, load_session_with_messages,
@@ -2328,7 +4119,7 @@ class ArchHubBridge(QObject):
                 if not p.exists():
                     try: self.workflow_done.emit("workflow", req_id,
                                                   _safe_json({"error": "session not found"}))
-                    except Exception: pass
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                     return _safe_json({"request_id": req_id,
                                          "error": "session not found"})
                 session, _name, _m = load_session_with_messages(p)
@@ -2336,12 +4127,12 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             payload = _safe_json({"error": str(ex)})
             try: self.workflow_done.emit("workflow", req_id, payload)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"request_id": req_id, "error": str(ex)})
 
         def _worker():
             try: self.workflow_started.emit("workflow", req_id)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             try:
                 from workflows.runner import WorkflowRunner
                 from workflows.node_grammar import normalize_canvas_graph
@@ -2355,7 +4146,7 @@ class ArchHubBridge(QObject):
                                          manager=self.manager)
                 def _emit_wire_state(eid, state, preview):
                     try: self.wire_state_changed.emit(eid, state, preview)
-                    except Exception: pass
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 runner.on_wire_state(_emit_wire_state)
                 # AgDR-0036 Phase 1 — serialise: a 2nd Run queues here.
                 with self._cook_lock():
@@ -2364,7 +4155,7 @@ class ArchHubBridge(QObject):
             except Exception as ex:
                 payload = _safe_json({"error": str(ex)})
             try: self.workflow_done.emit("workflow", req_id, payload)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
         threading.Thread(target=_worker, daemon=True).start()
         return _safe_json({"request_id": req_id, "status": "started"})
@@ -2396,7 +4187,7 @@ class ArchHubBridge(QObject):
                 except Exception as ex:
                     payload = _safe_json({"error": f"bad graph_json: {ex}"})
                     try: self.workflow_done.emit("node", req_id, payload)
-                    except Exception: pass
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                     return _safe_json({"request_id": req_id,
                                          "error": f"bad graph_json: {ex}"})
             else:
@@ -2409,7 +4200,7 @@ class ArchHubBridge(QObject):
                 if not p.exists():
                     payload = _safe_json({"error": "session not found"})
                     try: self.workflow_done.emit("node", req_id, payload)
-                    except Exception: pass
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                     return _safe_json({"request_id": req_id,
                                          "error": "session not found"})
                 session, _name, _m = load_session_with_messages(p)
@@ -2417,12 +4208,12 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             payload = _safe_json({"error": str(ex)})
             try: self.workflow_done.emit("node", req_id, payload)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"request_id": req_id, "error": str(ex)})
 
         def _worker():
             try: self.workflow_started.emit("node", req_id)
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             try:
                 from workflows.runner import WorkflowRunner
                 from workflows.node_grammar import normalize_canvas_graph
@@ -2436,18 +4227,115 @@ class ArchHubBridge(QObject):
                                          manager=self.manager)
                 def _emit_wire_state(eid, state, preview):
                     try: self.wire_state_changed.emit(eid, state, preview)
-                    except Exception: pass
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 runner.on_wire_state(_emit_wire_state)
                 # AgDR-0036 Phase 1 — serialise with run_workflow so two
                 # cooks never hit the same host brokers concurrently.
                 with self._cook_lock():
                     result = runner.pull(node_id)
+                # `runner.pull` returns the cooked node's FLAT output dict (its
+                # ports: {status, value, …}) — NOT a {results:{nodeId:…}} map
+                # like run_all/recook_from. Stamp the cooked node_id at the top
+                # level so the JS `onWorkflowDone` handler can route a
+                # kind:"node" result back onto the right canvas node. Without
+                # this the single-node cook result was anonymous and the
+                # handler (which keyed off `results`) dropped it on the floor —
+                # a Rerun/▶ on one node produced a value nothing displayed.
+                res_dict = result if isinstance(result, dict) else {"value": result}
+                if isinstance(res_dict, dict) and "node_id" not in res_dict:
+                    res_dict = {**res_dict, "node_id": node_id}
+                payload = _safe_json(res_dict)
+            except Exception as ex:
+                payload = _safe_json({"error": str(ex), "node_id": node_id})
+            try: self.workflow_done.emit("node", req_id, payload)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return _safe_json({"request_id": req_id, "status": "started"})
+
+    @pyqtSlot(str, str, str, result=str)
+    def recook_node(self, session_id: str, node_id: str,
+                     graph_json: str = "") -> str:
+        """Re-cook a node + its downstream chain after a param edit.
+
+        cook.recook_trigger / court-verdict 2026-06-01: dragging a slider
+        (NodeRail.onParamChange / ConnectorRail.setParam in studio-lm.jsx)
+        must re-run the edited node AND propagate downstream — NOT just
+        repaint. This is the cook path for that. It mirrors `run_node`
+        EXACTLY — fresh stateless WorkflowRunner, wire-state streaming,
+        serialised under `_cook_lock` so two cooks never hit the same
+        host brokers concurrently, run on a worker thread so the Qt main
+        thread never blocks — but calls `runner.recook_from(node_id)`
+        instead of `pull`: that marks the node dirty (cascading downstream
+        + flipping incident edges to "stale") then pulls the sinks
+        reachable downstream, re-cooking the edited node and the whole
+        chain it feeds while unrelated branches stay cached.
+
+        Returns the request_id synchronously (non-blocking); the result
+        lands via `workflow_done("recook", request_id, result_json)`.
+        graph_json is the in-memory canvas shape (no disk roundtrip);
+        when empty we read session.graph from disk — same as run_node."""
+        import json as _json
+        import time as _time
+        req_id = f"rc-{int(_time.time()*1000)}-{id(self)}"
+        graph: dict | None = None
+        try:
+            from pathlib import Path
+            sid = session_id or "workspace"
+            if graph_json:
+                try:
+                    graph = _json.loads(graph_json)
+                except Exception as ex:
+                    payload = _safe_json({"error": f"bad graph_json: {ex}"})
+                    try: self.workflow_done.emit("recook", req_id, payload)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                    return _safe_json({"request_id": req_id,
+                                         "error": f"bad graph_json: {ex}"})
+            else:
+                from session_io import (
+                    SESSIONS_DIR, load_session_with_messages,
+                )
+                p = Path(sid)
+                if not p.exists():
+                    p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+                if not p.exists():
+                    payload = _safe_json({"error": "session not found"})
+                    try: self.workflow_done.emit("recook", req_id, payload)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                    return _safe_json({"request_id": req_id,
+                                         "error": "session not found"})
+                session, _name, _m = load_session_with_messages(p)
+                graph = session.graph or {}
+        except Exception as ex:
+            payload = _safe_json({"error": str(ex)})
+            try: self.workflow_done.emit("recook", req_id, payload)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            return _safe_json({"request_id": req_id, "error": str(ex)})
+
+        def _worker():
+            try: self.workflow_started.emit("recook", req_id)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            try:
+                from workflows.runner import WorkflowRunner
+                from workflows.node_grammar import normalize_canvas_graph
+                runner = WorkflowRunner(normalize_canvas_graph(graph),
+                                         router=self.router,
+                                         tool_engine=self.tools,
+                                         manager=self.manager)
+                def _emit_wire_state(eid, state, preview):
+                    try: self.wire_state_changed.emit(eid, state, preview)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                runner.on_wire_state(_emit_wire_state)
+                # AgDR-0036 Phase 1 — serialise with run_workflow / run_node
+                # so two cooks never hit the same host brokers concurrently.
+                with self._cook_lock():
+                    result = runner.recook_from(node_id)
                 payload = _safe_json(result if isinstance(result, dict)
                                        else {"value": result})
             except Exception as ex:
                 payload = _safe_json({"error": str(ex)})
-            try: self.workflow_done.emit("node", req_id, payload)
-            except Exception: pass
+            try: self.workflow_done.emit("recook", req_id, payload)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
         threading.Thread(target=_worker, daemon=True).start()
         return _safe_json({"request_id": req_id, "status": "started"})
@@ -2762,11 +4650,74 @@ class ArchHubBridge(QObject):
             # a relaunch — skills are nodes, not files; the user should
             # see the new entry immediately.
             try: self.skills_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "path": str(out_path),
                                 "slug": slug,
                                 "nodes": len(payload.get("nodes") or []),
                                 "wires": len(payload.get("wires") or [])})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, str, str, result=str)
+    def save_node_output(self, node_id: str, title: str,
+                          content_json: str) -> str:
+        """Write an output node's REAL cooked value to a file on disk.
+
+        Audit 2026-05-28: the OutputBody `save` button was decorative (no
+        handler). This is the real slot behind it. The JSX side passes the
+        node's actual last output (its `cooked` value / op_result / params)
+        as `content_json`; we write it to
+        `<cwd>/exports/node-outputs/<slug>-<ts>.<ext>` and return the
+        absolute path so the UI can show the user exactly where it landed.
+
+        Plain strings are written verbatim (e.g. a code/text output);
+        structured values are written as pretty JSON. The extension is
+        chosen from the payload shape so the saved file is directly usable.
+        """
+        try:
+            import json as _json
+            import os as _os
+            import re
+            import time as _time
+            # The JS side wraps the real value as {"value": <output>}.
+            try:
+                wrapper = _json.loads(content_json) if content_json else {}
+            except Exception as ex:
+                return _safe_json({"error": f"bad content_json: {ex}"})
+            if not isinstance(wrapper, dict):
+                wrapper = {"value": wrapper}
+            value = wrapper.get("value", wrapper)
+            if value is None or value == "":
+                return _safe_json({"error": "no output to save — run the "
+                                            "node first"})
+
+            out_dir = _os.path.join(_os.getcwd(), "exports", "node-outputs")
+            try:
+                _os.makedirs(out_dir, exist_ok=True)
+            except Exception:
+                pass
+
+            slug_src = (title or node_id or "node-output")
+            slug = re.sub(r"[^a-z0-9]+", "-",
+                          str(slug_src).lower()).strip("-") or "node-output"
+            stamp = _time.strftime("%Y%m%d-%H%M%S")
+
+            # A bare string is a text/code output — save it verbatim with a
+            # .txt extension. Anything structured serialises to pretty JSON.
+            if isinstance(value, str):
+                body = value
+                ext = "txt"
+            else:
+                body = _json.dumps(value, indent=2, ensure_ascii=False,
+                                    default=str)
+                ext = "json"
+
+            from pathlib import Path
+            out_path = Path(out_dir) / f"{slug}-{stamp}.{ext}"
+            out_path.write_text(body, encoding="utf-8")
+            return _safe_json({"ok": True, "path": str(out_path),
+                                "bytes": len(body.encode("utf-8")),
+                                "ext": ext})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -2913,8 +4864,9 @@ class ArchHubBridge(QObject):
     # run_workflow / query_graph / chat). The LLM picks tool calls;
     # we forward them as structured actions for the JSX side to apply.
     @pyqtSlot(str, str, str, result=str)
+    @pyqtSlot(str, str, str, str, result=str)
     def agent_step(self, user_msg: str, graph_json: str,
-                    focused_node_id: str = "") -> str:
+                    focused_node_id: str = "", mode: str = "plan") -> str:
         """LLM-as-orchestrator. Founder bug 2026-05-15: the app froze
         ("Not Responding") on every composer submit — root cause was
         this slot running `run_agent_step` SYNCHRONOUSLY on the Qt main
@@ -2922,7 +4874,15 @@ class ArchHubBridge(QObject):
         round-trip; both blocked the UI. Fix: run it on a background
         thread and emit `agent_step_done(result_json)` when finished.
         The slot returns immediately so the main thread never stalls.
-        """
+
+        `mode` (IA fix, ia-critique-ai-stemcells-2026-06-03 §4 — the
+        backend half the "all writes gated" chip never had) is the
+        USER-AGENCY gate: "plan" (default, gates host writes pending
+        approval), "auto" (auto reads, gates writes), "yolo" (runs
+        free). NEW trailing param, defaulted "plan" → the historical
+        3-arg call is unchanged AND fail-safe gated. run_agent_step
+        enforces it; the result carries `gated` (count blocked) +
+        `mode`."""
         import json as _json
         try:
             graph = _json.loads(graph_json) if graph_json else {}
@@ -2938,6 +4898,7 @@ class ArchHubBridge(QObject):
                     graph=graph if isinstance(graph, dict) else {},
                     focused_node_id=focused_node_id or "",
                     router=self.router,
+                    mode=mode or "plan",
                 )
             except Exception as ex:
                 result = {"actions": [], "text": "", "error": str(ex)}
@@ -3005,7 +4966,7 @@ class ArchHubBridge(QObject):
             path = write_spec(spec)
             node_spec = register_spec(spec)
             try: self.skills_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "type": node_spec.type,
                                 "path": str(path),
                                 "inputs":  [p.name for p in node_spec.inputs],
@@ -3108,7 +5069,7 @@ class ArchHubBridge(QObject):
             except Exception:
                 pass
             try: self.skills_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "id": sid, "method": method})
         except Exception as ex:
             return _safe_json({"ok": False, "id": skill_id,
@@ -3124,7 +5085,7 @@ class ArchHubBridge(QObject):
             ok = bool(delete_spec(type_id))
             if ok:
                 try: self.skills_changed.emit()
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": ok, "type": type_id,
                                "error": "" if ok else "not_found"})
         except Exception as ex:
@@ -3144,7 +5105,7 @@ class ArchHubBridge(QObject):
                     removed += 1
             if removed:
                 try: self.skills_changed.emit()
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "removed": removed})
         except Exception as ex:
             return _safe_json({"ok": False, "error": str(ex)})
@@ -3176,7 +5137,7 @@ class ArchHubBridge(QObject):
                     removed += 1
             if removed:
                 try: self.skills_changed.emit()
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "removed": removed})
         except Exception as ex:
             return _safe_json({"ok": False, "error": str(ex)})
@@ -3204,7 +5165,7 @@ class ArchHubBridge(QObject):
                 write_spec(spec)
                 node_spec = register_spec(spec)
                 try: self.skills_changed.emit()
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 self.node_created.emit(_safe_json({
                     "req_id": req_id, "ok": True,
                     "type": node_spec.type,
@@ -3270,7 +5231,7 @@ class ArchHubBridge(QObject):
                            encoding="utf-8")
             tmp.replace(p)
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "id": sid, "title": title})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -3319,7 +5280,7 @@ class ArchHubBridge(QObject):
                 encoding="utf-8",
             )
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "id": new_slug,
                                 "title": base_title})
         except Exception as ex:
@@ -3344,7 +5305,7 @@ class ArchHubBridge(QObject):
             except Exception as ex:
                 return _safe_json({"error": f"unlink failed: {ex}"})
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "id": sid})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -3380,17 +5341,50 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # Theme vocabulary — the founder-signed branded ids are the store's
+    # native tongue. Legacy ids (the original dark/light/system slots) are
+    # still ACCEPTED on write and FOLDED on read, so any value written by
+    # an older build or an older caller still resolves to a branded theme.
+    #   forge     ← dark, system, auto   (the signed default)
+    #   blueprint ← (branded only)
+    #   vellum    ← light
+    _THEME_BRANDED = ("forge", "blueprint", "vellum")
+    _THEME_LEGACY_FOLD = {
+        "dark": "forge", "system": "forge", "auto": "forge",
+        "light": "vellum",
+    }
+    _THEME_DEFAULT = "forge"
+
+    @classmethod
+    def _canon_theme(cls, value) -> str:
+        """Fold any stored/incoming theme id to a branded id. Branded ids
+        pass through; legacy ids map via _THEME_LEGACY_FOLD; anything
+        unknown (or blank) falls back to the signed default — never
+        raises."""
+        n = str(value or "").strip().lower()
+        if n in cls._THEME_BRANDED:
+            return n
+        return cls._THEME_LEGACY_FOLD.get(n, cls._THEME_DEFAULT)
+
     @pyqtSlot(str, result=str)
     def set_theme(self, name: str) -> str:
         """Persist theme choice to %LOCALAPPDATA%/ArchHub/theme.json.
-        Accepts 'dark' / 'light' / 'system'."""
+
+        Accepts the branded ids 'forge' / 'blueprint' / 'vellum'
+        (case-insensitive) and persists them branded. Still accepts the
+        legacy 'dark' / 'light' / 'system' (and 'auto') for back-compat,
+        mapping each to its branded slot before persisting. An unknown id
+        is rejected (the store stays unchanged) so a typo can't silently
+        repaint the app."""
         try:
             import os as _os
             from pathlib import Path
-            n = (name or "").strip().lower()
-            if n not in ("dark", "light", "system"):
+            raw = (name or "").strip().lower()
+            if (raw not in self._THEME_BRANDED
+                    and raw not in self._THEME_LEGACY_FOLD):
                 return _safe_json({"error":
-                    "theme must be one of: dark, light, system"})
+                    "theme must be one of: forge, blueprint, vellum"})
+            n = self._canon_theme(raw)
             base = Path(_os.environ.get("LOCALAPPDATA",
                                           str(Path.home()))) / "ArchHub"
             base.mkdir(parents=True, exist_ok=True)
@@ -3404,24 +5398,25 @@ class ArchHubBridge(QObject):
 
     @pyqtSlot(result=str)
     def get_theme(self) -> str:
-        """Read theme.json, defaulting to 'dark' when missing/invalid."""
+        """Read theme.json, returning a branded id ('forge' default when
+        missing/invalid). Any legacy value still on disk (dark/light/
+        system/auto) is folded to its branded slot on read, so an old
+        store upgrades transparently without a migration step."""
         try:
             import os as _os
             from pathlib import Path
             p = Path(_os.environ.get("LOCALAPPDATA",
                                        str(Path.home()))) / "ArchHub" / "theme.json"
             if not p.exists():
-                return _safe_json({"theme": "dark"})
+                return _safe_json({"theme": self._THEME_DEFAULT})
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
             except Exception:
-                return _safe_json({"theme": "dark"})
-            theme = str((data or {}).get("theme", "dark") or "dark").lower()
-            if theme not in ("dark", "light", "system"):
-                theme = "dark"
+                return _safe_json({"theme": self._THEME_DEFAULT})
+            theme = self._canon_theme((data or {}).get("theme"))
             return _safe_json({"theme": theme})
         except Exception as ex:
-            return _safe_json({"error": str(ex), "theme": "dark"})
+            return _safe_json({"error": str(ex), "theme": self._THEME_DEFAULT})
 
     @pyqtSlot(result=str)
     def get_storage_stats(self) -> str:
@@ -3527,104 +5522,83 @@ class ArchHubBridge(QObject):
             return _safe_json({"error": str(ex)})
 
     @pyqtSlot(result=str)
-    def export_all(self) -> str:
-        """Zip sessions/, skills/, custom_nodes/, profile.json,
-        theme.json into ~/Downloads/archhub-export-<ts>.zip."""
-        try:
-            import os as _os
-            import zipfile
-            from datetime import datetime, timezone
-            from pathlib import Path
-            from session_io import SESSIONS_DIR
+    @pyqtSlot(str, result=str)
+    def export_all(self, request_id: str = "") -> str:
+        """Zip sessions/, skills/, custom_nodes/, profile.json, theme.json into
+        ~/Downloads/archhub-export-<ts>.zip — OFF the Qt main thread.
 
-            appdata = Path(_os.environ.get("LOCALAPPDATA",
-                                              str(Path.home()))) / "ArchHub"
-            cn_dir = appdata / "custom_nodes"
-            skills_dir = appdata / "skills"
-            profile_path = appdata / "profile.json"
-            theme_path = appdata / "theme.json"
+        AgDR-0036 follow-up (2026-06-02): the recursive glob+zip used to run
+        inline in this slot, freezing the UI for the user's whole "Export
+        everything" click (the last allowlisted GUI-thread blocker). Now the
+        heavy work (`_do_export_all`, a module-level helper invisible to the
+        blocking-in-pyqtslot audit) runs on `_bg_pool()` and the result is
+        delivered via `settings_op_done(result_json)` with `request_id` stamped
+        in. The slot returns {async, request_id} INSTANTLY so the click never
+        stalls — the EXACT idiom proven by brain_export_dataset / node_op_done.
 
-            home = Path(_os.environ.get("USERPROFILE",
-                                           str(Path.home())))
-            downloads = home / "Downloads"
+        Dual-path: when called WITH a request_id (the live UI, via the JSX
+        `bridgeAsyncSignal` helper or the native SettingsTab worker) it goes
+        off-thread. When called WITHOUT one (a direct in-process call, e.g. a
+        unit test) it runs synchronously and returns the full {ok,path,size}
+        envelope so existing callers keep their contract."""
+        rid = (request_id or "").strip()
+        if not rid:
+            # Direct/synchronous path — no signal to correlate. Heavy work runs
+            # on the caller's own thread (a test / script, never the Qt UI).
+            return _safe_json(_do_export_all())
+
+        def _runner():
             try:
-                downloads.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                downloads = home
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            zip_path = downloads / f"archhub-export-{ts}.zip"
-
-            def _add_dir(z: zipfile.ZipFile, root: Path, arc_prefix: str) -> None:
-                if not root.exists():
-                    return
-                try:
-                    for f in root.glob("**/*"):
-                        try:
-                            if f.is_file():
-                                rel = f.relative_to(root)
-                                z.write(f, arcname=f"{arc_prefix}/{rel}")
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-
-            with zipfile.ZipFile(zip_path, "w",
-                                   compression=zipfile.ZIP_DEFLATED) as z:
-                _add_dir(z, SESSIONS_DIR, "sessions")
-                _add_dir(z, skills_dir,   "skills")
-                _add_dir(z, cn_dir,       "custom_nodes")
-                for one in (profile_path, theme_path):
-                    try:
-                        if one.exists() and one.is_file():
-                            z.write(one, arcname=one.name)
-                    except Exception:
-                        pass
-
-            size = 0
+                payload = _do_export_all()
+            except Exception as ex:  # _do_* is fail-safe, but belt-and-braces
+                payload = {"error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = rid
             try:
-                size = zip_path.stat().st_size
+                self.settings_op_done.emit(_safe_json(payload))
             except Exception:
                 pass
-            return _safe_json({"ok": True,
-                                "path": str(zip_path),
-                                "size": size})
+
+        try:
+            self._bg_pool().submit(_runner)
         except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            return _safe_json({"async": False, "request_id": rid,
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": rid})
 
     @pyqtSlot(result=str)
-    def clear_model_cache(self) -> str:
-        """Best-effort delete of %LOCALAPPDATA%/ArchHub/model_cache/*.
-        Returns total bytes freed."""
+    @pyqtSlot(str, result=str)
+    def clear_model_cache(self, request_id: str = "") -> str:
+        """Best-effort delete of %LOCALAPPDATA%/ArchHub/model_cache/* — OFF the
+        Qt main thread. Returns total bytes freed.
+
+        AgDR-0036 follow-up (2026-06-02): the recursive glob+delete used to run
+        inline in this slot, freezing the UI for the user's whole "Clear model
+        cache" click. Now `_do_clear_model_cache` (module-level, audit-invisible)
+        runs on `_bg_pool()` and the result lands via `settings_op_done(
+        result_json)` with `request_id`. Same dual-path contract as
+        `export_all`: with a request_id → instant {async} + signal; without one
+        → synchronous {ok,freed_bytes} for direct/unit-test callers."""
+        rid = (request_id or "").strip()
+        if not rid:
+            return _safe_json(_do_clear_model_cache())
+
+        def _runner():
+            try:
+                payload = _do_clear_model_cache()
+            except Exception as ex:
+                payload = {"error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = rid
+            try:
+                self.settings_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
         try:
-            import os as _os
-            import shutil
-            from pathlib import Path
-            cache = Path(_os.environ.get("LOCALAPPDATA",
-                                            str(Path.home()))) / "ArchHub" / "model_cache"
-            freed = 0
-            if not cache.exists():
-                return _safe_json({"ok": True, "freed_bytes": 0,
-                                    "note": "no cache dir"})
-            try:
-                for f in cache.glob("**/*"):
-                    try:
-                        if f.is_file():
-                            freed += f.stat().st_size
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            try:
-                shutil.rmtree(cache, ignore_errors=True)
-            except Exception:
-                pass
-            try:
-                cache.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
-            return _safe_json({"ok": True, "freed_bytes": freed})
+            self._bg_pool().submit(_runner)
         except Exception as ex:
-            return _safe_json({"error": str(ex)})
+            return _safe_json({"async": False, "request_id": rid,
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": rid})
 
     @pyqtSlot(result=str)
     def forget_all_memory(self) -> str:
@@ -3656,7 +5630,7 @@ class ArchHubBridge(QObject):
             except Exception:
                 pass
             try: self.memory_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True,
                                 "cloud_forgotten": forgot_cloud})
         except Exception as ex:
@@ -3677,7 +5651,7 @@ class ArchHubBridge(QObject):
                     except Exception:
                         continue
             try: self.sessions_changed.emit()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             return _safe_json({"ok": True, "deleted": deleted})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -3715,6 +5689,60 @@ class ArchHubBridge(QObject):
                 return _safe_json({"error": f"startfile failed: {ex}",
                                     "path": str(path)})
             return _safe_json({"ok": True, "path": str(path)})
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def open_file(self, path: str) -> str:
+        """Open a single ArchHub data file in its default OS application.
+
+        Backs the JSX "Open full table" button (ai.plan card). Locked down so
+        the bridge can never be used to open/execute arbitrary system files:
+        the target must (1) be an existing file, (2) live inside the ArchHub
+        data tree (LOCALAPPDATA/ArchHub or the sessions dir), and (3) carry a
+        safe, inert extension. Mirrors open_folder's structure + return shape.
+        """
+        try:
+            import os as _os
+            from pathlib import Path
+            p = (path or "").strip()
+            if not p:
+                return _safe_json({"error": "no path given"})
+            target = Path(p).expanduser().resolve()
+            if not target.is_file():
+                return _safe_json({"error": f"not a file: {target}"})
+            # SECURITY — only files inside the ArchHub data tree may be opened.
+            appdata = (Path(_os.environ.get("LOCALAPPDATA",
+                                            str(Path.home()))) / "ArchHub").resolve()
+            roots = [appdata]
+            try:
+                from session_io import SESSIONS_DIR
+                roots.append(Path(SESSIONS_DIR).resolve())
+            except Exception:
+                pass
+            def _inside(root) -> bool:
+                try:
+                    return target.is_relative_to(root)
+                except Exception:
+                    return False
+            if not any(_inside(r) for r in roots):
+                return _safe_json({"error":
+                    "path outside the ArchHub data tree is not allowed"})
+            # SECURITY — extension allowlist denies opening/executing arbitrary
+            # system files (.exe/.bat/.dll/...). Inert document types only.
+            SAFE = {".json", ".txt", ".md", ".csv", ".log",
+                    ".yaml", ".yml", ".tsv", ".html", ".pdf"}
+            if target.suffix.lower() not in SAFE:
+                return _safe_json({"error":
+                    f"refusing to open {target.suffix} via bridge"})
+            try:
+                startfile = getattr(_os, "startfile", None)
+                if callable(startfile):
+                    startfile(str(target))
+            except Exception as ex:
+                return _safe_json({"error": f"startfile failed: {ex}",
+                                    "path": str(target)})
+            return _safe_json({"ok": True, "path": str(target)})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -3772,3 +5800,75 @@ class ArchHubBridge(QObject):
                                 "blocked":    blocked})
         except Exception as ex:
             return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def get_runtime_info(self) -> str:
+        """Return REAL runtime facts for the footer ServerStrip.
+
+        Audit 2026-05-28: the strip hardcoded `server :7300` (a port that
+        corresponds to nothing). ArchHub is a desktop app — its only real
+        listening surfaces are the optional QtWebEngine remote-debug port
+        and the local brain daemon. Report the real ones so the footer
+        tells the truth:
+          - `debug_port`: the actual remote-debugging port if enabled
+            (env QTWEBENGINE_REMOTE_DEBUGGING), else null.
+          - `brain_port` / `brain_ok`: the brain daemon port + a cheap
+            reachability check (the daemon is the app's real backend).
+          - `providers`: configured / blocked LLM provider counts.
+        """
+        import os as _os
+        info: dict = {}
+        # Real remote-debug port (only present when launched with the env).
+        dbg = (_os.environ.get("QTWEBENGINE_REMOTE_DEBUGGING") or "").strip()
+        info["debug_port"] = int(dbg) if dbg.isdigit() else None
+        # Brain daemon — the app's real local backend (AgDR-0044, :8473).
+        brain_port = 8473
+        info["brain_port"] = brain_port
+        brain_ok = False
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.25)
+            brain_ok = (s.connect_ex(("127.0.0.1", brain_port)) == 0)
+            s.close()
+        except Exception:
+            brain_ok = False
+        info["brain_ok"] = brain_ok
+        # Provider counts (real — same source as get_provider_stats).
+        try:
+            if self.router is not None:
+                info["providers_configured"] = len(list(self.router.configured_providers() or []))
+                info["providers_blocked"] = len(list(self.router.blocked_providers() or {}))
+            else:
+                info["providers_configured"] = 0
+                info["providers_blocked"] = 0
+        except Exception:
+            info["providers_configured"] = 0
+            info["providers_blocked"] = 0
+        return _safe_json(info)
+
+    @pyqtSlot(result=str)
+    def get_token_usage(self) -> str:
+        """REAL provider-reported token usage for this session, accumulated
+        by the router from each completion's usage block (Anthropic
+        message.usage, OpenAI/OpenRouter chat.completion usage, Ollama
+        prompt_eval_count/eval_count).
+
+        Replaces the footer ServerStrip's old client-side chars/4 ESTIMATE.
+        Shape: {prompt_tokens, completion_tokens, tokens, cost, cost_known,
+        model, completions}. tokens stays 0 until a real completion lands —
+        an honest empty state, not a fabricated baseline. `cost` is only
+        meaningful when cost_known is True (a metered model with a known
+        price contributed); local/subscription models report tokens with
+        cost_known False, so the UI shows tokens only. Cheap read — no
+        off-thread needed."""
+        empty = {
+            "prompt_tokens": 0, "completion_tokens": 0, "tokens": 0,
+            "cost": 0.0, "cost_known": False, "model": "", "completions": 0,
+        }
+        try:
+            if self.router is not None and hasattr(self.router, "get_token_usage"):
+                return _safe_json(self.router.get_token_usage())
+        except Exception:
+            pass
+        return _safe_json(empty)

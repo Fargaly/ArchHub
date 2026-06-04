@@ -24,6 +24,12 @@ SYNC_MARKER = "dev_source_sync.json"
 SETTINGS_FILE = "settings.json"
 VERSION_FILE = "version.json"
 
+# reopen=latest: bound on waiting for the OLD single-instance to quit + release
+# its lock before we relaunch the freshly-synced child. Hard cap so a wedged old
+# instance can NEVER block startup — on timeout we sync + relaunch anyway
+# (worst case = the old behaviour). 4s mirrors single_instance._quit's default.
+QUIT_OLD_INSTANCE_TIMEOUT = 4.0
+
 CODE_PATHS: tuple[tuple[str, str], ...] = (
     ("app", "app"),
     ("payload/sources", "payload/sources"),
@@ -346,9 +352,9 @@ def _relaunch(install_root: Path, argv: Sequence[str]) -> None:
         # stderr buffers and call Win32 FlushFileBuffers via ctypes
         # for the install root's volume.
         try: sys.stdout.flush()
-        except Exception: pass
+        except Exception: pass  # audit: deliberate-fail-soft — best-effort stdout flush inside an outer best-effort fsync sweep
         try: sys.stderr.flush()
-        except Exception: pass
+        except Exception: pass  # audit: deliberate-fail-soft — best-effort stderr flush inside an outer best-effort fsync sweep
         if sys.platform == "win32":
             try:
                 import ctypes
@@ -360,10 +366,35 @@ def _relaunch(install_root: Path, argv: Sequence[str]) -> None:
                 pass
         else:
             try: os.sync()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — best-effort os.sync inside an outer best-effort fsync sweep
     except Exception:
         pass
     subprocess.Popen([sys.executable, *args], cwd=str(install_root), close_fds=True)
+
+
+def _quit_running_instance_before_relaunch(install_root: Path) -> bool:
+    """Ask any running single-instance (old, stale code) to quit + release its
+    lock so the relaunched child becomes the listener on the freshly-synced code.
+
+    This is the PRIMARY reopen=latest fix: it runs in the PARENT, inside the sync
+    path, before _relaunch + os._exit. Returns True when no instance remains
+    (none was running, stale lock, or it quit in time); False on timeout/error.
+
+    Load-bearing safety: NEVER raises + NEVER blocks beyond the bounded quit.
+    A missing symbol (ImportError), any exception, or a timeout all return False,
+    and the caller proceeds to sync + relaunch regardless — so the worst case is
+    exactly today's behaviour (old window foregrounded), never a wedged launch.
+    single_instance.quit_running_instance is a plain socket call (no Qt), safe
+    here at module-import time before QApplication exists."""
+    try:
+        from single_instance import quit_running_instance
+        gone = quit_running_instance(timeout=QUIT_OLD_INSTANCE_TIMEOUT)
+        _log(install_root,
+             f"quit old instance before relaunch -> {'released' if gone else 'still-alive/timeout'}")
+        return bool(gone)
+    except Exception as ex:  # missing symbol / any error -> degrade to today's behaviour
+        _log(install_root, f"quit old instance skipped ({type(ex).__name__}: {ex})")
+        return False
 
 
 def maybe_sync_and_relaunch(
@@ -392,6 +423,15 @@ def maybe_sync_and_relaunch(
     if not should_sync:
         return False
 
+    if relaunch:
+        # reopen=latest PRIMARY fix: the running install is the old, stale-code
+        # instance (it was launched with --no-dev-source-sync so it never
+        # re-syncs). Ask it to quit + release its lock NOW — before we relaunch
+        # — so the freshly-synced child becomes the single-instance listener on
+        # the NEW code instead of summoning the old one. Best-effort + bounded:
+        # on timeout/error we sync + relaunch anyway (worst case = today).
+        _quit_running_instance_before_relaunch(install_root)
+
     _log(install_root, f"syncing from {source_root}")
     sync_source_to_install(source_root, install_root, stamp)
     _log(install_root, f"synced {stamp.get('file_count', 0)} files commit={stamp.get('commit', '')}")
@@ -400,3 +440,56 @@ def maybe_sync_and_relaunch(
         _relaunch(install_root, argv)
         os._exit(0)
     return True
+
+
+def has_new_source(install_root: Path) -> bool:
+    """reopen=latest predicate: True when a configured source checkout has
+    code newer than what this install was last synced to.
+
+    GATED + graceful: returns False (→ caller summons / normal startup) when
+    the install IS a git checkout, when no source is configured, or on ANY
+    error. This is the predicate the single-instance summon decision consults
+    to decide "is there new code worth superseding the running instance for?".
+
+    It mirrors the guards inside maybe_sync_and_relaunch (is_git_checkout,
+    find_source_root) so the answer is consistent with what an actual sync
+    would do — but it NEVER syncs, relaunches, or exits. Pure query."""
+    try:
+        install_root = Path(install_root)
+        if is_git_checkout(install_root):
+            return False
+        source_root = find_source_root(install_root)
+        if source_root is None:
+            return False
+        should_sync, _stamp = needs_sync(source_root, install_root)
+        return bool(should_sync)
+    except Exception:
+        return False
+
+
+def force_sync_now(install_root: Path, argv: Sequence[str] | None = None) -> bool:
+    """Dev-verify launch: sync from the configured checkout IGNORING the
+    sync marker (so even an up-to-date install is force-refreshed once),
+    without relaunching. Returns True when a sync happened.
+
+    Used by the ARCHHUB_DEV_VERIFY=1 / --dev-verify path so the founder +
+    Claude can be certain the running app reflects HEAD before CDP
+    verification. GATED + graceful exactly like maybe_sync_and_relaunch:
+    a git-checkout install or no configured source → no-op False; any error
+    is swallowed so the launch always proceeds."""
+    try:
+        argv = list(argv or sys.argv)
+        install_root = Path(install_root)
+        if is_git_checkout(install_root):
+            return False
+        source_root = find_source_root(install_root)
+        if source_root is None:
+            return False
+        stamp = source_stamp(source_root)
+        _log(install_root, f"force-sync (dev-verify) from {source_root}")
+        sync_source_to_install(source_root, install_root, stamp)
+        _log(install_root,
+             f"force-synced {stamp.get('file_count', 0)} files commit={stamp.get('commit', '')}")
+        return True
+    except Exception:
+        return False

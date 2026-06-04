@@ -1,0 +1,194 @@
+[
+  {
+    "slug": "ACCESSIBILITY-AUDIT-2026-05-26",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "AGENTS_AUTONOMOUS_LOOP",
+    "stale": true,
+    "reason": "artefacts changed after doc mtime: app/main.py",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "AZURE_SIGNING_QUICKSTART",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "BACKEND_SPEC",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "BILLING_ALTERNATIVES",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CAIQ_LITE",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CANVAS_PLAN",
+    "stale": true,
+    "reason": "artefacts changed after doc mtime: app/bridge.py, app/chat_window.py, app/main.py, app/settings_dialog.py",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CIVIL_3D_ROADMAP",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CLOUD_REVIVAL_PLAN",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CODE_SIGNING",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CONNECTOR_MASTER_PLAN_2026-05-15",
+    "stale": true,
+    "reason": "artefacts changed after doc mtime: app/bridge.py, app/connectors/base.py, app/tool_engine.py",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "CONTENT-ECOSYSTEM-2026-05-26",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "FAILURE_LOG",
+    "stale": true,
+    "reason": "artefacts changed after doc mtime: app/settings_dialog.py",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "GO_LIVE_CHECKLIST",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "GTM_STRATEGY",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "MULTI_DEVICE",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "NODE_GRAMMAR",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "NODE_LIBRARY_v2",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "PRICING_STATUS",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "REALITY_SMOKE",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "RELIABILITY",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "REVENUE_MODEL",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "REVIT_FINISHES_PIPELINE",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "ROADMAP",
+    "stale": true,
+    "reason": "artefacts changed after doc mtime: app/bridge.py, app/llm_router.py, app/main.py",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "RUN-MCP",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "RUN-REVIT",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "SKILLS",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "SOC2_READINESS",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "STATUS_REPORTS",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "TRADEMARK_FILING",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "TRUST_CENTER",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  },
+  {
+    "slug": "USER_GUIDE",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-05-26T09:40:45.845504+00:00"
+  }
+]

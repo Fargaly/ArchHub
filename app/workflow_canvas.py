@@ -210,7 +210,7 @@ class EdgeItem(QGraphicsPathItem):
         pen = QPen(QColor(T["accent"]), 1.5)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         self.setPen(pen)
-        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.refresh()
 
     def refresh(self) -> None:
@@ -244,7 +244,7 @@ class DraggingEdgeItem(QGraphicsPathItem):
         self.src = src
         pen = QPen(QColor(T["accent"]), 1.2, Qt.PenStyle.DashLine)
         self.setPen(pen)
-        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.setZValue(10)
         self._end = src.output_pos()
 
@@ -420,7 +420,7 @@ class CanvasScene(QGraphicsScene):
         line = QColor(T["line"])
         # Outer border (1 px ink).
         painter.setPen(QPen(ink, 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         painter.drawRect(scene_rect.adjusted(14, 14, -14, -14))
         # Inner border (1 px line).
         painter.setPen(QPen(line, 1))

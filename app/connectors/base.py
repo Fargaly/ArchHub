@@ -167,6 +167,9 @@ class Connector(ABC):
 
     def __init__(self) -> None:
         self._ops_cache: Optional[list] = None
+        self._ops_error: str = ""   # set when build_ops() raised, so the
+                                    # failure surfaces as an honest status
+                                    # instead of a silent zero-op host.
 
     # -- status -------------------------------------------------------
     @abstractmethod
@@ -183,13 +186,38 @@ class Connector(ABC):
         raise NotImplementedError
 
     def ops(self) -> list:
+        """Memoised list of this connector's ops.
+
+        If build_ops() raises we must NOT re-raise — that would crash
+        connector enumeration (all_ops/registry iteration) and take a
+        broken host's neighbours down with it. But we must also NOT
+        silently return an empty list: a host that exposes zero ops is
+        indistinguishable from a host with no capabilities, so a broken
+        build_ops() would masquerade as a healthy-but-empty host. The
+        honest middle ground: return [] so enumeration keeps working,
+        AND record the failure on `_ops_error` so `to_dict()`/`ops_status`
+        report the host as errored (loaded_dead), never as a clean zero."""
         if self._ops_cache is None:
             try:
                 self._ops_cache = list(self.build_ops() or [])
-            except Exception:
+                self._ops_error = ""
+            except Exception as ex:
                 traceback.print_exc()
+                self._ops_error = f"{type(ex).__name__}: {ex}"
                 self._ops_cache = []
         return self._ops_cache
+
+    def ops_status(self) -> dict:
+        """Honest report of the op layer: did build_ops() succeed?
+
+        Returns {"ok": bool, "count": int, "error": str}. `ok=False` with
+        a non-empty `error` means build_ops() raised — the host is broken,
+        not capability-free. Callers use this to avoid the silent-empty
+        trap when an op list comes back empty."""
+        ops = self.ops()   # populates _ops_error as a side effect
+        return {"ok": not self._ops_error,
+                "count": len(ops),
+                "error": self._ops_error}
 
     def op(self, op_id: str) -> Optional[ConnectorOp]:
         for o in self.ops():
@@ -204,13 +232,30 @@ class Connector(ABC):
         except Exception as ex:
             st = {"status": "missing", "note": f"probe failed: {ex}",
                   "detail": {}}
+        ops = self.ops()                 # populates _ops_error
+        status = st.get("status", "missing")
+        note = st.get("note", "")
+        # Honest-status rule (founder: "report honest status, never
+        # fabricate"). A build_ops() failure means this host's capability
+        # layer is dead. Surfacing it as the probe's status (e.g. "live")
+        # with an empty op list would fake a working-but-feature-less host
+        # — the exact silent-empty trap. So when build_ops() raised, mark
+        # the host loaded_dead unless probe already reported a stronger
+        # failure (missing/unauthorized), and always carry ops_error so the
+        # break is visible downstream.
+        if self._ops_error:
+            if status not in ("missing", "unauthorized"):
+                status = "loaded_dead"
+            ops_note = f"ops unavailable — build_ops failed: {self._ops_error}"
+            note = f"{note} · {ops_note}" if note else ops_note
         return {
             "host": self.host,
             "display_name": self.display_name,
             "mechanism": self.mechanism,
-            "status": st.get("status", "missing"),
-            "note": st.get("note", ""),
-            "ops": [o.to_dict() for o in self.ops()],
+            "status": status,
+            "note": note,
+            "ops_error": self._ops_error,
+            "ops": [o.to_dict() for o in ops],
         }
 
 
@@ -268,6 +313,7 @@ def load_all_connectors() -> int:
         "connectors.indesign_connector",
         "connectors.speckle_connector",
         "connectors.notion_connector",
+        "connectors.procore_connector",
         "connectors.dropbox_connector",
         "connectors.teams_connector",
         "connectors.blender_connector",

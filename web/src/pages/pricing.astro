@@ -1,0 +1,218 @@
+---
+import Base from '../layouts/Base.astro';
+
+// Pricing = Model C, the founder-approved hybrid. Numbers come straight
+// from the COMMITTED src/data/pricing.json — the SINGLE SOURCE OF TRUTH
+// extracted from cloud_backend/config.py's typed public_pricing() by
+// scripts/extract_pricing.py (npm run refresh-content). NOTHING here is
+// hardcoded: if config says Studio is $39/seat, so does this page. If the
+// JSON is missing we show an honest note rather than invent numbers.
+import pricing from '../data/pricing.json';
+
+const tiers = pricing.tiers ?? [];
+const byId = Object.fromEntries(tiers.map((t) => [t.id, t]));
+const pack = pricing.credit_pack ?? null;
+const discountPct = Math.round((pricing.annual_discount ?? 0) * 100);
+const fmt = (n) => (Number.isInteger(n) ? `${n}` : n.toFixed(2));
+
+// Per-tier copy that doesn't live in config (positioning, not pricing).
+const tagline = {
+  solo: 'individual architect / freelancer',
+  studio: 'a practice / project team',
+  firm: 'large firm / enterprise',
+};
+const seatNote = (t) => {
+  if (t.id === 'solo') return '1 seat';
+  if (t.id === 'firm') return `${t.min_seats}+ seats · volume per-seat`;
+  return 'seats à la carte';
+};
+const featured = 'studio';
+---
+<Base title="Pricing" description="Model C — a simple per-seat base, with AI your way: bring your own key for free, or buy hosted credits.">
+  <h1>Pricing</h1>
+  <p>
+    A predictable <strong>per-seat base</strong> for the app, the 19
+    connectors, the brain and offline sync — and <strong>AI as your
+    choice</strong>: bring your own LLM key for free, or buy hosted
+    credits and let us run it. Same tiers, your call, switch anytime.
+    Numbers below come straight from <code>cloud_backend/config.py</code>
+    — no duplicated prices, no drift.
+  </p>
+
+  {tiers.length === 0 ? (
+    <p class="freshness">
+      Pricing source <code>src/data/pricing.json</code> is missing — run
+      <code>npm run refresh-content</code> to regenerate it from
+      <code>cloud_backend/config.py</code>.
+    </p>
+  ) : (
+    <>
+      <!-- ── TIERS ─────────────────────────────────────────────── -->
+      <div class="tiers">
+        {tiers.map((t) => (
+          <div class={t.id === featured ? 'tier feat' : 'tier'}>
+            {t.id === featured && <span class="badge">most teams</span>}
+            <div class="nm">{t.name}</div>
+            <div class="pr">
+              ${fmt(t.price_per_seat)}
+              <small>{t.id === 'solo' ? '/mo · 1 seat' : '/seat/mo'}</small>
+            </div>
+            <div class="who">{tagline[t.id] ?? t.blurb}</div>
+            <div class="annual">
+              or ${fmt(t.price_per_seat_annual)}/{t.id === 'solo' ? 'mo' : 'seat/mo'}
+              billed annually <span class="off">−{discountPct}%</span>
+            </div>
+            <ul>
+              <li>App + 19 connectors (Revit, AutoCAD, Office, Adobe…)</li>
+              {t.id === 'solo'
+                ? <li>Your personal brain + offline Speckle sync</li>
+                : <li>Shared team brain (collective memory + skills)</li>}
+              {t.is_company && <li>Roles, approvals, admin console</li>}
+              {t.sso && <li>SSO, audit log, priority support</li>}
+              <li class="ai">AI: BYO-key free — or pooled hosted credits</li>
+              <li>{seatNote(t)}</li>
+            </ul>
+          </div>
+        ))}
+      </div>
+      <p class="allannual">All tiers: annual billing −{discountPct}%.</p>
+
+      <!-- ── THE AI CHOICE (the key flexibility) ───────────────── -->
+      <h2>AI is your choice — per workspace</h2>
+      <p>
+        The AI bill is <strong>decoupled</strong> from the seat base. Each
+        workspace picks one, and can switch anytime:
+      </p>
+      <div class="modes">
+        <div class="mode byo">
+          <h3>BYO key · free AI</h3>
+          <p>
+            Paste your own provider key (Anthropic / OpenAI / Google). We
+            charge <strong>$0</strong> for AI and there's <strong>no
+            hosted message limit</strong> — your key carries it.
+          </p>
+          <p class="tag">Default — launch cheap</p>
+        </div>
+        <div class="mode host">
+          <h3>Hosted · buy credits</h3>
+          <p>
+            We run the LLM, metered against credit packs. Pay-as-you-go,
+            no provider account to manage. Each message draws one credit;
+            at zero we prompt an honest top-up.
+          </p>
+          {pack && (
+            <p class="tag">
+              ${pack.price_usd} = {pack.messages.toLocaleString()} messages ·
+              top up anytime · rolls over {pack.rollover_days} days
+            </p>
+          )}
+        </div>
+      </div>
+
+      <!-- ── FLEXIBILITY LEVERS ────────────────────────────────── -->
+      <h2>What makes it flexible</h2>
+      <ul class="levers">
+        <li>
+          <strong>Seats à la carte.</strong> Add or remove seats any day,
+          prorated — no locked buckets. Studio grows one seat at a time;
+          {byId.firm && ` Firm's volume per-seat starts at ${byId.firm.min_seats} seats.`}
+        </li>
+        {pack && (
+          <li>
+            <strong>Hosted credit packs.</strong> ${pack.price_usd} →
+            {' '}{pack.messages.toLocaleString()} messages. Top up anytime;
+            unused credits roll over {pack.rollover_days} days.
+          </li>
+        )}
+        <li>
+          <strong>One ramp, no re-platform.</strong> Same product solo →
+          firm; you only add seats + governance. No migration, no tier
+          lock-in.
+        </li>
+        <li>
+          <strong>Annual saves {discountPct}%.</strong> Flip any tier to
+          annual billing for a −{discountPct}% per-seat price.
+        </li>
+      </ul>
+
+      <!-- ── HONEST TABLE (the raw config-derived numbers) ─────── -->
+      <h2>At a glance</h2>
+      <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+        <thead>
+          <tr style="border-bottom:1px solid #2a2e35;">
+            <th style="text-align:left; padding:10px 8px;">Plan</th>
+            <th style="text-align:right; padding:10px 8px;">Per seat / mo</th>
+            <th style="text-align:right; padding:10px 8px;">Annual / seat / mo</th>
+            <th style="text-align:right; padding:10px 8px;">Seats</th>
+            <th style="text-align:right; padding:10px 8px;">SSO</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tiers.map((t) => (
+            <tr style="border-bottom:1px solid #1a1d22;">
+              <td style="padding:10px 8px;"><strong>{t.name}</strong></td>
+              <td style="text-align:right; padding:10px 8px;">${fmt(t.price_per_seat)}</td>
+              <td style="text-align:right; padding:10px 8px;">${fmt(t.price_per_seat_annual)}</td>
+              <td style="text-align:right; padding:10px 8px;">
+                {t.id === 'solo' ? '1' : t.id === 'firm' ? `${t.min_seats}+` : 'à la carte'}
+              </td>
+              <td style="text-align:right; padding:10px 8px;">{t.sso ? '✓' : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p class="freshness" style="margin-top: 24px;">
+        Pricing extracted from <code>cloud_backend/config.py</code> by
+        <code>scripts/extract_pricing.py</code> at build time
+        (Model {pricing.model}).
+      </p>
+    </>
+  )}
+
+  <style>
+    .tiers {
+      display: grid; grid-template-columns: 1fr 1.12fr 1fr; gap: 14px;
+      margin: 22px 0 6px;
+    }
+    @media (max-width: 720px) { .tiers { grid-template-columns: 1fr; } }
+    .tier {
+      position: relative; background: #14171c; border: 1px solid #232830;
+      border-radius: 14px; padding: 18px 18px 14px;
+    }
+    .tier.feat { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(94,200,255,0.08); }
+    .tier .badge {
+      position: absolute; top: -10px; left: 16px; background: var(--accent);
+      color: #06222f; font-size: 10px; font-weight: 700; letter-spacing: .5px;
+      text-transform: uppercase; border-radius: 20px; padding: 3px 9px;
+    }
+    .tier .nm { font-weight: 700; font-size: 1.05rem; }
+    .tier .pr { font-weight: 700; font-size: 1.8rem; margin-top: 4px; }
+    .tier .pr small { font-weight: 400; font-size: .8rem; color: var(--muted); }
+    .tier .who { font-size: .82rem; color: var(--muted); margin-top: 2px; }
+    .tier .annual { font-size: .78rem; color: var(--muted); margin-top: 6px; }
+    .tier .annual .off {
+      color: #8fdca0; font-weight: 600; background: rgba(143,220,160,.12);
+      border-radius: 5px; padding: 1px 6px;
+    }
+    .tier ul { list-style: none; margin: 12px 0 0; padding: 0; font-size: .86rem; }
+    .tier li { padding: 4px 0 4px 18px; position: relative; }
+    .tier li::before { content: "✓"; position: absolute; left: 0; color: #8fdca0; }
+    .tier li.ai { color: var(--accent); }
+    .tier li.ai::before { content: "⚡"; color: var(--accent); }
+    .allannual { color: var(--muted); font-size: .82rem; text-align: center; margin: 4px 0 0; }
+    .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+    @media (max-width: 720px) { .modes { grid-template-columns: 1fr; } }
+    .mode { background: #14171c; border: 1px solid #232830; border-radius: 12px; padding: 16px 18px; }
+    .mode h3 { margin: 0 0 6px; font-size: 1rem; }
+    .mode p { margin: 0 0 8px; font-size: .88rem; color: var(--fg); }
+    .mode.byo { border-left: 3px solid #8fdca0; }
+    .mode.host { border-left: 3px solid var(--accent); }
+    .mode .tag {
+      font-size: .8rem; color: var(--muted); background: #0f1216;
+      border-radius: 7px; padding: 7px 10px; margin: 0;
+    }
+    ul.levers { padding-left: 18px; }
+    ul.levers li { margin: 6px 0; font-size: .92rem; }
+  </style>
+</Base>

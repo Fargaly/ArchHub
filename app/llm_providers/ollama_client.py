@@ -12,11 +12,50 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 import urllib.request
 import urllib.error
 from typing import Callable, Optional
 
 OLLAMA_BASE = "http://localhost:11434"
+
+# ---------------------------------------------------------------------------
+# Short-TTL cache for the reachability/model-list probe.
+#
+# GUI-idle-stall root fix (2026-06-02, residual): `list_local_models()` does a
+# synchronous `urllib.request.urlopen(.../api/tags, timeout=2)`. It is called
+# ON the Qt GUI thread from several hot paths — `llm_router.configured_providers`
+# / `ollama_models` / `has_credentials`, reached from the `get_providers`
+# `@pyqtSlot`, the model-picker, and timer-driven status refreshes. With Ollama
+# not running (the common case), each call pays the full cold socket cost, and a
+# single UI refresh fans several of them, so the GUI thread stalled for up to
+# ~7 s and the window flipped to "Not Responding" on a periodic tick. py-spy
+# caught the MainThread parked in `create_connection` under
+# `list_local_models`. (The host-pill probe — the first stall source — was
+# already moved off-thread in chat_window._refresh_host_pills; this closes the
+# SECOND source of the same class.)
+#
+# The fix has two layers. (1) Cache the result for `_TTL_S`, so a burst of
+# GUI-thread calls within the window is ~0 ms instead of several synchronous
+# 2 s probes stacking toward 7 s. (2) REFRESH-BEHIND: a GUI-thread call NEVER
+# performs the socket probe itself — it returns the cached value immediately and
+# (when the entry is stale) kicks a single daemon thread to refresh in the
+# background. So the only cost on the Qt thread is a dict read; the urlopen
+# always runs off-thread. Liveness is preserved — the list refreshes within
+# ~`_TTL_S` of going stale. First-ever call (cold cache) returns `[]` and
+# triggers the background fill; the value is correct on the next tick a few ms
+# later. A `pass_through=True` caller (explicit user "refresh models") forces a
+# SYNCHRONOUS probe on the caller's own thread — only ever invoked from a
+# user-initiated refresh path, never from a timer/paint on the GUI thread.
+# Additive and thread-safe; closes the SECOND source of the GUI-idle-stall class
+# (the first — the host-pill broker scan — was moved off-thread in
+# chat_window._refresh_host_pills).
+_TTL_S = 4.0
+_cache_lock = threading.Lock()
+_cache_val: list[str] | None = None
+_cache_at: float = 0.0
+_refresh_inflight = False  # guards against spawning N background refreshers
 
 
 # Matches a JSON object that looks like a tool call (top-level "name" + "arguments"
@@ -70,8 +109,11 @@ def _split_think(delta: str, state: dict):
             state["in_think"] = True
 
 
-def list_local_models() -> list[str]:
-    """Return model names currently pulled in Ollama. Empty list if Ollama not running."""
+def _probe_local_models() -> list[str]:
+    """The raw, uncached probe. Synchronous urlopen with a 2 s timeout;
+    returns [] if Ollama is not running. Callers should prefer
+    `list_local_models()` (cached) — this is split out so the cache wrapper
+    and any future off-thread refresher can share one implementation."""
     try:
         with urllib.request.urlopen(f"{OLLAMA_BASE}/api/tags", timeout=2) as r:
             data = json.loads(r.read())
@@ -80,11 +122,74 @@ def list_local_models() -> list[str]:
         return []
 
 
+def _store(val: list[str]) -> None:
+    global _cache_val, _cache_at
+    with _cache_lock:
+        _cache_val = list(val)
+        _cache_at = time.monotonic()
+
+
+def _spawn_refresh() -> None:
+    """Kick a single daemon thread to refresh the cache off any caller's
+    thread. Guarded by `_refresh_inflight` so concurrent stale reads (the
+    common case — several hot paths in one UI refresh) coalesce into ONE
+    background probe."""
+    global _refresh_inflight
+    with _cache_lock:
+        if _refresh_inflight:
+            return
+        _refresh_inflight = True
+
+    def _worker():
+        global _refresh_inflight
+        try:
+            _store(_probe_local_models())
+        finally:
+            with _cache_lock:
+                _refresh_inflight = False
+
+    threading.Thread(target=_worker, name="ollama-models-refresh",
+                     daemon=True).start()
+
+
+def list_local_models(pass_through: bool = False) -> list[str]:
+    """Return model names currently pulled in Ollama. Empty list if Ollama
+    not running.
+
+    Non-blocking by default (see module note): returns the cached value
+    immediately and refreshes BEHIND on a daemon thread when stale, so the
+    synchronous 2 s `/api/tags` probe never runs on the Qt GUI thread (the
+    residual idle-stall source — `configured_providers` / `ollama_models` /
+    `has_credentials` fan several calls into one UI refresh). First-ever call
+    returns `[]` and the correct list lands a few ms later on the background
+    fill. Pass `pass_through=True` to force a SYNCHRONOUS probe on the caller's
+    own thread — only for explicit user-initiated refreshes, never a GUI-thread
+    timer/paint."""
+    if pass_through:
+        val = _probe_local_models()
+        _store(val)
+        return val
+
+    now = time.monotonic()
+    with _cache_lock:
+        have = _cache_val is not None
+        fresh = have and (now - _cache_at) < _TTL_S
+        snapshot = list(_cache_val) if have else []
+
+    if not fresh:
+        # Stale or never-populated: serve what we have NOW, refresh off-thread.
+        _spawn_refresh()
+    return snapshot
+
+
 class OllamaClient:
     """Thin wrapper around Ollama's /api/chat endpoint."""
 
     def __init__(self):
-        pass  # No API key needed
+        # Real token usage from the most recent complete() call —
+        # {prompt_tokens, completion_tokens} or None. LLMRouter reads this
+        # after each call to accumulate real usage. No API key needed.
+        self.last_usage = None
 
     def complete(
         self,
@@ -173,6 +278,12 @@ class OllamaClient:
 
         full_text = ""
         tool_calls: list[dict] = []
+        # REAL token usage — Ollama reports it on the final (done) chunk as
+        # prompt_eval_count (prompt tokens) + eval_count (generated tokens).
+        # Captured on `self.last_usage` so LLMRouter can fold the real
+        # numbers into its accumulator after this call returns, without
+        # changing this method's (text, tool_calls) return contract.
+        self.last_usage = None
 
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
@@ -214,6 +325,14 @@ class OllamaClient:
                         })
 
                     if chunk.get("done"):
+                        # Final chunk carries the real token counts.
+                        pe = chunk.get("prompt_eval_count")
+                        ev = chunk.get("eval_count")
+                        if pe is not None or ev is not None:
+                            self.last_usage = {
+                                "prompt_tokens": int(pe or 0),
+                                "completion_tokens": int(ev or 0),
+                            }
                         break
         except urllib.error.URLError as e:
             raise RuntimeError(

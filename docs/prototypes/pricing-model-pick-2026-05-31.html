@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — pick one model</title>
+<style>
+  :root{
+    --dark:#141413; --light:#faf9f5; --mid:#b0aea5; --lgray:#e8e6dc;
+    --orange:#d97757; --blue:#6a9bcc; --green:#788c5d;
+    --shadow:0 1px 3px rgba(20,20,19,.08),0 10px 30px rgba(20,20,19,.07);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--light);color:var(--dark);
+    font-family:"Lora",Georgia,serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  h1,h2,h3,.f{font-family:"Poppins",Arial,sans-serif}
+  header{background:var(--dark);color:var(--light);padding:38px 32px 30px;border-bottom:4px solid var(--orange)}
+  header h1{margin:0 0 8px;font-size:30px;font-weight:600;letter-spacing:-.5px}
+  header p{margin:0;color:var(--mid);font-size:16px;max-width:820px}
+  .wrap{max-width:1040px;margin:0 auto;padding:26px 22px 90px}
+  .lead{background:#fff;border:1px solid var(--lgray);border-left:4px solid var(--orange);
+    border-radius:12px;padding:16px 22px;margin:0 0 28px;box-shadow:var(--shadow);font-size:15px}
+  .lead b{color:var(--orange)}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:30px}
+  .card{background:#fff;border:1px solid var(--lgray);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+  .card .ch{padding:16px 20px;color:#fff}
+  .card.a .ch{background:var(--blue)} .card.b .ch{background:var(--green)}
+  .card .ch .tag{font-family:"Poppins",Arial;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:.85}
+  .card .ch h2{margin:4px 0 0;font-size:20px;font-weight:600}
+  .card .ch .sub{font-size:13px;opacity:.9;margin-top:3px}
+  .card .body{padding:6px 20px 18px}
+  .tier{display:flex;align-items:baseline;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--lgray)}
+  .tier:last-child{border-bottom:0}
+  .tier .nm{font-family:"Poppins",Arial;font-weight:600;font-size:15px}
+  .tier .nm small{display:block;font-family:"Lora",Georgia;font-weight:400;font-size:12px;color:#777;margin-top:2px}
+  .tier .pr{font-family:"Poppins",Arial;font-weight:700;font-size:18px;text-align:right;white-space:nowrap}
+  .tier .pr small{display:block;font-weight:400;font-size:11px;color:#777}
+
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:30px}
+  .mbox{background:#fff;border:1px solid var(--lgray);border-radius:14px;padding:16px 20px;box-shadow:var(--shadow)}
+  .mbox h3{margin:0 0 10px;font-family:"Poppins",Arial;font-size:14px}
+  .mbox .row{display:flex;gap:8px;font-size:13.5px;margin-bottom:7px;align-items:flex-start}
+  .mbox .row:last-child{margin-bottom:0}
+  .mbox .ic{flex:none;width:16px;text-align:center}
+  .plus{color:var(--green);font-weight:700} .minus{color:var(--orange);font-weight:700}
+  .a-accent{border-top:3px solid var(--blue)} .b-accent{border-top:3px solid var(--green)}
+
+  .rec{background:linear-gradient(180deg,#fff,#fcfbf7);border:1px dashed var(--orange);border-radius:14px;padding:18px 22px;margin-bottom:10px;font-size:15px}
+  .rec b{color:var(--orange);font-family:"Poppins",Arial}
+  .pickrow{display:flex;gap:14px;margin-top:14px;flex-wrap:wrap}
+  .pick{flex:1;min-width:240px;border:2px solid var(--lgray);border-radius:12px;padding:14px 16px;font-family:"Poppins",Arial;font-size:14px;background:#fff}
+  .pick.a{border-color:var(--blue)} .pick.b{border-color:var(--green)}
+  .pick .h{font-weight:700;margin-bottom:4px}
+  .pick.a .h{color:var(--blue)} .pick.b .h{color:var(--green)}
+  .pick .d{font-family:"Lora",Georgia;font-size:12.5px;color:#666}
+  footer{max-width:1040px;margin:0 auto;padding:18px 22px;color:var(--mid);font-size:12.5px;text-align:center}
+  .note{font-size:12px;color:#888;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Pricing — pick one model</h1>
+  <p>Two pricing models live in the repo right now and contradict each other.
+  The website + billing can't go live until one is canonical. Here's both,
+  side by side — point at one and I make it the single source of truth (config,
+  the pricing page, the checkout).</p>
+</header>
+
+<div class="wrap">
+
+  <div class="lead">
+    <b>Why this matters:</b> the cloud backend (<code>config.py</code>) ships
+    Model A; an internal plan doc (<code>CLOUD_REVIVAL_PLAN.md</code>) describes
+    Model B. The pricing page reads whichever the backend says — so this is the
+    one number-and-tier decision that's yours, not mine.
+  </div>
+
+  <div class="cols">
+    <div class="card a">
+      <div class="ch"><div class="tag">Model A · in the backend today</div><h2>3 tiers · pay per message</h2><div class="sub">Solo · Studio · Firm — quota-based</div></div>
+      <div class="body">
+        <div class="tier"><div class="nm">Solo<small>BYO API key · individual</small></div><div class="pr">$19<small>/mo · 500 msgs</small></div></div>
+        <div class="tier"><div class="nm">Studio<small>5 seats · hosted LLM</small></div><div class="pr">$79<small>/mo · 2,000 msgs</small></div></div>
+        <div class="tier"><div class="nm">Firm<small>25 seats · hosted LLM</small></div><div class="pr">$299<small>/mo · 1M msgs</small></div></div>
+      </div>
+    </div>
+
+    <div class="card b">
+      <div class="ch"><div class="tag">Model B · the plan doc</div><h2>2 tiers · pay per seat</h2><div class="sub">Pro · Studio — seat-based, BYO-key default</div></div>
+      <div class="body">
+        <div class="tier"><div class="nm">Pro<small>individual · BYO key</small></div><div class="pr">$19<small>/mo · 1 seat</small></div></div>
+        <div class="tier"><div class="nm">Studio<small>3-seat minimum · BYO key</small></div><div class="pr">$59<small>/seat/mo</small></div></div>
+        <div class="tier"><div class="nm" style="color:#aaa">(no Firm tier)<small>large firms negotiate</small></div><div class="pr" style="color:#bbb">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div class="mbox a-accent">
+      <h3>Model A — pay per message</h3>
+      <div class="row"><span class="ic plus">+</span><span>Simple to grasp: a tier = a monthly message bucket.</span></div>
+      <div class="row"><span class="ic plus">+</span><span>You host the LLM on Studio/Firm — a real margin to capture.</span></div>
+      <div class="row"><span class="ic plus">+</span><span>Firm tier ($299) anchors a real enterprise price.</span></div>
+      <div class="row"><span class="ic minus">−</span><span>Hosting the LLM = you fund the upstream API bills (real spend + the proxy must be turned on).</span></div>
+      <div class="row"><span class="ic minus">−</span><span>Message quotas can feel arbitrary to a buyer ("how many is 2,000?").</span></div>
+    </div>
+    <div class="mbox b-accent">
+      <h3>Model B — pay per seat</h3>
+      <div class="row"><span class="ic plus">+</span><span>BYO-key default = you carry almost no LLM cost; near-pure-margin.</span></div>
+      <div class="row"><span class="ic plus">+</span><span>Per-seat is the SaaS norm teams expect — easy to forecast.</span></div>
+      <div class="row"><span class="ic plus">+</span><span>3-seat minimum pushes teams, not just solos.</span></div>
+      <div class="row"><span class="ic minus">−</span><span>BYO-key means each user wrangles their own API key (friction).</span></div>
+      <div class="row"><span class="ic minus">−</span><span>No hosted-LLM upsell = you leave the inference margin on the table.</span></div>
+    </div>
+  </div>
+
+  <div class="rec">
+    <b>My read (you decide):</b> If you want to launch fast + cheap and avoid
+    funding LLM bills, <b>Model B (per-seat, BYO-key)</b> is the lower-risk
+    start — near-zero cost-of-goods, the proxy stays off, teams pay per seat.
+    If the bet is that <b>hosting the AI is the product</b> (the brain + your
+    own models — your north star), <b>Model A</b> sets you up to capture that
+    inference margin, but you fund the API balances + flip the paid proxy on.
+    <div class="pickrow">
+      <div class="pick a"><div class="h">Pick A — per message</div><div class="d">3 tiers, hosted LLM, capture inference margin. You fund the upstream bills + flip the proxy on.</div></div>
+      <div class="pick b"><div class="h">Pick B — per seat</div><div class="d">2 tiers, BYO-key, near-pure margin, launch cheap. Proxy stays off.</div></div>
+    </div>
+    <div class="note">Tell me "A" or "B" (or your own numbers) and I make it the single source of truth: <code>config.py</code> tiers + the pricing page + the checkout — one canonical model, no contradiction.</div>
+  </div>
+
+</div>
+
+<footer>
+  Prototype · 2026-05-31 · the one pricing decision that's yours · point at A or B, I make it canonical
+</footer>
+</body>
+</html>

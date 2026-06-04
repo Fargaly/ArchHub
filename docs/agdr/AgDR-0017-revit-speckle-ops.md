@@ -4,7 +4,16 @@ timestamp: 2026-05-21T00:00:00Z
 agent: claude-code (Sonnet)
 session: m1-shipping · founder /loop till finalize · "don't sleep"
 trigger: /loop next — close end-to-end Max-mass → Revit-family litmus from AgDR-0016 with the M2-Python connector ops
-status: proposed
+status: executed
+status-evidence: |
+  Flipped proposed → executed 2026-05-30 (governance reconciliation). SHIPPED
+  as "M2-Python" — app/connectors/revit_speckle_ops.py on disk with
+  send_to_speckle / receive_from_speckle / build_create_script; 2 ConnectorOps
+  (revit.send_to_speckle read, revit.receive_from_speckle action+destructive)
+  registered in RevitConnector.build_ops(); 21 tests + Max→Revit litmus chain
+  (tests/test_litmus_max_to_revit.py) green. See ROADMAP "M2-Python ✓ SHIPPED
+  2026-05-21". The deferred M2-Bundle (official Speckle Revit add-in) remains a
+  separate OPEN roadmap item — it does not gate this AgDR's IPC-path decision.
 category: architecture
 projects: [archhub]
 extends:

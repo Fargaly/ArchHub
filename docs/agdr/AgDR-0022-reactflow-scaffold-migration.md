@@ -4,7 +4,15 @@ timestamp: 2026-05-21T00:00:00Z
 agent: claude-code (Sonnet)
 session: m1-shipping · founder /loop "till you finalize" · "don't sleep"
 trigger: AgDR-0015 §"Phase 2 — ReactFlow scaffold uses tokens from day 1 (M1.a)" + AgDR-0012 §"WHAT COLLAPSES" — "Custom canvas → replaced by ReactFlow"
-status: proposed
+status: superseded by AgDR-0048
+status-evidence: |
+  Moot — never reached parity. The P2.a groundwork (NodeCanvasRF_Stub feature
+  flag) shipped only as a placeholder; @xyflow/react was never installed
+  (no package.json, no node_modules, no `import { ReactFlow }`). The custom
+  canvas overtook it with six months of shipped features. AgDR-0048 (executed
+  2026-05-25) supersedes this AgDR in full and recognises the custom canvas as
+  the substrate of record. See FAILURE_LOG "agdr-0022-reactflow-lock-
+  contradiction" (closed) and REPO-MAP-2026-05-28 §2.
 category: architecture
 projects: [archhub]
 extends:

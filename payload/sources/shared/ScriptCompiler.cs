@@ -327,6 +327,57 @@ namespace ArchHub.Shared
             }
         }
 
+        // ─── BCL facade references (AgDR-0051) ────────────────────
+        //
+        // The .NET reference-assembly model requires the BCL forwarder
+        // facades (System.Runtime, netstandard, mscorlib, …) to be in
+        // csc's /reference: list — hundreds of BCL types FORWARD to them.
+        // On the host these facades load LAZILY, so the AgDR-0031
+        // GetAssemblies() snapshot can miss them on a cold first /exec
+        // → CS0012.  Resolving them by FILE from the runtime directory
+        // of typeof(object) (the shared-framework dir that also holds
+        // the facades on .NET Core, or the GAC-shadow dir on net48) makes
+        // them deterministically present.  Returns only the files that
+        // exist on THIS box — empty list on a runtime that ships none,
+        // so the caller's existing behaviour is unchanged there.
+        private static IList<string> _BclFacadeRefs()
+        {
+            var outp = new List<string>();
+            try
+            {
+                var dir = Path.GetDirectoryName(typeof(object).Assembly.Location);
+                if (string.IsNullOrEmpty(dir)) return outp;
+                // The forwarder facades csc needs for the C# 7.3 wrapper.
+                // System.Runtime is THE one CS0012 names; the rest are the
+                // common companions a real script (LINQ, collections,
+                // interop, tasks) forwards through.
+                // NOTE: deliberately NOT System.Private.CoreLib.dll — that is
+                // always typeof(object).Assembly and is already in the host's
+                // GetAssemblies() list; referencing it ALONGSIDE the facades
+                // can confuse csc about where System.Object lives (CS0518).
+                // Only the forwarder facades + companions belong here.
+                string[] names = {
+                    "System.Runtime.dll",
+                    "netstandard.dll",
+                    "mscorlib.dll",
+                    "System.Collections.dll",
+                    "System.Linq.dll",
+                    "System.Linq.Expressions.dll",
+                    "System.Runtime.Extensions.dll",
+                    "System.Runtime.InteropServices.dll",
+                    "System.Threading.Tasks.dll",
+                    "System.ObjectModel.dll",
+                };
+                foreach (var n in names)
+                {
+                    var p = Path.Combine(dir, n);
+                    if (File.Exists(p)) outp.Add(p);
+                }
+            }
+            catch { /* best-effort — never throw out of ref assembly */ }
+            return outp;
+        }
+
         // ─── wrapping ─────────────────────────────────────────────
 
         /// <summary>
@@ -398,10 +449,37 @@ namespace ArchHub.Shared
             r.CompilerPath = csc;
             r.CompilerNeedsDotnetExec = needsDotnetExec;
 
+            // AgDR-0051 — guarantee the BCL type-forwarder FACADES are in the
+            // /reference: list on a COLD first /exec.  AgDR-0031 builds the
+            // ref list from AppDomain.CurrentDomain.GetAssemblies(), which only
+            // reports assemblies ALREADY loaded at the instant it's sampled.
+            // System.Runtime.dll / netstandard.dll are pure forwarder facades
+            // the CLR loads LAZILY — before any forwarded type is touched they
+            // are absent from the enumeration, so they're absent from the /r
+            // list, so csc emits CS0012 ("the type ... is defined in an
+            // assembly that is not referenced; add a reference to
+            // System.Runtime").  Resolving the facades from the runtime
+            // directory of typeof(object) makes them present regardless of
+            // load order.  ADDITIVE ONLY: appends to the caller's list; the
+            // distinct/File.Exists filter below de-dupes against the host's
+            // own GetAssemblies() entries.  Touches no port / transaction /
+            // entry-point / load path.
+            var refs = references;
+            var facades = _BclFacadeRefs();
+            if (facades.Count > 0)
+            {
+                var merged = new List<string>(references);
+                merged.AddRange(facades);
+                refs = merged
+                    .Where(File.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
             // Hash + cache lookup.
             var tfm = "net48";  // wrapper is langver 7.3 / net48 compat
             var hash = Hash(userCode + "||" + scriptContextFullName,
-                            references, langVersion, tfm);
+                            refs, langVersion, tfm);
             var ns = "ArchHub.Generated_" + hash.Substring(0, 16);
             var srcPath = Path.Combine(CacheRoot(), hash + ".cs");
             var dllPath = Path.Combine(CacheRoot(), hash + ".dll");
@@ -432,7 +510,7 @@ namespace ArchHub.Shared
                 rspBody.Append("/nologo /target:library /platform:anycpu /optimize+ ");
                 rspBody.Append("/langversion:").Append(langVersion).Append(' ');
                 rspBody.Append("/out:\"").Append(dllPath).Append("\"\r\n");
-                foreach (var rf in references)
+                foreach (var rf in refs)
                     rspBody.Append("/reference:\"").Append(rf).Append("\"\r\n");
                 rspBody.Append("\"").Append(srcPath).Append("\"\r\n");
                 var rspPath = Path.Combine(CacheRoot(), hash + ".rsp");

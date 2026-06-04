@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — Model C (the flexible hybrid)</title>
+<style>
+  :root{
+    --dark:#141413; --light:#faf9f5; --mid:#b0aea5; --lgray:#e8e6dc;
+    --orange:#d97757; --blue:#6a9bcc; --green:#788c5d; --amber:#c2913f;
+    --shadow:0 1px 3px rgba(20,20,19,.08),0 10px 30px rgba(20,20,19,.07);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--light);color:var(--dark);
+    font-family:"Lora",Georgia,serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  h1,h2,h3,h4,.f{font-family:"Poppins",Arial,sans-serif}
+  header{background:var(--dark);color:var(--light);padding:38px 32px 30px;border-bottom:4px solid var(--orange)}
+  header h1{margin:0 0 8px;font-size:30px;font-weight:600;letter-spacing:-.5px}
+  header p{margin:0;color:var(--mid);font-size:16px;max-width:860px}
+  .wrap{max-width:1060px;margin:0 auto;padding:26px 22px 90px}
+  .lead{background:#fff;border:1px solid var(--lgray);border-left:4px solid var(--orange);
+    border-radius:12px;padding:16px 22px;margin:0 0 26px;box-shadow:var(--shadow);font-size:15px}
+  .lead b{color:var(--orange)}
+  .blendbar{display:flex;align-items:stretch;gap:0;margin:0 0 28px;border-radius:12px;overflow:hidden;box-shadow:var(--shadow);font-family:"Poppins",Arial}
+  .blendbar div{padding:11px 16px;font-size:12.5px;font-weight:600;display:flex;align-items:center}
+  .blendbar .ba{background:rgba(106,155,204,.18);color:#3f6a96;flex:1}
+  .blendbar .bc{background:var(--orange);color:#fff;flex:1.3;justify-content:center;text-align:center}
+  .blendbar .bb{background:rgba(120,140,93,.18);color:#4f6138;flex:1;justify-content:flex-end;text-align:right}
+
+  .tiers{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:16px;margin-bottom:14px}
+  .tier{background:#fff;border:1px solid var(--lgray);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column}
+  .tier.feat{border:2px solid var(--orange);box-shadow:0 0 0 5px rgba(217,119,87,.08),var(--shadow)}
+  .tier .th{padding:16px 18px 14px;border-bottom:1px solid var(--lgray)}
+  .tier .th .nm{font-family:"Poppins",Arial;font-weight:700;font-size:17px}
+  .tier .th .pr{font-family:"Poppins",Arial;font-weight:700;font-size:26px;margin-top:6px}
+  .tier .th .pr small{font-weight:400;font-size:13px;color:#777}
+  .tier .th .who{font-size:12.5px;color:#777;margin-top:3px}
+  .tier .feat-tag{display:inline-block;font-family:"Poppins",Arial;font-size:10px;font-weight:700;letter-spacing:.5px;color:#fff;background:var(--orange);border-radius:20px;padding:2px 9px;margin-bottom:8px;text-transform:uppercase}
+  .tier ul{list-style:none;margin:0;padding:14px 18px;font-size:13.5px;flex:1}
+  .tier li{padding:5px 0 5px 20px;position:relative}
+  .tier li:before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:700}
+  .tier li.ai{color:var(--blue)} .tier li.ai:before{content:"⚡";color:var(--blue)}
+
+  h2.sec{font-family:"Poppins",Arial;font-size:19px;margin:34px 0 4px}
+  .secsub{color:var(--mid);font-size:13.5px;margin:0 0 16px;font-family:"Poppins",Arial}
+  .levers{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .lever{background:#fff;border:1px solid var(--lgray);border-radius:14px;padding:16px 20px;box-shadow:var(--shadow)}
+  .lever h4{margin:0 0 6px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .lever h4 .n{width:22px;height:22px;border-radius:6px;background:var(--orange);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+  .lever p{margin:0;font-size:13.5px;color:#555}
+  .lever .ex{margin-top:8px;font-family:"Poppins",Arial;font-size:12px;color:var(--green);background:rgba(120,140,93,.10);border-radius:7px;padding:6px 10px}
+
+  .econ{background:linear-gradient(180deg,#fff,#fcfbf7);border:1px dashed var(--green);border-radius:14px;padding:18px 22px;margin:26px 0 0;font-size:15px}
+  .econ b{color:var(--green);font-family:"Poppins",Arial}
+  .toggle{display:flex;gap:0;margin:10px 0 0;border:1px solid var(--lgray);border-radius:10px;overflow:hidden;max-width:520px}
+  .toggle div{flex:1;padding:11px 14px;font-family:"Poppins",Arial;font-size:13px;text-align:center}
+  .toggle .byo{background:rgba(120,140,93,.12);color:#4f6138;font-weight:600}
+  .toggle .mid{background:#fff;color:#999;display:flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 60px}
+  .toggle .host{background:rgba(217,119,87,.12);color:#a8543a;font-weight:600}
+
+  .picknote{font-family:"Poppins",Arial;font-size:13px;color:#666;margin-top:18px;background:#fff;border:1px solid var(--lgray);border-radius:10px;padding:12px 16px}
+  .picknote b{color:var(--dark)}
+  footer{max-width:1060px;margin:0 auto;padding:18px 22px;color:var(--mid);font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Model C — the flexible hybrid</h1>
+  <p>You asked for something between A and B, more flexible. Here it is: a
+  predictable <b>per-seat base</b> (Model B's strength) with <b>AI as your
+  choice</b> — bring your own key for free, or buy hosted credits and we capture
+  the margin (Model A's strength). Add seats à la carte, top up usage when you
+  want. Launch cheap, upsell the convenience.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="blendbar">
+    <div class="ba">◀ Model A · per-message, hosted LLM</div>
+    <div class="bc">Model C · seat base + choose-your-AI</div>
+    <div class="bb">Model B · per-seat, BYO-key ▶</div>
+  </div>
+
+  <div class="lead">
+    <b>The one idea:</b> everyone pays a simple per-seat base for the app, the
+    19 connectors, the brain, and offline sync. The AI bill is <b>decoupled</b> —
+    each workspace picks BYO-key (you pay your provider, we charge $0 for AI) or
+    Hosted credits (we run it, you buy a usage pool). Same tiers, your call,
+    switch anytime.
+  </div>
+
+  <!-- TIERS -->
+  <div class="tiers">
+    <div class="tier">
+      <div class="th">
+        <div class="nm">Solo</div>
+        <div class="pr">$19<small>/mo · 1 seat</small></div>
+        <div class="who">individual architect / freelancer</div>
+      </div>
+      <ul>
+        <li>App + 19 connectors (Revit, AutoCAD, Office, Adobe…)</li>
+        <li>Your personal brain + offline Speckle sync</li>
+        <li class="ai">AI: BYO-key free — or a starter credit pack</li>
+        <li>1 seat</li>
+      </ul>
+    </div>
+
+    <div class="tier feat">
+      <div class="th">
+        <span class="feat-tag">most teams</span>
+        <div class="nm">Studio</div>
+        <div class="pr">$39<small>/seat/mo · add any number</small></div>
+        <div class="who">a practice / project team</div>
+      </div>
+      <ul>
+        <li>Everything in Solo, per seat</li>
+        <li>Shared team brain (collective memory + skills)</li>
+        <li>Roles, approvals, admin console</li>
+        <li class="ai">AI: BYO-key free — or pooled hosted credits for the team</li>
+        <li>Seats à la carte — add/remove anytime, prorated</li>
+      </ul>
+    </div>
+
+    <div class="tier">
+      <div class="th">
+        <div class="nm">Firm</div>
+        <div class="pr">from $29<small>/seat/mo · 10+ seats</small></div>
+        <div class="who">large firm / enterprise</div>
+      </div>
+      <ul>
+        <li>Everything in Studio, volume per-seat</li>
+        <li>SSO, audit log, priority support</li>
+        <li class="ai">AI: BYO-key, hosted credits, or a dedicated LLM pool</li>
+        <li>Firm-wide brain + governance</li>
+      </ul>
+    </div>
+  </div>
+  <div style="text-align:center;font-family:'Poppins',Arial;font-size:12px;color:#999">All tiers: annual billing −20%</div>
+
+  <!-- FLEXIBILITY LEVERS -->
+  <h2 class="sec">What makes it flexible (the 4 levers)</h2>
+  <div class="secsub">These are exactly what A and B each lacked.</div>
+  <div class="levers">
+    <div class="lever">
+      <h4><span class="n">1</span> AI = your choice, per workspace</h4>
+      <p>Flip between BYO-key (you pay your provider, our AI cost = $0) and Hosted (we run it, you buy credits). Same price base either way.</p>
+      <div class="toggle"><div class="byo">BYO key · free AI</div><div class="mid">⇄ flip</div><div class="host">Hosted · buy credits</div></div>
+    </div>
+    <div class="lever">
+      <h4><span class="n">2</span> Hosted credit packs (usage on top)</h4>
+      <p>For the convenience-buyers: pay-as-you-go AI without funding a whole tier. Top up anytime; credits roll over.</p>
+      <div class="ex">$10 → 1,000 messages · top up anytime · rolls over 60 days</div>
+    </div>
+    <div class="lever">
+      <h4><span class="n">3</span> Seats à la carte</h4>
+      <p>Add or remove seats any day, prorated — no locked 5 / 25 buckets (Model A's rigidity, fixed). Grow solo → team → firm smoothly.</p>
+      <div class="ex">3 seats today, 7 next month — pay only for what's active</div>
+    </div>
+    <div class="lever">
+      <h4><span class="n">4</span> One ramp, no re-platform</h4>
+      <p>Same product solo → firm; you only add seats + governance. Volume per-seat kicks in at 10+. No migration, no tier lock-in.</p>
+      <div class="ex">Firm per-seat auto-drops to $29 at 10 seats</div>
+    </div>
+  </div>
+
+  <!-- ECONOMICS -->
+  <div class="econ">
+    <b>Why this is the smart blend:</b> most users start on BYO-key → your
+    cost-of-goods is near zero, so you launch <b>cheap and low-risk</b> (Model
+    B). The convenience-buyers flip to Hosted credits → you capture the
+    <b>inference margin</b> (Model A) — but only from those who opt in, so you
+    never fund LLM bills for everyone. The per-seat base stays predictable for
+    the buyer and for your forecast. And it's the natural on-ramp to your north
+    star: once the brain trains our own hosted models, "Hosted" becomes pure
+    margin on infrastructure you own.
+  </div>
+
+  <div class="picknote">
+    <b>Your move:</b> say <b>"ship C"</b> and I make it canonical — rewrite
+    <code>cloud_backend/config.py</code> (tiers + the BYO/Hosted toggle + credit
+    packs + à-la-carte seats), the pricing page, and the checkout to this one
+    model. Or tweak any number (base, per-seat, credit rate) and I bake your
+    version in. The plumbing (billing, quotas, seats) already exists — this is a
+    config + page change, not new infrastructure.
+  </div>
+
+</div>
+
+<footer>
+  Prototype · 2026-05-31 · Model C — the flexible hybrid between A and B · say "ship C" or tweak the numbers
+</footer>
+</body>
+</html>

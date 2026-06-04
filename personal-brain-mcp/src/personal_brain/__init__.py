@@ -42,9 +42,22 @@ from .models import (  # noqa: F401
     SkillMintResult,
 )
 from .server import build_server, main, main_stdio  # noqa: F401
+from .cloud_config import (  # noqa: F401
+    CloudConfig,
+    load_cloud_config,
+    save_cloud_config,
+    default_cloud_config_path,
+)
+from .personal_cloud_sync import PersonalCloudSync, PersonalSyncResult  # noqa: F401
 
 __all__ = [
     "BrainStore",
+    "CloudConfig",
+    "load_cloud_config",
+    "save_cloud_config",
+    "default_cloud_config_path",
+    "PersonalCloudSync",
+    "PersonalSyncResult",
     "Fragment",
     "FragmentKind",
     "Scope",

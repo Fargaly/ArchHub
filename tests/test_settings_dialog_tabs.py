@@ -6,12 +6,14 @@ here without coordination break the UX promise. These tests pin:
 
   * `SettingsDialog` + `BrainTab` import cleanly.
   * `BrainTab` is a `QWidget` subclass.
-  * `TABS` is exactly the 9-entry list in the documented order, with
-    Brain at index 4 (between Memory and Permissions).
+  * `TABS` is exactly the 11-entry list in the documented order, with
+    Brain at index 5 (between Memory and Permissions) and
+    Accessibility at index 9 (between Shortcuts and About).
   * `BrainTab` exposes every public/private method that
     `studio-lm.jsx` + the dialog code expects.
   * `BrainTab.DAEMON_URL` matches the BRAIN-FIRST MANDATE port
     (8473/mcp).
+  * `AccessibilityTab` imports clean + is a QWidget subclass.
   * Bonus: if agent 3's `SecretsTab` has landed, it imports.
 
 Tests deliberately avoid Qt app boot where possible — only the
@@ -63,13 +65,18 @@ def test_braintab_imports():
 
 
 def test_tabs_list_order():
-    """The TABS contract: 10-entry list (Secrets inserted between
-    Providers and Hosts, 2026-05-26 wave agent 3); Brain at index 5
-    between Memory and Permissions."""
+    """The TABS contract: 12-entry list. Secrets inserted between Providers
+    and Hosts (2026-05-26 wave agent 3); Accessibility between Shortcuts and
+    About (2026-05-26 wave agent E); Account APPENDED after About
+    (MAKE-IT-REAL cloud sign-in agent, 2026-05-31) — appended, not inserted,
+    so every prior tab keeps its documented index. Brain stays at index 5
+    between Memory and Permissions; Accessibility at index 9 between
+    Shortcuts and About; Account is the last tab."""
     from settings_dialog import SettingsDialog
     expected = [
         "General", "Providers", "Secrets", "Hosts", "Memory", "Brain",
-        "Permissions", "Storage", "Shortcuts", "About",
+        "Permissions", "Storage", "Shortcuts", "Accessibility", "About",
+        "Account",
     ]
     actual = [label for label, _cls in SettingsDialog.TABS]
     assert actual == expected, (
@@ -82,7 +89,14 @@ def test_tabs_list_order():
     # Secrets MUST come right after Providers.
     assert actual.index("Secrets") == 2
     assert actual[1] == "Providers"
-    assert len(SettingsDialog.TABS) == 10
+    # Accessibility lands between Shortcuts and About.
+    assert actual.index("Accessibility") == 9
+    assert actual[8] == "Shortcuts"
+    assert actual[10] == "About"
+    # Account is appended as the final tab — the real cloud sign-in home.
+    assert actual.index("Account") == 11
+    assert actual[-1] == "Account"
+    assert len(SettingsDialog.TABS) == 12
 
 
 def test_tabs_list_entries_are_widget_classes():
@@ -171,3 +185,21 @@ def test_secretstab_imports_if_present():
     SecretsTab = getattr(mod, "SecretsTab")
     assert isinstance(SecretsTab, type)
     assert issubclass(SecretsTab, QWidget)
+
+
+# ── Track E (Accessibility, 2026-05-26): AccessibilityTab must import
+def test_accessibility_tab_imports():
+    """AccessibilityTab is importable + is a QWidget subclass + carries
+    the documented DAEMON_URL constant the same way BrainTab does."""
+    pytest.importorskip("PyQt6.QtWidgets")
+    from PyQt6.QtWidgets import QWidget
+    from settings_dialog import AccessibilityTab
+    assert AccessibilityTab is not None
+    assert isinstance(AccessibilityTab, type)
+    assert issubclass(AccessibilityTab, QWidget), (
+        "AccessibilityTab must be a QWidget subclass so SettingsDialog "
+        "can host it inside a QScrollArea."
+    )
+    # Same canonical brain daemon URL as BrainTab — the audit doc + the
+    # BRAIN-FIRST mandate preamble all agree on 127.0.0.1:8473/mcp.
+    assert AccessibilityTab.DAEMON_URL == "http://127.0.0.1:8473/mcp"

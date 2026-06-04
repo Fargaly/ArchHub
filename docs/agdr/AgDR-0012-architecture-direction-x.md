@@ -264,6 +264,12 @@ before any `library.create_node_type` — enforced as Anthropic `strict: true`.
 
 ### Canvas substrate — ReactFlow
 
+> **SUPERSEDED by AgDR-0048 (executed 2026-05-25).** This entire section is
+> historical. ReactFlow was never installed; the custom canvas (`NodeView` +
+> `WireLayer` + `LM_GRAPH`) is the substrate of record. The migration order
+> below never executed past the P2.a placeholder stub (AgDR-0022, also
+> superseded). Kept verbatim for history per the AGDR mandate.
+
 Already committed in an earlier session turn. Migration order:
 - **M1.a** (parallel with M1): scaffold ReactFlow component, port one
   primitive node (`constant`) and verify the engine integration.

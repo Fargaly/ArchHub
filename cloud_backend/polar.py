@@ -78,11 +78,25 @@ def _ensure_configured() -> bool:
     return bool(config.POLAR_ACCESS_TOKEN)
 
 
-def create_checkout_url(*, user: dict, tier: str) -> Optional[str]:
-    """Build a Polar Checkout session for a tier and return the URL."""
+def create_checkout_url(*, user: dict, tier: str,
+                        annual: bool = False) -> Optional[str]:
+    """Build a Polar Checkout session for a tier and return the URL.
+
+    `annual` selects the −20% product UUID when configured; falls back
+    to the monthly product if no annual product is set (Polar parity
+    with the Stripe path — Model C).
+    """
     if not _ensure_configured():
         return None
     product_id = config.POLAR_PRODUCT_IDS.get(tier)
+    if annual:
+        annual_id = {
+            "solo":   config.POLAR_PRODUCT_SOLO_ANNUAL,
+            "studio": config.POLAR_PRODUCT_STUDIO_ANNUAL,
+            "firm":   config.POLAR_PRODUCT_FIRM_ANNUAL,
+        }.get(tier)
+        if annual_id:
+            product_id = annual_id
     if not product_id:
         return None
 

@@ -182,6 +182,115 @@ def test_text_none_coerces_to_empty(text_ex):
 
 
 # ---------------------------------------------------------------------------
+# text.op — regex ops (UPGRADE 1: regex_findall / regex_match /
+# regex_replace / regex_split). All total-tolerant: bad regex, non-string
+# subject, or missing pattern returns text.op's {"value": None, "error":...}
+# typed shape, never a raise.
+
+
+def test_regex_findall_simple(text_ex):
+    r = text_ex({"op": "regex_findall", "pattern": r"\d+"},
+                {"a": "a1 b22 c333"}, None)
+    assert r["value"] == ["1", "22", "333"]
+
+
+def test_regex_findall_groups_returns_tuples(text_ex):
+    # A pattern with groups -> re.findall yields group-tuples.
+    r = text_ex({"op": "regex_findall", "pattern": r"(\w)(\d)"},
+                {"a": "a1 b2"}, None)
+    assert r["value"] == [("a", "1"), ("b", "2")]
+
+
+def test_regex_findall_no_match_is_empty_list(text_ex):
+    r = text_ex({"op": "regex_findall", "pattern": r"\d+"},
+                {"a": "no digits"}, None)
+    assert r["value"] == []
+
+
+def test_regex_match_returns_struct_with_groups(text_ex):
+    r = text_ex({"op": "regex_match", "pattern": r"v(\d+)\.(\d+)"},
+                {"a": "release v12.7 now"}, None)
+    assert r["value"] == {"matched": True, "groups": ["12", "7"],
+                          "group0": "v12.7"}
+
+
+def test_regex_match_uses_search_not_fullmatch(text_ex):
+    # search finds the pattern ANYWHERE, not just at the string start.
+    r = text_ex({"op": "regex_match", "pattern": r"\d+"},
+                {"a": "abc 42 xyz"}, None)
+    assert r["value"]["matched"] is True
+    assert r["value"]["group0"] == "42"
+
+
+def test_regex_match_no_match_struct(text_ex):
+    r = text_ex({"op": "regex_match", "pattern": r"\d+"},
+                {"a": "nope"}, None)
+    assert r["value"] == {"matched": False, "groups": [], "group0": ""}
+
+
+def test_regex_replace_with_backreference(text_ex):
+    # repl may use regex backreferences (\1).
+    r = text_ex({"op": "regex_replace", "pattern": r"(\w+)@(\w+)",
+                 "repl": r"\2.\1"},
+                {"a": "user@host"}, None)
+    assert r["value"] == "host.user"
+
+
+def test_regex_replace_plain(text_ex):
+    r = text_ex({"op": "regex_replace", "pattern": r"\s+", "repl": "_"},
+                {"a": "a  b   c"}, None)
+    assert r["value"] == "a_b_c"
+
+
+def test_regex_split(text_ex):
+    r = text_ex({"op": "regex_split", "pattern": r"[,;]\s*"},
+                {"a": "a, b; c,d"}, None)
+    assert r["value"] == ["a", "b", "c", "d"]
+
+
+def test_regex_ignore_case_flag(text_ex):
+    r = text_ex({"op": "regex_findall", "pattern": r"abc",
+                 "ignore_case": True},
+                {"a": "ABC abc AbC"}, None)
+    assert r["value"] == ["ABC", "abc", "AbC"]
+
+
+def test_regex_wired_pattern_beats_config(text_ex):
+    # A wired `pattern` input wins over the config pattern.
+    r = text_ex({"op": "regex_findall", "pattern": r"\d+"},
+                {"a": "a1 b2", "pattern": r"[a-z]"}, None)
+    assert r["value"] == ["a", "b"]
+
+
+def test_regex_wired_repl_beats_config(text_ex):
+    r = text_ex({"op": "regex_replace", "pattern": r"x", "repl": "Z"},
+                {"a": "xx", "repl": "Q"}, None)
+    assert r["value"] == "QQ"
+
+
+def test_regex_invalid_pattern_typed_error_no_raise(text_ex):
+    # An invalid regex returns the typed-error shape, never raises.
+    r = text_ex({"op": "regex_findall", "pattern": r"("},
+                {"a": "anything"}, None)
+    assert r["value"] is None
+    assert "invalid regex" in r["error"].lower()
+
+
+def test_regex_missing_pattern_typed_error(text_ex):
+    r = text_ex({"op": "regex_match"}, {"a": "x"}, None)
+    assert r["value"] is None
+    assert "pattern" in r["error"].lower()
+
+
+def test_regex_non_string_subject_typed_error(text_ex):
+    # A non-string wired subject is a typed error, not a silent stringify.
+    r = text_ex({"op": "regex_findall", "pattern": r"\d+"},
+                {"a": [1, 2, 3]}, None)
+    assert r["value"] is None
+    assert "string" in r["error"].lower()
+
+
+# ---------------------------------------------------------------------------
 # Spec shape
 
 
@@ -194,3 +303,19 @@ def test_executor_registered(type_name):
     assert spec.display_name
     assert {p.name for p in spec.inputs} == {"a", "b"}
     assert spec.outputs[0].name == "value"
+
+
+def test_text_op_enum_has_regex_ops_and_keeps_originals():
+    spec, _ = registry_get("text.op")
+    enum = spec.config_schema["op"]["enum"]
+    # All four new regex ops present.
+    for op in ("regex_findall", "regex_match", "regex_replace",
+               "regex_split"):
+        assert op in enum
+    # Every original op preserved (no regression in the enum).
+    for op in ("concat", "split", "replace", "format", "match",
+               "upper", "lower", "trim", "length"):
+        assert op in enum
+    # New params documented in the schema.
+    assert "repl" in spec.config_schema
+    assert "ignore_case" in spec.config_schema

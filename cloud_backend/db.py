@@ -27,6 +27,14 @@ from typing import Iterable, Optional
 import config
 
 
+# Bearer-token lifetime. Single source of truth — auth.exchange_code
+# returns this same value to the client as `expires_at`, and
+# issue_token stamps `tokens.expires_at = created_at + TOKEN_TTL_SECONDS`
+# so the client's expiry and the server's enforced expiry AGREE.
+# A token past this is rejected by user_for_token (server-side enforced).
+TOKEN_TTL_SECONDS = 90 * 24 * 3600   # 90 days
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
@@ -52,6 +60,10 @@ CREATE TABLE IF NOT EXISTS tokens (
     user_id       TEXT NOT NULL,
     created_at    INTEGER NOT NULL,
     last_used_at  INTEGER,
+    -- Absolute server-side expiry (epoch seconds). A token whose
+    -- expires_at is in the past fails auth in user_for_token — the
+    -- 90-day lifetime is enforced HERE, not just promised client-side.
+    expires_at    INTEGER,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -115,6 +127,33 @@ CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites(company_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_email ON company_invites(email);
+
+-- Hosted-AI credit grants (Model C, founder 2026-05-31) -----------------
+-- Each purchased credit pack ($10 = 1,000 messages) inserts ONE row.
+-- `remaining` decrements one-per-message while the workspace is in
+-- `hosted` AI mode; `expires_at` is granted_at + CREDIT_PACK.rollover_days
+-- (60 days) so unused credits roll over then lapse. The live balance is
+-- SUM(remaining) over rows with expires_at > now (see credit_balance()).
+-- Exactly one of (user_id, company_id) identifies the owning workspace:
+-- solo/trial actors grant on user_id; company workspaces on company_id —
+-- mirroring the msg_used billing-actor split.
+CREATE TABLE IF NOT EXISTS credit_grants (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT,
+    company_id  TEXT,
+    messages    INTEGER NOT NULL,       -- size of the pack as purchased
+    remaining   INTEGER NOT NULL,       -- decremented per hosted message
+    source      TEXT NOT NULL DEFAULT 'credit_pack',
+    stripe_event_id TEXT,               -- idempotency for webhook replays
+    granted_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,       -- granted_at + rollover_days
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_grants_user ON credit_grants(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_credit_grants_company ON credit_grants(company_id, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_grants_event ON credit_grants(stripe_event_id);
 
 -- Marketplace v1 ----------------------------------------------------------
 -- Architects upload signed skill packs (zip + Ed25519 signature). Packs
@@ -209,30 +248,48 @@ CREATE TABLE IF NOT EXISTS memory_facts (
     FOREIGN KEY (source_sample_id) REFERENCES training_samples(id)
 );
 
--- FTS5 index over the canonical text column. Keeps search fast on
--- pure-SQLite deploys until pgvector lands (ADR-002 §"revisit").
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
-    text,
-    content='memory_facts',
-    content_rowid='id'
+-- ── Unified per-user brain (cloud-brain-unify 2026-05-31) ────────────
+-- ONE canonical per-user store: the replica `fragments` table
+-- (brain_replica.py → data/replicas/<user_id>/brain.db). A "memory fact"
+-- IS a fragment. `memory_facts` above is RETAINED for audit + as the
+-- one-time migration source, but the /v1/memory DAO no longer reads/writes
+-- it — it reads/writes the user's replica fragments so a fact added via
+-- /v1/memory and a fragment synced via /v1/brain/sync share one table.
+--
+-- `memory_fact_index` is the DERIVED index over those fragments (NOT a
+-- second source of truth): it mints the global-unique INTEGER fact-id the
+-- /v1/memory/facts/{id} API has always exposed, maps it to the per-user
+-- replica fragment (user_id, frag_id), and carries the optional embedding.
+-- The canonical CONTENT (text/scope/visibility/confidence/valid_until/…)
+-- lives in the fragment; this table is the lookup + search spine only.
+CREATE TABLE IF NOT EXISTS memory_fact_index (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    frag_id         TEXT NOT NULL,      -- fragment id in the user's replica
+    embedding       BLOB,
+    embedding_model TEXT,
+    created_at      INTEGER NOT NULL,
+    UNIQUE (user_id, frag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mfi_user ON memory_fact_index(user_id);
+
+-- Migration / schema markers (mirrors the per-replica meta table). One row
+-- per one-time migration so a re-run is a guarded no-op.
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
 );
 
--- Keep FTS in sync via triggers. Cheap — facts churn slowly.
-CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts
-BEGIN
-    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.id, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts
-BEGIN
-    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
-        VALUES('delete', old.id, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts
-BEGIN
-    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
-        VALUES('delete', old.id, old.text);
-    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.id, new.text);
-END;
+-- FTS5 index over the canonical fragment text, keyed on the index id (the
+-- public fact-id). Contentless external-content table — we own the rows
+-- explicitly from the DAO (insert/update/delete), so no triggers on the
+-- legacy memory_facts table. Keeps search fast on pure-SQLite deploys
+-- until pgvector lands (ADR-002 §"revisit").
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+    text,
+    content='',
+    content_rowid='id'
+);
 
 -- Per arXiv 2505.18279 Collaborative Memory. Anonymised + redacted
 -- patterns promoted from private memory_facts. Searchable by everyone
@@ -363,12 +420,117 @@ def init_schema() -> None:
             # rate limit). Webhook + create_company set the right value.
             "ALTER TABLE companies ADD COLUMN msg_limit INTEGER NOT NULL DEFAULT 2000",
             "ALTER TABLE companies ADD COLUMN msg_used INTEGER NOT NULL DEFAULT 0",
+            # Server-side token expiry. Pre-expiry deploys created the
+            # tokens table without this column; add it here for them.
+            # (Fresh DBs already have it from SCHEMA above — the
+            # try/except makes the duplicate add a no-op.)
+            "ALTER TABLE tokens ADD COLUMN expires_at INTEGER",
+            # Model C (founder 2026-05-31): AI mode + hosted credit
+            # balance per workspace. `ai_mode` is 'byo_key' (default,
+            # launch-cheap — user's own key, no hosted limit) or
+            # 'hosted' (we run the LLM, metered against credit_grants).
+            # `credit_balance` is a denormalised cache of the live
+            # SUM(remaining) over non-expired credit_grants — kept in
+            # sync by grant_credits / consume_credit so a hot read
+            # (the per-message gate) avoids the aggregate query.
+            "ALTER TABLE companies ADD COLUMN ai_mode TEXT NOT NULL DEFAULT 'byo_key'",
+            "ALTER TABLE companies ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN ai_mode TEXT NOT NULL DEFAULT 'byo_key'",
+            "ALTER TABLE users ADD COLUMN credit_balance INTEGER NOT NULL DEFAULT 0",
+            # MAKE-IT-REAL (founder 2026-05-31): every account gets a brain
+            # slot. `brain_id` is the explicit, queryable link from a users
+            # row to its per-user cloud brain replica (brain_replica.py →
+            # <replicas_root>/<brain_id>/brain.db). It equals users.id (the
+            # replica dir is keyed on the user id) so the mapping is 1:1 and
+            # derivable, but storing it turns "does this account have a
+            # brain?" into a column lookup. Fresh DBs get it from the
+            # backfill below; existing deployments self-migrate via this
+            # ALTER. Nullable because ALTER can't add a NOT NULL column with
+            # a per-row default — the backfill fills it immediately after.
+            "ALTER TABLE users ADD COLUMN brain_id TEXT",
         ):
             try:
                 con.execute(ddl)
             except sqlite3.OperationalError:
                 # Column already exists — idempotent re-run.
                 pass
+        # Backfill: any existing token row with a NULL expires_at (rows
+        # issued before this migration, when tokens were immortal) gets
+        # a real expiry of created_at + the 90-day TTL. After this runs
+        # once, every token has an enforced expiry — no immortal tokens
+        # survive the upgrade. Idempotent: only touches NULL rows.
+        con.execute(
+            "UPDATE tokens SET expires_at = created_at + ? "
+            "WHERE expires_at IS NULL",
+            (TOKEN_TTL_SECONDS,),
+        )
+        # Model C backfill: re-derive each workspace's cached
+        # credit_balance from the live (non-expired) credit_grants so the
+        # denormalised column can never disagree with the grant ledger
+        # after an upgrade. Same idempotent shape as the token backfill —
+        # safe on every boot. Workspaces with no grants settle to 0.
+        now = int(time.time())
+        con.execute(
+            "UPDATE users SET credit_balance = COALESCE("
+            "  (SELECT SUM(remaining) FROM credit_grants g"
+            "   WHERE g.user_id = users.id AND g.expires_at > ?), 0)",
+            (now,),
+        )
+        con.execute(
+            "UPDATE companies SET credit_balance = COALESCE("
+            "  (SELECT SUM(remaining) FROM credit_grants g"
+            "   WHERE g.company_id = companies.id AND g.expires_at > ?), 0)",
+            (now,),
+        )
+        # brain_id backfill: every EXISTING user gets their brain link set to
+        # their own id (the replica is keyed on users.id). Pre-MAKE-IT-REAL
+        # rows had brain_id NULL; after this runs once every account has a
+        # populated brain slot — no account is left without a brain link on
+        # upgrade. Idempotent: only touches NULL rows, so a returning user is
+        # never re-stamped. (provision_brain at exchange time also sets this
+        # for new sign-ins; this backfill covers users who never re-login.)
+        con.execute(
+            "UPDATE users SET brain_id = id WHERE brain_id IS NULL")
+        # cloud-brain-unify (2026-05-31): the FTS index is now a CONTENTLESS
+        # external table owned explicitly by the DAO (keyed on the public
+        # fact-id), not auto-synced from the legacy memory_facts table.
+        # Existing DBs created the old `content='memory_facts'` FTS + its
+        # three triggers — drop them and rebuild the contentless table so
+        # search runs against the unified store. A fresh DB already has the
+        # right shape from SCHEMA; these statements are then no-ops.
+        for legacy_trigger in (
+            "memory_facts_ai", "memory_facts_ad", "memory_facts_au",
+        ):
+            try:
+                con.execute(f"DROP TRIGGER IF EXISTS {legacy_trigger}")
+            except sqlite3.OperationalError:
+                pass
+        # If the FTS table was created with external content (old shape), its
+        # schema string names content='memory_facts'. Rebuild only then.
+        try:
+            ddl = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table'"
+                " AND name='memory_facts_fts'"
+            ).fetchone()
+            if ddl and ddl["sql"] and "content='memory_facts'" in ddl["sql"]:
+                con.execute("DROP TABLE IF EXISTS memory_facts_fts")
+                con.execute(
+                    "CREATE VIRTUAL TABLE memory_facts_fts USING fts5("
+                    " text, content='', content_rowid='id')")
+        except sqlite3.OperationalError:
+            pass
+    # One-time data migration: fold legacy memory_facts rows into the
+    # canonical per-user replica fragments. Runs AFTER the schema connection
+    # closes (it opens its own replica connections) and is marker-guarded +
+    # idempotent, so it's safe on every boot.
+    try:
+        migrate_memory_facts_to_fragments()
+    except Exception:
+        # A migration failure must not block boot / break /healthz. The
+        # marker isn't written on failure, so the next boot retries.
+        import sys as _sys
+        print("migrate_memory_facts_to_fragments deferred (will retry next "
+              "boot)", file=_sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +630,25 @@ def get_user_by_stripe_id(stripe_id: str) -> Optional[dict]:
         return dict(r) if r else None
 
 
+def set_user_brain_id(user_id: str, brain_id: str) -> None:
+    """Record the user's brain replica identity on the users row.
+
+    Called from auth.provision_brain at first login so `users.brain_id`
+    is the explicit, queryable link to the per-user cloud brain replica.
+    Idempotent + write-once-stable: only writes when the stored value
+    differs (a returning user whose brain_id already equals brain_id is a
+    no-op), so re-provisioning on every sign-in never churns the row.
+    """
+    if not user_id or not brain_id:
+        return
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET brain_id = ? WHERE id = ? "
+            "AND (brain_id IS NULL OR brain_id != ?)",
+            (brain_id, user_id, brain_id),
+        )
+
+
 def update_user_plan(user_id: str, *, plan: str,
                       stripe_id: Optional[str] = None,
                       period_end: Optional[int] = None) -> None:
@@ -554,6 +735,222 @@ def quota_remaining(user_id: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Model C — AI mode + hosted credit packs (founder 2026-05-31)
+# ---------------------------------------------------------------------------
+# Two concerns, both keyed on the same billing-actor split as msg_used:
+#   • ai_mode — 'byo_key' (default) or 'hosted', per workspace. In
+#     byo_key the user's own LLM key carries inference → no hosted limit.
+#     In hosted, we run the LLM and decrement credits per message.
+#   • credit packs — credit_grants ledger rows ($10 = 1,000 messages),
+#     each expiring 60 days after purchase (rollover). The live balance
+#     is SUM(remaining) over non-expired rows; companies/users also cache
+#     it in credit_balance for a cheap hot read on the metering path.
+#
+# "Actor" resolution: a user operating under current_company_id bills on
+# the COMPANY workspace (shared pool); solo/trial users bill on their own
+# user row. ai_mode_for_actor / credit_balance_for_actor / consume_credit
+# all follow that rule so the per-message gate is workspace-correct.
+
+
+def _ai_mode_norm(mode: str | None) -> str:
+    m = (mode or "").strip().lower()
+    return m if m in config.AI_MODES else config.DEFAULT_AI_MODE
+
+
+def set_company_ai_mode(company_id: str, mode: str) -> str:
+    """Set a company workspace's AI mode. Returns the stored value.
+    Invalid values fall back to the default (never raises)."""
+    mode = _ai_mode_norm(mode)
+    with connect() as con:
+        con.execute("UPDATE companies SET ai_mode = ? WHERE id = ?",
+                    (mode, company_id))
+    return mode
+
+
+def set_user_ai_mode(user_id: str, mode: str) -> str:
+    """Set a solo user's AI mode. Returns the stored value."""
+    mode = _ai_mode_norm(mode)
+    with connect() as con:
+        con.execute("UPDATE users SET ai_mode = ? WHERE id = ?",
+                    (mode, user_id))
+    return mode
+
+
+def ai_mode_for_actor(user: dict) -> str:
+    """Resolve the active AI mode for the billing actor (company if the
+    user is operating under one, else the user)."""
+    if not isinstance(user, dict):
+        return config.DEFAULT_AI_MODE
+    cid = user.get("current_company_id") or None
+    if cid:
+        c = get_company(cid)
+        if c is not None:
+            return _ai_mode_norm(c.get("ai_mode"))
+    return _ai_mode_norm(user.get("ai_mode"))
+
+
+def _recache_balance(con, *, user_id: str | None,
+                     company_id: str | None, now: int) -> int:
+    """Recompute SUM(remaining) over non-expired grants for one actor and
+    write it back to the actor's credit_balance cache. Returns the value.
+    Runs inside an existing connection/transaction."""
+    if company_id:
+        row = con.execute(
+            "SELECT COALESCE(SUM(remaining),0) AS bal FROM credit_grants"
+            " WHERE company_id = ? AND expires_at > ?",
+            (company_id, now),
+        ).fetchone()
+        bal = int(row["bal"]) if row else 0
+        con.execute("UPDATE companies SET credit_balance = ? WHERE id = ?",
+                    (bal, company_id))
+        return bal
+    row = con.execute(
+        "SELECT COALESCE(SUM(remaining),0) AS bal FROM credit_grants"
+        " WHERE user_id = ? AND expires_at > ?",
+        (user_id, now),
+    ).fetchone()
+    bal = int(row["bal"]) if row else 0
+    con.execute("UPDATE users SET credit_balance = ? WHERE id = ?",
+                (bal, user_id))
+    return bal
+
+
+def grant_credits(*, messages: int,
+                  user_id: str | None = None,
+                  company_id: str | None = None,
+                  rollover_days: int | None = None,
+                  source: str = "credit_pack",
+                  stripe_event_id: str | None = None,
+                  now: int | None = None) -> dict:
+    """Credit a workspace with `messages` hosted-AI messages.
+
+    Inserts one credit_grants row expiring `rollover_days` (default
+    CREDIT_PACK.rollover_days = 60) after now, then refreshes the cached
+    balance. Exactly one of user_id / company_id must be given.
+
+    Idempotent on stripe_event_id: a replayed webhook with the same event
+    id is a no-op (the UNIQUE index would otherwise raise) — returns the
+    existing balance with granted=False so double-delivery can't
+    double-credit.
+    """
+    if bool(user_id) == bool(company_id):
+        raise ValueError("grant_credits needs exactly one of user_id/company_id")
+    messages = int(messages)
+    if messages <= 0:
+        raise ValueError("messages must be positive")
+    if rollover_days is None:
+        rollover_days = int(config.CREDIT_PACK["rollover_days"])
+    now = int(now if now is not None else time.time())
+    expires_at = now + int(rollover_days) * 86400
+    with connect() as con:
+        if stripe_event_id:
+            dup = con.execute(
+                "SELECT 1 FROM credit_grants WHERE stripe_event_id = ?",
+                (stripe_event_id,),
+            ).fetchone()
+            if dup is not None:
+                bal = _recache_balance(con, user_id=user_id,
+                                       company_id=company_id, now=now)
+                return {"granted": False, "balance": bal,
+                        "reason": "duplicate_event"}
+        con.execute(
+            "INSERT INTO credit_grants (user_id, company_id, messages,"
+            " remaining, source, stripe_event_id, granted_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, company_id, messages, messages, source,
+             stripe_event_id, now, expires_at),
+        )
+        bal = _recache_balance(con, user_id=user_id,
+                               company_id=company_id, now=now)
+    return {"granted": True, "balance": bal, "expires_at": expires_at,
+            "messages": messages}
+
+
+def credit_balance(*, user_id: str | None = None,
+                   company_id: str | None = None,
+                   now: int | None = None) -> int:
+    """Live hosted-credit balance = SUM(remaining) over non-expired
+    grants for one actor. Computed from the ledger (not the cache) so it
+    is always honest even if a cache write was missed."""
+    now = int(now if now is not None else time.time())
+    if bool(user_id) == bool(company_id):
+        raise ValueError("credit_balance needs exactly one of user_id/company_id")
+    col = "company_id" if company_id else "user_id"
+    val = company_id or user_id
+    with connect() as con:
+        r = con.execute(
+            f"SELECT COALESCE(SUM(remaining),0) AS bal FROM credit_grants"
+            f" WHERE {col} = ? AND expires_at > ?",
+            (val, now),
+        ).fetchone()
+    return int(r["bal"]) if r else 0
+
+
+def credit_balance_for_actor(user: dict, *, now: int | None = None) -> int:
+    """Hosted-credit balance for the billing actor (company if set)."""
+    if not isinstance(user, dict):
+        return 0
+    cid = user.get("current_company_id") or None
+    if cid:
+        return credit_balance(company_id=cid, now=now)
+    return credit_balance(user_id=user["id"], now=now)
+
+
+def consume_credit(*, n: int = 1,
+                   user_id: str | None = None,
+                   company_id: str | None = None,
+                   now: int | None = None) -> dict:
+    """Spend `n` hosted-AI credits from the oldest-expiring non-expired
+    grants first (so credits closest to lapsing are used up before they
+    roll off — minimises waste). Returns {consumed, balance, exhausted}.
+
+    `consumed` is how many credits were actually deducted (may be < n if
+    the balance ran out mid-spend). `exhausted` is True when the balance
+    hit 0. The caller's gate decides the 402 — this just does the maths
+    atomically within one transaction.
+    """
+    if bool(user_id) == bool(company_id):
+        raise ValueError("consume_credit needs exactly one of user_id/company_id")
+    n = int(n)
+    now = int(now if now is not None else time.time())
+    col = "company_id" if company_id else "user_id"
+    val = company_id or user_id
+    consumed = 0
+    with connect() as con:
+        # Oldest-expiring first (FIFO on expiry) among live grants.
+        rows = con.execute(
+            f"SELECT id, remaining FROM credit_grants"
+            f" WHERE {col} = ? AND expires_at > ? AND remaining > 0"
+            f" ORDER BY expires_at ASC, id ASC",
+            (val, now),
+        ).fetchall()
+        need = n
+        for row in rows:
+            if need <= 0:
+                break
+            take = min(int(row["remaining"]), need)
+            con.execute(
+                "UPDATE credit_grants SET remaining = remaining - ?"
+                " WHERE id = ?",
+                (take, row["id"]),
+            )
+            need -= take
+            consumed += take
+        bal = _recache_balance(con, user_id=user_id,
+                               company_id=company_id, now=now)
+    return {"consumed": consumed, "balance": bal, "exhausted": bal <= 0}
+
+
+def consume_credit_for_actor(user: dict, n: int = 1, *,
+                             now: int | None = None) -> dict:
+    """Spend hosted credits on the right billing actor (company if set)."""
+    cid = user.get("current_company_id") or None
+    if cid:
+        return consume_credit(n=n, company_id=cid, now=now)
+    return consume_credit(n=n, user_id=user["id"], now=now)
+
+
+# ---------------------------------------------------------------------------
 def issue_code(user_id: str, code_challenge: str,
                 *, ttl_seconds: int = 300) -> str:
     code = secrets.token_urlsafe(32)
@@ -571,13 +968,25 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
     """Verify code + PKCE verifier; if valid, delete + return user_id.
     Returns None when code is missing / expired / verifier mismatched.
 
-    Browser-direct flow (2026-05-24): when the code was issued with an
-    empty `code_challenge`, the user is signing in via a browser
-    (no desktop client to generate a PKCE pair). In that mode the
-    magic-link code itself is the only secret — it is one-time-use,
-    5-min TTL, and only delivered to the email's owner. We skip the
-    verifier check rather than store a server-side verifier (simpler;
-    same security posture as classic magic-link auth)."""
+    TWO deliberate paths, gated on whether the code was issued with a
+    `code_challenge`:
+
+    1. PKCE flow (DESKTOP) — `code_challenge` is NON-EMPTY. The desktop
+       client generated a PKCE pair and bound the challenge to the code
+       at /register time. The exchange MUST present a verifier whose
+       SHA-256/base64url digest equals the stored challenge. A missing,
+       empty, or mismatched verifier is REJECTED (the code is burned).
+       This closes the bypass: a code that was challenged can never be
+       redeemed without proving possession of the matching verifier.
+
+    2. Browser-direct flow — `code_challenge` is EMPTY. The user signs in
+       from a browser with no desktop client to hold a PKCE secret. Here
+       the magic-link code itself is the only secret: one-time-use,
+       5-min TTL, delivered only to the email owner's inbox. This is the
+       classic magic-link security floor and is intentionally preserved;
+       an empty verifier is expected and accepted ONLY because no
+       challenge was ever issued for this code.
+    """
     with connect() as con:
         r = con.execute(
             "SELECT user_id, code_challenge, expires_at FROM codes"
@@ -592,12 +1001,20 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
         stored_challenge = r["code_challenge"] or ""
         if stored_challenge:
             # PKCE flow — desktop client must present a matching verifier.
+            # Reject an absent/blank verifier up front: a challenged code
+            # exchanged with no proof of the verifier is the bypass we are
+            # closing. (Burn the code so it can't be retried.)
+            verifier = (code_verifier or "").strip()
+            if not verifier:
+                con.execute("DELETE FROM codes WHERE code = ?", (code,))
+                return None
             import base64
             import hashlib
             expected = base64.urlsafe_b64encode(
-                hashlib.sha256(code_verifier.encode("ascii")).digest()
+                hashlib.sha256(verifier.encode("ascii")).digest()
             ).rstrip(b"=").decode("ascii")
-            if stored_challenge != expected:
+            # Constant-time compare — challenge/verifier are secrets.
+            if not secrets.compare_digest(stored_challenge, expected):
                 con.execute("DELETE FROM codes WHERE code = ?", (code,))
                 return None
         # else: browser-direct flow — code alone is the secret.
@@ -606,32 +1023,69 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
         return user_id
 
 
-def issue_token(user_id: str) -> str:
+def issue_token(user_id: str, *,
+                 ttl_seconds: int = TOKEN_TTL_SECONDS) -> str:
     token = "ah_live_" + secrets.token_urlsafe(32)
     now = int(time.time())
+    expires_at = now + int(ttl_seconds)
     with connect() as con:
         con.execute(
-            "INSERT INTO tokens (token, user_id, created_at) VALUES (?, ?, ?)",
-            (token, user_id, now),
+            "INSERT INTO tokens (token, user_id, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?)",
+            (token, user_id, now, expires_at),
         )
     return token
 
 
 def user_for_token(token: str) -> Optional[dict]:
+    """Resolve a bearer token to its user, enforcing server-side expiry.
+
+    A token whose `expires_at` is in the past (or, defensively, NULL —
+    which only happens if a row dodged the backfill) does NOT
+    authenticate: the JOIN's `expires_at > now` clause returns no row
+    and the caller gets None → 401. This is the real teeth behind the
+    90-day lifetime; the client-side expiry is now a convenience, not
+    the only gate.
+    """
+    now = int(time.time())
     with connect() as con:
         r = con.execute(
             "SELECT u.* FROM tokens t JOIN users u ON t.user_id = u.id"
-            " WHERE t.token = ?",
-            (token,),
+            " WHERE t.token = ?"
+            "   AND t.expires_at IS NOT NULL AND t.expires_at > ?",
+            (token, now),
         ).fetchone()
         if r is None:
             return None
         # Touch last_used_at for token-rotation analytics.
         con.execute(
             "UPDATE tokens SET last_used_at = ? WHERE token = ?",
-            (int(time.time()), token),
+            (now, token),
         )
         return dict(r)
+
+
+def delete_token(token: str) -> bool:
+    """Revoke a single bearer token (logout of the current session).
+
+    Returns True when a row was actually removed. After this, a call to
+    user_for_token(token) returns None → the token is dead.
+    """
+    with connect() as con:
+        cur = con.execute("DELETE FROM tokens WHERE token = ?", (token,))
+        return int(cur.rowcount or 0) > 0
+
+
+def delete_tokens_for_user(user_id: str) -> int:
+    """Revoke ALL of a user's bearer tokens (logout everywhere / GDPR
+    erasure / "sign out of all devices").
+
+    Returns the number of tokens removed. Referenced by
+    brain_replica.py's erasure note — now actually implemented.
+    """
+    with connect() as con:
+        cur = con.execute("DELETE FROM tokens WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -737,17 +1191,144 @@ def memory_stats(user_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Semantic memory facts (ADR-002)
+# Semantic memory facts (ADR-002) — UNIFIED on the per-user brain replica
 # ---------------------------------------------------------------------------
 #
-# Atomic facts. Mem0-style ADD/UPDATE/DELETE/NOOP operations apply through
-# `apply_memory_op` below. Search uses FTS5 over the `text` column; vector
-# search is best-effort via the embedding BLOB (populated by an async
-# embedding worker when one is configured).
+# cloud-brain-unify (2026-05-31): a "memory fact" IS a fragment in the user's
+# replica (brain_replica.py → data/replicas/<user_id>/brain.db). The DAO
+# below reads/writes THAT canonical store so a fact added via /v1/memory and
+# a fragment synced via /v1/brain/sync share ONE table — the two-brains
+# duplicate is gone. `memory_fact_index` mints the global-unique INTEGER
+# fact-id the /v1/memory/facts/{id} API exposes and maps it to the replica
+# fragment (+ holds the FTS/embedding index). The canonical CONTENT lives in
+# the fragment, never in a second per-user table.
+#
+# Mem0-style ADD/UPDATE/DELETE/NOOP operations apply through memory_writer.
+# Search uses FTS5 over the fragment text; vector search is best-effort via
+# the index embedding BLOB (populated by an async embedding worker later).
 
 VALID_SCOPES = ("user", "project", "company", "global")
 VALID_VISIBILITY = ("private", "shared_company", "shared_public")
 VALID_OPS = ("ADD", "UPDATE", "DELETE", "NOOP")
+
+# Numeric-confidence (REAL) → fragment text-confidence label. The replica
+# `fragments.confidence` column is a TEXT enum ('extracted'/'stated'/…); the
+# precise 0..1 score memory facts use rides in extra_json.mf_confidence so no
+# precision is lost while the fragment still carries a sensible brain label.
+def _conf_label(score: float) -> str:
+    s = float(score)
+    if s >= 0.9:
+        return "confirmed"
+    if s >= 0.7:
+        return "stated"
+    return "extracted"
+
+
+def _open_replica(user_id: str):
+    """Open (creating if needed) the user's brain replica — the canonical
+    per-user store. Imported lazily so db.py stays importable standalone.
+
+    Passes NO explicit root, so it resolves through the SAME
+    brain_replica.DEFAULT_REPLICAS_ROOT that main.py's /v1/brain/sync uses —
+    guaranteeing the /v1/memory DAO and the /v1/brain/sync endpoint open the
+    EXACT same per-user brain.db file (one store, both APIs agree). Operator
+    override flows through config.REPLICAS_ROOT → DEFAULT_REPLICAS_ROOT at
+    import; test isolation repoints DEFAULT_REPLICAS_ROOT."""
+    import brain_replica
+    return brain_replica.BrainReplica.open(user_id=user_id)
+
+
+def _fragment_to_fact_row(user_id: str, fact_id: int, frag: dict) -> dict:
+    """Project a replica fragment back into the memory_facts row shape every
+    caller (main.py, memory_writer, memory_extractor, tests) expects. The
+    integer `id` is the public fact-id from memory_fact_index; the rest is
+    reconstructed from fragment columns + extra_json (mf_* keys)."""
+    extra = frag.get("extra") or {}
+    return {
+        "id": int(fact_id),
+        "user_id": user_id,
+        "company_id": extra.get("mf_company_id"),
+        "project_id": frag.get("project_id"),
+        "scope": frag.get("scope") or "user",
+        "visibility": frag.get("visibility") or "private",
+        "subject": frag.get("subject") or "",
+        "predicate": frag.get("predicate") or "",
+        "object": frag.get("object") or "",
+        "text": frag.get("text") or "",
+        "confidence": float(extra.get("mf_confidence", 0.7)),
+        "source_sample_id": extra.get("mf_source_sample_id"),
+        "valid_from": extra.get("mf_valid_from"),
+        "valid_until": frag.get("valid_until"),
+        "created_at": extra.get("mf_created_at"),
+        "last_reinforced_at": extra.get("mf_last_reinforced_at"),
+        "reinforce_count": int(extra.get("mf_reinforce_count", 1)),
+        # The underlying fragment id — internal, lets callers that already
+        # have the row find the canonical fragment without a re-lookup.
+        "frag_id": frag.get("id"),
+    }
+
+
+def _fts_insert(con, fact_id: int, text: str) -> None:
+    """Add a NEW fact's text to the contentless FTS index. Must only be
+    called for a rowid not already present (a 'delete' directive against an
+    absent rowid corrupts a contentless fts5 table)."""
+    con.execute("INSERT INTO memory_facts_fts(rowid, text) VALUES (?, ?)",
+                (fact_id, text))
+
+
+def _fts_delete(con, fact_id: int, old_text: str) -> None:
+    """Drop a fact's text from the contentless FTS index. `old_text` MUST be
+    the exact text currently indexed for this rowid (contentless fts5 needs
+    the stored value to reverse the posting)."""
+    con.execute("INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)"
+                " VALUES('delete', ?, ?)", (fact_id, old_text))
+
+
+def _fts_replace(con, fact_id: int, old_text: str, new_text: str) -> None:
+    """Re-index a fact whose text changed: remove the old posting, add new."""
+    _fts_delete(con, fact_id, old_text)
+    _fts_insert(con, fact_id, new_text)
+
+
+def _index_lookup(fact_id: int) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT id, user_id, frag_id FROM memory_fact_index WHERE id = ?",
+            (fact_id,),
+        ).fetchone()
+    return dict(r) if r else None
+
+
+def _index_for_fragment(user_id: str, frag: dict) -> int:
+    """Return the public fact-id for a fact fragment, MINTING the index row
+    (+ FTS posting) on first sight.
+
+    This is what makes the index a true *derived* view over the canonical
+    fragments: a fact that arrives via /v1/brain/sync (a fragment, never
+    routed through insert_memory_fact) is auto-indexed the first time
+    /v1/memory lists or searches — so both APIs surface the SAME facts with
+    no separate write path. Idempotent: an already-indexed fragment just
+    returns its id."""
+    frag_id = frag.get("id")
+    created = int((frag.get("extra") or {}).get("mf_created_at")
+                  or time.time())
+    with connect() as con:
+        row = con.execute(
+            "SELECT id FROM memory_fact_index WHERE user_id = ? AND frag_id = ?",
+            (user_id, frag_id),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cur = con.execute(
+            "INSERT INTO memory_fact_index (user_id, frag_id, created_at)"
+            " VALUES (?, ?, ?)",
+            (user_id, frag_id, created),
+        )
+        fact_id = int(cur.lastrowid or 0)
+        text = frag.get("text") or ""
+        if text:
+            _fts_insert(con, fact_id, text)
+    return fact_id
 
 
 def insert_memory_fact(*, user_id: str, text: str,
@@ -760,7 +1341,8 @@ def insert_memory_fact(*, user_id: str, text: str,
                         project_id: Optional[str] = None,
                         source_sample_id: Optional[int] = None,
                         ) -> int:
-    """Insert a new fact. Returns row id.
+    """Insert a new fact AS A FRAGMENT in the user's replica. Returns the
+    global-unique integer fact-id.
 
     Caller is responsible for asserting non-private writes have gone
     through the redaction policy (memory_writer.promote_to_shared).
@@ -773,116 +1355,335 @@ def insert_memory_fact(*, user_id: str, text: str,
     if not text:
         raise ValueError("text required")
     now = int(time.time())
+    replica = _open_replica(user_id)
+    # Write the fact as a fragment (the canonical store). The replica's
+    # secret-leak gate runs here too — /v1/memory can't smuggle a bare
+    # credential past the BRAIN-FIRST contract any more than /v1/brain/sync.
+    res = replica.upsert_fragment({
+        "kind": "fact",
+        "text": text,
+        "subject": subject or None,
+        "predicate": predicate or None,
+        "object": object or None,
+        "scope": scope,
+        "visibility": visibility,
+        "project_id": project_id,
+        "valid_from": None,
+        "valid_until": None,
+        "confidence": _conf_label(confidence),
+        "provenance": {"via": "v1/memory"},
+        "extra": {
+            "mf_confidence": float(confidence),
+            "mf_company_id": company_id,
+            "mf_source_sample_id": source_sample_id,
+            "mf_created_at": now,
+            "mf_last_reinforced_at": now,
+            "mf_valid_from": now,
+            "mf_reinforce_count": 1,
+        },
+    })
+    frag_id = res["id"]
+    # Mint / fetch the public integer fact-id, then index the text for FTS.
     with connect() as con:
         cur = con.execute(
-            "INSERT INTO memory_facts (user_id, company_id, project_id,"
-            " scope, visibility, subject, predicate, object, text,"
-            " confidence, source_sample_id, valid_from, valid_until,"
-            " created_at, last_reinforced_at, reinforce_count)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1)",
-            (user_id, company_id, project_id, scope, visibility,
-             subject, predicate, object, text,
-             float(confidence), source_sample_id, now, now, now),
+            "INSERT INTO memory_fact_index (user_id, frag_id, created_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(user_id, frag_id) DO UPDATE SET frag_id = excluded.frag_id",
+            (user_id, frag_id, now),
         )
-        return int(cur.lastrowid or 0)
+        fact_id = int(cur.lastrowid or 0)
+        if not fact_id:
+            row = con.execute(
+                "SELECT id FROM memory_fact_index WHERE user_id = ? AND frag_id = ?",
+                (user_id, frag_id),
+            ).fetchone()
+            fact_id = int(row["id"]) if row else 0
+        # New index row → plain FTS insert. If this (user,frag) was already
+        # indexed (re-add of a fragment id), refresh by delete+insert.
+        if int(cur.lastrowid or 0):
+            _fts_insert(con, fact_id, text)
+        else:
+            try:
+                _fts_delete(con, fact_id, text)
+            except sqlite3.DatabaseError:
+                pass
+            _fts_insert(con, fact_id, text)
+    return fact_id
 
 
 def get_memory_fact(fact_id: int) -> Optional[dict]:
-    with connect() as con:
-        r = con.execute(
-            "SELECT * FROM memory_facts WHERE id = ?", (fact_id,),
-        ).fetchone()
-    return dict(r) if r else None
+    """Resolve a fact-id to its row by reading the canonical fragment."""
+    idx = _index_lookup(int(fact_id))
+    if idx is None:
+        return None
+    frag = _open_replica(idx["user_id"]).get_fragment(idx["frag_id"])
+    if frag is None:
+        return None
+    return _fragment_to_fact_row(idx["user_id"], int(fact_id), frag)
 
 
 def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
                        include_expired: bool = False,
                        limit: int = 50) -> list[dict]:
-    where = ["user_id = ?"]
-    params: list = [user_id]
-    if scope:
-        where.append("scope = ?")
-        params.append(scope)
-    if not include_expired:
-        where.append("valid_until IS NULL")
-    params.append(int(limit))
-    with connect() as con:
-        rows = con.execute(
-            f"SELECT * FROM memory_facts WHERE {' AND '.join(where)}"
-            f" ORDER BY last_reinforced_at DESC LIMIT ?",
-            tuple(params),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    """List a user's facts from their replica fragments (newest first),
+    excluding tombstoned (valid_until set) rows unless include_expired."""
+    replica = _open_replica(user_id)
+    frags = replica.list_fragments(
+        kind="fact", include_invalid=include_expired, limit=max(int(limit), 1))
+    out: list[dict] = []
+    for f in frags:
+        if scope and (f.get("scope") or "user") != scope:
+            continue
+        # Lazily mint the public fact-id for ANY fact fragment — including
+        # ones that arrived via /v1/brain/sync — so the unified store
+        # presents the same facts through both APIs.
+        fid = _index_for_fragment(user_id, f)
+        out.append(_fragment_to_fact_row(user_id, fid, f))
+        if len(out) >= int(limit):
+            break
+    return out
 
 
 def search_memory_facts(*, user_id: str, query: str,
                          include_shared: bool = True,
                          limit: int = 10) -> list[dict]:
-    """FTS5 search. When include_shared=True the user also sees their
-    company's shared facts (scope=company OR visibility=shared_company).
-    """
+    """FTS5 search over the unified fragment text. When include_shared=True
+    the user also sees shared facts (visibility shared_company/shared_public).
+    Results are reconstructed from the canonical fragments."""
     query = (query or "").strip()
     if not query:
         return []
-    # FTS5 query — escape double-quotes by doubling them.
+    # Ensure the caller's own fact fragments are indexed before searching —
+    # a fact that arrived via /v1/brain/sync is otherwise absent from the
+    # FTS index until first listed. This lazy backfill keeps search honest
+    # across both write paths (one store, both APIs agree). Cheap: facts
+    # churn slowly and _index_for_fragment is a no-op once indexed.
+    try:
+        own = _open_replica(user_id).list_fragments(kind="fact", limit=500)
+        for f in own:
+            _index_for_fragment(user_id, f)
+    except Exception:
+        pass
     safe = query.replace('"', '""')
-    visibility_clauses = ["user_id = ?"]
-    params: list = [user_id]
-    if include_shared:
-        visibility_clauses.append(
-            "(visibility IN ('shared_company','shared_public'))"
-        )
-    visibility_sql = " OR ".join(visibility_clauses)
+    # FTS index is keyed on the public fact-id; join back to the index to
+    # get (user_id, frag_id), then read the canonical fragment.
     with connect() as con:
-        rows = con.execute(
-            "SELECT f.*, bm25(memory_facts_fts) AS rank"
-            " FROM memory_facts f"
-            " JOIN memory_facts_fts ON memory_facts_fts.rowid = f.id"
-            f" WHERE memory_facts_fts MATCH ? AND f.valid_until IS NULL"
-            f"   AND ({visibility_sql})"
+        hits = con.execute(
+            "SELECT i.id AS id, i.user_id AS user_id, i.frag_id AS frag_id,"
+            " bm25(memory_facts_fts) AS rank"
+            " FROM memory_facts_fts"
+            " JOIN memory_fact_index i ON i.id = memory_facts_fts.rowid"
+            " WHERE memory_facts_fts MATCH ?"
             " ORDER BY rank LIMIT ?",
-            (f'"{safe}"', *params, int(limit)),
+            (f'"{safe}"', int(limit) * 4),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out: list[dict] = []
+    # Cache replicas per owner so a multi-user shared search opens each once.
+    replicas: dict[str, object] = {}
+    for h in hits:
+        owner = h["user_id"]
+        rep = replicas.get(owner)
+        if rep is None:
+            rep = _open_replica(owner)
+            replicas[owner] = rep
+        frag = rep.get_fragment(h["frag_id"])
+        if frag is None or frag.get("valid_until") is not None:
+            continue
+        vis = frag.get("visibility") or "private"
+        # Own facts always visible; others only if shared + caller opted in.
+        if owner == user_id:
+            pass
+        elif include_shared and vis in ("shared_company", "shared_public"):
+            pass
+        else:
+            continue
+        row = _fragment_to_fact_row(owner, int(h["id"]), frag)
+        row["rank"] = h["rank"]
+        out.append(row)
+        if len(out) >= int(limit):
+            break
+    return out
 
 
 def update_memory_fact(fact_id: int, *,
                         text: Optional[str] = None,
                         confidence: Optional[float] = None,
                         reinforce: bool = True) -> None:
-    """Apply a refinement to an existing fact. `reinforce=True` bumps
-    reinforce_count + last_reinforced_at."""
-    now = int(time.time())
-    sets = []
-    params: list = []
-    if text is not None and text.strip():
-        sets.append("text = ?")
-        params.append(text.strip())
-    if confidence is not None:
-        sets.append("confidence = ?")
-        params.append(float(confidence))
-    if reinforce:
-        sets.append("reinforce_count = reinforce_count + 1")
-        sets.append("last_reinforced_at = ?")
-        params.append(now)
-    if not sets:
+    """Refine a fact's underlying fragment. `reinforce=True` bumps the
+    reinforce_count + last_reinforced_at carried in the fragment extra."""
+    idx = _index_lookup(int(fact_id))
+    if idx is None:
         return
-    params.append(fact_id)
-    with connect() as con:
-        con.execute(
-            f"UPDATE memory_facts SET {', '.join(sets)} WHERE id = ?",
-            tuple(params),
-        )
+    replica = _open_replica(idx["user_id"])
+    frag = replica.get_fragment(idx["frag_id"])
+    if frag is None:
+        return
+    now = int(time.time())
+    old_text = frag.get("text") or ""
+    extra = dict(frag.get("extra") or {})
+    patch: dict = {}
+    new_text = None
+    if text is not None and text.strip():
+        new_text = text.strip()
+        patch["text"] = new_text
+    fcol = None
+    if confidence is not None:
+        extra["mf_confidence"] = float(confidence)
+        fcol = _conf_label(confidence)
+    if reinforce:
+        extra["mf_reinforce_count"] = int(extra.get("mf_reinforce_count", 1)) + 1
+        extra["mf_last_reinforced_at"] = now
+    if not patch and confidence is None and not reinforce:
+        return
+    patch["extra"] = extra
+    if fcol is not None:
+        patch["confidence"] = fcol
+    replica.patch_fragment(idx["frag_id"], **patch)
+    if new_text is not None and new_text != old_text:
+        with connect() as con:
+            _fts_replace(con, int(fact_id), old_text, new_text)
 
 
 def delete_memory_fact(fact_id: int) -> None:
-    """Soft-delete. Sets valid_until=now; row stays for audit."""
+    """Soft-delete: tombstone the underlying fragment (valid_until=now) so
+    BOTH /v1/memory and the /v1/brain/sync export agree it's gone. The
+    fragment + index row stay for audit; FTS row is dropped so it no longer
+    surfaces in search."""
+    idx = _index_lookup(int(fact_id))
+    if idx is None:
+        return
+    replica = _open_replica(idx["user_id"])
+    frag = replica.get_fragment(idx["frag_id"])
+    if frag is None or frag.get("valid_until") is not None:
+        return
     now = int(time.time())
+    replica.patch_fragment(idx["frag_id"], valid_until=now)
+    with connect() as con:
+        try:
+            _fts_delete(con, int(fact_id), frag.get("text") or "")
+        except sqlite3.DatabaseError:
+            pass
+
+
+# ── One-time migration: legacy memory_facts rows → replica fragments ────
+def migrate_memory_facts_to_fragments() -> dict:
+    """Fold every LIVE legacy `memory_facts` row into its owner's replica
+    `fragments` (the canonical per-user store). Idempotent + marker-guarded
+    — mirrors the token/credit/brain_id backfills:
+
+      * a per-row stable fragment id `legacy-mf-<original_id>` makes a re-run
+        a no-op (upsert on the same id, never a dup),
+      * a global `schema_meta.migrated_memory_facts` marker short-circuits
+        the whole pass once it has run.
+
+    Legacy rows are NOT deleted (audit), they're just no longer the source
+    the DAO reads — so nothing is lost. Returns a small summary dict.
+    """
+    with connect() as con:
+        done = con.execute(
+            "SELECT value FROM schema_meta WHERE key = 'migrated_memory_facts'"
+        ).fetchone()
+        if done is not None:
+            return {"migrated": 0, "skipped": True, "reason": "already_done"}
+        # Pull every legacy row that still has live content. (We migrate all
+        # rows incl. tombstoned so the audit trail's validity carries over.)
+        try:
+            rows = con.execute(
+                "SELECT id, user_id, company_id, project_id, scope,"
+                " visibility, subject, predicate, object, text, confidence,"
+                " source_sample_id, valid_from, valid_until, created_at,"
+                " last_reinforced_at, reinforce_count"
+                " FROM memory_facts ORDER BY id ASC"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+
+    migrated = 0
+    for r in rows:
+        user_id = r["user_id"]
+        if not user_id:
+            continue
+        legacy_id = int(r["id"])
+        frag_id = f"legacy-mf-{legacy_id}"
+        replica = _open_replica(user_id)
+        # Skip if this legacy row was already folded in a prior partial run.
+        if replica.get_fragment(frag_id) is not None:
+            # Ensure it's indexed, then move on (idempotent).
+            _ensure_indexed(user_id, frag_id, r["text"] or "",
+                            int(r["created_at"] or time.time()))
+            continue
+        conf = float(r["confidence"] if r["confidence"] is not None else 0.7)
+        try:
+            replica.upsert_fragment({
+                "id": frag_id,
+                "kind": "fact",
+                "text": r["text"] or "",
+                "subject": r["subject"] or None,
+                "predicate": r["predicate"] or None,
+                "object": r["object"] or None,
+                "scope": r["scope"] or "user",
+                "visibility": r["visibility"] or "private",
+                "project_id": r["project_id"],
+                "valid_from": None,
+                "valid_until": r["valid_until"],
+                "confidence": _conf_label(conf),
+                "provenance": {"via": "migrate:memory_facts",
+                               "legacy_id": legacy_id},
+                "extra": {
+                    "mf_confidence": conf,
+                    "mf_company_id": r["company_id"],
+                    "mf_source_sample_id": r["source_sample_id"],
+                    "mf_created_at": int(r["created_at"] or time.time()),
+                    "mf_last_reinforced_at": int(
+                        r["last_reinforced_at"] or time.time()),
+                    "mf_valid_from": int(r["valid_from"] or time.time()),
+                    "mf_reinforce_count": int(r["reinforce_count"] or 1),
+                },
+            })
+        except ValueError:
+            # A legacy row carrying a bare secret-like value is rejected by
+            # the replica gate — skip it (don't leak it into the brain), it
+            # stays in the legacy table for audit.
+            continue
+        _ensure_indexed(user_id, frag_id, r["text"] or "",
+                        int(r["created_at"] or time.time()),
+                        live=(r["valid_until"] is None))
+        migrated += 1
+
     with connect() as con:
         con.execute(
-            "UPDATE memory_facts SET valid_until = ? WHERE id = ? AND valid_until IS NULL",
-            (now, fact_id),
+            "INSERT INTO schema_meta (key, value) VALUES"
+            " ('migrated_memory_facts', ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(int(time.time())),),
         )
+    return {"migrated": migrated, "skipped": False}
+
+
+def _ensure_indexed(user_id: str, frag_id: str, text: str,
+                    created_at: int, *, live: bool = True) -> int:
+    """Idempotently map (user_id, frag_id) → a public fact-id and (re)index
+    its text for FTS. Returns the fact-id. Used by the migration so a
+    re-run never double-indexes."""
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO memory_fact_index (user_id, frag_id, created_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(user_id, frag_id) DO NOTHING",
+            (user_id, frag_id, created_at),
+        )
+        newly_indexed = int(cur.lastrowid or 0) and (cur.rowcount or 0) > 0
+        row = con.execute(
+            "SELECT id FROM memory_fact_index WHERE user_id = ? AND frag_id = ?",
+            (user_id, frag_id),
+        ).fetchone()
+        fact_id = int(row["id"]) if row else int(cur.lastrowid or 0)
+        # Only insert the FTS posting when the index row is brand-new — a
+        # re-run (row already present) must NOT re-post (idempotent, and a
+        # blind 'delete' on contentless fts5 would corrupt the index).
+        if live and text and newly_indexed:
+            _fts_insert(con, fact_id, text)
+    return fact_id
 
 
 def log_memory_op(*, user_id: str, op: str,
@@ -1115,6 +1916,7 @@ def update_company(company_id: str, **fields) -> None:
     allowed = {
         "name", "billing_email", "plan", "seat_limit",
         "stripe_customer_id", "stripe_subscription_id", "period_end",
+        "ai_mode",
     }
     sets: list[str] = []
     vals: list = []
@@ -1182,6 +1984,27 @@ def count_company_members(company_id: str) -> int:
         r = con.execute(
             "SELECT COUNT(*) AS n FROM company_members WHERE company_id = ?",
             (company_id,),
+        ).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def count_outstanding_invites(company_id: str) -> int:
+    """Distinct invited emails with an un-accepted, un-expired invite.
+
+    Each outstanding invite reserves a seat. The seat-limit check counts
+    these alongside accepted members so a company can't over-invite past
+    `seat_limit` — the failure mode where 3 members + N pending invites
+    all pass the check, then all accept and blow the cap. DISTINCT email
+    so a double-click re-invite of the same address reserves one seat,
+    not two; expired invites free their reservation automatically.
+    """
+    now = int(time.time())
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(DISTINCT email) AS n FROM company_invites"
+            " WHERE company_id = ? AND accepted_at IS NULL"
+            "   AND expires_at > ?",
+            (company_id, now),
         ).fetchone()
     return int(r["n"]) if r else 0
 

@@ -1,0 +1,92 @@
+---
+import Base from '../layouts/Base.astro';
+
+// Feature cards come from the COMMITTED src/data/skills-export.json — the static
+// export of the brain's REAL community-scope skills. A maintainer refreshes it
+// from the live brain with `python tools/export_web_data.py` (or
+// `npm run refresh-content`); the deploy build just reads this file with NO
+// daemon. Real skills today → real cards. If the count is ever genuinely 0,
+// the honest empty-state below renders instead — never a fabricated card.
+import skillsExport from '../data/skills-export.json';
+const skills = skillsExport.skills ?? [];
+const exportedDate = (skillsExport.exported_at ?? '').slice(0, 10);
+
+function honing(s) {
+  if (!s.honed_trials) return null;
+  return `honed ${s.honed_passed}/${s.honed_trials}`;
+}
+function uses(s) {
+  const n = s.success_count ?? 0;
+  return n > 0 ? `${n} successful use${n === 1 ? '' : 's'}` : 'no production uses yet';
+}
+---
+<Base title="Features" description="Every skill in the ArchHub community library, surfaced as a feature card. A skill ships → a card appears.">
+  <h1>Features</h1>
+  <p>
+    Every card below is a real skill in the ArchHub brain — minted from a
+    successful trace, gated by the Voyager critic, promoted to the community
+    scope by reputation. New skill ships → new card appears here automatically.
+  </p>
+
+  {skills.length === 0 ? (
+    <p class="freshness">
+      No community skills have been published to the federation yet. This is a
+      live, honest count — when firms promote their first skills to the
+      community scope, their cards appear here. Until then, the library is
+      empty by design, not by omission.
+    </p>
+  ) : (
+    <>
+      <p class="freshness">
+        <strong>{skills.length}</strong> community skill{skills.length === 1 ? '' : 's'}
+        exported from the live brain{exportedDate ? ` on ${exportedDate}` : ''}.
+      </p>
+      <ul class="skill-list">
+        {skills.map((s) => (
+          <li class="skill-card">
+            <div class="skill-head">
+              <strong>{s.name}</strong>
+              <span class="skill-scope">{s.scope}</span>
+            </div>
+            <p class="skill-desc">{s.description}</p>
+            <div class="skill-meta freshness">
+              <span>by {s.contributor}</span>
+              {honing(s) && <span> · {honing(s)}</span>}
+              <span> · {uses(s)}</span>
+              {s.minted_at && <span> · minted {s.minted_at.slice(0, 10)}</span>}
+            </div>
+            {s.triggers && s.triggers.length > 0 && (
+              <div class="skill-triggers freshness">
+                triggers: {s.triggers.map((t) => <code>{t}</code>)}
+              </div>
+            )}
+            {s.requires_mcps && s.requires_mcps.length > 0 && (
+              <div class="skill-mcps freshness">
+                requires: {s.requires_mcps.map((m) => <code>{m}</code>)}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  )}
+
+  <style>
+    .skill-list { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 14px; }
+    .skill-card {
+      border: 1px solid #1f242b; border-radius: 10px; padding: 16px 18px;
+      background: #0f1216;
+    }
+    .skill-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .skill-head strong { font-size: 1.05rem; }
+    .skill-scope {
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent); border: 1px solid #234; border-radius: 999px;
+      padding: 2px 9px;
+    }
+    .skill-desc { margin: 8px 0 10px; color: var(--fg); }
+    .skill-meta span + span::before { content: ''; }
+    .skill-triggers, .skill-mcps { margin-top: 6px; }
+    .skill-triggers code, .skill-mcps code { margin-right: 6px; }
+  </style>
+</Base>

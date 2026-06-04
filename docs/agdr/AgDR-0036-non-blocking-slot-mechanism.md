@@ -4,7 +4,7 @@ timestamp: 2026-05-22T02:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-22 — "for god's sake why is it not stable? do a deeeeeeeep audit and solve this from the fucking roots... I don't want to point this out again"
 trigger: AgDR-0035 fixed 2 blocking slots; a deep audit found 5+ MORE blocking the Qt main thread one helper-hop down.  The founder wants the whole CLASS killed + a guard so it can't recur.
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

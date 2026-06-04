@@ -88,7 +88,7 @@ def test_agdr_0031_exists_and_approved():
     p = REPO / "docs" / "agdr" / "AgDR-0031-archhub-mcp-server.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     assert "claude mcp add archhub" in text
     # Pivot note — server existed before this AgDR.
     assert "ALREADY exists" in text

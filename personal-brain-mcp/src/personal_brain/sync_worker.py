@@ -178,6 +178,7 @@ class SyncWorker:
         interval_s: float = 300.0,
         owner_user: Optional[str] = None,
         device_id: Optional[str] = None,
+        scope_resolver: Optional[Any] = None,
     ):
         self.store = store
         self.transport = transport
@@ -185,12 +186,32 @@ class SyncWorker:
         self.interval_s = max(5.0, interval_s)
         self.owner_user = owner_user
         self.device_id = device_id or "device-default"
+        # Optional callable() -> list[Scope] evaluated per-tick. Lets the
+        # worker widen its sync scope dynamically — e.g. add Scope.COMMUNITY
+        # only once this device has joined a multi-device community, so two
+        # devices on the same community converge COMMUNITY-scope fragments
+        # without paying the cost when no community exists.
+        self.scope_resolver = scope_resolver
         self._tick_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_result: Optional[SyncCycleResult] = None
         self._cycle_count = 0
         self._error_count = 0
+
+    def _active_scopes(self) -> list[Scope]:
+        """Scopes to sync THIS tick. Uses scope_resolver when provided
+        (falling back to the static list on any error), so membership
+        changes take effect without restarting the worker."""
+        if self.scope_resolver is None:
+            return self.scopes
+        try:
+            resolved = self.scope_resolver()
+            if resolved:
+                return list(resolved)
+        except Exception:
+            pass
+        return self.scopes
 
     # ── lifecycle ───────────────────────────────────────────────────
 
@@ -230,12 +251,13 @@ class SyncWorker:
             )
             t0 = time.perf_counter()
             try:
+                active_scopes = self._active_scopes()
                 # 1. Local snapshot
                 fragments = _scoped_fragments(
-                    self.store, self.scopes, self.owner_user,
+                    self.store, active_scopes, self.owner_user,
                 )
                 skills = _scoped_skills(
-                    self.store, self.scopes, self.owner_user,
+                    self.store, active_scopes, self.owner_user,
                 )
                 clock = device_clock()
                 for item in fragments:
@@ -309,7 +331,7 @@ class SyncWorker:
             "running": self._thread is not None and self._thread.is_alive(),
             "interval_s": self.interval_s,
             "transport": getattr(self.transport, "name", "unknown"),
-            "scopes": [s.value for s in self.scopes],
+            "scopes": [s.value for s in self._active_scopes()],
             "cycle_count": self._cycle_count,
             "error_count": self._error_count,
             "last_result": asdict(self._last_result) if self._last_result else None,

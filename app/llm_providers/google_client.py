@@ -59,6 +59,8 @@ class GoogleClient:
         tools: list[dict],
         on_chunk: Callable[[str], None],
         on_reasoning: Callable[[str], None] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         on_reasoning = on_reasoning or (lambda _: None)
         gemini_contents = self._adapt_messages(messages)
@@ -66,6 +68,18 @@ class GoogleClient:
             "temperature": 0.2,
             "maxOutputTokens": 4096,
         }
+        # Caller-supplied sampling params (node.config) override the
+        # defaults above; None keeps them so the chat path is unchanged.
+        if temperature is not None:
+            try:
+                gen_cfg["temperature"] = max(0.0, min(2.0, float(temperature)))
+            except (TypeError, ValueError):
+                pass
+        if max_tokens is not None:
+            try:
+                gen_cfg["maxOutputTokens"] = max(16, int(max_tokens))
+            except (TypeError, ValueError):
+                pass
         # Extended thinking — Gemini 2.5 series supports
         # thinkingConfig.thinkingBudget. Budget from Settings.
         try:
@@ -75,7 +89,10 @@ class GoogleClient:
             budget = 0
         if budget > 0 and "2.5" in (model or ""):
             gen_cfg["thinkingConfig"] = {"thinkingBudget": int(budget)}
-            gen_cfg["maxOutputTokens"] = max(8192, budget + 2048)
+            # Thinking needs headroom above the budget; respect a larger
+            # caller maxOutputTokens if one was supplied.
+            gen_cfg["maxOutputTokens"] = max(8192, budget + 2048,
+                                              int(gen_cfg["maxOutputTokens"]))
         body: dict[str, Any] = {
             "contents": gemini_contents,
             "generationConfig": gen_cfg,

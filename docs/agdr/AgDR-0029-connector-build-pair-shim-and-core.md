@@ -4,7 +4,7 @@ timestamp: 2026-05-21T16:00:00Z
 agent: claude-code (Sonnet)
 session: handoff from prior session (commit eccfc2c) — Bug 1 in deploy machinery
 trigger: Founder report — Revit 2025 listener never binds; root cause = auto_build.py.build_revit_connector only invokes dotnet build on the shim csproj, never on RevitMCPCore.csproj.  Half-deployed pair on every end-user Connectors-panel toggle.
-status: approved
+status: executed
 category: architecture
 projects: [archhub, revitmcp, acadmcp]
 extends:

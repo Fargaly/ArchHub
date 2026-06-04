@@ -45,27 +45,22 @@ falls back to local-only dataset.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Optional
 
 
 def _resolve_secret_ref(ref: Optional[str]) -> Optional[str]:
     """Resolve `op://vault/item/field` references via the brain's
-    secrets-resolver path. Plain strings pass through with a warning."""
+    secret resolver. Plain strings pass through (discouraged in prod).
+
+    Delegates to `secret_resolver.resolve_secret`, which tries (in order)
+    the 1Password CLI, Windows Credential Manager, then the
+    `OP_<VAULT>_<ITEM>_<FIELD>` env-var fallback. Returns None when a
+    reference cannot be resolved by any path."""
     if not ref:
         return None
-    if not ref.startswith("op://"):
-        # Direct string — works but discouraged outside tests.
-        return ref
-    try:
-        from .secrets import resolve_secret  # type: ignore
-        return resolve_secret(ref)
-    except Exception:
-        # Fall back to env var lookup: op://vault/item/field →
-        # env name `OP_VAULT_ITEM_FIELD` (uppercase, '/' → '_', OP_ prefix).
-        env_name = "OP_" + ref.replace("op://", "").upper().replace("/", "_")
-        return os.environ.get(env_name)
+    from .secret_resolver import resolve_secret
+    return resolve_secret(ref)
 
 
 def _is_boto3_available() -> bool:

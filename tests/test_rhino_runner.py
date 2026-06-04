@@ -1,12 +1,21 @@
 """Rhino connector tests — v1.1.0.
 
 Static-surface tests for the Rhino MCP bridge. We don't spawn Rhino in
-CI, so the network-facing tests stub urlopen. The discovery tests run
-freely on any OS and verify the search paths exist.
+CI, so the network-facing tests stub the transport. The discovery tests
+run freely on any OS and verify the search paths exist.
+
+The "bridge down" tests are HERMETIC: they monkeypatch the transport
+(``socket.create_connection`` for the TCP probe, ``urllib.request.urlopen``
+for the HTTP calls) to force a connection-refused failure. That makes them
+deterministic whether or not a real Rhino bridge happens to be listening on
+:9879 on this machine — a developer box with Rhino auto-started would
+otherwise see the probe succeed and flip these error-path assertions.
 """
 from __future__ import annotations
 
+import socket
 import sys
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -43,16 +52,27 @@ class TestDiscovery:
 
 
 class TestReachability:
-    def test_is_reachable_returns_false_when_port_unbound(self):
-        from connectors.rhino_runner import is_reachable
-        # 9879 is the production port; on a CI/dev box nothing listens,
-        # so the probe should fail-closed.
-        assert is_reachable(timeout=0.1) is False
+    def test_is_reachable_returns_false_when_port_unbound(self, monkeypatch):
+        from connectors import rhino_runner
+        # 9879 is the production port. On THIS box a real Rhino bridge may be
+        # auto-started and listening, so we can't rely on the port being free.
+        # Force the TCP connect to fail (connection-refused) so the probe
+        # deterministically exercises its fail-closed path regardless.
+        def _refuse(*_a, **_k):
+            raise ConnectionRefusedError("forced: port unbound")
+        monkeypatch.setattr(rhino_runner.socket, "create_connection", _refuse)
+        assert rhino_runner.is_reachable(timeout=0.1) is False
 
 
 class TestPing:
-    def test_ping_returns_error_when_bridge_down(self):
+    def test_ping_returns_error_when_bridge_down(self, monkeypatch):
         from connectors import rhino_runner
+        # Force the HTTP transport to fail as if no bridge is listening, so
+        # this stays deterministic even when Rhino is live on :9879 here.
+        # A URLError drives ping()'s "cannot reach Rhino bridge" branch.
+        def _refuse(*_a, **_k):
+            raise urllib.error.URLError("forced: connection refused")
+        monkeypatch.setattr(rhino_runner.urllib.request, "urlopen", _refuse)
         r = rhino_runner.ping(timeout=0.2)
         assert r["status"] == "error"
         assert "rhino" in r["error"].lower() or "bridge" in r["error"].lower() \
@@ -66,9 +86,14 @@ class TestExecutePython:
         assert r["status"] == "error"
         assert "code" in r["error"].lower()
 
-    def test_non_empty_code_when_bridge_down_errors_cleanly(self):
-        from connectors.rhino_runner import execute_python
-        r = execute_python("result = 1+1", timeout_seconds=1)
+    def test_non_empty_code_when_bridge_down_errors_cleanly(self, monkeypatch):
+        from connectors import rhino_runner
+        # Simulate "bridge not running" by forcing the POST transport to
+        # raise connection-refused, deterministic even with Rhino live here.
+        def _refuse(*_a, **_k):
+            raise ConnectionRefusedError("forced: bridge down")
+        monkeypatch.setattr(rhino_runner.urllib.request, "urlopen", _refuse)
+        r = rhino_runner.execute_python("result = 1+1", timeout_seconds=1)
         # The HTTP call fails because the bridge isn't running.
         assert r["status"] == "error"
 

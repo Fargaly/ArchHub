@@ -4,7 +4,18 @@ timestamp: 2026-05-20T00:00:00Z
 agent: claude-code (Sonnet)
 session: node-redesign-loop · /design:design-system audit
 trigger: founder `/design:design-system` (second invocation) — audit the VISUAL UI design system in studio-lm.jsx, complementing the library taxonomy audit in AgDR-0014
-status: proposed
+status: executed
+status-evidence: |
+  Flipped proposed → executed 2026-05-30 (governance reconciliation). SHIPPED:
+  Phase 1 scale tokens (LM.size/font/radius/shadow/motion/brand) additive in
+  studio-lm.jsx; Phase 4 accessibility floor shipped across multiple slices —
+  aria-label sweep (33 aria-label refs live in studio-lm.jsx), :focus-visible
+  ring + prefers-reduced-motion sheet, _useModalA11y focus-trap on 4 modals,
+  radiogroup keyboard nav on pill pickers, and WCAG 1.4.3 contrast audit
+  (app/contrast_audit.py on disk, 23 tests). See ROADMAP "Done" lines tagged
+  "AgDR-0015 Phase 4" — every sub-slice CDP/test-verified. Phase 2 (ReactFlow
+  scaffold) is MOOT — superseded by AgDR-0048 (custom canvas is the substrate);
+  the token system landed on the custom canvas instead.
 category: architecture
 projects: [archhub]
 ---

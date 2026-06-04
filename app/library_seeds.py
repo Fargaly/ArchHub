@@ -787,6 +787,315 @@ PRIMITIVE_SEEDS: list[dict] = [
         "side_effects": "pure",
         "status": "registered",
     },
+
+    # ── data.join ─────────────────────────────────────────────────────
+    {
+        "type": "data.join",
+        "display_name": "Join",
+        "category": "shape",
+        "inputs": [
+            {
+                "name": "left",
+                "port_type": "list",
+                "required": True,
+                "description": "Left list — its unmatched rows go to left_only.",
+            },
+            {
+                "name": "right",
+                "port_type": "list",
+                "required": True,
+                "description": "Right list — its unmatched rows go to right_only.",
+            },
+            {
+                "name": "key",
+                "port_type": "string",
+                "description": "Join field on both sides (empty = the item itself).",
+            },
+            {
+                "name": "left_key",
+                "port_type": "string",
+                "description": "Override the join field on the left side only.",
+            },
+            {
+                "name": "right_key",
+                "port_type": "string",
+                "description": "Override the join field on the right side only.",
+            },
+        ],
+        "outputs": [
+            {
+                "name": "matched",
+                "port_type": "list",
+                "description": "Paired rows {key, left, right}; how shapes which.",
+            },
+            {
+                "name": "left_only",
+                "port_type": "list",
+                "description": "Left rows with no match — the reconcile diff.",
+            },
+            {
+                "name": "right_only",
+                "port_type": "list",
+                "description": "Right rows with no match — the reconcile diff.",
+            },
+            {
+                "name": "match_count",
+                "port_type": "number",
+                "description": "Number of rows in `matched`.",
+            },
+        ],
+        "config_schema": {
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Join field applied to both lists.",
+                },
+                "left_key": {
+                    "type": "string",
+                    "description": "Per-side join field for the left list.",
+                },
+                "right_key": {
+                    "type": "string",
+                    "description": "Per-side join field for the right list.",
+                },
+                "how": {
+                    "type": "string",
+                    "enum": ["inner", "left", "right", "outer"],
+                    "default": "inner",
+                    "description": "Which side(s) must match to land in `matched`.",
+                },
+            }
+        },
+        "description": (
+            "Matches two lists on a key and partitions the result into "
+            "matched / left_only / right_only — the reconcile core. Use it "
+            "to compare a master against a submittal, an Excel sheet against "
+            "Revit parameters, or any two record sets keyed by a shared id. "
+            "`how` (inner/left/right/outer) shapes the matched rows; the "
+            "left_only + right_only diffs are always complete."
+        ),
+        "examples": [
+            {
+                "input": {
+                    "left": [{"id": "A", "v": 1}, {"id": "B", "v": 2}],
+                    "right": [{"id": "B", "w": 9}, {"id": "C", "w": 8}],
+                },
+                "output": {
+                    "matched": [
+                        {"key": "B",
+                         "left": {"id": "B", "v": 2},
+                         "right": {"id": "B", "w": 9}},
+                    ],
+                    "left_only": [{"id": "A", "v": 1}],
+                    "right_only": [{"id": "C", "w": 8}],
+                    "match_count": 1,
+                },
+                "note": "Inner join on id — B matches; A + C are the diff.",
+            },
+        ],
+        "side_effects": "pure",
+        "status": "registered",
+    },
+
+    # ── verify.assert ──────────────────────────────────────────────────
+    # category="logic" — the validator's Category enum has no `verify`
+    # value; `assert` is the branch/gate primitive and lives with the
+    # control.* logic seeds (control.if / merge / foreach all category=logic).
+    {
+        "type": "verify.assert",
+        "display_name": "Assert",
+        "category": "logic",
+        "inputs": [
+            {
+                "name": "value",
+                "port_type": "any",
+                "required": True,
+                "description": "Subject under test AND the pass-through payload.",
+            },
+            {
+                "name": "subject",
+                "port_type": "any",
+                "description": "Override the test subject; `value` still flows out.",
+            },
+            {
+                "name": "expected",
+                "port_type": "any",
+                "description": "Comparison RHS for compare mode (overrides config).",
+            },
+        ],
+        "outputs": [
+            {
+                "name": "passed",
+                "port_type": "boolean",
+                "description": "Predicate result — the branch signal.",
+            },
+            {
+                "name": "report",
+                "port_type": "string",
+                "description": "One-line PASS/FAIL/ERROR verdict; never empty.",
+            },
+            {
+                "name": "value",
+                "port_type": "any",
+                "description": "The input `value`, unchanged on pass AND fail.",
+            },
+        ],
+        "config_schema": {
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["expression", "compare"],
+                    "default": "expression",
+                    "description": "Predicate mode (auto-inferred when unset).",
+                },
+                "expr": {
+                    "type": "string",
+                    "description": "Predicate expression; value/subject in scope.",
+                },
+                "safe_mode": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Sandbox the expression (restricted builtins).",
+                },
+                "op": {
+                    "type": "string",
+                    "enum": ["eq", "neq", "gt", "lt", "gte", "lte"],
+                    "description": "Comparison operator for {op, expected}.",
+                },
+                "expected": {
+                    "description": "Comparison RHS (wired `expected` overrides).",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Optional label prefixed to `report`.",
+                },
+            }
+        },
+        "description": (
+            "Runs a predicate over an input and emits passed (bool) + a "
+            "report string, passing the input value through unchanged on "
+            "pass AND fail — the per-node verify gate every reliable job "
+            "ends in, and the branch primitive. Wire `passed` into If or "
+            "Switch to branch, or let the ROMA court gate a leaf on it. "
+            "Expression mode evaluates a Python predicate (`value`/`subject` "
+            "in scope); compare mode tests {op, expected} with "
+            "eq/neq/gt/lt/gte/lte. A clean false is passed=false (branchable, "
+            "status ok); only a broken predicate is an error."
+        ),
+        "examples": [
+            {
+                "input": {"value": 6, "expected": 0},
+                "output": {"passed": True,
+                           "report": "PASS — 6 gt 0",
+                           "value": 6},
+                "note": "Compare mode (config: op=gt) — 6 > 0 passes; "
+                        "value flows through unchanged.",
+            },
+            {
+                "input": {"value": []},
+                "output": {"passed": False,
+                           "report": "FAIL — len(value) > 0 (got [])",
+                           "value": []},
+                "note": "Expression mode (config: expr='len(value) > 0') — "
+                        "empty list refutes the predicate; a clean false "
+                        "(status ok), branchable, NOT an error.",
+            },
+        ],
+        "side_effects": "pure",
+        "status": "registered",
+    },
+
+    # ── fs.list ────────────────────────────────────────────────────────
+    # category="shape" — the validator's Category enum has no `io` value
+    # (the engine NodeSpec uses category="io"; the library taxonomy is a
+    # separate vocabulary). `fs.list` is a pure list→list read, so it sits
+    # with the data/list shape seeds (data.join / filter / transform).
+    # side_effects="pure" — a READ-ONLY directory read mutates nothing.
+    {
+        "type": "fs.list",
+        "display_name": "List Files",
+        "category": "shape",
+        "inputs": [
+            {
+                "name": "path",
+                "port_type": "string",
+                "required": True,
+                "description": "Directory to list (wired path overrides config).",
+            },
+            {
+                "name": "pattern",
+                "port_type": "string",
+                "description": "Optional glob filter, e.g. '*.dwg' (empty = all).",
+            },
+        ],
+        "outputs": [
+            {
+                "name": "rows",
+                "port_type": "list",
+                "description": "Typed file-rows {path,name,ext,size,is_dir,mtime}.",
+            },
+            {
+                "name": "count",
+                "port_type": "number",
+                "description": "len(rows) — convenience for downstream gating.",
+            },
+        ],
+        "config_schema": {
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory to list (wired path overrides).",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Optional glob filter, e.g. '*.dwg'.",
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Descend sub-directories (os.walk) vs flat.",
+                },
+                "include_dirs": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include directory rows, not just files.",
+                },
+            }
+        },
+        "description": (
+            "Lists a directory READ-ONLY and returns typed file-rows "
+            "{path, name, ext, size, is_dir, mtime} plus a count. Use it to "
+            "walk a submittal folder, gather every DWG/XLSX for a reconcile, "
+            "or feed a file pipeline. `pattern` filters by glob; `recursive` "
+            "descends sub-folders; `include_dirs` adds directory rows. A "
+            "missing or unreadable path is a typed error. Lists only — no "
+            "write, move, or delete."
+        ),
+        "examples": [
+            {
+                "input": {"path": "C:/proj/submittals", "pattern": "*.dwg"},
+                "output": {
+                    "rows": [
+                        {"path": "C:/proj/submittals/A-101.dwg",
+                         "name": "A-101.dwg", "ext": "dwg",
+                         "size": 20480, "is_dir": False, "mtime": 1700000000.0},
+                    ],
+                    "count": 1,
+                },
+                "note": "Flat listing filtered to *.dwg — one drawing matched.",
+            },
+            {
+                "input": {"path": "C:/does/not/exist"},
+                "output": {
+                    "status": "error",
+                    "error": "fs.list: path not found: 'C:/does/not/exist'",
+                },
+                "note": "Missing path — typed error, never a crash; rows empty.",
+            },
+        ],
+        "side_effects": "pure",
+        "status": "registered",
+    },
 ]
 
 

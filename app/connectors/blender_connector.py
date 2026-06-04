@@ -335,6 +335,110 @@ def _render(output_path: str = "", engine: str = "BLENDER_EEVEE",
                     value_preview=f"rendered → {str(saved)[-48:]}")
 
 
+# ── AgDR-0041 Property 1 — typed-host primitives (host swap) ─────────
+# Resolved from workflows/nodes/host_typed.py so "Export viewport" /
+# "Import mesh" do REAL Blender work — same wire, swap the host param.
+# Both route through the existing blender_runner surface; addon offline
+# → honest OpResult.fail, never a fabricated value.
+
+def _export_viewport(view: str = "", width: int = 2048,
+                     height: int = 1536, output_path: str = "",
+                     engine: str = "BLENDER_EEVEE") -> OpResult:
+    """`blender.export_viewport` — render the current scene/camera to a
+    PNG via the runner's /render route. Returns {image, depth, view,
+    path}. `view` is accepted for typed-node symmetry (Blender renders
+    the active camera); `depth` is None (no separate depth pass here)."""
+    op_id = "blender.export_viewport"
+    out = (output_path or "").strip()
+    if not out:
+        # Default to a temp PNG so the typed node is usable with no config.
+        import tempfile
+        import os
+        out = os.path.join(tempfile.gettempdir(), "archhub_blender_view.png")
+    try:
+        env = _runner.render(out, engine=engine or "BLENDER_EEVEE")
+    except Exception as ex:
+        return OpResult.fail(f"Blender render failed: {ex}", op_id)
+    if not isinstance(env, dict):
+        return OpResult.fail("Blender render returned an unexpected shape",
+                             op_id)
+    if env.get("ok") is False or env.get("status") == "error":
+        return OpResult.fail(env.get("error") or "render error", op_id)
+    saved = env.get("output_path") or env.get("path") or out
+    value = {"image": saved, "depth": None, "view": str(view or ""),
+             "path": saved}
+    return OpResult(ok=True, value=value, op_id=op_id,
+                    value_preview=f"rendered → {str(saved)[-40:]}")
+
+
+def _import_mesh(mesh: Any = None, name: str = "",
+                 layer: str = "") -> OpResult:
+    """`blender.import_mesh` — import a .glb/.gltf/.obj/.ply/.stl/.fbx
+    mesh file into the scene via the matching bpy importer. DESTRUCTIVE.
+    Accepts a path string or an upstream geometry dict carrying a path."""
+    op_id = "blender.import_mesh"
+    path = ""
+    if isinstance(mesh, str):
+        path = mesh.strip()
+    elif isinstance(mesh, dict):
+        for k in ("path", "file", "filepath", "url", "value"):
+            v = mesh.get(k)
+            if isinstance(v, str) and v.strip():
+                path = v.strip()
+                break
+    if not path:
+        return OpResult.fail(
+            "import_mesh needs a mesh file path (.glb/.obj/.ply/.stl/.fbx) "
+            "on the `mesh` input — got "
+            f"{type(mesh).__name__} with no resolvable path.", op_id)
+    code = (
+        "import bpy, os\n"
+        f"_path = {path!r}\n"
+        "_ext = os.path.splitext(_path)[1].lower()\n"
+        "if not os.path.exists(_path):\n"
+        "    archhub_result = {'ok': False,\n"
+        "                      'error': 'mesh file not found: ' + _path}\n"
+        "else:\n"
+        "    _before = set(o.name for o in bpy.data.objects)\n"
+        "    _ok = True; _err = ''\n"
+        "    try:\n"
+        "        if _ext in ('.glb', '.gltf'):\n"
+        "            bpy.ops.import_scene.gltf(filepath=_path)\n"
+        "        elif _ext == '.obj':\n"
+        "            try: bpy.ops.wm.obj_import(filepath=_path)\n"
+        "            except Exception:"
+        " bpy.ops.import_scene.obj(filepath=_path)\n"
+        "        elif _ext == '.ply':\n"
+        "            try: bpy.ops.wm.ply_import(filepath=_path)\n"
+        "            except Exception:"
+        " bpy.ops.import_mesh.ply(filepath=_path)\n"
+        "        elif _ext == '.stl':\n"
+        "            try: bpy.ops.wm.stl_import(filepath=_path)\n"
+        "            except Exception:"
+        " bpy.ops.import_mesh.stl(filepath=_path)\n"
+        "        elif _ext == '.fbx':\n"
+        "            bpy.ops.import_scene.fbx(filepath=_path)\n"
+        "        else:\n"
+        "            _ok = False; _err = 'unsupported format: ' + _ext\n"
+        "    except Exception as _e:\n"
+        "        _ok = False; _err = str(_e)\n"
+        "    _new = [o.name for o in bpy.data.objects"
+        " if o.name not in _before]\n"
+        "    archhub_result = {'ok': _ok, 'error': _err,\n"
+        "                      'imported': len(_new), 'objects': _new,\n"
+        "                      'path': _path}\n"
+    )
+    res = _run_snippet(code)
+    if not res.ok:
+        return OpResult.fail(res.error or "import failed", op_id)
+    val = res.value if isinstance(res.value, dict) else {}
+    if not val.get("ok", False):
+        return OpResult.fail(val.get("error", "import failed"), op_id)
+    res.op_id = op_id
+    res.value_preview = f"{val.get('imported', 0)} object(s) imported"
+    return res
+
+
 # ── connector ────────────────────────────────────────────────────────
 class BlenderConnector(Connector):
     """Blender, driven through the ArchHub HTTP addon via `blender_runner`."""
@@ -479,6 +583,52 @@ class BlenderConnector(Connector):
                 output_type="any",
                 destructive=True,
                 fn=_render,
+            ),
+            # ── AgDR-0041 P1 — typed-host primitives ────────────────
+            ConnectorOp(
+                op_id="blender.export_viewport", host="blender",
+                kind="read", label="Export viewport",
+                description="Render the current scene/camera to a PNG via "
+                            "the addon /render route.",
+                inputs=[
+                    ParamSpec("view", "View", "text", default="",
+                              help="Accepted for symmetry; Blender renders "
+                                   "the active camera."),
+                    ParamSpec("width", "Width px", "number", default=2048,
+                              help="Output image width in pixels."),
+                    ParamSpec("height", "Height px", "number", default=1536,
+                              help="Output image height in pixels."),
+                    ParamSpec("output_path", "Output path", "file",
+                              default="",
+                              help="Where to write the PNG. Empty = a temp "
+                                   "file."),
+                    ParamSpec("engine", "Render engine", "choice",
+                              default="BLENDER_EEVEE",
+                              options=["BLENDER_EEVEE", "BLENDER_EEVEE_NEXT",
+                                       "CYCLES", "BLENDER_WORKBENCH"],
+                              help="Render engine to use."),
+                ],
+                output_type="any",
+                fn=_export_viewport,
+            ),
+            ConnectorOp(
+                op_id="blender.import_mesh", host="blender",
+                kind="action", label="Import mesh",
+                description="Import a .glb/.gltf/.obj/.ply/.stl/.fbx mesh "
+                            "file into the scene via the matching bpy "
+                            "importer.",
+                inputs=[
+                    ParamSpec("mesh", "Mesh", "any", required=True,
+                              help="Mesh file path or an upstream geometry "
+                                   "dict carrying a path/file/url."),
+                    ParamSpec("name", "Name", "text", default="",
+                              help="Name hint for the imported object(s)."),
+                    ParamSpec("layer", "Collection", "text", default="",
+                              help="Target collection hint (optional)."),
+                ],
+                output_type="any",
+                destructive=True,
+                fn=_import_mesh,
             ),
         ]
 

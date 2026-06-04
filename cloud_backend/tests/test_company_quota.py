@@ -59,8 +59,12 @@ class TestActorResolution:
         # Burn some company quota.
         db.increment_usage_for_actor(u, 7)
         remaining = db.quota_remaining_for_actor(u)
-        # Studio company: msg_limit = config.PLAN_QUOTAS["studio"] = 2000.
-        assert remaining == 2000 - 7
+        # Studio company shares one bucket = config.PLAN_QUOTAS["studio"].
+        # (Model C: this legacy msg bucket is now the fair-use ceiling;
+        # hosted billing flows through credit packs. The shared-bucket
+        # decrement mechanism is what this guards — read the live number
+        # rather than hardcode it so it can't drift from config.)
+        assert remaining == db.config.PLAN_QUOTAS["studio"] - 7
 
     def test_stale_company_id_falls_back_to_user_quota(self):
         import db

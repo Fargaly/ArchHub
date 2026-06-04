@@ -338,6 +338,100 @@ def _run_maxscript(instance: str = "", script: str = "") -> OpResult:
     return OpResult(ok=True, value=res, op_id=op_id, value_preview=preview)
 
 
+# ── AgDR-0041 Property 1 — typed-host primitives (host swap) ─────────
+# Resolved from workflows/nodes/host_typed.py so "Export viewport" /
+# "Import mesh" do REAL 3ds Max work — same wire, swap the host param.
+# Both route through the MaxMCP /exec Python route the same way every
+# other Max op does; add-in offline → honest _broker_offline_result.
+
+def _export_viewport(instance: str = "", view: str = "",
+                     width: int = 2048, height: int = 1536,
+                     output_path: str = "") -> OpResult:
+    """`max.export_viewport` — grab the active viewport to a PNG via
+    pymxs `viewport.GetViewportDib` / `gw.getViewportDib` saved to disk.
+    Returns {image, depth, view, path}. `depth` is None (no depth pass)."""
+    op_id = "max.export_viewport"
+    out = str(output_path or "").strip()
+    if not out:
+        out = r"C:\temp\archhub_max_view.png"
+    out_lit = json.dumps(out)
+    code = (
+        "import os\n"
+        f"_out = {out_lit}\n"
+        "_dir = os.path.dirname(_out)\n"
+        "if _dir and not os.path.exists(_dir):\n"
+        "    os.makedirs(_dir)\n"
+        "_bmp = rt.gw.getViewportDib()\n"
+        "if _bmp == None:\n"
+        "    result = {'ok': False, 'error': 'no active viewport'}\n"
+        "else:\n"
+        "    _bmp.filename = _out\n"
+        "    rt.save(_bmp)\n"
+        "    rt.close(_bmp)\n"
+        "    result = {'ok': True, 'path': _out,\n"
+        "              'view': str(rt.viewport.activeViewport)}\n"
+    )
+    res = _exec_python(op_id, code, instance=instance or None, timeout=60.0)
+    if isinstance(res, OpResult):
+        return res
+    data = res if isinstance(res, dict) else {}
+    if data.get("ok") is False:
+        return OpResult.fail(
+            f"Could not export viewport: {data.get('error', 'unknown')}",
+            op_id)
+    saved = data.get("path") or out
+    value = {"image": saved, "depth": None,
+             "view": str(view or data.get("view", "")), "path": saved}
+    return OpResult(ok=True, value=value, op_id=op_id,
+                    value_preview=f"viewport → {str(saved)[-40:]}")
+
+
+def _import_mesh(instance: str = "", mesh: Any = None,
+                 name: str = "", layer: str = "") -> OpResult:
+    """`max.import_mesh` — import a mesh file (.obj/.fbx/.stl/.3ds/.gltf)
+    into the scene via pymxs `importFile`. DESTRUCTIVE. Accepts a path
+    string or an upstream geometry dict carrying a path."""
+    op_id = "max.import_mesh"
+    path = ""
+    if isinstance(mesh, str):
+        path = mesh.strip()
+    elif isinstance(mesh, dict):
+        for k in ("path", "file", "filepath", "url", "value"):
+            v = mesh.get(k)
+            if isinstance(v, str) and v.strip():
+                path = v.strip()
+                break
+    if not path:
+        return OpResult.fail(
+            "import_mesh needs a mesh file path (.obj/.fbx/.stl/.3ds) on "
+            "the `mesh` input — got "
+            f"{type(mesh).__name__} with no resolvable path.", op_id)
+    path_lit = json.dumps(path)
+    code = (
+        "import os\n"
+        f"_path = {path_lit}\n"
+        "if not os.path.exists(_path):\n"
+        "    result = {'ok': False, 'error': 'mesh file not found: ' "
+        "+ _path}\n"
+        "else:\n"
+        "    _before = int(rt.objects.count)\n"
+        "    _ok = rt.importFile(_path, rt.Name('noPrompt'))\n"
+        "    _after = int(rt.objects.count)\n"
+        "    result = {'ok': bool(_ok), 'imported': _after - _before,\n"
+        "              'path': _path}\n"
+    )
+    res = _exec_python(op_id, code, instance=instance or None, timeout=120.0)
+    if isinstance(res, OpResult):
+        return res
+    data = res if isinstance(res, dict) else {}
+    if data.get("ok") is False:
+        return OpResult.fail(
+            f"Could not import mesh: {data.get('error', 'unknown')}", op_id)
+    return OpResult(ok=True, value=data, op_id=op_id,
+                    value_preview=f"{data.get('imported', 0)} object(s) "
+                                  f"imported")
+
+
 # ── connector ───────────────────────────────────────────────────────
 class MaxConnector(Connector):
     """Autodesk 3ds Max — drives the host through the multi-session broker.
@@ -487,6 +581,53 @@ class MaxConnector(Connector):
                 ],
                 output_type="any", destructive=True,
                 fn=_run_maxscript,
+            ),
+            # ── AgDR-0041 P1 — typed-host primitives ───────────
+            ConnectorOp(
+                op_id="max.export_viewport", host="max", kind="read",
+                label="Export viewport",
+                description="Grab the active 3ds Max viewport to a PNG "
+                            "via pymxs gw.getViewportDib.",
+                inputs=[
+                    inst,
+                    ParamSpec(id="view", label="View", type="text",
+                              default="",
+                              help="Accepted for symmetry; Max grabs the "
+                                   "active viewport."),
+                    ParamSpec(id="width", label="Width px", type="number",
+                              default=2048,
+                              help="Output image width (best-effort)."),
+                    ParamSpec(id="height", label="Height px", type="number",
+                              default=1536,
+                              help="Output image height (best-effort)."),
+                    ParamSpec(id="output_path", label="Output path",
+                              type="text", default="",
+                              help="Where to write the PNG. Empty = host "
+                                   "default temp path."),
+                ],
+                output_type="any", destructive=False,
+                fn=_export_viewport,
+            ),
+            ConnectorOp(
+                op_id="max.import_mesh", host="max", kind="action",
+                label="Import mesh",
+                description="Import a .obj/.fbx/.stl/.3ds/.gltf mesh file "
+                            "into the scene via pymxs importFile.",
+                inputs=[
+                    inst,
+                    ParamSpec(id="mesh", label="Mesh", type="any",
+                              default=None, required=True,
+                              help="Mesh file path or an upstream geometry "
+                                   "dict carrying a path/file/url."),
+                    ParamSpec(id="name", label="Name", type="text",
+                              default="",
+                              help="Name hint for the imported object(s)."),
+                    ParamSpec(id="layer", label="Layer", type="text",
+                              default="",
+                              help="Target layer hint (optional)."),
+                ],
+                output_type="any", destructive=True,
+                fn=_import_mesh,
             ),
             # ── M5 parity (AgDR-0017 send-pattern, 3ds Max symmetric)
             ConnectorOp(

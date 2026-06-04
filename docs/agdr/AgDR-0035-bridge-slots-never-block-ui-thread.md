@@ -4,7 +4,7 @@ timestamp: 2026-05-22T00:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "THE LAGGING STILL PERSISTS... WRITING IN THE COMPOSER LAGS THE ENTIRE PC... WHY IS THAT?"
 trigger: CDP CPU profile proved the renderer is 99% IDLE during the lag — the freeze is the Qt main thread blocked by synchronous bridge slots, not JavaScript.
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

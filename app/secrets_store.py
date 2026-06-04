@@ -136,7 +136,7 @@ def delete_api_key(provider: str) -> None:
     kr = _try_keyring()
     if kr:
         try: kr.delete_password(SERVICE, provider)
-        except Exception: pass
+        except Exception: pass  # audit: deliberate-fail-soft — best-effort keyring delete teardown; file-delete fallback follows
     _file_delete(provider)
 
 def list_keys() -> list[str]:

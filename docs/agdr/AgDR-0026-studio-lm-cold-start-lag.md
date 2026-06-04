@@ -4,7 +4,7 @@ timestamp: 2026-05-21T13:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "you should fix this and the lag issue"
 trigger: Founder demand 2026-05-21 — app slow + lagging; profile + fix the cold-start path
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

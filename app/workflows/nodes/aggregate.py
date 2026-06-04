@@ -13,6 +13,8 @@ Pure + side-effect-free. No host, no LLM.
 """
 from __future__ import annotations
 
+import json
+
 from ..graph import Port, PortType
 from ..registry import NodeSpec, register
 
@@ -196,3 +198,107 @@ register(NodeSpec(
              Port(name="keys",   type=PortType.LIST)],
     config_schema={"key": {"type": "string"}},
     icon="⊞"), _group_by_executor)
+
+
+# ── data.dedupe ──────────────────────────────────────────────────────
+#
+# Distinct from data.group_by: group_by PARTITIONS every row into buckets
+# keyed by the field; dedupe DROPS duplicate rows, keeping exactly one per
+# identity. The reconcile-pipeline twin of fs.list's "one row per file" —
+# it collapses a list with repeats (a doubled submittal log, a re-imported
+# parameter dump) down to its distinct rows in stable first-seen order, so
+# a parity gate over the output is byte-stable.
+
+_DEDUPE_KEEPS = ("first", "last")
+
+
+def _dedupe_identity(row, key):
+    """A stable, hashable identity for one row.
+
+    - key set AND row is a dict  → the value at `key` (its repr if that
+      value is itself unhashable, mirroring relate._key_of).
+    - otherwise (no key, or a non-dict row even when key is set) → a
+      stable repr of the WHOLE row via json.dumps(sort_keys, default=str)
+      so dicts/lists are hashable + key-order-independent and a non-dict
+      row never crashes the cell.
+    """
+    if key and isinstance(row, dict):
+        k = row.get(key)
+        try:
+            hash(k)
+            return k
+        except TypeError:
+            return json.dumps(k, sort_keys=True, default=str)
+    return json.dumps(row, sort_keys=True, default=str)
+
+
+def _dedupe_executor(config: dict, inputs: dict, ctx) -> dict:
+    raw = (inputs or {}).get("rows")
+    if not isinstance(raw, (list, tuple)):
+        return {"status": "error", "rows": [], "removed": 0, "count": 0,
+                "error": f"dedupe: rows must be a list, got "
+                         f"{type(raw).__name__}"}
+    rows = list(raw)
+
+    cfg = config or {}
+    # Wired input beats config (data.join "wired key wins" parity): a
+    # `key` arriving on the input port overrides the config default.
+    wired_key = (inputs or {}).get("key")
+    key = (wired_key if wired_key not in (None, "") else cfg.get("key")) or ""
+    keep = str(cfg.get("keep", "first") or "first").lower()
+    if keep not in _DEDUPE_KEEPS:
+        return {"status": "error", "rows": [], "removed": 0, "count": 0,
+                "error": f"dedupe: unknown keep {keep!r} — want one of "
+                         f"{', '.join(_DEDUPE_KEEPS)}"}
+
+    # ONE pass, first-seen order preserved throughout — deterministic.
+    #   keep=first → the FIRST row of each identity is kept in its slot;
+    #                later duplicates are dropped.
+    #   keep=last  → the LAST row's VALUE wins, but it occupies the
+    #                FIRST-SEEN POSITION (we overwrite the stored row in
+    #                place rather than re-appending), so output order is
+    #                identical to keep=first and stays byte-stable.
+    order: list = []                 # identities in first-seen order
+    chosen: dict = {}                # identity -> the row we keep
+    removed = 0
+    try:
+        for row in rows:
+            ident = _dedupe_identity(row, key)
+            if ident not in chosen:
+                order.append(ident)
+                chosen[ident] = row
+            else:
+                removed += 1
+                if keep == "last":
+                    chosen[ident] = row   # later value wins, position held
+    except Exception as ex:
+        return {"status": "error", "rows": [], "removed": 0, "count": 0,
+                "error": f"{type(ex).__name__}: {ex}"}
+
+    out_rows = [chosen[ident] for ident in order]
+    return {"status": "ok", "rows": out_rows,
+            "removed": removed, "count": len(out_rows)}
+
+
+register(NodeSpec(
+    type="data.dedupe", category="data", display_name="Dedupe",
+    description="Remove duplicate rows from a list, keeping one per "
+                "identity in stable first-seen order. `key` dedupes on "
+                "that field (empty = whole-row equality); `keep` = first "
+                "(default) keeps the earliest, last lets the later value "
+                "win in the same position. `removed` counts the dropped "
+                "rows. Distinct from group_by, which partitions instead.",
+    inputs=[Port(name="rows", type=PortType.LIST, required=True),
+            Port(name="key",  type=PortType.STRING)],
+    outputs=[Port(name="rows",    type=PortType.LIST),
+             Port(name="removed", type=PortType.NUMBER),
+             Port(name="count",   type=PortType.NUMBER)],
+    config_schema={
+        "key":  {"type": "string", "default": "",
+                 "description": "Field to dedupe on; empty = whole-row "
+                                "equality."},
+        "keep": {"type": "string", "default": "first",
+                 "options": list(_DEDUPE_KEEPS),
+                 "description": "Which duplicate to retain — first or last."},
+    },
+    icon="≣"), _dedupe_executor)

@@ -105,6 +105,25 @@ class TransferOwnershipReq(BaseModel):
     new_owner_user_id: str = Field(min_length=1, max_length=200)
 
 
+class AiModeReq(BaseModel):
+    # Model C: per-workspace AI mode. byo_key (user's own key, no hosted
+    # limit) or hosted (we run the LLM, metered against credits).
+    ai_mode: str = Field(pattern="^(byo_key|hosted)$")
+
+
+class SeatsReq(BaseModel):
+    # Absolute target seat count. Clamped to the tier floor server-side
+    # (Firm can't drop below 10). Studio adds/removes à la carte.
+    seats: int = Field(ge=1, le=100000)
+
+
+class CreditPackReq(BaseModel):
+    # Annual billing toggle is irrelevant for a one-time credit pack —
+    # this body is intentionally empty for now (kept for forward-compat
+    # so the client can POST {} and the route stays stable).
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -217,7 +236,11 @@ async def invite_member(company_id: str, req: InviteReq,
     if req.role not in ("admin", "member"):
         raise HTTPException(status_code=400, detail="invalid_role")
     # Seat-limit check — count existing members + outstanding invites.
-    current = db.count_company_members(company_id)
+    # Outstanding (un-accepted, un-expired) invites each reserve a seat;
+    # counting only members let a company over-invite past seat_limit
+    # (N pending invites all pass the check, then all accept).
+    current = (db.count_company_members(company_id)
+               + db.count_outstanding_invites(company_id))
     company = db.get_company(company_id)
     if current >= int(company["seat_limit"]):
         raise HTTPException(status_code=400, detail="seat_limit_reached")
@@ -318,6 +341,100 @@ def transfer_ownership(company_id: str, req: TransferOwnershipReq,
         "company_id": company_id,
         "owner_user_id": req.new_owner_user_id,
     }
+
+
+@router.get("/v1/companies/{company_id}/ai")
+def get_company_ai(company_id: str,
+                   authorization: str | None = Header(None)) -> dict:
+    """Workspace AI status (Model C): current mode + live hosted-credit
+    balance + the credit-pack terms. Any member can read it."""
+    user = _require_user(authorization)
+    _require_membership(company_id, user["id"])
+    company = db.get_company(company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company_not_found")
+    return {
+        "company_id": company_id,
+        "ai_mode": db._ai_mode_norm(company.get("ai_mode")),
+        "credit_balance": db.credit_balance(company_id=company_id),
+        "credit_pack": dict(config.CREDIT_PACK),
+        "ai_modes": list(config.AI_MODES),
+    }
+
+
+@router.post("/v1/companies/{company_id}/ai-mode")
+def set_company_ai_mode(company_id: str, req: AiModeReq,
+                        authorization: str | None = Header(None)) -> dict:
+    """Flip the workspace between byo_key and hosted AI (Model C).
+    Owner/admin only. byo_key → no hosted limit (user's own key);
+    hosted → metered against credit packs."""
+    user = _require_user(authorization)
+    _require_membership(company_id, user["id"], roles=("owner", "admin"))
+    if db.get_company(company_id) is None:
+        raise HTTPException(status_code=404, detail="company_not_found")
+    mode = db.set_company_ai_mode(company_id, req.ai_mode)
+    return {"ok": True, "company_id": company_id, "ai_mode": mode}
+
+
+@router.post("/v1/companies/{company_id}/seats")
+def set_company_seats(company_id: str, req: SeatsReq,
+                      authorization: str | None = Header(None)) -> dict:
+    """À-la-carte seats (Model C). Owner/admin sets the target seat
+    count; the request is clamped to the tier floor (Firm ≥ 10), the
+    Stripe subscription quantity is updated (Stripe prorates), and the
+    company's seat_limit is updated to match.
+
+    If the company has no live Stripe subscription yet (local dev / not
+    yet checked out), we still update seat_limit so the roster cap is
+    correct — the next checkout will bill the right quantity.
+    """
+    user = _require_user(authorization)
+    _require_membership(company_id, user["id"], roles=("owner", "admin"))
+    company = db.get_company(company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company_not_found")
+    plan = company["plan"]
+    target = config.clamp_seats(plan, req.seats)
+    # Can't drop below the current member count — that would orphan
+    # seated teammates.
+    members = db.count_company_members(company_id)
+    if target < members:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "seats_below_member_count",
+                    "members": members, "requested": target})
+    sub_id = company.get("stripe_subscription_id")
+    stripe_result = None
+    if sub_id:
+        stripe_result = billing.update_subscription_quantity(
+            subscription_id=sub_id, plan=plan, seats=target)
+        if not stripe_result.get("ok"):
+            raise HTTPException(status_code=503,
+                                detail={"error": "seat_update_failed",
+                                        "stripe": stripe_result})
+    db.update_company(company_id, seat_limit=target)
+    return {"ok": True, "company_id": company_id, "seat_limit": target,
+            "stripe": stripe_result}
+
+
+@router.post("/v1/companies/{company_id}/credits/checkout")
+def buy_company_credits(company_id: str, req: CreditPackReq,
+                        authorization: str | None = Header(None)) -> dict:
+    """Start a one-time Stripe Checkout for a hosted-AI credit pack
+    ($10 = 1,000 messages). Owner/admin only. The webhook grants the
+    messages to the company on payment (60-day rollover)."""
+    user = _require_user(authorization)
+    _require_membership(company_id, user["id"], roles=("owner", "admin"))
+    company = db.get_company(company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company_not_found")
+    url = billing.create_credit_pack_checkout(
+        company_id=company_id,
+        billing_email=company.get("billing_email"),
+    )
+    if not url:
+        raise HTTPException(status_code=503, detail="checkout_unavailable")
+    return {"url": url, "credit_pack": dict(config.CREDIT_PACK)}
 
 
 @router.post("/v1/companies/{company_id}/switch")

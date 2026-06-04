@@ -333,6 +333,48 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _sse_health_ok(raw: str):
+    """Parse an SSE-framed tools/call response for brain.health and return the
+    REAL top-level `ok` flag (True/False) or None if it can't be located.
+
+    The daemon answers with `event: message\\n data: <json-rpc>\\n\\n` where the
+    JSON is SPACED, so the wire body is the JSON-RPC response object
+    `{"jsonrpc":..,"result":{"content":[{"type":"text","text":"{...}"}],
+    "structuredContent":{"ok": true, ...},"isError":false}}`. The authoritative
+    flag is result.structuredContent.ok; the content[0].text block (the same
+    payload JSON-encoded) is the documented fallback. We read the structured
+    field — NOT a substring — so a nested `"ok": false` deeper in the payload
+    can't cause a false pass."""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            envelope = json.loads(line[len("data:"):].strip())
+        except Exception:
+            continue
+        result = envelope.get("result") if isinstance(envelope, dict) else None
+        if not isinstance(result, dict):
+            continue
+        sc = result.get("structuredContent")
+        if isinstance(sc, dict) and "ok" in sc:
+            return sc["ok"]
+        # Fallback: the text content block carries the same payload as JSON.
+        content = result.get("content")
+        if isinstance(content, list):
+            for item in content:
+                txt = item.get("text") if isinstance(item, dict) else None
+                if not txt:
+                    continue
+                try:
+                    payload = json.loads(txt)
+                except Exception:
+                    continue
+                if isinstance(payload, dict) and "ok" in payload:
+                    return payload["ok"]
+    return None
+
+
 def _wait_for_port(port: int, timeout_s: float = 10.0) -> bool:
     import socket
     deadline = time.time() + timeout_s
@@ -447,7 +489,16 @@ def test_slice_16_with_real_subprocess_daemon(tmp_path):
             )
             with urllib.request.urlopen(req, timeout=5.0) as r:
                 raw = r.read().decode()
-            assert '"ok":true' in raw, f"brain.health failed on port {port}"
+            # The daemon SSE-frames the JSON-RPC response as
+            #   event: message\n data: {"jsonrpc":...,"result":{...}}\n\n
+            # with SPACED JSON ("ok": true), so a substring '"ok":true' never
+            # matches. Parse the SSE data line(s) as JSON and assert the REAL
+            # health flag (result.structuredContent.ok, with the text-content
+            # block as fallback) is True — exercising the live wire, parsed
+            # correctly instead of a brittle substring.
+            ok = _sse_health_ok(raw)
+            assert ok is True, (
+                f"brain.health did not report ok:true on port {port}; raw={raw!r}")
     finally:
         for p in (proc_a, proc_b):
             try:

@@ -115,21 +115,27 @@
   };
 </script>
 
-<!-- AgDR-0026 Phase 1 — vendored React + Babel · production builds.
+<!-- AgDR-0026 Phase 1 — vendored React · production builds.
      Eliminates the CDN round-trip on cold start (was 1.5-3 s on slow
-     WiFi + indefinitely on offline) AND switches to react.production.min
+     WiFi + indefinitely on offline) AND uses react.production.min
      (~10 KB vs ~230 KB dev) + react-dom.production.min (~130 KB vs
-     ~1.1 MB dev).  Babel-standalone stays bundled — Phase 2 will
-     cache the compiled JSX so this only runs on a hash miss. -->
+     ~1.1 MB dev). React is always needed; load it eagerly. -->
 <script src="vendor/react.production.min.js"></script>
 <script src="vendor/react-dom.production.min.js"></script>
-<script src="vendor/babel.min.js"></script>
 
-<!-- AgDR-0026 Phase 2 — JSX boot loader.  Hashes each .jsx file +
-     checks localStorage cache for the compiled JS.  Cache hit skips
-     Babel entirely (saves ~15 s on cold start).  Cache miss falls
-     back to Babel.transform + writes the result back for next time.
-     Boot order: shared-data.jsx → studio-lm.jsx → app-boot.jsx. -->
+<!-- AgDR-0026 Phase 3 — babel.min.js is NO LONGER loaded here.  It was
+     3 MB read+parsed on EVERY launch (even cache hits, where it went
+     unused).  The boot loader now prefers the precompiled on-disk
+     artifacts (studio-lm.compiled.js / app-boot.compiled.js, kept fresh
+     by tools/build_jsx.py at launch) and loads them directly — no Babel.
+     babel.min.js is lazily <script>-injected by jsx-boot.js ONLY when a
+     precompiled artifact is missing or its sha doesn't match the live
+     .jsx (the in-browser fallback path). -->
+
+<!-- AgDR-0026 Phase 3 — JSX boot loader.  Fast path: load the precompiled
+     *.compiled.js when its embedded source-sha matches the live .jsx
+     (no Babel, no localStorage, ~instant).  Fallback: lazy-load Babel +
+     transpile in-browser + cache.  Boot order: studio-lm.jsx → app-boot.jsx. -->
 <script src="jsx-boot.js"></script>
 </body>
 </html>

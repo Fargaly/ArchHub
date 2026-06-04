@@ -6,8 +6,166 @@ after the tool engine is available.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# Make QtWebEngine opt INTO real GPU acceleration. MUST run before any
+# QtWebEngine import/initialization (the eager-import block below) and before
+# QApplication is constructed, because QtWebEngine reads QTWEBENGINE_CHROMIUM_FLAGS
+# only at process startup. Measured: with no flags, QtWebEngine's GPU process
+# fails to launch and the canvas composites on the CPU (SwiftShader/software) —
+# the cause of pan/scroll/paint lag. --ignore-gpu-blocklist is the key flag:
+# QtWebEngine often blocklists the GPU and silently falls back to software, so
+# this forces it to use the real GPU. setdefault() lets a deliberate override win.
+#
+# These flags are the CORRECT, proven production set — keep them (verified
+# 2026-06-01: hardware ANGLE/D3D11 + 60fps canvas, the lag fix). An isolation
+# study (throwaway venv, app's exact PyQt6 6.11.0 / Qt 6.11.0 build, never the
+# app interpreter) confirmed they do NOT impair the app's real UI<->Python
+# bridge: QWebChannel — the transport WebShell uses (web_shell.py setWebChannel)
+# — round-tripped 40/40 JS->slot->return->callback with these flags ON, and
+# page.runJavaScript callbacks themselves fired 40/40 under all 8 flag combos
+# tested (zero timeouts). So there is NO flag-induced callback wedge to fix here.
+# The only GPU-related accommodation is a VERIFICATION-ONLY, opt-in toggle
+# (ARCHHUB_VERIFY_NO_GPU, applied below) that NEVER affects a production launch.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy")
+
+
+def _maybe_disable_gpu_for_verification() -> None:
+    """Verification-only, opt-in GPU disable — production is NEVER affected.
+
+    Why this exists (tooling-only finding, isolation-tested 2026-06-01)
+    -------------------------------------------------------------------
+    ArchHub's shipped Chromium flags above (--ignore-gpu-blocklist
+    --enable-gpu-rasterization --enable-zero-copy) are the proven lag fix and
+    are CORRECT for production: they give hardware ANGLE/D3D11 acceleration +
+    a 60fps canvas. They are deliberately left untouched.
+
+    The isolation study also settled the long-suspected "do the GPU raster
+    flags wedge page.runJavaScript callbacks?" question: they do NOT. With the
+    full production flag set ON, both the app's real QWebChannel bridge
+    (40/40 round-trips) AND raw page.runJavaScript callbacks (40/40, across all
+    8 flag combinations, including all-three) ran with zero timeouts on real
+    hardware. There is therefore no callback wedge to fix, and the production
+    flags are a strict win — adopted as-is.
+
+    This toggle is consequently a DEFENSE-IN-DEPTH affordance for
+    verification/debug-bridge runs, not a fix for an observed bug: a verifier
+    that drives dom_query through ``debug_bridge.py`` (worker thread ->
+    *queued* fire-and-forget ``QMetaObject.invokeMethod`` onto the GUI thread ->
+    ``page.runJavaScript(js, callback)`` whose later callback signals the
+    worker through a ``threading.Event`` — NOT a BlockingQueuedConnection and
+    NOT a nested QEventLoop; the GUI thread never blocks, see the module
+    docstring + ``_GuiProxy.dom_query`` in debug_bridge.py) can set
+    ``ARCHHUB_VERIFY_NO_GPU=1`` to force the software path and remove the
+    GPU/compositor as a variable entirely, without ever changing what
+    production ships. (The other zero-GPU-dependency proof paths remain
+    ``/screenshot`` and CDP — see debug_bridge.py.)
+
+    Mechanics: APPENDS ``--disable-gpu`` to QTWEBENGINE_CHROMIUM_FLAGS only when
+    ``ARCHHUB_VERIFY_NO_GPU`` is set to a truthy value (1/true). A normal
+    production launch never sets that env var, so the flag is never added and
+    the production string is byte-for-byte unchanged. Idempotent + additive: it
+    keeps every existing flag and never duplicates ``--disable-gpu``. MUST run
+    before QtWebEngine initialises (same constraint as the flags above) —
+    Chromium reads QTWEBENGINE_CHROMIUM_FLAGS once at process startup.
+    """
+    if (os.environ.get("ARCHHUB_VERIFY_NO_GPU") or "").strip().lower() not in ("1", "true"):
+        return  # production / normal launch -> add nothing, GPU flags intact.
+    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--disable-gpu" not in existing:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            f"{existing} --disable-gpu".strip() if existing else "--disable-gpu"
+        )
+
+
+_maybe_disable_gpu_for_verification()
+
+
+def _dev_verify_requested() -> bool:
+    """True when this launch opted into the reopen=latest dev-verify mode,
+    via env ``ARCHHUB_DEV_VERIFY=1`` or the ``--dev-verify`` argv flag.
+
+    Dev-verify is the founder+Claude "prove the running app is HEAD" launch:
+    it (a) FORCES a dev-source sync ignoring the marker, and (b) turns on
+    QtWebEngine remote debugging so CDP verification is reliable. Off by
+    default — a production launch sets neither and behaves exactly as before."""
+    if (os.environ.get("ARCHHUB_DEV_VERIFY") or "").strip().lower() in ("1", "true"):
+        return True
+    try:
+        return "--dev-verify" in sys.argv[1:]
+    except Exception:
+        return False
+
+
+def _maybe_enable_dev_verify_cdp() -> None:
+    """When dev-verify is requested, ensure remote debugging is ON so CDP
+    works. Sets QTWEBENGINE_REMOTE_DEBUGGING (default 9223) if unset, BEFORE
+    _enable_cdp_remote_origins() reads it below. setdefault semantics: an
+    explicit port the launcher already chose wins. No-op when dev-verify is
+    off, so production never enables remote debugging."""
+    if not _dev_verify_requested():
+        return
+    try:
+        if not (os.environ.get("QTWEBENGINE_REMOTE_DEBUGGING") or "").strip():
+            os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9223"
+    except Exception:
+        pass
+
+
+_maybe_enable_dev_verify_cdp()
+
+
+def _enable_cdp_remote_origins() -> None:
+    """When remote debugging is opted IN, allow the DevTools websocket upgrade.
+
+    Root cause of the long-standing "CDP/DevTools websocket stalls on this
+    QtWebEngine build" symptom (isolation-tested on Qt 6.11.0 AND 6.11.1 —
+    NOT a Qt bug): Chromium 111+ added an Origin check to the remote-debugging
+    endpoint. When a websocket client sends an ``Origin`` header (most do), the
+    server rejects the upgrade with HTTP 403 unless that origin is on an
+    allow-list — so ``websocket.create_connection`` hangs/aborts the handshake.
+    ``--remote-allow-origins`` is the allow-list. The DevTools ws + runJavaScript
+    work fine once it is set (the other half of the old symptom was the verifier
+    calling urlopen/ws ON the Qt GUI thread, which is fixed in the verifier, not
+    here).
+
+    Scoped tightly: this flag is APPENDED to QTWEBENGINE_CHROMIUM_FLAGS only when
+    ``QTWEBENGINE_REMOTE_DEBUGGING`` is set/non-empty (remote debugging is opt-in).
+    A normal production launch never sets that env var, so the flag is never added
+    and production behaviour is unchanged. The GPU flags above are preserved — we
+    only append. We allow both the localhost and 127.0.0.1 debug origins on the
+    actual debug port (loopback only); if a client still 403s with a differently
+    shaped Origin, ``ARCHHUB_CDP_ALLOW_ANY_ORIGIN=1`` falls back to ``=*`` (still
+    safe: remote-debugging is opt-in and binds loopback only).
+
+    MUST run before QtWebEngine initialises (same constraint as the GPU flags) —
+    Chromium reads QTWEBENGINE_CHROMIUM_FLAGS once at process startup.
+    """
+    port = (os.environ.get("QTWEBENGINE_REMOTE_DEBUGGING") or "").strip()
+    if not port:
+        return  # remote debugging OFF -> production launch, add nothing.
+    if os.environ.get("ARCHHUB_CDP_ALLOW_ANY_ORIGIN") == "1":
+        allow = "--remote-allow-origins=*"
+    else:
+        # The env value is usually a bare port ("9223"); it can also be a
+        # host:port. Derive the bare port for the loopback origins, else *.
+        bare = port.rsplit(":", 1)[-1]
+        if bare.isdigit():
+            allow = (f"--remote-allow-origins=http://localhost:{bare},"
+                     f"http://127.0.0.1:{bare}")
+        else:
+            allow = "--remote-allow-origins=*"
+    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    # Idempotent + additive: never duplicate the flag, always keep GPU flags.
+    if "--remote-allow-origins" not in existing:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            f"{existing} {allow}".strip() if existing else allow
+        )
+
+
+_enable_cdp_remote_origins()
 
 APP_ROOT = Path(__file__).resolve().parent
 ASSETS = APP_ROOT / "assets"
@@ -15,8 +173,19 @@ THEME = APP_ROOT / "theme.qss"
 
 
 def _maybe_sync_dev_source_at_startup() -> None:
-    """Let an installed AppData launch refresh from a configured checkout."""
+    """Let an installed AppData launch refresh from a configured checkout.
+
+    Dev-verify launches (ARCHHUB_DEV_VERIFY=1 / --dev-verify) FORCE a sync
+    that ignores the marker, so the running app is guaranteed to reflect HEAD
+    before CDP verification — even if the marker already matches. A normal
+    launch keeps the marker-gated, relaunch-once behaviour unchanged."""
     try:
+        if _dev_verify_requested():
+            from dev_source_sync import force_sync_now
+            force_sync_now(APP_ROOT.parent, sys.argv)
+            # Fall through to the normal path too: it is a marker no-op after
+            # the force-sync wrote the marker, and it preserves the existing
+            # relaunch guard semantics for any edge case.
         from dev_source_sync import maybe_sync_and_relaunch
         maybe_sync_and_relaunch(APP_ROOT.parent, sys.argv)
     except Exception:
@@ -26,6 +195,49 @@ def _maybe_sync_dev_source_at_startup() -> None:
 
 
 _maybe_sync_dev_source_at_startup()
+
+
+def _precompile_jsx_at_startup() -> None:
+    """Pre-launch hook (founder, 2026-06-01 — boot-lag root fix).
+
+    Refresh the on-disk precompiled JSX artifacts
+    (app/web_ui/studio-lm.compiled.js + app-boot.compiled.js) so the embedded
+    artifact is ALWAYS current with the live .jsx before QtWebEngine loads the
+    page. The loader (jsx-boot.js) then loads them directly — no in-browser
+    Babel, no 3 MB babel.min.js parse on a normal launch.
+
+    Idempotent + fast: tools/build_jsx.build_all() hashes each source and skips
+    any artifact whose embedded sha already matches (a sub-second no-op when
+    nothing changed). It recompiles ONLY a .jsx that actually changed, so the
+    founder never hits an in-browser recompile — yet an edit is picked up on
+    the next launch automatically.
+
+    Never fatal: if Node is missing or a transform fails, the artifacts are
+    left as-is (or absent) and the loader gracefully falls back to in-browser
+    Babel. The app must always launch.
+    """
+    try:
+        tools_dir = APP_ROOT.parent / "tools"
+        if str(tools_dir) not in sys.path:
+            sys.path.insert(0, str(tools_dir))
+        import build_jsx
+        summary = build_jsx.build_all(quiet=True)
+        if summary.get("any_built"):
+            built = [r["file"] for r in summary.get("results", [])
+                     if r.get("status") == "built"]
+            try:
+                import logging as _logging
+                _logging.getLogger("archhub.boot").info(
+                    "[build_jsx] recompiled JSX artifacts: " + ", ".join(built))
+            except Exception:
+                pass
+    except Exception:
+        # Precompile is a perf accelerator, never a launch gate. On any
+        # failure the in-browser Babel fallback in jsx-boot.js still renders.
+        pass
+
+
+_precompile_jsx_at_startup()
 
 # AgDR-0047 §B2: central logging init. Must run BEFORE any other app
 # import that might call `logging.getLogger(__name__)`, so the root
@@ -316,21 +528,64 @@ def main() -> int:
     # Wired AFTER QApplication so we can post a Qt event back to the
     # main thread when we receive a SHOW request from a second
     # launcher.
+    #
+    # reopen=latest (founder, 2026-06-04): the plain summon above strands
+    # new code — the running install never re-syncs (it's the
+    # --no-dev-source-sync child) and a second launch just foregrounds it.
+    # So we pass `should_supersede` = "is there new code to load?"
+    # (dev_source_sync.has_new_source). When an instance is running AND that
+    # is True, acquire_or_summon QUITs the old instance, waits (bounded) for
+    # the lock to free, then this launch becomes the listener and continues
+    # into startup — where _maybe_sync_dev_source_at_startup already ran the
+    # sync. `on_quit` lets a FUTURE newer launch quit US gracefully (Qt
+    # main-thread app.quit() so the clean-shutdown tail + atexit release()
+    # run). Both are gated + graceful-degrade to today's summon on any error.
     try:
         from single_instance import acquire_or_summon, release as _si_release
         from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
         class _Summoner(QObject):
             requested = pyqtSignal()
+            quit_requested = pyqtSignal()
         summoner = _Summoner()
-        # Bound on the main thread: when the worker fires .requested,
+        # Bound on the main thread: when the worker fires a signal,
         # Qt queues the slot back to main thread automatically.
         def _on_summon():
             summoner.requested.emit()
-        first_instance = acquire_or_summon(_on_summon)
+        def _on_quit():
+            summoner.quit_requested.emit()
+        # Graceful quit on the Qt main thread: release the lock first (so a
+        # superseding launch's bounded poll sees it free promptly), then ask
+        # the app to quit so app.exec() returns and the clean-shutdown tail
+        # runs. atexit-registered release() is a belt-and-braces backstop.
+        def _do_graceful_quit():
+            try:
+                _si_release()
+            except Exception:
+                pass
+            try:
+                app.quit()
+            except Exception:
+                pass
+        summoner.quit_requested.connect(_do_graceful_quit)
+
+        def _should_supersede() -> bool:
+            # "Is there new code to load?" — gated + graceful (False on any
+            # error / git-checkout install / no configured source).
+            try:
+                from dev_source_sync import has_new_source
+                return bool(has_new_source(APP_ROOT.parent))
+            except Exception:
+                return False
+
+        first_instance = acquire_or_summon(
+            _on_summon,
+            should_supersede=_should_supersede,
+            on_quit=_on_quit,
+        )
         if not first_instance:
             return 0
-        # The slot itself wires up after `window` is created below — we
+        # The summon slot wires up after `window` is created below — we
         # stash a deferred connection here.
         app._archhub_summoner = summoner   # keep ref alive
         import atexit
@@ -662,6 +917,18 @@ def main() -> int:
 
     rc = app.exec()
     scheduler.stop()
+    # Stop + join the connector-health poll thread on clean exit. The daemon
+    # was started at launch (instance() above) and polls loopback ports every
+    # 5s; main.py never halted it. It's daemon=True so it dies with the
+    # process either way, but stopping it explicitly honors the same
+    # clean-stop contract the test suite enforces (conftest
+    # _stop_leaked_background_threads) — the production side of closing the
+    # leaked-poller class, not just the test side.
+    try:
+        import connector_health as _ch
+        _ch.shutdown()
+    except Exception:
+        pass
     # Flush in-flight telemetry events on clean exit.
     try:
         import telemetry as _t

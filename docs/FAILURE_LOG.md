@@ -28,10 +28,10 @@ Status legend:
 - **resolution**: AgDR-0043 workshop · Sprint 0+1 mandates user-visible default-view check.
 
 ### 2026-05-25 · brokenwire-dialog-buttons-disabled
-- **status**: open
+- **status**: closed
 - **claim**: "D2·A 2/3 BrokenWireDialog shipped" (commit `58fb6c0`)
 - **gap**: Modal renders but "Insert adapter" + "Swap downstream" buttons STILL disabled at `studio-lm.jsx:6280` — D2·A 3/3 wired but dialog buttons never re-enabled.
-- **resolution**: AgDR-0043 Sprint 2 · Move 6 (Cmd+K wires this) closes the loop.
+- **resolution**: CLOSED 2026-05-25 — buttons re-enabled + wired via commit `5b8c7a2` (per `docs/status/2026-05-26.md` row 2). Synced open→closed 2026-05-30 in governance reconciliation (FAILURE_LOG had drifted behind the status doc).
 
 ### 2026-05-25 · agdr-0041-status-flip-without-ui-surface
 - **status**: open
@@ -40,16 +40,16 @@ Status legend:
 - **resolution**: Workshop · Sprint 0 mandates UI-surface check before status flip.
 
 ### 2026-05-25 · agdr-0042-zero-jsx-consumer
-- **status**: open
+- **status**: closed
 - **claim**: "D1·C 6/6 AgDR-0042 status: executing → executed" (commit `a5d868b`)
 - **gap**: All 6 slices' BACKEND shipped (memory graph + 4 extractors + BFS query + community + sync) but ZERO JSX consumer. Founder cannot see his 197 nodes / 76 capabilities / 176 communities anywhere in the app.
-- **resolution**: Workshop · Sprint 2 Move 7 (memory-aware Library) renders the graph. Sprint 0 mandates UI-surface check before AgDR `executed`.
+- **resolution**: CLOSED 2026-05-25 — Memory Explorer modal shipped (commit `bbd3e87`) + memory pill + library hits surface the graph (per `docs/status/2026-05-26.md` row 4; BrainViewModal confirmed live in `REPO-MAP-2026-05-28` §2). Synced open→closed 2026-05-30 in governance reconciliation.
 
 ### 2026-05-25 · agdr-0024-hostnodev2-localstorage-gated-off
-- **status**: open
+- **status**: closed
 - **claim**: "AgDR-0024 Host Node v2 shipped" + AgDR `status: executed`
 - **gap**: Built but localStorage-gated OFF by default. No Settings UI toggle. Founder must open DevTools to enable. S2/S3 sub-slices explicitly missing per code comment.
-- **resolution**: Sprint 2 · Settings UI exposes the toggle + sub-slices reopened.
+- **resolution**: CLOSED 2026-05-25 — default flipped ON (commit `51797b7`) + Settings panel toggle shipped (commit `1c5376f`) (per `docs/status/2026-05-26.md` row 5). Synced open→closed 2026-05-30 in governance reconciliation.
 
 ### 2026-05-26 · brainsection-cache-prototype-perf-triple-failure
 - **status**: partially-closed
@@ -58,10 +58,10 @@ Status legend:
 - **resolution**: 2026-05-26 — VISIBILITY shipped via a different surface: native PyQt tab `BrainTab` in `app/settings_dialog.py` (5th tab of Settings dialog) replaces the JSX route approach. The native tab bypasses the JSX cache entirely (failure F1 dissolved), runs as a Qt widget without React polling cascade (F3 dissolved), and adopts native Qt design language instead of mirroring the HTML prototype (F2 explicitly rejected — see AgDR-0046 superseded-by). Live runtime verified via mss screenshots `proofs/2026-05-26/brain_tab_final_084027.png` + `proofs/2026-05-26/now_mon1_084935.png`. Founder eye-check 2026-05-26: *"great although the design is a total shit... but for now it will do."* Design-debt (polish to a non-shit Qt aesthetic) tracked in this wave's agent-2/agent-3 design pass — not a new AgDR per NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES. AgDR-0046 status flipped to `superseded-by-shipped-native`.
 
 ### 2026-05-25 · agdr-0021-aiplan-zero-jsx-references
-- **status**: open
+- **status**: closed
 - **claim**: "AgDR-0021 ai.plan canvas node shipped" + AgDR `status: executed`
 - **gap**: Engine registered, writes to disk. ZERO JSX references to `ai.plan` / `AiPlan` / plan history. Renders as generic palette tile. No replay button. No history viewer.
-- **resolution**: Sprint 2 · Move 8 (ai.plan as hero node 2.5× size) per prototype contract.
+- **resolution**: CLOSED 2026-05-25 — Inspector tab (commit `9030eb0`) + plan History modal (commit `495fc4c`) surface the plan node + replay (per `docs/status/2026-05-26.md` row 7). Synced open→closed 2026-05-30 in governance reconciliation.
 
 ### 2026-05-25 · agdr-0022-reactflow-lock-contradiction
 - **status**: closed
@@ -80,3 +80,9 @@ Status legend:
 - **claim**: "ship(archhub-redesign A): composer-first home" (commit `34ad75a`) + "fix(home): explicit CSS order" (`0aa8c32`)
 - **gap**: Composer moved from familiar bottom-fixed to top-of-page without founder approval. Founder: "do things deeply... won't fix something and fuck everything else up... why did you change the composer place?" Shipped Prototype A blindly without confirming the move was wanted; the followup order-fix patched a symptom of the same uncoordinated change.
 - **resolution**: Reverted both commits (`537fab8` + `972962d`). Composer back to `position:fixed bottom:80`. Don't ship layout moves from a prototype again without explicit per-section confirmation.
+
+### 2026-06-02 · session-save-falsely-fixed-synthetic-verification
+- **status**: closed
+- **claim**: "fix(sessions): graph-only sessions save + load back (was saved-but-empty)" (commit `85bbe15`) — reported verified live.
+- **gap**: Founder still hit it — *"I DON'T GET WHY THE SESSION WASN'T SAVED AND WHENEVER I OPEN IT IT'S NOT CONNECTED AS IF THE NODES AREN'T WORKING?"* The bug had THREE stacked causes: (1) `_payload_is_empty` ignored graph nodes → save refused; (2) slug mismatch (hyphen session-id vs underscore `_slugify`) → save wrote a different file than load read; (3) `openSession` resets `LM_GRAPH` on navigation WITHOUT flushing the pending 250ms debounced save → the save fires against the empty graph and persists `nodes:[]`. 85bbe15 fixed (1)+(2). I had EARLIER written the fix for (3) (the `openSession` flush) then REVERTED it once I concluded (1)+(2) were the whole story. Worse: my "verified live" was SYNTHETIC — I drove `save_graph` directly and manually called `__archhub_flushGraphSave`, which bypassed the navigation race. The real gesture (spawn → switch session → reopen) still lost everything.
+- **resolution**: 2026-06-02 — reproduced the REAL gesture via CDP (real `lm-composer-action` spawn + `lm-action-open-session` navigation, NO manual flush): spawn 2 nodes → navigate within debounce → reopen showed **0 nodes / 0 wires** (bug reproduced on the running app). Re-added the `openSession` flush (flush pending save to the current sid BEFORE the `LM_GRAPH` reset + id reassignment). Re-ran the SAME real-gesture repro → reopen shows **2 nodes / 1 wire preserved**. Regression harness committed: `tools/cdp_session_race.cjs`. **CLASS-OF-FAILURE: "verified live" must drive the ACTUAL user gesture (UI events → real handlers), never a synthetic bridge call that bypasses the real timing/navigation path. A synthetic round-trip proves the MECHANISM, not the FEATURE. Added to the verification bar.**

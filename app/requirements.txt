@@ -12,9 +12,28 @@ cryptography>=48.0.0
 # (roadmap M1.a). Same implicit-local / missing-in-CI class as the
 # cryptography dep above: tests/test_speckle_wire.py +
 # tests/test_litmus_max_to_revit.py fail collection without it.
-specklepy>=3.2.8,<4
+# Floor lowered 3.2.6 -> 3.0.8 (2026-06-01) to match the installed +
+# proven-working interpreter. NO 3.2.x-only API is used: every call
+# (operations.send/receive, SQLiteTransport(base_path/app_name/scope),
+# Base(), SpeckleClient, ServerTransport, begin/end_write) resolves and
+# round-trips on 3.0.8 — verified by signature inspection + the offline
+# SpeckleWire round-trip. <4 stays: the 2.x->3.x rewrite (Stream->Project)
+# is the kind of break the upper bound guards against.
+# (merge 2026-06-04: declined origin/main dependabot bump to 3.2.8 — keeps the
+# deliberate 3.0.8 floor that matches the installed interpreter.)
+specklepy>=3.0.8,<4
 # mcp powers app/archhub_mcp_server.py (AgDR-0031) — the MCP server
 # that exposes ArchHub to other Claude sessions. Hard-imported at
 # module load; tests/test_archhub_mcp_server.py runs its --selftest.
 # Same implicit-local / missing-in-CI class as cryptography + specklepy.
+# mcp floor 1.27.2 (origin/main dependabot patch bump, merge 2026-06-04) — safe;
+# the in-house brain MCP only uses mcp.types, and app/archhub_mcp_server uses the
+# stable server surface.
 mcp>=1.27.2,<2
+# posthog powers app/telemetry.py product analytics (track-G, AgDR pending).
+# Same implicit-local / silent-off-if-missing class as cryptography +
+# specklepy + mcp: telemetry._client_or_none() returns None when the SDK
+# is absent, so the app degrades cleanly. Pinned so CI + installer ship it.
+# (merge 2026-06-04: kept 4.0.0,<5 — did not take origin dependabot's 7.x major
+# bump untested; let dependabot re-propose 7.x as its own reviewable PR.)
+posthog>=4.0.0,<5

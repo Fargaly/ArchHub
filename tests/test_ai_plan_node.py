@@ -46,8 +46,13 @@ def test_ai_plan_appears_in_payload():
 
 
 def test_ai_plan_grammar_count_within_cap():
-    """Grammar grew by 1 (ai_plan); cap raised to 80."""
-    assert len(ng.PRIMITIVES) <= 80
+    """Grammar grew by 1 (ai_plan); cap raised to 80, then +1 → 81 for
+    stem-rebuild Phase-0 `verify.assert` (verify gate / branch primitive),
+    then +1 → 82 for stem-rebuild Phase-0 `fs.list` (READ-ONLY IO read cell)."""
+    # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
+    # + data.json) — cap bumped in lockstep with their node_grammar entries.
+    # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(ng.PRIMITIVES) <= 87
 
 
 def test_ai_plan_carries_replay_param():

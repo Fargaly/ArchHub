@@ -419,6 +419,118 @@ PRIMITIVES: list[Primitive] = [
         params=({"k": "key", "v": "", "type": "text"},),
         blurb="Partition a list by key",
     ),
+    # ── stem-rebuild Phase-0 — the reconcile core. `data.join` matches
+    # two lists on a key and partitions into matched / left_only /
+    # right_only; the relational match that turns a bespoke reconcile
+    # code-blob (BBC4 QC, Excel↔Revit sync, DD↔DWG match) into a cell.
+    Primitive(
+        "join", "Join", "shape", "",
+        {"": "data.join"}, READY,
+        "data.join — match two lists on a key → matched / left_only / "
+        "right_only (how = inner/left/right/outer)",
+        params=({"k": "key", "v": "", "type": "text"},
+                {"k": "how", "v": "inner", "type": "text"}),
+        blurb="Reconcile two lists on a key",
+    ),
+    # ── stem-rebuild Phase-0 — the per-node verify gate + branch primitive.
+    # `verify.assert` runs a predicate over `value` → passed / report /
+    # value(pass-through). Wire `passed` into If/Switch to branch, or let the
+    # ROMA court gate a leaf on it. Reuses code.expression / math.op (no new
+    # evaluator). cat="logic" — it lives with the control.* branch primitives.
+    Primitive(
+        "assert", "Assert", "logic", "",
+        {"": "verify.assert"}, READY,
+        "verify.assert — predicate over value → passed/report/value "
+        "(branch primitive + per-node verify gate)",
+        params=({"k": "mode", "v": "expression", "type": "text"},
+                {"k": "expr", "v": "value", "type": "text"}),
+        blurb="Check a condition, branch on pass/fail",
+    ),
+    # ── stem-rebuild Phase-0 — the IO read cell. `fs.list` is a READ-ONLY
+    # directory listing → typed file-rows {path,name,ext,size,is_dir,mtime}.
+    # Turns the raw os.walk/glob blob that file-walk jobs (BBC4 submittal QC)
+    # dropped to into a stem cell. Pure primitive (no fs host — scandir is
+    # in-process, needs no probe/auth). List only — write/move are LATER cells.
+    Primitive(
+        "list_files", "List Files", "input", "",
+        {"": "fs.list"}, READY,
+        "fs.list — READ-ONLY directory listing → typed file-rows "
+        "{path,name,ext,size,is_dir,mtime} + count (glob/recursive)",
+        params=({"k": "path", "v": "", "type": "text"},
+                {"k": "pattern", "v": "", "type": "text"}),
+        blurb="List files in a folder",
+    ),
+    # ── stem-rebuild Phase-0 — the IO read cell's twin. `fs.read` is a
+    # READ-ONLY single-file read → decoded `text` + metrics {size, bytes_read,
+    # truncated, lines, ext}. fs.list finds files, fs.read reads one. Turns the
+    # raw open()/read()/decode blob into a stem cell. Pure (no fs host — open is
+    # in-process, needs no probe/auth). Read only — write/move are LATER cells.
+    Primitive(
+        "read_file", "Read File", "input", "",
+        {"": "fs.read"}, READY,
+        "fs.read — READ-ONLY single-file read → decoded text + metrics "
+        "{size, bytes_read, truncated, lines, ext} (encoding + max_bytes cap)",
+        params=({"k": "path", "v": "", "type": "text"},
+                {"k": "encoding", "v": "utf-8", "type": "text"}),
+        blurb="Read a file's contents",
+    ),
+    # ── stem-rebuild Phase-0 — the IO-write cell. `fs.write` is the write half
+    # of the fs stem family (fs.list finds, fs.read reads, fs.write writes):
+    # give it a path + `text`; it encodes with `encoding` and writes the bytes,
+    # returning the abspath + {bytes_written, created}. Side-effecting by design
+    # but clobber-guarded (overwrite flag) + total-tolerant (a bad input is a
+    # typed error, never a raise). Pure cell (no fs host — open is in-process).
+    Primitive(
+        "write_file", "Write File", "output", "",
+        {"": "fs.write"}, READY,
+        "fs.write — WRITE text to a file → abspath + {bytes_written, created} "
+        "(encoding; overwrite guard; make_dirs)",
+        params=({"k": "path", "v": "", "type": "text"},
+                {"k": "overwrite", "v": False, "type": "boolean"}),
+        blurb="Write text to a file",
+    ),
+    # ── stem-rebuild Phase-0 — the IO-move cell. `fs.move` is the move half of
+    # the fs stem family: give it `src` + `dst`; it relocates src to dst
+    # (shutil.move — handles files + whole folders, across filesystems),
+    # returning the abspaths + a `moved` flag. Side-effecting by design but
+    # clobber-guarded (overwrite flag) + total-tolerant (a bad input is a typed
+    # error, never a raise). Pure cell (no fs host — shutil is in-process).
+    Primitive(
+        "move_file", "Move File", "output", "",
+        {"": "fs.move"}, READY,
+        "fs.move — MOVE / rename a file or directory → abspaths + `moved` "
+        "(overwrite guard; make_dirs)",
+        params=({"k": "src", "v": "", "type": "text"},
+                {"k": "dst", "v": "", "type": "text"}),
+        blurb="Move or rename a file",
+    ),
+    # ── stem-rebuild Phase-0 — the reconcile dedupe cell. `data.dedupe` drops
+    # duplicate rows, keeping one per identity in stable first-seen order
+    # (key = field to dedupe on; keep = first/last). The pipeline twin of
+    # data.join — it collapses a doubled submittal log / re-imported param dump
+    # to its distinct rows. Distinct from group_by, which partitions instead.
+    Primitive(
+        "dedupe", "Dedupe", "shape", "",
+        {"": "data.dedupe"}, READY,
+        "data.dedupe — drop duplicate rows, keep one per identity in stable "
+        "first-seen order (key = field; keep = first/last)",
+        params=({"k": "key", "v": "", "type": "text"},
+                {"k": "keep", "v": "first", "type": "text"}),
+        blurb="Remove duplicate rows",
+    ),
+    # ── stem-rebuild Phase-0 — the JSON codec cell. `data.json` is one
+    # mode-selected engine: mode=parse reads `text` → `value`; mode=stringify
+    # reads `value` → JSON `text`. The JSON twin of text.op (one engine, op in
+    # config) — turns the ad-hoc json.loads/json.dumps blob into a stem cell.
+    # Pure (json is stdlib, in-process — no host/probe/auth).
+    Primitive(
+        "json_codec", "JSON", "shape", "",
+        {"": "data.json"}, READY,
+        "data.json — one mode-selected JSON codec: parse (text→value) or "
+        "stringify (value→text), with indent + sort_keys knobs",
+        params=({"k": "mode", "v": "parse", "type": "text"},),
+        blurb="Parse or stringify JSON",
+    ),
     # ── MATH category — typed arithmetic / comparison / logic (slice J).
     # All map to `math.op` with `op` pre-set. One engine, many typed nodes.
     Primitive(
@@ -915,6 +1027,7 @@ def _synthesized_primitives() -> list[dict]:
                 "blurb": _synth_blurb(
                     t, getattr(spec, "display_name", "") or t),
                 "ports": _ports_for(t),
+                "config_schema": _config_schema_for(t),   # ← ADDITIVE
                 "params": [],
                 "_source": "registry",
             })
@@ -951,6 +1064,11 @@ def _synthesized_primitives() -> list[dict]:
                     t, spec.get("display_name") or s.get("name") or t),
                 "ports": {"in":  [_to_port(p) for p in inputs],
                           "out": [_to_port(p) for p in outputs]},
+                # Library Capability specs derive no config_schema today
+                # (audit's "graph-Capability I/O derive" gap; out of scope)
+                # → empty schema means the inspector falls through to the
+                # flat-param rendering, exactly as before.
+                "config_schema": {},
                 "params": [],
                 "_source": "library",
             })
@@ -985,6 +1103,27 @@ def _ports_for(engine_t: str) -> dict:
     return {"in": _p(spec.inputs), "out": _p(spec.outputs)}
 
 
+def _config_schema_for(engine_t: str) -> dict:
+    """The config_schema of an engine type, read from its registry
+    NodeSpec. Empty {} when the type is not registered. Additive twin
+    of _ports_for — the canvas renders each property as a typed field
+    (string→text, number→number, boolean→checkbox, options→select) so a
+    placed cell (map/join/assert/…) is TUNABLE on the canvas, not a flat
+    read-only param list. The fields write back into node.params, which
+    the engine folds to config via `_params_to_config` (unchanged)."""
+    if not engine_t:
+        return {}
+    try:
+        from .registry import get as _reg_get
+        tup = _reg_get(engine_t)
+    except Exception:
+        tup = None
+    if not tup:
+        return {}
+    schema = getattr(tup[0], "config_schema", None)
+    return dict(schema) if isinstance(schema, dict) else {}
+
+
 def grammar_payload() -> list[dict]:
     """Serialisable grammar — what the bridge exposes to the JSX canvas
     so the library palette is built from ONE source (no JS-side copy
@@ -1012,6 +1151,7 @@ def grammar_payload() -> list[dict]:
             "selector": p.selector, "engine_types": dict(p.engine_types),
             "status": p.status, "note": p.note, "blurb": p.blurb,
             "ports": _ports_for(rep),
+            "config_schema": _config_schema_for(rep),   # ← ADDITIVE
             "params": [dict(x) for x in p.params],
         })
     # AgDR-0041 / Tier 0/1/2 — surface registry + library entries.

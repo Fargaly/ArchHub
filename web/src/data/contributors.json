@@ -1,0 +1,23 @@
+{
+  "exported_at": "2026-05-31T19:04:38.152957+00:00",
+  "count": 1,
+  "reputation_rows": 0,
+  "source": "brain.list_reputations() + community-skill authorship via tools/export_web_data.py",
+  "note": "1 contributor(s) have published to the community scope (0 peer-reputation row(s) exchanged).",
+  "contributors": [
+    {
+      "contributor": "founder",
+      "published_skills": 3,
+      "success_total": 0,
+      "honed_passed": 6,
+      "honed_trials": 9,
+      "reputation": null,
+      "first_published": "2026-05-30T13:26:20.781496+00:00",
+      "skills": [
+        "fix_apply_flow_community",
+        "fix_apply_flow_proj_community",
+        "perf_apply_flow_community"
+      ]
+    }
+  ]
+}

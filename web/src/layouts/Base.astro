@@ -1,0 +1,62 @@
+---
+// Shared layout — every page imports this. The freshness footer is stamped at
+// BUILD TIME from the committed src/data/build-info.json (git sha + date),
+// not by a brittle post-build HTML rewrite. Regenerate build-info.json with
+// `npm run refresh-content` (or `npm run build-info`).
+import buildInfo from '../data/build-info.json';
+const { title, description } = Astro.props;
+const sha = buildInfo.git_sha ?? 'unknown';
+const builtDate = (buildInfo.git_date ?? '').slice(0, 10) || 'unknown';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — ArchHub</title>
+    <meta name="description" content={description ?? "ArchHub — AI workspace for AEC professionals."} />
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --fg: #e7e9ec;
+        --muted: #9aa4ad;
+        --accent: #5ec8ff;
+        --max-w: 880px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--fg);
+        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      header, footer { max-width: var(--max-w); margin: 0 auto; padding: 24px 20px; }
+      main { max-width: var(--max-w); margin: 0 auto; padding: 20px; }
+      nav a { color: var(--muted); margin-right: 18px; text-decoration: none; }
+      nav a:hover, nav a.active { color: var(--accent); }
+      h1 { font-size: 2.2rem; line-height: 1.15; margin: 0 0 12px; }
+      h2 { font-size: 1.4rem; margin: 28px 0 10px; }
+      a { color: var(--accent); }
+      .freshness { color: var(--muted); font-size: 0.85rem; opacity: 0.75; }
+      .freshness code { background: #1a1d22; padding: 2px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/features">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/community">Community</a>
+        <a href="/security">Security</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/brain">Brain</a>
+      </nav>
+    </header>
+    <main>
+      <slot />
+    </main>
+    <footer>
+      <p class="freshness">built from commit <code>{sha}</code> on <code>{builtDate}</code></p>
+    </footer>
+  </body>
+</html>

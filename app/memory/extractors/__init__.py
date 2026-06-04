@@ -26,8 +26,10 @@ from .library import extract_library  # noqa: F401
 from .turns import extract_turns  # noqa: F401
 from .decisions import extract_decisions  # noqa: F401
 from .projects import extract_projects  # noqa: F401
+from .docs import extract_docs  # noqa: F401
 
 __all__ = [
     "extract_library", "extract_turns",
     "extract_decisions", "extract_projects",
+    "extract_docs",
 ]

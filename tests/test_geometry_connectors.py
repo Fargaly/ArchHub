@@ -84,6 +84,10 @@ class TestOpSets:
             "blender.list_collections", "blender.list_materials",
             "blender.get_selection", "blender.run_script",
             "blender.set_object_visibility", "blender.render",
+            # AgDR-0041 P1: typed-host primitives — export_viewport
+            # (read, wraps /render) + import_mesh (action). Resolved by
+            # workflows/nodes/host_typed.py for host-swap.
+            "blender.export_viewport", "blender.import_mesh",
         }
 
     def test_rhino_op_set(self):
@@ -92,6 +96,10 @@ class TestOpSets:
             "rhino.document_info", "rhino.list_layers",
             "rhino.list_objects", "rhino.get_selection",
             "rhino.run_script", "rhino.set_layer_visibility",
+            # AgDR-0041 P1: typed-host primitives — export_viewport
+            # (read, /screenshot) + import_mesh (action). Resolved by
+            # workflows/nodes/host_typed.py for host-swap.
+            "rhino.export_viewport", "rhino.import_mesh",
         }
 
     def test_destructive_actions_flagged(self):

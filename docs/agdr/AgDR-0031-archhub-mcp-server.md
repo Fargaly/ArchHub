@@ -4,7 +4,7 @@ timestamp: 2026-05-21T19:30:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — other Claude Code session can't see ArchHub tools in its MCP toolset
 trigger: Founder screenshot showing a separate Claude session saying "I don't currently see an archhub MCP server in my available tools list".  ArchHub today is a Qt desktop app with HTTP brokers; not an MCP server.  Founder demand: every Claude Code session should be able to drive ArchHub's hosts via the MCP toolset, not shell out via accoreconsole.exe / Bash.
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

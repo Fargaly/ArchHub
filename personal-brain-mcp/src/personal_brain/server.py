@@ -232,6 +232,66 @@ def queue_skill_mint(
             diversity_reason = f"diversity check skipped: {ex}"
 
     will_hone = accept and not diversity_blocked
+
+    # ── REAL MINT (AgDR-0044 §1 wire: skill_mint → reflect_on_trace →
+    # record_outcome). Before this, queue_skill_mint persisted a trace and
+    # scored the gates but NEVER reflected, so no live trace ever minted a
+    # skill and calibration alpha/beta stayed frozen at the 1.0/1.0 prior.
+    # Now, when R1+R2 pass, we run the reflexion pipeline inline (Heuristic
+    # critic — deterministic, no network) so a real trace mints a real
+    # skill, then feed the hone outcome back into calibration so the Beta
+    # posterior moves. The ReflexionWorker thread is ALSO fed (for the async
+    # path / future LLM critic), but the inline run is what makes the mint
+    # observable + verifiable this turn per the ANTI-LIE mandate.
+    minted_skill_id: Optional[str] = None
+    minted_skill_name: Optional[str] = None
+    minted_skill: Optional[Skill] = None
+    if will_hone:
+        try:
+            from .reflexion import reflect_on_trace
+            from .workers import get_supervisor
+
+            # Enqueue onto the live worker if the engine is running (async
+            # path). Non-fatal if absent.
+            sup = get_supervisor(store)
+            if sup is not None and sup.reflexion is not None:
+                try:
+                    from .reflexion import WorkerTask
+                    sup.reflexion.enqueue(WorkerTask(
+                        trace=trace,
+                        owner_user=owner_user,
+                        contributing_agent=contributing_agent,
+                    ))
+                except Exception:
+                    pass
+
+            result = reflect_on_trace(
+                trace,
+                store=store,
+                owner_user=owner_user,
+                contributing_agent=contributing_agent,
+                publish=True,
+            )
+            if result.accepted and result.skill is not None:
+                minted_skill = result.skill
+                minted_skill_id = result.skill.id
+                minted_skill_name = result.skill.name
+                # Calibration outcome: a honed-and-published skill is a
+                # "retained" observation → moves alpha; a non-accept (hone
+                # failed / validator rejected) moves beta. Either way the
+                # posterior leaves 1.0/1.0.
+                honed_ok = bool(result.hone.get("ok", True))
+                calib.record_outcome(retained=honed_ok)
+            else:
+                calib.record_outcome(retained=False)
+                will_hone = False  # reflexion declined downstream of the gates
+            # Persist the moved calibration state (alpha/beta now off prior).
+            store.set_meta("calibration_v1", calib.to_json())
+        except Exception as ex:
+            # Never let a mint failure break the Stop hook. Record the
+            # reason; the trace fragment is already persisted for retry.
+            diversity_reason = (diversity_reason + f" | mint error: {ex}").strip(" |")
+
     final_reason = (
         f"trace persisted {frag_id[:12]}…; "
         f"novelty={novelty:.2f} (floor {breakdown['novelty_floor']:.2f}) · "
@@ -242,12 +302,18 @@ def queue_skill_mint(
         final_reason += f"calibration deny: {breakdown['reason']}"
     elif diversity_blocked:
         final_reason += diversity_reason
+    elif minted_skill_id:
+        final_reason += (
+            f"MINTED real skill '{minted_skill_name}' ({minted_skill_id}) "
+            f"via reflexion; calibration α={calib.alpha:.2f} β={calib.beta:.2f}"
+        )
     else:
-        final_reason += "will hone via reflexion worker (R1+R2 gates passed)"
+        final_reason += "R1+R2 gates passed; reflexion declined downstream"
 
     return SkillMintResult(
         queued=True,
-        proposed_name=proposed_name,
+        immediate_skill=minted_skill,
+        proposed_name=minted_skill_name or proposed_name,
         novelty_score=novelty,
         success_score=success_score,
         will_hone=will_hone,
@@ -316,23 +382,69 @@ def build_server(
     Defaults to $USER / $USERNAME / 'founder'.
     """
     try:
-        from fastmcp import FastMCP
+        # CUTOVER 2026-06-03: the brain runs on ArchHub's OWN in-house MCP core
+        # — no third-party framework in the data path (founder grievance #1).
+        # InHouseMCP is a drop-in for FastMCP's .tool()/.run()/attribute-carrier
+        # surface (56 parity tests, e5c3b1e; wire-parity vs memory_gate proven).
+        # REVERT = restore `from fastmcp import FastMCP`.
+        from .mcp_core import InHouseMCP as FastMCP
     except ImportError as ex:  # pragma: no cover
         raise RuntimeError(
-            "fastmcp not installed. `pip install fastmcp` "
-            "(or `pip install personal-brain-mcp[server]`)"
+            "personal_brain.mcp_core (in-house MCP core) failed to import"
         ) from ex
 
     if store is None:
         store = BrainStore.open(db_path)
 
-    default_owner = (
+    # ── Account binding (MAKE-IT-REAL: local brain ⇄ cloud user_id) ────────
+    # brain_meta keys that persist the bound cloud owner across daemon
+    # restarts. Once `bound_owner_user` is set (via brain.set_owner), every
+    # tool that falls back to the default owner resolves to the cloud user_id
+    # — so the local brain's fragments/skills are owned by the signed-in
+    # account, not by `$USER`/"founder".
+    BOUND_OWNER_KEY = "bound_owner_user"
+    BOUND_EMAIL_KEY = "bound_owner_email"
+    BOUND_NAME_KEY = "bound_owner_display_name"
+    BOUND_SET_AT_KEY = "bound_owner_set_at"
+
+    # The env/OS/static fallback, resolved once (does NOT include the bound
+    # owner — that is read live from meta on every resolution so a set_owner
+    # takes effect in-process without a daemon restart).
+    fallback_owner = (
         default_owner_user
         or os.environ.get("BRAIN_OWNER_USER")
         or os.environ.get("USER")
         or os.environ.get("USERNAME")
         or "founder"
     )
+
+    def _bound_owner() -> Optional[str]:
+        """The persisted cloud owner, or None when unbound. Read from
+        brain_meta on EVERY call so a brain.set_owner during the daemon's
+        lifetime governs all subsequent default-owner resolutions without a
+        restart."""
+        try:
+            val = store.get_meta(BOUND_OWNER_KEY)
+        except Exception:
+            return None
+        val = (val or "").strip()
+        return val or None
+
+    def resolve_default_owner() -> str:
+        """Effective default owner: the bound cloud user_id when present,
+        else the env/OS/static fallback. Called per-tool-invocation (not
+        cached) so binding is live in-process."""
+        return _bound_owner() or fallback_owner
+
+    def _owner_source() -> str:
+        """Where the current effective owner comes from — for diagnostics."""
+        if _bound_owner():
+            return "bound"
+        if default_owner_user or os.environ.get("BRAIN_OWNER_USER"):
+            return "env"
+        if os.environ.get("USER") or os.environ.get("USERNAME"):
+            return "os"
+        return "default"
 
     mcp = FastMCP("personal-brain")
 
@@ -356,7 +468,7 @@ def build_server(
         k_skills: int = 5,
         k_facts: int = 8,
     ) -> dict[str, Any]:
-        owner = owner_user or default_owner
+        owner = owner_user or resolve_default_owner()
         resp = make_context_payload(
             store=store,
             prompt=prompt,
@@ -389,7 +501,7 @@ def build_server(
         # Build actor identity from local firm membership
         seat = current_seat(store)
         actor = Identity(
-            user_id=(seat.user_id if seat else default_owner),
+            user_id=(seat.user_id if seat else resolve_default_owner()),
             firm_id=(seat.firm_id if seat else None),
             is_maintainer=False,  # `global` writes are out-of-band
         )
@@ -452,6 +564,102 @@ def build_server(
         return result
 
     @mcp.tool(
+        name="brain.organize",
+        description=(
+            "Facet-organize the brain: partition every fragment into a coarse "
+            "facet (Capability / Decisions / Memory) by predicate, label each "
+            "row's category from extra_json/text (nearest-centroid for "
+            "unlabeled Memory rows), MERGE near-duplicates (cosine>=0.95 AND "
+            "same subject AND predicate), and ARCHIVE stale traces "
+            "(kind=trace, >30d, 0 successes) via valid_until — never deleting "
+            "Decisions/Capability. Idempotent; also runs on the sync cadence "
+            "via the worker engine. Persists the cluster map to "
+            "brain_meta('organize.clusters')."
+        ),
+    )
+    def brain_organize_tool() -> dict[str, Any]:
+        from .organize import brain_organize
+        owner = resolve_default_owner()
+        return brain_organize(store, owner_user=owner)
+
+    @mcp.tool(
+        name="brain.reembed",
+        description=(
+            "Backfill embeddings for every fragment whose vector is "
+            "NULL/empty: encode(text+subject+object) with the active embedder "
+            "and persist it, stamping brain_meta embed.backend + embed.dim. "
+            "Fixes all-NULL embeddings — the top retrieval-quality fix. "
+            "Idempotent (skips rows that already have a vector); also runs on "
+            "the sync cadence via the worker engine."
+        ),
+    )
+    def brain_reembed_tool() -> dict[str, Any]:
+        from .organize import brain_reembed
+        return brain_reembed(store)
+
+    @mcp.tool(
+        name="brain.promote_skills",
+        description=(
+            "Promote harvested skill-FRAGMENTS (kind=skill rows, or fact rows "
+            "marked source=session-harvest with a skill_name) into PROPER "
+            "`skills` rows so retrieval (brain.context / search_skills) can "
+            "match + fire them. For each: slugify the human name to the "
+            "Skill.name regex (^[a-z][a-z0-9_-]*$, collision-suffixed), build a "
+            "Skill (triggers←trigger, requires_mcps←broker_tool, body←steps, "
+            "examples, eval_queries synthesized from the description, "
+            "scope/visibility/owner + provenance carried from the fragment), "
+            "upsert_skill it, then delete the now-duplicated fragment. DEDUPE: "
+            "skips (keeps the existing) when a same-slug or near-identical "
+            "skill already exists. One-shot + idempotent (a 2nd run promotes 0 "
+            "— the fragments are gone). Writes ONLY via in-daemon "
+            "upsert_skill/delete_fragment (never raw sqlite). Pass dry_run=true "
+            "to preview the slug map + dedupe decisions without mutating."
+        ),
+    )
+    def brain_promote_skills_tool(dry_run: bool = False) -> dict[str, Any]:
+        from .organize import promote_skill_fragments
+        owner = resolve_default_owner()
+        return promote_skill_fragments(store, owner_user=owner, dry_run=dry_run)
+
+    @mcp.tool(
+        name="brain.browse",
+        description=(
+            "READ-ONLY. Assemble the founder-facing visual brain browser: the "
+            "decay-weighted 'top of mind' cards, facet lanes (Decisions / "
+            "Memory / Capability) as cluster cards with top-3 salient items, "
+            "the faded/archived tray, and a learning timeline. Each card is a "
+            "plain one-liner + last-used + 'used N times' + a plain 'why is "
+            "this here' — raw subject/predicate/object live under details. "
+            "The payload includes a `projects` per-project fact census; pass "
+            "`project` (e.g. 'P-674') to scope the whole view to one project's "
+            "facts. Pass `query` to layer the real retrieval ranker on top "
+            "(search results carry facet colour). Never writes; safe to poll."
+        ),
+    )
+    def brain_browse_tool(
+        query: Optional[str] = None,
+        owner_user: Optional[str] = None,
+        project: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from .organize import brain_browse
+        owner = owner_user or resolve_default_owner()
+        return brain_browse(store, owner_user=owner, query=query, project=project)
+
+    @mcp.tool(
+        name="brain.restore",
+        description=(
+            "Un-archive a fragment — clear its valid_until so a faded/archived "
+            "note rejoins active memory. The inverse of the organize pass's "
+            "stale-trace archive; powers the visual browser's 'Restore' button "
+            "(MAKE-IT-REAL-NEVER-TRIM). Mutates only through the safe writer; "
+            "idempotent. Returns {ok, restored, id}."
+        ),
+    )
+    def brain_restore_tool(fragment_id: str) -> dict[str, Any]:
+        from .organize import brain_restore
+        return brain_restore(store, fragment_id)
+
+    @mcp.tool(
         name="brain.skill_mint",
         description=(
             "Receive a trace on Stop / SessionEnd. The reflexion worker "
@@ -468,7 +676,7 @@ def build_server(
         contributing_agent: str = "unknown",
         session_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        owner = owner_user or default_owner
+        owner = owner_user or resolve_default_owner()
         result = queue_skill_mint(
             store=store,
             trace=trace,
@@ -496,7 +704,7 @@ def build_server(
         git_remote: Optional[str] = None,
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
-        owner = owner_user or default_owner
+        owner = owner_user or resolve_default_owner()
         # Coerce dicts → WiringEntry / SecretRef with sane defaults.
         wiring_entries: list[WiringEntry] = []
         for raw in entries or []:
@@ -549,7 +757,7 @@ def build_server(
         from .redaction import redact_fragment
 
         actor = Identity(
-            user_id=owner_user or default_owner,
+            user_id=owner_user or resolve_default_owner(),
             project_id=target_project_id,
             firm_id=target_firm_id,
             community_subscriptions=(
@@ -663,7 +871,7 @@ def build_server(
                 "root_pub": existing.root_pub,
             }
         identity = create_firm(
-            store, name=name, created_by=created_by or default_owner,
+            store, name=name, created_by=created_by or resolve_default_owner(),
         )
         return {
             "ok": True,
@@ -713,7 +921,7 @@ def build_server(
         from .firm import accept_invite_token
         try:
             seat = accept_invite_token(
-                store, envelope=token, user_id=user_id or default_owner,
+                store, envelope=token, user_id=user_id or resolve_default_owner(),
             )
             return {
                 "ok": True, "firm_id": seat.firm_id, "user_id": seat.user_id,
@@ -776,7 +984,7 @@ def build_server(
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
         from . import community as _community
-        owner = owner_user or default_owner
+        owner = owner_user or resolve_default_owner()
         sub = _community.subscribe(
             store,
             actor_url=actor_url,
@@ -850,11 +1058,387 @@ def build_server(
         results = poller.tick()
         return {"ok": True, "results": [_asdict(r) for r in results]}
 
+    # ───────────── multi-device community (create / join / converge) ──────
+    # Distinct from the federation `community_*` subscription tools above:
+    # these create a community the user OWNS + a second device JOINS via a
+    # signed join-code, then both converge COMMUNITY-scope fragments through
+    # the shared transport (owned Speckle server OR cloud relay).
+
+    @mcp.tool(
+        name="brain.community_create",
+        description=(
+            "Create a multi-device community on this device. The caller "
+            "becomes the OWNER (holds the signing key locally). Writes a "
+            "COMMUNITY-scope `community` fragment + an owner `community_"
+            "member` fragment, so brain.community_groups + brain.community_"
+            "list are immediately non-empty. `transport_kind` is one of "
+            "'disk' (offline JSON snapshot — default), 'cloud_relay' "
+            "(ArchHub /v1/brain/sync replica, the user's own token), or "
+            "'speckle' (the user's OWNED local Speckle server). "
+            "`transport_base_url` points at the relay/server (e.g. "
+            "http://localhost:3000 for an owned Speckle server). Idempotent "
+            "only by name collision is NOT enforced — call once."
+        ),
+    )
+    def brain_community_create(
+        name: str,
+        created_by: Optional[str] = None,
+        transport_kind: str = "disk",
+        transport_base_url: str = "",
+        transport_note: str = "",
+    ) -> dict[str, Any]:
+        from . import community_groups as _cg
+        tconf = _cg.TransportConfig(
+            kind=transport_kind or "disk",
+            base_url=transport_base_url or "",
+            note=transport_note or "",
+        )
+        community = _cg.create_community(
+            store, name=name,
+            created_by=created_by or resolve_default_owner(),
+            transport=tconf,
+        )
+        return {
+            "ok": True,
+            "community": community.to_safe_dict(),
+            "is_owner": True,
+        }
+
+    @mcp.tool(
+        name="brain.community_join_code",
+        description=(
+            "Create a signed join-code (+ archhub:// URL) for the CURRENT "
+            "community so a SECOND device can join. Only the owner (device "
+            "holding the signing key) can issue one. The code is a "
+            "base64url payload + signature carrying the community id, name, "
+            "owner public key, AND the transport config — so the joining "
+            "device knows where to converge, fully offline-verifiable. "
+            "Expires in `ttl_hours` (default 7 days). Returns {token, url}."
+        ),
+    )
+    def brain_community_join_code(
+        role: str = "member",
+        ttl_hours: int = 168,
+    ) -> dict[str, Any]:
+        from . import community_groups as _cg
+        try:
+            token = _cg.create_join_code(store, role=role, ttl_hours=ttl_hours)
+            return {
+                "ok": True,
+                "token": token,
+                "url": _cg.join_url(token),
+                "role": role,
+                "ttl_hours": ttl_hours,
+            }
+        except RuntimeError as ex:
+            return {"ok": False, "error": str(ex)}
+
+    @mcp.tool(
+        name="brain.community_join",
+        description=(
+            "Join a community on THIS device using a join-code (the bare "
+            "token OR the archhub://community/join?code=... URL). Verifies "
+            "signature + expiry offline, materialises membership, writes a "
+            "COMMUNITY-scope `community_member` fragment so the owner sees "
+            "this device after the next sync, and adopts the community's "
+            "transport config. Idempotent: re-joining with the same code "
+            "refreshes the member record. Returns the joined community."
+        ),
+    )
+    def brain_community_join(
+        code: str,
+        member_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from . import community_groups as _cg
+        try:
+            community = _cg.join_community(
+                store, envelope=code,
+                member_id=member_id or resolve_default_owner(),
+            )
+            return {
+                "ok": True,
+                "community": community.to_safe_dict(),
+                "is_owner": False,
+            }
+        except RuntimeError as ex:
+            return {"ok": False, "error": str(ex)}
+
+    @mcp.tool(
+        name="brain.community_groups",
+        description=(
+            "List every multi-device community this device knows about "
+            "(from synced COMMUNITY-scope `community` fragments). Each entry "
+            "includes id, name, transport config, and this device's role. "
+            "Returns [] when this device has not created or joined any "
+            "community. This is the multi-device-group list — distinct from "
+            "brain.community_list, which lists peer-firm outbox subscriptions."
+        ),
+    )
+    def brain_community_groups() -> dict[str, Any]:
+        from . import community_groups as _cg
+        comms = _cg.list_communities(store)
+        current = _cg.current_community(store)
+        return {
+            "ok": True,
+            "current_community_id": current.community_id if current else None,
+            "communities": [c.to_safe_dict() for c in comms],
+        }
+
+    @mcp.tool(
+        name="brain.community_members",
+        description=(
+            "List the members (devices/users) of the current community "
+            "from synced COMMUNITY-scope `community_member` fragments. Two "
+            "devices on the same community see each other here after a sync "
+            "cycle. Returns [] when not in a community."
+        ),
+    )
+    def brain_community_members(
+        community_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from . import community_groups as _cg
+        members = _cg.list_members(store, community_id=community_id)
+        cid = community_id or _cg.current_community_id(store)
+        return {
+            "ok": True,
+            "community_id": cid,
+            "members": [
+                {
+                    "member_id": m.member_id,
+                    "role": m.role,
+                    "joined_at": m.joined_at,
+                    "invited_by": m.invited_by,
+                }
+                for m in members
+            ],
+        }
+
+    @mcp.tool(
+        name="brain.community_set_transport",
+        description=(
+            "Point the current community at a transport so its devices "
+            "converge: 'disk' (offline JSON snapshot), 'cloud_relay' "
+            "(ArchHub /v1/brain/sync), or 'speckle' (owned local Speckle "
+            "server). Use this after starting an owned server to upgrade an "
+            "offline community to live multi-device sync. Re-issue a "
+            "join-code afterward so new devices pick up the new transport."
+        ),
+    )
+    def brain_community_set_transport(
+        transport_kind: str,
+        transport_base_url: str = "",
+        transport_note: str = "",
+    ) -> dict[str, Any]:
+        from . import community_groups as _cg
+        tconf = _cg.TransportConfig(
+            kind=transport_kind or "disk",
+            base_url=transport_base_url or "",
+            note=transport_note or "",
+        )
+        community = _cg.set_transport(store, tconf)
+        if community is None:
+            return {"ok": False, "error": "no community on this device"}
+        return {"ok": True, "community": community.to_safe_dict()}
+
+    @mcp.tool(
+        name="brain.community_leave",
+        description=(
+            "Leave the current multi-device community on this device. "
+            "Tombstones this device's member fragment so the roster "
+            "converges on other devices after their next sync. The "
+            "community record + any COMMUNITY-scope fragments stay until "
+            "pruned. Reversible: re-join with a fresh join-code."
+        ),
+    )
+    def brain_community_leave() -> dict[str, Any]:
+        from . import community_groups as _cg
+        _cg.leave_community(store)
+        return {"ok": True}
+
+    @mcp.tool(
+        name="brain.community_owned_server",
+        description=(
+            "Report whether an OWNED Speckle server (no external account) is "
+            "reachable / startable, so a community can converge through it. "
+            "Checks the port (default http://localhost:3000) then Docker. "
+            "Returns {reachable, docker_available, can_start, code, message}. "
+            "code is 'running' (live), 'ready_to_start' (Docker up — start it "
+            "from the desktop), or 'docker_missing' (install + start Docker "
+            "Desktop first). Does NOT start anything — that is the desktop's "
+            "`docker compose up`. Pass `base_url` to check a specific server."
+        ),
+    )
+    def brain_community_owned_server(
+        base_url: str = "http://localhost:3000",
+    ) -> dict[str, Any]:
+        from . import owned_server as _os
+        report = _os.readiness(base_url or "http://localhost:3000")
+        return {"ok": True, **report}
+
+    # ─────────────── account binding (local brain ⇄ cloud user) ──────────
+    @mcp.tool(
+        name="brain.set_owner",
+        description=(
+            "Bind this local brain to a signed-in cloud account. Persists the "
+            "cloud `user_id` (+ optional email / display_name) to brain_meta "
+            "so every fragment, skill, and wiring write that falls back to the "
+            "default owner is owned by that user_id — not by $USER / 'founder'. "
+            "Takes effect IN-PROCESS immediately (no daemon restart) and "
+            "survives restarts (persisted). Call this right after cloud "
+            "sign-in. Returns {ok, owner_user, previously}."
+        ),
+    )
+    def brain_set_owner(
+        user_id: str,
+        email: str = "",
+        display_name: str = "",
+    ) -> dict[str, Any]:
+        uid = (user_id or "").strip()
+        if not uid:
+            return {
+                "ok": False,
+                "error": "user_id must be a non-empty string",
+                "owner_user": resolve_default_owner(),
+            }
+        previously = _bound_owner()  # None when this is the first bind
+        now_iso = datetime.now(timezone.utc).isoformat()
+        store.set_meta(BOUND_OWNER_KEY, uid)
+        store.set_meta(BOUND_EMAIL_KEY, (email or "").strip())
+        store.set_meta(BOUND_NAME_KEY, (display_name or "").strip())
+        store.set_meta(BOUND_SET_AT_KEY, now_iso)
+        return {
+            "ok": True,
+            "owner_user": uid,
+            "bound": True,
+            "previously": previously,
+            "email": (email or "").strip(),
+            "display_name": (display_name or "").strip(),
+            "set_at": now_iso,
+        }
+
+    @mcp.tool(
+        name="brain.get_owner",
+        description=(
+            "Report the current effective brain owner and where it comes "
+            "from. Returns {owner_user, bound, email, display_name, source} "
+            "— source is 'bound' (cloud user_id persisted via set_owner), "
+            "'env' (BRAIN_OWNER_USER / build default), 'os' ($USER/$USERNAME), "
+            "or 'default' ('founder')."
+        ),
+    )
+    def brain_get_owner() -> dict[str, Any]:
+        bound = _bound_owner()
+        return {
+            "ok": True,
+            "owner_user": resolve_default_owner(),
+            "bound": bound is not None,
+            "email": (store.get_meta(BOUND_EMAIL_KEY) or "") if bound else "",
+            "display_name": (store.get_meta(BOUND_NAME_KEY) or "") if bound else "",
+            "set_at": (store.get_meta(BOUND_SET_AT_KEY) or "") if bound else "",
+            "source": _owner_source(),
+            "fallback_owner": fallback_owner,
+        }
+
+    @mcp.tool(
+        name="brain.clear_owner",
+        description=(
+            "Unbind the cloud account from this local brain (sign-out). "
+            "Removes the persisted owner binding so the default owner reverts "
+            "to env / OS / 'founder'. The brain DATA stays — only the binding "
+            "is cleared; previously-bound fragments keep their owner_user. "
+            "Returns {ok, owner_user (new effective), previously}."
+        ),
+    )
+    def brain_clear_owner() -> dict[str, Any]:
+        previously = _bound_owner()
+        for key in (
+            BOUND_OWNER_KEY,
+            BOUND_EMAIL_KEY,
+            BOUND_NAME_KEY,
+            BOUND_SET_AT_KEY,
+        ):
+            try:
+                store.set_meta(key, "")
+            except Exception:
+                pass
+        return {
+            "ok": True,
+            "owner_user": resolve_default_owner(),
+            "bound": False,
+            "previously": previously,
+            "cleared": previously is not None,
+        }
+
     @mcp.tool(
         name="brain.health",
         description="Diagnostic: counts of skills, facts, wiring entries, brain db path.",
     )
     def brain_health() -> dict[str, Any]:
+        # Engine liveness (AgDR-0044 §1 prevent-clause): report whether the
+        # background workers are actually ALIVE, not just whether tools are
+        # registered. A daemon with tools but no engine is the dormant-brain
+        # failure this surfaces.
+        engine: dict[str, Any] = {"started": False, "workers": {}}
+        try:
+            from .workers import get_supervisor
+            sup = get_supervisor(store)
+            if sup is not None:
+                engine = sup.status()
+        except Exception as ex:
+            engine = {"started": False, "error": f"{type(ex).__name__}: {ex}"}
+
+        # Calibration posterior — proves the self-tightening loop has moved
+        # off the 1.0/1.0 prior once a real trace has been reflected.
+        calibration: dict[str, Any] = {}
+        try:
+            import json as _json
+            raw = store.get_meta("calibration_v1")
+            if raw:
+                c = _json.loads(raw)
+                calibration = {
+                    "alpha": c.get("alpha"),
+                    "beta": c.get("beta"),
+                    "mints_proposed": c.get("mints_proposed"),
+                    "mints_accepted": c.get("mints_accepted"),
+                    "observed_mints": int(
+                        max(0, (c.get("alpha", 1.0) + c.get("beta", 1.0) - 2))
+                    ),
+                }
+        except Exception:
+            pass
+
+        # Account binding — surface the effective owner + whether it is
+        # bound to a cloud user_id so the desktop/founder can see the link
+        # is live (MAKE-IT-REAL: local brain ⇄ cloud account).
+        effective_owner = resolve_default_owner()
+        is_bound = _bound_owner() is not None
+
+        # Personal cross-device cloud sync — surface whether this device is
+        # signed in (token present) + the last tick outcome, so the founder
+        # can SEE the personal brain is converging across devices (or that it
+        # is inert pending sign-in). Never raises; degrades to a minimal dict.
+        personal_sync: dict[str, Any] = {"signed_in": False}
+        try:
+            from .cloud_config import load_cloud_config
+            import json as _json2
+            _cfg = load_cloud_config()
+            personal_sync = {
+                "signed_in": _cfg.is_signed_in,
+                "cloud": _cfg.redacted(),
+                "since_hlc": store.get_meta("personal_cloud_sync.since_hlc") or "",
+                "last_sync_ts": store.get_meta("personal_cloud_sync.last_sync_ts") or "",
+                "error_count": int(store.get_meta("personal_cloud_sync.error_count") or 0),
+            }
+            _lr = store.get_meta("personal_cloud_sync.last_result_json")
+            if _lr:
+                try:
+                    personal_sync["last_result"] = _json2.loads(_lr)
+                except Exception:
+                    pass
+        except Exception as ex:
+            personal_sync = {"signed_in": False,
+                             "error": f"{type(ex).__name__}: {ex}"}
+
         return {
             "ok": True,
             "version": "0.1.0",
@@ -862,7 +1446,16 @@ def build_server(
             "skills": store.count_skills(),
             "facts": store.count_fragments(Scope.USER) + store.count_fragments(Scope.PROJECT),
             "wiring_active": len(store.list_wiring()),
-            "owner_user_default": default_owner,
+            "owner_user_default": effective_owner,
+            "owner": {
+                "owner_user": effective_owner,
+                "bound": is_bound,
+                "source": _owner_source(),
+                "email": (store.get_meta(BOUND_EMAIL_KEY) or "") if is_bound else "",
+            },
+            "engine": engine,
+            "calibration": calibration,
+            "personal_sync": personal_sync,
         }
 
     # ── Content ecosystem tools (CONTENT-ECOSYSTEM-2026-05-26.md) ──────
@@ -897,7 +1490,7 @@ def build_server(
                 "requires_mcps": list(sk.requires_mcps or []),
                 "examples": list(sk.examples or []),
                 "contributor": sk.owner_user,
-                "firm_id": sk.firm_id,
+                "firm_id": getattr(sk, "firm_id", None),
             })
         return {
             "ok": True,
@@ -949,7 +1542,7 @@ def build_server(
                 query_embedding=query_embedding,
                 kinds=kind_filter,
                 scope_filter=scope_filter,
-                owner_user=owner_user or default_owner,
+                owner_user=owner_user or resolve_default_owner(),
                 k=int(k),
                 max_candidates=int(max_candidates),
                 max_phash=int(max_phash),
@@ -1018,9 +1611,253 @@ def build_server(
                 kinds=kind_filter,
                 since=since,
                 limit=int(limit),
-                owner_user=owner_user or default_owner,
+                owner_user=owner_user or resolve_default_owner(),
             )
             return manifest
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+    @mcp.tool(
+        name="brain.fanout_export",
+        description=(
+            "Slice-17 cloud-fanout export: return RAW fragment rows for the "
+            "given scopes, shaped for POST /v1/brain/sync (the cloud replica "
+            "fanout). Unlike brain.dataset_export — which routes COMMUNITY/"
+            "GLOBAL to differentially-private AGGREGATES for model-training — "
+            "this is the multi-device CONVERGENCE path: USER + FIRM + "
+            "COMMUNITY raw rows that ride the shared cloud replicas so a "
+            "teammate / second device receives them (per community_groups.py: "
+            "COMMUNITY multi-device groups converge raw, keyed by "
+            "community_id). USER rows are still gated to the owner; the cloud "
+            "keeps USER private per account. Each row carries its HLC (from "
+            "provenance.hlc, else a fresh device-clock tick) so the cloud's "
+            "last-writer-wins CRDT merge is correct + idempotent. NEVER emits "
+            "GLOBAL raw rows (that scope stays DP-aggregate only). Returns "
+            "{ok, fragments:[...], count, scopes}."
+        ),
+    )
+    def brain_fanout_export(
+        scopes: Optional[list[str]] = None,
+        owner_user: Optional[str] = None,
+        limit: int = 10_000,
+    ) -> dict[str, Any]:
+        from .models import Scope as _S
+        from .hlc import device_clock as _device_clock
+        # Default to the three convergence scopes. GLOBAL is refused — it is
+        # collective-class (DP-aggregate only), never raw multi-device sync.
+        requested = scopes or ["user", "firm", "community"]
+        try:
+            scope_filter = [_S(s) for s in requested]
+        except ValueError as ex:
+            return {"ok": False, "error": f"invalid scope: {ex}"}
+        if any(s == _S.GLOBAL for s in scope_filter):
+            return {"ok": False,
+                    "error": "global scope is DP-aggregate only — "
+                             "use brain.dataset_export"}
+        owner = owner_user or resolve_default_owner()
+        try:
+            frags = store.list_fragments(
+                scope_filter=scope_filter,
+                owner_user=owner,
+                limit=int(limit),
+            )
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        clock = _device_clock()
+
+        def _hlc_str(raw: Any) -> str:
+            """Normalise an HLC to a FIXED-WIDTH 16-hex string so the cloud's
+            lexicographic `excluded.hlc > fragments.hlc` compare matches the
+            packed-int numeric order. provenance.hlc is a packed 64-bit int
+            (sync.stamp_with_hlc); a missing one gets a fresh device tick."""
+            if isinstance(raw, int):
+                return f"{raw:016x}"
+            if isinstance(raw, str) and raw:
+                # Already a string HLC — keep as-is (assumed comparable).
+                return raw
+            return f"{clock.tick():016x}"
+
+        out: list[dict[str, Any]] = []
+        for f in frags:
+            prov = f.provenance
+            hlc = _hlc_str(prov.hlc if prov else None)
+            scope_val = f.scope.value if hasattr(f.scope, "value") else str(f.scope)
+            out.append({
+                "id": f.id,
+                "kind": f.kind.value if hasattr(f.kind, "value") else str(f.kind),
+                "text": f.text or "",
+                "subject": f.subject,
+                "predicate": f.predicate,
+                "object": f.object,
+                "scope": scope_val,
+                "visibility": (f.visibility.value
+                               if hasattr(f.visibility, "value")
+                               else str(f.visibility)),
+                "owner_user": f.owner_user or owner,
+                "project_id": f.project_id,
+                "firm_id": f.firm_id,
+                "confidence": (f.confidence.value
+                               if hasattr(f.confidence, "value")
+                               else str(f.confidence)),
+                "extra": dict(f.extra or {}),
+                "hlc": hlc,
+            })
+        return {"ok": True, "fragments": out, "count": len(out),
+                "scopes": [s.value for s in scope_filter]}
+
+    @mcp.tool(
+        name="brain.fanout_apply",
+        description=(
+            "Slice-17 cloud-fanout INBOUND merge: write FIRM/COMMUNITY "
+            "fragment rows pulled from the cloud replica back into the local "
+            "brain. This is the receive half of the fanout — a device pulls "
+            "the merged firm/community delta (other devices' / teammates' "
+            "facts) and lands it locally. These rows ALREADY crossed the "
+            "promote/redaction gate on the contributor's machine, so — exactly "
+            "like sync_worker._write_remote_fragment_into_store — they are "
+            "written straight via the store's CRDT upsert, NOT re-gated "
+            "through brain.write/brain.promote (which would refuse a direct "
+            "community write). Merge is last-writer-wins by HLC + idempotent: "
+            "a row whose local copy has an equal-or-newer HLC is skipped, so "
+            "re-pulling the same delta is a no-op and any apply order "
+            "converges. USER-scope rows are refused here (they are the "
+            "account's own private state, never fanned in). Returns "
+            "{ok, applied, skipped, refused}."
+        ),
+    )
+    def brain_fanout_apply(fragments: list[dict[str, Any]]) -> dict[str, Any]:
+        from .models import (Confidence as _C, Fragment as _F,
+                             FragmentKind as _FK, Provenance as _P,
+                             Scope as _S, Visibility as _V)
+
+        def _as_packed(hlc: Any) -> int:
+            """Coerce an HLC (16-hex str, decimal str, or int) to a packed int
+            for ordered compare. Unknown / missing → -1 (older than any real
+            row, so an absent local copy always loses to incoming)."""
+            if isinstance(hlc, int):
+                return hlc
+            if isinstance(hlc, str) and hlc:
+                try:
+                    return int(hlc, 16)
+                except ValueError:
+                    try:
+                        return int(hlc)
+                    except ValueError:
+                        return -1
+            return -1
+
+        def _local_hlc(fid: str) -> int:
+            """Packed-int HLC of the local copy, or -1 if absent/unstamped."""
+            try:
+                cur = store.get_fragment(fid) if hasattr(store, "get_fragment") else None
+            except Exception:
+                cur = None
+            if cur is None:
+                return -1
+            prov = getattr(cur, "provenance", None)
+            return _as_packed(getattr(prov, "hlc", None) if prov else None)
+
+        applied = 0
+        skipped = 0
+        refused = 0
+        for f in (fragments or []):
+            if not isinstance(f, dict):
+                refused += 1
+                continue
+            scope_val = (f.get("scope") or "").strip().lower()
+            # Only the SHARED convergence scopes are fanned in. USER stays
+            # private; PROJECT/GLOBAL are out of this path's contract.
+            if scope_val not in ("firm", "community"):
+                refused += 1
+                continue
+            fid = f.get("id")
+            if not fid:
+                refused += 1
+                continue
+            raw_hlc = f.get("hlc")
+            incoming = _as_packed(raw_hlc)
+            local = _local_hlc(fid)
+            if local >= 0 and incoming <= local:
+                # Local copy is equal/newer — LWW says keep it (idempotent).
+                skipped += 1
+                continue
+            # Provenance.hlc is a STRING in the model — keep the wire hex form
+            # (or stringify an int) so the type validates + the next export
+            # compares it consistently.
+            hlc_str = (raw_hlc if isinstance(raw_hlc, str) and raw_hlc
+                       else (f"{raw_hlc:016x}" if isinstance(raw_hlc, int) else None))
+            prov = _P(
+                contributing_agent="cloud-fanout",
+                contributing_user=f.get("owner_user") or "remote",
+                hlc=hlc_str,
+            )
+            try:
+                frag = _F(
+                    id=fid,
+                    kind=_FK(f.get("kind") or "fact"),
+                    text=f.get("text") or "",
+                    subject=f.get("subject"),
+                    predicate=f.get("predicate"),
+                    object=f.get("object"),
+                    scope=_S(scope_val),
+                    visibility=_V(f.get("visibility") or "shared_public"),
+                    owner_user=f.get("owner_user") or "remote",
+                    project_id=f.get("project_id"),
+                    firm_id=f.get("firm_id"),
+                    confidence=_C(f.get("confidence") or "extracted"),
+                    provenance=prov,
+                    extra=f.get("extra") or {},
+                )
+                store.write_fragment(frag)
+                applied += 1
+            except Exception:
+                refused += 1
+        return {"ok": True, "applied": applied, "skipped": skipped,
+                "refused": refused}
+
+    @mcp.tool(
+        name="brain.cloud_archive",
+        description=(
+            "Brain #32 day-2: upload a local dataset directory (from "
+            "brain.dataset_export) to an S3-compatible bucket the USER "
+            "owns (Cloudflare R2 / AWS S3 / Hetzner / MinIO). ArchHub "
+            "never holds the data — it pushes to the caller's chosen "
+            "target. Credentials are passed as op://vault/item/field refs "
+            "(resolved at call time via 1Password CLI / Credential Manager "
+            "/ env), never plaintext. include_blobs also mirrors the "
+            "content-addressed blob tree. Returns ok/uploaded_count/"
+            "total_bytes/error. Requires boto3 (returns a clean error if "
+            "absent — never crashes)."
+        ),
+    )
+    def brain_cloud_archive(
+        local_dir: str,
+        bucket: str,
+        endpoint_url: Optional[str] = None,
+        region: str = "auto",
+        access_key_ref: Optional[str] = None,
+        secret_key_ref: Optional[str] = None,
+        prefix: str = "archhub-brain",
+        dataset_name: Optional[str] = None,
+        include_blobs: bool = False,
+        blob_store_root: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from pathlib import Path as _P
+        from . import cloud_archive as _ca
+
+        try:
+            return _ca.upload_dataset(
+                _P(local_dir),
+                bucket=bucket,
+                endpoint_url=endpoint_url,
+                region=region,
+                access_key_ref=access_key_ref,
+                secret_key_ref=secret_key_ref,
+                prefix=prefix,
+                dataset_name=dataset_name,
+                include_blobs=include_blobs,
+                blob_store_root=_P(blob_store_root) if blob_store_root else None,
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
@@ -1057,7 +1894,7 @@ def build_server(
         prefs: Optional[dict[str, Any]] = None,
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
-        owner = owner_user or default_owner
+        owner = owner_user or resolve_default_owner()
         if hasattr(store, "a11y_prefs"):
             return store.a11y_prefs(mode=mode, prefs=prefs, owner_user=owner)
         return {
@@ -1071,6 +1908,85 @@ def build_server(
             },
             "note": "store.a11y_prefs not implemented yet",
         }
+
+    @mcp.tool(
+        name="brain.enforce_diligence",
+        description=(
+            "Anti-laziness gate. Given an agent's final message + the files "
+            "it touched + session proof signals, decide whether it has "
+            "earned the right to stop. Returns {verdict: allow|block, "
+            "violations, reason}. A 'block' verdict means the Stop hook "
+            "refuses to let the session end — the agent must do the work. "
+            "This is the brain holding EVERY AI client to the same bar."
+        ),
+    )
+    def brain_enforce_diligence(
+        last_message: str,
+        touched_files: Optional[list[str]] = None,
+        file_contents: Optional[dict[str, str]] = None,
+        session_signals: Optional[dict[str, Any]] = None,
+        owner_user: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from .diligence import evaluate_diligence
+
+        verdict = evaluate_diligence(
+            last_message=last_message,
+            touched_files=touched_files,
+            file_contents=file_contents,
+            session_signals=session_signals,
+        )
+        # Remember enforcement stats so the brain can report how often
+        # laziness was caught (a device-level diligence ledger).
+        try:
+            key = "diligence.stats"
+            raw = store.get_meta(key)
+            import json as _json
+            stats = _json.loads(raw) if raw else {"checks": 0, "blocks": 0}
+            stats["checks"] = int(stats.get("checks", 0)) + 1
+            if verdict.verdict == "block":
+                stats["blocks"] = int(stats.get("blocks", 0)) + 1
+            store.set_meta(key, _json.dumps(stats))
+            out = verdict.to_dict()
+            out["stats"] = stats
+            return out
+        except Exception:
+            return verdict.to_dict()
+
+    # Expose the bound store on the server object so the daemon entrypoint
+    # (`main`) can start the background engine against the SAME store the
+    # tools read/write. build_server stays pure (no threads) so unit tests
+    # that call it directly don't spawn workers — `main` flips the engine.
+    # Also expose the owner resolver so additive tool families (below) can
+    # honour the cloud account binding without importing build_server.
+    try:
+        mcp._brain_store = store  # type: ignore[attr-defined]
+        mcp._brain_resolve_owner = resolve_default_owner  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # ROMA "method-that-finishes-everything" tool families (ADDITIVE; ENCODE
+    # artifact). Two complementary additive surfaces over ONE requirement-tree
+    # ledger persisted in brain_meta (key 'requirement_tree_v1' — no new table,
+    # no schema migration, no touch of fragments/skills/-wal/-shm):
+    #   • brain.tree_*  — the requirement-tree primitives (create_root →
+    #                     decompose/split-never-simplify → claim_leaf →
+    #                     external court → sweep/frontier). [requirement_tree.py]
+    #   • brain.roma_*  — the orchestration loop over the same tree (atomize →
+    #                     claim → judge → loop-until-dry).            [roma.py]
+    # Each registers NEW tool names only; zero existing handlers touched. Both
+    # are wrapped fail-soft so the core 40 tools never depend on them building.
+    try:
+        from .requirement_tree import register_tree_tools
+        register_tree_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] tree tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+    try:
+        from .roma import register_roma_tools
+        register_roma_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] roma tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
     return mcp
 
@@ -1275,31 +2191,49 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     server = build_server(db_path=args.db, default_owner_user=args.owner)
 
+    # ── Turn the ENGINE ON (AgDR-0044 §1). build_server only registers
+    # tools; the background workers (Sync / Publish / Reflexion / Watchdog)
+    # are started HERE, at daemon boot, against the same bound store.
+    # Guarded by BRAIN_WORKERS (default ON). Without this the brain is a
+    # library of dormant primitives, not an ambient engine.
+    try:
+        from .workers import start_workers, workers_enabled
+        bound_store = getattr(server, "_brain_store", None)
+        if bound_store is not None:
+            sup = start_workers(bound_store, owner_user=args.owner)
+            if sup is not None:
+                st = sup.status()
+                alive = [
+                    name for name, w in st.get("workers", {}).items()
+                    if isinstance(w, dict) and w.get("alive")
+                ]
+                print(
+                    f"[brain] engine ON — workers alive: {', '.join(alive) or 'none'}"
+                    + (f" | errors: {st['errors']}" if st.get("errors") else ""),
+                    file=sys.stderr, flush=True,
+                )
+            elif not workers_enabled():
+                print("[brain] engine OFF — BRAIN_WORKERS disabled",
+                      file=sys.stderr, flush=True)
+    except Exception as ex:  # never block daemon boot on engine start
+        print(f"[brain] engine start error: {type(ex).__name__}: {ex}",
+              file=sys.stderr, flush=True)
+
     if args.http is not None:
-        # FastMCP 3.3.1 verified — `transport="http"` is the canonical
-        # Streamable HTTP option. `stateless_http=True` skips session
-        # tracking so ArchHub's BrainClient (synchronous, in-process)
-        # doesn't have to maintain Mcp-Session-Id state between hooks.
+        # InHouseMCP.run (mcp_core.run) serves build_asgi_app() — our
+        # hand-rolled stateless Streamable-HTTP Starlette app — over uvicorn.
+        # `transport="http"` selects that path; `stateless_http=True` keeps
+        # every POST self-contained so ArchHub's BrainClient (synchronous,
+        # in-process) never has to track an Mcp-Session-Id between hooks. The
+        # run() signature always accepts these kwargs (mcp_core.run), so no
+        # version fallback is needed.
         host = os.environ.get("BRAIN_HTTP_HOST", "127.0.0.1")
-        try:
-            server.run(transport="http", host=host, port=args.http,
-                       stateless_http=True)
-        except TypeError:
-            # Older fastmcp without stateless_http kwarg — try plain http.
-            try:
-                server.run(transport="http", host=host, port=args.http)
-            except TypeError:
-                # Legacy fastmcp — last-resort streamable-http
-                server.run(transport="streamable-http",
-                           host=host, port=args.http)
+        server.run(transport="http", host=host, port=args.http,
+                   stateless_http=True)
         return
 
-    # stdio is the default
-    try:
-        server.run(transport="stdio")
-    except TypeError:
-        # fastmcp <0.4 fallback
-        server.run()
+    # stdio is the default transport.
+    server.run(transport="stdio")
 
 
 def main_stdio(argv: Optional[list[str]] = None) -> None:

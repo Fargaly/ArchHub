@@ -98,10 +98,24 @@ agents/state/*
 
 # ==== Codex / temporary boot logs ====
 boot.log
-graphify-out/cache/
-graphify-out/extraction.json
-graphify-out/extraction-filtered.json
-graphify-out/graph.json
-graphify-out/extract.log
+# graphify scratch — generated knowledge-graph artefacts, never source.
+graphify-out/
+
+# ==== personal-brain-mcp daemon runtime artefacts ====
+# Written by the running brain daemon (engine ON). Per-machine runtime
+# state, never source: the rotated log tail + the last sync snapshot.
+personal-brain-mcp/daemon-engine.log.out
+personal-brain-mcp/brain-sync-snapshot.json
+
+# ==== Generated training datasets ====
+# Brain dataset exports (e.g. exports/brain-datasets/<brain>/fragments.jsonl)
+# are produced on demand by the brain_export_dataset bridge slot. Artifact
+# output, never source — never committed.
+exports/
 
 scripts/stripe_login_pty.py
+
+# ==== Debug bridge (app/debug_bridge.py) ====
+# Per-launch random token written to the repo run dir when the in-app debug
+# bridge is enabled (ARCHHUB_DEBUG_BRIDGE=1). A secret — never committed.
+.debug_bridge_token

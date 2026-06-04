@@ -201,6 +201,63 @@ class TestConversationNodeTools:
         assert out["status"] == "error"
         assert "prompt" in out["error"]
 
+    def test_chat_complete_stub_path_self_labels(self, monkeypatch):
+        """DELIBERATE FAIL-SOFT contract: when the LLM router can't even
+        be imported, the node degrades to a stub. This must NOT masquerade
+        as a real completion — the envelope carries `stub: True` and the
+        text is prefixed `[stub-<model>]`. status:ok here is honest
+        precisely BECAUSE it self-labels. (This is the
+        `# audit: deliberate-fail-soft`-marked path in node_mcp.py.)"""
+        import builtins
+        real_import = builtins.__import__
+
+        def no_router(name, *a, **k):
+            if name == "llm_router":
+                raise ImportError("router trimmed from build")
+            return real_import(name, *a, **k)
+        monkeypatch.setattr(builtins, "__import__", no_router)
+
+        s = NodeMCPServer(node_id="cvstub",
+                           node_type="conversation.chat",
+                           config={"model": "demo"})
+        out = s.invoke("chat.complete", {"prompt": "ping"})
+        assert out["status"] == "ok"
+        assert out["stub"] is True, "stub path must self-label"
+        assert out["response"].startswith("[stub-demo]")
+
+    def test_chat_complete_router_failure_is_unavailable_not_ok(self,
+                                                                monkeypatch):
+        """REAL failure honesty: when the router IS importable but its
+        .complete() RAISES, the node must report status:'unavailable'
+        with the reason — never a masked status:ok. This is the path the
+        audit allowlist deliberately does NOT cover."""
+        import types
+        import builtins
+        real_import = builtins.__import__
+
+        class _Boom:
+            def __init__(self, *a, **k):
+                pass
+
+            def complete(self, *a, **k):
+                raise RuntimeError("router exploded")
+
+        fake_mod = types.SimpleNamespace(LLMRouter=_Boom)
+
+        def fake_import(name, *a, **k):
+            if name == "llm_router":
+                return fake_mod
+            return real_import(name, *a, **k)
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        s = NodeMCPServer(node_id="cvfail",
+                           node_type="conversation.chat",
+                           config={"model": "demo"})
+        out = s.invoke("chat.complete", {"prompt": "ping"})
+        assert out["status"] == "unavailable"
+        assert "router exploded" in out["reason"]
+        assert out.get("stub") is not True
+
 
 # ─── Envelope shape + invoke contracts ────────────────────────────
 class TestEnvelopeShape:

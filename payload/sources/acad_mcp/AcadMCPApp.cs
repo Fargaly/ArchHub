@@ -31,10 +31,21 @@ namespace AcadMCP
 
     public class AcadMCPApp : IExtensionApplication
     {
-        private const string ListenPrefix = "http://localhost:48885/";
+        // AgDR-0052 — listener resilience, mirroring RevitMCPCore.CoreEntry.
+        // The single hardcoded prefix is widened into a scan range whose
+        // FIRST element stays 48885 (the canonical AutoCAD broker port — see
+        // acad_broker.PORT_FIRST), so this is additive: 48885 is still tried
+        // first, we only fall through to 48886..48899 when it is taken by a
+        // stale http.sys reservation or another AutoCAD session.
+        private const int PortFirst = 48885;   // canonical port preserved as range start
+        private const int PortLast  = 48899;
+        private const int HeartbeatSeconds = 10;
 
         private HttpListener _listener;
         private CancellationTokenSource _cts;
+        private int _port;                 // AgDR-0052 — discovered bind port
+        private string _sessionFile;       // AgDR-0052 — %LOCALAPPDATA%\ArchHub\sessions\autocad-<pid>.json
+        private System.Threading.Timer _heartbeat;   // AgDR-0052 — refreshes session file
 
         // Inbound work to be executed on the AutoCAD main thread (in the Idle handler).
         private static readonly ConcurrentQueue<WorkItem> Queue = new ConcurrentQueue<WorkItem>();
@@ -46,7 +57,9 @@ namespace AcadMCP
                 Application.Idle += OnIdle;
                 _cts = new CancellationTokenSource();
                 Task.Run(() => RunListenerAsync(_cts.Token));
-                Log("AcadMCP started. Listening on " + ListenPrefix);
+                // AgDR-0052 — actual bound port is logged inside
+                // RunListenerAsync once the scan succeeds.
+                Log("AcadMCP starting. Scanning ports " + PortFirst + ".." + PortLast);
             }
             catch (System.Exception ex)
             {
@@ -58,6 +71,16 @@ namespace AcadMCP
         {
             try { _cts?.Cancel(); } catch { }
             try { _listener?.Stop(); } catch { }
+            // AgDR-0052 — stop the heartbeat + remove the session file so the
+            // broker prunes us immediately on a clean unload (mirrors
+            // RevitMCPCore.CoreEntry.Stop).
+            try { _heartbeat?.Dispose(); } catch { }
+            try
+            {
+                if (!string.IsNullOrEmpty(_sessionFile) && File.Exists(_sessionFile))
+                    File.Delete(_sessionFile);
+            }
+            catch { }
             try { Application.Idle -= OnIdle; } catch { }
         }
 
@@ -65,17 +88,44 @@ namespace AcadMCP
 
         private async Task RunListenerAsync(CancellationToken ct)
         {
-            try
+            // AgDR-0052 — scan + retry the 48885..48899 range instead of the
+            // old single-port bind that returned (gave up) on the first
+            // HttpListenerException (e.g. 183 from a stale http.sys URL
+            // reservation), which forced a manual NETLOAD. Mirrors
+            // RevitMCPCore.CoreEntry.Start lines 103-110. Non-destructive:
+            // 48885 is still attempted first.
+            for (int p = PortFirst; p <= PortLast; p++)
             {
-                _listener = new HttpListener();
-                _listener.Prefixes.Add(ListenPrefix);
-                _listener.Start();
+                if (ct.IsCancellationRequested) return;
+                var lis = new HttpListener();
+                lis.Prefixes.Add("http://localhost:" + p + "/");
+                try { lis.Start(); _listener = lis; _port = p; break; }
+                catch (System.Exception ex)
+                {
+                    Log("Listener.Start on " + p + " failed (trying next): " + ex.Message);
+                    try { lis.Close(); } catch { }
+                }
             }
-            catch (System.Exception ex)
+            if (_listener == null)
             {
-                Log("Listener.Start failed: " + ex);
+                Log("Listener.Start failed: no free port in ["
+                    + PortFirst + ".." + PortLast + "]");
                 return;
             }
+            Log("AcadMCP listening on http://localhost:" + _port + "/");
+
+            // AgDR-0052 — session registry + heartbeat, mirroring
+            // RevitMCPCore.CoreEntry. acad_broker.list_sessions reads
+            // autocad-<pid>.json (port/pid/version/heartbeat) and prunes
+            // entries silent > 30s, so the 10s cadence keeps us live.
+            try
+            {
+                _sessionFile = WriteSessionFile(_port);
+                _heartbeat = new System.Threading.Timer(_ => HeartbeatTick(), null,
+                    TimeSpan.FromSeconds(HeartbeatSeconds),
+                    TimeSpan.FromSeconds(HeartbeatSeconds));
+            }
+            catch (System.Exception ex) { Log("session reg failed: " + ex.Message); }
 
             while (!ct.IsCancellationRequested)
             {
@@ -129,8 +179,13 @@ namespace AcadMCP
                         // so the broker logs which compiler we use.
                         var cscPath = ScriptCompiler.ProbeCsc();
                         var cscStatus = cscPath != null ? "ok" : "missing";
+                        // AgDR-0052 — port + pid added so acad_broker's
+                        // port-range discovery can populate Session metadata
+                        // for instances found without a session file.
                         return Task.FromResult(
                             "{\"status\":\"ok\",\"service\":\"acad-mcp\",\"version\":\"0.3.0\","
+                            + "\"port\":" + _port + ","
+                            + "\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ","
                             + "\"compiler\":\"subprocess_csc\","
                             + "\"csc_status\":\"" + cscStatus + "\","
                             + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\"}");
@@ -317,6 +372,79 @@ namespace AcadMCP
 
         private static string JsonError(string msg) =>
             "{\"status\":\"error\",\"error\":\"" + JsonEscape(msg) + "\"}";
+
+        // ─── AgDR-0052 — session registry (atomic file + heartbeat) ──────
+        // Mirrors RevitMCPCore.CoreEntry.WriteSessionFile/HeartbeatTick.
+        // acad_broker.list_sessions() reads autocad-<pid>.json; the keys
+        // here (session_id/family/pid/port/version/doc_title/started_at/
+        // last_heartbeat) match acad_broker._read() exactly. Atomic via
+        // tmp + File.Replace so the broker never reads a half-written file.
+
+        private static readonly string _startedAtUtc =
+            DateTime.UtcNow.ToString("o");
+
+        private string WriteSessionFile(int port)
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ArchHub", "sessions");
+            Directory.CreateDirectory(dir);
+            int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+            var path = Path.Combine(dir, "autocad-" + pid + ".json");
+            WriteSessionJson(path, port, pid);
+            return path;
+        }
+
+        private void HeartbeatTick()
+        {
+            if (string.IsNullOrEmpty(_sessionFile)) return;
+            try
+            {
+                WriteSessionJson(_sessionFile, _port,
+                    System.Diagnostics.Process.GetCurrentProcess().Id);
+            }
+            catch { }
+        }
+
+        private void WriteSessionJson(string path, int port, int pid)
+        {
+            // Best-effort active-document title; never throw from the
+            // heartbeat thread if the DocumentManager is mid-transition.
+            string docTitle = "";
+            try
+            {
+                var d = Application.DocumentManager.MdiActiveDocument;
+                if (d != null) docTitle = d.Name ?? "";
+            }
+            catch { }
+
+            var nowUtc = DateTime.UtcNow.ToString("o");
+            var sb = new StringBuilder(256);
+            sb.Append('{');
+            sb.Append("\"session_id\":\"autocad-").Append(pid).Append("\",");
+            sb.Append("\"family\":\"autocad\",");
+            sb.Append("\"pid\":").Append(pid).Append(',');
+            sb.Append("\"port\":").Append(port).Append(',');
+            sb.Append("\"version\":\"0.3.0\",");
+            sb.Append("\"doc_title\":\"").Append(JsonEscape(docTitle)).Append("\",");
+            sb.Append("\"started_at\":\"").Append(_startedAtUtc).Append("\",");
+            sb.Append("\"last_heartbeat\":\"").Append(nowUtc).Append("\",");
+            sb.Append("\"heartbeat\":true");
+            sb.Append('}');
+
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            catch
+            {
+                File.Copy(tmp, path, overwrite: true);
+                try { File.Delete(tmp); } catch { }
+            }
+        }
 
         private static void Log(string msg)
         {

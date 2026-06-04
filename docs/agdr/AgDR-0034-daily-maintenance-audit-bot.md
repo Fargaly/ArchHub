@@ -4,7 +4,7 @@ timestamp: 2026-05-21T23:00:00Z
 agent: claude-code (Sonnet)
 session: founder demand 2026-05-21 — "RUN A DEEP MAINTENANCE AUDIT... SETUP A GITHUB BOT TO DO THAT AUDIT DAILY"
 trigger: Recurring "still not working" bugs reaching the founder.  He wants a standing automated audit, not one-off hunts.
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

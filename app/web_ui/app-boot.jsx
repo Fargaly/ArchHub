@@ -1,9 +1,9 @@
 // AgDR-0026 Phase 2 — extracted from index.html so jsx-boot.js can
-// hash + cache it the same way as shared-data.jsx and studio-lm.jsx.
+// hash + cache it the same way as studio-lm.jsx.
 // Functionally identical to the previous inline
 //   <script type="text/babel" data-presets="env,react">…</script>.
 //
-// Boot order (jsx-boot.js):  shared-data.jsx → studio-lm.jsx → app-boot.jsx
+// Boot order (jsx-boot.js):  studio-lm.jsx → app-boot.jsx
 
 const { useState, useEffect, useRef } = React;
 
@@ -152,14 +152,23 @@ const SplashFader = () => {
   useEffect(() => {
     const s = document.getElementById('__archhub_splash');
     if (!s) return;
-    // The splash shows for as long as the boot actually takes — this
-    // component mounts only once the full JSX tree is up.  A 350ms
-    // floor so even an instant (cache-hit) boot reads as an
-    // intentional splash, not a flicker.  Then a 320ms opacity fade.
+    // The splash shows for as long as boot actually takes — this component
+    // mounts only once the full JSX tree is up.  Phase 3 (precompiled boot)
+    // makes boot near-instant, so the old 350ms floor was pure dead time the
+    // founder stared at.  Floor trimmed:
+    //   • precompiled fast path hit  →  40ms (barely a beat, no flicker)
+    //   • Babel fallback path        → 120ms (covers the slower mount)
+    // Then a 320ms opacity fade.  Pure perceived-latency win.
+    let floor = 120;
+    try {
+      if (window.__archhub_jsx_boot && window.__archhub_jsx_boot.precompiled) {
+        floor = 40;
+      }
+    } catch (e) {}
     const t = setTimeout(() => {
       s.classList.add('fade');
       setTimeout(() => { try { s.remove(); } catch (e) {} }, 320);
-    }, 350);
+    }, floor);
     return () => clearTimeout(t);
   }, []);
   return null;

@@ -231,7 +231,19 @@ class _AutoHideLabel(QLabel):
         self._owner = owner_window
 
     def setText(self, s: str) -> None:        # type: ignore[override]
-        super().setText(s or "")
+        # Qt-C++-lifetime guard (same family as the _refresh_host_pills
+        # QThread fix). ChatWindow is embedded in studio_shell, whose
+        # central/dock widget tree can be torn down + rebuilt; background
+        # workers (_on_session_event / _on_finished) marshal status text
+        # here via queued signals that may arrive AFTER this label's C++
+        # QLabel was destroyed while the Python wrapper lingers. Touching
+        # it then raises "wrapped C/C++ object of type _AutoHideLabel has
+        # been deleted" (Sentry). A deleted wrapper has nothing to show
+        # and no owner to sync — treat it as gone and no-op.
+        try:
+            super().setText(s or "")
+        except RuntimeError:
+            return  # audit: deliberate-fail-soft — C++ QLabel already deleted
         try:
             sync = getattr(self._owner, "_sync_status_visibility", None)
             if callable(sync):
@@ -1241,6 +1253,11 @@ class ChatWindow(QMainWindow):
     # back to the Qt main thread via update_ready_signal.
     # ---------------------------------------------------------------------
     update_ready_signal = pyqtSignal(object, object)  # (installer_path, release)
+    # Host-pill statuses computed OFF the Qt thread (see _refresh_host_pills).
+    # Carries an ordered list of (family, short, status) tuples; the GUI-thread
+    # slot _on_host_pills_ready repaints from it. A signal (not a direct call)
+    # is what marshals the worker's result back onto the Qt thread safely.
+    _host_pills_ready = pyqtSignal(object)
 
     def _build_update_banner(self) -> QWidget:
         bar = QFrame()
@@ -1492,8 +1509,11 @@ class ChatWindow(QMainWindow):
         h.addWidget(self.menu_btn)
 
         # Kick off the host-pill refresh timer right after the header
-        # is constructed (the first refresh runs on the Qt event loop
-        # so __init__ stays fast).
+        # is constructed. The refresh itself does NO blocking I/O on the
+        # Qt thread — it fans the broker port-probes onto a worker thread
+        # and repaints from the signal (see _refresh_host_pills).
+        self._host_pills_ready.connect(self._on_host_pills_ready)
+        self._host_pills_probe_thread = None  # in-flight probe guard
         QTimer.singleShot(0, self._refresh_host_pills)
         self._host_pill_timer = QTimer(self)
         self._host_pill_timer.setInterval(6000)
@@ -1515,7 +1535,105 @@ class ChatWindow(QMainWindow):
     )
 
     def _refresh_host_pills(self) -> None:
-        """Probe each broker for live sessions, paint a pill per host."""
+        """Kick a host-status probe OFF the Qt thread; never block here.
+
+        Why off-thread (GUI idle-stall root fix, 2026-06-02)
+        ----------------------------------------------------
+        This method is driven by `_host_pill_timer` (every 6 s) + an initial
+        `singleShot`. It used to call `_probe_host_status` for every family
+        INLINE on the Qt thread — and that helper calls each broker's
+        `list_sessions()`, which port-scans the 48884-48899 MCP range
+        (synchronous `socket.create_connection` + `urlopen`, plus a
+        `ThreadPoolExecutor.map` whose `__exit__` joins every worker). A live
+        py-spy capture caught the Qt MainThread parked exactly there
+        (`acad_broker._ping_service` → blocked TCP connect; and
+        `revit_broker._discover_in_port_range` → blocked on
+        `list(ex.map(...))`). Cold, that scan costs ~2 s+ and froze the whole
+        UI on the idle timer tick — the founder-visible idle stall.
+
+        Fix uses the PROVEN non-blocking pattern (ArchHubBridge._cached_async /
+        memory_stats, AgDR-0035/0036, and the in-file `_silent_update_check`
+        QThread idiom): the timer callback fans the blocking probe onto a
+        worker `QThread`, which emits `_host_pills_ready` with the computed
+        statuses; the GUI thread repaints in `_on_host_pills_ready`
+        (pure widget work, zero I/O) and returns instantly. While a probe is
+        in flight a second tick is a no-op, so ticks can never pile up workers.
+        """
+        # Coalesce — if a probe thread is still running, skip this tick.
+        # Guard the .isRunning() read: the previous probe's QThread may have
+        # already been deleteLater()'d (C++ object freed) while this Python
+        # wrapper lingers. Touching it then raises "wrapped C/C++ object of
+        # type QThread has been deleted" (the d41fd94 regression, ~1/tick).
+        # Root fix is _clear_host_pills_thread_ref dropping the ref on
+        # finished; this try/except is the guard so the class can't resurface.
+        th = getattr(self, "_host_pills_probe_thread", None)
+        if th is not None:
+            try:
+                if th.isRunning():
+                    return
+            except RuntimeError:
+                pass  # audit: deliberate-fail-soft — stale wrapper; fall through to start a fresh probe
+            self._host_pills_probe_thread = None
+
+        families = self._HOST_PILL_FAMILIES
+
+        class _HostPillsWorker(QObject):
+            done = pyqtSignal(object)
+
+            def __init__(self, owner):
+                super().__init__()
+                self._owner = owner
+
+            def run(self) -> None:
+                out = []
+                try:
+                    for family, short, broker_name in families:
+                        try:
+                            status = self._owner._probe_host_status(
+                                family, broker_name)
+                        except Exception:
+                            status = "missing"
+                        out.append((family, short, status))
+                except Exception:
+                    out = []
+                self.done.emit(out)
+
+        worker = _HostPillsWorker(self)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        # Re-emit on the ChatWindow signal so the GUI-thread slot repaints.
+        worker.done.connect(lambda res: self._host_pills_ready.emit(res))
+        worker.done.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # ROOT FIX (d41fd94 regression): drop the Python wrapper the instant
+        # the QThread finishes — BEFORE the queued deleteLater frees the C++
+        # object — so the next timer tick's coalesce check never calls
+        # .isRunning() on a dangling wrapper.
+        thread.finished.connect(self._clear_host_pills_thread_ref)
+        # Keep a ref so the QThread isn't GC'd mid-run, and so the next
+        # tick can see it's still in flight.
+        self._host_pills_probe_thread = thread
+        self._host_pills_worker = worker
+        thread.start()
+
+    def _clear_host_pills_thread_ref(self) -> None:
+        """Drop the finished probe QThread's Python wrapper.
+
+        Connected to ``QThread.finished``. Clearing the stored reference here —
+        synchronously, before the queued ``deleteLater`` frees the C++ object —
+        guarantees the next ``_host_pill_timer`` tick sees ``None`` and starts a
+        fresh probe, instead of calling ``.isRunning()`` on a wrapper whose C++
+        QThread was already deleted (the d41fd94 'wrapped C/C++ object of type
+        QThread has been deleted' regression, ~once per 6 s tick)."""
+        self._host_pills_probe_thread = None
+        self._host_pills_worker = None
+
+    def _on_host_pills_ready(self, statuses) -> None:
+        """Repaint the host pills from the worker's result. Runs on the Qt
+        GUI thread (delivered via `_host_pills_ready`); does only widget
+        work — no I/O, no broker calls — so it can never stall the loop."""
         try:
             # Clear current pills.
             while self._host_pills_row.count():
@@ -1525,15 +1643,14 @@ class ChatWindow(QMainWindow):
                     w.setParent(None); w.deleteLater()
             self._host_pill_labels.clear()
 
-            for family, short, broker_name in self._HOST_PILL_FAMILIES:
-                status = self._probe_host_status(family, broker_name)
+            for family, short, status in (statuses or []):
                 if status == "missing":
                     continue  # don't render a pill for hosts not present
                 pill = self._build_host_pill(family, short, status)
                 self._host_pills_row.addWidget(pill)
                 self._host_pill_labels[family] = pill
         except Exception:
-            # Pills are decoration — never let a probe crash kill the
+            # Pills are decoration — never let a repaint crash kill the
             # chat window.
             pass
 
@@ -1992,11 +2109,20 @@ class ChatWindow(QMainWindow):
         bar = getattr(self, "_status_bar_widget", None)
         if bar is None:
             return
-        has_text = bool(
-            (getattr(self, "status_left", None) and self.status_left.text())
-            or (getattr(self, "status_right", None) and self.status_right.text())
-        )
-        bar.setVisible(has_text)
+        # Qt-C++-lifetime guard: status_left/right (and the bar itself) may
+        # have had their C++ objects destroyed by a studio_shell view
+        # rebuild while the Python wrappers linger. Reading .text() or
+        # calling .setVisible() on a deleted wrapper raises RuntimeError
+        # ("wrapped C/C++ object ... has been deleted"). Treat a deleted
+        # status bar as already-gone and no-op rather than crash.
+        try:
+            has_text = bool(
+                (getattr(self, "status_left", None) and self.status_left.text())
+                or (getattr(self, "status_right", None) and self.status_right.text())
+            )
+            bar.setVisible(has_text)
+        except RuntimeError:
+            return  # audit: deliberate-fail-soft — status bar C++ tree already deleted
 
     # ---- Send / receive ----------------------------------------------------
 
@@ -2693,18 +2819,33 @@ class ChatWindow(QMainWindow):
     def _clear_chat_view(self) -> None:
         """Remove every message row from the conversation layout. Keeps
         the trailing stretch item so new bubbles still anchor top."""
-        layout = self.conv_layout
+        layout = getattr(self, "conv_layout", None)
+        if layout is None:
+            return
         # Layout has rows + a final stretch — drop every widget item but
         # leave the stretch so insertWidget(count-1, ...) keeps working.
-        i = 0
-        while i < layout.count():
-            item = layout.itemAt(i)
-            w = item.widget() if item is not None else None
-            if w is None:
-                i += 1
-                continue
-            layout.removeWidget(w)
-            w.deleteLater()
+        #
+        # Qt-C++-lifetime guard (same family as the _refresh_host_pills
+        # QThread fix). This runs from _restore_history, including an
+        # auto-resume QTimer.singleShot(100, ...) at startup and on session
+        # switches inside the studio_shell embedding. If the conversation
+        # container's C++ QVBoxLayout was destroyed (view rebuilt / window
+        # torn down) while this Python wrapper lingers, layout.count() /
+        # itemAt() / removeWidget() raise "wrapped C/C++ object of type
+        # QVBoxLayout has been deleted" (Sentry). A deleted layout has no
+        # rows left to clear — treat it as already-empty and bail.
+        try:
+            i = 0
+            while i < layout.count():
+                item = layout.itemAt(i)
+                w = item.widget() if item is not None else None
+                if w is None:
+                    i += 1
+                    continue
+                layout.removeWidget(w)
+                w.deleteLater()
+        except RuntimeError:
+            return  # audit: deliberate-fail-soft — conv_layout C++ object already deleted
         # Remove the welcome card if it's still around — restored
         # transcripts replace it.
         if getattr(self, "_welcome_widget", None) is not None:

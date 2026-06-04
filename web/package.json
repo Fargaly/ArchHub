@@ -1,0 +1,26 @@
+{
+  "name": "archhub-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ArchHub marketing + docs site. Static Astro 4 build off COMMITTED content under src/content/ + public/ — no live daemon needed. Maintainers refresh that content with `npm run refresh-content`.",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "refresh-content": "node scripts/refresh-content.js",
+    "build-info": "node scripts/build-info.js",
+    "copy-brain-viz": "node scripts/copy-brain-viz.js",
+    "from-brain": "node scripts/from-brain.js",
+    "export-web-data": "python ../tools/export_web_data.py",
+    "extract-pricing": "python scripts/extract_pricing.py"
+  },
+  "dependencies": {
+    "astro": "^4.16.0",
+    "@astrojs/mdx": "^3.1.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

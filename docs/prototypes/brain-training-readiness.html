@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArchHub · Brain Training Readiness (#33)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --panel:#16181c; --line:#262a31; --ink:#e9e7df; --soft:#a8a69c;
+    --muted:#6c6f78; --accent:#d97757; --ok:#788c5d; --cyan:#6a9bcc; --warn:#c9a23f;
+    --sans:'Segoe UI',system-ui,sans-serif; --mono:'Cascadia Code',Consolas,monospace; --serif:Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;padding:34px 22px 80px}
+  .wrap{max-width:980px;margin:0 auto}
+  h1{font-family:var(--serif);font-weight:500;font-size:27px;letter-spacing:-.01em;margin:0 0 4px}
+  .sub{color:var(--soft);font-size:13.5px;max-width:640px}
+  .badge{display:inline-block;font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;
+    padding:3px 9px;border-radius:20px;background:rgba(217,119,87,.16);color:var(--accent);vertical-align:middle;margin-left:8px}
+  .grid{display:grid;gap:13px;margin-top:22px}
+  .g4{grid-template-columns:repeat(4,1fr)} .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:760px){.g4,.g2{grid-template-columns:1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px}
+  .card .n{font-family:var(--mono);font-size:30px;font-weight:600;color:var(--ink);line-height:1.1}
+  .card .l{font-size:11.5px;color:var(--soft);margin-top:5px}
+  .card .h{font-size:9px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px}
+  h2{font-family:var(--serif);font-weight:500;font-size:18px;margin:30px 0 6px}
+  .bar{height:11px;border-radius:6px;background:#202329;overflow:hidden;display:flex;margin:3px 0}
+  .bar i{display:block;height:100%}
+  .row{display:flex;align-items:center;gap:10px;font-size:12.5px;margin:7px 0}
+  .row .k{width:120px;color:var(--soft);font-family:var(--mono);font-size:11px}
+  .row .v{width:48px;text-align:right;color:var(--muted);font-family:var(--mono);font-size:11px}
+  .row .bw{flex:1}
+  .verdict{border-left:3px solid var(--warn);background:rgba(201,162,63,.08)}
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:8px}
+  @media(max-width:760px){.paths{grid-template-columns:1fr}}
+  .path{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .path.a{border-top:3px solid var(--accent)} .path.b{border-top:3px solid var(--cyan)}
+  .path h3{margin:0 0 4px;font-size:15px} .path .when{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .path p{font-size:12.5px;color:var(--soft);margin:8px 0 0}
+  .pick{margin-top:11px;font-size:11px;color:var(--accent);font-family:var(--mono)}
+  ul{margin:6px 0 0;padding-left:18px} li{font-size:12.5px;color:var(--soft);margin:3px 0}
+  .gap{color:var(--warn)} .good{color:var(--ok)}
+  .foot{margin-top:26px;font-family:var(--mono);font-size:10px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+  code{font-family:var(--mono);background:#202329;padding:1px 5px;border-radius:3px;font-size:.92em;color:var(--cyan)}
+</style>
+</head>
+<body><div class="wrap">
+
+  <h1>Your brain as model fuel <span class="badge">#33 · readiness</span></h1>
+  <div class="sub">Live snapshot of what the brain holds today, scored for training ArchHub's own
+    models. Real numbers, pulled from the daemon — not a mock. The question this answers:
+    <b>is there enough good data to train on yet, and how?</b></div>
+
+  <div class="grid g4">
+    <div class="card"><div class="h">Trainable rows</div><div class="n">396</div><div class="l">facts + docs the brain can export as examples</div></div>
+    <div class="card"><div class="h">Dataset size</div><div class="n">~32k</div><div class="l">tokens (≈627 KB JSONL) — <span class="gap">proof-scale</span></div></div>
+    <div class="card"><div class="h">Provenance</div><div class="n good">100%</div><div class="l">every row tags the agent that wrote it</div></div>
+    <div class="card"><div class="h">Use signal</div><div class="n good">175 / 0</div><div class="l">successful uses / failures — clean</div></div>
+  </div>
+
+  <h2>What's in it — by scope</h2>
+  <div class="row"><span class="k">user (yours)</span><span class="bw"><span class="bar"><i style="width:48%;background:var(--accent)"></i></span></span><span class="v">191</span></div>
+  <div class="row"><span class="k">project</span><span class="bw"><span class="bar"><i style="width:51%;background:var(--cyan)"></i></span></span><span class="v">203</span></div>
+  <div class="row"><span class="k">firm</span><span class="bw"><span class="bar"><i style="width:1%;background:var(--ok)"></i></span></span><span class="v">2</span></div>
+  <div class="row"><span class="k gap">community</span><span class="bw"><span class="bar"><i style="width:0;"></i></span></span><span class="v">0</span></div>
+
+  <h2>What's in it — by kind</h2>
+  <div class="row"><span class="k">fact</span><span class="bw"><span class="bar"><i style="width:87%;background:var(--accent)"></i></span></span><span class="v">345</span></div>
+  <div class="row"><span class="k">document</span><span class="bw"><span class="bar"><i style="width:12%;background:var(--cyan)"></i></span></span><span class="v">48</span></div>
+  <div class="row"><span class="k">setup</span><span class="bw"><span class="bar"><i style="width:1%;background:var(--ok)"></i></span></span><span class="v">2</span></div>
+  <div class="row"><span class="k">trace</span><span class="bw"><span class="bar"><i style="width:1%;background:var(--muted)"></i></span></span><span class="v">1</span></div>
+
+  <h2>Verdict</h2>
+  <div class="card verdict">
+    <b>Proof-scale, not production-scale — yet.</b> 396 rows / ~32k tokens is far too small to train a
+    model from scratch (that needs millions of tokens). But it's enough to <b>fine-tune a small adapter
+    (LoRA) on a base model as a working proof</b> — a few hundred good, provenance-tagged examples
+    measurably shift behaviour. The path to a real model is the brain growing: more projects, more
+    devices, and eventually the <span class="gap">community scope (now 0)</span> pooling
+    privacy-protected facts across users. That's the north-star loop already wired in the app.
+  </div>
+
+  <h2>Two ways to spend the fuel — pick one to prototype</h2>
+  <div class="paths">
+    <div class="path a">
+      <h3>A · Fine-tune a domain model</h3>
+      <span class="when">LoRA on a small instruct base · proof in ~1 session</span>
+      <p>Turn the 345 facts into instruction pairs, LoRA-fine-tune a small open model (e.g. an 8B). Output: a model that <i>answers AEC + ArchHub questions in your voice</i> without RAG. Tests whether the brain can teach a model, at proof scale.</p>
+      <div class="pick">▸ react: "do A" to scope it</div>
+    </div>
+    <div class="path b">
+      <h3>B · Train the retrieval brain</h3>
+      <span class="when">embedding fine-tune · feeds today's RAG</span>
+      <p>Fine-tune the embedding model on your fragments so "find me something like this" gets sharper on AEC terms. Lower risk, compounds the brain you already use daily — but not "our own model" in the headline sense.</p>
+      <div class="pick">▸ react: "do B" to scope it</div>
+    </div>
+  </div>
+
+  <h2>Honest gaps before any real training run</h2>
+  <ul>
+    <li><span class="good">Confidence now in the export ✓</span> (fixed + live 2026-06-02) — every row now carries its <code>confidence</code> tier + <code>half_life_days</code>, so a training run can filter by quality. <b>Real signal: all 396 rows are "extracted" tier — zero promoted to "proven" yet.</b> Promotion happens when a fact survives success gates (175 clean uses logged, but promotion not yet run). The high-value training slice is the <i>proven</i> one — so the lever before a serious run is <b>promote, not just collect</b>. That's a brain-side job, not yours.</li>
+    <li><span class="gap">Community scope = 0</span> — the highest-value training pool (cross-user, privacy-protected aggregates) needs the multi-device sync live, which needs your <b>cloud sign-in</b>. Until then, training data caps at your own user+project facts.</li>
+    <li><b>Compute + base-model + spend</b> — fine-tuning needs a GPU box (local or rented) and a base-model license choice. That's yours.</li>
+  </ul>
+
+  <div class="foot">
+    SOURCE: live <code>brain.dataset_export</code> (scopes user/project/firm) + per-row analysis, 2026-06-02.
+    396 rows · kinds fact 345 / document 48 / setup 2 / trace 1 · provenance 100% · success 175 / fail 0 ·
+    confidence 100% extracted-tier (0 proven) · ~32k tokens (text/4). Brain: 64 skills, 410 facts, owner
+    Fargaly. NOT a mock — regenerate any time. Confidence + half_life now in the export (dataset_export.py).
+  </div>
+
+</div></body>
+</html>

@@ -350,6 +350,40 @@ def sessions_count() -> int:
     return sum(1 for s in list_sessions(prune=False) if s.healthy)
 
 
+def live_session_count(*, timeout: float = 0.3) -> int:
+    """Hard-bounded count of live Revit sessions — for the 5s health poll.
+
+    Why this exists (connector-health thread-leak root fix, 2026-06-01):
+    `list_sessions(prune=True)` does a parallel 16-port range scan via a
+    ThreadPoolExecutor whose __exit__ joins every worker, and each worker
+    probes `http://localhost:<port>` — which on Windows resolves to ::1 THEN
+    127.0.0.1, so a dead port costs 2× the timeout. Cold, that call measures
+    ~2.4s. When connector_health's poll thread ran it inside a tick, the tick
+    blocked un-interruptibly for >2s, so ConnectorHealth.stop()'s 2s join
+    timed out and the daemon leaked past test teardown (the 229-error
+    regression). c98fd35 added the join but couldn't have known a single tick
+    could outlast it.
+
+    This helper is the cheap path the poll thread needs: it reads the session
+    heartbeat files (RevitMCP rewrites them every 10s — the authoritative
+    source) and does ONE bounded 127.0.0.1 TCP connect per known port. No
+    thread pool, no port-range discovery, no prune, no dual-stack HTTP — so it
+    is bounded to (num session files × timeout) and is ~0 when no Revit runs
+    (no files). Full discovery + prune stays in list_sessions for the UI's
+    explicit enumeration, which runs off the poll thread.
+    """
+    if not SESSIONS_DIR.exists():
+        return 0
+    n = 0
+    for p in sorted(SESSIONS_DIR.glob("revit-*.json")):
+        s = _read_session_file(p)
+        if s is None or not s.port:
+            continue
+        if _probe(s.port, timeout=timeout):
+            n += 1
+    return n
+
+
 def cleanup_stale() -> int:
     """Force-prune stale session files. Returns count removed."""
     if not SESSIONS_DIR.exists():

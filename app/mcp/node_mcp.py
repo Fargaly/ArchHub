@@ -649,6 +649,16 @@ def _build_conversation_tools(config: dict,
         try:
             from llm_router import LLMRouter  # late import
         except Exception:
+            # audit: deliberate-fail-soft — the LLM router isn't even
+            # importable (e.g. trimmed/embedded build). This is NOT a
+            # masked failure: the envelope self-labels `"stub": True` and
+            # the response text is literally prefixed `[stub-<model>]`, so
+            # no caller can mistake it for a real completion. The node
+            # stays a live MCP server (founder direction: every node) and
+            # its chat state remains observable offline. A router that IS
+            # present but FAILS at call time is reported honestly as
+            # status:"unavailable" in the block below — that path is not
+            # allowlisted.
             response_text = f"[stub-{model}] {prompt[:80]}"
             state["messages"].append({"role": "assistant",
                                        "content": response_text})

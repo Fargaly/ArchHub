@@ -102,40 +102,49 @@ def _llm_complete_with_tools_executor(config: dict, inputs: dict, ctx) -> dict:
     model = config.get("model") or "auto"
     whitelist = set(config.get("allowed_tools") or [])
 
-    # Temporarily filter the tool engine's exposed tools by patching the
-    # method that returns schemas. Cleaner approach: a context manager.
-    original = ctx.tool_engine.tool_schemas_for
+    # Restrict the tool surface for THIS call via the router's per-call
+    # `allowed_tool_names` whitelist — a thread-safe local filter inside
+    # _complete_once. The previous implementation MUTATED the shared
+    # ctx.tool_engine.tool_schemas_for for the duration of the call, which
+    # corrupted any concurrent chat / workflow turn running on the same
+    # ToolEngine (it would transiently see this node's whitelist). The
+    # router now owns the filtering per-request, so no shared state is
+    # touched. Empty whitelist ⇒ pass None ⇒ full surface (unchanged).
+    history = [{"role": "user", "content": prompt}]
+    invocations: list[dict] = []
+    text_buf: list[str] = []
+
+    _complete_kwargs = dict(
+        history=history,
+        model=model,
+        on_chunk=lambda piece: text_buf.append(piece),
+        on_tool_invocation=lambda inv: invocations.append(inv.to_dict()),
+    )
+    # Back-compat: only pass the whitelist kwarg to a router whose
+    # complete() accepts it. An older router (without the param) keeps the
+    # full surface rather than raising TypeError.
     if whitelist:
-        def filtered(provider: str):
-            return [t for t in original(provider)
-                    if (t.get("name") or t.get("function", {}).get("name")) in whitelist]
-        ctx.tool_engine.tool_schemas_for = filtered
+        try:
+            import inspect as _inspect
+            if "allowed_tool_names" in _inspect.signature(
+                    ctx.router.complete).parameters:
+                _complete_kwargs["allowed_tool_names"] = whitelist
+        except (TypeError, ValueError):
+            pass
 
     try:
-        history = [{"role": "user", "content": prompt}]
-        invocations: list[dict] = []
-        text_buf: list[str] = []
-
-        try:
-            response = ctx.router.complete(
-                history=history,
-                model=model,
-                on_chunk=lambda piece: text_buf.append(piece),
-                on_tool_invocation=lambda inv: invocations.append(inv.to_dict()),
-            )
-        except Exception as ex:
-            return {"text": "", "model": "",
-                    "tool_invocations": invocations,
-                    "status": "error",
-                    "error": f"{type(ex).__name__}: {ex}"}
-        return {
-            "status": "ok",
-            "text": response.text,
-            "tool_invocations": invocations,
-            "model": response.model,
-        }
-    finally:
-        ctx.tool_engine.tool_schemas_for = original
+        response = ctx.router.complete(**_complete_kwargs)
+    except Exception as ex:
+        return {"text": "", "model": "",
+                "tool_invocations": invocations,
+                "status": "error",
+                "error": f"{type(ex).__name__}: {ex}"}
+    return {
+        "status": "ok",
+        "text": response.text,
+        "tool_invocations": invocations,
+        "model": response.model,
+    }
 
 
 register(

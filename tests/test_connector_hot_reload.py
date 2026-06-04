@@ -155,7 +155,7 @@ def test_agdr_0027_exists():
     p = DOCS / "agdr" / "AgDR-0027-connector-hot-reload.md"
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     assert "AssemblyLoadContext" in text
     assert "ICoreEntryPoint" in text
     # Acceptance: no Revit restart for future updates.

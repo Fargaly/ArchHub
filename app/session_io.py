@@ -52,6 +52,21 @@ def _payload_is_empty(session: Session, messages: Optional[list]) -> bool:
         chain = getattr(session, "chain", None) or []
         if len(params) > 0 or len(chain) > 0:
             return False
+        # A canvas-authored graph with nodes is NOT empty — the user built
+        # a graph (host / AI / connector nodes) even if no chat message,
+        # parameter, or chain step exists yet. Without this, `ping rhino`
+        # (which spawns a Host + Conversation node and writes the chat into
+        # the NODE body, not session.history) was judged empty and REFUSED,
+        # so the session persisted as a nodes:[] stub (founder bug
+        # 2026-06-02: "the session is saved but empty"). The round-trip
+        # verify below already counts graph nodes — this makes the refuse
+        # gate consistent with it.
+        graph = getattr(session, "graph", None)
+        if graph is not None:
+            nodes = (graph.get("nodes") if isinstance(graph, dict)
+                     else getattr(graph, "nodes", None))
+            if nodes and len(nodes) > 0:
+                return False
     except Exception:
         return False
     return True

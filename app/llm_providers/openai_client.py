@@ -50,6 +50,8 @@ class OpenAIClient:
         tools: list[dict],
         on_chunk: Callable[[str], None],
         on_reasoning: Callable[[str], None] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         on_reasoning = on_reasoning or (lambda _: None)
         oa_messages: list[dict] = [{"role": "system", "content": system}]
@@ -100,15 +102,42 @@ class OpenAIClient:
 
             oa_messages.append({"role": role, "content": content})
 
-        kwargs: dict[str, Any] = dict(model=model, messages=oa_messages, stream=True)
+        kwargs: dict[str, Any] = dict(
+            model=model, messages=oa_messages, stream=True,
+            # Ask the API to emit a final usage chunk so we get REAL token
+            # counts (prompt_tokens / completion_tokens) instead of an
+            # estimate. The usage chunk arrives after the content, in a
+            # chunk whose `choices` list is empty.
+            stream_options={"include_usage": True},
+        )
+        # Caller-supplied sampling params (node.config). None keeps the
+        # API defaults so the chat path is unchanged.
+        if temperature is not None:
+            try:
+                kwargs["temperature"] = max(0.0, min(2.0, float(temperature)))
+            except (TypeError, ValueError):
+                pass
+        if max_tokens is not None:
+            try:
+                kwargs["max_tokens"] = max(16, int(max_tokens))
+            except (TypeError, ValueError):
+                pass
         if tools:
             kwargs["tools"] = tools
 
         text_accum: list[str] = []
         tool_calls: dict[int, dict] = {}     # index -> partial tool call
         finish_reason = "stop"
+        # REAL token usage from the final usage chunk (choices == []).
+        prompt_tokens = 0
+        completion_tokens = 0
 
         for chunk in self._client.chat.completions.create(**kwargs):
+            # Final usage chunk carries no choices — read the real counts.
+            cu = getattr(chunk, "usage", None)
+            if cu is not None:
+                prompt_tokens = int(getattr(cu, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(cu, "completion_tokens", 0) or 0)
             if not chunk.choices: continue
             choice = chunk.choices[0]
             delta = choice.delta
@@ -144,6 +173,8 @@ class OpenAIClient:
                 finish_reason = choice.finish_reason
 
         text = "".join(text_accum)
+        usage = {"prompt_tokens": prompt_tokens,
+                 "completion_tokens": completion_tokens}
         if finish_reason == "tool_calls" and tool_calls:
             calls = []
             for tc in tool_calls.values():
@@ -152,5 +183,6 @@ class OpenAIClient:
                 except json.JSONDecodeError:
                     parsed = {}
                 calls.append({"id": tc["id"], "name": tc["name"], "input": parsed})
-            return {"type": "tool_use", "text": text, "tool_calls": calls}
-        return {"type": "final", "text": text}
+            return {"type": "tool_use", "text": text,
+                    "tool_calls": calls, "usage": usage}
+        return {"type": "final", "text": text, "usage": usage}

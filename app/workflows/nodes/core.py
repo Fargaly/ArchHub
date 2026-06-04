@@ -604,6 +604,24 @@ def _conversation_exec(config: dict, inputs: dict, ctx) -> dict:
         msgs = []
     model = config.get("model") or "auto"
     system_cfg = inputs.get("system") or config.get("system") or ""
+    # node.config sampling params (config_schema declares temperature
+    # default 0.7, max_tokens default 4096; the node UI exposes both).
+    # Read them here and forward to the router so the node's settings
+    # actually reach the provider — before this they were dead config.
+    # Coerce defensively; leave as None when absent/invalid so the
+    # router + provider keep their own defaults (back-compat).
+    def _num(_v):
+        try:
+            return None if _v is None else float(_v)
+        except (TypeError, ValueError):
+            return None
+
+    _temperature = _num(config.get("temperature"))
+    _max_tokens = config.get("max_tokens")
+    try:
+        _max_tokens = None if _max_tokens is None else int(_max_tokens)
+    except (TypeError, ValueError):
+        _max_tokens = None
 
     # Path A: real router in scope.
     router = getattr(ctx, "router", None) if ctx is not None else None
@@ -629,13 +647,26 @@ def _conversation_exec(config: dict, inputs: dict, ctx) -> dict:
             except Exception:
                 invocations.append({"raw": repr(inv)[:200]})
 
+        # Forward the node's sampling params. Back-compat: an older router
+        # whose complete() predates these kwargs raises TypeError on the
+        # FIRST call (before any provider I/O) — detected by signature
+        # introspection so we retry cleanly without them, never masking a
+        # real provider TypeError raised mid-completion.
+        import inspect as _inspect
+        _complete_params = _inspect.signature(router.complete).parameters
+        _supports_sampling = ("temperature" in _complete_params
+                              and "max_tokens" in _complete_params)
+        _complete_kwargs = dict(
+            history=history,
+            model=model,
+            on_chunk=lambda _piece: None,
+            on_tool_invocation=_on_inv,
+        )
+        if _supports_sampling:
+            _complete_kwargs["temperature"] = _temperature
+            _complete_kwargs["max_tokens"] = _max_tokens
         try:
-            response = router.complete(
-                history=history,
-                model=model,
-                on_chunk=lambda _piece: None,
-                on_tool_invocation=_on_inv,
-            )
+            response = router.complete(**_complete_kwargs)
         except Exception as ex:
             # No key / blocked / refused — fall through to missing_dep
             # with the best hint we can derive.

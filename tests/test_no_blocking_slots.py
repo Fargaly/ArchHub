@@ -6,13 +6,21 @@ hidden one helper-hop down (c.probe(), broker.forward(),
 cloud_client._request(), detect_all_*, a recursive glob).
 
 This test runs the `maintenance_audit` blocking-in-pyqtslot detector
-over app/bridge.py and FAILS if any slot blocks the UI thread —
-except a tiny, documented allowlist of EXPLICIT user-action Settings
-buttons whose brief stall is acceptable UX.
+over app/bridge.py and FAILS if ANY slot blocks the UI thread.
+
+The allowlist is now EMPTY. It once held the two EXPLICIT user-action
+Settings buttons (`export_all` + `clear_model_cache`) whose brief stall
+on click was treated as acceptable UX. As of 2026-06-02 (AgDR-0036
+follow-up) both were converted to the proven off-thread idiom — the
+slot submits the heavy glob+zip / glob+delete to `_bg_pool()`, returns
+`{async, request_id}` instantly, and emits `settings_op_done` when the
+work lands — so there is no longer any slot that blocks the Qt main
+thread, on user action or otherwise.
 
 If this test fails, a new blocking slot was added.  Route its slow
-work through `ArchHubBridge._cached_async` (cached, pooled,
-signal-on-fresh) — see AgDR-0035 / AgDR-0036.
+work off-thread: `ArchHubBridge._cached_async` (cached, pooled,
+signal-on-fresh) for passive reads, or `_bg_pool().submit(...)` +
+a `*_op_done` signal for user-action ops — see AgDR-0035 / AgDR-0036.
 """
 from __future__ import annotations
 
@@ -29,12 +37,15 @@ import maintenance_audit as ma  # noqa: E402
 
 BRIDGE = REPO / "app" / "bridge.py"
 
-# Explicit user-action Settings buttons.  A 1-2s stall when the user
-# deliberately clicks "Export everything" / "Clear model cache" is
-# expected UX, NOT the passive freeze the founder reported.  Bounded,
-# documented, and tracked on docs/ROADMAP.md for async conversion.
-# Anything NOT in this set that blocks is a real regression.
-_ALLOWLISTED_SLOTS = {"export_all", "clear_model_cache"}
+# EMPTY by design (2026-06-02).  This once allowlisted the explicit
+# user-action Settings buttons `export_all` + `clear_model_cache` — a
+# 1-2s stall on a deliberate click was treated as acceptable UX.  Both
+# are now genuinely off-thread (slot submits the heavy fs work to
+# `_bg_pool()`, returns {async, request_id} instantly, and emits
+# `settings_op_done` on completion — AgDR-0036 follow-up), so the
+# exception is gone.  ANY blocking @pyqtSlot is now a real regression;
+# keep this set empty and route new slow work off-thread instead.
+_ALLOWLISTED_SLOTS: set[str] = set()
 
 
 def _slot_name_for(finding, lines: list[str]) -> str:
@@ -77,8 +88,13 @@ def test_no_unguarded_blocking_slots_in_bridge():
 
 
 def test_allowlist_slots_still_exist():
-    """If an allowlisted slot is renamed / removed, shrink the
-    allowlist — don't let it rot into a silent escape hatch."""
+    """Guard against the allowlist rotting into a silent escape hatch.
+
+    The allowlist is currently EMPTY (no blocking slots are tolerated).
+    If a future change re-adds an entry, it must name a slot that really
+    exists — a stale name would silently excuse a slot that's no longer
+    there. With an empty set this is a no-op, which is the intended
+    steady state."""
     src = BRIDGE.read_text(encoding="utf-8")
     for slot in _ALLOWLISTED_SLOTS:
         assert re.search(rf"def\s+{re.escape(slot)}\s*\(", src), (

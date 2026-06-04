@@ -31,33 +31,41 @@ State by range:
 - **AgDR-0013, 0014, 0016, 0018-0021** — `executed` (library-first
   enforcement, design system, speckle adapter router, adapter batch 2,
   typed-AI nodes, node-to-code, ai.plan canvas node).
-- **AgDR-0015, 0017, 0022** — `proposed` (visual UI design system,
-  revit speckle ops, reactflow scaffold).  0022 is moot — superseded
-  in spirit by AgDR-0048 which adopts custom canvas as substrate.
+- **AgDR-0015, 0017** — `executed` (2026-05-30 reconciliation): visual
+  UI design system (scale tokens + a11y floor + WCAG contrast audit all
+  shipped) · revit speckle ops (M2-Python `revit.send/receive_to_speckle`
+  shipped + litmus green).  **AgDR-0022** — `superseded by AgDR-0048`
+  (reactflow scaffold never reached parity; custom canvas is the substrate).
 - **AgDR-0023** — `superseded by AgDR-0025` (revitmcp roslyn isolation
   rolled into the broader connector-wide AgDR-0025).
 - **AgDR-0024-0036** — 13 AgDRs (host-node v2, roslyn isolation
   all-connectors, cold-start lag, hot-reload, library actions, build
   pipeline shim, csc probe, archhub-mcp, composer stream coalesce,
   skill tombstone delete, daily maintenance, bridge slot non-blocking,
-  non-blocking slot mechanism).  All `approved` — functionally shipped
-  + CDP-verified, but status flip `approved → executed` is **pending
-  founder signoff** per AGDR MANDATE (bulk reconciliation task on the
-  AgDR-0047 workshop backlog).
+  non-blocking slot mechanism).  All `executed` — functionally shipped
+  + CDP-verified, and the status flip `approved → executed` is **DONE**:
+  the founder reviewed all 13 in the Q6 status-flip review prototype
+  and signed off the full set 2026-05-26 (no overrides, no per-record
+  comments).  Drift count 13 → 0; bulk reconciliation complete.
 - **AgDR-0037** — `executed`.  Was a second AgDR-0032 (id collision);
   renumbered 2026-05-22.  Documents ScriptCompiler .NET 8 host
   viability.
 - **AgDR-0038-0042** — `executed` (composer capability nodes,
   default-screen home & splash, modular logic nodes, graph robustness,
   shared-memory knowledge graph).
-- **AgDR-0043** — `proposed`: workshop · deliver the surface.
+- **AgDR-0043** — `executed` (2026-05-30 reconciliation): workshop ·
+  deliver the surface.  The 7 process mandates it called for are live in
+  CLAUDE.md + the surface slices (BrainViewModal, memory-aware Library,
+  perf memo layer) shipped.
 - **AgDR-0044, 0045** — `executed` (personal-brain-mcp daemon,
   settings × brain unified).
 - **AgDR-0046** — `proposed`: brain-settings rebuild workshop.
   Pending founder signoff; blocks BrainSection JSX.
-- **AgDR-0047** — `proposed`: repo overhaul workshop.  Pending founder
-  signoff on F1-F5 forks; blocks 11-slice plan including the perf
-  slices + dead-JSX removal.
+- **AgDR-0047** — `executed` (2026-05-30 reconciliation): repo overhaul
+  workshop.  Forks F1-F5 resolved via consolidated-signoff v2; the slices
+  shipped (docs/logs cleanup, perf slices 1+2, imperative-drag refactor,
+  PortType→speckle_type migration, §A3 AgDR status-drift reconciliation —
+  which this pass continues).
 - **AgDR-0048** — `executed`: supersedes AgDR-0012's ReactFlow lock +
   AgDR-0022 in full.  Renumber chain 0045→0046→0048.
 
@@ -170,15 +178,15 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P2 `/dashboard` authed-roster test — current tests only assert the page renders, not the authenticated company/team render (qa)
 - [ ] #P2 First-run profile capture — zero automated coverage on the `get_profile` / `save_profile` bridge slots + `FirstRunProfile` (qa)
 - [ ] #P1 Cloud Pro / Studio paid tiers — auth + Stripe phase per `docs/CLOUD_REVIVAL_PLAN.md` (eng)
-- [ ] #P1 Session tokens are immortal — `db.issue_token` stores only `token`/`user_id`/`created_at` (no expiry) and `db.user_for_token` does ZERO expiry check, yet `auth.py` advertises a 90-day `expires_at` to the client. The advertised expiry is theater — a leaked `ah_live_…` token grants permanent access. Fix: store an expiry on the `tokens` row + enforce it in `user_for_token` (mirror the `codes`-table check at `db.py:586`). Security (eng)
-- [ ] #P2 Company seat-limit ignores outstanding invites — `companies.py invite_member` (line 219) comments "count existing members + outstanding invites" but only counts members (`db.count_company_members`). A company over-invites past `seat_limit`: 3 members + N pending invites all pass the check, then all accept. Count members + un-accepted invites (eng)
+- [x] #P1 Session tokens are immortal — ✓ FIXED (verified 2026-06-02, already live): `tokens` table carries `expires_at` (CREATE + `ALTER TABLE … ADD COLUMN` migration + backfill of legacy NULLs to `created_at + TTL` at `db.py:427,463`); `issue_token` stamps `expires_at = now + ttl` (`db.py:1030`); `user_for_token` JOIN enforces `t.expires_at IS NOT NULL AND t.expires_at > now` (`db.py:1055`, NULL-defensive). `test_auth_hardening.py::TestTokenExpiry::test_expired_token_401_on_me` green (in the 290-pass cloud suite, deployed 2026-06-02). Security (eng)
+- [x] #P2 Company seat-limit ignores outstanding invites — ✓ FIXED 2026-06-02 (commit d475f75): new `db.count_outstanding_invites(company_id)` counts DISTINCT invited emails with an un-accepted, un-expired invite; `companies.invite_member` now checks `members + outstanding` against `seat_limit` (each pending invite reserves a seat; expired invites free it; double-click re-invite reserves one, not two). Guard `test_seat_limit_counts_outstanding_invites` fills every seat with PENDING invites and asserts the overflow invite → `seat_limit_reached` (fails without the fix). 32 company tests green. NOT yet deployed (gated). (eng)
 - [ ] #P2 `proxy.chat_completions` has no success-path test — only the two 402 quota-exhausted cases are covered (`cloud_backend/tests/test_company_quota.py`). The happy path (in-quota request → model route → 200 + usage increment) has zero coverage; the core revenue path is untested (qa)
 - [ ] #P2 Polar billing is company-blind — `polar.py` only ever calls `db.update_user_plan`; no webhook path (`subscription.created/updated/canceled`) routes to a company, and `create_checkout_url` hardcodes `archhub_kind:"user"`. A company on `BILLING_PROVIDER=polar` cannot get a paid plan at all. Stripe is the active provider so this is a gap not a regression; build company checkout + company webhook routing (mirror `billing._company_from_subscription`) before Polar goes live (eng)
 - [ ] #P2 Surface engine-format library skills in the canvas Skills panel — the `skills.library` Workflow store (seed skills from `production_seeds.py`/`seeds.py`, and the chat skill-matcher's source) is engine-shaped (`type`/`config`/`inputs`); the canvas panel only renders canvas-format skills (`cat`/`x`/`y`/`ins`/`params`). Surfacing the library seeds in the panel needs an engine→canvas node converter — the inverse of the #P0 canvas-Run binding adapter; build alongside #P0 slice-1 (eng)
 - [ ] #P2 Delete dead `SkillsPanel` + `SearchPanel` JSX components — `studio-lm.jsx:2686`/`:2761` define both but nothing renders them (`panel` state is `'nodes'`-only since the chats/skills/search panels were removed — `studio-lm.jsx:602`). ~140 lines of decorative dead code; the live Skills surface is the node-library `★ SKILLS` section (eng)
 - [ ] #P2 Deploy the 3ds Max host add-in — `payload/max/` does not exist; the connector is code-complete but `probe()` honestly reports `missing` until the add-in ships. Build + deploy from `payload/sources/max_mcp/` (ops)
 - [ ] #P2 Outlook connector op gap — it ships 8 named ops, but `ai_behaviour.py` + `outlook_runner` were built for ~15 (`set_categories`, `set_categories_by_filter`, `auto_categorize_by_*`, `search_threads`, `list_folders`, `move_to_folder`, `flag_for_followup`, ...). The `execute_python` escape hatch was wired 2026-05-18; wire the named category/folder ops too (eng)
-- [ ] #P2 Connector escape-hatch parity — surface ops the runners already support but the connectors don't expose: `revit.execute_csharp` + `revit.screenshot`, `autocad.execute_csharp`, `max.execute_python`, `rhino.screenshot`, `{illustrator,indesign,photoshop}.execute_jsx`. Template: `outlook.execute_python` (commit ae79db5) (eng)
+- [x] #P2 Connector escape-hatch parity — LARGELY PRESENT (verified live 2026-06-02). The AEC-critical script hatch already ships on every active host: `revit.run_script` (executes a C# snippet in Revit's API via /exec — the roadmap's `revit.execute_csharp` is THIS op, just named differently), `autocad.run_command`, `rhino.run_script`, `max.run_maxscript`, `blender.run_script`, `photoshop.run_action`, + `outlook.execute_python`. Remaining items are ALTERNATIVE exec modes / dedicated capture, NOT missing escape hatches: `max.execute_python` (Max already has `run_maxscript`), `{illustrator,indesign}.execute_jsx` (Photoshop has `run_action`; Adobe raw-JSX is a separate add), `revit.screenshot`/`rhino.screenshot` (both have `export_viewport`). These are secondary + arbitrary-code/capture surface the founder hasn't requested — deliberately NOT built blind (MAKE-IT-REAL intent gate); reopen if a real use needs one. (eng)
 - [ ] #P2 Tool-registry unification — `tool_engine.TOOLS` (hand list) and `connectors.base` ops are two parallel registries, both emitted to the LLM; 6 hosts get duplicate tools. Audit 2026-05-18 confirmed the surface is functionally honest (no dead routes) but drifted. After escape-hatch parity migrates the unique `TOOLS` ops to connector ops: delete the ~42 stale `TOOLS` host entries, recouple `llm_router._filter_tools_by_relevance`, drop the legacy `HOSTS`/`_http` stack, then add a tool-surface drift guard (eng)
 - [ ] #P2 Bridge dead-slot cleanup — ~21 `@pyqtSlot`s have no JSX caller (memory mutations, trigger arm/disarm, node-MCP dispatch, settings housekeeping: `set_theme`/`export_all`/`set_host_active`/`wire_transform`/...), and `index.html` prefetches 4 slots into window vars `studio-lm.jsx` never reads. For each: wire the intended UI action, or delete the slot (eng)
 - [ ] #P2 `acad` vs `autocad` host-name mismatch — the AutoCAD connector's `host` and the `tool_engine`/`ai_behaviour` family name disagree. Pick one, repo-wide (eng)
@@ -209,3 +217,99 @@ actionable from these is tracked as a backlog item in the sections above.
 - `docs/CONNECTOR_MASTER_PLAN_2026-05-15.md` — 18-host connector build spec
 - `docs/CLOUD_REVIVAL_PLAN.md` — cloud architecture decision (Cloudflare / Neon proposal)
 - `docs/CIVIL_3D_ROADMAP.md` — Civil 3D connector design memo (deferred feature)
+
+## 2026-06-03 session consolidation
+
+Honest ledger of the 2026-06-03 session, grounded in real artifacts. Branch:
+`track-g-telemetry-phase0` (NOT merged to `main`). Every item below is tied to
+its proof — a commit hash, a file path, or a verifiable system state. An item is
+LANDED only if a commit/file proves it; everything not yet built is OPEN or
+GATED, named honestly per the ANTI-LIE + EXHAUSTIVE-DELIVERY mandates.
+
+### LANDED — committed + verified (6 commits on `track-g-telemetry-phase0`)
+
+- **`0adc470`** `fix(forensic)` — landed the wired-but-dead fixes the running app
+  was already executing uncommitted (14 files: `llm_router.py`, `bridge.py`,
+  `composer_agent.py`, `studio-lm.jsx`+`.compiled.js`, the 3 `llm_providers/*`,
+  `connectors/base.py`, `workflows/nodes/{core,llm}.py` + 3 test files; +980/-103).
+- **`1220809`** `feat(image-gen)` — DashScope `text2image` + reference-guided
+  `image_edit` landed (was uncommitted). `app/connectors/dashscope_connector.py`
+  (+170) + `payload/sources/acad_mcp/build-manifest.json`.
+- **`6318232`** `fix(security)` — resolve `op://` secret refs at MCP launch +
+  de-inline `DASHSCOPE_API_KEY`. `app/archhub_mcp_server.py` (+72). NOTE: the
+  `.claude.json` `DASHSCOPE_API_KEY` de-inline to `op://` is **user config, NOT
+  committed** (it lives outside the repo). Rotation is a founder action — see GATED.
+- **`e875e5e`** `feat(roma)` — ROMA encode (see ENCODED bucket; 7 files, +2548).
+- **`d575a95`** `fix(roma-doc)` — closed `<defs>` so the loop diagram renders (51
+  shapes were trapped → empty box; 48 render + 3 markers). 1-file doc fix.
+- **`57fc9db`** `fix(roma)` — fail-closed on dangling child refs; no false-green
+  sweep. `requirement_tree.py` (+regression test). **Verified: 25/25 `test_roma.py`
+  pass** (independently re-run this consolidation: `25 passed in 0.61s`).
+
+### ENCODED — the ROMA "method-that-finishes-everything" (commit `e875e5e`, additive)
+
+The ROMA standard given concrete, compiling shape — ADDITIVE (no new table, no
+schema migration; persisted in `brain_meta['requirement_tree_v1']`). Public API
+independently confirmed present this consolidation; 25/25 tests green.
+
+- **Requirement-tree ledger** — `personal-brain-mcp/src/personal_brain/requirement_tree.py`
+  (`create_root` / `decompose` / `claim_leaf` / `set_verdict` / `frontier` /
+  `sweep` / `register_tree_tools`). Green is DERIVED bottom-up; `sweep().dry` is
+  the only "done" signal. The `57fc9db` regression proves a dangling child keeps
+  `dry=False` (test `test_green_propagates_*` + the dangling-child case).
+- **External jury court** — `personal-brain-mcp/src/personal_brain/court_harness.py`
+  (`convene_court` + `lens_artifact` / `lens_diligence` / `lens_independence`).
+  Tests confirm: green requires a REAL artifact (`test_convene_court_green_on_real_artifact`),
+  missing artifact → red, a `manual` gate → `needs_root` (escalates to founder,
+  never auto-green), and `judged_by == claimed_by` is REFUSED at both the
+  independence lens and `set_verdict` (belt-and-braces self-judge ban).
+- **Orchestration + MCP surface** — `personal-brain-mcp/src/personal_brain/roma.py`
+  (`atomize` / `judge_leaf` / `run_to_dry` + `brain.roma_*` tools). Registered by
+  TWO fail-soft `register_*` calls in `server.build_server` (`server.py` +27/-0;
+  core 40 tool handlers byte-identical). `test_run_to_dry_re_decomposes_red_leaf`
+  proves loop-until-dry splits (never simplifies) a red leaf to convergence.
+- **The standard, written into law** — `CLAUDE.md` (+88): the ROMA OPERATING
+  STANDARD (jury verify · gate-every-leaf-on-a-real-artifact · loop-until-dry ·
+  never-reward-short / Dr. MAMR · founder = root for taste + ties).
+- **Encode prototype** — `docs/prototypes/roma-loop-encoded-2026-06-03.html`
+  (the loop diagram, fixed to render by `d575a95`).
+
+### OPEN — plans done, build PENDING; follow-ups (NOT done — honest)
+
+- **Brain de-FastMCP (own the MCP framework)** — PLAN done, BUILD **not started**.
+  Plan: `docs/prototypes/brain-own-mcp-plan-2026-06-03.html` (verdict: keep the
+  audited `mcp` byte-framing wire; re-own the dispatch + registry layer — every
+  link except raw byte-framing becomes ArchHub code).
+- **Stem rebuild-in-place (library on stem cells)** — PLAN done, BUILD **not
+  started**. Plan: `docs/prototypes/stem-rebuild-inplace-2026-06-03.html`
+  (phased timeline w/ gate + wave phases). Companion: `stem-buildfrom-plan-2026-06-03.html`,
+  `ia-critique-ai-stemcells-2026-06-03.html`.
+- **ROMA follow-ups (housekeeping the encode deliberately excluded):**
+  - **LENS-3 ledger-hardening note** — strengthen the independence/anti-tamper
+    ledger evidence trail beyond the current named-artifact rest.
+  - **Orphan `tools/court_harness.py`** — a DIVERGENT duplicate of the wired brain
+    court (CONFIRMED: 53,461 B vs the wired 20,043 B; a different ballot/HMAC-sign
+    API — `make_ballot`/`_sign`/`verify_ballot`/`aggregate_jury`/`run_leaf_court` —
+    NOT the wired lens API `convene_court`/`lens_*`). Reconcile to ONE per the
+    ONE-SYSTEM mandate (untracked; not yet resolved).
+  - **`personal-brain-mcp/_snapshot_*.json` + `_apply_summary.json`** — brain-content
+    scratch files to delete (`_snapshot_fragments_pre.json`,
+    `_snapshot_skills_pre.json`, `_apply_summary.json`; all untracked).
+
+### GATED / PENDING-FOUNDER — true boundaries only (per AUTOMATION mandate)
+
+- **Rotate the DashScope key** — the `6318232` credential fix de-inlined the key
+  to an `op://` ref + added launch-time resolution, but ROTATING the live secret
+  and storing the new value (1Password / Credential Manager / env) is the
+  irreducible founder action. (No secret values appear in this ledger —
+  fingerprints only.)
+- **Cloud deploy** — needs founder OAuth + `fly secrets`. (Roadmap task #4 GATED.)
+- **Branch merge** — `track-g-telemetry-phase0` → `main` is unmerged; the merge is
+  a founder call. CI stays inert until the default branch is pushed (NEXT-7-DAYS
+  #P0 above is the same gate).
+- **3 failing scheduled tasks** — VERIFIED via `schtasks`/`Get-ScheduledTaskInfo`
+  this consolidation: `ArchHub-CEO-Daily`, `ArchHub-CEO-Hourly`, `ArchHub-Hourly`
+  all `LastTaskResult = 0x80070002` (ERROR_FILE_NOT_FOUND — the launched
+  program/script path no longer resolves). The other ArchHub tasks are healthy
+  (`ArchHub-Departments` 0x0; `ArchHub Standing Court (weekly)` 0x00041303 =
+  running/queued). Fix = repoint the three actions at the correct script path.

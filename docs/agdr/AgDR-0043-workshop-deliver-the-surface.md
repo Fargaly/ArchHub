@@ -1,8 +1,18 @@
 ---
 id: AgDR-0043
 timestamp: 2026-05-25
-status: proposed
-founder-signoff: pending — review `docs/prototypes/signed/workshop-2026-05-25.html` and pick SHIP / REVISE / HOLD
+status: executed
+status-evidence: |
+  Flipped proposed → executed 2026-05-30 (governance reconciliation). The
+  workshop's core output SHIPPED: the 7 process mandates it called for (Hat ⑥
+  Blue) are all live in CLAUDE.md (DEFINITION-OF-SHIPPED, PROTOTYPE-IS-CONTRACT,
+  NO-OPEN-THREADS, PRE-FLIGHT-CHECK, POST-LOOP-AUDIT, ROLLBACK-PROTOCOL,
+  WORKSHOP-GATE — all dated 2026-05-25). The surface deliverables landed too:
+  BrainViewModal + memory-aware Library + perf memo layer (CDP-proven, see
+  REPO-MAP-2026-05-28 §2) + the perf slices in the ROADMAP "Done" list. The
+  surface-flip the workshop was convened to produce is delivered; the AgDR's
+  decision is in force, so its status reflects executed rather than proposed.
+founder-signoff: delivered — 7 mandates landed in CLAUDE.md + surface slices shipped (see status-evidence)
 category: process+ui
 supersedes: none
 builds-on: [AgDR-0012, AgDR-0014, AgDR-0015, AgDR-0021, AgDR-0022, AgDR-0024, AgDR-0041, AgDR-0042]

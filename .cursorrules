@@ -6,3 +6,8 @@ hooks enforce the protected-files rule; do not bypass with --no-verify.
 CLAUDE.md has the long-form Claude-flavored ruleset. AGENTS.md is the
 agent-agnostic short version every coding agent (Cursor included) MUST
 follow regardless of vendor.
+
+Brain: connect to the personal-brain daemon (http://127.0.0.1:8473/mcp)
+before work — see AGENTS.md → BRAIN-FIRST. If this client has no auto
+hook, run tools/brainwrap or call brain.health + brain.context yourself
+first.

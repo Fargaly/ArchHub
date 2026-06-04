@@ -4,7 +4,7 @@ timestamp: 2026-05-21T22:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "STILL NOT WORKING" (delete saved skill)
 trigger: AgDR-0032 made delete_saved_skill resolve via the canvas-skill store but added a read_only gate that rejected shipped seeds.  The skills the founder actually wants to delete ("canvas", "ping-outlook-fork") live in app/skills/ — mis-saved there by the historical save_as_skill source-tree-write bug — so the gate blocked the real use case.
-status: approved
+status: executed
 category: architecture
 projects: [archhub]
 extends:

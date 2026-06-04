@@ -4,7 +4,7 @@ timestamp: 2026-05-21T12:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "/exec broken on Revit 2025 · same Roslyn conflict · make sure this problem doesn't happen with other connectors"
 trigger: Founder pick 2026-05-21 — "Subprocess csc per AgDR-0023" + "make sure this problem doesn't happen with other connectors"
-status: approved
+status: executed
 category: architecture
 projects: [archhub, revitmcp, acadmcp]
 extends:

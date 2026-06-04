@@ -18,8 +18,24 @@ instead of fabricating, and it can't wander off into Bash.
 Interface contract (matches the other provider clients):
     stream_completion(model, system, messages, tools, on_chunk,
                       on_reasoning=None) -> dict
-    -> {"type": "final", "text": str}
+    -> {"type": "final", "text": str, "tool_calls": [],
+        "tool_calls_log": [{"name","input","result"}], "usage": {...}}
     raises RuntimeError on failure (router fallback chain re-routes).
+
+Reasoning + tool-call surfacing (founder demand 2026-06-01 — "see
+everything in nodes: REASONING, tool-calls"): we drive the CLI with
+`--output-format stream-json --verbose` so it emits a JSONL event
+stream instead of a single final blob. We parse it and:
+  • stream every assistant `text` block through `on_chunk` (token-ish);
+  • forward every `thinking` block AND the `post_turn_summary` line
+    through `on_reasoning` so the Conversation / ai.plan node renders a
+    REAL reasoning trace (not the old mocked block);
+  • capture every MCP `tool_use` + its matching `tool_result` into
+    `tool_calls_log` so the turn persists the tools the local Claude
+    actually ran on the user's hosts. (Headless `claude -p` EXECUTES its
+    MCP tools itself, so we don't re-run them in the router loop —
+    `tool_calls` stays empty; the executed calls live in
+    `tool_calls_log` for the plan record + a reasoning line each.)
 """
 from __future__ import annotations
 
@@ -131,8 +147,14 @@ class ClaudeCliClient:
         if not prompt:
             raise RuntimeError("claude CLI: empty prompt")
 
+        # `--output-format stream-json --verbose` → a JSONL event stream
+        # we parse for text + thinking + tool_use + the final result.
+        # `--include-partial-messages` would give finer token deltas but
+        # also balloons the event count; block-level streaming is plenty
+        # for the in-node trace and keeps the parser simple.
         cmd = [self._exe, "-p",
-               "--output-format", "json",
+               "--output-format", "stream-json",
+               "--verbose",
                "--model", _model_arg(model)]
         if system and system.strip():
             cmd += ["--append-system-prompt", system.strip()]
@@ -174,22 +196,126 @@ class ClaudeCliClient:
                 "claude CLI returned no output"
                 + (f" — {err[:300]}" if err else ""))
 
-        # `--output-format json` → one JSON object with `result`.
-        try:
-            data = json.loads(raw)
-        except Exception:
-            on_chunk(raw)
-            return {"type": "final", "text": raw}
+        return self._parse_stream(raw, on_chunk, on_reasoning)
 
-        if isinstance(data, dict) and data.get("is_error"):
-            raise RuntimeError(
-                "claude CLI error: "
-                + str(data.get("result")
-                      or data.get("subtype") or "unknown"))
+    # ── stream-json event parser ──────────────────────────────────────
+    def _parse_stream(
+        self,
+        raw: str,
+        on_chunk: Callable[[str], None],
+        on_reasoning: Optional[Callable[[str], None]],
+    ) -> dict:
+        """Parse the `--output-format stream-json` JSONL into the client
+        contract. Streams text via on_chunk, reasoning via on_reasoning,
+        and records the MCP tools the CLI executed in tool_calls_log."""
+        on_reasoning = on_reasoning or (lambda _x: None)
 
-        text = ""
-        if isinstance(data, dict):
-            text = str(data.get("result") or "")
-        if text:
-            on_chunk(text)
-        return {"type": "final", "text": text}
+        streamed_parts: list[str] = []   # assistant text blocks (chunked)
+        final_text = ""
+        usage: Optional[dict] = None
+        is_error = False
+        err_detail = ""
+        # tool_use blocks keyed by id so we can attach the matching
+        # tool_result that arrives in a later `user` event.
+        tool_calls_log: list[dict] = []
+        _by_id: dict[str, dict] = {}
+        # Avoid double-emitting the same text both as a streamed block AND
+        # again as the final `result` blob.
+        any_text_streamed = False
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                evt = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(evt, dict):
+                continue
+            etype = evt.get("type")
+            esub = evt.get("subtype")
+
+            if etype == "assistant":
+                msg = evt.get("message") or {}
+                for blk in (msg.get("content") or []):
+                    if not isinstance(blk, dict):
+                        continue
+                    bt = blk.get("type")
+                    if bt == "text":
+                        piece = blk.get("text") or ""
+                        if piece:
+                            streamed_parts.append(piece)
+                            any_text_streamed = True
+                            on_chunk(piece)
+                    elif bt == "thinking":
+                        # Extended-thinking — the model's real reasoning.
+                        think = (blk.get("thinking") or "").strip()
+                        if think:
+                            on_reasoning(think)
+                    elif bt == "tool_use":
+                        name = blk.get("name") or "tool"
+                        tu_id = blk.get("id") or ""
+                        rec = {"name": name,
+                                "input": blk.get("input") or {},
+                                "result": None}
+                        tool_calls_log.append(rec)
+                        if tu_id:
+                            _by_id[tu_id] = rec
+                        # Surface the call itself as a reasoning frame so
+                        # the node shows WHICH host op the local Claude
+                        # ran (e.g. `revit__list_documents`).
+                        pretty = name.replace("mcp__archhub__", "") \
+                                     .replace("__", ".")
+                        on_reasoning(f"→ called tool {pretty}")
+
+            elif etype == "user":
+                # tool_result blocks ride back on a synthetic user turn.
+                msg = evt.get("message") or {}
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for blk in content:
+                        if (isinstance(blk, dict)
+                                and blk.get("type") == "tool_result"):
+                            tu_id = blk.get("tool_use_id") or ""
+                            rec = _by_id.get(tu_id)
+                            if rec is not None:
+                                rec["result"] = blk.get("content")
+
+            elif etype == "system" and esub == "post_turn_summary":
+                # A concise model-authored summary of what it did — a
+                # great single reasoning line for the node header.
+                detail = (evt.get("status_detail") or "").strip()
+                if detail:
+                    on_reasoning(detail)
+
+            elif etype == "result":
+                is_error = bool(evt.get("is_error"))
+                final_text = str(evt.get("result") or "")
+                u = evt.get("usage")
+                if isinstance(u, dict):
+                    usage = {
+                        "prompt_tokens": u.get("input_tokens"),
+                        "completion_tokens": u.get("output_tokens"),
+                    }
+                if is_error:
+                    err_detail = str(evt.get("result")
+                                     or evt.get("subtype") or "unknown")
+
+        if is_error:
+            raise RuntimeError("claude CLI error: " + (err_detail or "unknown"))
+
+        text = "".join(streamed_parts) or final_text
+        # If we streamed text blocks already, don't re-emit the final blob
+        # (would duplicate the whole message in the node). If we streamed
+        # nothing but the result has text (e.g. a pure tool turn that ended
+        # with a short summary), emit it once.
+        if final_text and not any_text_streamed:
+            on_chunk(final_text)
+            text = final_text
+
+        out: dict = {"type": "final", "text": text,
+                     "tool_calls": [], "tool_calls_log": tool_calls_log}
+        if usage:
+            out["usage"] = usage
+        return out

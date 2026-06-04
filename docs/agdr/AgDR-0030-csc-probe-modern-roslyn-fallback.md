@@ -4,7 +4,7 @@ timestamp: 2026-05-21T16:30:00Z
 agent: claude-code (Sonnet)
 session: handoff from prior session (commit eccfc2c) — Bug 2 in ScriptCompiler probe
 trigger: Founder report — /exec returns CS1617 "Invalid option '7.3' for /langversion" on any box without VS BuildTools; root cause = ScriptCompiler probe accepts Framework64 csc.exe which caps at C# 5 on .NET 4.8.1.
-status: approved
+status: executed
 category: architecture
 projects: [archhub, revitmcp, acadmcp]
 extends:

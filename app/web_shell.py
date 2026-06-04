@@ -164,6 +164,29 @@ class WebShell(QMainWindow):
         QShortcut(QKeySequence("F12"), self,
                    activated=self._toggle_devtools)
 
+        # ── In-app debug bridge (founder-approved, 2026-06-01) — a
+        # COMPLEMENTARY zero-DevTools proof path, NOT a CDP replacement.
+        # CDP/remote-debugging works on this QtWebEngine build (see
+        # tests/test_ui_cdp_smoke.py); the earlier "the remote-debugging
+        # websocket handshake stalls on this build" note was wrong — the real
+        # causes were a missing --remote-allow-origins Chromium flag (now
+        # added in app/main.py when remote debugging is opt-in) and a verifier
+        # that ran the ws client on the Qt GUI thread. This bridge is still
+        # valuable because it needs NO remote-debugging port: it starts a tiny
+        # loopback HTTP server with a narrow read-only surface (/health,
+        # /screenshot, /dom_query) so an external verifier can observe the live
+        # window with curl alone. It runs ONLY when ARCHHUB_DEBUG_BRIDGE=1 —
+        # a normal launch opens no port and is completely unaffected. Never
+        # raises; a debug aid must not be able to break the app launch.
+        self._debug_bridge = None
+        try:
+            import debug_bridge
+            self._debug_bridge = debug_bridge.maybe_start(
+                view=self.view, page=self.view.page(), window=self,
+            )
+        except Exception:
+            self._debug_bridge = None
+
     # ────────────────────────────────────────────────────────────
     # Tray + summon contract (matches StudioShell + WorkspaceShell)
     # ────────────────────────────────────────────────────────────
@@ -196,7 +219,7 @@ class WebShell(QMainWindow):
                 # each F12 session left a Chromium render process alive
                 # until app exit.  Detach + deleteLater frees it.
                 try: page.setDevToolsPage(None)
-                except Exception: pass
+                except Exception: pass  # audit: deliberate-fail-soft — best-effort devtools page detach during dispose
                 self._devtools.deleteLater()
                 self._devtools = None
                 return

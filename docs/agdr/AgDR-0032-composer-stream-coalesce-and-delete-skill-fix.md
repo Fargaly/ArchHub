@@ -4,7 +4,7 @@ timestamp: 2026-05-21T20:30:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "attempted deletion... but nothing happened... composer still lagging"
 trigger: Two production bugs reported from the v1.4 prototype screenshot.  Both AgDR-0028 follow-ons.
-status: approved
+status: executed
 category: bugfix
 projects: [archhub]
 extends:

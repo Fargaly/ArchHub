@@ -84,13 +84,18 @@ class TestCreateCompany:
         assert m is not None
         assert m["role"] == "owner"
 
-    def test_create_with_firm_plan_sets_25_seats(self, client, owner_token):
+    def test_create_with_firm_plan_sets_min_10_seats(self, client, owner_token):
+        # Model C: Firm provisions at its 10-seat minimum (volume
+        # per-seat starts at 10). Read the number from config so it can't
+        # drift from the canonical PLANS source.
+        import config
         _, token = owner_token
         r = client.post("/v1/companies",
                           json={"name": "Big Firm", "plan": "firm"},
                           headers=_hdr(token))
         assert r.status_code == 200
-        assert r.json()["seat_limit"] == 25
+        assert r.json()["seat_limit"] == config.PLAN_SEATS["firm"]
+        assert r.json()["seat_limit"] == 10
 
     def test_unsupported_plan_rejected(self, client, owner_token):
         _, token = owner_token
@@ -205,6 +210,34 @@ class TestInvites:
                                 "role": "member"},
                           headers=_hdr(t_other))
         assert r.status_code == 403
+
+    def test_seat_limit_counts_outstanding_invites(
+            self, client, owner_token, monkeypatch):
+        """Outstanding (un-accepted) invites reserve seats — a company
+        cannot over-invite past seat_limit by stacking pending invites
+        (the bug: only members were counted, so every pending invite
+        passed the check, then all could accept and blow the cap)."""
+        import db
+        _send_calls_recorder(monkeypatch)
+        _, token = owner_token
+        cid = self._new_company(client, token)
+        seat_limit = int(db.get_company(cid)["seat_limit"])
+        start = db.count_company_members(cid)
+        # Fill every remaining seat with PENDING invites (none accepted).
+        for i in range(seat_limit - start):
+            r = client.post(f"/v1/companies/{cid}/invites",
+                             json={"email": f"hire{i}@studio.com",
+                                   "role": "member"},
+                             headers=_hdr(token))
+            assert r.status_code == 200, r.text
+        # members + outstanding invites == seat_limit → company is full
+        # even though zero invites have been accepted.
+        r = client.post(f"/v1/companies/{cid}/invites",
+                         json={"email": "overflow@studio.com",
+                               "role": "member"},
+                         headers=_hdr(token))
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == "seat_limit_reached"
 
     def test_invalid_role_rejected(self, client, owner_token, monkeypatch):
         _send_calls_recorder(monkeypatch)

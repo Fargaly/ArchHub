@@ -210,6 +210,6 @@ def test_agdr_0032_exists_and_approved():
          / "AgDR-0032-composer-stream-coalesce-and-delete-skill-fix.md")
     assert p.exists()
     text = p.read_text(encoding="utf-8")
-    assert "status: approved" in text
+    assert "status: executed" in text
     assert "_scan_canvas_skills" in text
     assert "bumpGraphRaf" in text

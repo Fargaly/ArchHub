@@ -199,4 +199,4 @@ def test_agdr_0035_and_0036_exist():
     assert (agdr / "AgDR-0035-bridge-slots-never-block-ui-thread.md").exists()
     p36 = agdr / "AgDR-0036-non-blocking-slot-mechanism.md"
     assert p36.exists()
-    assert "status: approved" in p36.read_text(encoding="utf-8")
+    assert "status: executed" in p36.read_text(encoding="utf-8")

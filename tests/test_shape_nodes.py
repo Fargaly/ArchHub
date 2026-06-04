@@ -76,6 +76,117 @@ class TestTransform:
         out = _transform_executor({"op": "nonsense"}, {"value": WALLS}, None)
         assert out.get("status") == "error"
 
+    def test_existing_ops_unchanged_no_regression(self):
+        # Belt-and-braces: the pre-pluck ops must behave byte-for-byte.
+        assert _transform_executor(
+            {"op": "identity"}, {"value": WALLS}, None)["value"] is WALLS
+        assert _transform_executor(
+            {"op": "count"}, {"value": WALLS}, None)["value"] == 3
+        assert _transform_executor(
+            {"op": "pick", "field": "h"}, {"value": WALLS}, None
+        )["value"] == [3, 2, 4]
+        assert _transform_executor(
+            {"op": "first"}, {"value": WALLS}, None)["value"] == WALLS[0]
+        assert _transform_executor(
+            {"op": "last"}, {"value": WALLS}, None)["value"] == WALLS[-1]
+        assert _transform_executor(
+            {"op": "unique"}, {"value": [1, 1, 2, 3, 3]}, None
+        )["value"] == [1, 2, 3]
+        assert _transform_executor(
+            {"op": "flatten"}, {"value": [[1, 2], [3]]}, None
+        )["value"] == [1, 2, 3]
+
+
+ROWS = [
+    {"id": 1, "name": "Alpha", "h": 3, "extra": "x"},
+    {"id": 2, "name": "Beta", "h": 2},            # no "extra"
+    {"id": 3, "name": "Gamma", "h": 4, "extra": "z"},
+]
+
+
+class TestTransformPluck:
+    """UPGRADE 2: op=pluck projects a SUBSET of fields per dict row into a
+    NEW list of dicts (distinct from `pick`'s single-field flat list)."""
+
+    def test_subset_projection(self):
+        out = _transform_executor(
+            {"op": "pluck", "fields": ["id", "name"]},
+            {"value": ROWS}, None)
+        assert out["value"] == [
+            {"id": 1, "name": "Alpha"},
+            {"id": 2, "name": "Beta"},
+            {"id": 3, "name": "Gamma"},
+        ]
+        assert out["count"] == 3
+
+    def test_pluck_is_distinct_from_pick(self):
+        # pick -> flat list of one field's values; pluck -> list of dicts.
+        pick = _transform_executor(
+            {"op": "pick", "field": "name"}, {"value": ROWS}, None)["value"]
+        pluck = _transform_executor(
+            {"op": "pluck", "fields": ["name"]}, {"value": ROWS}, None)["value"]
+        assert pick == ["Alpha", "Beta", "Gamma"]
+        assert pluck == [{"name": "Alpha"}, {"name": "Beta"},
+                         {"name": "Gamma"}]
+
+    def test_rename_maps_old_to_new(self):
+        out = _transform_executor(
+            {"op": "pluck", "fields": ["id", "name"],
+             "rename": {"name": "label"}},
+            {"value": ROWS}, None)
+        assert out["value"] == [
+            {"id": 1, "label": "Alpha"},
+            {"id": 2, "label": "Beta"},
+            {"id": 3, "label": "Gamma"},
+        ]
+
+    def test_missing_field_is_omitted_tolerantly(self):
+        # Row 2 has no "extra" -> that key is simply omitted, not None.
+        out = _transform_executor(
+            {"op": "pluck", "fields": ["id", "extra"]},
+            {"value": ROWS}, None)
+        assert out["value"] == [
+            {"id": 1, "extra": "x"},
+            {"id": 2},                 # "extra" omitted, not present
+            {"id": 3, "extra": "z"},
+        ]
+
+    def test_non_dict_row_is_skipped(self):
+        out = _transform_executor(
+            {"op": "pluck", "fields": ["id"]},
+            {"value": [{"id": 1}, 42, "str", {"id": 2}]}, None)
+        # Non-dict rows (42, "str") are skipped — they have no fields.
+        assert out["value"] == [{"id": 1}, {"id": 2}]
+        assert out["count"] == 2
+
+    def test_non_list_input_typed_error_no_raise(self):
+        out = _transform_executor(
+            {"op": "pluck", "fields": ["id"]},
+            {"value": {"id": 1}}, None)   # a bare dict, not a list
+        assert out.get("status") == "error"
+        assert "value" not in out
+
+    def test_empty_fields_typed_error(self):
+        out = _transform_executor(
+            {"op": "pluck", "fields": []}, {"value": ROWS}, None)
+        assert out.get("status") == "error"
+
+    def test_missing_fields_key_typed_error(self):
+        out = _transform_executor(
+            {"op": "pluck"}, {"value": ROWS}, None)
+        assert out.get("status") == "error"
+
+    def test_pluck_in_op_enum_and_documented(self):
+        import workflows as _wf
+        spec, _ = _wf.get("transform.apply")
+        assert "pluck" in spec.config_schema["op"]["enum"]
+        # Originals preserved (no enum regression).
+        for op in ("identity", "count", "first", "last", "pick",
+                   "unique", "sort", "flatten"):
+            assert op in spec.config_schema["op"]["enum"]
+        assert "fields" in spec.config_schema
+        assert "rename" in spec.config_schema
+
 
 class TestWatch:
     def test_passes_data_through_unchanged(self):

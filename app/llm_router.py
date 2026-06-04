@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from secrets_store import load_api_key, list_keys
@@ -437,6 +437,38 @@ KNOWN_MODELS: list[tuple[str, str]] = [
 ]
 
 
+# Real per-million-token USD prices for cost accounting. Keyed by a
+# substring matched case-insensitively against the model name returned by
+# the provider. (input_per_M, output_per_M). Only models whose real public
+# price we know appear here — anything not matched yields cost_known=False
+# so the UI omits a dollar figure rather than fabricating one. Local
+# models (ollama / lmstudio / claude_cli / codex_cli subscription) are NOT
+# metered per token, so they carry no row → token count shown, no cost.
+_MODEL_PRICES_PER_M: dict[str, tuple[float, float]] = {
+    "claude-opus-4":    (15.0, 75.0),
+    "claude-sonnet-4":  (3.0, 15.0),
+    "claude-haiku-4":   (1.0, 5.0),
+    "gpt-4o-mini":      (0.15, 0.60),
+    "gpt-4o":           (2.5, 10.0),
+    "gemini-2.5-pro":   (1.25, 10.0),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-2.5-flash": (0.30, 2.5),
+}
+
+
+def _price_for_model(model_name: str) -> Optional[tuple[float, float]]:
+    """Return (input_per_M, output_per_M) USD for the model, or None when
+    no real price is known (local/subscription models, or a model not in
+    the table). Longest-key match wins so 'gpt-4o-mini' beats 'gpt-4o'."""
+    lo = (model_name or "").lower()
+    best: Optional[tuple[float, float]] = None
+    best_len = -1
+    for key, price in _MODEL_PRICES_PER_M.items():
+        if key in lo and len(key) > best_len:
+            best, best_len = price, len(key)
+    return best
+
+
 def ollama_models() -> list[tuple[str, str]]:
     """Return (model_id, label) pairs for every model pulled in Ollama."""
     try:
@@ -476,6 +508,11 @@ class LLMResponse:
     model: str
     tool_invocations: list[ToolInvocation]
     routing_note: str = ""
+    # Tools a self-driving CLI provider (claude_cli) executed in-process
+    # via its own MCP loop. The router's tool-use loop never sees these
+    # (the CLI ran + resolved them itself), so they ride out here for the
+    # ai.plan turn record. Shape: [{"name","input","result"}].
+    tool_calls_log: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +534,23 @@ class LLMRouter:
         # enough that adding credits + waiting fixes it without a
         # restart.
         self._BLOCK_SECONDS = 600         # 10 minutes
+        # REAL provider-reported token usage, accumulated across every
+        # completion this process has run. Replaces the old client-side
+        # chars/4 ESTIMATE the footer ServerStrip showed. Populated by
+        # `_record_usage` from the usage{} block each provider returns
+        # (Anthropic message.usage.input/output_tokens, OpenAI
+        # chat.completion usage, Ollama prompt_eval_count/eval_count).
+        # Stays at zero — honestly — until a real provider call lands,
+        # so the footer shows nothing fabricated on a fresh box.
+        self._token_usage: dict[str, object] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "tokens": 0,            # prompt + completion (total)
+            "cost": 0.0,            # real $ when the model's price is known
+            "cost_known": False,    # False ⇒ omit cost honestly (no price)
+            "model": "",            # last model that contributed real usage
+            "completions": 0,       # number of real completions counted
+        }
 
     # ---- credentials ------------------------------------------------------
 
@@ -568,6 +622,59 @@ class LLMRouter:
             if r:
                 out[p] = r
         return out
+
+    # ---- real token accounting --------------------------------------------
+
+    def _record_usage(self, provider: str, model_name: str,
+                       usage: Optional[dict]) -> None:
+        """Fold one completion's REAL provider-reported usage into the
+        running total. `usage` is the {prompt_tokens, completion_tokens}
+        block the provider client returns — None / empty means the
+        provider didn't report it (local model, older path); we then add
+        nothing rather than guess. Cost is only added when the model's
+        real price is known; otherwise cost_known stays False so the UI
+        omits a dollar figure instead of fabricating one."""
+        if not usage:
+            return
+        try:
+            pt = int(usage.get("prompt_tokens") or 0)
+            ct = int(usage.get("completion_tokens") or 0)
+        except (TypeError, ValueError):
+            return
+        if pt <= 0 and ct <= 0:
+            return
+        acc = self._token_usage
+        acc["prompt_tokens"] = int(acc["prompt_tokens"]) + pt
+        acc["completion_tokens"] = int(acc["completion_tokens"]) + ct
+        acc["tokens"] = int(acc["prompt_tokens"]) + int(acc["completion_tokens"])
+        acc["completions"] = int(acc["completions"]) + 1
+        acc["model"] = f"{provider}:{model_name}"
+        price = _price_for_model(model_name)
+        if price is not None:
+            in_per_m, out_per_m = price
+            acc["cost"] = float(acc["cost"]) + (
+                pt * in_per_m / 1e6 + ct * out_per_m / 1e6
+            )
+            acc["cost_known"] = True
+
+    def get_token_usage(self) -> dict:
+        """REAL accumulated provider usage for this process. Read by the
+        bridge `get_token_usage` slot → footer ServerStrip. Returns a copy
+        so callers can't mutate the accumulator. tokens==0 until a real
+        completion lands (honest empty state). `cost` is only meaningful
+        when `cost_known` is True (a metered model with a known price
+        contributed); for local/subscription models cost_known is False
+        and the UI shows tokens only."""
+        acc = self._token_usage
+        return {
+            "prompt_tokens": int(acc["prompt_tokens"]),
+            "completion_tokens": int(acc["completion_tokens"]),
+            "tokens": int(acc["tokens"]),
+            "cost": round(float(acc["cost"]), 6),
+            "cost_known": bool(acc["cost_known"]),
+            "model": acc["model"],
+            "completions": int(acc["completions"]),
+        }
 
     def configured_providers(self) -> list[str]:
         # `list_keys()` returns providers with an entry in the secrets
@@ -989,6 +1096,11 @@ class LLMRouter:
         on_status: Optional[Callable[[str], None]] = None,
         session_pin: Optional[str] = None,
         system_override: Optional[str] = None,
+        extra_tools: Optional[list[dict]] = None,
+        tool_schemas: Optional[list[dict]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        allowed_tool_names: Optional[set] = None,
     ) -> LLMResponse:
         """session_pin — optional `@token` parsed out of the user's chat
         message (e.g. `@Tower-A`, `@Pavilion`, `@25232`). Forwarded to
@@ -1004,11 +1116,65 @@ class LLMRouter:
         chat-assistant prompt or tempted into tool calls. Previously
         callers faked this with a `role:"system_override"` history
         message — a role the provider clients silently dropped, so the
-        specialised instructions never reached the model."""
+        specialised instructions never reached the model.
+
+        extra_tools — caller-supplied, CLIENT-SIDE tool schemas (each in
+        Anthropic `{name, description, input_schema}` shape) MERGED into
+        the provider tool surface for THIS call only. Use this when the
+        caller — not the ToolEngine — owns the tools' execution. The
+        Composer agent passes its canvas primitives (spawn_node /
+        add_wire / set_node_param / run_node / run_workflow / query_graph
+        / chat) here so the LLM can actually see + call them. When the
+        model invokes one of these, the router does NOT dispatch it to
+        ToolEngine.invoke (which would 'Unknown tool' it); instead it
+        records the invocation, fires `on_tool_invocation` so the caller
+        collects the action, and feeds a neutral acknowledgement back to
+        the model so the tool-use loop continues. The caller replays the
+        collected invocations against its own surface (the canvas).
+
+        tool_schemas — back-compat alias for `extra_tools`. The Composer
+        originally called `complete(..., tool_schemas=TOOL_SCHEMA)`
+        against a signature that never accepted it, so the call raised
+        TypeError and silently fell back to a tool-LESS path (the LLM
+        never saw the canvas tools — the dead-orchestration bug). Both
+        names are accepted now; they merge identically.
+
+        temperature / max_tokens — OPTIONAL sampling params forwarded to
+        the provider request for this call. node.config carries these for
+        a Conversation node (config_schema declares temperature default
+        0.7, max_tokens default 4096) and the UI exposes them, but they
+        were never wired through to the provider — the model always ran at
+        the client's hardcoded defaults. When None (the chat default) the
+        provider keeps its own default; when set they override it.
+        Best-effort + back-compat: providers whose stream_completion can't
+        accept them silently keep their defaults (see _complete_once).
+
+        allowed_tool_names — OPTIONAL whitelist of ToolEngine tool names.
+        When set, the ToolEngine tool surface for THIS call is filtered to
+        just these names (client-side extra_tools are unaffected). This is
+        the supported, THREAD-SAFE way for the workflow `llm.complete_with_tools`
+        node to restrict tools: previously it MUTATED the shared
+        ctx.tool_engine.tool_schemas_for, corrupting any concurrent chat /
+        workflow turn that shared the same ToolEngine. The filter is now a
+        per-call local copy — no shared state is touched. None ⇒ full
+        surface (the chat default, unchanged)."""
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
         on_reasoning = on_reasoning or (lambda _: None)
         on_status = on_status or (lambda _: None)
+        # Merge the two accepted spellings into one list. Either may be
+        # None (the common case — no client-side tools). Order: explicit
+        # extra_tools first, then the alias, de-duped by tool name so a
+        # caller passing both never double-registers.
+        _merged_extra: list[dict] = []
+        _seen_extra: set = set()
+        for _src in (extra_tools or [], tool_schemas or []):
+            for _t in _src:
+                _nm = (_t or {}).get("name")
+                if _nm and _nm not in _seen_extra:
+                    _seen_extra.add(_nm)
+                    _merged_extra.append(_t)
+        extra_tools = _merged_extra
 
         # Soft-route guard: when `auto` is requested but no provider is
         # configured (clean install with no key + no Ollama / Cloud), the
@@ -1069,6 +1235,10 @@ class LLMRouter:
                             on_status=on_status,
                             session_pin=session_pin,
                             system_override=system_override,
+                            extra_tools=extra_tools,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            allowed_tool_names=allowed_tool_names,
                         )
                         break
                     except Exception as _net_ex:
@@ -1179,9 +1349,26 @@ class LLMRouter:
         on_status=None,
         session_pin: Optional[str] = None,
         system_override: Optional[str] = None,
+        extra_tools: Optional[list[dict]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        allowed_tool_names: Optional[set] = None,
     ):
         on_reasoning = on_reasoning or (lambda _: None)
         on_status = on_status or (lambda _: None)
+        extra_tools = extra_tools or []
+        # OPTIONAL sampling params (node.config temperature/max_tokens).
+        # Built once here into a kwargs dict that's spread into the
+        # provider call ONLY when a value was supplied — so a None (chat
+        # default) leaves the provider's own default untouched. Providers
+        # whose stream_completion predates these kwargs raise TypeError;
+        # the call sites below retry WITHOUT them, so wiring them through
+        # can never break a provider (back-compat).
+        _sampling_kwargs: dict = {}
+        if temperature is not None:
+            _sampling_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            _sampling_kwargs["max_tokens"] = max_tokens
         # Original body inlined below — extracted so the auto-fallback
         # loop can wrap it cleanly.
 
@@ -1233,6 +1420,20 @@ class LLMRouter:
         )
         tool_schemas = ([] if system_override
                         else self.tools.tool_schemas_for(provider))
+        # Per-call ToolEngine whitelist (THREAD-SAFE). When the caller
+        # (workflow `llm.complete_with_tools` node) restricts tools, filter
+        # the schemas to the allowed names HERE — a local list copy — so we
+        # never mutate the shared ToolEngine instance the way the old
+        # node-side monkey-patch did (which corrupted concurrent turns).
+        # Matches the name at the top level (anthropic/google wire shape)
+        # or under function.name (openai-compatible shape).
+        if allowed_tool_names:
+            def _ts_name(_t: dict) -> str:
+                return (_t.get("name")
+                        or (_t.get("function") or {}).get("name")
+                        or "")
+            tool_schemas = [t for t in tool_schemas
+                            if _ts_name(t) in allowed_tool_names]
         # Small models choke on a big tool list. Gemini Flash refuses
         # to pick when given 30+ schemas (empty type=final, no call);
         # local Ollama 7-8B models (command-r7b, qwen…) do the same —
@@ -1245,6 +1446,39 @@ class LLMRouter:
                 tool_schemas, history, cap=12,
             )
 
+        # ── Caller-supplied CLIENT-SIDE tools (e.g. the Composer's canvas
+        # primitives). Merge them into the provider tool surface AFTER the
+        # relevance trim above so a small-model filter can never drop them
+        # — the caller asked for these specific tools and owns their
+        # execution. They arrive in Anthropic `{name, description,
+        # input_schema}` shape; convert to the active provider's wire
+        # format (mirrors ToolEngine.tool_schemas_for). `system_override`
+        # one-shots stay tool-LESS, so we skip the merge there. The
+        # `_client_tool_names` set tells the dispatch loop below to route
+        # these to on_tool_invocation instead of ToolEngine.invoke.
+        _client_tool_names: set = set()
+        if extra_tools and not system_override:
+            for _et in extra_tools:
+                _name = (_et or {}).get("name")
+                if not _name:
+                    continue
+                _desc = _et.get("description", "")
+                _schema = _et.get("input_schema") or {
+                    "type": "object", "properties": {},
+                }
+                if provider == "anthropic":
+                    _wired = {"name": _name, "description": _desc,
+                              "input_schema": _schema}
+                elif provider == "google":
+                    _wired = {"name": _name, "description": _desc,
+                              "parameters": _schema}
+                else:  # openai-compatible (openai/ollama/openrouter/…)
+                    _wired = {"type": "function", "function": {
+                        "name": _name, "description": _desc,
+                        "parameters": _schema}}
+                tool_schemas = tool_schemas + [_wired]
+                _client_tool_names.add(_name)
+
         # Tool-use loop. The cap prevents runaway loops when a model
         # gets stuck calling itself, but it also has to be high enough
         # for legitimate multi-stage Skills like sketch-to-production
@@ -1253,6 +1487,10 @@ class LLMRouter:
         # prone to runaway and more likely to need extra rounds for
         # complex tool chains.
         all_invocations: list[ToolInvocation] = []
+        # CLI-provider in-process tool calls (claude_cli MCP loop) — these
+        # never pass through the router tool-use loop, so collect them for
+        # the ai.plan turn record.
+        cli_tool_calls_log: list = []
         full_text = ""
         # Working copy for tool round-tripping — only real conversational
         # turns (system messages were folded into system_prompt above).
@@ -1363,15 +1601,33 @@ class LLMRouter:
 
             # Ollama uses a different client interface
             if provider == "ollama":
-                assistant_text, raw_tool_calls = client.complete(
-                    system=system_prompt,
-                    history=messages,
-                    model=model_name,
-                    tools=tool_schemas,
-                    on_chunk=chunk_handler,
-                    on_reasoning=on_reasoning,
-                )
+                try:
+                    assistant_text, raw_tool_calls = client.complete(
+                        system=system_prompt,
+                        history=messages,
+                        model=model_name,
+                        tools=tool_schemas,
+                        on_chunk=chunk_handler,
+                        on_reasoning=on_reasoning,
+                        **_sampling_kwargs,
+                    )
+                except TypeError:
+                    # Older OllamaClient.complete without sampling kwargs —
+                    # drop them, keep the model's defaults.
+                    assistant_text, raw_tool_calls = client.complete(
+                        system=system_prompt,
+                        history=messages,
+                        model=model_name,
+                        tools=tool_schemas,
+                        on_chunk=chunk_handler,
+                        on_reasoning=on_reasoning,
+                    )
                 full_text += assistant_text
+                # REAL usage capture — Ollama records prompt_eval_count /
+                # eval_count on the done-chunk; the client stashed it on
+                # `last_usage`. Fold the real counts into the accumulator.
+                self._record_usage(provider, model_name,
+                                   getattr(client, "last_usage", None))
                 tool_calls = raw_tool_calls  # already [{id, name, input}]
                 if not tool_calls:
                     # Procrastination check — local models often write
@@ -1417,14 +1673,46 @@ class LLMRouter:
                     on_chunk=chunk_handler,
                 )
                 _trace(f"iter{_iteration} → stream_completion (msg_count={len(messages)})")
+                # kwarg ladder, most-capable first. Each rung drops an
+                # optional kwarg a given provider client may not accept:
+                #   1. on_reasoning + sampling (temperature/max_tokens)
+                #   2. sampling only (provider has no on_reasoning param)
+                #   3. on_reasoning only (provider has no sampling params)
+                #   4. neither (oldest client shape)
+                # Sampling kwargs are empty unless the caller passed them,
+                # so for a plain chat turn rungs 1↔3 and 2↔4 are identical
+                # and behaviour is exactly as before this wiring.
                 try:
                     stream = client.stream_completion(
-                        on_reasoning=on_reasoning, **stream_kwargs,
+                        on_reasoning=on_reasoning,
+                        **_sampling_kwargs, **stream_kwargs,
                     )
                 except TypeError:
-                    stream = client.stream_completion(**stream_kwargs)
+                    try:
+                        stream = client.stream_completion(
+                            **_sampling_kwargs, **stream_kwargs,
+                        )
+                    except TypeError:
+                        try:
+                            stream = client.stream_completion(
+                                on_reasoning=on_reasoning, **stream_kwargs,
+                            )
+                        except TypeError:
+                            stream = client.stream_completion(**stream_kwargs)
                 assistant_text = stream.get("text", "")
                 full_text += assistant_text
+                # Self-driving CLI providers (claude_cli) ran their MCP
+                # tools in-process and report them on the stream as
+                # tool_calls_log. Collect them so the turn's ai.plan record
+                # shows the real host ops the local Claude executed.
+                _cli_log = stream.get("tool_calls_log")
+                if isinstance(_cli_log, list) and _cli_log:
+                    cli_tool_calls_log.extend(_cli_log)
+                # REAL usage capture — fold the provider-reported
+                # usage{prompt_tokens, completion_tokens} into the running
+                # total. Absent on providers that don't report it yet; the
+                # accumulator then adds nothing (no fabrication).
+                self._record_usage(provider, model_name, stream.get("usage"))
                 _trace(f"iter{_iteration} ← type={stream.get('type')} "
                         f"text_len={len(assistant_text)} "
                         f"tool_calls={[t.get('name') for t in stream.get('tool_calls') or []]}")
@@ -1453,6 +1741,53 @@ class LLMRouter:
                 )
                 all_invocations.append(inv)
                 on_tool_invocation(inv)
+
+                # ── CLIENT-SIDE tool (caller owns execution, e.g. the
+                # Composer's canvas primitives). Do NOT dispatch to
+                # ToolEngine.invoke — it doesn't know this tool and would
+                # return {'status':'error','error':'Unknown tool: …'},
+                # which the model reads as a failure and either retries or
+                # apologises. Instead: mark it accepted, fire the callback
+                # AGAIN with the completed status so the caller collects
+                # the action (the first fire above was status:running), and
+                # feed a neutral acknowledgement back to the model so the
+                # tool-use loop continues. The caller (run_agent_step)
+                # replays inv against the real canvas.
+                if inv.tool_name in _client_tool_names:
+                    # SPAWN-ID CONTRACT (shared with the JSX spawn handler):
+                    # when spawn_node fires we must ALLOCATE the new node id
+                    # HERE — before the model continues — and hand it back in
+                    # the ack, so a follow-up add_wire / set_node_param /
+                    # run_node the model emits in the SAME turn can reference
+                    # it, and the JSX places the node under that SAME id (see
+                    # onAgentStep -> spawn_host_chat). The id is namespaced
+                    # like the JSX library ids (ng:ai_chat) + a short uuid so
+                    # every spawn is unique and resolvable. TOOL_SCHEMA's
+                    # spawn_node advertises "Returns the new node id" — this is
+                    # where that promise is kept (was a content-free
+                    # {accepted:true} before, so multi-node orchestration was
+                    # dead: the model never learned the id it just made).
+                    inv.result = {"status": "ok", "accepted": True,
+                                  "note": "applied to canvas"}
+                    if inv.tool_name == "spawn_node":
+                        _node_id = self._allocate_spawn_node_id(inv.arguments)
+                        inv.result["node_id"] = _node_id
+                        # Mirror onto the args so the caller's action dict
+                        # (built from the invocation) carries the id too — the
+                        # JSX replay reads action.node_id to place the node.
+                        try:
+                            inv.arguments = {**(inv.arguments or {}),
+                                             "node_id": _node_id}
+                        except Exception:
+                            pass
+                    inv.status = "ok"
+                    on_tool_invocation(inv)
+                    tool_results.append({
+                        "tool_use_id": inv.id,
+                        "name":         inv.tool_name,
+                        "content":      inv.result,
+                    })
+                    continue   # skip gate + ToolEngine.invoke
 
                 # AgDR-0013 Layer 3 — LIBRARY-FIRST gate.
                 # Insert BEFORE ToolEngine.invoke for library_* calls.
@@ -1624,7 +1959,28 @@ class LLMRouter:
             model=f"{provider}:{model_name}",
             tool_invocations=all_invocations,
             routing_note=note,
+            tool_calls_log=cli_tool_calls_log,
         )
+
+    @staticmethod
+    def _allocate_spawn_node_id(arguments: Optional[dict]) -> str:
+        """Mint the node id a spawn_node call will land on — the
+        COMPOSER/ROUTER half of the SPAWN-ID CONTRACT.
+
+        The JSX `spawn_host_chat` replay focuses + wires the spawned
+        CONVERSATION node, so that's the id that must round-trip back to
+        the model (a follow-up add_wire/run_node references the placed
+        node). We namespace it like the JSX library ids ('ng:ai_chat')
+        and append a short uuid so every spawn is unique + resolvable.
+        The JSX uses this id verbatim (action.node_id) instead of minting
+        its own; if it's ever absent the JSX falls back to its old uid
+        scheme (back-compat).
+
+        `arguments` is the spawn_node input ({family, title, x, y}); the
+        family is not needed for uniqueness but kept in the signature so a
+        future contract revision (e.g. encoding family into the id) is a
+        one-line change here, not a cross-file one."""
+        return f"ng:ai_chat:{uuid.uuid4().hex[:8]}"
 
     @staticmethod
     def _max_iterations(model_name: str) -> int:

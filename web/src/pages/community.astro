@@ -1,0 +1,95 @@
+---
+import Base from '../layouts/Base.astro';
+
+// Community / federation status — DATA-DRIVEN from committed JSON, never a
+// hardcoded leaderboard.
+//   - contributors.json: who has published to the community scope (derived from
+//     real reputation rows + community-skill authorship by tools/export_web_data.py).
+//   - skills-export.json: how many skills are in the community scope.
+// A maintainer refreshes both from the live brain with
+// `python tools/export_web_data.py` (or `npm run refresh-content`); the deploy
+// build reads them with NO daemon. Real contributors → real leaderboard rows;
+// genuinely 0 → a data-driven "be the first" state, not a fabricated table.
+import contributorsData from '../data/contributors.json';
+import skillsExport from '../data/skills-export.json';
+
+const contributors = contributorsData.contributors ?? [];
+const reputationRows = contributorsData.reputation_rows ?? 0;
+const publishedSkills = skillsExport.count ?? 0;
+const exportedDate = (contributorsData.exported_at ?? '').slice(0, 10);
+---
+<Base title="Community" description="Architects sharing skills across the ArchHub federation — who's contributing + how to take part.">
+  <h1>Community</h1>
+  <p>
+    ArchHub's design lets firms publish reusable skills to a shared community
+    scope and earn reputation when their patterns get reused, all routed
+    through the brain's federation — no separate ranking store.
+  </p>
+
+  <h2>Federation status</h2>
+  <p class="freshness">
+    <strong>{publishedSkills}</strong> skill{publishedSkills === 1 ? '' : 's'} published to the
+    community scope · <strong>{contributors.length}</strong> contributor{contributors.length === 1 ? '' : 's'} ·
+    <strong>{reputationRows}</strong> peer-reputation row{reputationRows === 1 ? '' : 's'} exchanged.
+    {exportedDate ? ` Live as of ${exportedDate}.` : ''}
+  </p>
+
+  <h2>Contributors</h2>
+  {contributors.length === 0 ? (
+    <p class="freshness">
+      No firm has published to the community federation yet — so there is no
+      leaderboard to show, and we won't fabricate one. This is the real,
+      current state: be the first to promote a skill to the community scope and
+      your name appears here.
+    </p>
+  ) : (
+    <>
+      <p class="freshness">
+        {reputationRows === 0
+          ? 'Ranked by skills published to the community scope (no peer reputation has been exchanged yet, so reputation scores are not shown).'
+          : 'Ranked by community reputation and skills published.'}
+      </p>
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Contributor</th>
+            <th>Skills published</th>
+            <th>Honed</th>
+            <th>Uses</th>
+            {reputationRows > 0 && <th>Reputation</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {contributors.map((c, i) => (
+            <tr>
+              <td>{i + 1}</td>
+              <td><strong>{c.contributor}</strong></td>
+              <td>{c.published_skills}</td>
+              <td>{c.honed_trials ? `${c.honed_passed}/${c.honed_trials}` : '—'}</td>
+              <td>{c.success_total ?? 0}</td>
+              {reputationRows > 0 && <td>{c.reputation ?? '—'}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )}
+
+  <h2>How to contribute</h2>
+  <ol>
+    <li>Mint a skill locally — the reflexion worker does this automatically when you finish a successful flow.</li>
+    <li>Promote it to community scope via <code>brain.promote</code> — redaction strips PII automatically.</li>
+    <li>Other firms subscribed to your outbox pull the skill on their next poll tick, and reuse builds your reputation.</li>
+  </ol>
+
+  <style>
+    .leaderboard { width: 100%; border-collapse: collapse; margin: 14px 0 0; font-size: 0.95rem; }
+    .leaderboard th, .leaderboard td {
+      text-align: left; padding: 9px 12px; border-bottom: 1px solid #1f242b;
+    }
+    .leaderboard th { color: var(--muted); font-weight: 600; font-size: 0.82rem;
+      text-transform: uppercase; letter-spacing: 0.04em; }
+    .leaderboard tbody tr:hover { background: #0f1216; }
+  </style>
+</Base>

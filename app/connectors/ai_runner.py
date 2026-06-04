@@ -155,15 +155,19 @@ def gemini_ask(prompt: str, model: Optional[str] = None,
             )
             resp = m.generate_content(prompt)
             text = (getattr(resp, "text", "") or "").strip()
+            model_used = model or DEFAULT_GEMINI_MODEL
         except ImportError:
-            # Fallback: hit the REST endpoint directly so the tool
-            # works even when the SDK isn't installed.
+            # Fail-OVER (not fail-soft): the SDK isn't installed, so hit
+            # the REST endpoint directly. `_gemini_via_rest` RAISES on a
+            # transport error OR an API-level error payload, so a real
+            # failure propagates to the outer `except` below and is
+            # reported honestly — it is never masked as ok here. The
+            # success return lives OUTSIDE this block so both paths share
+            # one honest envelope.
             text, model_used = _gemini_via_rest(api_key, prompt, model, system,
                                                  temperature)
-            return {"status": "ok", "provider": "google",
-                    "model": model_used, "text": text}
         return {"status": "ok", "provider": "google",
-                "model": model or DEFAULT_GEMINI_MODEL, "text": text}
+                "model": model_used, "text": text}
     except Exception as ex:
         return {"status": "error", "error": f"{type(ex).__name__}: {ex}"}
 
@@ -189,8 +193,22 @@ def _gemini_via_rest(api_key: str, prompt: str, model: Optional[str],
     )
     with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
+    # Gemini returns HTTP 200 even for several failure modes (the SDK
+    # would have raised). Surface those as a RAISE so the caller reports
+    # status:error instead of an empty-text "ok" lie:
+    #   1. an explicit {"error": {...}} envelope, and
+    #   2. a prompt that was blocked (no candidates + a blockReason).
+    err = payload.get("error")
+    if err:
+        msg = err.get("message") if isinstance(err, dict) else str(err)
+        raise RuntimeError(f"Gemini API error: {msg or err}")
     cands = payload.get("candidates") or []
-    parts = (cands[0].get("content", {}).get("parts") or []) if cands else []
+    if not cands:
+        reason = (payload.get("promptFeedback", {}) or {}).get("blockReason")
+        raise RuntimeError(
+            f"Gemini returned no candidates"
+            + (f" (blocked: {reason})" if reason else ""))
+    parts = cands[0].get("content", {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
     return text, m
 

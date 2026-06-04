@@ -4,7 +4,7 @@ timestamp: 2026-05-21T14:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "DIDN'T WE AGREE THAT THE CONNECTORS SHOULDN'T REQUIRE RESTARTING REVIT... OR CLOSING CURRENT SESSIONS?"
 trigger: AgDR-0025 deploy required restart of Revit 2025 to swap the in-memory `RevitMCP.dll`.  Founder's agreed principle: connector updates ship hot.
-status: approved
+status: executed
 category: architecture
 projects: [archhub, revitmcp, acadmcp]
 extends:

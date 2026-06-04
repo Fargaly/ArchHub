@@ -4,7 +4,7 @@ timestamp: 2026-05-21T15:00:00Z
 agent: claude-code (Sonnet)
 session: founder gripe 2026-05-21 — "THE LIBRARY ACTIONS... FILTERS... CLEARING CUSTOM NODES... DELETING THOSE SAVED SKILLS?... WHY ISN'T IT POSSIBLE?"
 trigger: NodesPanel context menu only had Expand all / Collapse all / Clear most-used.  No way to delete a custom node or a saved skill from the library.
-status: approved
+status: executed
 category: ux
 projects: [archhub]
 extends:

@@ -229,10 +229,23 @@ def test_code_grammar_count_after_slice_l():
     primitives + shipped Skills auto-surfaced from registry/library)
     are uncapped because they ARE real registered types, not a
     decorative palette."""
-    assert len(ng.PRIMITIVES) <= 80
+    # +1 → 81: stem-rebuild Phase-0 added `verify.assert` (verify gate /
+    # branch primitive), like the `join` cell.
+    # +1 → 82: stem-rebuild Phase-0 added `fs.list` (READ-ONLY IO read cell).
+    # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
+    # + data.json) — cap bumped in lockstep with their node_grammar entries.
+    # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(ng.PRIMITIVES) <= 87
     payload = ng.grammar_payload()
     hardcoded = [e for e in payload if not e.get("_source")]
-    assert len(hardcoded) <= 70
+    # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile +
+    # verify cells, both real palette primitives. Still a grammar, not a
+    # catalogue.
+    # +1 → 73: stem-rebuild Phase-0 `fs.list` (visible IO read primitive).
+    # +3 → 76: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe +
+    # data.json), real palette primitives.
+    # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    assert len(hardcoded) <= 78
 
 
 # ─── 6. integration — code node cooks through runner ─────────────────

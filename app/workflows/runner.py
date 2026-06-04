@@ -615,6 +615,79 @@ class WorkflowRunner:
             result["auto_publish"] = published
         return result
 
+    # ── reachable-sinks downstream of a node ────────────────────────
+    def reachable_sinks(self, node_id: str) -> list[str]:
+        """The sink nodes (no downstream edges) reachable by walking
+        DOWNSTREAM from `node_id`, inclusive.
+
+        Used by `recook_from`: after a param edit on `node_id`, the only
+        cooks that need re-running are the chains BETWEEN the edited node
+        and the sinks it feeds — not every sink in the graph. If the
+        edited node IS a sink (or a dead-end with no clear sink path),
+        it's its own terminal and we return just `[node_id]` so the edit
+        still re-cooks itself.
+        """
+        if node_id not in self.nodes_by_id:
+            return []
+        downstream_targets = {e["src_node"] for e in self.edges}
+        seen: set[str] = set()
+        sinks: list[str] = []
+        stack = [node_id]
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            outs = self._downstream_edges(n)
+            if not outs:
+                # n has no downstream edges → it's a sink (terminal).
+                if n in self.nodes_by_id and n not in sinks:
+                    sinks.append(n)
+                continue
+            for e in outs:
+                stack.append(e["dst_node"])
+        if not sinks:
+            # Defensive: a cycle or odd topology left no terminal — cook
+            # the edited node itself so its param change still takes.
+            return [node_id] if node_id in self.nodes_by_id else []
+        return sinks
+
+    def recook_from(self, node_id: str) -> dict:
+        """Re-cook the edited node + everything downstream of it.
+
+        This is the param-edit cook path (court verdict + cook.recook_
+        trigger): a slider/param change on `node_id` invalidates that
+        node AND every node fed by it. We `mark_dirty(node_id)` (cascades
+        the dirty flag + flips incident edges to "stale" downstream), then
+        `pull` each reachable sink — the lazy walk re-cooks the edited
+        node and the whole chain between it and the sinks, while branches
+        unrelated to the edit stay cached (no full-graph thrash).
+
+        Reuses the exact lazy+dirty+cached machinery as `pull`/`run_all`;
+        invents no new dataflow. Returns the same shape as `run_all` so
+        the bridge can treat the payload identically."""
+        self.mark_dirty(node_id)
+        sinks = self.reachable_sinks(node_id)
+        out: dict[str, dict] = {}
+        for nid in sinks:
+            try:
+                out[nid] = self.pull(nid)
+            except CycleDetected as ex:
+                out[nid] = {"status": "error", "error": str(ex)}
+        published = self._maybe_auto_publish_sinks(out) \
+            if self.auto_publish.get("enabled") else None
+        result = {"status": "ok",
+                   "recooked_from": node_id,
+                   "sinks": sinks,
+                   "results": out,
+                   "edges_state": [
+                       {"id": e["id"], "state": e.get("state", "idle")}
+                       for e in self.edges
+                   ]}
+        if published is not None:
+            result["auto_publish"] = published
+        return result
+
     def _maybe_auto_publish_sinks(self, sink_results: dict) -> list:
         """Ship every successful sink's value through SpeckleWire +
         optionally push to the configured server. Returns a list of
@@ -674,7 +747,7 @@ class WorkflowRunner:
                 published.append(entry)
         finally:
             try: wire.close()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — best-effort wire close in finally; published data already sent
         return published
 
     # ── observability ───────────────────────────────────────────────

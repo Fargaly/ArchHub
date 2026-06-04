@@ -103,6 +103,17 @@ const LM = {
   get cyan()       { return _currentTheme.cyan; },
   get purple()     { return _currentTheme.purple; },
   get blue()       { return _currentTheme.blue; },
+  // ── Semantic aliases — real getters so undefined-token refs resolve ──
+  // Audit 2026-05-28: `LM.paper` (collapsed-group fill + port borders, ×3)
+  // and `LM.accent2` (BrokenWireDialog emphasis text, ×3) were referenced
+  // but never defined → rendered the literal string `undefined` (only
+  // "worked" via CSS inheritance fallback). They're aliases of existing
+  // theme values, exposed as getters so they stay theme-reactive like every
+  // other color token. `paper` = the panel-card surface (groups sit on the
+  // canvas and need a fill distinct from bgCanvas); `accent2` = the bright
+  // accent variant, which is exactly the emphasis-text token.
+  get paper()      { return _currentTheme.bgPanel; },
+  get accent2()    { return _currentTheme.accentHi; },
   // ── Typography family tokens ──────────────────────────────────────
   serif:"'Instrument Serif', Georgia, serif",
   sans:"'Inter', system-ui, sans-serif",
@@ -172,6 +183,21 @@ const LM = {
     anthropic:  '#cc785c',
   },
 };
+
+// Stable no-op with a fixed module-level identity. Used where a component
+// prop expects a function but the call site has nothing to do (e.g. the
+// Home-branch IconRail `setPanel`). A fresh `() => {}` per render would be a
+// new reference each time → defeats the child's React.memo; this never changes.
+const _NOOP = () => {};
+
+// Hoisted static style objects (LAG-ROOT FIX 2026-06-01). These are
+// PURE-LITERAL styles with NO theme (LM.*) tokens and NO dynamic values, so a
+// single shared module-level object is identical to the inline literal — but
+// allocated ONCE instead of on every render. `S_FLEX1` (the flex-spacer) alone
+// appeared 37× inline. Only provably-static styles live here; every
+// theme-reactive `style={{ ...LM.x }}` stays inline so it re-evaluates the
+// live palette on each render (theme-swap correctness).
+const S_FLEX1 = { flex: 1 };
 
 // ─── Categories — each is a node type with color + icon + role ───
 const CAT = {
@@ -278,6 +304,41 @@ const SPECKLE_WIRE = {
   'Objects.Geometry.Base':          LM.accent,
 };
 
+// LIVE WIRE-STATE → VISUAL (v1.4 wire-as-data-bridge). The runner streams
+// `wire_state_changed(edge_id, state, preview)` as a cook walks the graph, and
+// stamps the final per-edge state into `workflow_done`'s `edges_state`. The
+// canvas overlays that state on the type-coloured wire so the user SEES data
+// flowing / settling / going stale / erroring in real time — before this the
+// signal had no JS subscriber and the wire never lit up. `null` meta = no live
+// state for this edge → keep the plain type colour (back-compat for the common
+// idle case + graphs that never cooked). `flowing` animates; `upstream_error`
+// recolours red; `stale` dims; `cached` is the settled (success) look.
+const WIRE_STATE_META = {
+  flowing:        { col: LM.accent,   animated: true,  dash: '6 8', op: 1    },
+  cached:         { col: LM.ok,       animated: false, op: 0.95 },
+  stale:          { col: LM.inkMuted, animated: false, dash: '3 5', op: 0.42 },
+  upstream_error: { col: LM.err,      animated: false, dash: '2 4', op: 0.95 },
+  idle:           null,   // explicit idle = no overlay (plain type colour)
+};
+const wireStateMeta = (s) => (s ? (WIRE_STATE_META[s] || null) : null);
+// edge_id → {state, preview}. edge_id matches the runner's canonical id
+// (runner.py:265 — `${srcNode}.${srcPort}-${dstNode}.${dstPort}`, or the
+// wire's own `id` when set). Module-scoped + window-exposed so the bridge
+// subscriber, the wires memo, and a cook-end `edges_state` apply all read the
+// SAME store. Reset is intentionally NOT automatic — a wire keeps its last
+// state until the next cook touches it (Houdini cook-state semantics).
+const LM_WIRE_STATE = window.__archhub_LM_WIRE_STATE =
+  window.__archhub_LM_WIRE_STATE || {};
+// Canonical edge id for a JSX wire — MUST mirror WorkflowRunner's edge-id
+// derivation (runner.py:262-266) so a `wire_state_changed(edge_id,…)` from the
+// backend resolves to the right canvas wire. Prefer an explicit `w.id`.
+const lmWireEdgeId = (w) => {
+  if (!w) return '';
+  if (w.id) return String(w.id);
+  const f = w.from || [], t = w.to || [];
+  return `${f[0]}.${f[1]}-${t[0]}.${t[1]}`;
+};
+
 // ──────────────────────── DATA ────────────────────────
 // Founder demand #15 + #17: wrap all top-level arrays in window globals so
 // index.html's bridge hydrator can splice() real data over the demo fallback.
@@ -361,6 +422,72 @@ const bridgeAsync = (slot, ...args) => new Promise((resolve) => {
     resolve(null);
   }
 });
+
+// AgDR-0036 follow-up — request/response over a result-signal.
+// Some slots that need a DEFINITIVE, per-request answer (graph_on_node_delete,
+// library_suggest_swaps) now run their work on the Python `_bg_pool` so the
+// Qt main thread never blocks. They return `{async, request_id}` instantly and
+// deliver the real result via a signal (`node_op_done`) carrying the same
+// request_id. This helper fires the slot with a generated request_id as the
+// LAST arg, listens on the signal, and resolves with the matching payload —
+// so a caller still just `await`s a single answer. Mirrors the
+// brain_dataset_done / connector_op_done correlate-by-request_id idiom.
+const bridgeAsyncSignal = (slot, signalName, ...args) => new Promise((resolve) => {
+  const b = window.archhub;
+  if (!b || typeof b[slot] !== 'function') { resolve(null); return; }
+  const sig = b[signalName];
+  const reqId = slot + '-' + Date.now().toString(36) + '-'
+    + Math.random().toString(36).slice(2, 8);
+  let settled = false;
+  let onDone = null;
+  const finish = (val) => {
+    if (settled) return; settled = true;
+    try { if (sig && onDone && typeof sig.disconnect === 'function') sig.disconnect(onDone); } catch (e) {}
+    resolve(val);
+  };
+  // No signal available (dev / pre-handshake) → degrade to the ack (which
+  // carries any inline parse/arg error) so the caller still resolves.
+  if (!sig || typeof sig.connect !== 'function') {
+    try {
+      const ack = b[slot](...args, reqId, () => {});
+      if (ack && typeof ack.then === 'function') ack.then((raw) => {
+        let p = raw; if (typeof raw === 'string') { try { p = JSON.parse(raw); } catch (e) { p = null; } }
+        finish(p);
+      });
+    } catch (e) { finish(null); }
+    setTimeout(() => finish(null), 1500);
+    return;
+  }
+  onDone = (resultJson) => {
+    let payload = resultJson;
+    if (typeof resultJson === 'string') { try { payload = JSON.parse(resultJson); } catch (e) { payload = null; } }
+    if (!payload || payload.request_id !== reqId) return;   // not ours
+    finish(payload);
+  };
+  try {
+    sig.connect(onDone);
+    // The slot returns {async, request_id} synchronously; we ignore that
+    // ack and wait for the signal. A `done` no-op satisfies the QWebChannel
+    // callback arg so the marshaller is happy.
+    b[slot](...args, reqId, () => {});
+  } catch (e) {
+    console.warn('[archhub] bridgeAsyncSignal ' + slot, e);
+    finish(null);
+    return;
+  }
+  // Safety net — never hang a UI flow if the signal is lost. The work is
+  // in-memory (sub-ms) so 4s is generous.
+  setTimeout(() => finish(null), 4000);
+});
+
+// ─── Telemetry (track-G, AgDR-0049) — fire-and-forget canvas analytics.
+// Routes through the bridge so the Python pii_redactor stays the single
+// egress chokepoint; the canvas never holds a PostHog SDK. No-op when
+// telemetry is off (the Python side guards).
+const trackEvent = (name, props) => {
+  try { bridgeCall('track_event_json', name, JSON.stringify(props || {})); }
+  catch (e) { /* telemetry must never break the UI */ }
+};
 
 // ─── Sessions — refresh + unified actions ──────────────────────────
 // Founder bug 2026-05-18: the Home dashboard's session cards had NO
@@ -537,6 +664,139 @@ if (typeof window !== 'undefined') {
 window.__archhub_flushGraphSave = () => {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   if (_savePending) { _savePending = false; _saveCurrentGraphSync(); }
+};
+
+// PERF FIX (founder 2026-06-01 — "fix the fucking lag problem", slider drag):
+// MEASURED root cause of the drag stutter. A continuous slider drag fires
+// `onParamChange` on EVERY pointer tick. The generic `saveCurrentGraph()`
+// above is a *throttle*-flavoured trailing debounce: it schedules ONE timer
+// on the first tick and does NOT reset it, so during a sustained drag it
+// fires the trailing write every ~250ms — each firing re-serialises the
+// ENTIRE LM_GRAPH (one session = 630KB inline base64) and round-trips it to
+// disk via the bridge. A 2s drag = ~8 full 630KB serialise+disk-writes mid-
+// gesture → the visible hitch.
+//
+// `saveGraphParamTick()` is a TRUE idle-reset debounce reserved for the per-
+// tick param path ONLY: every tick CLEARS and reschedules the timer, so a
+// continuous drag produces exactly ZERO mid-drag writes and ONE write
+// 250ms after the user goes idle. It runs on its OWN timer so it never
+// interferes with the structural/explicit `saveCurrentGraph()` path (node
+// add/delete/wire/load stay immediate-ish on the existing debounce).
+//
+// CORRECTNESS — never lose the final value: `flushGraphParamTick()` writes
+// immediately and is wired to fire on every drag-release edge (pointerup /
+// mouseup / blur / change-commit on the slider) and on node deselect / rail
+// unmount. A debounce that can drop the last value is unacceptable; the
+// flush-on-release guarantees the value is ALWAYS persisted when the user
+// stops. The existing `pagehide`/`beforeunload` handler below also flushes
+// this timer as belt-and-suspenders for a close mid-debounce.
+let _paramSaveTimer = null;
+let _paramSavePending = false;
+const _PARAM_SAVE_DEBOUNCE_MS = 280;   // ~250-300ms idle window
+const saveGraphParamTick = () => {
+  // Idle-reset: each tick pushes the trailing write further out, so a
+  // continuous drag coalesces into a SINGLE disk write once motion stops.
+  _paramSavePending = true;
+  if (_paramSaveTimer) clearTimeout(_paramSaveTimer);
+  _paramSaveTimer = setTimeout(() => {
+    _paramSaveTimer = null;
+    if (_paramSavePending) {
+      _paramSavePending = false;
+      _saveCurrentGraphSync();
+    }
+  }, _PARAM_SAVE_DEBOUNCE_MS);
+};
+// Flush-on-release: persist NOW and cancel any pending trailing write.
+// Idempotent + cheap when nothing is pending, so it's safe to call from
+// every release edge (pointerup/mouseup/blur/change) and on node deselect.
+const flushGraphParamTick = () => {
+  if (_paramSaveTimer) { clearTimeout(_paramSaveTimer); _paramSaveTimer = null; }
+  if (_paramSavePending) {
+    _paramSavePending = false;
+    _saveCurrentGraphSync();
+  }
+};
+// Fold the param-tick timer into the global escape hatch + page-hide flush
+// so NO close path can strand an un-persisted param mid-debounce.
+if (typeof window !== 'undefined') {
+  ['pagehide', 'beforeunload', 'visibilitychange'].forEach(ev =>
+    window.addEventListener(ev, () => { flushGraphParamTick(); }, { capture: true })
+  );
+}
+const _origFlushGraphSave = window.__archhub_flushGraphSave;
+window.__archhub_flushGraphSave = () => {
+  flushGraphParamTick();
+  if (_origFlushGraphSave) _origFlushGraphSave();
+};
+
+// RE-COOK ON PARAM CHANGE (court verdict 2026-06-01 + cook.recook_trigger):
+// before this, dragging a slider only repainted (bumpGraph) + debounce-saved —
+// the node's executor was NEVER re-run and downstream was NEVER invalidated.
+// That was the 1-line-fix bug the court flagged. This pair wires the param
+// path to RE-COOK the edited node + its downstream chain, reusing the existing
+// cook dataflow (the `recook_node` bridge slot → fresh WorkflowRunner →
+// runner.recook_from = mark_dirty + pull reachable sinks).
+//
+// OFF-THREAD: `recook_node` is an async @pyqtSlot — it spawns a Python worker
+// thread, returns {request_id,status:'started'} instantly, and streams results
+// via wire_state_changed / workflow_done("recook",…). So bridgeCall returns
+// immediately and the Qt main thread (and the UI) is NEVER blocked by the cook.
+//
+// DEBOUNCED — no per-tick chain-thrash: this is a TRAILING idle-reset debounce
+// (~200ms). A continuous slider drag reschedules on every tick, so it cooks a
+// FEW times during a sustained drag (responsive) but NOT once per pointer tick.
+// `flushReCook()` fires immediately on the drag-release edge (pointerup/mouseup/
+// /keyup/blur/change-commit) and on node deselect / rail unmount, so the FINAL
+// value always re-cooks even if the user releases inside the idle window.
+//
+// Separate timer from the save-debounce (saveGraphParamTick): persistence and
+// cook are orthogonal concerns — one writes the graph to disk, the other re-runs
+// the dataflow. Keeping them independent means neither can stall the other.
+let _reCookTimer = null;
+let _reCookPendingNode = null;
+const _RECOOK_DEBOUNCE_MS = 200;   // ~200ms trailing idle, per cook.debounce_plan
+const _fireReCook = (nodeId) => {
+  if (!nodeId) return;
+  // Off-thread, non-blocking: the slot returns {request_id,status:'started'}
+  // synchronously and cooks on a Python worker thread. We pass the live
+  // in-memory LM_GRAPH so the cook sees the just-edited config (no disk
+  // roundtrip), exactly like the per-node "Rerun" button (L14553).
+  try { bridgeCall('recook_node', currentSid(), nodeId, JSON.stringify(LM_GRAPH)); } catch (e) {}
+};
+// Idle-reset trailing debounce: each tick pushes the re-cook further out, so a
+// continuous drag coalesces into a few cooks (one per ~200ms idle), never one
+// per tick. Stores the most-recent node id so coalesced ticks cook the right node.
+const reCookParamTick = (nodeId) => {
+  _reCookPendingNode = nodeId || _reCookPendingNode;
+  if (_reCookTimer) clearTimeout(_reCookTimer);
+  _reCookTimer = setTimeout(() => {
+    _reCookTimer = null;
+    const nid = _reCookPendingNode; _reCookPendingNode = null;
+    _fireReCook(nid);
+  }, _RECOOK_DEBOUNCE_MS);
+};
+// Flush-on-release: re-cook NOW with the final value + cancel any pending
+// trailing cook. Idempotent + cheap when nothing is pending, so it's safe to
+// call from every release edge (pointerup/mouseup/keyup/blur/change) and on
+// node deselect / rail unmount. Guarantees the last value is always cooked.
+const flushReCook = (nodeId) => {
+  if (_reCookTimer) { clearTimeout(_reCookTimer); _reCookTimer = null; }
+  const nid = nodeId || _reCookPendingNode;
+  _reCookPendingNode = null;
+  if (nid) _fireReCook(nid);
+};
+// Fold the re-cook timer into the global escape hatch + page-hide flush so a
+// close mid-debounce still cooks the final value (belt-and-suspenders; the cook
+// is fire-and-forget so this is best-effort on unload).
+if (typeof window !== 'undefined') {
+  ['pagehide', 'beforeunload', 'visibilitychange'].forEach(ev =>
+    window.addEventListener(ev, () => { flushReCook(); }, { capture: true })
+  );
+}
+const _origFlushGraphSave2 = window.__archhub_flushGraphSave;
+window.__archhub_flushGraphSave = () => {
+  flushReCook();
+  if (_origFlushGraphSave2) _origFlushGraphSave2();
 };
 
 // SLICE C (AgDR-0004): six predefined Group Styles. Names serialise
@@ -850,6 +1110,30 @@ const LM_GRAPH = window.__archhub_LM_GRAPH = window.__archhub_LM_GRAPH || { node
 // Defensive: older saved graphs may lack `groups`. Seed it once.
 if (!Array.isArray(LM_GRAPH.groups)) LM_GRAPH.groups = [];
 
+// ─── STREAM STORE — decouples AI token streaming from the canvas ──────
+// THE LAG ROOT (founder, multi-session rage): `onChunk` used to push every
+// streamed token into LM_GRAPH and then call the ROOT `bumpGraph()`, which
+// re-rendered the ENTIRE app — NodeCanvas + Workspace + every wire/node —
+// ~60×/sec for the whole AI response. The canvas geometry does NOT change
+// while text streams, so it must NOT repaint.
+//
+// Fix (mechanism): a tiny external store with a monotonic version counter.
+// `onChunk`/`onReasoning` mutate the conversation's `messages` in place (as
+// before) then bump THIS store only. ConversationRail subscribes via
+// useSyncExternalStore, so ONLY the conversation subtree re-renders on each
+// token — NodeCanvas never subscribes, so it stays flat during streaming.
+// A real graph-structure change (node add/delete/wire/done) still calls the
+// root bumpGraph normally; only the per-token text stream is decoupled.
+const STREAM_STORE = window.__archhub_STREAM_STORE || (window.__archhub_STREAM_STORE = (() => {
+  let version = 0;
+  const listeners = new Set();
+  return {
+    bump() { version++; listeners.forEach(fn => { try { fn(); } catch (e) {} }); },
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    getSnapshot() { return version; },
+  };
+})());
+
 // Slice K follow-up: ID-collision fix for rapid node placement.
 // Date.now().toString(36).slice(-4) alone collides within the same
 // millisecond (founder saw it during slice B2 burst-placement).
@@ -878,6 +1162,282 @@ const LM_CONNECTORS = window.__archhub_LM_CONNECTORS = window.__archhub_LM_CONNE
 const LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR || [];
 // User-minted custom nodes — AI-designed via Node Smith or hand-built.
 const LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES || [];
+
+// ─── Shared wire-integrity helpers (ENGINEERING mandate, founder 2026-06-02:
+// "WHERE ARE THE WIRES?" — fix the CLASS, not the instance).
+//
+// Two recurring bug-classes both produce ORPHANED / VANISHED wires:
+//   (1) a legacy/portless node gets (re-)ported, but the saved wires still
+//       reference old port ids the node no longer has → the wire can't resolve
+//       to a socket and silently disappears;
+//   (2) a live in-place port change (op pick, type swap, output promote)
+//       rewrites a node's ins/outs WITHOUT re-pointing the wires touching it.
+// `_upgradeLegacyNodes` owns class (1) — it was inlined in openSession; now ONE
+// implementation that every legacy-blob loader calls. `remapWiresForNode` owns
+// class (2) — every site that mutates a node's ports calls it after the change.
+// Both are idempotent: re-running on an already-consistent graph is a no-op.
+
+// Port object the canvas understands: {id, label, t}. Mirrors
+// addNodeFromLibrary's gport mapping (lowercased type tag).
+const _lmGport = (p) => ({ id: p.id, label: p.id, t: String((p && p.type) || 'any').toLowerCase() });
+
+// ─── #1 stem-FIELD gap (founder: "stem fields — sliders, inputs, selects") ──
+// A primitive's typed `config_schema` (e.g. data.join: key/how/left_key, or
+// verify.assert: mode/op/expected/expr/safe_mode/message) must render as
+// EDITABLE inspector fields, not a flat read-only param list. These two pure
+// helpers turn a JSON-Schema-ish config_schema into the {k,type,v,options,…}
+// shape the existing `FullParam` widget renderer already dispatches on — so NO
+// new widget code is needed and the write-back rides the existing onParamChange
+// path (which mirrors into node.params, folded to config by _params_to_config).
+// Additive + reversible: a node with no config_schema → {} → flat-param fallback.
+
+// config_schema for a placed node, by KIND, from the ONE grammar source.
+// `_grammar` is a transient attach (not reliably persisted across save/reload —
+// save serializes LM_GRAPH.nodes whole), so re-derive by node.kind, matching the
+// existing lookup pattern (lines ~7864 / ~11734). {} → flat-param fallback.
+const _configSchemaFor = (node) => {
+  if (!node) return {};
+  const g = (node._grammar) ||
+            (LM_NODE_GRAMMAR || []).find(p => p && p.kind === node.kind);
+  const cs = g && g.config_schema;
+  return (cs && typeof cs === 'object') ? cs : {};
+};
+
+// JSON-Schema property → the {k,type,v,options} shape FullParam renders:
+//   options:[…]                 → select   (string enum)
+//   type "boolean"              → boolean  (toggle)
+//   type "number"/"integer"     → number   (numeric input)
+//   else (string / unspecified) → text     (text input)
+// `cur` is the seeded current value (node.config → node.params → schema.default).
+const _schemaFieldToParam = (k, prop, cur) => {
+  const spec = (prop && typeof prop === 'object') ? prop : {};
+  const t = String(spec.type || '').toLowerCase();
+  let type = 'text';
+  let options;
+  if (Array.isArray(spec.options) && spec.options.length > 0) {
+    type = 'select';
+    options = spec.options;
+  } else if (t === 'boolean') {
+    type = 'boolean';
+  } else if (t === 'number' || t === 'integer') {
+    type = 'number';
+  } else {
+    type = 'text';   // string / unspecified
+  }
+  // Normalize the seeded value to the widget's expected JS type so the
+  // control renders correctly (a boolean toggle needs a bool, etc.).
+  let v = cur;
+  if (type === 'boolean') v = !!v;
+  else if (type === 'number') v = (v === '' || v === undefined || v === null || isNaN(Number(v))) ? '' : Number(v);
+  else if (v === undefined || v === null) v = '';
+  return { k, type, v, options, _desc: spec.description || '' };
+};
+
+// Pick the target-side input a legacy data-feed wire should snap to. Prefer a
+// context/input port over the first port (which is `prompt` for ai_chat) — the
+// legacy host->conversation wire fed host data into the conversation's CONTEXT,
+// not its prompt text. Returns the chosen port object (caller reads .id).
+const _lmPreferInPort = (ins) => (
+  (ins || []).find(p => /^(context|ctx|input|in)$/i.test(p.id))
+  || (ins || []).find(p => /context|input/i.test(p.id))
+  || (ins || [])[0]
+);
+
+// HELPER 1 — upgrade legacy saved nodes IN PLACE to the grammar shape, then
+// remap any wire whose port id no longer exists on its (now re-ported) node.
+// Extracted verbatim from openSession's inline upgrade body so there is ONE
+// implementation. Bounded + additive: only touches nodes missing `kind` (or the
+// half-upgraded portless state); host->connector only when a real LM_CONNECTORS
+// entry exists. Operates on the passed `nodes`/`wires` arrays (mutates them) so
+// it works on a freshly-loaded blob BEFORE it's spliced into LM_GRAPH. Returns
+// the (same) nodes array for convenience. Idempotent.
+const _upgradeLegacyNodes = (nodes, wires) => {
+  const ns = Array.isArray(nodes) ? nodes : [];
+  const ws = Array.isArray(wires) ? wires : [];
+  try {
+    // Grammar ports MUST be populated on upgrade — without them the node has no
+    // sockets, so a wire can't resolve to it and VANISHES. Mirror
+    // addNodeFromLibrary's gport mapping. Also handle the HALF-upgraded state
+    // (kind set by the earlier port-less upgrade, but outs/ins empty) so a
+    // previously mis-upgraded saved session self-heals on next open.
+    const _setPorts = (n, prim) => {
+      if (prim && prim.ports) {
+        n.ins = ((prim.ports.in) || []).map(_lmGport);
+        n.outs = ((prim.ports.out) || []).map(_lmGport);
+      }
+    };
+    const _connPrim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'connector');
+    const _aiPrim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'ai_chat');
+    ns.forEach(n => {
+      if (!n) return;
+      const portless = !((n.outs || []).length) && !((n.ins || []).length);
+      // A host-family node becomes the connector master whenever a matching
+      // LM_CONNECTORS entry exists — REGARDLESS of whether `kind` is set. The
+      // old `!n.kind` guard let legacy nodes that carried `kind:'host'` slip
+      // through and stay the superseded HostBody (opened_doc/selection/state/
+      // after) forever (founder 2026-06-02: "WHAT IS THIS [Speckle] NODE?").
+      // Idempotent: once upgraded cat/kind become 'connector' and stop matching.
+      if ((n.cat === 'host') || (n.kind === 'host') || (n.kind === 'connector' && portless)) {
+        const fam = n.host || (n.title || '').toLowerCase().split(/\s+/)[0];
+        const c = (LM_CONNECTORS || []).find(x => x.host === fam);
+        if (c) {
+          n.kind = 'connector'; n.cat = 'connector'; n.host = fam;
+          n.config = { host: fam, op: (n.config && n.config.op) || '' };
+          if (!n.title) n.title = c.display_name || fam;
+          _setPorts(n, _connPrim);
+        }
+      } else if ((n.cat === 'ai' && !n.kind) || (n.kind === 'ai_chat' && portless)) {
+        n.kind = 'ai_chat';
+        if (!Array.isArray(n.messages)) n.messages = [];
+        _setPorts(n, _aiPrim);
+      }
+    });
+    // Remap any wire whose port id no longer exists on its (now re-ported)
+    // node — snap to the node's first out (source) / preferred in (target).
+    const _byId = {};
+    ns.forEach(n => { if (n && n.id) _byId[n.id] = n; });
+    ws.forEach(w => {
+      if (!w || !w.from || !w.to) return;
+      const sn = _byId[w.from[0]]; const tn = _byId[w.to[0]];
+      if (sn && (sn.outs || []).length && !(sn.outs || []).some(p => p.id === w.from[1])) w.from[1] = sn.outs[0].id;
+      if (tn && (tn.ins || []).length && !(tn.ins || []).some(p => p.id === w.to[1])) {
+        const pref = _lmPreferInPort(tn.ins);
+        if (pref) w.to[1] = pref.id;
+      }
+    });
+    // Type-aware pass: a wire whose port id is valid but whose TYPE no longer
+    // fits (a `list` output sitting on a `string` input) re-routes to a
+    // compatible ANY input on the same node — heals existing graphs on load.
+    _resnapTypeMismatch(ns, ws);
+  } catch (e) {}
+  return ns;
+};
+
+// HELPER 2 — after a node's ins/outs were just changed in place, re-point every
+// wire in LM_GRAPH.wires touching node.id whose port id no longer exists on the
+// node: snap it to the node's first matching-direction port (mirror the load
+// remap), or DROP it + toast when the node has no port of that direction at all.
+// `oldIns`/`oldOuts` are accepted for symmetry/debugging but the decision is made
+// purely against the node's CURRENT ports, so the call is idempotent (a wire that
+// already references a valid current port is left untouched). No-op when the node
+// has no id or no wires touch it.
+const remapWiresForNode = (node, oldIns, oldOuts) => {
+  if (!node || !node.id) return;
+  const ws = LM_GRAPH.wires;
+  if (!Array.isArray(ws) || !ws.length) return;
+  const outs = Array.isArray(node.outs) ? node.outs : [];
+  const ins = Array.isArray(node.ins) ? node.ins : [];
+  const kept = [];
+  let dropped = 0;
+  ws.forEach(w => {
+    if (!w || !w.from || !w.to) { kept.push(w); return; }
+    let drop = false;
+    // Source side — wire leaves this node via w.from[1].
+    if (w.from[0] === node.id && !outs.some(p => p.id === w.from[1])) {
+      if (outs.length) w.from[1] = outs[0].id; else drop = true;
+    }
+    // Target side — wire enters this node via w.to[1].
+    if (!drop && w.to[0] === node.id && !ins.some(p => p.id === w.to[1])) {
+      const pref = _lmPreferInPort(ins);
+      if (pref) w.to[1] = pref.id; else drop = true;
+    }
+    if (drop) dropped++; else kept.push(w);
+  });
+  if (dropped) {
+    LM_GRAPH.wires = kept;
+    try {
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail: {
+        msg: dropped + ' wire' + (dropped > 1 ? 's' : '') + ' dropped — no matching port',
+        kind: 'info',
+      } }));
+    } catch (e) {}
+  }
+};
+
+// Re-route a data wire that sits on a type-INCOMPATIBLE input to a compatible
+// ANY input on the SAME target node, when one exists. The id-only remaps above
+// keep a wire whose port id is still valid even when the TYPE no longer fits —
+// e.g. a connector op switched document_info→list_layers retypes `out` to
+// `list` while the wire still sits on ai_chat's `prompt`:string, which the
+// graph-health type check (graph.py) then flags as a type_mismatch error
+// (founder 2026-06-02). The conversation's `context`:any input is the designed
+// home for piped host data (see _lmPreferInPort), so move it there. Bounded:
+// only moves wires that ACTUALLY mismatch; ANY-typed or matching wires are left
+// untouched. Idempotent — a wire already on a compatible port is never moved.
+const _isAnyT = (t) => !t || /^any$/i.test(String(t));
+const _resnapTypeMismatch = (nodes, wires) => {
+  const ns = Array.isArray(nodes) ? nodes : [];
+  const ws = Array.isArray(wires) ? wires : [];
+  if (!ws.length) return;
+  const byId = {};
+  ns.forEach(n => { if (n && n.id) byId[n.id] = n; });
+  let moved = 0;
+  ws.forEach(w => {
+    if (!w || !w.from || !w.to) return;
+    const sn = byId[w.from[0]], tn = byId[w.to[0]];
+    if (!sn || !tn) return;
+    const sp = (sn.outs || []).find(p => p.id === w.from[1]);
+    const tp = (tn.ins  || []).find(p => p.id === w.to[1]);
+    if (!sp || !tp) return;
+    const st = String(sp.t || 'any').toLowerCase();
+    const tt = String(tp.t || 'any').toLowerCase();
+    if (_isAnyT(st) || _isAnyT(tt) || st === tt) return;   // compatible — leave it
+    const anyIn = (tn.ins || []).find(p => p.id !== tp.id && _isAnyT(p.t));
+    if (anyIn) { w.to[1] = anyIn.id; moved++; }
+  });
+  if (moved) {
+    try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail: {
+      msg: moved + ' wire' + (moved > 1 ? 's' : '') + ' re-routed to a compatible input (type mismatch)',
+      kind: 'info',
+    } })); } catch (e) {}
+  }
+};
+
+// ── Shared connector op-switch (ENGINEERING root-fix, founder 2026-06-02):
+// ONE mechanism for changing a connector node's active op. Used by BOTH the
+// inspector OPERATION <select> (ConnectorRail.pickOp) AND the on-card op-tile
+// click (lm-host-set-op handler) so the two surfaces can never drift. Sets the
+// canonical in/out ports, rebuilds typed params off the op spec, folds config
+// (mirrors ConnectorRail.syncConfig), and re-snaps wires via remapWiresForNode
+// so an op swap never orphans the value→context wire (founder wire-orphan fix).
+// Caller fires bumpGraph() after. Returns true if the op was found + applied.
+const applyConnectorOp = (node, opId) => {
+  if (!node) return false;
+  const rawHost = node.host || (node.config && node.config.host) || '';
+  const host = String(rawHost).toLowerCase();
+  const conn = (LM_CONNECTORS || []).find(c => c.host === host)
+            || (LM_CONNECTORS || []).find(c => c.host === rawHost);
+  const o = ((conn && conn.ops) || []).find(x => x.op_id === opId);
+  if (!o) return false;
+  const oldIns  = Array.isArray(node.ins)  ? node.ins.slice()  : [];
+  const oldOuts = Array.isArray(node.outs) ? node.outs.slice() : [];
+  node.op_id = o.op_id;
+  node.op_kind = o.kind || 'read';
+  node.destructive = !!o.destructive;
+  node.title = o.label || o.op_id;
+  node.sub = rawHost + ' · ' + (o.kind || 'op');
+  node.ins  = [{ id:'in',  label:'in',     t:'any' }];
+  node.outs = [{ id:'out', label:'result', t: o.output_type || 'any' }];
+  node.params = (o.inputs || []).map(p => ({
+    k: p.id, v: p.default != null ? p.default : '',
+    type: p.type || 'text', label: p.label || p.id,
+    options: p.options || [], required: !!p.required, help: p.help || '',
+    options_source: p.options_source || '', _by: 'default',
+  }));
+  node.op_result = null; node.cooked = null;
+  const cfg = { host: node.host || '', op: node.op_id || '' };
+  (node.params || []).forEach(p => {
+    if (p && p.k != null && p.v !== '' && p.v != null) cfg[p.k] = p.v;
+  });
+  node.config = cfg;
+  remapWiresForNode(node, oldIns, oldOuts);
+  // Op-switch may have retyped `out` (document_info→list_layers makes it a
+  // `list`). Re-route any now-type-mismatched downstream wire to a compatible
+  // ANY input (e.g. ai_chat `context`) instead of leaving a type_mismatch err.
+  _resnapTypeMismatch(LM_GRAPH.nodes, LM_GRAPH.wires);
+  try { saveCurrentGraph(); } catch (e) {}
+  return true;
+};
 
 // Per-host brand colors for connector op nodes / library grouping.
 const CONNECTOR_COLORS = {
@@ -930,6 +1490,38 @@ const StudioLM = () => {
     });
     return () => { cancelled = true; };
   }, []);
+  // Accessibility prefs → live UI (2026-06-03). On mount, pull the prefs
+  // the Settings → Accessibility tab persists (bridge.get_a11y_prefs) and
+  // APPLY reduce-motion by toggling html.lm-reduce-motion — the class the
+  // _LM_A11Y_STYLES sheet keys its "kill animations/transitions" rule on.
+  // This is the one pref with zero-risk CSS infrastructure already in
+  // place, so it's the clean slice to make real this pass.
+  //
+  // INTENTIONALLY DEFERRED (read but NOT applied): font_size, contrast,
+  // and screen_reader. Applying them honestly needs design-gated work —
+  // font_size a px → scale refactor of the inline-style UI, contrast a
+  // dedicated high-contrast palette, screen_reader component-level
+  // aria-live changes. We do NOT inject any no-op styling that pretends
+  // to apply them; that would be a decorative lie. They wait on a design
+  // decision. (See settings_dialog.AccessibilityTab + AgDR a11y wave-2.)
+  React.useEffect(() => {
+    let cancelled = false;
+    try {
+      if (!window.archhub || typeof window.archhub.get_a11y_prefs !== 'function') return;
+      bridgeAsync('get_a11y_prefs').then((prefs) => {
+        if (cancelled || !prefs || typeof prefs !== 'object') return;
+        try {
+          const el = document.documentElement;
+          if (prefs.reduce_motion) el.classList.add('lm-reduce-motion');
+          else el.classList.remove('lm-reduce-motion');
+          // font_size / contrast / screen_reader: deliberately not applied
+          // (see note above) — reading them here only documents that the
+          // boot path sees them; no DOM/style mutation is made for them.
+        } catch (e) { /* DOM not ready / unavailable — never block boot */ }
+      });
+    } catch (e) { /* bridge unavailable — accessibility stays at OS defaults */ }
+    return () => { cancelled = true; };
+  }, []);
   const [panel, setPanel] = React.useState('nodes'); // only 'nodes' now — chats/skills/search panels removed
   // Default focus to the first AI node so the right-rail isn't empty.
   const [focusId, setFocusId] = React.useState(() => {
@@ -940,6 +1532,21 @@ const StudioLM = () => {
   const [userNodes, setUserNodes] = React.useState([]);
   // Bump counter to force rerender after we mutate LM_GRAPH.wires/nodes in place.
   const [graphBump, setGraphBump] = React.useState(0);
+  // LAG-ROOT SPLIT (2026-06-02): graphBump used to double as the THEME-repaint
+  // key for the always-mounted memo shell (ServerStripMemo, PerfHud, the 5
+  // modals, GlobalToast) via `_themeBump={graphBump}`. That conflated two
+  // concerns: a GEOMETRY change (a wire/param/node edit → bumpGraph) and a
+  // PALETTE change (theme swap / host-node-v2 toggle). Because the shell keyed
+  // its memo on graphBump, EVERY geometry bump re-ran the whole shell + its
+  // nested-in-render children (StripItem/GroupSep remount) — the residual
+  // waste measured in rendercount_after.json (RESIDUAL_RERENDER_FINDINGS.md
+  // §Amplifier-1). Split: `paletteBump` is a SECOND root counter dedicated to
+  // palette changes. The shell's `_themeBump` now reads paletteBump, so a theme
+  // / v2 swap still repaints the entire shell (correctness preserved), while a
+  // geometry-only bumpGraph no longer touches it. Workspace/NodeCanvas/
+  // GraphHealthBadge keep reading graphBump (they ARE geometry consumers).
+  const [paletteBump, setPaletteBump] = React.useState(0);
+  const bumpPalette = React.useCallback(() => { setPaletteBump(b => b + 1); }, []);
   // god-counter kill (founder, 2026-05-25): bumpGraph used to fire a
   // synchronous setState on every call → 73 sites → cascade re-renders.
   // Now every bumpGraph call is rAF-coalesced — duplicate bumps in the
@@ -950,18 +1557,48 @@ const StudioLM = () => {
   // (commit-on-blur, drag-end → snap). Net effect: render rate drops
   // from per-mutation to per-frame max.
   const bumpPendingRef = React.useRef(false);
+  const bumpTimerRef = React.useRef(0);
+  // REGRESSION ROOT (founder 2026-06-02 "WHERE ARE THE WIRES?"): the rAF-only
+  // coalescing below silently DROPPED every graph repaint whenever the window
+  // was hidden/occluded. Chromium/QtWebEngine SUSPENDS requestAnimationFrame
+  // entirely while `document.visibilityState === 'hidden'` (CDP-confirmed live:
+  // hidden=true, rafFires=false). openSession populates LM_GRAPH.nodes then
+  // calls bumpGraph() to repaint — but the rAF never fired, so setGraphBump
+  // never ran, graphBump stayed frozen, the Workspace/NodeCanvas React.memo
+  // comparators saw an unchanged graphBump and SKIPPED re-render, the allNodes
+  // useMemo never recomputed (stuck []), nodeById was empty, resolveEndpoint
+  // returned null for every wire, and the wires useMemo produced [] → zero
+  // <g data-wire-i>. Worse, bumpPendingRef stayed true forever, so EVERY later
+  // bumpGraph() early-returned — the canvas was permanently wedged. This hit
+  // the WHOLE CLASS of graph mutations (open session, spawn, drag-end, composer
+  // edits), not just wires, and reproduced for any occluded/headless window.
+  //
+  // Fix the mechanism, not the symptom: still coalesce to one flush per frame
+  // via rAF for the live 60Hz foreground case, but ALSO arm a setTimeout that
+  // fires the SAME flush — timers run regardless of visibility. Whichever lands
+  // first performs the (idempotent) flush and cancels the other. The pending
+  // flag is always cleared, so the bump can never get stuck again.
+  const flushGraphBump = React.useCallback(() => {
+    if (!bumpPendingRef.current) return;       // already flushed by the other timer
+    bumpPendingRef.current = false;
+    if (bumpTimerRef.current) { clearTimeout(bumpTimerRef.current); bumpTimerRef.current = 0; }
+    setGraphBump(b => b + 1);
+    // Surface mutation to non-canvas listeners (footer HealthStripItem
+    // polls graph_validate on this event). Coalesced with the flush so
+    // we don't fire >60Hz.
+    try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
+  }, []);
   const bumpGraph = React.useCallback(() => {
     if (bumpPendingRef.current) return;
     bumpPendingRef.current = true;
-    requestAnimationFrame(() => {
-      bumpPendingRef.current = false;
-      setGraphBump(b => b + 1);
-      // Surface mutation to non-canvas listeners (footer HealthStripItem
-      // polls graph_validate on this event). Coalesced with the rAF so
-      // we don't fire >60Hz.
-      try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
-    });
-  }, []);
+    // Foreground 60Hz coalescing path.
+    requestAnimationFrame(flushGraphBump);
+    // Visibility-proof fallback: a timer fires even when the window is hidden
+    // and rAF is suspended. ~32ms keeps the foreground path winning under
+    // normal load while guaranteeing the flush happens within a frame or two
+    // when rAF is dead. clearTimeout in flushGraphBump prevents a double flush.
+    bumpTimerRef.current = setTimeout(flushGraphBump, 32);
+  }, [flushGraphBump]);
   // AgDR-0047 §C4 (deleted 2026-05-26 per Q1): the sync escape hatch
   // (zero callers) and the cosmetic Raf alias were dead — bumpGraph
   // itself coalesces via rAF. Their window-global counterpart is gone
@@ -984,6 +1621,19 @@ const StudioLM = () => {
   // Also exposes window.__archhub_session_id so save_graph() targets the right
   // file (founder demand #16: no more hardcoded 'workspace').
   const openSession = React.useCallback(async (id) => {
+    // DATA-LOSS FIX (founder repeat-regression 2026-06-02 — "session not
+    // saved / opens disconnected"). saveCurrentGraph() is a 250ms trailing-
+    // edge debounce that reads LM_GRAPH + currentSid() at FIRE time. The reset
+    // below (LM_GRAPH.nodes=[]) and the id reassignment run synchronously now,
+    // so if a spawn/edit scheduled a save and the user navigates within that
+    // 250ms window, the pending save fires AFTER the reset and persists
+    // nodes:[] (REPRODUCED live: spawn 2 nodes -> navigate -> reopen shows 0).
+    // Flush the pending save to the CURRENT session FIRST. It reads
+    // window.__archhub_session_id, so this MUST run before we reassign the id
+    // below. No-op when nothing is pending. (Two earlier causes — the empty-
+    // payload refusal + the slug mismatch — were real and fixed in 85bbe15;
+    // this navigation race was the third, stacked, cause.)
+    try { if (window.__archhub_flushGraphSave) window.__archhub_flushGraphSave(); } catch (e) {}
     if (!id) { setOpenId(null); return; }
     if (!openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
@@ -1000,22 +1650,51 @@ const StudioLM = () => {
       LM_GRAPH.wires = Array.isArray(g.wires) ? g.wires : [];
       // SLICE C (AgDR-0004): groups round-trip too. Default to [].
       LM_GRAPH.groups = Array.isArray(g.groups) ? g.groups : [];
-      const ai = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai');
+      // Upgrade legacy saved nodes to the grammar shape so OLD sessions show
+      // the decided design too (not just new spawns). Founder 2026-06-02:
+      // pre-grammar sessions hold bare cat:'host'/'ai' nodes whose properties
+      // don't match SLICE A / AgDR-0001. Map host -> per-host connector master
+      // (kind:'connector' + host + config{host,op}); a chat ai node -> ai_chat,
+      // populate grammar ports, then snap any wire whose port id no longer
+      // exists. ADDITIVE + bounded + idempotent — see the shared
+      // `_upgradeLegacyNodes` (module scope), the ONE implementation now reused
+      // by onSpawnSkill + onDisentangle. Operates on LM_GRAPH's live arrays.
+      _upgradeLegacyNodes(LM_GRAPH.nodes, LM_GRAPH.wires);
+      const ai = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai' || n.kind === 'ai_chat');
       setFocusId(ai ? ai.id : (LM_GRAPH.nodes[0] && LM_GRAPH.nodes[0].id) || null);
       bumpGraph();
     }
   }, [openTabs, bumpGraph]);
 
-  const closeTab = (id) => {
+  // useCallback so the reference is stable across root re-renders (e.g. the
+  // once-per-response onDone bump) — a precondition for the Workspace
+  // React.memo to bail. Deps: openId (read here) + openSession.
+  const closeTab = React.useCallback((id) => {
     setOpenTabs(t => {
       const next = t.filter(x => x !== id);
       if (openId === id) {
         const replacement = next[next.length - 1] || null;
-        if (replacement) openSession(replacement); else setOpenId(null);
+        // DATA-LOSS FIX (founder repeat-regression 2026-06-02): the bare
+        // setOpenId(null) here closed the last tab WITHOUT flushing the 250ms
+        // trailing-edge save — a spawn/edit within that window then fired AFTER
+        // the global session id cleared, persisting to a stray `default`
+        // session (the same race openSession fixes on navigate). Route the null
+        // transition through openSession(null), which flushes the pending save
+        // FIRST (it reads window.__archhub_session_id before clearing it).
+        if (replacement) openSession(replacement); else openSession(null);
       }
       return next;
     });
-  };
+  }, [openId, openSession]);
+
+  // Stable "go Home" callback — hoisted out of the inline arrows that were
+  // passed to Sidebar/Workspace/Home (a fresh closure each root render kept
+  // the Workspace memo from bailing). Routes through openSession(null) — NOT a
+  // bare setOpenId(null) — so the pending debounced save is FLUSHED to the
+  // current session before the id clears (founder repeat-regression 2026-06-02:
+  // going Home lost the last edit to a stray default session). openSession(null)
+  // owns the flush + the setOpenId(null).
+  const goHome = React.useCallback(() => { openSession(null); }, [openSession]);
 
   // ─── Founder demand #5+#6: mint a fresh session.
   // Founder bug 2026-05-15: "latest session edits weren't saved." Root
@@ -1050,8 +1729,12 @@ const StudioLM = () => {
   // session.  The app stays on Home until the user picks a session.
   // (The old one-time auto-open effect lived here — removed.)
 
-  // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
-  const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
+  // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click.
+  // useCallback so the reference is stable across root re-renders — a
+  // precondition for the Workspace + NodeCanvas React.memo to bail. Only
+  // closes over setFocusId (stable setter) + bumpGraph (stable) + module
+  // globals, so [bumpGraph] is a sufficient dep set.
+  const addNodeFromLibrary = React.useCallback((libItem, x = 200, y = 200) => {
     const cat = libItem.cat;
     // ── Custom node: an AI-minted (or hand-built) node type registered
     // server-side in the workflow registry. Carries `custom_type` (the
@@ -1065,7 +1748,12 @@ const StudioLM = () => {
         const nm = (p && p.name) || `${dir}${i}`;
         return { id: nm, label: nm, t: (p && p.type) || 'any' };
       };
-      const id = `cn_${String(spec.type || 'custom').replace(/[^a-z0-9]+/gi,'_')}_${_lm_uid()}`;
+      // SPAWN-ID CONTRACT: honor a caller-forced id (same as the grammar +
+      // legacy branches below) so a spawn_node that lands a CUSTOM node also
+      // places it under the id the router allocated. No _forceId → mint the
+      // usual uid (every existing caller unchanged).
+      const id = libItem._forceId
+        || `cn_${String(spec.type || 'custom').replace(/[^a-z0-9]+/gi,'_')}_${_lm_uid()}`;
       const node = {
         id, cat:'custom', x, y, w:232, h:120,
         title: spec.title || spec.display_name || spec.type || 'Custom node',
@@ -1092,7 +1780,11 @@ const StudioLM = () => {
     // dropped (ConnectorRail picks op + fills typed params).
     if (libItem._grammar) {
       const g = libItem._grammar;
-      const gid = `${g.kind}_${_lm_uid()}`;
+      // SPAWN-ID CONTRACT: honor a caller-forced id (the node id the
+      // router allocated for a spawn_node call) so the placed node lands
+      // under the exact id the model saw. No _forceId → mint the usual uid
+      // (every other caller — palette, slash, prefill — unchanged).
+      const gid = libItem._forceId || `${g.kind}_${_lm_uid()}`;
       const gport = (p) => ({ id: p.id, label: p.id,
         t: String(p.type || 'any').toLowerCase() });
       const hostLock = libItem._host || '';
@@ -1147,7 +1839,10 @@ const StudioLM = () => {
       return gnode;
     }
     const tmpl = LM_NODE_TEMPLATES[libItem.id] || LM_NODE_TEMPLATES[`__cat_${cat}`] || {};
-    const id = `${libItem.id || cat}_${_lm_uid()}`;
+    // SPAWN-ID CONTRACT: honor a caller-forced id (see grammar branch
+    // above). Default path mints the usual uid — unchanged for every
+    // non-spawn caller.
+    const id = libItem._forceId || `${libItem.id || cat}_${_lm_uid()}`;
     const newNode = {
       id, cat, x, y, w: tmpl.w || libItem.w || 220, h: tmpl.h || libItem.h || 110,
       title: libItem.title, sub: libItem.sub,
@@ -1164,7 +1859,7 @@ const StudioLM = () => {
     saveCurrentGraph();
     bumpGraph();
     return newNode;
-  };
+  }, [bumpGraph]);
 
   const removeUserNode = React.useCallback((id) => {
     setUserNodes(ns => ns.filter(n => n.id !== id));
@@ -1179,6 +1874,46 @@ const StudioLM = () => {
       const detail = (ev && ev.detail) || {};
       const action = detail.action || {};
       const cmd = action.command || 'chat';
+      // USER-AGENCY MANDATE — composer-mode WRITE GATE (the chokepoint).
+      // Plan (default): every AI write to a host / the graph is approval-gated.
+      // Auto: reads run free, writes still gated. YOLO: everything auto-runs.
+      // `detail.mode` is stamped by FloatingComposer.dispatchAction; an
+      // approval grant re-dispatches the SAME action with mode:'yolo' + the
+      // _approved flag so it flows through unblocked. window fallback covers
+      // any non-composer dispatcher that omits mode.
+      const mode = detail.mode || (typeof window !== 'undefined' && window.__archhub_composer_mode) || 'plan';
+      // Host/graph WRITE ops the AI can drive. Reads (chat/ping/info/help/
+      // _refresh/_passthrough/createnode-which-only-opens-a-modal) are NOT here.
+      const WRITE_CMDS = ['run_node','run_workflow','set_node_param','wire',
+                          'freeze','delete','rename','duplicate','disconnect'];
+      const _isWrite = WRITE_CMDS.indexOf(cmd) >= 0;
+      const _gated = (mode === 'plan' || mode === 'auto') && _isWrite && !detail._approved;
+      if (_gated) {
+        // Make the "all writes gated" label TRUE: do NOT execute. Surface an
+        // approval the user can Approve (re-runs as yolo) or Dismiss. This is
+        // the client-side gate for DIRECT (non-agent) composer writes — the
+        // real chokepoint. The agent path is gated by the backend instead
+        // (run_agent_step), surfaced via onAgentStep → the SAME approval queue;
+        // there is no separate write-gate bridge slot (the prior dead no-op
+        // call to a nonexistent slot was removed). One gate of record per
+        // path, both real.
+        try {
+          window.dispatchEvent(new CustomEvent('lm-approval-request', {
+            detail: {
+              action, raw: detail.raw || '', focusId: detail.focusId || '',
+              attachments: detail.attachments || [],
+              summary: action.summary || `${cmd}`,
+              cmd, mode,
+            },
+          }));
+        } catch (e) {}
+        try {
+          window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+            detail: { msg: `${cmd} held — approve to write (${mode} mode gates writes)`, kind:'warn' },
+          }));
+        } catch (e) {}
+        return; // gate closed — nothing mutates until approved.
+      }
       // Founder demand: silent failures are unacceptable. Surface every
       // composer dispatch as a toast so the user always sees feedback.
       try {
@@ -1241,23 +1976,60 @@ const StudioLM = () => {
             baseX = maxX + 60;
             baseY = 60 + (existingNodes.length % 3) * 320;
           }
-          // De-dupe HOST: don't spawn a 2nd Outlook host if one already exists.
-          const exists = existingNodes.find(n => n.cat === 'host' && (n.title || '').toLowerCase().includes(family));
+          // Build the per-host CONNECTOR MASTER exactly as the palette does —
+          // grammar `connector` primitive + the LM_CONNECTORS host entry → the
+          // host is LOCKED with the op picker + typed params (ConnectorRail).
+          // The conversation is the grammar `ai_chat` typed node. Founder
+          // 2026-06-02: ping-spawned nodes were bare legacy cat:'host'/'ai'
+          // nodes whose properties did NOT match the decided grammar design
+          // (SLICE A / AgDR-0001) — palette placement gave the real master,
+          // ping gave a shell. Reuse the grammar path so spawn === palette.
+          const _connPrim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'connector');
+          const _connEntry = (LM_CONNECTORS || []).find(c => c.host === family);
+          const _aiPrim = (LM_NODE_GRAMMAR || []).find(p => p.kind === 'ai_chat');
+          // De-dupe HOST: reuse an existing connector/host node for this family.
+          const exists = existingNodes.find(n =>
+            (n.kind === 'connector' && n.host === family) ||
+            (n.cat === 'host' && (n.title || '').toLowerCase().includes(family)));
           let hostNode = exists;
           if (!hostNode) {
-            hostNode = addNodeFromLibrary({
-              id: `h_${family}`, cat:'host', title: family.charAt(0).toUpperCase()+family.slice(1),
-              sub: action.sub || 'host',
-            }, baseX, baseY);
+            hostNode = (_connPrim && _connEntry)
+              ? addNodeFromLibrary({
+                  id: 'ng:connector:' + family,
+                  title: _connEntry.display_name || family,
+                  sub: 'Run ' + (_connEntry.display_name || family) + ' operations',
+                  cat: 'connector', kind: 'connector',
+                  _grammar: _connPrim, _host: family,
+                }, baseX, baseY)
+              : addNodeFromLibrary({   // fallback only if grammar/connectors unloaded
+                  id: `h_${family}`, cat: 'host',
+                  title: family.charAt(0).toUpperCase() + family.slice(1),
+                  sub: action.sub || 'host',
+                }, baseX, baseY);
           }
           // ALWAYS spawn a fresh conversation per ping — founder demand.
-          // Each "ping <host>" creates a new chat thread tied to the host.
-          const convNode = addNodeFromLibrary({
-            id:'i_conv', cat:'ai', title:'Conversation', sub:'Claude · streaming',
-            ins:[{ id:'ctx', label:'context', t:'any' }],
-            outs:[{ id:'response', label:'response', t:'completion' }],
-            messages:[],
-          }, (hostNode.x || baseX) + 280, (hostNode.y || baseY) + 40);
+          // Grammar `ai_chat` typed node (carries its messages rail), NOT the
+          // legacy cat:'ai' shell.
+          // SPAWN-ID CONTRACT: when the agent path supplied action.node_id
+          // (the id the router allocated + the model saw), PLACE the
+          // conversation node under THAT exact id via `_forceId` so a
+          // follow-up add_wire/run_node referencing it resolves. No node_id
+          // (manual ping, /ping, older router) → addNodeFromLibrary mints its
+          // usual uid (back-compat, unchanged).
+          const _forcedConvId = action.node_id || undefined;
+          const convNode = _aiPrim
+            ? addNodeFromLibrary({
+                id: 'ng:ai_chat', title: 'Conversation',
+                sub: _aiPrim.blurb || 'Claude · streaming',
+                cat: _aiPrim.cat || 'ai', kind: 'ai_chat', _grammar: _aiPrim,
+                _forceId: _forcedConvId,
+              }, (hostNode.x || baseX) + 280, (hostNode.y || baseY) + 40)
+            : addNodeFromLibrary({
+                id: 'i_conv', cat: 'ai', title: 'Conversation', sub: 'Claude · streaming',
+                ins: [{ id: 'ctx', label: 'context', t: 'any' }],
+                outs: [{ id: 'response', label: 'response', t: 'completion' }],
+                messages: [], _forceId: _forcedConvId,
+              }, (hostNode.x || baseX) + 280, (hostNode.y || baseY) + 40);
           // User-visible feedback — toast names what just spawned.
           try {
             window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
@@ -1283,27 +2055,53 @@ const StudioLM = () => {
           if (convNode && (verb === 'ping' || verb === 'info')) {
             convNode.messages = [
               { me:true, text, who:'You', time:now() },
-              { me:false, text:'…', streaming:true, time:now() },
+              { me:false, text:`pinging ${family}…`, streaming:true, time:now() },
             ];
             bumpGraph();
-            bridgeAsync('probe_connector', family).then((res) => {
-              const st = (res && res.status) || 'unknown';
-              const note = (res && res.note) || '';
-              const ok = st === 'live';
-              const reply = ok
-                ? `✓ ${family} is connected — ${note || 'live'}.`
-                : (st === 'loaded_dead'
-                    ? `${family} is running but the ArchHub connector isn't loaded — ${note}.`
-                    : st === 'unauthorized'
-                    ? `${family} needs authorization — ${note}.`
-                    : `${family} is not reachable (${st})${note ? ' — ' + note : ''}.`);
+            // probe_connector returns {status:'probing'} as a COLD-CACHE
+            // PLACEHOLDER while the real probe runs on a background pool
+            // (it emits hosts_changed when it lands, and a 2nd call returns
+            // the cached real status). 'probing' is never a real connector
+            // status — only this placeholder. Bug fix 2026-06-02: the old
+            // code took that first placeholder as the FINAL answer and
+            // stamped "{host} is not reachable (probing) — probe in
+            // progress" even for a LIVE host (founder repro: `ping rhino`
+            // while Rhino was up on :9879). Now we poll until it resolves
+            // and only then render the true status.
+            const _stampProbe = (txt, ok) => {
               const msgs = convNode.messages || [];
               const ix = msgs.findIndex(m => m.streaming);
-              const stamped = { me:false, text:reply, time:now(),
+              const stamped = { me:false, text:txt, time:now(),
                                  who:'ArchHub', col: ok ? LM.ok : LM.warn };
               if (ix >= 0) msgs[ix] = stamped; else msgs.push(stamped);
               saveCurrentGraph(); bumpGraph();
-            });
+            };
+            let _probeTries = 0;
+            const _pollProbe = () => {
+              bridgeAsync('probe_connector', family).then((res) => {
+                const st = (res && res.status) || 'unknown';
+                const note = (res && res.note) || '';
+                if (st === 'probing') {
+                  if (_probeTries < 15) {           // ~9s budget; probe is 1-6s
+                    _probeTries += 1;
+                    setTimeout(_pollProbe, 600);
+                  } else {
+                    _stampProbe(`${family}: still checking (probe is slow) — try the ping again in a moment.`, false);
+                  }
+                  return;
+                }
+                const ok = st === 'live';
+                const reply = ok
+                  ? `✓ ${family} is connected — ${note || 'live'}.`
+                  : (st === 'loaded_dead'
+                      ? `${family} is running but the ArchHub connector isn't loaded — ${note}.`
+                      : st === 'unauthorized'
+                      ? `${family} needs authorization — ${note}.`
+                      : `${family} is not reachable (${st})${note ? ' — ' + note : ''}.`);
+                _stampProbe(reply, ok);
+              }).catch((e) => _stampProbe(`${family}: probe failed — ${String(e)}`, false));
+            };
+            _pollProbe();
           } else if (text && convNode) {
             // A genuine question (not a ping) — LLM chat is appropriate.
             const history = (convNode.messages || []).map(m => ({ me:m.me, text:m.text }));
@@ -1320,18 +2118,42 @@ const StudioLM = () => {
           // Agent path takes precedence when the descriptor already carries the
           // wired pair, so we don't make a no-op bridge round-trip.
           if (action.src_node && action.dst_node) {
-            const w = { from: [action.src_node, action.src_port || 'out'],
-                        to:   [action.dst_node, action.dst_port || 'in'] };
-            LM_GRAPH.wires = [...(LM_GRAPH.wires || []), w];
-            saveCurrentGraph(); bumpGraph();
-            break;
+            // RESOLVE REAL PORTS — do NOT hardcode 'out'/'in' (founder
+            // 2026-06-02 wire-vanish class): a wire whose port id doesn't exist
+            // on the node can't resolve to a socket and never renders. Source =
+            // action.src_port IF the node actually has it, else the node's first
+            // out. Target = action.dst_port IF present on the node, else the
+            // preferred context/input port (mirror the load remap). If either
+            // node or a usable port can't be resolved, fall THROUGH to
+            // apply_composer_command below, which validates the wire properly.
+            const srcNode = (LM_GRAPH.nodes || []).find(n => n && n.id === action.src_node);
+            const dstNode = (LM_GRAPH.nodes || []).find(n => n && n.id === action.dst_node);
+            if (srcNode && dstNode) {
+              const sOuts = Array.isArray(srcNode.outs) ? srcNode.outs : [];
+              const dIns = Array.isArray(dstNode.ins) ? dstNode.ins : [];
+              const fromPort = (action.src_port && sOuts.some(p => p.id === action.src_port))
+                ? action.src_port : (sOuts[0] && sOuts[0].id);
+              const prefIn = (action.dst_port && dIns.some(p => p.id === action.dst_port))
+                ? action.dst_port : (_lmPreferInPort(dIns) || {}).id;
+              if (fromPort && prefIn) {
+                const w = { from: [action.src_node, fromPort], to: [action.dst_node, prefIn] };
+                LM_GRAPH.wires = [...(LM_GRAPH.wires || []), w];
+                saveCurrentGraph(); bumpGraph();
+                break;
+              }
+            }
+            // else: ports didn't resolve — fall through to the validating bridge.
           }
-          const out = bridgeJson('apply_composer_command', JSON.stringify(LM_GRAPH), detail.raw || '', detail.focusId || '');
-          if (out && out.graph && Array.isArray(out.graph.nodes)) {
-            LM_GRAPH.nodes = out.graph.nodes;
-            LM_GRAPH.wires = out.graph.wires || [];
-            saveCurrentGraph(); bumpGraph();
-          }
+          // QWebChannel slots are async — sync bridgeJson returned a Promise so
+          // the graph-mutation never applied (slash wire command silently
+          // no-op'd). Resolve via bridgeAsync, then apply in the continuation.
+          bridgeAsync('apply_composer_command', JSON.stringify(LM_GRAPH), detail.raw || '', detail.focusId || '').then((out) => {
+            if (out && out.graph && Array.isArray(out.graph.nodes)) {
+              LM_GRAPH.nodes = out.graph.nodes;
+              LM_GRAPH.wires = out.graph.wires || [];
+              saveCurrentGraph(); bumpGraph();
+            }
+          });
           break;
         }
         case 'set_node_param': {
@@ -1348,14 +2170,27 @@ const StudioLM = () => {
         }
         case 'run_node': {
           // Agent tool — cook a single node via the bridge runner.
+          // run_node's slot signature is (session_id, node_id, graph_json):
+          // the LIVE 3-arg form (currentSid() + node_id + the in-memory
+          // LM_GRAPH) — same as the NodeRail "Rerun" button (L14441), the
+          // NodeMenu onRun (L7426), and the re-cook path. The old single-arg
+          // call passed node_id into session_id (node_id → empty), so the
+          // slot looked up a bogus session on disk and cooked NOTHING.
           if (action.node_id) {
-            try { bridgeCall('run_node', action.node_id); } catch (e) {}
+            try { bridgeCall('run_node', currentSid(), action.node_id, JSON.stringify(LM_GRAPH)); } catch (e) {}
           }
           break;
         }
         case 'run_workflow': {
           // Agent tool — cook every sink in the graph via the bridge.
-          try { bridgeCall('run_workflow'); } catch (e) {}
+          // Pass the LIVE form (currentSid() + the in-memory LM_GRAPH), same
+          // as the ▶ RUN button (L6901) and the run_node case above. The old
+          // no-arg call made run_workflow load session_id="" -> Path(
+          // "workspace") -> "session not found" (or cooked a STALE on-disk
+          // graph), so an agent/composer "run the workflow" cooked NOTHING /
+          // the wrong graph. Same class as the run_node single-arg bug fixed
+          // above — fixed here too. (2026-06-02)
+          try { bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH)); } catch (e) {}
           break;
         }
         case 'freeze':     // /freeze
@@ -1366,12 +2201,16 @@ const StudioLM = () => {
         case 'disconnect': { // /disconnect
           // The bridge's apply_composer_command returns the mutated graph,
           // so we ask for that one-shot. Safe if bridge missing — we no-op.
-          const out = bridgeJson('apply_composer_command', JSON.stringify(LM_GRAPH), detail.raw || '', detail.focusId || '');
-          if (out && out.graph && Array.isArray(out.graph.nodes)) {
-            LM_GRAPH.nodes = out.graph.nodes;
-            LM_GRAPH.wires = out.graph.wires || [];
-            saveCurrentGraph(); bumpGraph();
-          }
+          // QWebChannel slots are async — sync bridgeJson returned a Promise so
+          // /freeze /delete /rename /duplicate /properties /disconnect all
+          // silently no-op'd. Resolve via bridgeAsync, apply in continuation.
+          bridgeAsync('apply_composer_command', JSON.stringify(LM_GRAPH), detail.raw || '', detail.focusId || '').then((out) => {
+            if (out && out.graph && Array.isArray(out.graph.nodes)) {
+              LM_GRAPH.nodes = out.graph.nodes;
+              LM_GRAPH.wires = out.graph.wires || [];
+              saveCurrentGraph(); bumpGraph();
+            }
+          });
           break;
         }
         case 'createnode': {
@@ -1508,15 +2347,28 @@ const StudioLM = () => {
       if (ix >= 0) {
         msgs[ix] = { ...msgs[ix], text: (msgs[ix].text === '…' ? '' : msgs[ix].text) + piece };
       } else {
-        msgs.push({ me:false, text:piece, streaming:true, time:new Date().toISOString().slice(11,16) });
+        msgs.push({ me:false, text:piece, streaming:true,
+                     time:new Date().toISOString().slice(11,16),
+                     ts:new Date().toISOString() });
         streamRef.msgIx = msgs.length - 1;
       }
-      // AgDR-0032 — coalesce chunk-driven re-renders to one per
-      // animation frame (was: full canvas re-render per chunk = lag).
-      // AgDR-0047 §C4 (2026-05-26): `bumpGraph` itself coalesces via rAF,
-      // so the dedicated `bumpGraphRaf` alias was removed. Same behavior,
-      // one symbol.
-      bumpGraph();
+      // 2026-05-31: nudge ServerStrip to re-pull the REAL provider-reported
+      // token usage. The old chars/4 ESTIMATE that lived here (count streamed
+      // characters ÷ 4) was a fabrication — it guessed tokens from output
+      // length and ignored prompt tokens entirely. Real usage now comes from
+      // the provider (Anthropic/OpenAI/OpenRouter usage{}, Ollama
+      // eval_count) → router accumulator → bridge `get_token_usage` slot.
+      // ServerStrip re-reads that slot on this bump. No client-side guess.
+      try { window.dispatchEvent(new Event('lm-usage-bump')); } catch (e) {}
+      // LAG-ROOT FIX (mechanism 1): per-token chunks bump the STREAM_STORE
+      // ONLY — never the root. The conversation rail (the sole subtree that
+      // shows streamed text) subscribes to STREAM_STORE and re-renders; the
+      // canvas does NOT subscribe, so NodeCanvas/Workspace stay flat through
+      // the whole response. The graph geometry is unchanged by a token, so
+      // it must not repaint. (Was: `bumpGraph()` → root re-render ~60×/sec →
+      // the multi-session lag the founder raged about. onDone still bumps the
+      // root once so canvas node-state — e.g. the running dot — settles.)
+      STREAM_STORE.bump();
     };
     const onDone = (sid) => {
       (LM_GRAPH.nodes || []).forEach(n => {
@@ -1527,7 +2379,10 @@ const StudioLM = () => {
       // ai node entirely).
       streamRef.conv = null;
       streamRef.msgIx = -1;
-      saveCurrentGraph(); bumpGraph();
+      // Root bump ONCE: clears the canvas node running-state (a real
+      // structure/state change, end-of-response only — cheap). Stream bump
+      // too so the rail's blinking caret + streaming flag clear instantly.
+      saveCurrentGraph(); bumpGraph(); STREAM_STORE.bump();
     };
     const onError = (sid, err) => {
       console.warn('[studio-lm] chat error:', err);
@@ -1554,9 +2409,10 @@ const StudioLM = () => {
         r.push(step);
         msgs[lastIx] = { ...cur, reasoning: r };
       }
-      // AgDR-0032 — coalesce reasoning-step bumps too (via bumpGraph
-      // rAF; the `bumpGraphRaf` alias was removed per AgDR-0047 §C4).
-      bumpGraph();
+      // LAG-ROOT FIX (mechanism 1): reasoning steps only change the
+      // conversation, so bump the STREAM_STORE — not the root. Same
+      // decoupling as the token path: the rail repaints, the canvas does not.
+      STREAM_STORE.bump();
     };
     const wires = [];
     const wire = (name, fn) => {
@@ -1573,20 +2429,27 @@ const StudioLM = () => {
           detail: { msg: `trigger: ${payload.kind || 'fired'} → ${nodeId}`, kind:'info' },
         }));
       } catch (e) {}
-      // BFS forward from trigger node, cook each downstream sink.
-      const wires = LM_GRAPH.wires || [];
-      const visited = new Set([nodeId]);
-      const queue = [nodeId];
-      while (queue.length) {
-        const cur = queue.shift();
-        wires.forEach(w => {
-          if (w.from && w.from[0] === cur && !visited.has(w.to[0])) {
-            visited.add(w.to[0]);
-            queue.push(w.to[0]);
-            try { bridgeCall('run_node', w.to[0]); } catch (e) {}
-          }
-        });
-      }
+      // Cook the trigger node + its whole downstream subgraph. We route
+      // through the SAME engine path as the court-verdict param re-cook:
+      // `recook_node` (session_id, node_id, graph_json) → runner.recook_from
+      // marks the trigger node dirty, cascades the dirty flag + flips incident
+      // edges to "stale" downstream, then pulls the reachable sinks — so the
+      // fired node AND every node it feeds actually re-cook with fresh data.
+      //
+      // This replaces a hand-rolled JS BFS that called `bridgeCall('run_node',
+      // w.to[0])` per downstream node. That had TWO bugs: (1) the single-arg
+      // call passed the node_id into run_node's FIRST param (session_id), with
+      // node_id defaulting to "" — the slot then looked up a non-existent
+      // session on disk and cooked NOTHING (auto-triggers were silent no-ops);
+      // (2) even with the args fixed, `run_node`/`pull` on a downstream node
+      // walks UPSTREAM and returns CACHED outputs when nothing is marked dirty,
+      // so the trigger firing would not propagate fresh values. `recook_from`
+      // is the correct primitive: it marks-dirty-then-pulls, which is exactly
+      // "a trigger fired → re-cook the downstream subgraph". One bridge call,
+      // off-thread, serialised under _cook_lock — no per-node thrash.
+      // `sid` is the real session id the scheduler fired with; fall back to
+      // currentSid() defensively. LM_GRAPH is the live in-memory shape.
+      try { bridgeCall('recook_node', sid || currentSid(), nodeId, JSON.stringify(LM_GRAPH)); } catch (e) {}
     };
     // Founder bug 2026-05-15: agent_step froze the UI on the main thread.
     // It's now threaded server-side + emits agent_step_done(result_json).
@@ -1597,9 +2460,62 @@ const StudioLM = () => {
       if (!step || !Array.isArray(step.actions)) return;
       step.actions.forEach((a) => {
         const tool = a && a.tool, args = (a && a.args) || {};
+        // BACKEND GATE — HONOR it (the agent path's ONE gate of record).
+        // run_agent_step gated this host-WRITE per the composer mode: it set
+        // a.gated + replaced the executable result with a typed approval
+        // payload (a.approval.type === 'approval_required'). Do NOT rebuild an
+        // executable action — route it to the SAME approval surface the
+        // client-side composer gate uses (lm-approval-request → ApprovalQueue),
+        // and STOP. Approving there re-dispatches the held action through
+        // lm-composer-action as yolo/_approved, so it executes exactly once.
+        // (Re-dispatching here too would double-gate / double-run.)
+        const _gated = !!(a && (a.gated
+          || (a.approval && a.approval.type === 'approval_required')));
+        if (_gated) {
+          // Map the gated tool to the canvas action the approval re-runs on
+          // grant — same shape onAgentStep would have built for an ungated
+          // action — so the held write actually lands after Approve.
+          let held = null;
+          if (tool === 'spawn_node') {
+            held = { command:'spawn_host_chat', family:args.family,
+                      node_id:(a && a.node_id) || args.node_id || undefined,
+                      text:(step.text || ''), fresh_conversation:true };
+          } else if (tool === 'add_wire') {
+            held = { command:'wire', src_node:args.src_node, src_port:args.src_port,
+                      dst_node:args.dst_node, dst_port:args.dst_port };
+          } else if (tool === 'set_node_param') {
+            held = { command:'set_node_param', node_id:args.node_id,
+                      key:args.key, value:args.value };
+          } else if (tool === 'run_node') {
+            held = { command:'run_node', node_id:args.node_id };
+          } else if (tool === 'run_workflow') {
+            held = { command:'run_workflow' };
+          }
+          if (held) {
+            try {
+              window.dispatchEvent(new CustomEvent('lm-approval-request', {
+                detail: {
+                  action: held, raw: step.text || '', focusId: focusId,
+                  attachments: [],
+                  summary: (a.approval && a.approval.reason) || tool,
+                  cmd: held.command, mode: a.mode || 'plan',
+                },
+              }));
+            } catch (e) {}
+          }
+          return; // gate closed on the agent path — nothing executes until approved.
+        }
         let action = null;
         if (tool === 'spawn_node') {
+          // SPAWN-ID CONTRACT: the router ALLOCATED the new node id and put
+          // it on the action (a.node_id) — carry it into spawn_host_chat so
+          // the placed conversation node lands under THAT id (not a freshly
+          // minted uid). That makes the id the model saw == the id on the
+          // canvas, so a follow-up add_wire/run_node the model emitted in the
+          // same turn resolves against the real node. Absent (older router) →
+          // undefined, and spawn_host_chat falls back to its uid scheme.
           action = { command:'spawn_host_chat', family:args.family,
+                      node_id:(a && a.node_id) || args.node_id || undefined,
                       text:(step.text || ''), fresh_conversation:true };
         } else if (tool === 'add_wire') {
           action = { command:'wire', src_node:args.src_node, src_port:args.src_port,
@@ -1677,22 +2593,100 @@ const StudioLM = () => {
         bumpGraph();
       }
     };
-    // Workflow / node cook result. run_workflow emits workflow_done(
-    // kind, req_id, result_json); result.results maps nodeId -> that
-    // node's cooked outputs. Stash on node.cooked so node bodies (the
-    // watch node especially) can render what cooked. Before this the
-    // JSX never listened — a Run produced a result nothing displayed.
+    // Apply a runner `edges_state` array ([{id,state}]) — emitted by
+    // run_all / recook_from at cook end — into the live wire-state store so
+    // the canvas wires settle to their final colour (cached/stale/error) the
+    // moment the cook finishes, not just mid-flow via the streamed signal.
+    // edge.id matches the canvas wire's canonical id (lmWireEdgeId).
+    const _applyEdgesState = (edges) => {
+      if (!Array.isArray(edges)) return false;
+      let any = false;
+      for (const e of edges) {
+        if (!e || !e.id) continue;
+        LM_WIRE_STATE[String(e.id)] = { state: e.state || 'idle',
+                                         preview: e.preview || '' };
+        any = true;
+      }
+      return any;
+    };
+    // Workflow / node cook result. run_workflow / recook emit workflow_done(
+    // kind, req_id, result_json) with result.results mapping nodeId -> that
+    // node's cooked outputs + result.edges_state for the wires. run_node
+    // (kind:"node") instead delivers the FLAT single-node output dict stamped
+    // with `node_id` (bridge.run_node) — NOT a results map. Handle BOTH so a
+    // single-node Rerun/▶ shows its value on the node (Bug: the handler only
+    // read `results`, so kind:"node" cooks rendered nothing), and so the
+    // wires light up at cook end (Bug: edges_state was dropped). Stash on
+    // node.cooked so node bodies (the watch node especially) render what cooked.
     const onWorkflowDone = (kind, reqId, resultJson) => {
       let res = null;
       try { res = JSON.parse(resultJson || '{}'); } catch (e) { return; }
-      const results = (res && res.results) || {};
+      if (!res) return;
       let touched = false;
-      for (const nid of Object.keys(results)) {
-        const node = (LM_GRAPH.nodes || []).find(n => n.id === nid);
-        if (node) { node.cooked = results[nid]; touched = true; }
+      const results = res.results;
+      if (results && typeof results === 'object') {
+        // run_all / recook_from — a {nodeId: outputs} map.
+        for (const nid of Object.keys(results)) {
+          const node = (LM_GRAPH.nodes || []).find(n => n.id === nid);
+          if (node) { node.cooked = results[nid]; touched = true; }
+        }
+      } else if (res.node_id) {
+        // run_node — the flat single-node output dict, stamped with node_id.
+        const node = (LM_GRAPH.nodes || []).find(n => n.id === res.node_id);
+        if (node) {
+          // Drop the routing key so node.cooked is the pure output shape
+          // (node bodies read .value / .status, never .node_id).
+          const { node_id: _nid, ...cooked } = res;
+          node.cooked = cooked;
+          touched = true;
+        }
       }
+      // Final per-edge states (success path lands them as cached/stale/error).
+      if (_applyEdgesState(res.edges_state)) touched = true;
       if (touched) saveCurrentGraph();
       bumpGraph();
+    };
+    // LIVE WIRE-STATE (v1.4 wire-as-data-bridge). The runner streams
+    // wire_state_changed(edge_id, state, preview) as a cook walks the graph;
+    // before this NOTHING subscribed, so the wires never animated. Stamp each
+    // edge's state into the shared store + repaint — the wires memo reads
+    // LM_WIRE_STATE[edgeId] and recolours/animates. Cheap: an in-memory map
+    // write + a graph bump (the same repaint a param tick does).
+    const onWireState = (edgeId, state, preview) => {
+      if (!edgeId) return;
+      LM_WIRE_STATE[String(edgeId)] = { state: state || 'idle',
+                                        preview: preview || '' };
+      bumpGraph();
+    };
+    // AgDR-0036 follow-up — memory_stats / memory_query / graph_validate
+    // are now off-thread (_cached_async): the first call returns a cached
+    // placeholder and these signals fire when fresh data lands. Re-broadcast
+    // them as DOM events so the one-shot consumers (BrainView, MemoryExplorer,
+    // memory strip, canvas health strip) re-pull the now-warm cache instead
+    // of being stuck on the cold placeholder. No-arg signals.
+    const onMemoryChanged = () => {
+      try { window.dispatchEvent(new CustomEvent('lm-memory-changed')); } catch (e) {}
+    };
+    const onGraphValidated = () => {
+      try { window.dispatchEvent(new CustomEvent('lm-graph-validated')); } catch (e) {}
+    };
+    // Backend → user message. The bridge emits notice(level, text) for
+    // out-of-band conditions (settings unavailable, pricing fetch failed, …);
+    // before this NOTHING subscribed so those messages were lost. Surface as a
+    // canvas toast — the level maps to the toast `kind` (warning/error → its
+    // own styling, anything else → info). The toast listener (CanvasStage)
+    // reads detail.msg + detail.kind.
+    const onNotice = (level, text) => {
+      const msg = (text || '').trim();
+      if (!msg) return;
+      const lv = (level || '').toLowerCase();
+      const kind = lv === 'error' ? 'err'
+                 : lv === 'warning' || lv === 'warn' ? 'warn'
+                 : 'info';
+      try {
+        window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail: { msg, kind } }));
+      } catch (e) {}
     };
     wire('chat_chunk',     onChunk);
     wire('chat_reasoning', onReasoning);
@@ -1704,6 +2698,18 @@ const StudioLM = () => {
     wire('param_options_ready', onParamOptions);
     wire('node_created',   onNodeCreated);
     wire('workflow_done',  onWorkflowDone);
+    wire('wire_state_changed', onWireState);   // v1.4 live wire dataflow
+    wire('notice',         onNotice);          // backend → toast
+    wire('memory_changed', onMemoryChanged);
+    wire('graph_validated', onGraphValidated);
+    // NOTE — `workflow_started(kind, request_id)` is intentionally NOT
+    // subscribed. It exists to pair started/done for an optional cook spinner,
+    // but the canvas already shows liveness via the streamed wire_state_changed
+    // ("flowing") animation + the per-node running dot, and the cook result
+    // arrives on `workflow_done`. There is no started/done correlation the UI
+    // needs today, so wiring a consumer would be dead weight. `sessions_changed`
+    // IS consumed — in app-boot.jsx (re-pulls the session list) — so it is not
+    // listed here. Documented per the no-fake-consumer rule.
     return () => { for (const off of wires) { try { off(); } catch (e) {} } };
   }, [bumpGraph, focusId]);
 
@@ -1856,8 +2862,15 @@ const StudioLM = () => {
 
   // ─── Founder demand #4: clicking gear opens the NATIVE PyQt SettingsDialog.
   // The in-React Settings overlay is only a fallback when the bridge isn't wired.
-  const openSettingsResolved = React.useCallback(() => {
-    const ok = bridgeCall('open_settings');
+  const openSettingsResolved = React.useCallback((section) => {
+    // Forward an optional section (e.g. "account") so the native
+    // SettingsDialog can focus the right tab — the Brain "Back up my brain"
+    // signed-out CTA routes here with section="account" to land the founder
+    // on the real "Sign in to ArchHub Cloud" button. bridgeCall passes the
+    // arg through to the open_settings(str) slot overload.
+    const ok = (section && typeof section === 'string')
+      ? bridgeCall('open_settings', section)
+      : bridgeCall('open_settings');
     if (ok === null) setSettingsOpen(true); // fallback for preview/standalone
   }, []);
 
@@ -1910,6 +2923,11 @@ const StudioLM = () => {
         n.y = (n.y || 0) + 40 + offset;
         n._user = true;
       });
+      // Upgrade a legacy-shaped skill blob to the grammar shape + remap its
+      // wires to the (re-ported) nodes BEFORE splicing — same class-fix the
+      // load path uses. Without this a pre-grammar skill's nodes spawn portless
+      // and its internal wires reference dead port ids → vanish on placement.
+      _upgradeLegacyNodes(blob.nodes, blob.wires);
       setUserNodes(ns => [...ns, ...blob.nodes]);
       if (Array.isArray(blob.wires)) {
         LM_GRAPH.wires = [...(LM_GRAPH.wires || []), ...blob.wires];
@@ -1937,14 +2955,31 @@ const StudioLM = () => {
     // AgDR-0043 Sprint 2 Move 6 — Cmd+K command palette dispatches these
     // events; this is the single place state setters are reachable.
     const onCmdOpenLibrary = () => setLibraryOpen(true);
-    const onCmdOpenSettings = () => openSettingsResolved();
+    const onCmdOpenSettings = (ev) => {
+      // Honour an optional section in the event detail (e.g. the Brain
+      // backup CTA fires { detail:{ section:'account' } } to land on the
+      // real cloud sign-in tab). Plain opens stay default-tab.
+      const section = ev && ev.detail && ev.detail.section;
+      openSettingsResolved(section);
+    };
     const onCmdOpenAiNode = () => setAiNodeOpen(true);
     const onCmdNewCanvas = () => { try { createSession(); } catch (e) {} };
     const onCmdOpenSession = (ev) => {
       const sid = ev && ev.detail && ev.detail.id;
       if (sid) try { openSession(sid); } catch (e) {}
     };
-    const onCmdRunCanvas = () => { try { bridgeCall('cook_session', currentSid()); } catch (e) {} };
+    const onCmdRunCanvas = () => {
+      // Cmd-K "Run canvas" — mirror the working ▶ RUN handler (Cmd/Ctrl+Enter,
+      // ~L6940). The old `cook_session` slot DOES NOT EXIST on the bridge, so
+      // this was a silent no-op (founder 2026-06-02: Cmd-K run did nothing).
+      // run_workflow's slot is (session_id, graph_json) — pass the LIVE form
+      // (currentSid() + the in-memory LM_GRAPH), identical to the RUN button.
+      try {
+        try { trackEvent('workflow.run_started', { node_count:(LM_GRAPH.nodes||[]).length, wire_count:(LM_GRAPH.wires||[]).length, has_ai_node:(LM_GRAPH.nodes||[]).some(n=>n&&n.cat==='ai'), trigger:'cmdk_run' }); } catch (e) {}
+        bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH));
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail:{ msg:'Workflow running…', kind:'info' } })); } catch (e) {}
+      } catch (e) {}
+    };
     const onCmdAddGrammarNode = (ev) => {
       const d = ev && ev.detail;
       if (!d || !d.kind) return;
@@ -2014,6 +3049,8 @@ const StudioLM = () => {
       const node = (LM_GRAPH.nodes || []).find(x => x.id === d.node_id);
       if (!node) return;
       node.outs = Array.isArray(node.outs) ? node.outs : [];
+      const oldOuts = node.outs.slice();
+      const oldIns = Array.isArray(node.ins) ? node.ins.slice() : [];
       const oid = d.output.id || d.output.name;
       if (!oid) return;
       // Don't double-promote.
@@ -2025,24 +3062,63 @@ const StudioLM = () => {
         from_op: d.op_id || null,
         promoted: true,
       });
+      // Promotion is additive (appends an out), so existing wires can't be
+      // orphaned here — but route through the shared remap so any port mutation
+      // on this node preserves its wires uniformly + idempotently (founder
+      // wire-integrity class-fix 2026-06-02).
+      remapWiresForNode(node, oldIns, oldOuts);
       try { saveCurrentGraph(); } catch (e) {}
       bumpGraph();
+    };
+    // On-card op-tile click → switch the connector node's active op via the
+    // SAME shared mechanism as the inspector OPERATION select (applyConnectorOp,
+    // ENGINEERING: one op-switch path, wires preserved). Fired by the
+    // HostNodeV2Body collapsed op-tiles.
+    const onSetOp = (ev) => {
+      const d = ev && ev.detail;
+      if (!d || !d.node_id || !d.op_id) return;
+      const node = (LM_GRAPH.nodes || []).find(x => x.id === d.node_id);
+      if (!node || node.op_id === d.op_id) return;
+      if (applyConnectorOp(node, d.op_id)) bumpGraph();
     };
     window.addEventListener('lm-node-toggle-bypass', onToggleBypass);
     window.addEventListener('lm-node-toggle-freeze', onToggleFreeze);
     window.addEventListener('lm-node-toggle-preview', onTogglePreview);
     window.addEventListener('lm-node-toggle-pin', onTogglePin);
     window.addEventListener('lm-host-promote-output', onPromoteOutput);
+    window.addEventListener('lm-host-set-op', onSetOp);
     // Theme swap triggers full re-render so LM-getter inline styles
     // re-evaluate with the new palette. bumpGraph reaches the canvas;
     // the surrounding shell re-renders via its own state bump.
     const onThemeChanged = () => {
+      // A palette swap changes BOTH surfaces: (1) the canvas (Workspace/
+      // NodeCanvas read graphBump → LM-getter inline styles re-evaluate) and
+      // (2) the always-mounted shell (ServerStrip, PerfHud, modals, toast key
+      // their `_themeBump` on paletteBump). bumpGraph() reaches the canvas;
+      // bumpPalette() repaints the shell. Post-split: this is the ONLY path
+      // (besides the v2 toggle) that bumps paletteBump — a geometry-only edit
+      // no longer forces the shell. (Was: a second setGraphBump that only
+      // existed to re-run the shell when it keyed on graphBump.)
       try { bumpGraph(); } catch (e) {}
-      // Force the shell (Home, ServerStrip, modals) to re-render too —
-      // tiny no-op state bump via window event the shell listens for.
-      setGraphBump(b => b + 1);
+      bumpPalette();
     };
     window.addEventListener('archhub-theme-changed', onThemeChanged);
+    // Host-node-v2 toggle (archhub.host_node_v2) is read at RENDER time by
+    // `bodyFor` (@~8439) to pick HostNodeV2Body vs ConnectorOpBody. `_setHostNodeV2`
+    // (@~7968) writes localStorage + dispatches this event, but nothing listened —
+    // so flipping it only applied on reload (dead-dispatch class, 2026-05-30; same
+    // pattern as the theme handler above). Wire it: force the canvas + shell to
+    // re-render so every connector node re-evaluates the flag and swaps body LIVE.
+    const onHostNodeV2Changed = () => {
+      // Same dual-surface repaint as onThemeChanged: bumpGraph() re-cooks the
+      // canvas so every connector node re-evaluates the v2 flag and swaps body
+      // (HostNodeV2Body vs ConnectorOpBody) LIVE; bumpPalette() repaints the
+      // memo shell. (Was: a second setGraphBump only present to force the shell
+      // when it keyed on graphBump — now the shell reads paletteBump.)
+      try { bumpGraph(); } catch (e) {}
+      bumpPalette();
+    };
+    window.addEventListener('archhub-host-node-v2', onHostNodeV2Changed);
     return () => {
       window.removeEventListener('lm-new-session', onNewSession);
       window.removeEventListener('lm-spawn-skill', onSpawnSkill);
@@ -2062,9 +3138,11 @@ const StudioLM = () => {
       window.removeEventListener('lm-node-toggle-preview', onTogglePreview);
       window.removeEventListener('lm-node-toggle-pin', onTogglePin);
       window.removeEventListener('lm-host-promote-output', onPromoteOutput);
+      window.removeEventListener('lm-host-set-op', onSetOp);
       window.removeEventListener('archhub-theme-changed', onThemeChanged);
+      window.removeEventListener('archhub-host-node-v2', onHostNodeV2Changed);
     };
-  }, [createSession, openId, bumpGraph]);
+  }, [createSession, openId, bumpGraph, bumpPalette]);
 
   // Close the wire-promote palette by clicking outside or pressing Esc.
   React.useEffect(() => {
@@ -2097,7 +3175,7 @@ const StudioLM = () => {
         <Sidebar
           panel={panel} setPanel={setPanel}
           openId={openId} onOpen={openSession}
-          onHome={() => setOpenId(null)} onSettings={openSettingsResolved}
+          onHome={goHome} onSettings={openSettingsResolved}
           addNodeFromLibrary={addNodeFromLibrary} setFocusId={setFocusId}/>
       ) : (
         <aside style={{
@@ -2107,8 +3185,8 @@ const StudioLM = () => {
           boxShadow:`inset -1px 0 0 ${LM.lineSoft}`,
           minHeight:0, overflow:'hidden',
         }}>
-          <IconRail panel={panel} setPanel={() => {}}
-            onHome={() => setOpenId(null)} onSettings={openSettingsResolved}/>
+          <IconRail panel={panel} setPanel={_NOOP}
+            onHome={goHome} onSettings={openSettingsResolved}/>
         </aside>
       )}
       {session
@@ -2123,20 +3201,29 @@ const StudioLM = () => {
             removeUserNode={removeUserNode}
             bumpGraph={bumpGraph}
             graphBump={graphBump}
-            onHome={() => setOpenId(null)}
+            onHome={goHome}
             onCreateSession={createSession}/>
         : <Home onOpen={openSession} model={model} setPickerOpen={setPickerOpen}
                   onCreateSession={createSession}
                   onSettings={openSettingsResolved}/>}
-      <ServerStrip session={session} model={model} setSettingsOpen={openSettingsResolved}/>
-      <PerfHud/>
+      <ServerStripMemo session={session} model={model} setSettingsOpen={openSettingsResolved} _themeBump={paletteBump}/>
+      <PerfHud _themeBump={paletteBump}/>
       {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}/>}
-      <AiPlanHistoryModal/>
-      <CommandPalette/>
-      <MemoryExplorerModal/>
-      <GlobalToast/>
+      {/* Always-mounted modals: memo'd (each early-returns null when closed +
+          opens via its own window-event state). `_themeBump`={paletteBump} is
+          their only prop — a theme / host-v2 swap bumps paletteBump so an OPEN
+          modal repaints, while root focus/settings/panel/picker AND geometry
+          bumpGraph re-renders are skipped (the LAG-ROOT split, 2026-06-02:
+          paletteBump replaces graphBump here so a wire/param edit no longer
+          re-runs these closed modal bodies). */}
+      <AiPlanHistoryModal _themeBump={paletteBump}/>
+      <CommandPalette _themeBump={paletteBump}/>
+      <MemoryExplorerModal _themeBump={paletteBump}/>
+      <BrainViewModal _themeBump={paletteBump}/>
+      <ApprovalQueue _themeBump={paletteBump}/>
+      <GlobalToast _themeBump={paletteBump}/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
       {aiNodeOpen && <AINodeModal onClose={() => setAiNodeOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -2192,7 +3279,10 @@ const CreateNodeModal = ({ spec, onClose }) => {
       inputs: inputs.split(',').map(s => s.trim()).filter(Boolean),
       outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
     };
-    bridgeJson('create_node_type', JSON.stringify(payload));
+    // QWebChannel slots are async — sync bridgeJson fired the call but never
+    // awaited it; the slot emits node_created back to JS (handled by the
+    // onNodeCreated signal wire) so the new type lands in the library.
+    bridgeAsync('create_node_type', JSON.stringify(payload));
     onClose();
   };
   const modalRef = _useModalA11y(onClose);
@@ -2316,7 +3406,7 @@ const AINodeModal = ({ onClose, addNodeFromLibrary }) => {
         <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:4 }}>
           <span style={{ color:LM.blue, fontSize:16 }}>⊕</span>
           <span id="lm-ai-node-modal-title" style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.01em' }}>Create a node with AI</span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <button onClick={onClose} disabled={phase==='working'} style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`,
             background:'transparent', borderRadius:5,
@@ -2668,7 +3758,7 @@ const WirePromotePalette = ({ detail, onClose, onPick }) => {
           fontFamily:LM.mono, fontSize:9, letterSpacing:'0.12em', color:LM.inkMuted,
           display:'flex', alignItems:'center', gap:8 }}>
           <span>{fromType ? `PROMOTE → ${fromType}` : 'ADD NODE'}</span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <span style={{ color:LM.inkDim, fontSize:8.5 }}>↵ pick · esc close</span>
         </div>
         <div style={{ padding:'6px 8px', borderBottom:`1px solid ${LM.lineSoft}` }}>
@@ -2815,22 +3905,31 @@ const LM_NODE_TEMPLATES = window.__archhub_LM_NODE_TEMPLATES = window.__archhub_
 };
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
-const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, addNodeFromLibrary, setFocusId }) => (
+// LAG-ROOT FIX (2026-06-01): Sidebar (+ its IconRail/NodesPanel children) is
+// always mounted while a session is open and was re-executing on every root
+// re-render (focusId change especially). Memo'd; every callback it receives is
+// a stable useCallback / module const from the root (goHome, openSession,
+// openSettingsResolved, addNodeFromLibrary, setFocusId, setPanel/_NOOP), so the
+// default shallow compare bails on focus/picker changes. `_themeBump`
+// (= root graphBump) is threaded through so a theme swap still repaints the
+// rail (theme change bumps graphBump in StudioLM.onThemeChanged).
+const SidebarInner = ({ panel, setPanel, openId, onOpen, onHome, onSettings, addNodeFromLibrary, setFocusId, _themeBump }) => (
   <aside style={{
     gridColumn:'1', gridRow:'1',
     display:'grid', gridTemplateColumns:'56px 1fr',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings}/>
+    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} _themeBump={_themeBump}/>
     {/* Founder direction 2026-05-14: sidebar has Nodes library ONLY.
         Sessions live on Home page. Skills + Search were empty shells —
         purged. The icon rail still shows Nodes + Home + Settings. */}
-    <NodesPanel addNodeFromLibrary={addNodeFromLibrary}/>
+    <NodesPanelMemo addNodeFromLibrary={addNodeFromLibrary} _themeBump={_themeBump}/>
   </aside>
 );
+const Sidebar = React.memo(SidebarInner);
 
-const IconRail = ({ panel, setPanel, onHome, onSettings }) => {
+const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
   // Founder direction 2026-05-14: Nodes is the only mid-rail item; Home
   // pin lives at the top, Share + Settings at the bottom. Rail uses
   // 56px width so icons + labels read without crowding.
@@ -2858,13 +3957,21 @@ const IconRail = ({ panel, setPanel, onHome, onSettings }) => {
         </svg>
       </RailIcon>
       <div style={{ height:8 }}/>
-      {items.map(it => (
-        <RailIcon key={it.id} active={panel === it.id}
-          onClick={() => setPanel(it.id)} title={it.title} label={it.title.toLowerCase()}>
-          {it.svg}
-        </RailIcon>
-      ))}
-      <div style={{ flex:1 }}/>
+      {/* Audit 2026-06-02: in the Home view (no session) IconRail receives
+          setPanel={_NOOP}, so these panel items had no effect yet still showed
+          hover/active styling — a dead clickable. Honestly disable them when
+          setPanel is the no-op (Home); the session-view Sidebar passes a real
+          setPanel, where they stay fully functional. */}
+      {items.map(it => {
+        const dead = setPanel === _NOOP;
+        return (
+          <RailIcon key={it.id} active={!dead && panel === it.id} disabled={dead}
+            onClick={() => setPanel(it.id)} title={it.title} label={it.title.toLowerCase()}>
+            {it.svg}
+          </RailIcon>
+        );
+      })}
+      <div style={S_FLEX1}/>
       {/* Subtle divider before footer actions */}
       <div style={{ height:1, margin:'6px 10px 4px', background:LM.line }}/>
       <RailIcon title="Share canvas as skill" label="share"
@@ -2883,20 +3990,31 @@ const IconRail = ({ panel, setPanel, onHome, onSettings }) => {
     </div>
   );
 };
+// Memo'd: receives only `panel` (changes on rail switch) + stable callbacks +
+// `_themeBump`. Skips the root's focus/settings re-renders. RailIcon children
+// carry their own hover state, unaffected by this memo.
+const IconRail = React.memo(IconRailInner);
 
-const RailIcon = ({ active, onClick, title, label, children }) => {
+const RailIcon = ({ active, onClick, title, label, children, disabled }) => {
   const [hover, setHover] = React.useState(false);
   // Track E (Accessibility, 2026-05-26): aria-label so screen readers
   // announce the rail destination instead of just the icon glyph.
   // Falls back to `label` (the small caption beneath the icon) when
   // no explicit `title` is set.
-  const ariaLabel = title || label || 'navigation item';
+  // Audit 2026-06-02: when `disabled` (e.g. Home-view panel items with no
+  // session yet) the button is honestly inert — disabled attr, default
+  // cursor, muted color, NO hover change, and the title/aria explain why.
+  const baseLabel = title || label || 'navigation item';
+  const ariaLabel = disabled ? `${baseLabel} — open a session to use this panel` : baseLabel;
+  const hovering = hover && !disabled;
   return (
-    <button onClick={onClick} title={title} aria-label={ariaLabel} style={{
+    <button onClick={onClick} disabled={disabled}
+      title={disabled ? `${title || baseLabel} — open a session to use this panel` : title}
+      aria-label={ariaLabel} style={{
       width:'100%', minHeight:48, padding:'4px 0', border:0,
-      background: active ? LM.accentDim : (hover ? LM.bgSoft : 'transparent'),
-      color: active ? LM.accent : (hover ? LM.ink : LM.inkSoft),
-      cursor:'pointer',
+      background: active ? LM.accentDim : (hovering ? LM.bgSoft : 'transparent'),
+      color: disabled ? LM.inkMuted : (active ? LM.accent : (hovering ? LM.ink : LM.inkSoft)),
+      cursor: disabled ? 'default' : 'pointer',
       display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:3,
       position:'relative',
       transition:'background .12s, color .12s',
@@ -2908,7 +4026,7 @@ const RailIcon = ({ active, onClick, title, label, children }) => {
       {label && <span style={{
         fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.06em',
         textTransform:'uppercase',
-        color: active ? LM.accent : (hover ? LM.inkSoft : LM.inkMuted),
+        color: disabled ? LM.inkMuted : (active ? LM.accent : (hovering ? LM.inkSoft : LM.inkMuted)),
         lineHeight:1,
       }}>{label}</span>}
     </button>
@@ -2947,7 +4065,7 @@ const ChatsPanel = ({ openId, onOpen }) => {
       {/* Panel header */}
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
         <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
-        <div style={{ flex:1 }}/>
+        <div style={S_FLEX1}/>
         <button title="More" aria-label="More" onClick={() => setMenuFor(m => m && m.type === 'panel' ? null : { sid: openId, type:'panel' })} style={panelIconBtn()}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
         </button>
@@ -3187,7 +4305,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
         <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
           drag · right-click
         </span>
-        <div style={{ flex:1 }}/>
+        <div style={S_FLEX1}/>
         {/* Founder demand 2026-05-17: NO "+ new node" button here. Custom
             node creation lives in the node library ("+ add node" on the
             canvas toolbar → NodeLibrary modal → "Create with AI"). One
@@ -3217,7 +4335,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
               close(); return;
             }
             try {
-              const res = await bridgeJson('delete_custom_node', c.type);
+              const res = await bridgeAsync('delete_custom_node', c.type);
               if (!res || !res.ok) flashToast('Delete failed: ' + (res && res.error || 'unknown'), 'err');
               else flashToast('Custom node deleted');
             } catch (e) { flashToast('Delete failed: ' + e.message, 'err'); }
@@ -3233,7 +4351,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
               close(); return;
             }
             try {
-              const res = await bridgeJson('delete_saved_skill', s.id);
+              const res = await bridgeAsync('delete_saved_skill', s.id);
               if (!res || !res.ok) flashToast('Delete failed: ' + (res && res.error || 'unknown'), 'err');
               else flashToast('Skill deleted');
             } catch (e) { flashToast('Delete failed: ' + e.message, 'err'); }
@@ -3264,7 +4382,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
             if (!confirm('Delete ALL ' + n + ' custom node' + (n===1?'':'s')
                        + '? This cannot be undone.')) { close(); return; }
             try {
-              const res = await bridgeJson('clear_all_custom_nodes');
+              const res = await bridgeAsync('clear_all_custom_nodes');
               if (!res || !res.ok) flashToast('Failed: ' + (res && res.error || 'unknown'), 'err');
               else flashToast('Cleared ' + (res.removed || 0) + ' custom nodes');
             } catch (e) { flashToast('Failed: ' + e.message, 'err'); }
@@ -3278,7 +4396,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
               close(); return;
             }
             try {
-              const res = await bridgeJson('clear_all_saved_skills');
+              const res = await bridgeAsync('clear_all_saved_skills');
               if (!res || !res.ok) flashToast('Failed: ' + (res && res.error || 'unknown'), 'err');
               else flashToast('Cleared ' + (res.removed || 0) + ' saved skills');
             } catch (e) { flashToast('Failed: ' + e.message, 'err'); }
@@ -3637,6 +4755,13 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): NodesPanel (jsx-heavy, 36 inline styles) sits in
+// the always-mounted Sidebar and was re-executing on every root re-render.
+// Memo'd (NodesPanelMemo — Sidebar renders that); `addNodeFromLibrary` is a
+// stable useCallback. Its own search `q` state still re-renders it on typing
+// (internal). The `_themeBump` (= root graphBump) prop Sidebar passes makes the
+// shallow compare re-render it on theme swap (the body ignores the prop).
+const NodesPanelMemo = React.memo(NodesPanel);
 
 // RailMiniMap — minimap embedded in the left Nodes rail bottom area.
 // Reads canvas state from window.__archhub_canvas_state (stashed by
@@ -3651,8 +4776,31 @@ const RailMiniMap = () => {
     // (via bumpGraph rAF coalesce), so the interval was pure overhead.
     const onBump = () => setBump(b => b + 1);
     window.addEventListener('lm-graph-bump', onBump);
-    return () => { window.removeEventListener('lm-graph-bump', onBump); };
+    // Minimap show/hide toggle (MinimapToggleStripItem @~14086) writes
+    // localStorage.archhub.minimap + window.__archhub_minimap_on and dispatches
+    // `archhub-minimap-toggle`, but nothing listened — so flipping the pill did
+    // nothing until reload (dead-dispatch class, 2026-05-30). Wire it: re-render
+    // this component on toggle so the visibility gate below re-reads the flag and
+    // the map appears / disappears LIVE.
+    window.addEventListener('archhub-minimap-toggle', onBump);
+    return () => {
+      window.removeEventListener('lm-graph-bump', onBump);
+      window.removeEventListener('archhub-minimap-toggle', onBump);
+    };
   }, []);
+  // Visibility gate. Prefer the live window flag set by the toggle; on first
+  // mount (before the toggle component runs) fall back to localStorage, default
+  // ON — matching MinimapToggleStripItem's `v !== 'off'` rule. When OFF, render
+  // nothing so the right-sidebar map slot collapses.
+  let _minimapOn = true;
+  try {
+    if (typeof window !== 'undefined' && window.__archhub_minimap_on !== undefined) {
+      _minimapOn = !!window.__archhub_minimap_on;
+    } else {
+      _minimapOn = (localStorage.getItem('archhub.minimap') !== 'off');
+    }
+  } catch (e) { _minimapOn = true; }
+  if (!_minimapOn) return null;
   const s = (typeof window !== 'undefined' && window.__archhub_canvas_state) || null;
   if (!s) {
     return (
@@ -3799,239 +4947,6 @@ const NodeLibItem = ({ it, cat, onAdd, draggable = true, pinned = false, onPin =
 // fallback is EMPTY, never demo data \u2014 a failed prefetch shows an
 // honest empty panel, not fabricated skills (founder, 2026-05-18).
 const LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS = window.__archhub_LM_SAVED_SKILLS || [];
-
-const SkillsPanel = () => {
-  // Real wiring: click to spawn the skill onto the active canvas via the
-  // `lm-spawn-skill` event (StudioLM listens). Drag carries a typed payload
-  // so the canvas drop handler can accept it. Search filters by name client-side.
-  const [q, setQ] = React.useState('');
-  const filtered = React.useMemo(() => {
-    const items = LM_SAVED_SKILLS || [];
-    if (!q) return items;
-    const needle = q.toLowerCase();
-    return items.filter(s => (s.name || '').toLowerCase().includes(needle));
-  }, [q]);
-  const onNewSkill = () => {
-    // Open the CreateNodeModal pre-filled with category='compose'. We use a
-    // window-level event so this dumb panel doesn't need access to StudioLM
-    // state — the composer-action handler already routes 'createnode' commands.
-    try {
-      window.dispatchEvent(new CustomEvent('lm-composer-action', {
-        detail: { action: { command:'createnode', spec:{ cat:'compose' } } },
-      }));
-    } catch (e) {}
-  };
-  return (
-    <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-      <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
-        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
-        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{(LM_SAVED_SKILLS || []).length} SAVED</span>
-        <div style={{ flex:1 }}/>
-        <button title="New skill" aria-label="New skill" onClick={onNewSkill} style={panelIconBtn()}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-      <div style={{ padding:'0 10px 8px' }}>
-        <div style={{
-          display:'flex', alignItems:'center', gap:8, padding:'6px 10px',
-          background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:6, color:LM.inkMuted, fontSize:12,
-        }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search saved skills…" style={{
-            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
-          }}/>
-        </div>
-      </div>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
-        {filtered.map(s => (
-          <div key={s.id}
-            draggable="true"
-            onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); } catch (e) {} }}
-            onDragStart={(e) => { try { e.dataTransfer.setData('application/x-archhub-skill', JSON.stringify(s)); e.dataTransfer.effectAllowed = 'copy'; } catch (ex) {} }}
-            style={{
-              padding:'7px 9px', borderRadius:5, cursor:'grab', marginBottom:1,
-              background:'transparent', borderLeft:`2px solid transparent`,
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.accent; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
-            <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-              <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
-              <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{s.name}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{s.runs}</span>
-            </div>
-            <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, paddingLeft:18, marginTop:1, letterSpacing:'0.04em' }}>
-              <span style={{ color:LM.accent+'aa' }}>args:</span> {s.args} <span style={{ color:LM.inkDim, margin:'0 5px' }}>·</span> {s.when}
-            </div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ padding:'18px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
-            No skills match "{q}".
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// ─── Global search panel ───
-const SearchPanel = ({ onOpen, setFocusId } = {}) => {
-  const [q, setQ] = React.useState('');
-  const [scope, setScope] = React.useState('all');
-  // Audit 2026-05-21: the old code called bridgeJson() (async → Promise)
-  // synchronously inside useMemo and `Array.isArray(Promise)` was always
-  // false → bridge data was dead, every source silently fell back to a
-  // stale module global, and memory search returned [] forever.  Also
-  // running bridge I/O inside a render-phase useMemo on every keystroke
-  // is a side effect in render.  Fix: fetch in a debounced effect.
-  const [bridgeData, setBridgeData] = React.useState(
-    { sessions: null, memory: [], skills: null });
-  React.useEffect(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) { setBridgeData({ sessions: null, memory: [], skills: null }); return; }
-    let cancelled = false;
-    const t = setTimeout(() => {
-      Promise.all([
-        Promise.resolve(bridgeJson('get_sessions')).catch(() => null),
-        Promise.resolve(bridgeJson('list_memory_facts', needle)).catch(() => null),
-        Promise.resolve(bridgeJson('get_saved_skills')).catch(() => null),
-      ]).then(([sessions, memory, skills]) => {
-        if (cancelled) return;
-        setBridgeData({
-          sessions: Array.isArray(sessions) ? sessions : null,
-          memory:   Array.isArray(memory) ? memory : [],
-          skills:   Array.isArray(skills) ? skills : null,
-        });
-      });
-    }, 150);  // debounce — don't fan out a bridge call per keystroke
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [q]);
-  const results = React.useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return { chats:[], nodes:[], skills:[], memory:[], files:[], hosts:[] };
-    const matches = (s) => (s || '').toLowerCase().includes(needle);
-    const sessions = bridgeData.sessions || LM_SESSIONS || [];
-    const chats = sessions.filter(s => matches(s.title) || matches(s.last));
-    const memoryHits = bridgeData.memory || [];
-    let skills = bridgeData.skills || LM_SAVED_SKILLS || [];
-    skills = skills.filter(s => matches(s.name) || matches(s.args));
-    const nodes = (LM_GRAPH.nodes || []).filter(n => matches(n.title) || matches(n.sub) || matches(n.id));
-    const hosts = (LM_HOSTS || []).filter(h => matches(h.id) || matches(h.name) || matches(h.file));
-    const files = sessions.filter(s => matches(s.file)).map(s => ({ id:s.id, label:s.file, sid:s.id }));
-    return { chats, nodes, skills, memory: memoryHits, files, hosts };
-  }, [q, bridgeData]);
-  const counts = {
-    all: results.chats.length + results.nodes.length + results.skills.length + results.memory.length + results.files.length + results.hosts.length,
-    chats: results.chats.length, nodes: results.nodes.length, skills: results.skills.length,
-    memory: results.memory.length, files: results.files.length, hosts: results.hosts.length,
-  };
-  const showChats  = scope === 'all' || scope === 'chats';
-  const showNodes  = scope === 'all' || scope === 'nodes';
-  const showSkills = scope === 'all' || scope === 'skills';
-  const showMemory = scope === 'all' || scope === 'memory';
-  const showFiles  = scope === 'all' || scope === 'files';
-  const showHosts  = scope === 'all' || scope === 'hosts';
-  return (
-    <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-      <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
-        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
-        <div style={{ flex:1 }}/>
-        <kbd style={kbd()}>⌘K</kbd>
-      </div>
-      <div style={{ padding:'0 10px 10px' }}>
-        <div style={{
-          display:'flex', alignItems:'center', gap:8, padding:'8px 12px',
-          background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:6,
-          boxShadow:`0 0 0 3px ${LM.accentDim}`,
-        }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="everything in studio…" style={{
-            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:13, outline:'none',
-            fontFamily:LM.sans, fontStyle: q ? 'normal' : 'italic',
-          }}/>
-        </div>
-      </div>
-      <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>SCOPES</div>
-      <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
-        {[
-          ['all',    'everything',                counts.all],
-          ['chats',  'sessions + messages',       counts.chats],
-          ['nodes',  'in current graph',          counts.nodes],
-          ['skills', 'saved templates',           counts.skills],
-          ['memory', 'what Claude remembers',     counts.memory],
-          ['files',  'Revit / Rhino / Speckle',   counts.files],
-          ['hosts',  'connectors',                counts.hosts],
-        ].map(([k, sub, n]) => {
-          const active = scope === k;
-          return (
-            <button key={k} onClick={() => setScope(k)} style={{
-              padding:'6px 10px', borderRadius:5,
-              background: active ? LM.bgSoft : 'transparent', border:0,
-              borderLeft: `2px solid ${active ? LM.accent : 'transparent'}`,
-              cursor:'pointer', textAlign:'left',
-              display:'flex', alignItems:'center', gap:8,
-            }}
-            onMouseEnter={e => !active && (e.currentTarget.style.background = LM.bgHover)}
-            onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
-              <span style={{ fontFamily:LM.mono, fontSize:11, color: active ? LM.accent : LM.ink, width:54 }}>{k}</span>
-              <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'8px 6px 8px', minHeight:0 }}>
-        {!q && (
-          <div style={{ padding:'24px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
-            Type to search across sessions, nodes, skills, memory, files, and hosts.
-          </div>
-        )}
-        {q && counts[scope === 'all' ? 'all' : scope] === 0 && (
-          <div style={{ padding:'16px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
-            No matches for "{q}".
-          </div>
-        )}
-        {q && showChats && results.chats.map(s => (
-          <SearchHit key={'ch_'+s.id} k="chat" label={s.title} sub={s.last}
-            onClick={() => onOpen && onOpen(s.id)}/>
-        ))}
-        {q && showNodes && results.nodes.map(n => (
-          <SearchHit key={'nd_'+n.id} k="node" label={n.title || n.id} sub={n.sub || n.cat}
-            onClick={() => setFocusId && setFocusId(n.id)}/>
-        ))}
-        {q && showSkills && results.skills.map(s => (
-          <SearchHit key={'sk_'+s.id} k="skill" label={s.name} sub={s.args}
-            onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail:s })); } catch (e) {} }}/>
-        ))}
-        {q && showMemory && results.memory.map((m, i) => (
-          <SearchHit key={'mm_'+(m.id || i)} k="memory" label={m.text || String(m)} sub={m.src || ''}/>
-        ))}
-        {q && showFiles && results.files.map((f, i) => (
-          <SearchHit key={'fi_'+(f.id || i)} k="file" label={f.label || f.path || String(f)} sub={f.sid ? `session ${f.sid}` : ''}
-            onClick={() => f.sid && onOpen && onOpen(f.sid)}/>
-        ))}
-        {q && showHosts && results.hosts.map(h => (
-          <SearchHit key={'hs_'+h.id} k="host" label={h.name} sub={`${h.state} · ${h.file}`}/>
-        ))}
-      </div>
-    </div>
-  );
-};
-const SearchHit = ({ k, label, sub, onClick }) => (
-  <button onClick={onClick} disabled={!onClick} style={{
-    width:'100%', padding:'6px 10px', borderRadius:5,
-    background:'transparent', border:0, cursor: onClick ? 'pointer' : 'default',
-    textAlign:'left', display:'flex', alignItems:'center', gap:8, marginBottom:1,
-  }}
-  onMouseEnter={e => onClick && (e.currentTarget.style.background = LM.bgHover)}
-  onMouseLeave={e => onClick && (e.currentTarget.style.background = 'transparent')}>
-    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, width:42, letterSpacing:'0.08em', textTransform:'uppercase' }}>{k}</span>
-    <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
-      <div style={{ fontSize:12, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</div>
-      {sub && <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{sub}</div>}
-    </div>
-  </button>
-);
 
 const kbd = () => ({
   fontFamily:LM.mono, fontSize:9, padding:'1px 5px', background:LM.bgSoft,
@@ -4202,8 +5117,9 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   // Filter semantics defined in the audit:
   //   all       → no filter
   //   mine      → author field matches; fall back to all when no authors exist
-  //   scheduled → sessions with .schedule / .trigger config (none yet)
   //   workflows → graphs with 3+ nodes (peeks at .graph or .node_count)
+  //   (the dead "scheduled" chip was removed 2026-06-02 — roadmap #P2; no
+  //    session-schedule model exists, so it filtered to nothing.)
   const sessions = React.useMemo(() => {
     if (filter === 'all') return allSessions;
     if (filter === 'mine') {
@@ -4211,9 +5127,6 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       // If no authors are tracked anywhere, treat "mine" as "all" (single-user app).
       if (withAuthor.length === 0) return allSessions;
       return withAuthor.filter(s => s.author === 'me' || s.author === (window.__archhub_user || 'me'));
-    }
-    if (filter === 'scheduled') {
-      return allSessions.filter(s => s.schedule || s.trigger);
     }
     if (filter === 'workflows') {
       return allSessions.filter(s => {
@@ -4235,15 +5148,19 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
         <BrainChip/>
         <HomeGraphHealthChip/>
-        <HomePlanHistoryChip/>
+        {/* IA-FIX (ia-critique-ai-stemcells-2026-06-03): the home plan-history
+            chip was removed. Plans belong to a SESSION, not the home page —
+            plan history is reachable from the ai.plan node's own history
+            (NodeMenu → "plan history", which fires lm-aiplan-history-open with
+            the node id), not as a global floating chip on Home. */}
       </div>
       <div style={{ display:'flex', alignItems:'baseline', gap:10, margin:'24px 0 14px' }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
           {sessions.length} · CLICK TO OPEN
         </span>
-        <div style={{ flex:1 }}/>
-        {['all','mine','scheduled','workflows'].map(k => (
+        <div style={S_FLEX1}/>
+        {['all','mine','workflows'].map(k => (
           <button key={k} onClick={() => setFilter(k)} style={chipBtn(filter === k)}>{k}</button>
         ))}
         <button onClick={() => onCreateSession && onCreateSession('untitled')} style={chipBtn(true)}>+ new canvas</button>
@@ -4374,14 +5291,9 @@ const chipBtn = (active) => ({
   letterSpacing:'0.06em', cursor:'pointer',
 });
 
-const Chip = ({ children, mono }) => (
-  <span style={{
-    display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
-    background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:5,
-    color:LM.inkSoft, fontFamily: mono ? LM.mono : LM.sans, fontSize: mono ? 10.5 : 11.5,
-    letterSpacing: mono ? '0.04em' : 'normal', cursor:'pointer',
-  }}>{children}</span>
-);
+// Audit 2026-06-02: the `Chip` component was a styled span with cursor:"pointer"
+// but no onClick and zero render sites — removed (dead code). `chipBtn` above is
+// a different, used helper and is retained.
 
 const SessionCard = ({ s, onOpen, onChanged }) => {
   const [menu, setMenu] = React.useState(false);
@@ -4440,7 +5352,7 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
                         animation: sm.pulse ? 'lmPulse 1.2s infinite' : 'none' }}/>
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:sm.col,
                         letterSpacing:'0.1em', textTransform:'uppercase' }}>{sm.label}</span>
-        <div style={{ flex:1 }}/>
+        <div style={S_FLEX1}/>
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
                         letterSpacing:'0.04em' }}>{s.when || ''}</span>
       </div>
@@ -4478,7 +5390,14 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, removeUserNode, bumpGraph, graphBump, onHome, onCreateSession }) => {
+// LAG-ROOT FIX (mechanism 2): Workspace is wrapped in React.memo (see the
+// export below) so a ROOT re-render that does NOT change Workspace's props
+// (e.g. the once-per-response onDone bump, an unrelated root state change)
+// is skipped here — which means NodeCanvas inside is not reconciled either.
+// The root already no longer re-renders per streamed token (mechanism 1);
+// the memo guards every OTHER incidental root render. All callback props
+// passed from the root are now useCallback/stable so the comparator bails.
+const WorkspaceInner = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, removeUserNode, bumpGraph, graphBump, onHome, onCreateSession }) => {
   // AgDR-0047 §D D4 perf (2026-05-26): memoize allNodes so the spread
   // doesn't allocate a new array on every parent render. Mirrors the
   // same memo already in NodeCanvas (jsx:5044).
@@ -4534,6 +5453,34 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
   );
 };
 
+// React.memo comparator for Workspace. Returns true (SKIP re-render) only
+// when every prop that affects Workspace's output is unchanged. The data
+// props (session/model/openTabs/focusId/userNodes/graphBump) drive real
+// updates; the callback props are useCallback-stable from the root, so a
+// plain reference check on them is correct (and catches any that ever
+// become unstable). A real graph edit bumps graphBump → this returns false
+// → the canvas updates as before.
+const _wsPropsEqual = (a, b) => (
+  a.session === b.session &&
+  a.model === b.model &&
+  a.openTabs === b.openTabs &&
+  a.focusId === b.focusId &&
+  a.userNodes === b.userNodes &&
+  a.graphBump === b.graphBump &&
+  a.setOpenId === b.setOpenId &&
+  a.closeTab === b.closeTab &&
+  a.setPickerOpen === b.setPickerOpen &&
+  a.setSettingsOpen === b.setSettingsOpen &&
+  a.setLibraryOpen === b.setLibraryOpen &&
+  a.setFocusId === b.setFocusId &&
+  a.addNodeFromLibrary === b.addNodeFromLibrary &&
+  a.removeUserNode === b.removeUserNode &&
+  a.bumpGraph === b.bumpGraph &&
+  a.onHome === b.onHome &&
+  a.onCreateSession === b.onCreateSession
+);
+const Workspace = React.memo(WorkspaceInner, _wsPropsEqual);
+
 // Workspace header is now SESSION TABS (browser-style) + right-side actions.
 const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, onHome, onCreateSession }) => {
   // Founder demand: fork + save-as-skill act on the current session/canvas.
@@ -4548,8 +5495,11 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
     const title = (session.title || 'session') + ' (fork)';
     _toast('forking…');
     // Persist the current canvas first so the fork captures live edits.
+    // Include `groups` so the fork captures node groups too — the payload
+    // matched _saveCurrentGraphSync everywhere EXCEPT here + onSave, so a fork
+    // (and an explicit Save) silently dropped groups (2026-06-02).
     try { bridgeCall('save_graph', currentSid(),
-      JSON.stringify({ nodes: LM_GRAPH.nodes || [], wires: LM_GRAPH.wires || [] })); } catch (e) {}
+      JSON.stringify({ nodes: LM_GRAPH.nodes || [], wires: LM_GRAPH.wires || [], groups: LM_GRAPH.groups || [] })); } catch (e) {}
     const blob = await bridgeAsync('fork_session', session.id, title);
     const newId = blob && (blob.id || blob.session_id);
     if (newId) {
@@ -4572,8 +5522,11 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
   const onSave = () => {
     if (!session) return;
     try {
+      // Include `groups` so an explicit Save persists node groups too —
+      // matches _saveCurrentGraphSync's payload (groups were silently dropped
+      // here + onFork, 2026-06-02).
       bridgeCall('save_graph', currentSid(),
-        JSON.stringify({ nodes: LM_GRAPH.nodes || [], wires: LM_GRAPH.wires || [] }));
+        JSON.stringify({ nodes: LM_GRAPH.nodes || [], wires: LM_GRAPH.wires || [], groups: LM_GRAPH.groups || [] }));
       _toast('session saved');
     } catch (e) {
       _toast('save failed', 'err');
@@ -4587,7 +5540,10 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
     if (res && (res.ok || res.id || res.path)) {
       _toast(`skill added to node library: ${res.name || session.title || 'skill'}`);
       // Refresh the node library so the new skill appears immediately.
-      try { window.dispatchEvent(new CustomEvent('lm-skills-changed')); } catch (e) {}
+      // Event name MUST match the listener in the skills rail (`lm-skills-refresh`
+      // @ ~3176). Was `lm-skills-changed` — a name nothing listened to, so the
+      // library never refreshed after save-as-skill (dead-dispatch class, 2026-05-30).
+      try { window.dispatchEvent(new CustomEvent('lm-skills-refresh')); } catch (e) {}
     } else {
       _toast(`save-as-skill failed: ${(res && res.error) || 'no bridge'}`, 'err');
     }
@@ -4778,7 +5734,10 @@ const BrainChip = ({ compact }) => {
   }, []);
   const click = (e) => {
     e.stopPropagation();
-    try { window.dispatchEvent(new CustomEvent('lm-memory-explorer-open', { detail:{} })); } catch (e2) {}
+    // Click-through to the Brain intelligence-layer map (the
+    // You→Brain→AI surface). The richer Memory graph stays reachable via
+    // its own entry (the Home memory-graph chip / canvas memory entry).
+    try { window.dispatchEvent(new CustomEvent('lm-brain-view-open', { detail:{} })); } catch (e2) {}
   };
   // Derive display state.
   const hasTurn = stats && stats.ts;
@@ -4797,9 +5756,10 @@ const BrainChip = ({ compact }) => {
   const label = offline ? '⌬ brain · offline'
               : !hasTurn ? '⌬ brain · idle'
               : `⌬ brain · ${skillsN}s · ${factsN}f · ${Math.round(ms)}ms`;
-  const tip = !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
+  const tipBody = !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
             : offline ? 'Brain daemon offline. Circuit breaker open or socket refused.'
             : `Last hit: ${skillsN} skills + ${factsN} facts injected in ${Math.round(ms)}ms. Last user message: "${(stats.user_message_preview || '').slice(0,60)}"`;
+  const tip = `${tipBody}  ·  Click: open your brain map.`;
   return (
     <button onClick={click} title={tip}
       data-testid="brain-chip"
@@ -4834,10 +5794,15 @@ const HomeGraphHealthChip = () => {
   const lastHashRef = React.useRef(null);
   React.useEffect(() => {
     let cancelled = false;
-    const pull = async () => {
+    // `force` bypasses the unchanged-graph dedup. graph_validate is now
+    // off-thread (AgDR-0036): the first pull for a graph returns a cached
+    // placeholder; graph_validated (→ lm-graph-validated) fires when the
+    // real result lands, and that re-pull must run even though the graph
+    // payload is unchanged — hence force.
+    const pull = async (force) => {
       try {
         const payload = JSON.stringify(LM_GRAPH || { nodes:[], wires:[] });
-        if (payload === lastHashRef.current) return;
+        if (!force && payload === lastHashRef.current) return;
         lastHashRef.current = payload;
         const res = await bridgeAsync('graph_validate', payload);
         if (cancelled) return;
@@ -4853,9 +5818,12 @@ const HomeGraphHealthChip = () => {
     pull();
     const t = setInterval(pull, 4000);
     const onBump = () => pull();
+    const onValidated = () => pull(true);
     window.addEventListener('lm-graph-bump', onBump);
+    window.addEventListener('lm-graph-validated', onValidated);
     return () => { cancelled = true; clearInterval(t);
-      window.removeEventListener('lm-graph-bump', onBump); };
+      window.removeEventListener('lm-graph-bump', onBump);
+      window.removeEventListener('lm-graph-validated', onValidated); };
   }, []);
   const col = counts.err > 0 ? LM.err
             : counts.warn > 0 ? LM.warn
@@ -4891,50 +5859,15 @@ const HomeGraphHealthChip = () => {
   );
 };
 
-// AgDR-0021 — Home-view plan history chip. Fires the existing
-// `lm-aiplan-history-open` event handled by AiPlanHistoryModal (mounted
-// on every view via StudioLM root). Shows record count when the bridge
-// surfaces any plans cached on disk.
-const HomePlanHistoryChip = () => {
-  const [n, setN] = React.useState(null);
-  React.useEffect(() => {
-    let cancelled = false;
-    const pull = async () => {
-      try {
-        const r = await bridgeAsync('get_plan_history', '', 100);
-        if (cancelled) return;
-        const recs = (r && r.records) || [];
-        setN(recs.length);
-      } catch (e) { if (!cancelled) setN(null); }
-    };
-    pull();
-    const t = setInterval(pull, 8000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
-  const hit = n != null && n > 0;
-  return (
-    <button data-testid="home-plan-history-chip"
-      title="Open ai.plan history — replay any past plan"
-      onClick={(e) => {
-        e.stopPropagation();
-        try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open',
-          { detail:{} })); } catch (e2) {}
-      }}
-      style={{
-        display:'flex', alignItems:'center', gap:6,
-        padding:'6px 12px',
-        background: hit ? LM.accentDim : LM.bg,
-        border:`1px solid ${hit ? LM.accent + '66' : LM.line}`,
-        borderRadius:6, cursor:'pointer',
-        color: hit ? LM.accent : LM.inkSoft,
-        fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
-        whiteSpace:'nowrap',
-        transition:'background .12s, border-color .12s, color .12s',
-      }}>
-      {n == null ? '◷ plans · …' : `◷ plans · ${n}`}
-    </button>
-  );
-};
+// IA-FIX (ia-critique-ai-stemcells-2026-06-03): HomePlanHistoryChip REMOVED.
+// AgDR-0021 floated plan history on the home page via a global chip
+// (get_plan_history('', 100) → lm-aiplan-history-open). Per the signed IA
+// critique, plans belong to a SESSION, not Home — keying plans by session
+// (plan_history.id_for + _persist_chat_plan) makes the global pool wrong as a
+// home affordance. Plan history is still fully reachable: the ai.plan node's
+// NodeMenu fires `lm-aiplan-history-open` with the node id (see ~L9391), and
+// AiPlanHistoryModal still mounts at the StudioLM root. Nothing references
+// HomePlanHistoryChip after this deletion.
 
 const ModelStrip = ({ model, setPickerOpen, compact }) => {
   const [hover, setHover] = React.useState(false);
@@ -5088,7 +6021,14 @@ const collapsedGroupHeight = (promoted) =>
   Math.max(112, 28 + SOCKET_STEP *
     Math.max((promoted.ins || []).length, (promoted.outs || []).length, 1));
 
-const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, bumpGraph, graphBump = 0, removeUserNode }) => {
+// LAG-ROOT FIX (mechanism 2): NodeCanvas is wrapped in React.memo (see the
+// export at the end of the component) so a ROOT re-render that doesn't change
+// its props is skipped entirely — its whole render body (group-compute,
+// wires.map ~290 elements, allNodes.map) never runs. Combined with
+// mechanism 1 (streaming no longer bumps the root) and mechanism 3
+// (imperative pan), the canvas now repaints ONLY on a real geometry change
+// (graphBump), a focus change, or a node add/remove (userNodes).
+const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, bumpGraph, graphBump = 0, removeUserNode }) => {
   // Combine demo graph + user-added nodes. graphBump is the COUNTER (not the
   // callback) — recomputes whenever LM_GRAPH mutates in place. Previously
   // depended on `bumpGraph` callback ref which is stable across renders, so
@@ -5131,6 +6071,17 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     window.addEventListener('archhub-minimap-jump', onJump);
     return () => window.removeEventListener('archhub-minimap-jump', onJump);
   }, [zoom]);
+  // NOTE (2026-05-30 white-screen fix): the `lm-focus-node` listener effect
+  // that used to live HERE referenced `getWrapRect` (declared ~100 lines
+  // below) in its render-evaluated dependency array. Babel-standalone in the
+  // app's QtWebEngine targets the live (modern) Chromium, so it PRESERVES
+  // `const`/`let` — meaning that forward reference hit the temporal dead zone
+  // and threw `ReferenceError: Cannot access 'getWrapRect' before
+  // initialization` during NodeCanvas's render. That throw was caught by the
+  // app-boot ErrorBoundary, which also unmounts <SplashFader/> — so the splash
+  // overlay never cleared and the whole body read as blank/white. (Node's
+  // Babel downlevels const→var, which is why headless harnesses missed it.)
+  // The effect now lives AFTER getWrapRect's declaration; see below.
   // Stash canvas state so RailMiniMap (left rail) can render the map
   // without prop-drilling across the layout.
   //
@@ -5141,7 +6092,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // a downstream RailMiniMap re-render every frame.
   React.useEffect(() => {
     try {
-      const rect = wrapRef.current && wrapRef.current.getBoundingClientRect();
+      // D10 sweep: this effect re-runs on every drag frame because pan
+      // + positions change at 60Hz. Use the cached rect to avoid a
+      // forced-layout flush on each tick.
+      const rect = getWrapRect();
       window.__archhub_canvas_state = {
         pan, zoom, positions,
         nodes: allNodes,
@@ -5181,6 +6135,50 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [saveSkillDialog, setSaveSkillDialog] = React.useState(null);
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
+  // LAG-ROOT FIX (mechanism 3): IMPERATIVE PAN/ZOOM. `panLayerRef` points at
+  // the inner transform layer (the div with left/top + scale(zoom)); during a
+  // pan drag or a wheel-zoom we mutate ITS transform + the wrapper's
+  // background-gradient directly via these refs — ZERO setState per frame —
+  // and commit pan/zoom to React state EXACTLY ONCE on gesture end. This is
+  // the same imperative pattern D6 used for node-drag, now extended to
+  // panning/zooming (D6 left those reactive → setPan/setZoom every frame
+  // re-rendered NodeCanvas at 60Hz = the pan lag). `imperativePan` holds the
+  // live scratch (current pan/zoom) only while a pan/wheel gesture is active.
+  const panLayerRef = React.useRef(null);
+  const imperativePan = React.useRef(null); // { x, y, zoom } live during gesture
+  // Wheel-zoom rAF throttle + commit-debounce scratch (mechanism 3).
+  const _wheelRafPendingRef = React.useRef(false);
+  const _wheelPendingRef = React.useRef(null);    // { x, y, zoom } to apply next frame
+  const _wheelCommitTimerRef = React.useRef(null); // setTimeout id → commit on wheel-end
+
+  // AgDR-0047 §D D6 perf (2026-05-28): IMPERATIVE NODE DRAG.
+  // Root cause of the canvas-drag lag the founder flagged for multiple
+  // sessions: `_doMove` called setPositions() on EVERY rAF frame while a
+  // node drag was live. Each setPositions forces a full NodeCanvas
+  // reconcile per frame — nodeById memo rebuild → wires memo rebuild →
+  // every NodeRenderer + every wire <path> diffs. At 60Hz that's the lag.
+  //
+  // Fix: during a node drag we mutate the dragged nodes' DOM transform and
+  // the connected wires' SVG `d` DIRECTLY (zero React work), and commit the
+  // final positions to React state EXACTLY ONCE on mouseup. `imperativeDrag`
+  // holds the scratch handles captured at drag-start; it is non-null only
+  // while a node drag is mid-flight.
+  //   { ids:Set, els:Map<id,HTMLElement>, starts:Map<id,{x,y}>,
+  //     wires:[{ pathEls:[SVGPathElement], x1,y1,x2,y2, fromDragged, toDragged }] }
+  const imperativeDrag = React.useRef(null);
+  // Live re-render probe (ANTI-LIE / CDP verify): incremented once per
+  // NodeCanvas render commit. The verifier asserts this does NOT tick while
+  // a drag is mid-flight (transform changes with no reconcile) and ticks
+  // exactly once on drop. Exposed on window so CDP Runtime.evaluate can read
+  // it. Cheap integer write; no behavioural effect.
+  if (typeof window !== 'undefined') {
+    window.__archhub_render_count = (window.__archhub_render_count || 0) + 1;
+    // Dedicated per-component NodeCanvas render counter (lag-root proof).
+    // The render harness asserts this stays FLAT during an AI stream (was
+    // ~1 tick/token = the 60Hz storm) and does NOT tick per pan frame
+    // (imperative pan). Same cheap integer write; no behavioural effect.
+    window.__archhub_nodecanvas_renders = (window.__archhub_nodecanvas_renders || 0) + 1;
+  }
 
   // AgDR-0047 §D D10 perf (2026-05-26): cache wrapRef rect to avoid
   // forced-layout flushes on every mouse-move / drop / drag tick. The
@@ -5221,6 +6219,38 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       window.removeEventListener('resize', update);
     };
   }, []);
+  // Audit 2026-05-28: the footer Graph-Health popover (HealthStripItem) and
+  // the Home health chip dispatch `lm-focus-node` { node_id } when an issue
+  // row is clicked — but NOTHING listened, so the click did nothing. Wire it
+  // here: pan the canvas to center the offending node + select + focus it so
+  // the user lands on exactly the node the health check flagged.
+  //
+  // MUST stay BELOW `getWrapRect`'s declaration: it reads getWrapRect in its
+  // dependency array, which the renderer evaluates eagerly. With const kept
+  // (the app's QtWebEngine Babel targets modern Chromium), a forward
+  // reference here throws a TDZ ReferenceError and white-screens the app
+  // (white-screen fix 2026-05-30 — moved down from ~line 5216).
+  React.useEffect(() => {
+    const onFocusNode = (ev) => {
+      const nid = ev && ev.detail && ev.detail.node_id;
+      if (!nid) return;
+      const node = (allNodes || []).find(n => n.id === nid);
+      // Prefer the live dragged position; fall back to the node's stored x/y.
+      const pos = (positions && positions[nid]) || (node ? { x: node.x, y: node.y } : null);
+      if (!pos) return;
+      const rect = getWrapRect();
+      if (rect) {
+        // Center the node's visual middle (anchor + ~half a node) in view.
+        const cx = (pos.x || 0) + 130;
+        const cy = (pos.y || 0) + 70;
+        setPan({ x: rect.width / 2 - cx * zoom, y: rect.height / 2 - cy * zoom });
+      }
+      setSelectedIds(new Set([nid]));
+      setFocusId(nid);
+    };
+    window.addEventListener('lm-focus-node', onFocusNode);
+    return () => window.removeEventListener('lm-focus-node', onFocusNode);
+  }, [zoom, allNodes, positions, getWrapRect, setFocusId]);
 
   // Window-level toast bridge — handlers in StudioLM root dispatch
   // `lm-canvas-toast` so feedback shows here. Previously orphaned: events
@@ -5294,6 +6324,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     // empty — matches Figma/most editors).
     if (selectedIds.size > 0) setSelectedIds(new Set());
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
+    // Mechanism 3: seed the imperative-pan scratch + promote the pan layer to
+    // its own compositor layer so the per-frame transform write is cheap.
+    imperativePan.current = { x: pan.x, y: pan.y, zoom };
+    if (panLayerRef.current) panLayerRef.current.style.willChange = 'transform';
   };
 
   const onContextMenu = (e) => {
@@ -5336,6 +6370,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       sx:e.clientX, sy:e.clientY, alt:e.altKey,
       // Legacy single-id fields so existing onUp persist path still works
       id, nx: starts[id].x, ny: starts[id].y };
+    // AgDR-0047 §D D6: capture imperative scratch handles so the drag
+    // mutates DOM directly (no per-frame setState). Alt-push-neighbours
+    // still goes through the React commit on mouseup (it shoves
+    // non-dragged nodes — those aren't in the imperative set).
+    _beginImperativeDrag(dragIds, starts);
     setFocusId(id);
   };
 
@@ -5366,6 +6405,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     dragRef.current = { mode:'node', ids:dragIds, starts,
       sx:e.clientX, sy:e.clientY, alt:e.altKey,
       id:first, nx:starts[first].x, ny:starts[first].y };
+    // AgDR-0047 §D D6: group drag reuses the imperative node-drag path.
+    _beginImperativeDrag(dragIds, starts);
     // Select all members so the rail can show one of them.
     setSelectedIds(new Set(dragIds));
     setFocusId(first);
@@ -5442,26 +6483,33 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   };
 
   // Compute the screen position of a socket's centre (for wire endpoints).
+  // D10 sweep: socketScreen is called on every wire-in-flight render
+  // tick (per-frame during wire-drag). Use the cached wrap rect.
   const socketScreen = (nodeId, sockId, side) => {
     if (!wrapRef.current) return null;
     const sel = `[data-lm-socket="${side}:${nodeId}:${sockId}"] [data-lm-socket-dot="1"]`;
     const dot = wrapRef.current.querySelector(sel);
     if (!dot) return null;
     const r = dot.getBoundingClientRect();
-    const root = wrapRef.current.getBoundingClientRect();
+    const root = getWrapRect();
+    if (!root) return null;
     return { x: r.left + r.width/2 - root.left, y: r.top + r.height/2 - root.top };
   };
 
   // Find the nearest compatible input socket within SNAP_R of (cx,cy).
+  // D10 sweep: called from the rAF-throttled _doMove handler on every
+  // wire-drag mousemove. Pull the wrap rect from the cache once outside
+  // the per-socket loop instead of querying it N times per tick.
   const findSnapTarget = (cx, cy, fromType) => {
     if (!wrapRef.current) return null;
     const sockets = wrapRef.current.querySelectorAll('[data-side="in"]');
+    const root = getWrapRect();
+    if (!root) return null;
     let best = null;
     sockets.forEach(el => {
       const dot = el.querySelector('[data-lm-socket-dot="1"]');
       if (!dot) return;
       const r = dot.getBoundingClientRect();
-      const root = wrapRef.current.getBoundingClientRect();
       const sx = r.left + r.width/2 - root.left;
       const sy = r.top + r.height/2 - root.top;
       const d2 = (sx - cx) ** 2 + (sy - cy) ** 2;
@@ -5500,6 +6548,130 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return { ok:true };
   };
 
+  // ─── AgDR-0047 §D D6: imperative node-drag helpers ────────────────────
+  // Build a cubic-bezier `d` string in the SAME world/canvas space the
+  // wires-memo authored its paths in (the <svg> lives inside the
+  // scale(zoom) parent, so path coords are unscaled world units). Mirrors
+  // the formula in the wires useMemo exactly so the imperative path is
+  // pixel-identical to the committed React path.
+  const _wireD = (x1, y1, x2, y2) => {
+    const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
+    return `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`;
+  };
+
+  // Capture imperative scratch handles at drag-start. dragIds = node ids
+  // being dragged (single, multi-select, or group). starts = their
+  // pre-drag world positions. We grab each dragged node's `.lm-node` DOM
+  // element AND every wire <g> whose endpoint touches a dragged node,
+  // recording the wire's base endpoints (from the already-computed `wires`
+  // memo) so per-frame we only add the live delta.
+  const _beginImperativeDrag = (dragIds, starts) => {
+    if (!wrapRef.current) return;
+    const idSet = new Set(dragIds);
+    const els = new Map();
+    dragIds.forEach(id => {
+      const el = wrapRef.current.querySelector(`.lm-node[data-node-id="${CSS && CSS.escape ? CSS.escape(id) : id}"]`);
+      if (el) {
+        els.set(id, el);
+        // Promote to its own layer so the per-frame transform write is a
+        // pure GPU composite (no paint of siblings).
+        el.style.willChange = 'transform';
+      }
+    });
+    // Wires touching a dragged node: recompute `d` each frame by shifting
+    // the dragged end(s). `wires` is the current memo snapshot (world
+    // coords). Each entry already carries x1,y1,x2,y2 + raw.from/raw.to.
+    const dragWires = [];
+    (wires || []).forEach(w => {
+      const fromDragged = idSet.has(w.raw.from[0]);
+      const toDragged   = idSet.has(w.raw.to[0]);
+      if (!fromDragged && !toDragged) return;
+      const g = wrapRef.current.querySelector(`g[data-wire-i="${w.i}"]`);
+      if (!g) return;
+      const pathEls = Array.from(g.querySelectorAll('path'));
+      if (pathEls.length === 0) return;
+      dragWires.push({ pathEls, x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2,
+                       fromDragged, toDragged });
+    });
+    imperativeDrag.current = { idSet, els, starts, wires: dragWires };
+  };
+
+  // Per-frame imperative write (called from _doMove for mode:'node').
+  // ddx/ddy are the cursor delta in WORLD units (already divided by zoom).
+  // Pure DOM/SVG mutation — NO setState, so NO React reconcile this frame.
+  const _applyImperativeDrag = (ddx, ddy) => {
+    const im = imperativeDrag.current;
+    if (!im) return;
+    // Nodes: additive transform on top of their left/top (which still
+    // reflects the pre-drag position until the mouseup commit).
+    im.els.forEach((el) => {
+      el.style.transform = `translate(${ddx}px, ${ddy}px)`;
+    });
+    // Wires: shift only the endpoint(s) attached to a dragged node.
+    im.wires.forEach((dw) => {
+      const x1 = dw.x1 + (dw.fromDragged ? ddx : 0);
+      const y1 = dw.y1 + (dw.fromDragged ? ddy : 0);
+      const x2 = dw.x2 + (dw.toDragged   ? ddx : 0);
+      const y2 = dw.y2 + (dw.toDragged   ? ddy : 0);
+      const d = _wireD(x1, y1, x2, y2);
+      dw.pathEls.forEach(p => p.setAttribute('d', d));
+    });
+  };
+
+  // Tear down imperative scratch state. Called on mouseup AFTER the single
+  // setPositions commit (React then re-renders once, matching the DOM we
+  // mutated, so clearing the inline transform causes no visible jump).
+  const _endImperativeDrag = () => {
+    const im = imperativeDrag.current;
+    if (!im) return;
+    im.els.forEach((el) => {
+      el.style.transform = '';
+      el.style.willChange = '';
+    });
+    imperativeDrag.current = null;
+  };
+
+  // ─── LAG-ROOT FIX (mechanism 3): imperative pan/zoom helpers ──────────
+  // Write the live pan (x,y) + zoom DIRECTLY to the DOM — the pan layer's
+  // left/top + scale() and the wrapper's gradient background — with NO
+  // setState. Mirrors _applyImperativeDrag: a pure GPU-friendly transform
+  // write per frame, so NodeCanvas does not reconcile while the gesture is
+  // live. `imperativePan.current` carries the running values.
+  const _applyImperativePanZoom = (x, y, z) => {
+    imperativePan.current = { x, y, zoom: z };
+    const layer = panLayerRef.current;
+    if (layer) {
+      layer.style.left = x + 'px';
+      layer.style.top = y + 'px';
+      layer.style.transform = `scale(${z})`;
+    }
+    const wrap = wrapRef.current;
+    if (wrap) {
+      wrap.style.backgroundSize = `${20 * z}px ${20 * z}px`;
+      wrap.style.backgroundPosition = `${x}px ${y}px`;
+    }
+  };
+  // Commit the imperative pan/zoom to React state EXACTLY ONCE (gesture end).
+  // React then re-renders the canvas with matching left/top/scale, so the
+  // inline-style overrides we wrote are replaced by identical values → no
+  // visible jump. We clear the scratch AFTER scheduling so a stray frame
+  // can't re-apply stale values.
+  const _commitPanZoom = () => {
+    const p = imperativePan.current;
+    if (!p) return;
+    imperativePan.current = null;
+    setPan({ x: p.x, y: p.y });
+    setZoom(z => (z === p.zoom ? z : p.zoom));
+  };
+  // Flush any pending wheel-commit on unmount so a late timer doesn't fire
+  // into a torn-down component.
+  React.useEffect(() => () => {
+    if (_wheelCommitTimerRef.current) {
+      clearTimeout(_wheelCommitTimerRef.current);
+      _wheelCommitTimerRef.current = null;
+    }
+  }, []);
+
   // PERF FIX (founder 2026-05-25 — "fix the fucking lag problem"):
   // Hat 3 audit Fix #9 (lite). High-DPI / gaming mice fire mousemove
   // at 120-360Hz; React state updates / SVG wire re-paints at >60Hz
@@ -5512,7 +6684,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   React.useEffect(() => {
     const _doMove = (e) => {
       const d = dragRef.current;
-      const rect = wrapRef.current && wrapRef.current.getBoundingClientRect();
+      // D10 sweep: _doMove is the main mousemove pump (rAF-throttled to
+      // ~60Hz). The cached rect avoids a forced layout per frame.
+      const rect = getWrapRect();
       // ─── Wire drag-in-flight ─────────────────────────────────────
       if (wireDrag && rect) {
         const cx = e.clientX - rect.left;
@@ -5536,19 +6710,42 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const dx = e.clientX - d.sx;
       const dy = e.clientY - d.sy;
       if (d.mode === 'pan') {
-        setPan({ x: d.px + dx, y: d.py + dy });
+        // Mechanism 3: IMPERATIVE pan. Write the new offset straight to the
+        // pan layer + gradient — ZERO setState, so NO NodeCanvas reconcile
+        // this frame. The committed pan lands once on mouseup (_commitPanZoom).
+        // (Was: setPan() every frame → full canvas re-render at 60Hz = lag.)
+        const z = (imperativePan.current && imperativePan.current.zoom) || zoom;
+        _applyImperativePanZoom(d.px + dx, d.py + dy, z);
       } else if (d.mode === 'band') {
         // SLICE B2: rubber-band — update the band rect to the
         // current cursor in canvas coords.
         const c = toCanvasCoords(e.clientX, e.clientY);
         setBandRect({ x0:d.x0, y0:d.y0, x1:c.x, y1:c.y });
       } else if (d.mode === 'node') {
-        // SLICE B2: multi-drag. Apply the cursor delta (canvas
-        // coords) to EVERY id in d.ids. Plus Alt-push-neighbours:
-        // any non-dragged node whose bbox overlaps a dragged
-        // node's new bbox gets shoved aside in the drag direction.
+        // AgDR-0047 §D D6: IMPERATIVE node drag. The cursor delta in world
+        // coords drives a direct DOM transform on the dragged node(s) +
+        // a direct SVG `d` rewrite on connected wires — ZERO setState, so
+        // NO React reconcile this frame. This is the lag fix.
         const ddx = dx / zoom, ddy = dy / zoom;
         const alt = e.altKey;
+        if (!alt) {
+          _applyImperativeDrag(ddx, ddy);
+          return;
+        }
+        // Alt-push-neighbours is the documented heavier mode: non-dragged
+        // nodes get shoved aside, and the shove set changes frame-to-frame,
+        // so it stays on the React commit path (preserved 1:1 from B2/Alt).
+        // First zero the imperative scratch so left/top from setPositions is
+        // authoritative (transform is additive — leaving it would double the
+        // delta). Re-applies automatically on the next non-alt frame.
+        const im = imperativeDrag.current;
+        if (im) {
+          im.els.forEach(el => { el.style.transform = ''; });
+          im.wires.forEach(dw => {
+            const d2 = _wireD(dw.x1, dw.y1, dw.x2, dw.y2);
+            dw.pathEls.forEach(p => p.setAttribute('d', d2));
+          });
+        }
         setPositions(p => {
           const next = { ...p };
           (d.ids || [d.id]).forEach(id => {
@@ -5650,30 +6847,47 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         setWireDrag(null);
       }
       // ─── Persist final positions on drag-end (autosave) ────────
+      // AgDR-0047 §D D6: this is the SINGLE React commit for the whole
+      // drag. Positions were mutated only in the DOM during the move, so
+      // we recompute each dragged node's final world position from its
+      // captured start + the total cursor delta, commit once via
+      // setPositions (one reconcile that matches the DOM we've been
+      // mutating), write through to LM_GRAPH, then tear down the
+      // imperative scratch + clear the inline transforms.
       if (dragRef.current && dragRef.current.mode === 'node') {
-        const ids = dragRef.current.ids || [dragRef.current.id];
-        // Snap each to a 20px grid if enabled.
-        if (snapToGrid) {
-          setPositions(prev => {
-            const next = { ...prev };
-            ids.forEach(id => {
-              const p = next[id];
-              if (p) next[id] = { x: Math.round(p.x / 20) * 20,
-                                   y: Math.round(p.y / 20) * 20 };
-            });
-            return next;
-          });
-        }
+        const d = dragRef.current;
+        const ids = d.ids || [d.id];
+        const ddx = (e.clientX - d.sx) / zoom;
+        const ddy = (e.clientY - d.sy) / zoom;
+        const snap20 = (v) => Math.round(v / 20) * 20;
+        const finals = {};
         ids.forEach(id => {
-          const p = positions[id];
-          if (!p) return;
-          const finalP = snapToGrid
-            ? { x: Math.round(p.x / 20) * 20, y: Math.round(p.y / 20) * 20 }
-            : p;
+          const s = (d.starts && d.starts[id]) || { x: d.nx, y: d.ny };
+          if (!s) return;
+          let fx = s.x + ddx, fy = s.y + ddy;
+          if (snapToGrid) { fx = snap20(fx); fy = snap20(fy); }
+          finals[id] = { x: fx, y: fy };
+        });
+        // One reconcile: merge the dragged finals over current positions.
+        // (Alt-push shoved nodes already live in `positions` from the
+        // commit path and are preserved — we only overwrite dragged ids.)
+        setPositions(prev => {
+          const next = { ...prev };
+          Object.keys(finals).forEach(id => { next[id] = finals[id]; });
+          return next;
+        });
+        // Write-through to the graph model + autosave.
+        ids.forEach(id => {
+          const finalP = finals[id];
+          if (!finalP) return;
           const node = (LM_GRAPH.nodes || []).find(n => n.id === id);
           if (node) { node.x = finalP.x; node.y = finalP.y; }
         });
         saveCurrentGraph();
+        // Clear DOM scratch AFTER scheduling the commit: React's next paint
+        // sets left/top to the committed value while the transform clears,
+        // so there is no visible jump.
+        _endImperativeDrag();
       } else if (dragRef.current && dragRef.current.mode === 'band') {
         // SLICE B2: band commit — every node whose bbox intersects
         // the band rect joins selectedIds (additive on shift).
@@ -5697,6 +6911,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           });
         }
         setBandRect(null);
+      } else if (dragRef.current && dragRef.current.mode === 'pan') {
+        // Mechanism 3: pan ended — commit the imperatively-applied pan to
+        // React state ONCE. React re-renders with the same left/top, so the
+        // inline overrides we wrote during the drag are replaced by identical
+        // values (no jump). Clear the layer's willChange hint.
+        if (panLayerRef.current) panLayerRef.current.style.willChange = '';
+        _commitPanZoom();
       }
       dragRef.current = null;
     };
@@ -5799,14 +7020,45 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     // not stopping the event in time. This is the canvas-side belt.
     if (e.target && e.target.closest && e.target.closest('[data-no-pan]')) return;
     e.preventDefault();
-    const rect = wrapRef.current.getBoundingClientRect();
+    // D10 sweep: wheel fires rapidly during scroll-zoom; cached rect
+    // skips the forced-layout flush per event.
+    const rect = getWrapRect();
+    if (!rect) return;
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
+    // LAG-ROOT FIX (mechanism 3): IMPERATIVE, rAF-throttled wheel-zoom.
+    // Current pan/zoom come from the live imperative scratch if a wheel/pan
+    // gesture is mid-flight, else from React state. We compute the next
+    // focal-point-preserving pan + clamped zoom, write it straight to the
+    // DOM (no setState), and commit to React state ONCE ~140ms after the
+    // last wheel tick (the gesture "end"). Was: setPan()+setZoom() on EVERY
+    // wheel tick, un-throttled → a full NodeCanvas re-render per tick = lag.
+    const cur = imperativePan.current || { x: pan.x, y: pan.y, zoom };
     const delta = -e.deltaY * 0.0015;
-    const next = Math.max(0.3, Math.min(2, +(zoom * (1 + delta)).toFixed(3)));
-    if (next === zoom) return;
-    setPan(p => ({ x: mx - (mx - p.x) * (next / zoom), y: my - (my - p.y) * (next / zoom) }));
-    setZoom(next);
+    const nextZoom = Math.max(0.3, Math.min(2, +(cur.zoom * (1 + delta)).toFixed(3)));
+    if (nextZoom === cur.zoom) return;
+    const nx = mx - (mx - cur.x) * (nextZoom / cur.zoom);
+    const ny = my - (my - cur.y) * (nextZoom / cur.zoom);
+    _wheelPendingRef.current = { x: nx, y: ny, zoom: nextZoom };
+    // Keep the scratch current immediately so the next tick composes on top
+    // of this one even before the rAF write lands.
+    imperativePan.current = _wheelPendingRef.current;
+    if (panLayerRef.current) panLayerRef.current.style.willChange = 'transform';
+    if (!_wheelRafPendingRef.current) {
+      _wheelRafPendingRef.current = true;
+      requestAnimationFrame(() => {
+        _wheelRafPendingRef.current = false;
+        const p = _wheelPendingRef.current;
+        if (p) _applyImperativePanZoom(p.x, p.y, p.zoom);
+      });
+    }
+    // Debounce the React commit to the end of the wheel gesture.
+    if (_wheelCommitTimerRef.current) clearTimeout(_wheelCommitTimerRef.current);
+    _wheelCommitTimerRef.current = setTimeout(() => {
+      _wheelCommitTimerRef.current = null;
+      if (panLayerRef.current) panLayerRef.current.style.willChange = '';
+      _commitPanZoom();
+    }, 140);
   };
 
   // ─── HTML5 drag-and-drop from sidebar library ───
@@ -5814,7 +7066,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (![...e.dataTransfer.types].includes('application/x-lm-node')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-    const rect = wrapRef.current.getBoundingClientRect();
+    // D10 sweep: HTML5 dragover fires continuously while hovering with
+    // a node payload. Cached rect avoids forced layout per event.
+    const rect = getWrapRect();
+    if (!rect) return;
     setDropTarget({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
   const onDragLeave = (e) => {
@@ -5851,76 +7106,82 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // Anchored at the topleft of the original member bbox; size
   // 240 × max(112, port-rows). Sockets along the vertical pitch
   // via socketY().
+  //
+  // LAG-ROOT FIX (mechanism 4): this whole block used to run on EVERY
+  // NodeCanvas render — O(groups × members) Set/Map churn + N getBounding
+  // -free bbox passes — even when nothing about the groups changed. Now it
+  // is a useMemo keyed on its REAL inputs (nodeById carries positions;
+  // graphBump covers any in-place LM_GRAPH.groups/wires mutation). When the
+  // canvas re-renders for an unrelated reason, this returns the cached maps.
   const groupsArr = LM_GRAPH.groups || [];
-  const hiddenMemberIds = new Set();
-  const hiddenGroupIds = new Set();
-  const groupViews = {};
-  const memberAlias = {};
-  const groupSocketAlias = {};
   const allWiresRaw = LM_GRAPH.wires || [];
-  for (const g of groupsArr) {
-    if (!g || !g.collapsed) continue;
-    // SLICE C3: collapse cascades down the child-group tree.
-    // Recursive member-set = every leaf node id under this group's
-    // subtree; recursive child-group-set = every descendant group
-    // (hidden in the per-group render below).
-    const recursiveMembers = ((g.childGroupIds || []).length > 0)
-      ? expandedMembersJS(g.id, groupsArr)
-      : new Set(g.nodeIds || []);
-    const memberCoords = Array.from(recursiveMembers)
-      .map(id => nodeById[id]).filter(Boolean);
-    if (memberCoords.length === 0) continue;
-    const x0 = Math.min(...memberCoords.map(m => m.x));
-    const y0 = Math.min(...memberCoords.map(m => m.y));
-    const promoted = promotedPortsForGroup(g, allNodes, allWiresRaw, groupsArr);
-    const w = COLLAPSED_GROUP_W;
-    const h = collapsedGroupHeight(promoted);
-    groupViews[g.id] = {
-      anchor: { x: x0, y: y0 }, w, h, promoted, group: g,
-    };
-    recursiveMembers.forEach(id => hiddenMemberIds.add(id));
-    // Mark every DESCENDANT group as hidden too (so the group-render
-    // loop below skips them — the parent's collapsed-node covers
-    // the whole subtree).
-    const stack = [...(g.childGroupIds || [])];
-    while (stack.length) {
-      const cid = stack.pop();
-      if (hiddenGroupIds.has(cid)) continue;
-      hiddenGroupIds.add(cid);
-      const child = groupsArr.find(x => x.id === cid);
-      if (child) for (const c2 of (child.childGroupIds || [])) stack.push(c2);
-    }
-    promoted.ins.forEach((p, i) => {
-      const ax = x0;
-      const ay = y0 + socketY(i);
-      memberAlias[`${p.memberId}:${p.portName}:in`] = {
-        gid: g.id, side: 'in', idx: i,
-        x: ax, y: ay, t: p.portType, port: p.portName,
+  const { hiddenMemberIds, hiddenGroupIds, groupViews, memberAlias, groupSocketAlias } =
+    React.useMemo(() => {
+      const _hiddenMemberIds = new Set();
+      const _hiddenGroupIds = new Set();
+      const _groupViews = {};
+      const _memberAlias = {};
+      const _groupSocketAlias = {};
+      for (const g of groupsArr) {
+        if (!g || !g.collapsed) continue;
+        // SLICE C3: collapse cascades down the child-group tree.
+        const recursiveMembers = ((g.childGroupIds || []).length > 0)
+          ? expandedMembersJS(g.id, groupsArr)
+          : new Set(g.nodeIds || []);
+        const memberCoords = Array.from(recursiveMembers)
+          .map(id => nodeById[id]).filter(Boolean);
+        if (memberCoords.length === 0) continue;
+        const x0 = Math.min(...memberCoords.map(m => m.x));
+        const y0 = Math.min(...memberCoords.map(m => m.y));
+        const promoted = promotedPortsForGroup(g, allNodes, allWiresRaw, groupsArr);
+        const w = COLLAPSED_GROUP_W;
+        const h = collapsedGroupHeight(promoted);
+        _groupViews[g.id] = { anchor: { x: x0, y: y0 }, w, h, promoted, group: g };
+        recursiveMembers.forEach(id => _hiddenMemberIds.add(id));
+        // Mark every DESCENDANT group hidden (parent's collapsed-node covers it).
+        const stack = [...(g.childGroupIds || [])];
+        while (stack.length) {
+          const cid = stack.pop();
+          if (_hiddenGroupIds.has(cid)) continue;
+          _hiddenGroupIds.add(cid);
+          const child = groupsArr.find(x => x.id === cid);
+          if (child) for (const c2 of (child.childGroupIds || [])) stack.push(c2);
+        }
+        promoted.ins.forEach((p, i) => {
+          const ax = x0;
+          const ay = y0 + socketY(i);
+          _memberAlias[`${p.memberId}:${p.portName}:in`] = {
+            gid: g.id, side: 'in', idx: i, x: ax, y: ay, t: p.portType, port: p.portName };
+          _groupSocketAlias[p.groupSocket] = {
+            gid: g.id, side: 'in', idx: i, x: ax, y: ay, t: p.portType, port: p.portName };
+        });
+        promoted.outs.forEach((p, i) => {
+          const ax = x0 + w;
+          const ay = y0 + socketY(i);
+          _memberAlias[`${p.memberId}:${p.portName}:out`] = {
+            gid: g.id, side: 'out', idx: i, x: ax, y: ay, t: p.portType, port: p.portName };
+          _groupSocketAlias[p.groupSocket] = {
+            gid: g.id, side: 'out', idx: i, x: ax, y: ay, t: p.portType, port: p.portName };
+        });
+      }
+      return {
+        hiddenMemberIds: _hiddenMemberIds, hiddenGroupIds: _hiddenGroupIds,
+        groupViews: _groupViews, memberAlias: _memberAlias,
+        groupSocketAlias: _groupSocketAlias,
       };
-      groupSocketAlias[p.groupSocket] = {
-        gid: g.id, side: 'in', idx: i,
-        x: ax, y: ay, t: p.portType, port: p.portName,
-      };
-    });
-    promoted.outs.forEach((p, i) => {
-      const ax = x0 + w;
-      const ay = y0 + socketY(i);
-      memberAlias[`${p.memberId}:${p.portName}:out`] = {
-        gid: g.id, side: 'out', idx: i,
-        x: ax, y: ay, t: p.portType, port: p.portName,
-      };
-      groupSocketAlias[p.groupSocket] = {
-        gid: g.id, side: 'out', idx: i,
-        x: ax, y: ay, t: p.portType, port: p.portName,
-      };
-    });
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodeById, allNodes, graphBump]);
 
-  const connectedIds = new Set([focusId]);
-  (LM_GRAPH.wires || []).forEach(w => {
-    if (w.from[0] === focusId) connectedIds.add(w.to[0]);
-    if (w.to[0]   === focusId) connectedIds.add(w.from[0]);
-  });
+  // `connectedIds` (dims unconnected nodes) only depends on focusId + wires.
+  const connectedIds = React.useMemo(() => {
+    const s = new Set([focusId]);
+    (LM_GRAPH.wires || []).forEach(w => {
+      if (w.from[0] === focusId) s.add(w.to[0]);
+      if (w.to[0]   === focusId) s.add(w.from[0]);
+    });
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, graphBump]);
 
   // Resolve a wire endpoint to a screen coordinate, handling:
   //   1) Regular node — use socket-Y on the node bbox.
@@ -5980,18 +7241,57 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                  : shape === 'list' ? 2.8 : 1.6;
     const shapeDash = (shape === 'tree' || from.t === 'any')
                     ? '8 5' : null;
+    // LIVE WIRE-STATE OVERLAY (v1.4): if the runner has streamed a state for
+    // this edge (wire_state_changed / cook-end edges_state), it WINS over the
+    // static type colour + the running-node animation heuristic — the wire now
+    // shows real dataflow (flowing/cached/stale/upstream_error). No live state
+    // → fall back to the original type colour + node-running animation, so
+    // never-cooked graphs look exactly as before.
+    const live = (LM_GRAPH.nodes ? LM_WIRE_STATE[lmWireEdgeId(w)] : null);
+    const lm = live && wireStateMeta(live.state);
+    const animated = lm ? !!lm.animated
+                        : ((fromNode && fromNode.state === 'running') ||
+                           (toNode && toNode.state === 'running'));
     return {
       i, x1: from.x, y1: from.y, x2: to.x, y2: to.y, raw: w,
       t: from.t,
-      d, color, shape, shapeW, shapeDash,
-      animated: (fromNode && fromNode.state === 'running') ||
-                (toNode && toNode.state === 'running'),
+      d, color: (lm && lm.col) || color, shape, shapeW,
+      shapeDash: lm ? (lm.dash || null) : shapeDash,
+      animated,
+      wireState: live ? live.state : null,
+      wirePreview: live ? live.preview : '',
+      stateOp: lm ? lm.op : null,
       focused: touches,
     };
   }).filter(Boolean), [nodeById, focusId, graphBump]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleExpanded = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
   const onResetView = () => { setPan({ x:14, y:12 }); setZoom(0.66); setCtxMenu(null); };
+
+  // LAG-ROOT FIX (mechanism 4): stable per-node handler cache. The per-node
+  // .map() used to allocate THREE fresh closures per node every render
+  // (onToggleExpand / onDragStart / onFocus) — ~290 closures/render on a big
+  // graph, each a new prop identity. We instead hand each NodeRenderer the
+  // SAME handler object across renders (cached by node id). The closures call
+  // through `_nodeHandlerLatest` (updated each render) so identity is stable
+  // while behavior stays current. NodeRenderer's comparator already ignores
+  // these callbacks, so with stable identity its early-out is unconditional.
+  const _nodeHandlerLatest = React.useRef({});
+  _nodeHandlerLatest.current = { toggleExpanded, onNodeDragStart, setFocusId };
+  const _nodeHandlerCache = React.useRef(new Map());
+  const getNodeHandlers = (id) => {
+    const cache = _nodeHandlerCache.current;
+    let h = cache.get(id);
+    if (!h) {
+      h = {
+        onToggleExpand: () => _nodeHandlerLatest.current.toggleExpanded(id),
+        onDragStart: (e) => _nodeHandlerLatest.current.onNodeDragStart(id)(e),
+        onFocus: () => _nodeHandlerLatest.current.setFocusId(id),
+      };
+      cache.set(id, h);
+    }
+    return h;
+  };
 
   // ─── Founder demand #8: delete focused node or selected wire on Delete/Backspace.
   // Use capture phase on BOTH window and document so QtWebEngine focus quirks
@@ -6047,17 +7347,19 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // ─── Founder demand #14: Cmd/Ctrl+G composes the focused node + connected
   // chain into a subgraph composite. Right-click "Expand subgraph" undoes it.
   React.useEffect(() => {
-    const onShortcut = (e) => {
+    const onShortcut = async (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
-        bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH));
+        try { trackEvent('workflow.run_started', { node_count:(LM_GRAPH.nodes||[]).length, wire_count:(LM_GRAPH.wires||[]).length, has_ai_node:(LM_GRAPH.nodes||[]).some(n=>n&&n.cat==='ai'), trigger:'manual_run' }); } catch(e){} bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH));
         flashToast('Workflow running…');
         return;
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
         e.preventDefault();
         if (!focusId) { flashToast('Focus a node to group', 'info'); return; }
-        const result = bridgeJson('compose_subgraph', JSON.stringify(LM_GRAPH), JSON.stringify([focusId]));
+        // QWebChannel slots are async — sync bridgeJson returned a Promise so
+        // the result.graph check never fired (Cmd-G silently no-op'd). await it.
+        const result = await bridgeAsync('compose_subgraph', JSON.stringify(LM_GRAPH), JSON.stringify([focusId]));
         if (result && result.graph) {
           LM_GRAPH.nodes = result.graph.nodes || [];
           LM_GRAPH.wires = result.graph.wires || [];
@@ -6102,7 +7404,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         outline: dropTarget ? `1px dashed ${LM.accent}66` : 'none',
         outlineOffset:-1,
       }}>
-      <div style={{
+      <div ref={panLayerRef} style={{
         position:'absolute', left:pan.x, top:pan.y,
         transform:`scale(${zoom})`, transformOrigin:'0 0',
       }}>
@@ -6121,9 +7423,14 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const isSel = selectedWire === w.i;
             const strokeW = isSel ? 3.6
                          : (w.focused ? Math.max(shapeW, 2.6) : shapeW);
-            const op = isSel ? 1 : (w.focused ? 1 : 0.5);
+            // A live wire-state opacity (cached/stale/flowing/error) wins over
+            // the focus/idle default so a stale wire visibly dims, etc.
+            const op = isSel ? 1
+                     : (w.stateOp != null ? w.stateOp
+                        : (w.focused ? 1 : 0.5));
             return (
-              <g key={w.i}>
+              <g key={w.i} data-wire-i={w.i}
+                 data-wire-from={w.raw.from[0]} data-wire-to={w.raw.to[0]}>
                 {/* Invisible fat path so the wire is easy to click. */}
                 <path d={d} stroke="transparent" strokeWidth={16} fill="none"
                   style={{ pointerEvents:'stroke', cursor:'pointer' }}
@@ -6225,7 +7532,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                     textOverflow:'ellipsis' }}>
                     {g.title || 'Group'}
                   </span>
-                  <div style={{ flex:1 }}/>
+                  <div style={S_FLEX1}/>
                   <span style={{ fontFamily:LM.mono, fontSize:9,
                     color:LM.inkMuted, letterSpacing:'0.08em' }}>
                     {(g.nodeIds || []).length}n
@@ -6237,28 +7544,48 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                 <div style={{ position:'relative', height: h - COLLAPSED_GROUP_HDR,
                   fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
                   {promoted.ins.map((p, i) => (
-                    <div key={`in-${i}`} style={{
-                      position:'absolute', left:8,
-                      top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
-                      display:'flex', alignItems:'center', gap:6,
-                    }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
-                      <span style={{
+                    // Real wireable socket (was a dead dot): mirrors the Socket
+                    // contract so findSnapTarget can snap a dropped wire onto the
+                    // collapsed group's promoted INPUT. data-node === p.groupSocket
+                    // is the key groupSocketAlias/resolveEndpoint anchor on.
+                    <div key={`in-${i}`}
+                      data-lm-socket={`in:${p.groupSocket}:${p.groupSocket}`}
+                      data-side="in" data-node={p.groupSocket}
+                      data-pin={p.groupSocket} data-type={p.portType}
+                      onMouseDown={(e) => onSocketDown(e, p.groupSocket, p.groupSocket, 'in', p.portType)}
+                      style={{
+                        position:'absolute', left:8,
+                        top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
+                        display:'flex', alignItems:'center', gap:6,
+                        cursor:'crosshair', pointerEvents:'auto',
+                      }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
+                      <span data-lm-socket-dot="1" style={{
                         width:8, height:8, borderRadius:8,
                         background: WIRE[p.portType] || LM.inkSoft,
                         border:`1.5px solid ${LM.paper}`,
                         position:'absolute', left:-12,
                       }}/>
-                      <span>{p.portName}</span>
+                      <span style={{ pointerEvents:'none' }}>{p.portName}</span>
                     </div>
                   ))}
                   {promoted.outs.map((p, i) => (
-                    <div key={`out-${i}`} style={{
-                      position:'absolute', right:8,
-                      top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
-                      display:'flex', alignItems:'center', gap:6,
-                    }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
-                      <span>{p.portName}</span>
-                      <span style={{
+                    // Real wireable socket (was a dead dot): mirrors the Socket
+                    // contract so onSocketDown can START a wire from the collapsed
+                    // group's promoted OUTPUT. data-node === p.groupSocket is the
+                    // key groupSocketAlias/resolveEndpoint anchor on.
+                    <div key={`out-${i}`}
+                      data-lm-socket={`out:${p.groupSocket}:${p.groupSocket}`}
+                      data-side="out" data-node={p.groupSocket}
+                      data-pin={p.groupSocket} data-type={p.portType}
+                      onMouseDown={(e) => onSocketDown(e, p.groupSocket, p.groupSocket, 'out', p.portType)}
+                      style={{
+                        position:'absolute', right:8,
+                        top: socketY(i) - COLLAPSED_GROUP_HDR - 6,
+                        display:'flex', alignItems:'center', gap:6,
+                        cursor:'crosshair', pointerEvents:'auto',
+                      }} title={`${p.memberId} · ${p.portName} · ${p.portType}`}>
+                      <span style={{ pointerEvents:'none' }}>{p.portName}</span>
+                      <span data-lm-socket-dot="1" style={{
                         width:8, height:8, borderRadius:8,
                         background: WIRE[p.portType] || LM.inkSoft,
                         border:`1.5px solid ${LM.paper}`,
@@ -6336,7 +7663,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                   letterSpacing:'0.16em' }}>{(g.style || 'note').toUpperCase()}</span>
                 <span style={{ fontFamily:LM.serif, fontStyle:'italic',
                   fontSize:13, color:LM.ink, marginLeft:4 }}>{g.title || 'Group'}</span>
-                <div style={{ flex:1 }}/>
+                <div style={S_FLEX1}/>
                 <span style={{ fontFamily:LM.mono, fontSize:9,
                   color:LM.inkMuted, letterSpacing:'0.08em' }}>
                   {(g.nodeIds || []).length} nodes
@@ -6360,6 +7687,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           // group node renders in their place above.
           if (hiddenMemberIds.has(n.id)) return null;
           const pos = positions[n.id] || { x: n.x, y: n.y };
+          // Mechanism 4: stable per-id handlers (no fresh closures per render).
+          const h = getNodeHandlers(n.id);
           return (
             <NodeRenderer
               key={n.id}
@@ -6368,9 +7697,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
               selected={selectedIds.has(n.id)}
               dimmed={!connectedIds.has(n.id) && focusId !== n.id && !n._user}
               expanded={!!expanded[n.id]}
-              onToggleExpand={() => toggleExpanded(n.id)}
-              onDragStart={onNodeDragStart(n.id)}
-              onFocus={() => setFocusId(n.id)}
+              onToggleExpand={h.onToggleExpand}
+              onDragStart={h.onDragStart}
+              onFocus={h.onFocus}
               onSocketDown={onSocketDown}
               onSocketContextMenu={onSocketContextMenu}
               onNodeContextMenu={onNodeContextMenu}
@@ -6466,7 +7795,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           return Math.max(0.3, Math.min(2, next));
         });
       }} onFit={onResetView} setLibraryOpen={setLibraryOpen} onRun={() => {
-        bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH));
+        try { trackEvent('workflow.run_started', { node_count:(LM_GRAPH.nodes||[]).length, wire_count:(LM_GRAPH.wires||[]).length, has_ai_node:(LM_GRAPH.nodes||[]).some(n=>n&&n.cat==='ai'), trigger:'manual_run' }); } catch(e){} bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH));
         flashToast('▶ Workflow running…');
       }}/>
       <FloatingComposer setLibraryOpen={setLibraryOpen} focusId={focusId}/>
@@ -6586,11 +7915,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       {nodeMenu && (
         <NodeMenu x={nodeMenu.x} y={nodeMenu.y} nodeId={nodeMenu.id}
           selectedIds={selectedIds}
-          onFlattenToCode={() => {
+          onFlattenToCode={async () => {
             // SLICE L (AgDR-0020 follow-up): collapse selection to one code node.
+            // QWebChannel slots are async — sync bridgeJson returned a Promise
+            // so the result.graph check never fired (silent no-op). await it.
             const ids = Array.from(selectedIds || []);
             if (ids.length < 2) { flashToast('Select ≥2 nodes to flatten', 'info'); return; }
-            const result = bridgeJson('flatten_chain_to_code',
+            const result = await bridgeAsync('flatten_chain_to_code',
               JSON.stringify(LM_GRAPH), JSON.stringify(ids));
             if (result && result.error) {
               flashToast(`Flatten failed: ${result.error}`, 'err');
@@ -6625,12 +7956,28 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                 return { id, label: id, t: String(t || 'any').toLowerCase() };
               });
             };
+            // Snapshot ports BEFORE the swap so we can re-point wires after. The
+            // new shape can have FEWER ports than the old (or different ids when
+            // _mapPort runs out of old ids → `pN`), which orphans any wire bound
+            // to a now-gone port id.
+            const oldIns = Array.isArray(n.ins) ? n.ins.slice() : [];
+            const oldOuts = Array.isArray(n.outs) ? n.outs.slice() : [];
             n.type = newType;
             n.custom_type = newType;
+            // If the swap target IS a grammar primitive, set n.kind so the
+            // canvas renders it with the grammar node's identity (not a bare
+            // custom_type). Match on the full type or its last dotted segment.
+            const _seg = newType.split('.').slice(-1)[0];
+            const _gk = (LM_NODE_GRAMMAR || []).find(p => p && (p.kind === newType || p.kind === _seg));
+            if (_gk) n.kind = _gk.kind;
             if (suggestion && suggestion.in)  n.ins  = _mapPort(n.ins,  suggestion.in);
             if (suggestion && suggestion.out) n.outs = _mapPort(n.outs, suggestion.out);
             n.title = newType.split('.').slice(-1)[0] || n.title;
             n.sub = `swap → ${newType}`;
+            // Re-point (or drop+toast) every wire touching this node whose port
+            // id no longer exists after the swap — the shared wire-integrity
+            // class-fix (founder 2026-06-02). Idempotent.
+            remapWiresForNode(n, oldIns, oldOuts);
             saveCurrentGraph(); bumpGraph && bumpGraph();
             flashToast(`Swapped → ${newType}`);
           }}
@@ -6691,8 +8038,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             };
             let res = null;
             try {
-              res = await bridgeAsync('graph_on_node_delete', nid,
-                                       JSON.stringify(LM_GRAPH));
+              // AgDR-0036 — runs off the Qt main thread; the real answer
+              // (silent/auto-bridge/broken) arrives via node_op_done,
+              // correlated by request_id. bridgeAsyncSignal awaits it.
+              res = await bridgeAsyncSignal('graph_on_node_delete',
+                                            'node_op_done', nid,
+                                            JSON.stringify(LM_GRAPH));
             } catch (e) {
               // Bridge failure → safe fallback so the canvas stays usable.
               res = null;
@@ -6743,8 +8094,20 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
                     flashToast(`Searching adapter ${srcType} → ${dstType}…`);
                     let suggestions = null;
                     try {
-                      suggestions = await bridgeAsync('library_suggest_swaps',
-                        JSON.stringify({in_types:[srcType], out_types:[dstType], limit:5}));
+                      // Off-thread via node_op_done (request_id-correlated by
+                      // bridgeAsyncSignal). This path searches by PORT TYPE, not
+                      // by an existing node type — we need an adapter that takes
+                      // `srcType` and emits `dstType`. The slot's arg1 accepts a
+                      // JSON filter {in_types,out_types,limit} for exactly this
+                      // case (it forwards them to the tool's in_types/out_types
+                      // matcher); the positional `limit` is a back-compat
+                      // default the blob's own limit overrides. (Was previously
+                      // crammed into the scalar `node_type` arg, which the slot
+                      // fed to the search as a bogus type so nothing matched.)
+                      suggestions = await bridgeAsyncSignal('library_suggest_swaps',
+                        'node_op_done',
+                        JSON.stringify({in_types:[srcType], out_types:[dstType], limit:5}),
+                        5);
                     } catch (e) {
                       flashToast('Adapter search failed: '+e, 'err');
                       return;
@@ -6810,11 +8173,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             setSaveSkillDialog({ open: true, sourceNodeId: node.id,
               defaultName: node.title || node.id });
           }}
-          onExpand={() => {
+          onExpand={async () => {
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
             if (!node || node.cat !== 'subgraph.user') { flashToast('Not a subgraph', 'info'); return; }
             // Bridge returns `{ok, graph: {nodes, wires}}` (not `{ok, nodes, wires}`).
-            const result = bridgeJson('expand_subgraph', JSON.stringify(LM_GRAPH), nodeMenu.id);
+            // QWebChannel slots are async — sync bridgeJson returned a Promise so
+            // the ok/graph check never passed (silent no-op). await it.
+            const result = await bridgeAsync('expand_subgraph', JSON.stringify(LM_GRAPH), nodeMenu.id);
             if (result && result.ok && result.graph) {
               LM_GRAPH.nodes = result.graph.nodes || [];
               LM_GRAPH.wires = result.graph.wires || [];
@@ -6845,6 +8210,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
               y: (n.y || 0) - minY + baseY,
               _user: true,
             }));
+            // Upgrade a legacy-shaped skill blob to the grammar shape + remap
+            // its internal wires to the (re-ported) nodes BEFORE splicing — the
+            // same class-fix the load + spawn paths use. fresh preserves each
+            // node id, so blob.wires (which reference those ids) remap cleanly.
+            _upgradeLegacyNodes(fresh, blob.wires);
             // Drop the wrapper + any wires touching it.
             LM_GRAPH.nodes = (LM_GRAPH.nodes || []).filter(n => n.id !== node.id);
             LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(
@@ -6861,28 +8231,32 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       {wireMenu && (
         <WireMenu x={wireMenu.x} y={wireMenu.y}
           onClose={() => setWireMenu(null)}
-          onPickSource={() => {
+          onPickSource={async () => {
             // Bridge `list_wire_fields(node_id, port_name, sample_json)` returns
             // `{paths:[...], sample, node, port}`. The wire here is the one
             // right-clicked; its `from` socket is the source.
+            // QWebChannel slots are async — sync bridgeJson returned a Promise so
+            // `res.paths` was always empty ("No fields detected"). await it.
             const wire = (LM_GRAPH.wires || [])[wireMenu.idx];
             if (!wire) { setWireMenu(null); return; }
             const sample = wire._preview != null ? JSON.stringify(wire._preview) : '';
-            const res = bridgeJson('list_wire_fields', wire.from[0], wire.from[1], sample);
+            const res = await bridgeAsync('list_wire_fields', wire.from[0], wire.from[1], sample);
             const paths = (res && res.paths) || [];
             if (!paths.length) { setWireMenu(null); flashToast('No fields detected', 'info'); return; }
             setWireFieldPicker({ wireIdx: wireMenu.idx, side: 'src', paths });
             setWireMenu(null);
           }}
-          onPickDest={() => {
+          onPickDest={async () => {
             // The destination's schema is unknown from a wire alone, so we
             // introspect the *source* preview the same way — the picked path
             // is then assigned to `dst_field` on the wire (router applies the
             // remapping at runtime).
+            // QWebChannel slots are async — sync bridgeJson returned a Promise so
+            // `res.paths` was always empty ("No fields detected"). await it.
             const wire = (LM_GRAPH.wires || [])[wireMenu.idx];
             if (!wire) { setWireMenu(null); return; }
             const sample = wire._preview != null ? JSON.stringify(wire._preview) : '';
-            const res = bridgeJson('list_wire_fields', wire.from[0], wire.from[1], sample);
+            const res = await bridgeAsync('list_wire_fields', wire.from[0], wire.from[1], sample);
             const paths = (res && res.paths) || [];
             if (!paths.length) { setWireMenu(null); flashToast('No fields detected', 'info'); return; }
             setWireFieldPicker({ wireIdx: wireMenu.idx, side: 'dst', paths });
@@ -6918,7 +8292,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             flashToast(`Searching swaps for ${dstType}…`);
             let suggestions = null;
             try {
-              suggestions = await bridgeAsync('library_suggest_swaps', dstType, 8);
+              // AgDR-0036 — off-thread via node_op_done (request_id-correlated).
+              suggestions = await bridgeAsyncSignal('library_suggest_swaps',
+                'node_op_done', dstType, 8);
             } catch (e) {
               setWireMenu(null);
               flashToast('Swap search failed: ' + e, 'err'); return;
@@ -7023,6 +8399,22 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     </div>
   );
 };
+
+// React.memo comparator for NodeCanvas. Returns true (SKIP) only when all
+// props are unchanged. focusId/userNodes/graphBump drive real canvas
+// updates; the rest are stable callbacks from a memoized Workspace (checked
+// by reference so a regression to instability fails closed → re-render).
+const _ncPropsEqual = (a, b) => (
+  a.focusId === b.focusId &&
+  a.userNodes === b.userNodes &&
+  a.graphBump === b.graphBump &&
+  a.setFocusId === b.setFocusId &&
+  a.setLibraryOpen === b.setLibraryOpen &&
+  a.addNodeFromLibrary === b.addNodeFromLibrary &&
+  a.bumpGraph === b.bumpGraph &&
+  a.removeUserNode === b.removeUserNode
+);
+const NodeCanvas = React.memo(NodeCanvasInner, _ncPropsEqual);
 
 // ─── AgDR-0041 D2·A 2/3 — BrokenWireDialog ──────────────────────
 // Modal that pops when the user deletes a node whose incident wires
@@ -7171,28 +8563,42 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
   // when identical to the previous one.
   const lastHashRef = React.useRef(null);
 
+  // Shared validate. `force` bypasses the unchanged-graph dedup —
+  // graph_validate is off-thread (AgDR-0036), so the first pull returns a
+  // cached placeholder and the real result arrives via graph_validated
+  // (→ lm-graph-validated); that re-pull must run even when the graph
+  // payload is unchanged.
+  const validateRef = React.useRef(null);
+  validateRef.current = async (force) => {
+    const payload = JSON.stringify(LM_GRAPH);
+    if (!force && payload === lastHashRef.current) return;
+    lastHashRef.current = payload;
+    setBusy(true);
+    try {
+      const res = await bridgeAsync('graph_validate', payload);
+      if (res && res.status === 'ok') {
+        setIssues(res.issues || []);
+        setCounts({ err: res.errors || 0, warn: res.warnings || 0 });
+      }
+    } catch (e) {
+      // Validator failure shouldn't crash the canvas — surface
+      // nothing rather than a broken badge.
+    }
+    setBusy(false);
+  };
+
   React.useEffect(() => {
     let cancelled = false;
-    const t = setTimeout(async () => {
-      const payload = JSON.stringify(LM_GRAPH);
-      if (payload === lastHashRef.current) return;
-      lastHashRef.current = payload;
-      setBusy(true);
-      try {
-        const res = await bridgeAsync('graph_validate', payload);
-        if (cancelled) return;
-        if (res && res.status === 'ok') {
-          setIssues(res.issues || []);
-          setCounts({ err: res.errors || 0, warn: res.warnings || 0 });
-        }
-      } catch (e) {
-        // Validator failure shouldn't crash the canvas — surface
-        // nothing rather than a broken badge.
-      }
-      if (!cancelled) setBusy(false);
-    }, 200);
+    const t = setTimeout(() => { if (!cancelled) validateRef.current(); }, 200);
     return () => { cancelled = true; clearTimeout(t); };
   }, [graphBump]);
+
+  // Re-pull when the off-thread validator lands fresh results.
+  React.useEffect(() => {
+    const onValidated = () => { try { validateRef.current(true); } catch (e) {} };
+    window.addEventListener('lm-graph-validated', onValidated);
+    return () => window.removeEventListener('lm-graph-validated', onValidated);
+  }, []);
 
   const color = counts.err > 0 ? LM.err
               : counts.warn > 0 ? LM.warn
@@ -7341,7 +8747,9 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onBypass, onRena
     if (!targetType) { setSwaps([]); return; }
     (async () => {
       try {
-        const res = await bridgeAsync('library_suggest_swaps', targetType, 5);
+        // AgDR-0036 — off-thread via node_op_done (request_id-correlated).
+        const res = await bridgeAsyncSignal('library_suggest_swaps',
+          'node_op_done', targetType, 5);
         if (cancelled) return;
         // library_suggest_swaps wraps the list under `results`. Older
         // call sites checked for items/alternatives/suggestions/etc.;
@@ -7412,7 +8820,7 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onBypass, onRena
         onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
-          <span style={{ flex:1 }}>{it.t}</span>
+          <span style={S_FLEX1}>{it.t}</span>
         </button>
       ))}
       {/* AgDR-0041 D2·A 3/3 — swap-with section. Hidden until suggestions
@@ -7445,7 +8853,7 @@ const NodeMenu = ({ x, y, nodeId, selectedIds, onRun, onFreeze, onBypass, onRena
                 }}
                 onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <span style={{ flex:1 }}>{t}</span>
+                <span style={S_FLEX1}>{t}</span>
                 {scorePct != null && (
                   <span style={{ fontSize:10, color:LM.inkMuted }}>{scorePct}</span>
                 )}
@@ -7515,7 +8923,7 @@ const WireMenu = ({ x, y, onDisconnect, onPickSource, onPickDest,
         onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
-          <span style={{ flex:1 }}>{it.t}</span>
+          <span style={S_FLEX1}>{it.t}</span>
         </button>
       ))}
     </div>
@@ -7602,6 +9010,14 @@ select:focus-visible, [tabindex]:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
+/* APP-level Reduce-motion toggle (Settings → Accessibility). The OS
+   @media rule above only fires when the *operating system* asks for
+   reduced motion; this class-based twin lets the in-app toggle disable
+   animations + transitions on demand. The boot effect in the StudioLM
+   root adds/removes html.lm-reduce-motion from get_a11y_prefs. Selector
+   + declarations mirror the @media rule exactly so both paths behave
+   identically. */
+html.lm-reduce-motion *, html.lm-reduce-motion *::before, html.lm-reduce-motion *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 `;
 const _injectA11yStyles = (() => {
   if (typeof document === 'undefined') return;
@@ -7822,7 +9238,7 @@ const CanvasMenu = ({ x, y, onAddNode, onFit, onClose, onClearAll, onPaste, onZo
         onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
-          <span style={{ flex:1 }}>{it.t}</span>
+          <span style={S_FLEX1}>{it.t}</span>
           {it.toggle && (
             <span style={{
               width:22, height:12, borderRadius:999,
@@ -7973,7 +9389,7 @@ const _NodeRenderer_inner = ({ n, focused, selected, dimmed, expanded, onToggleE
         }}>
         <span style={{ width:14, height:14, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.mono, fontSize:11 }}>{cat.icon}</span>
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
-        <div style={{ flex:1 }}/>
+        <div style={S_FLEX1}/>
         {/* SLICE B (AgDR-0002): disable-verb state indicators. */}
         {(n.bypass || n.frozen || n.preview_off || n.pinned) && (
           <span style={{ display:'flex', alignItems:'center', gap:5,
@@ -8319,7 +9735,7 @@ const HostNodeV2Body = ({ n }) => {
                   <span style={{
                     fontFamily: LM.mono, fontSize:10.5, color:LM.ink,
                   }}>{_opShortName(op.op_id)}</span>
-                  <span style={{ flex:1 }}/>
+                  <span style={S_FLEX1}/>
                   <span style={{
                     fontFamily: LM.mono, fontSize:8.5,
                     color: status === 'done' ? LM.ok : LM.inkMuted,
@@ -8496,14 +9912,26 @@ const HostNodeV2Body = ({ n }) => {
             );
           }
           return (
-            <div key={op.op_id} style={{
-              background: LM.bgSoft,
-              border:`1px solid ${LM.lineSoft}`,
-              borderRadius:4, padding:'6px 7px',
-              fontFamily:LM.mono, fontSize:9.5, lineHeight:1.3,
-              color:LM.inkSoft, cursor:'pointer',
-              position:'relative',
-            }}>
+            <div key={op.op_id}
+              data-host-op-tile={op.op_id}
+              title={`Switch to ${_opShortName(op.op_id)}`}
+              onClick={(e) => {
+                // Click a collapsed op-tile → make it the node's active op.
+                // stopPropagation so the card's onFocus doesn't swallow it as a
+                // plain select. Routes through the shared op-switch handler.
+                e.stopPropagation();
+                try { window.dispatchEvent(new CustomEvent('lm-host-set-op', {
+                  detail: { node_id: n.id, op_id: op.op_id },
+                })); } catch (e2) {}
+              }}
+              style={{
+                background: LM.bgSoft,
+                border:`1px solid ${LM.lineSoft}`,
+                borderRadius:4, padding:'6px 7px',
+                fontFamily:LM.mono, fontSize:9.5, lineHeight:1.3,
+                color:LM.inkSoft, cursor:'pointer',
+                position:'relative',
+              }}>
               <div>
                 <span style={{
                   display:'inline-block', width:6, height:6,
@@ -8806,7 +10234,12 @@ const NoteBody = ({ n }) => {
     n.config = { ...(n.config || {}), text: draft };
     setEditing(false);
     saveCurrentGraph();
-    try { window.dispatchEvent(new CustomEvent('lm-canvas-bump')); } catch (e) {}
+    // Nudge the canvas surfaces (RailMiniMap @3690, NodeCanvas @4900, usage @13970)
+    // to re-render now that the note text changed. Event name MUST match those
+    // listeners (`lm-graph-bump`). Was `lm-canvas-bump` — a name nothing listened
+    // to, so the minimap/canvas never refreshed after a note edit (dead-dispatch
+    // class, 2026-05-30).
+    try { window.dispatchEvent(new CustomEvent('lm-graph-bump')); } catch (e) {}
   };
   if (editing) {
     return (
@@ -8942,26 +10375,29 @@ const GrammarBody = ({ n }) => {
 // workflow registry server-side); it cooks as part of a graph run. No
 // per-node run button — custom nodes aren't a fire-and-forget op, they're
 // graph cells. Founder demand 2026-05-16.
+// Hoisted out of CustomBody (was a render-body nested fn → remount per
+// render). Pure: reads LM.* getters + props only. Named CustomBodyRow to
+// stay distinct from the other Row helpers.
+const CustomBodyRow = ({ s, dir }) => (
+  <div style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:9.5 }}>
+    <span style={{ color: dir === 'in' ? LM.cyan : LM.ok, width:9, flexShrink:0 }}>
+      {dir === 'in' ? '→' : '←'}
+    </span>
+    <span style={{ color:LM.ink, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+      {s.label || s.id}
+    </span>
+    <span style={{ color:LM.inkMuted }}>{s.t || 'any'}</span>
+  </div>
+);
 const CustomBody = ({ n }) => {
   const ins = n.ins || [], outs = n.outs || [];
-  const Row = ({ s, dir }) => (
-    <div style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:9.5 }}>
-      <span style={{ color: dir === 'in' ? LM.cyan : LM.ok, width:9, flexShrink:0 }}>
-        {dir === 'in' ? '→' : '←'}
-      </span>
-      <span style={{ color:LM.ink, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-        {s.label || s.id}
-      </span>
-      <span style={{ color:LM.inkMuted }}>{s.t || 'any'}</span>
-    </div>
-  );
   return (
     <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:4 }}>
       {ins.length === 0 && outs.length === 0
         ? <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkDim }}>no declared ports</span>
         : <>
-            {ins.map(s => <Row key={'i'+s.id} s={s} dir="in"/>)}
-            {outs.map(s => <Row key={'o'+s.id} s={s} dir="out"/>)}
+            {ins.map(s => <CustomBodyRow key={'i'+s.id} s={s} dir="in"/>)}
+            {outs.map(s => <CustomBodyRow key={'o'+s.id} s={s} dir="out"/>)}
           </>}
       {n.custom_type && (
         <span style={{ fontFamily:LM.mono, fontSize:8, color:LM.inkDim, letterSpacing:'0.04em', marginTop:2 }}>
@@ -9077,8 +10513,38 @@ const HostBody = ({ n }) => (
 const AIBody = ({ n, expanded, onToggleExpand }) => {
   const [showReasoning, setShowReasoning] = React.useState(false);
   const [q, setQ] = React.useState('');
+  const [reply, setReply] = React.useState('');
   const messages = n.messages || [];
   const total = messages.length;
+
+  // Audit 2026-05-28: the expanded "Reply…" box + Send button had NO
+  // handler — pure decoration (founder's exact "buttons are for show"
+  // complaint). Wire it for real: push the user turn + a streaming
+  // placeholder onto THIS node, then call send_chat_history. The existing
+  // chat_chunk / chat_done signal handlers locate the streaming `ai` node
+  // and stream the model's reply straight onto it — same path the
+  // FloatingComposer uses, so the reply lands live on the node.
+  const sendReply = React.useCallback(() => {
+    const text = (reply || '').trim();
+    if (!text) return;
+    const now = () => new Date().toISOString().slice(11, 16);
+    const iso = () => new Date().toISOString();
+    const history = (n.messages || []).map(m => ({ me: m.me, text: m.text }));
+    history.push({ me: true, text, time: now() });
+    // Append the user turn + an empty streaming assistant bubble that the
+    // chat_chunk handler will fill in. Mutate in place so saveCurrentGraph
+    // captures it and the stream-target finder sees the streaming flag.
+    n.messages = (n.messages || []).concat([
+      { me: true, text, who: 'You', time: now(), ts: iso() },
+      { me: false, text: '…', streaming: true, time: now(), ts: iso() },
+    ]);
+    setReply('');
+    try { saveCurrentGraph(); } catch (e) {}
+    try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
+    try {
+      bridgeCall('send_chat_history', currentSid(), text, JSON.stringify(history));
+    } catch (e) {}
+  }, [reply, n]);
 
   if (expanded) {
     const filtered = q ? messages.filter(m => (m.text || '').toLowerCase().includes(q.toLowerCase())) : messages;
@@ -9140,14 +10606,23 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           })}
         </div>
 
-        {/* Inline reply */}
+        {/* Inline reply — real input + Send (wired to send_chat_history) */}
         <div style={{
           display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
           background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:5,
         }}>
           <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>/</span>
-          <span style={{ flex:1, fontStyle:'italic', fontFamily:LM.serif, fontSize:12, color:LM.inkMuted }}>Reply…</span>
-          <button style={{ padding:'3px 8px', background:LM.accent, color:'#fff', border:0, borderRadius:4, fontSize:10, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+          <input value={reply} onChange={e => setReply(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
+            placeholder="Reply…"
+            style={{ flex:1, border:0, background:'transparent', color:LM.ink,
+                      fontFamily:LM.sans, fontSize:12, outline:'none' }}/>
+          <button onClick={sendReply} disabled={!reply.trim()}
+            style={{ padding:'3px 8px',
+                      background: reply.trim() ? LM.accent : LM.bgSoft,
+                      color: reply.trim() ? '#fff' : LM.inkMuted,
+                      border:0, borderRadius:4, fontSize:10, fontWeight:500,
+                      cursor: reply.trim() ? 'pointer' : 'default' }}>Send ↵</button>
         </div>
       </div>
     );
@@ -9167,7 +10642,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
         onMouseLeave={e => e.currentTarget.style.borderColor = LM.lineSoft}>
           <span style={{ color:LM.accent }}>↑</span>
           <span>{total - 2} earlier messages</span>
-          <span style={{ flex:1 }}/>
+          <span style={S_FLEX1}/>
           <span style={{ color:LM.accent }}>expand + search ⤢</span>
         </button>
       )}
@@ -9354,39 +10829,82 @@ const LogicBody = ({ n }) => (
 );
 
 // Compose body — little table preview
-const ComposeBody = ({ n }) => (
-  <div style={{ marginTop:8 }}>
-    <div style={{
-      background:LM.bgInk, border:`1px solid ${LM.lineSoft}`, borderRadius:5, overflow:'hidden',
-      fontFamily:LM.mono, fontSize:9.5,
-    }}>
-      {/* header */}
-      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr', padding:'4px 8px', background:LM.bgDeep, color:LM.inkMuted, letterSpacing:'0.08em' }}>
-        <span>TYPE</span><span>LEN</span><span style={{ textAlign:'right' }}>QTY</span>
-      </div>
-      {[
-        ['Gen 200', '6 420', '12'],
-        ['Gen 150', '4 800', '6'],
-        ['CW 100',  '3 200', '5'],
-        ['…',       '…',    '1'],
-      ].map((r, i) => (
-        <div key={i} style={{
-          display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr', padding:'3px 8px',
-          color:LM.ink, borderTop:`1px solid ${LM.lineHair}`,
+// Audit 2026-05-28: the schedule table was a hardcoded fabrication
+// (Gen 200 / 6 420 / 12 …). Now it reads the node's REAL config: the rows
+// the compose node was actually configured with (n.config.rows /
+// .schedule / .entries / .items, or cooked output rows), and renders an
+// honest empty state when nothing is configured yet.
+const composeRows = (n) => {
+  const cfg = (n && n.config) || {};
+  const cand = cfg.rows || cfg.schedule || cfg.entries || cfg.items
+            || n.rows
+            || (n.cooked && (n.cooked.rows || (Array.isArray(n.cooked.value) ? n.cooked.value : null)));
+  return Array.isArray(cand) ? cand : null;
+};
+const ComposeBody = ({ n }) => {
+  const rows = composeRows(n);
+  // Derive columns from the real row shape. Arrays render positionally;
+  // objects render their real keys (first 3) as the header.
+  let cols = null;
+  if (rows && rows.length) {
+    const first = rows[0];
+    if (Array.isArray(first)) cols = first.map((_, i) => 'COL ' + (i + 1));
+    else if (first && typeof first === 'object') cols = Object.keys(first).slice(0, 3);
+  }
+  const cellOf = (r, c, i) => {
+    if (Array.isArray(r)) return r[i];
+    if (r && typeof r === 'object') return r[c];
+    return i === 0 ? r : '';
+  };
+  return (
+    <div style={{ marginTop:8 }}>
+      {rows && rows.length ? (
+        <div style={{
+          background:LM.bgInk, border:`1px solid ${LM.lineSoft}`, borderRadius:5, overflow:'hidden',
+          fontFamily:LM.mono, fontSize:9.5,
         }}>
-          <span>{r[0]}</span><span>{r[1]}</span><span style={{ textAlign:'right' }}>{r[2]}</span>
+          {cols && (
+            <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols.length}, 1fr)`, padding:'4px 8px', background:LM.bgDeep, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+              {cols.map((c, i) => <span key={i} style={{ textAlign: i === cols.length - 1 && cols.length > 1 ? 'right' : 'left' }}>{String(c).toUpperCase()}</span>)}
+            </div>
+          )}
+          {rows.slice(0, 6).map((r, i) => (
+            <div key={i} style={{
+              display:'grid', gridTemplateColumns:`repeat(${(cols && cols.length) || 1}, 1fr)`, padding:'3px 8px',
+              color:LM.ink, borderTop:`1px solid ${LM.lineHair}`,
+            }}>
+              {(cols || ['']).map((c, j) => (
+                <span key={j} style={{ textAlign: j === (cols || ['']).length - 1 && (cols || []).length > 1 ? 'right' : 'left' }}>
+                  {String(cellOf(r, c, j) == null ? '' : cellOf(r, c, j))}
+                </span>
+              ))}
+            </div>
+          ))}
+          {rows.length > 6 && (
+            <div style={{ padding:'3px 8px', color:LM.inkDim, borderTop:`1px solid ${LM.lineHair}` }}>
+              +{rows.length - 6} more
+            </div>
+          )}
         </div>
-      ))}
+      ) : (
+        <div style={{
+          background:LM.bgInk, border:`1px dashed ${LM.lineSoft}`, borderRadius:5,
+          padding:'10px 12px', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+          textAlign:'center', lineHeight:1.5,
+        }}>
+          No schedule configured yet.<br/>Set rows in the inspector or run the node.
+        </div>
+      )}
+      {n.result && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:10.5 }}>
+          <span style={{ color:LM.ok }}>→</span>
+          <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
+          <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
+        </div>
+      )}
     </div>
-    {n.result && (
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:10.5 }}>
-        <span style={{ color:LM.ok }}>→</span>
-        <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-        <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
-      </div>
-    )}
-  </div>
-);
+  );
+};
 
 const AnnotateBody = ({ n }) => (
   <div style={{ marginTop:9 }}>
@@ -9394,7 +10912,7 @@ const AnnotateBody = ({ n }) => (
       <>
         <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:6 }}>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>{Math.round(n.progress*100)}%</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, overflow:'hidden', marginBottom:10 }}>
@@ -9410,28 +10928,98 @@ const AnnotateBody = ({ n }) => (
     {n.runtime && (
       <>
         <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:5 }}>PREVIEW</div>
-        <StagePreview/>
+        <StagePreview n={n}/>
       </>
     )}
   </div>
 );
 
-const OutputBody = ({ n }) => (
-  <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:7 }}>
-    {n.params?.slice(0, 2).map(p => (
-      <div key={p.k} style={{ display:'flex', flexDirection:'column', gap:2 }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{p.k}</span>
-        <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:10.5, color:LM.ink }}>
-          {p.v}
+// Audit 2026-05-28: preview + save were decorative (no handlers). Now real:
+// preview reveals the node's ACTUAL last cooked output; save writes that
+// real value to disk via the save_node_output bridge slot and toasts the path.
+// `nodeOutputValue(n)` is the single source of "what did this node produce" —
+// the runner stashes cooked results on `n.cooked` (value/preview), connector
+// ops on `n.op_result`, and display fields on `n.params`.
+const nodeOutputValue = (n) => {
+  if (n && n.cooked != null) {
+    const c = n.cooked;
+    if (c && c.value !== undefined) return c.value;
+    if (c && c.preview != null) return c.preview;
+    return c;
+  }
+  if (n && n.op_result && n.op_result.value_preview != null) return n.op_result.value_preview;
+  if (n && n.result != null) return n.result;
+  // Fall back to the node's display params (the visible field values).
+  const params = (n && n.params) || [];
+  if (params.length) {
+    const obj = {};
+    params.forEach(p => { if (p && p.k != null) obj[p.k] = p.v; });
+    return obj;
+  }
+  return null;
+};
+const nodeOutputText = (val) => {
+  if (val == null) return '';
+  if (typeof val === 'string') return val;
+  try { return JSON.stringify(val, null, 2); } catch (e) { return String(val); }
+};
+const OutputBody = ({ n }) => {
+  const [showPreview, setShowPreview] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const value = nodeOutputValue(n);
+  const hasOutput = value != null && value !== '';
+  const onSave = React.useCallback(async () => {
+    const v = nodeOutputValue(n);
+    if (v == null || v === '') {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg:'No output yet — run this node first', kind:'err' } })); } catch (e) {}
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await bridgeAsync('save_node_output', n.id || '',
+        n.title || n.id || 'output', JSON.stringify({ value: v }));
+      if (res && res.ok && res.path) {
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'Saved → ' + res.path, kind:'info' } })); } catch (e) {}
+      } else {
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'Save failed: ' + ((res && res.error) || 'unknown'), kind:'err' } })); } catch (e) {}
+      }
+    } catch (e) {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg:'Save failed: ' + e.message, kind:'err' } })); } catch (er) {}
+    }
+    setSaving(false);
+  }, [n]);
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ marginTop:8, display:'flex', flexDirection:'column', gap:7 }}>
+      {n.params?.slice(0, 2).map(p => (
+        <div key={p.k} style={{ display:'flex', flexDirection:'column', gap:2 }}>
+          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{p.k}</span>
+          <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:10.5, color:LM.ink }}>
+            {p.v}
+          </div>
         </div>
+      ))}
+      {showPreview && (
+        <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4,
+          padding:'6px 8px', fontFamily:LM.mono, fontSize:10, color: hasOutput ? LM.ink : LM.inkMuted,
+          maxHeight:140, overflow:'auto', whiteSpace:'pre-wrap', lineHeight:1.5 }}>
+          {hasOutput ? nodeOutputText(value) : 'No output yet — run this node first.'}
+        </div>
+      )}
+      <div style={{ display:'flex', gap:6, marginTop:4 }}>
+        <button style={smallBtn()} onClick={() => setShowPreview(s => !s)}>
+          {showPreview ? 'hide' : 'preview'}
+        </button>
+        <button style={smallBtn(true)} onClick={onSave} disabled={saving}>
+          {saving ? 'saving…' : 'save'}
+        </button>
       </div>
-    ))}
-    <div style={{ display:'flex', gap:6, marginTop:4 }}>
-      <button style={smallBtn()}>preview</button>
-      <button style={smallBtn(true)}>save</button>
     </div>
-  </div>
-);
+  );
+};
 
 const CompactParam = ({ p }) => {
   if (p.type === 'slider') {
@@ -9459,31 +11047,48 @@ const CompactParam = ({ p }) => {
   );
 };
 
-const StagePreview = () => (
-  <div style={{
-    aspectRatio:'2/1', background:LM.bgInk, border:`1px solid ${LM.lineSoft}`, borderRadius:5,
-    position:'relative', overflow:'hidden',
-    backgroundImage:`linear-gradient(${LM.lineHair} 1px, transparent 1px), linear-gradient(90deg, ${LM.lineHair} 1px, transparent 1px)`,
-    backgroundSize:'12px 12px',
-  }}>
-    <svg viewBox="0 0 200 100" style={{ position:'absolute', inset:0, width:'100%', height:'100%' }}>
-      <rect x="20" y="20" width="160" height="60" fill="none" stroke={LM.accent} strokeWidth="2"/>
-      <line x1="100" y1="20" x2="100" y2="50" stroke={LM.inkSoft} strokeWidth="1"/>
-      <line x1="20"  y1="50" x2="180" y2="50" stroke={LM.inkSoft} strokeWidth="1"/>
-      <line x1="60"  y1="50" x2="60"  y2="80" stroke={LM.inkSoft} strokeWidth="1"/>
-      <line x1="20" y1="90" x2="180" y2="90" stroke={LM.accent} strokeWidth="0.6"/>
-      <line x1="20" y1="87" x2="20" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
-      <line x1="100" y1="87" x2="100" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
-      <line x1="180" y1="87" x2="180" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
-      <text x="60" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="4" fill={LM.accent}>9 600</text>
-      <text x="140" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="4" fill={LM.accent}>10 400</text>
-    </svg>
+// Audit 2026-06-02 (ANTI-LIE): StagePreview previously rendered a HARDCODED fake
+// CAD drawing with fabricated dimension labels + a fabricated "placed" badge —
+// pure fiction shown as if it were the node's real output. Now HONEST: mirrors the
+// OutputBody pattern (nodeOutputValue / nodeOutputText) and renders the node's
+// REAL last-cooked output. Frame styling (bgInk panel, border, faint grid) is
+// kept as neutral decoration; the fabricated <svg>/badge are deleted.
+const StagePreview = ({ n }) => {
+  const cooked = (n && n.cooked) || null;
+  const img = cooked && (cooked.image || cooked.preview_image);
+  const isImg = typeof img === 'string' && (
+    img.indexOf('data:image') === 0 ||
+    /\.(png|jpe?g|svg|webp|gif)$/i.test(img)
+  );
+  const val = nodeOutputValue(n);
+  const text = nodeOutputText(val);
+  const hasText = text != null && text !== '';
+  return (
     <div style={{
-      position:'absolute', top:5, right:6, fontFamily:LM.mono, fontSize:8,
-      color:LM.accent, letterSpacing:'0.06em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
-    }}>17 / 23 placed</div>
-  </div>
-);
+      aspectRatio:'2/1', background:LM.bgInk, border:`1px solid ${LM.lineSoft}`, borderRadius:5,
+      position:'relative', overflow:'hidden',
+      backgroundImage:`linear-gradient(${LM.lineHair} 1px, transparent 1px), linear-gradient(90deg, ${LM.lineHair} 1px, transparent 1px)`,
+      backgroundSize:'12px 12px',
+    }}>
+      {isImg ? (
+        <img src={img} alt="node output preview" style={{
+          position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'contain',
+        }}/>
+      ) : hasText ? (
+        <div style={{
+          position:'absolute', inset:0, overflow:'auto', padding:'7px 9px',
+          fontFamily:LM.mono, fontSize:9.5, lineHeight:1.5, color:LM.ink,
+          whiteSpace:'pre-wrap', wordBreak:'break-word',
+        }}>{text.slice(0, 600)}</div>
+      ) : (
+        <div style={{
+          position:'absolute', inset:0, display:'grid', placeItems:'center', padding:'0 12px',
+          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, textAlign:'center', letterSpacing:'0.04em',
+        }}>Preview appears after this node runs.</div>
+      )}
+    </div>
+  );
+};
 
 // ─── canvas toolbar (TOP-LEFT) ───
 const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen, onRun }) => (
@@ -9816,7 +11421,17 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
     // emits `agent_step_done`. The StudioLM root listens for that signal
     // and replays the tool calls. Here we just kick it off + show chat.
     dispatchAction({ command:'chat', text:t }, t, { attachments: atts });
-    try { bridgeCall('agent_step', t, JSON.stringify(LM_GRAPH), focusId || ''); }
+    // USER-AGENCY gate (backend half): send the LIVE composer mode as the 4th
+    // arg so the bridge's agent_step(..., mode=) gates host writes per the
+    // user's Plan/Auto/YOLO selection — not blind at the default. `mode` is
+    // this composer's live React state; window.__archhub_composer_mode mirrors
+    // it (set in setM + the mode effect) and is the fallback for any path that
+    // lost scope. Defaults to 'plan' (fail-safe gated). Positional order
+    // matches bridge.py: agent_step(user_msg, graph_json, focused_node_id, mode).
+    const _composerMode = mode
+      || (typeof window !== 'undefined' && window.__archhub_composer_mode)
+      || 'plan';
+    try { bridgeCall('agent_step', t, JSON.stringify(LM_GRAPH), focusId || '', _composerMode); }
     catch (e) {}
   };
 
@@ -10086,6 +11701,14 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   // Hat 1 caught: "memory graph 6 slices shipped, ZERO JSX consumer".
   // Now consumed here as a "Memory · top hits" section at top of right pane.
   const [memoryHits, setMemoryHits] = React.useState([]);
+  // AgDR-0036 — memory_query is off-thread; bump on lm-memory-changed so the
+  // effect re-runs and reads the now-warm cache for this query.
+  const [memHitTick, setMemHitTick] = React.useState(0);
+  React.useEffect(() => {
+    const onChanged = () => setMemHitTick(t => t + 1);
+    window.addEventListener('lm-memory-changed', onChanged);
+    return () => window.removeEventListener('lm-memory-changed', onChanged);
+  }, []);
   React.useEffect(() => {
     if (!q || q.length < 2) { setMemoryHits([]); return; }
     let cancelled = false;
@@ -10100,7 +11723,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
       } catch (e) { if (!cancelled) setMemoryHits([]); }
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [q]);
+  }, [q, memHitTick]);
   // The one node system — the modal is built from the node grammar
   // (docs/NODE_GRAMMAR.md), the SAME ~12 primitives the canvas palette
   // uses. No second catalogue that can drift out of sync.
@@ -10133,7 +11756,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
             {(LM_NODE_GRAMMAR || []).length} NODES · CLICK TO ADD
           </span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
             padding:'6px 11px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:5,
             color:LM.ink, fontFamily:LM.sans, fontSize:12.5, outline:'none', width:280,
@@ -10244,7 +11867,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                     <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, minWidth:60 }}>
                       score {Math.round(h.score || 0)}
                     </span>
-                    <div style={{ flex:1 }}>
+                    <div style={S_FLEX1}>
                       <div style={{ color:LM.ink, fontWeight:500 }}>{h.label || h.id}</div>
                       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{h.id} · {h.kind}</div>
                     </div>
@@ -10344,7 +11967,7 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
     display:'flex', alignItems:'center', gap:8, marginBottom:1,
   }}>
     {icon && <span style={{ color:col, width:12, textAlign:'center', fontFamily:LM.mono, fontSize:11 }}>{icon}</span>}
-    <span style={{ flex:1 }}>{label}</span>
+    <span style={S_FLEX1}>{label}</span>
   </button>
 );
 
@@ -10418,7 +12041,7 @@ const ParamField = ({ p, onChange, siblings }) => {
       {p.required && <span style={{ color:LM.accent, fontSize:9 }}>required</span>}
       {loading && <span style={{ color:LM.inkDim, fontSize:8.5,
         fontFamily:LM.mono }}>loading…</span>}
-      <div style={{ flex:1 }}/>
+      <div style={S_FLEX1}/>
       {p.help && <span title={p.help} style={{ color:LM.inkDim, fontSize:10, cursor:'help' }}>?</span>}
     </div>
   );
@@ -10444,17 +12067,24 @@ const ParamField = ({ p, onChange, siblings }) => {
   // number / range → stepper (+ slider when min/max known)
   if (p.type === 'number' || p.type === 'range') {
     const hasRange = p.min != null && p.max != null;
+    // tick = debounced mid-drag write; commit (2nd arg true) = flush-on-release.
     return (
       <div>
         {labelRow}
         <input type="number" value={p.v == null ? '' : p.v}
           min={p.min} max={p.max} step={p.step || 1}
           onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+          onBlur={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value), true)}
           style={inputStyle}/>
         {hasRange && (
+          // pointerup/mouseup/keyup/blur = drag-release edges → flush final value.
           <input type="range" min={p.min} max={p.max} step={p.step || 1}
             value={Number(p.v) || p.min}
             onChange={(e) => onChange(Number(e.target.value))}
+            onPointerUp={(e) => onChange(Number(e.target.value), true)}
+            onMouseUp={(e) => onChange(Number(e.target.value), true)}
+            onKeyUp={(e) => onChange(Number(e.target.value), true)}
+            onBlur={(e) => onChange(Number(e.target.value), true)}
             style={{ width:'100%', accentColor:LM.accent, marginTop:6 }}/>
         )}
       </div>
@@ -10586,33 +12216,32 @@ const ConnectorRail = ({ node, bumpGraph }) => {
     syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
   };
   const pickOp = (opId) => {
-    const o = ops.find(x => x.op_id === opId);
-    if (!o) return;
-    node.op_id = o.op_id;
-    node.op_kind = o.kind || 'read';
-    node.destructive = !!o.destructive;
-    node.title = o.label || o.op_id;
-    node.sub = host + ' · ' + (o.kind || 'op');
-    node.ins  = [{ id:'in',  label:'in',     t:'any' }];
-    node.outs = [{ id:'out', label:'result', t: o.output_type || 'any' }];
-    // Typed param rows straight off the op spec (the op's declared
-    // inputs only — NOT host/op, which live on the node directly so
-    // the per-node Run sends a clean kwargs dict to run_connector_op).
-    node.params = (o.inputs || []).map(p => ({
-      k: p.id, v: p.default != null ? p.default : '',
-      type: p.type || 'text', label: p.label || p.id,
-      options: p.options || [], required: !!p.required, help: p.help || '',
-      options_source: p.options_source || '', _by: 'default',
-    }));
-    node.op_result = null; node.cooked = null;
-    syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
+    // Shared op-switch — the SAME mechanism the on-card op-tile uses
+    // (applyConnectorOp). Rebuilds canonical in/out ports + typed params and
+    // re-snaps wires via remapWiresForNode so the value→context wire survives
+    // an op change (founder wire-orphan fix 2026-06-02). One path, two surfaces.
+    if (applyConnectorOp(node, opId)) bumpGraph && bumpGraph();
   };
-  const setParam = (k, v) => {
+  // Same slider-drag perf fix as NodeRail.onParamChange (2026-06-01): visual
+  // update + config sync stay immediate on every tick; only the disk write is
+  // debounced via saveGraphParamTick, with flush-on-release (commit=true from
+  // ParamField's pointerup/mouseup/keyup/blur). pickHost/pickOp above are
+  // STRUCTURAL host/op switches and intentionally keep the immediate
+  // saveCurrentGraph().
+  const setParam = (k, v, commit) => {
     const p = (node.params || []).find(x => x.k === k);
     if (p) {
       p.v = v;
       p._by = 'you';   // provenance — the architect set this
-      syncConfig(); saveCurrentGraph(); bumpGraph && bumpGraph();
+      syncConfig();
+      bumpGraph && bumpGraph();          // immediate visual repaint
+      if (commit) {
+        flushGraphParamTick();           // release edge → persist now
+        flushReCook(node.id);            // …and re-cook the final value now
+      } else {
+        saveGraphParamTick();            // mid-drag tick → coalesce to one write
+        reCookParamTick(node.id);        // …and coalesce mid-drag re-cooks (~200ms)
+      }
     }
   };
   // Group params by their `group` field (if connectors supply one).
@@ -10636,6 +12265,9 @@ const ConnectorRail = ({ node, bumpGraph }) => {
       borderLeft:`1px solid ${LM.line}`, overflow:'auto', minHeight:0,
       padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:14,
     }}>
+      {/* Flush a pending debounced param-save AND re-cook when this connector
+          node is deselected / the rail closes (keyed on node.id). */}
+      <ParamSaveFlush key={'psf_' + node.id} nodeId={node.id}/>
       {/* identity */}
       <div>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
@@ -10689,7 +12321,7 @@ const ConnectorRail = ({ node, bumpGraph }) => {
               fontFamily:LM.mono, fontSize:11, color:LM.ink,
             }}>
               <span style={{ width:6, height:6, borderRadius:'50%', background:col }}/>
-              <span style={{ flex:1 }}>{(conn && conn.display_name) || host}</span>
+              <span style={S_FLEX1}>{(conn && conn.display_name) || host}</span>
               <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
                 letterSpacing:'0.08em' }}>{conn && conn.mechanism ? conn.mechanism.toUpperCase() : 'LOCKED'}</span>
             </div>
@@ -10751,7 +12383,7 @@ const ConnectorRail = ({ node, bumpGraph }) => {
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
             {(groups[activeTab] || []).map(p => (
               <ParamField key={p.k} p={p} siblings={params}
-                onChange={(v) => setParam(p.k, v)}/>
+                onChange={(v, commit) => setParam(p.k, v, commit)}/>
             ))}
           </div>
         </div>
@@ -10824,7 +12456,7 @@ const ConnectorRail = ({ node, bumpGraph }) => {
 // any lm-canvas-toast event fired outside an open canvas session was
 // silent. Founder feedback 2026-05-25: "I click things and see
 // nothing happen". Now every dispatch surfaces here.
-const GlobalToast = () => {
+const GlobalToastInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [toast, setToast] = React.useState(null);
   React.useEffect(() => {
     const onToast = (ev) => {
@@ -10859,6 +12491,12 @@ const GlobalToast = () => {
     }}>{toast.msg}</div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): always-mounted, no real props. Memo'd so the
+// root's focus/settings/panel/picker re-renders no longer re-execute it.
+// `_themeBump` (= root paletteBump) is the ONLY prop: theme swaps bump it
+// (StudioLM onThemeChanged → bumpPalette), so an open toast still repaints
+// on theme change — same behavior as before, minus the wasted re-renders.
+const GlobalToast = React.memo(GlobalToastInner);
 
 // AgDR-0042 — Memory explorer modal. Opens when the user clicks the
 // bottom-strip memory pill. Renders a dashboard of the shared-memory
@@ -10867,27 +12505,38 @@ const GlobalToast = () => {
 // the BFS-walked community graph. The founder asked 2026-05-25:
 // "I have 197 nodes / 76 capabilities / 176 communities — where can
 // I see them?" This is the surface.
-const MemoryExplorerModal = () => {
+const MemoryExplorerModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);
   const [stats, setStats] = React.useState(null);
   const [q, setQ] = React.useState('');
   const [results, setResults] = React.useState([]);
   const [searching, setSearching] = React.useState(false);
+  // AgDR-0036 — memory_query/memory_stats are off-thread; bumped when the
+  // memory_changed signal (→ lm-memory-changed) fires so the search +
+  // stats effects re-pull the now-warm cache.
+  const [memTick, setMemTick] = React.useState(0);
   React.useEffect(() => {
+    // memory_stats is off-thread (AgDR-0036): ignore the cold-cache
+    // 'pending' placeholder; re-pull on lm-memory-changed.
+    const pullStats = () => bridgeAsync('memory_stats').then(r => {
+      if (r && r.status === 'ok' && r.source && r.source !== 'pending') setStats(r);
+    }).catch(() => {});
     const onOpen = (ev) => {
       setOpen(true);
       const s = ev && ev.detail && ev.detail.stats;
-      if (s) setStats(s);
-      else {
-        bridgeAsync('memory_stats').then(r => {
-          if (r && r.status === 'ok') setStats(r);
-        });
-      }
+      if (s && s.source !== 'pending') setStats(s);
+      else pullStats();
     };
+    const onChanged = () => { pullStats(); setMemTick(t => t + 1); };
     window.addEventListener('lm-memory-explorer-open', onOpen);
-    return () => window.removeEventListener('lm-memory-explorer-open', onOpen);
+    window.addEventListener('lm-memory-changed', onChanged);
+    return () => {
+      window.removeEventListener('lm-memory-explorer-open', onOpen);
+      window.removeEventListener('lm-memory-changed', onChanged);
+    };
   }, []);
-  // Debounced search.
+  // Debounced search. memTick in deps → re-runs when fresh memory data
+  // lands so the off-thread query result (now cached) is read.
   React.useEffect(() => {
     if (!open) return;
     if (!q.trim()) { setResults([]); return; }
@@ -10904,7 +12553,7 @@ const MemoryExplorerModal = () => {
       finally { if (!cancelled) setSearching(false); }
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [q, open]);
+  }, [q, open, memTick]);
   if (!open) return null;
   const close = () => { setOpen(false); setQ(''); setResults([]); };
   const kinds = (stats && stats.by_kind) || {};
@@ -10938,7 +12587,7 @@ const MemoryExplorerModal = () => {
               {stats.total_nodes} NODES · {stats.total_edges} EDGES · {stats.communities_total} COMM
             </span>
           )}
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <button onClick={close} style={{
             width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
             borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
@@ -11029,7 +12678,7 @@ const MemoryExplorerModal = () => {
                       <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, minWidth:50 }}>
                         score {Math.round(h.score || 0)}
                       </span>
-                      <div style={{ flex:1 }}>
+                      <div style={S_FLEX1}>
                         <div style={{ fontSize:12.5, color:LM.ink }}>{h.label || h.id}</div>
                         <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>
                           {h.id} · {h.kind}
@@ -11050,13 +12699,2027 @@ const MemoryExplorerModal = () => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): always-mounted, early-returns null when closed.
+// Memo'd so root focus/settings/panel/picker re-renders skip it; `_themeBump`
+// (= root paletteBump) re-renders it on theme swap so an open modal repaints.
+const MemoryExplorerModal = React.memo(MemoryExplorerModalInner);
+
+// ─── Brain · the VISUAL browser ("Your brain, organized") ──────────
+// The founder-facing, CEO-in-60-seconds view of what the brain actually
+// holds — built on the daemon's READ-ONLY brain.browse tool (bridge slot
+// `brain_browse`, off the Qt main thread via _cached_async). Four
+// coordinated views per the research:
+//   1. Top of mind — ranked cards of the most salient Memory + Decisions
+//      (decay-weighted salience), each a plain one-liner + last-used +
+//      quiet "used N times" + facet colour + a plain "why is this here".
+//   2. Facet lanes — cluster CARDS (not a force graph): Decisions (by
+//      category), Memory (the real notes/rules/skills + Speckle lessons),
+//      and How-to / Capabilities (machine inventory, de-emphasised +
+//      collapsible, OFF by default).
+//   3. Salience as visual weight (brighter/larger = salient, faded =
+//      decaying); archived items in a collapsed "Faded / archived" tray
+//      with one-click Restore (MAKE-IT-REAL-NEVER-TRIM made visible).
+//   4. Timeline ribbon — learnings by date ("what the brain learned").
+// Search runs the brain retrieval ranker (bridge `brain_search`). Raw
+// predicate/SPO/JSON live only in a per-card collapsed Details drawer.
+// Honest when the daemon is down: a plain empty-state, never a fake view.
+
+// Facet → founder-facing label + colour (reuses the app palette).
+const BRAIN_FACET_META = {
+  Decisions:  { col: () => LM.accent, label: 'Decisions',        glyph: '◆',
+                blurb: 'the calls you locked in' },
+  Memory:     { col: () => LM.blue,   label: 'Memory',           glyph: '▤',
+                blurb: 'notes, rules & lessons it remembers' },
+  Capability: { col: () => LM.cyan,   label: 'How-to / Skills',  glyph: '⚙',
+                blurb: 'the machine tool catalog' },
+};
+const brainFacetCol = (f) => {
+  const m = BRAIN_FACET_META[f];
+  return m ? m.col() : LM.inkSoft;
+};
+
+// One memory card. Salience drives visual weight: brighter border + fuller
+// opacity when salient, faded when decaying. The quiet "used N times" chip,
+// the plain "why is this here", and the facet colour are all here. Raw
+// subject/predicate/object hide behind the Details disclosure (FOUNDER-SPEAK).
+const BrainCard = ({ card, dim }) => {
+  const [showRaw, setShowRaw] = React.useState(false);
+  if (!card) return null;
+  const col = brainFacetCol(card.facet);
+  // Salience → opacity weight. brain.browse salience is ~0.3..1.6; map to a
+  // gentle 0.55..1.0 so faded items read as quieter, never invisible.
+  const s = typeof card.salience === 'number' ? card.salience : 0.5;
+  const weight = dim ? 0.5 : Math.max(0.55, Math.min(1, 0.5 + s * 0.4));
+  const used = card.used_count || 0;
+  return (
+    <div data-testid="brain-card" data-facet={card.facet} style={{
+      background: LM.bgPanel, border: `1px solid ${LM.line}`,
+      borderLeft: `3px solid ${col}`, borderRadius: 10, padding: '11px 13px',
+      opacity: weight, transition: `opacity ${LM.motion.base}`,
+    }}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+        <span style={{
+          fontFamily:LM.sans, fontSize:13, lineHeight:1.45, color:LM.ink, flex:1,
+        }}>{card.headline}</span>
+        {used > 0 && (
+          <span title="How many times the brain has used this" data-testid="brain-card-uses" style={{
+            fontFamily:LM.mono, fontSize:9.5, fontWeight:600, flex:'none',
+            color: col, background: LM.bg, border:`1px solid ${col}44`,
+            borderRadius:20, padding:'2px 7px', whiteSpace:'nowrap',
+          }}>used {used}×</span>
+        )}
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:7, flexWrap:'wrap' }}>
+        {/* Plain-English "why is this here" — recent / often-used / matches search */}
+        <span data-testid="brain-card-why" style={{
+          fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+          background:LM.bgSoft, borderRadius:20, padding:'2px 8px',
+        }}>{card.why}</span>
+        {card.last_used && (
+          <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
+            last used {card.last_used}
+          </span>
+        )}
+        <span style={{
+          fontFamily:LM.mono, fontSize:9, color:col, marginLeft:'auto',
+          textTransform:'lowercase',
+        }}>{card.cluster}</span>
+        {/* Details drawer toggle — raw SPO/JSON lives here, never at the top. */}
+        <button onClick={() => setShowRaw(v => !v)} data-testid="brain-card-details"
+          title="Show the raw record (subject · predicate · object)"
+          style={{
+            border:0, background:'transparent', cursor:'pointer', padding:'0 2px',
+            fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+          }}>{showRaw ? '▾ details' : '▸ details'}</button>
+      </div>
+      {showRaw && card.details && (
+        <div data-testid="brain-card-raw" style={{
+          marginTop:8, padding:'8px 10px', background:LM.bgSoft,
+          border:`1px solid ${LM.line}`, borderRadius:7,
+          fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, lineHeight:1.5,
+          wordBreak:'break-word',
+        }}>
+          {card.details.subject && <div><span style={{color:LM.inkMuted}}>subject</span> · {card.details.subject}</div>}
+          {card.details.predicate && <div><span style={{color:LM.inkMuted}}>predicate</span> · {card.details.predicate}</div>}
+          {card.details.object && <div><span style={{color:LM.inkMuted}}>object</span> · {card.details.object}</div>}
+          <div style={{marginTop:4}}><span style={{color:LM.inkMuted}}>scope</span> · {card.details.scope} &nbsp;·&nbsp; <span style={{color:LM.inkMuted}}>kind</span> · {card.kind}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// One facet lane — a header (label + count + blurb) and a row of cluster
+// cards. The de-emphasised lane (Capabilities) renders collapsed + muted and
+// is OFF by default (machine inventory). Each cluster card shows label +
+// count + its top-3 salient items.
+const BrainFacetLane = ({ lane }) => {
+  const meta = BRAIN_FACET_META[lane.facet] || {};
+  const col = brainFacetCol(lane.facet);
+  // De-emphasised lane starts collapsed (it's machine inventory).
+  const [open, setOpen] = React.useState(!lane.deemphasised);
+  const clusters = lane.clusters || [];
+  return (
+    <div data-testid={`brain-lane-${lane.facet}`} style={{
+      marginBottom:16, opacity: lane.deemphasised && !open ? 0.78 : 1,
+    }}>
+      <button onClick={() => setOpen(v => !v)} data-testid={`brain-lane-toggle-${lane.facet}`}
+        style={{
+          display:'flex', alignItems:'center', gap:10, width:'100%',
+          border:0, background:'transparent', cursor:'pointer', padding:'4px 0',
+          textAlign:'left',
+        }}>
+        <span style={{
+          width:24, height:24, borderRadius:7, flex:'none', display:'flex',
+          alignItems:'center', justifyContent:'center', fontSize:12, color:'#fff',
+          background: col,
+        }}>{meta.glyph || '•'}</span>
+        <span style={{ fontFamily:LM.sans, fontWeight:600, fontSize:14, color:LM.ink }}>
+          {meta.label || lane.facet}
+        </span>
+        <span style={{
+          fontFamily:LM.mono, fontSize:10, fontWeight:600, color:col,
+          background:LM.bg, border:`1px solid ${col}44`, borderRadius:20, padding:'1px 8px',
+        }}>{lane.count}</span>
+        <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>{meta.blurb}</span>
+        {lane.deemphasised && (
+          <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginLeft:6 }}>
+            {open ? '— hide inventory' : '+ show machine inventory'}
+          </span>
+        )}
+        <span style={{ marginLeft:'auto', color:LM.inkMuted, fontSize:11 }}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div style={{
+          display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))',
+          gap:10, marginTop:10,
+        }}>
+          {clusters.length === 0 && (
+            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted, padding:'6px 2px' }}>
+              nothing here yet
+            </div>
+          )}
+          {clusters.map((c, i) => (
+            <div key={c.label + i} data-testid="brain-cluster-card" style={{
+              border:`1px solid ${LM.line}`, borderTop:`2px solid ${col}`,
+              borderRadius:10, padding:12, background:LM.bgSoft,
+            }}>
+              <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:8 }}>
+                <span style={{ fontFamily:LM.sans, fontWeight:600, fontSize:12.5, color:LM.ink,
+                  textTransform:'capitalize' }}>{String(c.label).replace(/_/g,' ')}</span>
+                <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{c.count}</span>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {(c.top || []).map((card) => (
+                  <div key={card.id} title={card.headline} style={{
+                    fontFamily:LM.sans, fontSize:11, color:LM.inkSoft, lineHeight:1.4,
+                    display:'flex', gap:6,
+                  }}>
+                    <span style={{ color:col, flex:'none' }}>›</span>
+                    <span style={{ overflow:'hidden', textOverflow:'ellipsis',
+                      display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
+                      {card.headline}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// The 4-view browser. Pulls brain.browse on open (off-thread, instant cached
+// snapshot; re-pulls on the brain_browse_changed signal). Search runs the
+// retrieval ranker via brain_search and shows results in facet colour.
+const BrainBrowser = ({ open }) => {
+  const [view, setView] = React.useState(null);      // brain.browse payload
+  const [pulled, setPulled] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const [search, setSearch] = React.useState(null);  // {cards} | null
+  const [searching, setSearching] = React.useState(false);
+  const [showArchived, setShowArchived] = React.useState(false);
+  const [proj, setProj] = React.useState('');         // project filter ('' = All)
+  const searchReq = React.useRef(null);
+
+  // Pull the organized view when the modal opens. brain_browse is off-thread:
+  // the first call returns a cached/pending snapshot, then brain_browse_changed
+  // fires when the real data lands → re-pull.
+  React.useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const pull = () => {
+      bridgeAsync('brain_browse').then(r => {
+        if (!alive || !r) return;
+        setPulled(true);
+        if (r.ok || (r.totals && r.top_of_mind)) setView(r);
+        else if (r.pending) { /* keep waiting for the signal */ }
+        else setView(r);   // degraded — render honest empty state
+      }).catch(() => { if (alive) setPulled(true); });
+    };
+    pull();
+    const b = window.archhub;
+    let onChanged = null;
+    if (b && b.brain_browse_changed && b.brain_browse_changed.connect) {
+      onChanged = () => pull();
+      try { b.brain_browse_changed.connect(onChanged); } catch (e) {}
+    }
+    return () => {
+      alive = false;
+      if (onChanged && b && b.brain_browse_changed && b.brain_browse_changed.disconnect) {
+        try { b.brain_browse_changed.disconnect(onChanged); } catch (e) {}
+      }
+    };
+  }, [open]);
+
+  // Listen for search results (request_id-matched).
+  React.useEffect(() => {
+    const b = window.archhub;
+    if (!b || !b.brain_search_done || !b.brain_search_done.connect) return;
+    const onDone = (raw) => {
+      let res = null;
+      try { res = JSON.parse(raw || '{}'); } catch (e) { res = null; }
+      if (!res || (searchReq.current && res.request_id !== searchReq.current)) return;
+      searchReq.current = null;
+      setSearching(false);
+      setSearch(res.ok ? { cards: res.cards || [] } : { cards: [], error: res.error });
+    };
+    try { b.brain_search_done.connect(onDone); } catch (e) {}
+    return () => { try { b.brain_search_done.disconnect(onDone); } catch (e) {} };
+  }, []);
+
+  const runSearch = async (term, projOverride) => {
+    const t = (term == null ? q : term).trim();
+    if (!t) { setSearch(null); searchReq.current = null; setSearching(false); return; }
+    const p = projOverride === undefined ? proj : projOverride;
+    setSearching(true);
+    setSearch(null);
+    try {
+      // Pass the active project so search is scoped server-side to that
+      // project's facts (matches the filtered default view). The slot is the
+      // same off-thread brain_search — no main-thread blocking.
+      const r = await bridgeAsync('brain_search', t, p || '');
+      if (r && r.async && r.request_id) searchReq.current = r.request_id;
+      else { setSearching(false); setSearch({ cards: (r && r.cards) || [], error: r && r.error }); }
+    } catch (e) { setSearching(false); setSearch({ cards: [], error: String(e) }); }
+  };
+
+  // Toggle a project chip. Re-runs an active search under the new scope; the
+  // default view filters client-side (below) off the cached payload — no extra
+  // round-trip, no main-thread work.
+  const toggleProject = (code) => {
+    const next = (proj === code) ? '' : code;
+    setProj(next);
+    if (q.trim()) runSearch(q, next);
+  };
+
+  if (!open) return null;
+
+  const totals = (view && view.totals) || {};
+  const degraded = view && view.ok === false;
+  const projects = (view && view.projects) || {};        // {code: count}
+  const projCodes = Object.keys(projects).sort();
+  // Client-side project filter over the cached payload. A card matches when
+  // its extra.project equals the selected code; cluster cards (lanes) keep
+  // only their members that match, and the skills lane (cross-project, no
+  // project) is hidden while a filter is active. '' (All) is a pass-through.
+  const cardMatches = (c) => !proj || (c && c.project === proj);
+  const filterLane = (lane) => {
+    if (!proj) return lane;
+    if (lane.facet === 'How-to / Skills') return null;   // skills are cross-project
+    const clusters = (lane.clusters || [])
+      .map(cl => ({ ...cl, top: (cl.top || []).filter(cardMatches) }))
+      .filter(cl => cl.top.length > 0);
+    const count = clusters.reduce((n, cl) => n + cl.top.length, 0);
+    if (!count) return null;
+    return { ...lane, clusters, count };
+  };
+  const tom = ((view && view.top_of_mind) || []).filter(cardMatches);
+  const lanes = ((view && view.facets) || []).map(filterLane).filter(Boolean);
+  const archived = ((view && view.archived) || []).filter(cardMatches);
+  const timeline = (view && view.timeline) || [];
+  const totalAll = totals.all || 0;
+  // The fact count for the active project (from the always-complete census).
+  const projCount = proj ? (projects[proj] || 0) : 0;
+
+  const secTitle = {
+    fontFamily:LM.serif, fontSize:18, fontWeight:500, color:LM.ink,
+    margin:'22px 0 4px',
+  };
+  const secNote = { fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, margin:'0 0 12px' };
+
+  return (
+    <div data-testid="brain-browser" style={{
+      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderTop:`3px solid ${LM.accent}`, borderRadius:14,
+      padding:'18px 22px 22px', margin:'0 0 28px',
+    }}>
+      {/* Header + search */}
+      <div style={{ display:'flex', alignItems:'flex-end', gap:14, flexWrap:'wrap', marginBottom:6 }}>
+        <div style={{ flex:1, minWidth:220 }}>
+          <div style={{ fontFamily:LM.serif, fontSize:22, fontWeight:500, color:LM.ink }}>
+            Your brain, organized
+          </div>
+          <div style={{ fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, marginTop:2 }}>
+            {totalAll > 0
+              ? <>Everything it knows — sorted by what matters now. <span style={{color:LM.inkMuted}}>{totalAll} things in memory.</span></>
+              : 'Everything it knows — sorted by what matters now.'}
+          </div>
+        </div>
+        <div style={{ position:'relative', flex:'none' }}>
+          <input
+            data-testid="brain-search-input"
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') runSearch(); if (e.key === 'Escape') { setQ(''); setSearch(null); } }}
+            placeholder="Search your brain…"
+            style={{
+              width:230, padding:'8px 30px 8px 12px', borderRadius:8,
+              border:`1px solid ${LM.line}`, background:LM.bg, color:LM.ink,
+              fontFamily:LM.sans, fontSize:12.5, outline:'none',
+            }} />
+          {q && (
+            <button onClick={() => { setQ(''); setSearch(null); searchReq.current=null; setSearching(false); }}
+              title="Clear search" style={{
+                position:'absolute', right:6, top:'50%', transform:'translateY(-50%)',
+                border:0, background:'transparent', cursor:'pointer', color:LM.inkMuted,
+                fontFamily:LM.mono, fontSize:12,
+              }}>✕</button>
+          )}
+        </div>
+      </div>
+
+      {/* Honest degraded / loading states */}
+      {!pulled && !view && (
+        <div data-testid="brain-browser-loading" style={{
+          fontFamily:LM.mono, fontSize:11.5, color:LM.inkMuted, padding:'14px 2px' }}>
+          reading your brain…
+        </div>
+      )}
+      {degraded && (
+        <div data-testid="brain-browser-degraded" style={{
+          fontFamily:LM.mono, fontSize:11.5, color:LM.warn, padding:'12px 14px',
+          background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:8, marginTop:10,
+        }}>
+          The brain daemon is offline — start it to see your organized memory.
+          {view && view.degraded ? <span style={{ color:LM.inkMuted }}> ({view.degraded})</span> : null}
+        </div>
+      )}
+
+      {/* ── PROJECT FILTER chip-row — facts tagged to one project. 'All' is the
+            default; chips come straight from the browse payload's per-project
+            census. Filtering is client-side over the cached snapshot (default
+            view) + a scoped re-search (when a query is active) — no main-thread
+            work, reuses the same off-thread slots. ── */}
+      {!degraded && projCodes.length > 0 && (
+        <div data-testid="brain-project-filter" style={{
+          display:'flex', alignItems:'center', gap:7, flexWrap:'wrap',
+          margin:'12px 0 2px',
+        }}>
+          <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted, marginRight:2 }}>
+            Project:
+          </span>
+          {(() => {
+            const chip = (active) => ({
+              fontFamily:LM.mono, fontSize:10.5, fontWeight:600,
+              padding:'3px 10px', borderRadius:20, cursor:'pointer',
+              border:`1px solid ${active ? LM.accent : LM.line}`,
+              background: active ? LM.accent : LM.bg,
+              color: active ? '#fff' : LM.inkSoft,
+              transition:`all ${LM.motion.base}`,
+            });
+            return (
+              <>
+                <button data-testid="brain-project-chip-all"
+                  onClick={() => { setProj(''); if (q.trim()) runSearch(q, ''); }}
+                  style={chip(!proj)}>All</button>
+                {projCodes.map(code => (
+                  <button key={code} data-testid="brain-project-chip"
+                    data-project={code} title={`${projects[code]} fact${projects[code]===1?'':'s'} tagged ${code}`}
+                    onClick={() => toggleProject(code)} style={chip(proj === code)}>
+                    {code} <span style={{ opacity:0.7 }}>{projects[code]}</span>
+                  </button>
+                ))}
+              </>
+            );
+          })()}
+          {proj && (
+            <span style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkMuted }}>
+              showing {projCount} fact{projCount===1?'':'s'} about {proj}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── SEARCH RESULTS (replace the default views while a query is active) ── */}
+      {(searching || search) && (
+        <div data-testid="brain-search-results" style={{ marginTop:14 }}>
+          <div style={secTitle}>
+            Search results {search && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>· {(search.cards||[]).length} found</span>}
+          </div>
+          {searching && (
+            <div style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.inkMuted, padding:'8px 2px' }}>searching…</div>
+          )}
+          {search && (search.cards || []).length === 0 && !searching && (
+            <div style={{ fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, padding:'6px 2px' }}>
+              {search.error ? <span style={{color:LM.warn}}>search unavailable — {search.error}</span> : 'No matches. Try simpler words.'}
+            </div>
+          )}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:10, marginTop:6 }}>
+            {search && (search.cards || []).map(c => <BrainCard key={c.id} card={c} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── DEFAULT VIEWS (hidden while searching) ── */}
+      {!searching && !search && view && !degraded && (
+        <>
+          {/* 1 — TOP OF MIND */}
+          <div style={secTitle} data-testid="brain-top-of-mind">Top of mind</div>
+          <div style={secNote}>The notes &amp; decisions the brain is leaning on right now — brighter means more active.</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:10 }}>
+            {tom.length === 0 && (
+              <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>nothing surfaced yet</div>
+            )}
+            {tom.map(c => <BrainCard key={c.id} card={c} />)}
+          </div>
+
+          {/* 2 — FACET LANES */}
+          <div style={secTitle} data-testid="brain-facet-lanes">Grouped by kind</div>
+          <div style={secNote}>Decisions you locked in, memory it keeps, and the machine tool catalog (tucked away).</div>
+          {lanes.map(l => <BrainFacetLane key={l.facet} lane={l} />)}
+
+          {/* 4 — TIMELINE RIBBON (hidden under a project filter — the day
+                ribbon is a global learning view, not per-project) */}
+          {!proj && timeline.length > 0 && (
+            <>
+              <div style={secTitle} data-testid="brain-timeline">What it learned, by day</div>
+              <div style={secNote}>Recent days the brain picked something up.</div>
+              <div className="ah-scroll" style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:6 }}>
+                {timeline.map(t => (
+                  <div key={t.date} data-testid="brain-timeline-day" title={(t.items||[]).map(i=>i.headline).join('\n')}
+                    style={{
+                      flex:'none', minWidth:120, maxWidth:150, border:`1px solid ${LM.line}`,
+                      borderRadius:9, padding:'9px 11px', background:LM.bgSoft,
+                    }}>
+                    <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>{t.date}</div>
+                    <div style={{ fontFamily:LM.serif, fontSize:20, color:LM.accent, lineHeight:1.1, margin:'2px 0 4px' }}>{t.count}</div>
+                    <div style={{ fontFamily:LM.sans, fontSize:10, color:LM.inkSoft, overflow:'hidden',
+                      textOverflow:'ellipsis', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
+                      {(t.items && t.items[0]) ? t.items[0].headline : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* 3 — FADED / ARCHIVED TRAY (collapsed) — Restore makes NEVER-TRIM visible */}
+          <div style={{ marginTop:20, borderTop:`1px dashed ${LM.line}`, paddingTop:14 }}>
+            <button onClick={() => setShowArchived(v => !v)} data-testid="brain-archived-toggle"
+              style={{
+                display:'flex', alignItems:'center', gap:8, border:0, background:'transparent',
+                cursor:'pointer', fontFamily:LM.sans, fontSize:12.5, fontWeight:600, color:LM.inkSoft, padding:0,
+              }}>
+              <span style={{ color:LM.inkMuted }}>{showArchived ? '▾' : '▸'}</span>
+              Faded / archived
+              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+                background:LM.bgSoft, borderRadius:20, padding:'1px 8px' }}>{archived.length}</span>
+              <span style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkMuted, fontWeight:400 }}>
+                nothing is ever deleted — restore any time
+              </span>
+            </button>
+            {showArchived && (
+              <div style={{ marginTop:10 }}>
+                {archived.length === 0 ? (
+                  <div data-testid="brain-archived-empty" style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>
+                    Nothing has faded yet. When old, unused notes age out they land here — never deleted, always one click to bring back.
+                  </div>
+                ) : (
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:10 }}>
+                    {archived.map(c => (
+                      <div key={c.id} data-testid="brain-archived-card" style={{ position:'relative' }}>
+                        <BrainCard card={c} dim />
+                        <button data-testid="brain-restore-btn"
+                          onClick={() => {
+                            // Real mutation: clear valid_until via the daemon
+                            // (brain_restore → brain.restore). The slot emits
+                            // brain_browse_changed, so the view re-pulls and
+                            // this card leaves the tray — not a toast-only fake.
+                            bridgeAsync('brain_restore', c.id).then(r => {
+                              if (r && (r.async || r.ok)) {
+                                _lmToast('Restored — back in active memory.', 'info');
+                              } else {
+                                _lmToast('Restore needs the brain daemon running.', 'err');
+                              }
+                            }).catch(() => _lmToast('Restore needs the brain daemon running.', 'err'));
+                          }}
+                          title="Bring this note back to active memory"
+                          style={{
+                            position:'absolute', top:8, right:8, border:`1px solid ${LM.ok}66`,
+                            background:LM.bg, color:LM.ok, borderRadius:6, cursor:'pointer',
+                            fontFamily:LM.mono, fontSize:9.5, fontWeight:600, padding:'2px 8px',
+                          }}>↺ restore</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ─── COMMUNITIES — multi-device community panel (lives inside the Brain
+// view, directly under the organized browser). The community MECHANISM
+// (brain.community_* — 8 daemon tools) was wired-not-shipped: this is its
+// GUI so the founder can actually create / join / share a community and
+// pick how its devices converge.
+//
+// Reads are off the Qt main thread via _cached_async slots (community_groups
+// / community_members / community_owned_server): the first bridgeAsync call
+// returns a cached/pending snapshot, then `community_changed` fires when the
+// real data lands → re-pull. Writes (create / join / set_transport /
+// join_code / leave) run on the Python _bg_pool and deliver a definitive,
+// request_id-correlated answer over `community_op_done` — driven here by the
+// existing `bridgeAsyncSignal` helper (NEVER blocks the UI thread). A
+// successful write also emits `community_changed`, so the panel re-pulls
+// without extra wiring.
+//
+// TRANSPORT is the founder's fork, exposed as an explicit CHOICE (default
+// NOTHING selected — he picks): Cloud relay (works anywhere) · Shared folder
+// (Dropbox/OneDrive path) · LAN/Tailscale (owned Speckle server). Each radio
+// carries its privacy/availability one-liner.
+const CommunitiesPanel = ({ open }) => {
+  const [groups, setGroups] = React.useState(null);   // community_groups payload
+  const [members, setMembers] = React.useState(null); // community_members payload
+  const [owned, setOwned] = React.useState(null);     // community_owned_server payload
+  const [pulled, setPulled] = React.useState(false);
+
+  // CREATE
+  const [newName, setNewName] = React.useState('');
+  const [creating, setCreating] = React.useState(false);
+  // JOIN (second device)
+  const [joinCode, setJoinCode] = React.useState('');
+  const [joining, setJoining] = React.useState(false);
+  // JOIN CODE (owner-only invite)
+  const [invite, setInvite] = React.useState(null);    // {url, ttl_hours} | {error}
+  const [genBusy, setGenBusy] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  // TRANSPORT — default NOTHING selected (founder picks).
+  const [transportSel, setTransportSel] = React.useState(null);  // 'cloud_relay'|'disk'|'speckle'|null
+  const [transportPath, setTransportPath] = React.useState('');  // folder/server url for disk/speckle
+  const [transportBusy, setTransportBusy] = React.useState(false);
+  const [leaving, setLeaving] = React.useState(false);
+
+  // Off-thread reads. Pull on open; re-pull on community_changed (the signal
+  // every successful write fires). Each read returns a cached/pending snapshot
+  // instantly; ignore the cold-cache `pending` placeholder (the signal lands
+  // the real data).
+  React.useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const pull = () => {
+      bridgeAsync('community_groups').then(r => {
+        if (!alive || !r) return;
+        setPulled(true);
+        if (!r.pending) setGroups(r);
+      }).catch(() => { if (alive) setPulled(true); });
+      bridgeAsync('community_members').then(r => {
+        if (!alive || !r || r.pending) return;
+        setMembers(r);
+      }).catch(() => {});
+      bridgeAsync('community_owned_server').then(r => {
+        if (!alive || !r || r.pending) return;
+        setOwned(r);
+      }).catch(() => {});
+    };
+    pull();
+    const b = window.archhub;
+    let onChanged = null;
+    if (b && b.community_changed && b.community_changed.connect) {
+      onChanged = () => pull();
+      try { b.community_changed.connect(onChanged); } catch (e) {}
+    }
+    return () => {
+      alive = false;
+      if (onChanged && b && b.community_changed && b.community_changed.disconnect) {
+        try { b.community_changed.disconnect(onChanged); } catch (e) {}
+      }
+    };
+  }, [open]);
+
+  // Current community (the one this device is on). null ⇒ empty state.
+  const comms = (groups && Array.isArray(groups.communities)) ? groups.communities : [];
+  const curId = groups && groups.current_community_id;
+  const current = comms.find(c => c.community_id === curId) || (comms.length ? comms[0] : null);
+  const isOwner = current && current.role === 'owner';
+  const memberList = (members && Array.isArray(members.members)) ? members.members : [];
+  const daemonDown = groups && (groups.degraded || (groups.ok === false && !groups.pending));
+
+  // ── WRITE driver — request_id-correlated answer over community_op_done.
+  // bridgeAsyncSignal fires the slot with a generated request_id + listens on
+  // the signal, resolving with the matching payload. Off-thread end to end.
+  const runWrite = async (slot, ...args) => {
+    return await bridgeAsyncSignal(slot, 'community_op_done', ...args);
+  };
+
+  const doCreate = async () => {
+    const nm = newName.trim();
+    if (!nm || creating) return;
+    setCreating(true);
+    try {
+      const r = await runWrite('community_create', nm);
+      if (r && r.ok) {
+        _lmToast('Community created — you are the owner.', 'info');
+        setNewName('');
+        // community_changed already re-pulled groups; nothing else to do.
+      } else {
+        _lmToast((r && r.error) ? ('Create failed: ' + r.error)
+                                : 'Create needs the brain daemon running.', 'err');
+      }
+    } catch (e) { _lmToast('Create failed: ' + String(e), 'err'); }
+    finally { setCreating(false); }
+  };
+
+  const doJoin = async () => {
+    const c = joinCode.trim();
+    if (!c || joining) return;
+    setJoining(true);
+    try {
+      const r = await runWrite('community_join', c);
+      if (r && r.ok) {
+        _lmToast('Joined the community on this device.', 'info');
+        setJoinCode('');
+      } else {
+        _lmToast((r && r.error) ? ('Join failed: ' + r.error)
+                                : 'Join needs the brain daemon running.', 'err');
+      }
+    } catch (e) { _lmToast('Join failed: ' + String(e), 'err'); }
+    finally { setJoining(false); }
+  };
+
+  const genInvite = async () => {
+    if (genBusy || !isOwner) return;
+    setGenBusy(true);
+    setInvite(null);
+    setCopied(false);
+    try {
+      // role=member, ttl=168h (7 days — the daemon default).
+      const r = await runWrite('community_join_code', 'member', 168);
+      if (r && r.ok && r.url) {
+        setInvite({ url: r.url, ttl_hours: r.ttl_hours || 168 });
+      } else {
+        setInvite({ error: (r && r.error) ? r.error
+                          : 'Could not generate an invite (brain daemon?).' });
+      }
+    } catch (e) { setInvite({ error: String(e) }); }
+    finally { setGenBusy(false); }
+  };
+
+  const copyInvite = async () => {
+    if (!invite || !invite.url) return;
+    try {
+      await navigator.clipboard.writeText(invite.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (e) {
+      _lmToast('Copy failed — select the URL and copy manually.', 'err');
+    }
+  };
+
+  const applyTransport = async () => {
+    if (!transportSel || transportBusy || !current) return;
+    // disk + speckle want a path/url; cloud_relay does not.
+    const needsPath = (transportSel === 'disk' || transportSel === 'speckle');
+    const path = transportPath.trim();
+    if (needsPath && !path) {
+      _lmToast(transportSel === 'disk'
+        ? 'Enter the shared-folder path (Dropbox/OneDrive).'
+        : 'Enter the LAN/Tailscale server URL (e.g. http://localhost:3000).', 'err');
+      return;
+    }
+    setTransportBusy(true);
+    try {
+      const r = await runWrite('community_set_transport', transportSel, needsPath ? path : '');
+      if (r && r.ok) {
+        _lmToast('Transport set — re-share your invite so devices pick it up.', 'info');
+      } else {
+        _lmToast((r && r.error) ? ('Transport failed: ' + r.error)
+                                : 'Transport needs the brain daemon running.', 'err');
+      }
+    } catch (e) { _lmToast('Transport failed: ' + String(e), 'err'); }
+    finally { setTransportBusy(false); }
+  };
+
+  const doLeave = async () => {
+    if (leaving || !current) return;
+    setLeaving(true);
+    try {
+      const r = await runWrite('community_leave');
+      if (r && r.ok) {
+        _lmToast('Left the community on this device.', 'info');
+        setInvite(null);
+        setTransportSel(null);
+        setTransportPath('');
+      } else {
+        _lmToast('Leave needs the brain daemon running.', 'err');
+      }
+    } catch (e) { _lmToast('Leave failed: ' + String(e), 'err'); }
+    finally { setLeaving(false); }
+  };
+
+  // ── Shared sub-styles in the app's dark idiom (mirror BrainBrowser /
+  // BrainViewModal cards + chips). ──
+  const card = {
+    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:12,
+    padding:16, boxShadow:'0 1px 3px rgba(0,0,0,.25)',
+  };
+  const lbl = {
+    fontFamily:LM.mono, fontSize:10, fontWeight:600, letterSpacing:'0.14em',
+    textTransform:'uppercase', color:LM.inkMuted, marginBottom:8,
+  };
+  const inputS = {
+    flex:1, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7,
+    padding:'8px 11px', color:LM.ink, fontFamily:LM.sans, fontSize:13, outline:'none',
+  };
+  const btnPrimary = (busy) => ({
+    border:0, background: busy ? LM.accentDim : LM.accent, color:'#fff',
+    borderRadius:7, padding:'8px 14px', cursor: busy ? 'default' : 'pointer',
+    fontFamily:LM.sans, fontSize:12.5, fontWeight:600, flex:'none', opacity: busy ? .7 : 1,
+  });
+  const btnGhost = (busy) => ({
+    border:`1px solid ${LM.line}`, background:LM.bg, color:LM.inkSoft,
+    borderRadius:7, padding:'8px 14px', cursor: busy ? 'default' : 'pointer',
+    fontFamily:LM.sans, fontSize:12.5, fontWeight:600, flex:'none', opacity: busy ? .7 : 1,
+  });
+  const roleChip = (role) => (
+    <span style={{
+      fontFamily:LM.mono, fontSize:9, fontWeight:600, padding:'2px 8px', borderRadius:20,
+      background: role === 'owner' ? LM.accentDim : 'rgba(126,193,142,.15)',
+      color: role === 'owner' ? LM.accent : LM.ok, marginLeft:8,
+      letterSpacing:'0.08em', textTransform:'uppercase', verticalAlign:'middle',
+    }}>{role || 'member'}</span>
+  );
+
+  // TRANSPORT options — the founder's fork as a CHOICE (default-none). Each
+  // carries a privacy/availability one-liner.
+  const transports = [
+    { k:'cloud_relay', nm:'Cloud relay', tag:'works anywhere',
+      ds:'Devices sync through ArchHub Cloud over the internet. Easiest — no setup. Your data leaves your machines (encrypted in transit) and rests on the relay.',
+      ph:null },
+    { k:'disk', nm:'Shared folder', tag:'Dropbox / OneDrive',
+      ds:'Devices converge through a folder you already sync (Dropbox/OneDrive). Private to that folder, works offline-ish, no server. Needs the same path mounted on each device.',
+      ph:'C:\\Users\\you\\Dropbox\\archhub-fleet' },
+    { k:'speckle', nm:'LAN / Tailscale', tag:'peer-to-peer',
+      ds:'Devices converge through your OWN local Speckle server (no third party). Most private — data never leaves your network. Needs the server running (see below).',
+      ph:'http://localhost:3000' },
+  ];
+
+  const secH = { fontFamily:LM.serif, fontSize:21, fontWeight:500, margin:'34px 0 4px', color:LM.ink };
+  const secSub = { color:LM.inkSoft, fontSize:13.5, margin:'0 0 14px', lineHeight:1.5 };
+
+  return (
+    <div data-testid="communities-panel" style={{ margin:'10px 0 6px' }}>
+      <h2 style={secH}>
+        Communities
+        <span style={{
+          fontFamily:LM.mono, fontSize:9, fontWeight:600, padding:'3px 9px', borderRadius:20,
+          background:LM.accentDim, color:LM.accent, verticalAlign:'middle', marginLeft:10,
+          letterSpacing:'0.08em', textTransform:'uppercase',
+        }}>multi-device</span>
+      </h2>
+      <p style={secSub}>
+        Share one brain across your devices — or with teammates. Create a
+        community, send an invite, and pick how the devices stay in sync.
+      </p>
+
+      {daemonDown && (
+        <div data-testid="communities-daemon-down" style={{
+          ...card, borderLeft:`3px solid ${LM.warn}`, marginBottom:14,
+          fontSize:13, color:LM.inkSoft, lineHeight:1.5,
+        }}>
+          The brain daemon isn’t reachable right now, so community state can’t
+          load. Start it and this fills in automatically.
+        </div>
+      )}
+
+      {/* ── CURRENT COMMUNITY · or empty state ── */}
+      {current ? (
+        <div data-testid="community-current" style={{ ...card, marginBottom:14 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:6 }}>
+            <span style={{ fontFamily:LM.serif, fontSize:18, color:LM.ink }}>
+              {current.name || 'Community'}
+            </span>
+            {roleChip(current.role)}
+            <span style={S_FLEX1} />
+            <button data-testid="community-leave" onClick={doLeave} style={btnGhost(leaving)}
+              title="Leave this community on this device (reversible)">
+              {leaving ? 'Leaving…' : 'Leave'}
+            </button>
+          </div>
+          <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted }}>
+            {current.community_id}
+          </div>
+          {current.transport && (
+            <div style={{ marginTop:8, fontSize:12, color:LM.inkSoft }}>
+              Current transport:{' '}
+              <b style={{ color:LM.ink }}>
+                {current.transport.kind === 'cloud_relay' ? 'Cloud relay'
+                  : current.transport.kind === 'disk' ? 'Shared folder'
+                  : current.transport.kind === 'speckle' ? 'LAN / Tailscale'
+                  : (current.transport.kind || 'disk')}
+              </b>
+              {current.transport.base_url ? (
+                <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+                  {' · '}{current.transport.base_url}
+                </span>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div data-testid="community-empty" style={{
+          ...card, marginBottom:14, borderStyle:'dashed', textAlign:'center',
+        }}>
+          <div style={{ fontSize:14, color:LM.ink, marginBottom:4 }}>
+            No community yet
+          </div>
+          <div style={{ fontSize:12.5, color:LM.inkSoft }}>
+            Create one below to start sharing your brain across devices — or
+            paste an invite code to join one.
+          </div>
+        </div>
+      )}
+
+      {/* ── CREATE ── */}
+      {!current && (
+        <div data-testid="community-create-card" style={{ ...card, marginBottom:14 }}>
+          <div style={lbl}>Create a community</div>
+          <div style={{ display:'flex', gap:8 }}>
+            <input data-testid="community-create-input" style={inputS}
+              placeholder="e.g. ArchHub Studio Fleet" value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') doCreate(); }} />
+            <button data-testid="community-create-btn" style={btnPrimary(creating)}
+              onClick={doCreate} disabled={creating}>
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+          <div style={{ fontSize:11.5, color:LM.inkMuted, marginTop:8, lineHeight:1.5 }}>
+            You become the owner (the signing key stays on this device). Pick a
+            transport afterward — it starts offline until you do.
+          </div>
+        </div>
+      )}
+
+      {/* The owner/member tools below only make sense once you're in a community. */}
+      {current && (
+        <>
+          {/* ── JOIN CODE (owner-only invite) ── */}
+          <div data-testid="community-invite-card" style={{ ...card, marginBottom:14 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+              <span style={lbl}>Invite a device</span>
+              <span style={S_FLEX1} />
+              <button data-testid="community-invite-gen"
+                onClick={genInvite} disabled={!isOwner || genBusy}
+                style={{ ...btnPrimary(genBusy), opacity: (!isOwner ? .5 : (genBusy ? .7 : 1)),
+                         cursor: (!isOwner || genBusy) ? 'default' : 'pointer' }}
+                title={isOwner ? 'Generate a 7-day invite link'
+                               : 'Only the owner can generate invites'}>
+                {genBusy ? 'Generating…' : 'Generate invite'}
+              </button>
+            </div>
+            {!isOwner && (
+              <div style={{ fontSize:11.5, color:LM.inkMuted, lineHeight:1.5 }}>
+                Owner-only — this device is a member, so it can’t mint invites.
+              </div>
+            )}
+            {isOwner && !invite && (
+              <div style={{ fontSize:11.5, color:LM.inkMuted, lineHeight:1.5 }}>
+                Owner-only · the link works for 7 days. Send it to your other
+                device and paste it there under “Join”.
+              </div>
+            )}
+            {invite && invite.url && (
+              <div data-testid="community-invite-result">
+                <div style={{ display:'flex', gap:8, alignItems:'stretch' }}>
+                  <div style={{
+                    ...inputS, fontFamily:LM.mono, fontSize:11, color:LM.ink,
+                    overflow:'auto', whiteSpace:'nowrap', display:'flex', alignItems:'center',
+                    userSelect:'all',
+                  }} title={invite.url}>{invite.url}</div>
+                  <button data-testid="community-invite-copy" style={btnGhost(false)}
+                    onClick={copyInvite}>{copied ? 'Copied ✓' : 'Copy'}</button>
+                </div>
+                <div style={{ fontSize:11, color:LM.inkMuted, marginTop:7 }}>
+                  Owner-only · expires in {Math.round((invite.ttl_hours || 168) / 24)} days.
+                  Anyone with this link can join until it expires.
+                </div>
+              </div>
+            )}
+            {invite && invite.error && (
+              <div style={{ fontSize:12, color:LM.err, marginTop:4 }}>{invite.error}</div>
+            )}
+          </div>
+
+          {/* ── MEMBERS ── */}
+          <div data-testid="community-members-card" style={{ ...card, marginBottom:14 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+              <span style={lbl}>Members</span>
+              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+                background:LM.bgSoft, borderRadius:20, padding:'1px 8px' }}>
+                {memberList.length}
+              </span>
+            </div>
+            {memberList.length === 0 ? (
+              <div style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5 }}>
+                Just this device so far. When another device joins with your
+                invite, it shows up here after the next sync.
+              </div>
+            ) : (
+              <div style={{ display:'grid', gap:8 }}>
+                {memberList.map((m, i) => (
+                  <div key={m.member_id || i} data-testid="community-member-row" style={{
+                    display:'flex', alignItems:'center', gap:8,
+                    background:LM.bg, border:`1px solid ${LM.lineSoft}`,
+                    borderRadius:8, padding:'8px 11px',
+                  }}>
+                    <span style={{
+                      width:24, height:24, borderRadius:'50%', flex:'none',
+                      background:LM.bgSoft, display:'grid', placeItems:'center',
+                      fontFamily:LM.mono, fontSize:11, color:LM.inkSoft,
+                    }}>{(m.member_id || '?').slice(0, 1).toUpperCase()}</span>
+                    <span style={{ fontFamily:LM.sans, fontSize:13, color:LM.ink,
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {m.member_id || 'unknown device'}
+                    </span>
+                    {roleChip(m.role)}
+                    <span style={S_FLEX1} />
+                    {m.joined_at ? (
+                      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>
+                        {String(m.joined_at).slice(0, 10)}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── TRANSPORT SELECTOR — the founder's fork as a CHOICE (default
+              NOTHING selected). 3 segmented radios + per-choice one-liner. ── */}
+          <div data-testid="community-transport-card" style={{ ...card, marginBottom:14 }}>
+            <div style={lbl}>How devices stay in sync</div>
+            <div style={{ fontSize:11.5, color:LM.inkMuted, marginBottom:12, lineHeight:1.5 }}>
+              Pick one — this is your call. Each trades privacy against how easy
+              it is to reach from anywhere.
+            </div>
+            <div style={{ display:'grid', gap:10 }}>
+              {transports.map(t => {
+                const sel = transportSel === t.k;
+                return (
+                  <label key={t.k} data-testid={'community-transport-' + t.k} style={{
+                    display:'block', cursor:'pointer',
+                    background: sel ? LM.accentDim : LM.bg,
+                    border:`1px solid ${sel ? LM.accent : LM.line}`,
+                    borderRadius:9, padding:'11px 13px', transition:LM.motion.fast,
+                  }} onClick={() => { setTransportSel(t.k); }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+                      <span style={{
+                        width:15, height:15, borderRadius:'50%', flex:'none',
+                        border:`2px solid ${sel ? LM.accent : LM.inkMuted}`,
+                        display:'grid', placeItems:'center',
+                      }}>
+                        {sel ? <span style={{ width:7, height:7, borderRadius:'50%',
+                          background:LM.accent }} /> : null}
+                      </span>
+                      <span style={{ fontFamily:LM.sans, fontSize:13.5, fontWeight:600, color:LM.ink }}>
+                        {t.nm}
+                      </span>
+                      <span style={{
+                        fontFamily:LM.mono, fontSize:9, fontWeight:600, padding:'2px 7px',
+                        borderRadius:20, background:LM.bgSoft, color:LM.inkSoft,
+                        letterSpacing:'0.06em', textTransform:'uppercase',
+                      }}>{t.tag}</span>
+                    </div>
+                    <div style={{ fontSize:12, color:LM.inkSoft, marginTop:6, marginLeft:24, lineHeight:1.5 }}>
+                      {t.ds}
+                    </div>
+                    {sel && t.ph && (
+                      <input data-testid={'community-transport-path-' + t.k} style={{
+                        ...inputS, marginTop:9, marginLeft:24, width:'calc(100% - 24px)',
+                        fontFamily:LM.mono, fontSize:11.5,
+                      }} placeholder={t.ph} value={transportPath}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => setTransportPath(e.target.value)} />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:13 }}>
+              <button data-testid="community-transport-apply"
+                onClick={applyTransport} disabled={!transportSel || transportBusy}
+                style={{ ...btnPrimary(transportBusy),
+                         opacity: (!transportSel ? .5 : (transportBusy ? .7 : 1)),
+                         cursor: (!transportSel || transportBusy) ? 'default' : 'pointer' }}>
+                {transportBusy ? 'Applying…' : 'Apply transport'}
+              </button>
+              <span style={{ fontSize:11, color:LM.inkMuted }}>
+                {transportSel ? 'Re-share your invite after applying so devices pick up the change.'
+                              : 'Nothing selected — pick a transport above.'}
+              </span>
+            </div>
+          </div>
+
+          {/* ── OWNED SERVER status (for the LAN/Tailscale choice) ── */}
+          <div data-testid="community-owned-server" style={{ ...card, marginBottom:6 }}>
+            <div style={lbl}>Self-hosted server (for LAN / Tailscale)</div>
+            {!owned ? (
+              <div style={{ fontSize:12.5, color:LM.inkSoft }}>Checking…</div>
+            ) : (
+              <div>
+                <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+                  <span style={{
+                    width:9, height:9, borderRadius:'50%', flex:'none',
+                    background: owned.reachable ? LM.ok
+                              : owned.docker_available ? LM.warn : LM.err,
+                  }} />
+                  <span style={{ fontFamily:LM.sans, fontSize:13, color:LM.ink, fontWeight:600 }}>
+                    {owned.reachable ? 'Server running'
+                      : owned.docker_available ? 'Ready to start'
+                      : 'Docker not found'}
+                  </span>
+                  <span style={{
+                    fontFamily:LM.mono, fontSize:9, fontWeight:600, padding:'2px 7px',
+                    borderRadius:20, letterSpacing:'0.06em', textTransform:'uppercase',
+                    background: owned.docker_available ? 'rgba(126,193,142,.15)' : LM.accentDim,
+                    color: owned.docker_available ? LM.ok : LM.accent,
+                  }}>
+                    docker {owned.docker_available ? 'available' : 'missing'}
+                  </span>
+                </div>
+                <div style={{ fontSize:12, color:LM.inkSoft, marginTop:7, lineHeight:1.5 }}>
+                  {owned.message
+                    || (owned.docker_available
+                        ? 'Docker is up — start the server from the desktop, then point this community at it above.'
+                        : 'Install Docker Desktop to self-host the sync server, then come back here.')}
+                </div>
+                {!owned.docker_available && (
+                  <a data-testid="community-docker-link"
+                    href="https://www.docker.com/products/docker-desktop/"
+                    target="_blank" rel="noreferrer" style={{
+                      display:'inline-block', marginTop:9, fontFamily:LM.sans, fontSize:12,
+                      fontWeight:600, color:LM.accent, textDecoration:'none',
+                    }}>Install Docker Desktop →</a>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── JOIN (second device) — always available so a device can join an
+          existing community even before it has one of its own. ── */}
+      <div data-testid="community-join-card" style={{
+        ...card, marginTop:14,
+        borderTop: current ? `1px solid ${LM.line}` : `1px solid ${LM.line}`,
+      }}>
+        <div style={lbl}>Join from an invite</div>
+        <div style={{ display:'flex', gap:8 }}>
+          <input data-testid="community-join-input" style={{ ...inputS, fontFamily:LM.mono, fontSize:11.5 }}
+            placeholder="Paste an invite code or archhub://community/join?code=… URL"
+            value={joinCode} onChange={e => setJoinCode(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') doJoin(); }} />
+          <button data-testid="community-join-btn" style={btnPrimary(joining)}
+            onClick={doJoin} disabled={joining}>
+            {joining ? 'Joining…' : 'Join'}
+          </button>
+        </div>
+        <div style={{ fontSize:11.5, color:LM.inkMuted, marginTop:8, lineHeight:1.5 }}>
+          Paste the link the owner sent you. It’s verified on this device — no
+          round-trip needed. This is how your second device joins.
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Brain · the intelligence-layer map ────────────────────────────
+// Builds docs/prototypes/brain-the-intelligence-layer-2026-05-28.html
+// INTO the app as a reachable surface (PROTOTYPE-IS-CONTRACT). Full
+// screen overlay, opened by the Home BrainChip click → dispatches
+// `lm-brain-view-open`. NOT the Settings → Brain tab (AgDR-0045/0046);
+// this is the separate founder-facing "what the brain holds" map.
+//
+// LIVE data: reuses the BrainChip data path (window.archhub.get_brain_stats)
+// for real Skills + Memory-fact counts, and bridgeAsync('memory_stats')
+// for the richer memory-graph node total. Layers without a count slot
+// (Workflows / Mandates / Setups / Rules) render honest-static — the
+// layer + its description, no fabricated number (ANTI-LIE).
+//
+// The 4-scope privacy ladder mirrors the prototype rings. The real
+// Scope enum is USER/PROJECT/FIRM/COMMUNITY/GLOBAL; the founder-facing
+// "Collective" folds COMMUNITY+GLOBAL — labelled You/Project/Firm/
+// Collective per the signed prototype copy.
+//
+// "Back up my brain": there is NO client-facing push slot in bridge.py
+// (cloud_sync.push is an internal off-thread effect of delete_skill, not
+// a JS-callable @pyqtSlot). Per the build order, the button is rendered
+// DISABLED-with-reason ("sign in to enable") rather than a dead/lying
+// click — the live server (commit 0dce168, /v1/brain/sync) gets its UI
+// home here, honestly waiting on the sign-in/push slot.
+const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [open, setOpen] = React.useState(false);
+  const [stats, setStats] = React.useState(null);   // get_brain_stats
+  const [mem, setMem] = React.useState(null);        // memory_stats
+  // Brain #32 — "Generate training dataset" state. dsScope = which privacy
+  // scope to export (default USER, the user's own data — safe). dsBusy gates
+  // the button while a worker runs. dsResult holds the manifest (or error)
+  // the brain_dataset_done signal delivers back.
+  const [dsScope, setDsScope] = React.useState('user');
+  const [dsBusy, setDsBusy] = React.useState(false);
+  const [dsResult, setDsResult] = React.useState(null);
+  const dsReqRef = React.useRef(null);   // request_id of the in-flight export
+  React.useEffect(() => {
+    const onOpen = () => {
+      setOpen(true);
+      // LIVE skills + facts via the SAME slot BrainChip polls. The slot
+      // returns a string envelope; re-parse it ourselves (matches
+      // BrainChip — the brain pkg import can exceed bridgeAsync's ceiling).
+      try {
+        const b = window.archhub;
+        if (b && typeof b.get_brain_stats === 'function') {
+          const done = (raw) => {
+            let parsed = raw;
+            if (typeof raw === 'string') { try { parsed = JSON.parse(raw); } catch (e) { parsed = null; } }
+            if (parsed && typeof parsed === 'object') setStats(parsed);
+          };
+          const x = b.get_brain_stats(done);
+          if (x && typeof x.then === 'function') x.then(done);
+        }
+      } catch (e) {}
+      pullMem();
+    };
+    // Richer memory-graph totals (node/edge count) — same call the
+    // MemoryExplorer uses. memory_stats is off-thread (AgDR-0036): ignore
+    // the cold-cache 'pending' placeholder; the real snapshot lands via
+    // memory_changed → lm-memory-changed, which re-pulls here.
+    const pullMem = () => {
+      bridgeAsync('memory_stats').then(r => {
+        if (r && r.status === 'ok' && r.source && r.source !== 'pending') setMem(r);
+      }).catch(() => {});
+    };
+    window.addEventListener('lm-brain-view-open', onOpen);
+    window.addEventListener('lm-memory-changed', pullMem);
+    return () => {
+      window.removeEventListener('lm-brain-view-open', onOpen);
+      window.removeEventListener('lm-memory-changed', pullMem);
+    };
+  }, []);
+  // Esc closes.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+  // Brain #32 — listen for the dataset-export result. brain_export_dataset is
+  // threaded server-side (a large brain must not freeze the Qt main thread,
+  // nor trip bridgeAsync's 1.5s sync ceiling); it emits brain_dataset_done(
+  // result_json) when the worker finishes. Match on request_id so a stale
+  // result from a prior click never overwrites the current one.
+  React.useEffect(() => {
+    const b = window.archhub;
+    if (!b || !b.brain_dataset_done || typeof b.brain_dataset_done.connect !== 'function') return;
+    const onDone = (resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      if (!res || (dsReqRef.current && res.request_id !== dsReqRef.current)) return;
+      dsReqRef.current = null;
+      setDsBusy(false);
+      setDsResult(res);
+    };
+    try { b.brain_dataset_done.connect(onDone); } catch (e) {}
+    return () => { try { b.brain_dataset_done.disconnect(onDone); } catch (e) {} };
+  }, []);
+  if (!open) return null;
+  const close = () => setOpen(false);
+
+  // Brain #32 — fire the export. Returns instantly with {request_id}; the
+  // brain_dataset_done signal (above) lands the manifest. Honest about the
+  // daemon being down (bridgeAsync resolves null / the slot returns ok:false).
+  const runDatasetExport = async () => {
+    if (dsBusy) return;
+    setDsResult(null);
+    setDsBusy(true);
+    try {
+      const r = await bridgeAsync('brain_export_dataset', dsScope, 'my-brain');
+      if (r && r.request_id && r.async) {
+        dsReqRef.current = r.request_id;   // wait for the signal
+      } else {
+        // Slot never started (bridge missing / pool refused) — fail honestly.
+        dsReqRef.current = null;
+        setDsBusy(false);
+        setDsResult(r && r.error ? r : { ok:false, error:'export did not start (brain bridge unavailable)' });
+      }
+    } catch (e) {
+      dsReqRef.current = null;
+      setDsBusy(false);
+      setDsResult({ ok:false, error:String(e) });
+    }
+  };
+
+  // ── LIVE-derived layer values ──
+  // Two real sources, both already wired in bridge.py:
+  //   • get_brain_stats → last pre_prompt hit {skills_n, facts_n, ...}.
+  //     Populated only AFTER the first Composer turn (empty {} before).
+  //   • memory_stats   → memory-graph totals {total_nodes, by_kind:{skill}}.
+  //     Available immediately, independent of a turn.
+  // Prefer memory_stats (live on open); fall back to the turn-gated stats.
+  // null ⇒ no badge (honest — never a fabricated number; ANTI-LIE).
+  const memOk = mem && mem.status === 'ok';
+  const available = (memOk) || (stats && stats.available !== false && !(stats.error) && stats.ts);
+  const skillsN = (memOk && mem.by_kind && typeof mem.by_kind.skill === 'number') ? mem.by_kind.skill
+                : (stats && typeof stats.skills_n === 'number') ? stats.skills_n
+                : null;
+  const factsN = (memOk && typeof mem.total_nodes === 'number') ? mem.total_nodes
+               : (stats && typeof stats.facts_n === 'number') ? stats.facts_n
+               : null;
+  const liveCount = (v) => (v === null || v === undefined)
+    ? null
+    : String(v);
+
+  // ── The 7 layers (prototype order + copy 1:1) ──
+  // `live` = real count string when a slot feeds it; else null (static).
+  const layers = [
+    { key:'intent', glyph:'◆', col:LM.accent, nm:'Intent',
+      ds:'turns your words into a goal + steps', live:null },
+    { key:'mem', glyph:'▤', col:LM.blue, nm:'Memory',
+      ds:'facts about you · projects · firm · past work',
+      live: liveCount(factsN), unit:'facts' },
+    { key:'skill', glyph:'✦', col:LM.ok, nm:'Skills',
+      ds:'proven recipes it can replay',
+      live: liveCount(skillsN), unit:'skills' },
+    { key:'flow', glyph:'⇄', col:LM.purple, nm:'Workflows',
+      ds:'multi-step graphs it can run', live:null },
+    { key:'mand', glyph:'§', col:LM.ink, nm:'Mandates',
+      ds:'your non-negotiable rules (this file)', live:null },
+    { key:'setup', glyph:'⚙', col:LM.warn, nm:'Setups',
+      ds:'your hosts · connectors · secrets refs', live:null },
+    { key:'rule', glyph:'⊘', col:LM.err, nm:'Rules',
+      ds:'guardrails · what it must never do', live:null },
+  ];
+
+  // ── The 4-scope privacy ladder (founder-facing labels) ──
+  const scopes = [
+    { k:'u', nm:'You', ds:'your private memory', lk:'stays on device', col:LM.blue },
+    { k:'p', nm:'Project', ds:'shared in one project', lk:'project members', col:LM.ok },
+    { k:'f', nm:'Firm', ds:'your company', lk:'firm seats only', col:LM.warn },
+    { k:'c', nm:'Collective', ds:'all ArchHub users', lk:'noise-protected only', col:LM.accent },
+  ];
+
+  // ── AI execution column (prototype copy 1:1) ──
+  const aiSteps = [
+    { t:'Drain the cleanup queue', time:'~20m' },
+    { t:'Imperative-drag lag fix', time:'~2h' },
+    { t:'Wire geometry + image facts', time:'done' },
+    { t:'Privacy filter before sharing', time:'~1d' },
+  ];
+
+  // Shared sub-styles in the app's dark idiom (prototype is light; we
+  // keep its layout/copy/structure 1:1 and render in LM chrome).
+  const card = {
+    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:12,
+    padding:16, boxShadow:'0 1px 3px rgba(0,0,0,.25)',
+  };
+  const colHead = {
+    fontFamily:LM.mono, fontSize:10, fontWeight:600, letterSpacing:'0.14em',
+    textTransform:'uppercase', color:LM.inkMuted, textAlign:'center', marginBottom:10,
+  };
+  const secH = { fontFamily:LM.serif, fontSize:21, fontWeight:500, margin:'30px 0 4px', color:LM.ink };
+  const secSub = { color:LM.inkSoft, fontSize:13.5, margin:'0 0 12px', lineHeight:1.5 };
+  const buildBadge = (txt, vision) => (
+    <span style={{
+      fontFamily:LM.mono, fontSize:9, fontWeight:600, padding:'3px 9px', borderRadius:20,
+      background: vision ? LM.accentDim : 'rgba(126,193,142,.15)',
+      color: vision ? LM.accent : LM.ok, verticalAlign:'middle', marginLeft:8,
+      letterSpacing:'0.08em', textTransform:'uppercase',
+    }}>{txt}</span>
+  );
+
+  return (
+    <div onClick={close} data-testid="brain-view-overlay" style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.72)', zIndex:80,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} data-testid="brain-view-modal" style={{
+        width:1080, maxWidth:'96%', height:'92%', maxHeight:'94%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:12,
+        display:'flex', flexDirection:'column', overflow:'hidden',
+        boxShadow:'0 24px 60px rgba(0,0,0,.65)',
+      }}>
+        {/* ── Header (prototype <header>, orange bottom rule) ── */}
+        <div style={{
+          background:LM.bgDeep, color:LM.ink,
+          padding:'22px 28px 20px', borderBottom:`3px solid ${LM.accent}`,
+          display:'flex', alignItems:'flex-start', gap:16,
+        }}>
+          <div style={S_FLEX1}>
+            <h1 style={{ fontFamily:LM.serif, margin:'0 0 6px', fontSize:28,
+              fontWeight:500, letterSpacing:'-0.01em', color:LM.ink }}>
+              The Brain — your intelligence layer
+            </h1>
+            <p style={{ margin:0, color:LM.inkSoft, fontSize:14, maxWidth:820, lineHeight:1.5 }}>
+              Not a chatbox. The brain sits BETWEEN what you say and what the AI
+              does — translating your intent into real work using everything it
+              knows about you, your firm, your projects, and your rules.
+            </p>
+          </div>
+          <button onClick={close} data-testid="brain-view-close" style={{
+            width:26, height:26, border:0, background:LM.bgPanel, color:LM.inkSoft,
+            borderRadius:5, cursor:'pointer', fontFamily:LM.mono, fontSize:13, flex:'none',
+          }}>✕</button>
+        </div>
+
+        {/* ── Scrollable body ── */}
+        <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'22px 28px 40px' }}>
+
+          {/* The one idea (prototype .lead) */}
+          <div style={{
+            background:LM.bgPanel, border:`1px solid ${LM.line}`,
+            borderLeft:`3px solid ${LM.accent}`, borderRadius:10,
+            padding:'14px 20px', margin:'0 0 24px', fontSize:14.5, lineHeight:1.6, color:LM.ink,
+          }}>
+            <b style={{ color:LM.accent }}>The one idea:</b> you speak plainly. The
+            brain turns that into a plan — pulling your memory, your skills, your
+            workflows, your mandates, your setups, your rules — flags the
+            challenges, estimates the time, and only THEN hands a precise job to
+            the AI. Every result flows back in, so it gets smarter each time.
+          </div>
+
+          {/* ── THE VISUAL BROWSER — "Your brain, organized" (4 coordinated
+              views: Top of mind · Facet lanes · Timeline · Faded/archived).
+              The default, CEO-readable surface; the educational 7-layer map
+              below explains HOW the brain works. ── */}
+          <BrainBrowser open={open} />
+
+          {/* ── COMMUNITIES — multi-device sharing of this brain. Lives here,
+              under the organized browser, because a community is just "your
+              brain, on more than one device / with teammates." The community
+              MECHANISM was wired-not-shipped; this is its GUI. ── */}
+          <CommunitiesPanel open={open} />
+
+          {/* ── 3-COLUMN FLOW: You → Brain(7 layers) → AI ── */}
+          <div style={{
+            display:'grid', gridTemplateColumns:'1fr 1.5fr 1fr', gap:14,
+            alignItems:'stretch', margin:'4px 0 30px',
+          }}>
+            {/* You */}
+            <div>
+              <div style={colHead}>You</div>
+              <div style={{ ...card, borderTop:`3px solid ${LM.blue}`, height:'100%' }}>
+                {['"Clean up the repo and ship the lag fix."',
+                  '"Make the brain understand my drawings."'].map((t, i) => (
+                  <div key={i} style={{
+                    background:'rgba(120,152,214,.14)', borderRadius:'12px 12px 12px 3px',
+                    padding:'10px 13px', fontSize:13, marginBottom:9, color:LM.ink,
+                  }}>{t}</div>
+                ))}
+                <small style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted,
+                  display:'block', marginTop:8 }}>
+                  Plain language. No commands, no syntax, no jargon.
+                </small>
+              </div>
+            </div>
+
+            {/* The Brain — 7 layers */}
+            <div>
+              <div style={colHead}>The Brain&nbsp;·&nbsp;translates intent → plan</div>
+              <div style={{
+                ...card, border:`2px solid ${LM.accent}`,
+                boxShadow:`0 0 0 5px ${LM.accentDim}, 0 1px 3px rgba(0,0,0,.25)`,
+                height:'100%',
+              }}>
+                <h3 style={{ fontFamily:LM.serif, margin:'0 0 3px', fontSize:17,
+                  textAlign:'center', color:LM.ink, fontWeight:500 }}>What the brain holds</h3>
+                <div data-testid="brain-view-sub" style={{ textAlign:'center', color:LM.inkMuted,
+                  fontSize:11, margin:'0 0 14px', fontFamily:LM.mono }}>
+                  {available
+                    ? '7 layers, queried on every message · live'
+                    : '7 layers, queried on every message'}
+                </div>
+                {layers.map(L => (
+                  <div key={L.key} data-testid={`brain-layer-${L.key}`} style={{
+                    display:'flex', alignItems:'center', gap:10, padding:'9px 12px',
+                    borderRadius:9, marginBottom:7, border:`1px solid ${LM.line}`,
+                    background:LM.bgSoft,
+                  }}>
+                    <span style={{
+                      width:26, height:26, borderRadius:7, flex:'none',
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:13, color:'#fff', background:L.col,
+                    }}>{L.glyph}</span>
+                    <span style={S_FLEX1}>
+                      <span data-testid={`brain-layer-name-${L.key}`} style={{
+                        fontFamily:LM.sans, fontWeight:600, fontSize:13, color:LM.ink }}>{L.nm}</span>
+                      <span style={{ color:LM.inkSoft, fontSize:10.5, display:'block',
+                        fontFamily:LM.sans }}>{L.ds}</span>
+                    </span>
+                    {/* LIVE count badge where a slot feeds it; otherwise nothing
+                        (no fabricated number — ANTI-LIE). */}
+                    {L.live !== null && L.live !== undefined && (
+                      <span data-testid={`brain-layer-count-${L.key}`} title="Live from your brain"
+                        style={{
+                          fontFamily:LM.mono, fontSize:10.5, fontWeight:600,
+                          color: L.col, background: LM.bg, border:`1px solid ${L.col}55`,
+                          borderRadius:20, padding:'2px 9px', flex:'none', whiteSpace:'nowrap',
+                        }}>{L.live} {L.unit}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* The AI */}
+            <div>
+              <div style={colHead}>The AI</div>
+              <div style={{ ...card, borderTop:`3px solid ${LM.ok}`, height:'100%' }}>
+                {aiSteps.map((s, i) => (
+                  <div key={i} style={{
+                    fontSize:12.5, padding:'7px 0 7px 18px', position:'relative',
+                    borderBottom: i < aiSteps.length - 1 ? `1px dashed ${LM.line}` : 0,
+                    color:LM.ink,
+                  }}>
+                    <span style={{ position:'absolute', left:2, color:LM.ok, fontWeight:700 }}>›</span>
+                    {s.t}
+                    <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, float:'right' }}>{s.time}</span>
+                  </div>
+                ))}
+                <small style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted,
+                  display:'block', marginTop:8 }}>
+                  Precise, gated, reversible — because the brain briefed it.
+                </small>
+              </div>
+            </div>
+          </div>
+
+          {/* ── WORKED EXAMPLE ── */}
+          <div style={{
+            background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:14,
+            overflow:'hidden', margin:'0 0 28px',
+          }}>
+            <div style={{ background:LM.bgDeep, color:LM.ink, padding:'13px 22px',
+              fontFamily:LM.serif, fontWeight:500, fontSize:15 }}>
+              Worked example — one sentence in, real plan out
+            </div>
+            <div style={{ padding:22 }}>
+              <p style={{ fontSize:17, fontStyle:'italic', color:LM.ink, margin:'0 0 16px' }}>
+                You say: <b style={{ color:LM.accent, fontStyle:'normal' }}>"clean up the repo without breaking anything, commit it all."</b>
+              </p>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
+                {[
+                  { th:'Brain pulls', rows:[
+                    'Memory: "no waits >60s", protected files list',
+                    'Mandate: ANTI-LIE, PROTOTYPE-FIRST',
+                    'Skill: repo-overhaul (4-scout audit)',
+                    'Setup: git hooks, brain daemon',
+                  ] },
+                  { th:'Brain flags', rows:[
+                    { chip:'challenge', col:LM.accent, t:'protected .cs files — needs env flag' },
+                    { chip:'challenge', col:LM.accent, t:"don't commit secrets" },
+                    { chip:'time', col:LM.blue, t:'~20 min for safe queue' },
+                  ] },
+                  { th:'AI executes', rows:[
+                    'Audit → commit by track',
+                    'Run tests, verify green',
+                    { chip:'reversible', col:LM.ok, t:'per-track commits' },
+                    'Show you the result',
+                  ] },
+                ].map((c, ci) => (
+                  <div key={ci} style={{ border:`1px solid ${LM.line}`, borderRadius:11, padding:13,
+                    background:LM.bgSoft }}>
+                    <div style={{ fontFamily:LM.mono, fontSize:10, fontWeight:600,
+                      textTransform:'uppercase', letterSpacing:'0.06em', color:LM.inkMuted, marginBottom:8 }}>{c.th}</div>
+                    <ul style={{ margin:0, paddingLeft:16, fontSize:12.5, color:LM.ink }}>
+                      {c.rows.map((r, ri) => (
+                        <li key={ri} style={{ marginBottom:5 }}>
+                          {typeof r === 'string' ? r : (
+                            <>
+                              <span style={{ display:'inline-block', fontFamily:LM.mono, fontSize:9,
+                                fontWeight:600, padding:'2px 8px', borderRadius:20, marginRight:5,
+                                background:r.col + '26', color:r.col }}>{r.chip}</span>
+                              {r.t}
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── LEARN-BACK LOOP ── */}
+          <div style={{
+            background:LM.bgPanel, border:`1px dashed ${LM.accent}`, borderRadius:14,
+            padding:'18px 22px', textAlign:'center', fontSize:14.5, margin:'0 0 26px', color:LM.ink,
+          }}>
+            Every result writes back into <b style={{ color:LM.accent, fontFamily:LM.sans }}>Memory</b> +
+            mints new <b style={{ color:LM.accent, fontFamily:LM.sans }}>Skills</b> → the brain is
+            sharper on your next sentence. <b style={{ color:LM.accent, fontFamily:LM.sans }}>This is the moat.</b>
+          </div>
+
+          {/* ── GEOMETRY + PICTURES ── */}
+          <h2 style={secH}>It understands geometry &amp; pictures {buildBadge('built')}</h2>
+          <p style={secSub}>
+            The brain stores drawings + images as first-class facts —
+            perceptual-hash + CLIP embedding — so "find me something like this"
+            works on shapes and photos, not just text.
+          </p>
+
+          {/* ── DATASETS + PRIVACY SCOPES ── */}
+          <h2 style={secH}>It produces training datasets — privately {buildBadge('built')}</h2>
+          <p style={secSub}>
+            Your knowledge can train models. But nothing leaves a scope it
+            shouldn't. Four rings, each tighter than the last — the collective
+            only ever sees noise-protected aggregates, never your raw work.
+          </p>
+          <div data-testid="brain-scopes" style={{
+            display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginTop:10,
+          }}>
+            {scopes.map(s => (
+              <div key={s.k} data-testid={`brain-scope-${s.k}`} style={{
+                border:`1px solid ${LM.line}`, borderTop:`3px solid ${s.col}`,
+                borderRadius:11, padding:12, textAlign:'center', background:LM.bgPanel,
+              }}>
+                <div data-testid={`brain-scope-name-${s.k}`} style={{ fontFamily:LM.sans, fontWeight:600,
+                  fontSize:13, color:LM.ink }}>{s.nm}</div>
+                <div style={{ fontSize:11, color:LM.inkSoft, marginTop:4 }}>{s.ds}</div>
+                <div style={{ fontSize:10, fontFamily:LM.mono, color:LM.inkMuted, marginTop:6 }}>{s.lk}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── GENERATE TRAINING DATASET (Brain #32 — the real button) ──
+              Click → bridge.brain_export_dataset → brain.dataset_export tool
+              → real fragments.jsonl + manifest on disk. USER scope by default
+              (your own data); Collective routes through the DP privacy filter
+              (aggregates only, no raw rows). */}
+          <div data-testid="brain-dataset-export" style={{
+            display:'flex', alignItems:'center', gap:16, marginTop:16,
+            background:LM.bgPanel, border:`1px solid ${LM.line}`,
+            borderLeft:`3px solid ${LM.accent}`, borderRadius:12, padding:'16px 20px',
+            flexWrap:'wrap',
+          }}>
+            <div style={{ flex:1, minWidth:240 }}>
+              <div style={{ fontFamily:LM.serif, fontSize:16, fontWeight:500, color:LM.ink, marginBottom:3 }}>
+                Generate a training dataset
+              </div>
+              <div style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5 }}>
+                Export what the brain knows as a HuggingFace-style dataset
+                (JSONL + manifest) on disk — the raw material for ArchHub's
+                own models. Pick a scope; nothing leaves it.
+              </div>
+              {/* Scope picker — all four are real backend paths. USER/Project/
+                  Firm emit raw rows; Collective emits noise-protected
+                  aggregates only (privacy.privatize_for_collective). */}
+              <div data-testid="brain-dataset-scopes" style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+                {scopes.map(s => {
+                  const key = ({ u:'user', p:'project', f:'firm', c:'collective' })[s.k] || 'user';
+                  const sel = dsScope === key;
+                  return (
+                    <button key={s.k} type="button" data-testid={`brain-dataset-scope-${key}`}
+                      onClick={() => { setDsScope(key); setDsResult(null); }}
+                      title={key === 'collective'
+                        ? 'Collective: only noise-protected aggregates leave — never your raw work.'
+                        : s.ds}
+                      style={{
+                        fontFamily:LM.sans, fontSize:11.5, fontWeight:600,
+                        padding:'4px 11px', borderRadius:20, cursor:'pointer',
+                        border:`1px solid ${sel ? s.col : LM.line}`,
+                        background: sel ? s.col + '22' : LM.bgSoft,
+                        color: sel ? s.col : LM.inkSoft,
+                      }}>{s.nm}</button>
+                  );
+                })}
+              </div>
+              {/* Result line — the proof. Shows row_count + on-disk path on
+                  success, or an honest error if the daemon is down. */}
+              {dsResult && (dsResult.ok
+                ? (() => {
+                    const f = (dsResult.files && (dsResult.files.jsonl || dsResult.files.aggregates)) || {};
+                    const path = f.path || dsResult.manifest_path || (dsResult.out_dir || '');
+                    const n = (typeof dsResult.row_count === 'number') ? dsResult.row_count : 0;
+                    const dp = dsResult.mode === 'collective_dp' || dsResult.differential_privacy;
+                    return (
+                      <div data-testid="brain-dataset-result" style={{
+                        marginTop:11, fontFamily:LM.mono, fontSize:11.5, color:LM.ok,
+                        lineHeight:1.5, wordBreak:'break-all',
+                      }}>
+                        ✓ Dataset saved · {dp ? 'privacy-protected aggregates' : `${n} ${n === 1 ? 'fact' : 'facts'}`} · <span style={{ color:LM.inkSoft }}>{path}</span>
+                      </div>
+                    );
+                  })()
+                : (
+                  <div data-testid="brain-dataset-result" style={{
+                    marginTop:11, fontFamily:LM.mono, fontSize:11.5, color:LM.err,
+                    lineHeight:1.5, wordBreak:'break-all',
+                  }}>
+                    ✕ {dsResult.error || 'export failed'}
+                  </div>
+                ))}
+            </div>
+            <button onClick={runDatasetExport} disabled={dsBusy}
+              data-testid="brain-dataset-export-btn" title="Export this scope as a training dataset on disk"
+              style={{
+                flex:'none', padding:'10px 18px', borderRadius:8,
+                border:`1px solid ${LM.accent}`,
+                background: dsBusy ? LM.bgSoft : LM.accent,
+                color: dsBusy ? LM.inkMuted : '#fff',
+                fontFamily:LM.sans, fontSize:13, fontWeight:600,
+                cursor: dsBusy ? 'wait' : 'pointer', whiteSpace:'nowrap',
+                display:'flex', alignItems:'center', gap:7,
+              }}>
+              <span style={{ fontSize:14 }}>⛁</span>
+              {dsBusy ? 'Generating…' : 'Generate training dataset'}
+            </button>
+          </div>
+
+          {/* ── BACK UP MY BRAIN (cloud-sync area) ── */}
+          <BrainBackupRow available={available} />
+
+          {/* ── NORTH STAR ── */}
+          <h2 style={secH}>North star — our own hosted models {buildBadge('vision', true)}</h2>
+          <p style={{ ...secSub, marginBottom:6 }}>
+            Once enough users form a collective memory, those privacy-protected
+            datasets train ArchHub's own AEC models — owned by us, improving for
+            everyone, never exposing any one user's work. The brain is the road to that.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+// LAG-ROOT FIX (2026-06-01): always-mounted, early-returns null when closed.
+// Memo'd so root focus/settings/panel/picker re-renders skip it (and its
+// BrainBrowser/BrainBackupRow children); `_themeBump` (= root paletteBump)
+// re-renders it on theme swap so an open modal repaints.
+const BrainViewModal = React.memo(BrainViewModalInner);
+
+// "Back up my brain" — the UI home for the live cloud-sync server
+// (commit 0dce168, /v1/brain/sync). The client push is now wired:
+// bridge.brain_cloud_backup resolves the cloud token (encrypted at rest,
+// never plaintext), gathers a brain delta, and POSTs it to the live sync
+// server. The button ENABLES once a token exists (probed via
+// brain_cloud_backup_status); otherwise it keeps the honest "Sign in to
+// enable" state — the in-app sign-in is the founder's one manual step, so
+// we route to it rather than fake a backup (ANTI-LIE).
+const BrainBackupRow = ({ available }) => {
+  const [signedIn, setSignedIn] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState(null);   // brain_backup_done payload
+  const reqRef = React.useRef(null);                   // request_id of in-flight push
+
+  // Probe token presence on mount → drives enabled/disabled. Cheap,
+  // synchronous slot (no network) so it's safe under bridgeAsync's ceiling.
+  React.useEffect(() => {
+    let alive = true;
+    bridgeAsync('brain_cloud_backup_status').then(r => {
+      if (alive && r && typeof r.signed_in === 'boolean') setSignedIn(r.signed_in);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Listen for the backup result. brain_cloud_backup is threaded server-side
+  // (a large brain must not freeze the Qt main thread, nor trip bridgeAsync's
+  // 1.5s sync ceiling); it emits brain_backup_done(result_json) when the
+  // worker finishes. Match on request_id so a stale result never overwrites.
+  React.useEffect(() => {
+    const b = window.archhub;
+    if (!b || !b.brain_backup_done || typeof b.brain_backup_done.connect !== 'function') return;
+    const onDone = (resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      if (!res || (reqRef.current && res.request_id !== reqRef.current)) return;
+      reqRef.current = null;
+      setBusy(false);
+      setResult(res);
+      // A token that turned out to be missing flips the button back to the
+      // honest signed-out state.
+      if (res.need_signin) setSignedIn(false);
+    };
+    try { b.brain_backup_done.connect(onDone); } catch (e) {}
+    return () => { try { b.brain_backup_done.disconnect(onDone); } catch (e) {} };
+  }, []);
+
+  // Listen for cloud_signin_done — when the founder finishes the real browser
+  // sign-in (launched by bridge.cloud_sign_in from this row's signed-out CTA),
+  // flip the row to signed-in WITHOUT a reload so the next click is a real
+  // backup. cloud_sign_out → cloud_signout_done flips it back to signed-out.
+  React.useEffect(() => {
+    const b = window.archhub;
+    if (!b) return;
+    const onSignin = (resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      if (res && res.ok && res.signed_in) {
+        setSignedIn(true);
+        setResult(null);
+      }
+    };
+    const onSignout = () => { setSignedIn(false); setResult(null); };
+    try { if (b.cloud_signin_done && b.cloud_signin_done.connect) b.cloud_signin_done.connect(onSignin); } catch (e) {}
+    try { if (b.cloud_signout_done && b.cloud_signout_done.connect) b.cloud_signout_done.connect(onSignout); } catch (e) {}
+    return () => {
+      try { if (b.cloud_signin_done && b.cloud_signin_done.disconnect) b.cloud_signin_done.disconnect(onSignin); } catch (e) {}
+      try { if (b.cloud_signout_done && b.cloud_signout_done.disconnect) b.cloud_signout_done.disconnect(onSignout); } catch (e) {}
+    };
+  }, []);
+
+  // Sign in with Google — the founder's preferred path, leading the signed-out
+  // state. Drives the SAME real PKCE browser flow as the email path, via
+  // bridge.cloud_sign_in_google (cloud_auth.GoogleSignInWorker), which emits
+  // the SAME cloud_signin_done payload the listener above already handles — so
+  // success flips this row to signed-in with no reload and no new listener. If
+  // the slot isn't wired (older build), fall back to Settings → Account, which
+  // hosts the same real "Sign in with Google" button. Identical missing-slot
+  // guard + try/catch as the email path below.
+  const signInGoogle = async () => {
+    if (busy) return;
+    try {
+      const r = await bridgeAsync('cloud_sign_in_google');
+      if (!r || (r.ok === false && !r.async && !r.opened_browser)) {
+        window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+          { detail:{ section:'account' } }));
+      }
+    } catch (e) {
+      try { window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+        { detail:{ section:'account' } })); } catch (e2) {}
+    }
+  };
+
+  // Fire the backup. Returns instantly with {request_id}; brain_backup_done
+  // lands the real server result. If no token, REACH the real sign-in
+  // (cloud_auth.SignInWorker via bridge.cloud_sign_in) end-to-end — not a
+  // dead-end. We never build a credential form here; the browser the worker
+  // opens is the founder's one manual step.
+  const runBackup = async () => {
+    if (busy) return;
+    if (!signedIn) {
+      // Directly trigger the real PKCE browser sign-in. cloud_sign_in opens
+      // the browser to the magic-link + captures the loopback callback off
+      // the Qt main thread, returning instantly with {async, request_id} and
+      // emitting cloud_signin_done when the founder finishes. The listener
+      // below flips this row to signed-in (then ready to back up) with no
+      // reload. If the slot isn't wired (older build), fall back to opening
+      // Settings → Account, which now hosts the same real Sign-in button.
+      try {
+        const r = await bridgeAsync('cloud_sign_in');
+        if (!r || (r.ok === false && !r.async && !r.opened_browser)) {
+          window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+            { detail:{ section:'account' } }));
+        }
+      } catch (e) {
+        try { window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+          { detail:{ section:'account' } })); } catch (e2) {}
+      }
+      return;
+    }
+    setResult(null);
+    setBusy(true);
+    try {
+      const r = await bridgeAsync('brain_cloud_backup');
+      if (r && r.request_id && r.async) {
+        reqRef.current = r.request_id;   // wait for the signal
+      } else if (r && r.need_signin) {
+        reqRef.current = null; setBusy(false); setSignedIn(false); setResult(r);
+      } else {
+        reqRef.current = null; setBusy(false);
+        setResult(r && r.error ? r : { ok:false, error:'backup did not start (cloud bridge unavailable)' });
+      }
+    } catch (e) {
+      reqRef.current = null; setBusy(false);
+      setResult({ ok:false, error:String(e) });
+    }
+  };
+
+  const enabled = signedIn && !busy;
+  const tip = signedIn
+    ? 'Back up your brain to the ArchHub cloud (encrypted).'
+    : 'Sign in to ArchHub Cloud — opens your browser to finish sign-in, then enables encrypted backup.';
+  // Status line — honest about each state.
+  let statusNode;
+  if (busy) {
+    statusNode = <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>sync status: backing up…</span>;
+  } else if (result && result.ok) {
+    const n = (typeof result.synced === 'number') ? result.synced : 0;
+    // Slice-17 fanout: also surface how many firm/community facts converged
+    // IN from teammates / your other devices, and which shared scopes are
+    // live — so cross-device sharing is visibly working, not just a backup.
+    const mergedIn = (typeof result.merged_in === 'number') ? result.merged_in : 0;
+    const nFirm = Array.isArray(result.firm_keys) ? result.firm_keys.length : 0;
+    const nComm = Array.isArray(result.community_keys) ? result.community_keys.length : 0;
+    const parts = [`✓ Backed up ${n} ${n === 1 ? 'fact' : 'facts'}`];
+    if (mergedIn > 0) parts.push(`pulled ${mergedIn} shared in`);
+    const shared = [];
+    if (nFirm) shared.push(`${nFirm} firm`);
+    if (nComm) shared.push(`${nComm} community`);
+    if (shared.length) parts.push(`${shared.join(' + ')} synced`);
+    statusNode = <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ok }}>
+      {parts.join(' · ')}</span>;
+  } else if (result && result.error) {
+    statusNode = <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.err }}>✕ {result.error}</span>;
+  } else {
+    statusNode = <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>
+      sync status: {signedIn ? 'signed in · ready' : 'not signed in'}</span>;
+  }
+  return (
+    <div data-testid="brain-backup-row" style={{
+      display:'flex', alignItems:'center', gap:16, marginTop:26,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderLeft:`3px solid ${LM.blue}`, borderRadius:12, padding:'16px 20px',
+    }}>
+      <div style={S_FLEX1}>
+        <div style={{ fontFamily:LM.serif, fontSize:16, fontWeight:500, color:LM.ink, marginBottom:3 }}>
+          Back up my brain
+        </div>
+        <div data-testid="brain-backup-status" style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5 }}>
+          Your memory, skills, and setups — encrypted to the ArchHub cloud so
+          nothing is lost. {statusNode}
+        </div>
+      </div>
+      {signedIn ? (
+        // Signed-in: the real backup action (unchanged path).
+        <button onClick={runBackup}
+          disabled={busy} title={tip} data-testid="brain-backup-btn"
+          style={{
+            flex:'none', padding:'10px 18px', borderRadius:8,
+            border:`1px solid ${enabled ? LM.accent : LM.line}`,
+            background: enabled ? LM.accent : LM.bgSoft,
+            color: enabled ? '#fff' : LM.inkMuted,
+            fontFamily:LM.sans, fontSize:13, fontWeight:600,
+            // Signed-out is now a real action (reaches sign-in), so it's a
+            // pointer, not 'not-allowed'.
+            cursor: busy ? 'wait' : 'pointer', whiteSpace:'nowrap',
+            display:'flex', alignItems:'center', gap:7,
+          }}>
+          <span style={{ fontSize:14 }}>☁</span>
+          {busy ? 'Backing up…' : 'Back up my brain'}
+        </button>
+      ) : (
+        // Signed-out: offer BOTH real sign-in paths, leading with Google
+        // (founder preference). Google is the primary filled CTA; email/PKCE
+        // is the secondary text affordance. Both reach the SAME real flow and
+        // both emit the SAME cloud_signin_done the listener above handles.
+        <div style={{ flex:'none', display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
+          <button onClick={signInGoogle}
+            disabled={busy} data-testid="brain-backup-btn"
+            title="Sign in with Google to enable encrypted backup — opens your browser to finish sign-in."
+            style={{
+              padding:'10px 18px', borderRadius:8,
+              border:`1px solid ${LM.accent}`, background:LM.accent, color:'#fff',
+              fontFamily:LM.sans, fontSize:13, fontWeight:600,
+              cursor: busy ? 'wait' : 'pointer', whiteSpace:'nowrap',
+              display:'flex', alignItems:'center', gap:7,
+            }}>
+            <span style={{ fontFamily:LM.serif, fontWeight:700, fontSize:15, lineHeight:1 }}>G</span>
+            Sign in with Google
+          </button>
+          <button onClick={runBackup}
+            disabled={busy} data-testid="brain-backup-signin-email"
+            title="Or sign in with your email — opens your browser to finish sign-in via a magic link."
+            style={{
+              padding:'2px 4px', borderRadius:6, border:'1px solid transparent',
+              background:'transparent', color:LM.inkMuted,
+              fontFamily:LM.sans, fontSize:11.5, fontWeight:500,
+              cursor: busy ? 'wait' : 'pointer', whiteSpace:'nowrap',
+              textDecoration:'underline', textUnderlineOffset:2,
+            }}>
+            or sign in with email
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// USER-AGENCY MANDATE — composer-mode APPROVAL QUEUE (the gate's UI half).
+// Plan mode (default) holds every AI-driven host/graph WRITE before it runs;
+// the lm-composer-action chokepoint (~L1885) dispatches `lm-approval-request`
+// instead of mutating. This always-mounted bar surfaces each held write so the
+// user can APPROVE it (re-dispatches the SAME action with mode:'yolo' +
+// _approved, which flows through the gate and executes) or DISMISS it (the
+// write never happens). This is what makes the "all writes gated" label TRUE:
+// in Plan/Auto a write is observably blocked until the user acts. Every
+// approved write is still reversible (Speckle Versions per ARCHITECTURE LOCK).
+// Mounted once at the StudioLM root; early-returns null when the queue is empty.
+const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [queue, setQueue] = React.useState([]);
+  React.useEffect(() => {
+    let seq = 0;
+    const onReq = (ev) => {
+      const d = (ev && ev.detail) || {};
+      seq += 1;
+      const item = {
+        key: `${Date.now().toString(36)}-${seq}`,
+        action: d.action || {},
+        raw: d.raw || '',
+        focusId: d.focusId || '',
+        attachments: d.attachments || [],
+        summary: d.summary || (d.cmd || 'write'),
+        cmd: d.cmd || (d.action && d.action.command) || 'write',
+        mode: d.mode || 'plan',
+      };
+      setQueue(q => [...q, item]);
+    };
+    window.addEventListener('lm-approval-request', onReq);
+    return () => window.removeEventListener('lm-approval-request', onReq);
+  }, []);
+  const _drop = (key) => setQueue(q => q.filter(it => it.key !== key));
+  const _approve = (it) => {
+    // Re-run the EXACT held action, but mark it approved + yolo so the gate at
+    // the chokepoint lets it through and the canvas/host write actually lands.
+    try {
+      window.dispatchEvent(new CustomEvent('lm-composer-action', {
+        detail: {
+          action: it.action, raw: it.raw, focusId: it.focusId,
+          attachments: it.attachments, mode: 'yolo', _approved: true,
+        },
+      }));
+    } catch (e) {}
+    _drop(it.key);
+  };
+  const _approveAll = () => {
+    const items = queue.slice();
+    items.forEach(_approve);
+  };
+  if (!queue.length) return null;
+  return (
+    <div data-testid="approval-queue" role="region" aria-label="Pending writes awaiting approval"
+      style={{
+        position:'fixed', left:'50%', bottom:96, transform:'translateX(-50%)',
+        zIndex:70, width:520, maxWidth:'92%',
+        background:LM.bgPanel, border:`1px solid ${LM.warn || LM.accent}`, borderRadius:10,
+        boxShadow:'0 18px 48px rgba(0,0,0,.55)', overflow:'hidden',
+      }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10,
+        padding:'10px 14px', borderBottom:`1px solid ${LM.line}`, background:LM.bg }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.16em',
+          color: LM.warn || LM.accent }}>WRITES HELD · {queue.length}</span>
+        <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>
+          Plan mode gates AI writes — approve to apply.
+        </span>
+        <div style={S_FLEX1}/>
+        {queue.length > 1 && (
+          <button onClick={_approveAll} data-testid="approval-approve-all" style={{
+            padding:'4px 10px', borderRadius:5, border:`1px solid ${LM.accent}`,
+            background:LM.accentDim, color:LM.accent, cursor:'pointer',
+            fontFamily:LM.mono, fontSize:10,
+          }}>Approve all</button>
+        )}
+      </div>
+      <div style={{ maxHeight:220, overflow:'auto' }}>
+        {queue.map(it => (
+          <div key={it.key} data-testid="approval-row" style={{
+            display:'flex', alignItems:'center', gap:10,
+            padding:'9px 14px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+            <div style={S_FLEX1}>
+              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.ink }}>{it.summary}</div>
+              <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2 }}>
+                {it.cmd}{it.raw ? ` · ${it.raw}` : ''}
+              </div>
+            </div>
+            <button onClick={() => _approve(it)} data-testid="approval-approve" style={{
+              padding:'4px 11px', borderRadius:5, border:0,
+              background:LM.accent, color:'#fff', cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10, fontWeight:600,
+            }}>Approve</button>
+            <button onClick={() => _drop(it.key)} data-testid="approval-dismiss" style={{
+              padding:'4px 9px', borderRadius:5, border:`1px solid ${LM.line}`,
+              background:'transparent', color:LM.inkSoft, cursor:'pointer',
+              fontFamily:LM.mono, fontSize:10,
+            }}>Dismiss</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // AgDR-0021 — ai.plan HISTORY modal. Listens for
 // `lm-aiplan-history-open` (fired by the ai.plan hero node's "history"
 // button), pulls full plan history via bridge.get_plan_history, renders
 // a scrollable table with prompt/model/cost/steps + per-row open +
 // delete. Closes on backdrop click or ✕.
-const AiPlanHistoryModal = () => {
+const AiPlanHistoryModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);
   const [records, setRecords] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -11095,7 +14758,7 @@ const AiPlanHistoryModal = () => {
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.14em' }}>
             {records.length} RECORDS · NEWEST FIRST
           </span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <button onClick={close} style={{
             width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
             borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
@@ -11149,7 +14812,7 @@ const AiPlanHistoryModal = () => {
               <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
                 <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em' }}>PLAN</span>
                 <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{selected.plan_id}</span>
-                <div style={{ flex:1 }}/>
+                <div style={S_FLEX1}/>
                 <button onClick={async () => {
                   try {
                     await bridgeAsync('delete_plan_record', selected.plan_id, '');
@@ -11185,6 +14848,27 @@ const AiPlanHistoryModal = () => {
                   borderRadius:5, padding:'8px 12px', marginBottom:12,
                   color:LM.err, fontFamily:LM.mono, fontSize:11 }}>
                   ⚠ {selected.error}
+                </div>
+              )}
+              {/* REASONING — the founder's "see everything in nodes:
+                  REASONING" demand. Real model thinking + post-turn
+                  summary captured from the provider stream (claude_cli
+                  stream-json thinking/summary frames), persisted on the
+                  ai.plan record. Only renders when steps exist. */}
+              {Array.isArray(selected.reasoning) && selected.reasoning.length > 0 && (
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.purple,
+                    letterSpacing:'0.18em', marginBottom:6 }}>
+                    REASONING · {selected.reasoning.length} step{selected.reasoning.length === 1 ? '' : 's'}
+                  </div>
+                  <div style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`,
+                    borderLeft:`2px solid ${LM.purple}`, borderRadius:5,
+                    padding:'8px 11px', fontFamily:LM.mono, fontSize:10.5,
+                    color:LM.inkSoft, lineHeight:1.65 }}>
+                    {selected.reasoning.map((step, ri) => (
+                      <div key={ri}>{ri+1}. {step}</div>
+                    ))}
+                  </div>
                 </div>
               )}
               <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent,
@@ -11255,16 +14939,29 @@ const AiPlanHistoryModal = () => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): always-mounted, early-returns null when closed.
+// Memo'd so root focus/settings/panel/picker re-renders skip it; `_themeBump`
+// (= root paletteBump) re-renders it on theme swap so an open modal repaints.
+const AiPlanHistoryModal = React.memo(AiPlanHistoryModalInner);
 
 // AgDR-0043 Sprint 2 Move 6 — Cmd+K command palette. Linear-style.
 // Surfaces every action + library node + session in one keystroke.
 // Categories: actions (verbs), nodes (every grammar primitive), sessions
 // (every existing session). Fuzzy filter on label.
-const CommandPalette = () => {
+const CommandPaletteInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);
   const [q, setQ] = React.useState('');
   const [selIdx, setSelIdx] = React.useState(0);
   const [sessionsCache, setSessionsCache] = React.useState([]);
+  // Audit 2026-05-28: the orphan SearchPanel (never mounted; removed
+  // 2026-06-02) searched skills + memory + hosts too. Rather than reverse the founder's
+  // "Nodes-only sidebar" decision (2026-05-14) by re-adding a sidebar tab,
+  // fold those REAL sources into the already-mounted ⌘K palette — which the
+  // SearchPanel itself advertised (⌘K) and USER-AGENCY mandates as the
+  // library/everything entry. Skills + memory are fetched live from real
+  // slots (get_saved_skills, list_memory_facts).
+  const [skillsCache, setSkillsCache] = React.useState([]);
+  const [memoryCache, setMemoryCache] = React.useState([]);
   React.useEffect(() => {
     const onKey = (e) => {
       // Cmd+K or Ctrl+K opens; Esc closes.
@@ -11286,9 +14983,28 @@ const CommandPalette = () => {
           const s = await bridgeAsync('get_sessions');
           if (Array.isArray(s)) setSessionsCache(s);
         } catch (e) {}
+        try {
+          const sk = await bridgeAsync('get_saved_skills');
+          if (Array.isArray(sk)) setSkillsCache(sk);
+        } catch (e) {}
       })();
     }
   }, [open]);
+  // Memory facts are query-scoped — fetch them debounced as the user types
+  // (list_memory_facts takes the needle). Empty query clears them.
+  React.useEffect(() => {
+    if (!open) return;
+    const needle = q.trim();
+    if (!needle) { setMemoryCache([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const m = await bridgeAsync('list_memory_facts', needle);
+        if (!cancelled && Array.isArray(m)) setMemoryCache(m);
+      } catch (e) {}
+    }, 180);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q, open]);
   // Build the unified command list.
   const all = React.useMemo(() => {
     const items = [];
@@ -11339,8 +15055,41 @@ const CommandPalette = () => {
         },
       });
     });
+    // Saved skills — spawn onto the canvas (real lm-spawn-skill path, the
+    // same the orphan SkillsPanel used before it was removed 2026-06-02).
+    (skillsCache || []).forEach(s => {
+      items.push({
+        kind:'skill',
+        label:'✦ ' + (s.name || s.id || 'skill'),
+        sub: s.args || 'skill',
+        id: 'skill:' + (s.id || s.name),
+        run: () => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); } catch (e) {} },
+      });
+    });
+    // Hosts/connectors — focus settings (real LM_HOSTS source).
+    (LM_HOSTS || []).forEach(h => {
+      items.push({
+        kind:'host',
+        label:'⛁ ' + (h.name || h.id),
+        sub: `${h.state || 'idle'}${h.file ? ' · ' + h.file : ''}`,
+        id: 'host:' + h.id,
+        run: () => { try { window.dispatchEvent(new CustomEvent('lm-action-open-settings')); } catch (e) {} },
+      });
+    });
+    // Memory facts — what Claude remembers (real list_memory_facts results;
+    // read-only hits, no run action, surfaced so ⌘K is a true "everything").
+    (memoryCache || []).forEach((m, i) => {
+      const txt = (m && (m.text || m.fact)) || String(m);
+      items.push({
+        kind:'memory',
+        label:'◆ ' + txt,
+        sub: (m && (m.src || m.scope)) || 'memory',
+        id: 'mem:' + (m && m.id != null ? m.id : i),
+        run: null,
+      });
+    });
     return items;
-  }, [sessionsCache]);
+  }, [sessionsCache, skillsCache, memoryCache]);
   const filtered = React.useMemo(() => {
     const qq = q.trim().toLowerCase();
     if (!qq) return all.slice(0, 60);
@@ -11414,7 +15163,23 @@ const CommandPalette = () => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): always-mounted, early-returns null when closed.
+// Memo'd so root focus/settings/panel/picker re-renders skip it; `_themeBump`
+// (= root paletteBump) re-renders it on theme swap so an open palette repaints.
+const CommandPalette = React.memo(CommandPaletteInner);
 
+// Hoisted out of AiPlanSection (was a render-body nested fn → remount per
+// render). Pure: reads LM.* getters + props only. Named AiPlanRow to stay
+// distinct from the other Row helpers.
+const AiPlanRow = ({ k, v }) => (
+  <div style={{
+    background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`, padding:'6px 8px',
+    borderRadius:3, fontFamily:LM.mono, fontSize:10,
+  }}>
+    <div style={{ color:LM.inkMuted, fontSize:8.5, letterSpacing:'0.1em', textTransform:'uppercase' }}>{k}</div>
+    <div style={{ color:LM.ink, marginTop:2 }}>{v}</div>
+  </div>
+);
 const AiPlanSection = ({ node }) => {
   const [plan, setPlan] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -11473,23 +15238,16 @@ const AiPlanSection = ({ node }) => {
     }
     return out;
   })();
-  const Row = ({ k, v }) => (
-    <div style={{
-      background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`, padding:'6px 8px',
-      borderRadius:3, fontFamily:LM.mono, fontSize:10,
-    }}>
-      <div style={{ color:LM.inkMuted, fontSize:8.5, letterSpacing:'0.1em', textTransform:'uppercase' }}>{k}</div>
-      <div style={{ color:LM.ink, marginTop:2 }}>{v}</div>
-    </div>
-  );
+  // Row is now module-scoped (AiPlanRow, hoisted above) so it no longer
+  // remounts on every AiPlanSection re-render.
   return (
     <div>
       <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em', marginBottom:10 }}>PLAN · {plan.status || 'ok'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-        <Row k="Plan id" v={(plan.plan_id || '—').slice(0,12)}/>
-        <Row k="Tool calls · ok / total" v={`${done} / ${total || '—'}`}/>
-        <Row k="Model" v={plan.model || '—'}/>
-        <Row k="Source" v={cached}/>
+        <AiPlanRow k="Plan id" v={(plan.plan_id || '—').slice(0,12)}/>
+        <AiPlanRow k="Tool calls · ok / total" v={`${done} / ${total || '—'}`}/>
+        <AiPlanRow k="Model" v={plan.model || '—'}/>
+        <AiPlanRow k="Source" v={cached}/>
       </div>
       {decisions.length > 0 && (
         <>
@@ -11521,6 +15279,24 @@ const AiPlanSection = ({ node }) => {
   );
 };
 
+// Flush-on-deselect helper. Mounted (keyed on node.id) inside the generic
+// NodeRail's SETTINGS block, so it unmounts whenever the focused node changes
+// or the rail closes — its cleanup flushes any param value still sitting in
+// the `saveGraphParamTick` debounce window. A dedicated component (rather than
+// a hook in NodeRail) keeps NodeRail's early `return`s for ai/connector nodes
+// from turning a top-level hook into a conditional one (Rules of Hooks).
+const ParamSaveFlush = ({ nodeId }) => {
+  // On unmount (node deselect / rail close / focus change — the parent keys
+  // this on node.id so it remounts per focused node) flush BOTH the pending
+  // disk-save AND the pending re-cook, so a value left sitting in either
+  // debounce window is persisted + cooked before the node loses focus.
+  React.useEffect(() => () => {
+    flushGraphParamTick();
+    flushReCook(nodeId);
+  }, [nodeId]);
+  return null;
+};
+
 const NodeRail = ({ node, bumpGraph }) => {
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // Founder demand #15: spread defaults so a partial node blob never KOs the rail.
@@ -11534,15 +15310,28 @@ const NodeRail = ({ node, bumpGraph }) => {
   const cat = catMeta(node.cat);
 
   // Founder demand #10: writing a param updates node.config + saves graph.
-  const onParamChange = (k, v) => {
+  // PERF (2026-06-01 slider-drag fix): the VISUAL update stays immediate —
+  // mutate node.config/params in place + bumpGraph() on EVERY tick so the
+  // light-path repaint never lags. Only PERSISTENCE is debounced: a
+  // continuous drag routes through `saveGraphParamTick()` (idle-reset) so it
+  // writes ONCE when motion stops, not ~8× mid-drag. `commit` flushes the
+  // pending write immediately on drag-release (pointerup/mouseup/blur/change)
+  // so the final value is never lost.
+  const onParamChange = (k, v, commit) => {
     node.config = { ...(node.config || {}), [k]: v };
     // Also reflect into params for visual fidelity.
     if (Array.isArray(node.params)) {
       const p = node.params.find(x => x.k === k);
       if (p) p.v = v;
     }
-    saveCurrentGraph();
-    bumpGraph && bumpGraph();
+    bumpGraph && bumpGraph();          // immediate visual repaint (rAF-coalesced)
+    if (commit) {
+      flushGraphParamTick();           // drag-release edge → persist now
+      flushReCook(node.id);            // …and re-cook the final value now
+    } else {
+      saveGraphParamTick();            // mid-drag tick → coalesce to one write
+      reCookParamTick(node.id);        // …and coalesce mid-drag re-cooks (~200ms)
+    }
   };
   return (
     <aside className="ah-scroll" style={{
@@ -11583,14 +15372,59 @@ const NodeRail = ({ node, bumpGraph }) => {
         </div>
       )}
 
-      {(node.params || []).length > 0 && (
-        <div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
-            {(node.params || []).map(p => <FullParam key={p.k} p={p} node={node} onChange={(v) => onParamChange(p.k, v)}/>)}
+      {/* Flushes a pending debounced param-save AND re-cook when this node is
+          deselected or the rail closes (keyed on node.id → remounts per focused
+          node, so its unmount fires for the node losing focus). */}
+      <ParamSaveFlush key={'psf_' + node.id} nodeId={node.id}/>
+
+      {(() => {
+        // #1 stem-FIELD gap: when the node's grammar entry carries a typed
+        // config_schema, render one EDITABLE field per schema property (the
+        // schema is RICHER than the flat params — e.g. assert's flat params are
+        // mode/expr, its schema adds safe_mode/op/expected/message). Seed each
+        // field from node.config → node.params → schema.default and write back
+        // through the SAME onParamChange path (mirrors into node.params; the
+        // engine folds params→config via _params_to_config, contract unchanged).
+        const schema = _configSchemaFor(node);
+        const schemaKeys = Object.keys(schema);
+        if (schemaKeys.length > 0) {
+          const curVal = (k) => {
+            const cfg = node.config || {};
+            if (cfg[k] !== undefined) return cfg[k];
+            const pr = (node.params || []).find(x => x.k === k);
+            if (pr && pr.v !== undefined) return pr.v;
+            const d = schema[k] && schema[k].default;
+            return d !== undefined ? d : '';
+          };
+          return (
+            <div>
+              <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
+                {/* onChange(v) = mid-edit tick (debounced); onChange(v, true) =
+                    commit/release edge (flush now) — same contract as flat params. */}
+                {schemaKeys.map(k => (
+                  <FullParam key={k} p={_schemaFieldToParam(k, schema[k], curVal(k))} node={node}
+                    onChange={(v, commit) => onParamChange(k, v, commit)}/>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        // FALLBACK (unchanged): a node with no config_schema renders its flat
+        // node.params exactly as before — additive + reversible.
+        if ((node.params || []).length === 0) return null;
+        return (
+          <div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
+              {/* onChange(v) = mid-drag tick (debounced); onChange(v, true) =
+                  commit/release edge (flush now). FullParam fires the commit
+                  form on pointerup/mouseup/blur/change of its inputs. */}
+              {(node.params || []).map(p => <FullParam key={p.k} p={p} node={node} onChange={(v, commit) => onParamChange(p.k, v, commit)}/>)}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* AgDR-0021 ai.plan — Plan section (slim variant per
           archhub-redesign-2026-05-24.html Prototype D REFINED:
@@ -11611,14 +15445,17 @@ const NodeRail = ({ node, bumpGraph }) => {
           const payload = JSON.stringify({ nodes:[node], wires:[] });
           bridgeCall('save_as_skill', node.title || node.id, payload);
         }} style={railBtn()}>Pin to skill</button>
-        <button onClick={() => {
+        <button onClick={async () => {
           // Branch: duplicate the focused node and wire the original's first
           // output to the duplicate's first matching input. The bridge slot
           // `duplicate_node(graph_json, node_id)` returns the mutated graph
           // (F2-A); if it's missing we synthesize the duplicate client-side.
+          // QWebChannel slots are async — sync bridgeJson returned a Promise
+          // (truthiness fell through to the client-side fallback every time);
+          // bridgeAsync + await gets the real mutated graph back.
           const sourceNode = (LM_GRAPH.nodes || []).find(n => n.id === node.id);
           if (!sourceNode) return;
-          const result = bridgeJson('duplicate_node', JSON.stringify(LM_GRAPH), node.id);
+          const result = await bridgeAsync('duplicate_node', JSON.stringify(LM_GRAPH), node.id);
           let newId = null;
           if (result && result.graph && Array.isArray(result.graph.nodes)) {
             LM_GRAPH.nodes = result.graph.nodes;
@@ -11660,12 +15497,49 @@ const NodeRail = ({ node, bumpGraph }) => {
   );
 };
 
+// Audit 2026-05-28: the scrollback used to render ONE hardcoded
+// `WEDNESDAY · MAY 13` divider — a fabrication that contradicts ANTI-LIE.
+// Real grouping: walk the messages, emit a divider whenever the real date
+// (from a message's full-ISO `ts`, falling back to today for live `time`-
+// only turns) changes. `_dayKey` is the YYYY-MM-DD bucket; `_dayLabel`
+// renders the human divider ("TODAY", "YESTERDAY", or "WEDNESDAY · MAY 13").
+const _dayKeyOf = (m) => {
+  // Full ISO timestamp → real calendar day. Messages created before `ts`
+  // was stamped only carry HH:MM in `time`; those belong to the live
+  // session, so bucket them under today (a real date, not a fabrication).
+  const iso = m && m.ts;
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  // Local calendar day (not UTC) so the divider matches the user's clock.
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const _dayLabelOf = (dayKey) => {
+  const parts = String(dayKey).split('-').map(Number);
+  const d = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const that = new Date(d); that.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today - that) / 86400000);
+  if (diffDays === 0) return 'TODAY';
+  if (diffDays === 1) return 'YESTERDAY';
+  const wd = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'][d.getDay()];
+  const mo = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+  return `${wd} · ${mo} ${d.getDate()}`;
+};
+
 // ─── Conversation rail — full chat history + inline composer ───
 // Shown when the focused node is an AI/chat node. THIS is where the user
 // reads scrollback and continues the conversation.
 const ConversationRail = ({ node, bumpGraph }) => {
   // Founder demand #15: spread defaults so an empty/streaming AI node renders.
   node = { ins:[], outs:[], messages:[], params:[], ...node };
+  // LAG-ROOT FIX (mechanism 1): subscribe to the STREAM_STORE so this rail —
+  // the ONLY subtree that displays streamed AI text — re-renders on every
+  // token chunk WITHOUT the root re-rendering. onChunk/onReasoning mutate
+  // node.messages in place then STREAM_STORE.bump(); this hook is what turns
+  // that into a repaint of just the conversation. The canvas does not
+  // subscribe, so streaming never touches NodeCanvas/Workspace. (React
+  // 18.3.1 ships useSyncExternalStore.)
+  React.useSyncExternalStore(STREAM_STORE.subscribe, STREAM_STORE.getSnapshot);
   const cat = catMeta('ai');
   const scrollRef = React.useRef(null);
   // Auto-scroll to bottom on new messages.
@@ -11693,7 +15567,7 @@ const ConversationRail = ({ node, bumpGraph }) => {
       if (!lastUser) return;
       const truncated = msgs.slice(0, msgs.length - 1); // drop the assistant tail
       const historyJson = JSON.stringify(truncated.map(m => ({ me:m.me, text:m.text })));
-      node.messages = [...truncated, { me:false, text:'…', streaming:true, time:new Date().toISOString().slice(11,16) }];
+      node.messages = [...truncated, { me:false, text:'…', streaming:true, time:new Date().toISOString().slice(11,16), ts:new Date().toISOString() }];
       bridgeCall('send_chat_history', currentSid(), lastUser.text || '', historyJson);
       bumpGraph && bumpGraph();
       return;
@@ -11734,7 +15608,7 @@ const ConversationRail = ({ node, bumpGraph }) => {
       const truncated = msgs.slice(0, userIx).map(m => ({ ...m }));
       truncated.push({ ...userMsg, text: next });
       const historyJson = JSON.stringify(truncated.map(m => ({ me:m.me, text:m.text })));
-      node.messages = [...truncated, { me:false, text:'…', streaming:true, time:new Date().toISOString().slice(11,16) }];
+      node.messages = [...truncated, { me:false, text:'…', streaming:true, time:new Date().toISOString().slice(11,16), ts:new Date().toISOString() }];
       bridgeCall('send_chat_history', currentSid(), next, historyJson);
       bumpGraph && bumpGraph();
       return;
@@ -11802,7 +15676,7 @@ const ConversationRail = ({ node, bumpGraph }) => {
             onMouseLeave={e => e.currentTarget.style.color = LM.inkSoft}>›</button>
           <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
           <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
-          <div style={{ flex:1 }}/>
+          <div style={S_FLEX1}/>
           <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
             {node.messages.length} msgs
           </span>
@@ -11820,14 +15694,28 @@ const ConversationRail = ({ node, bumpGraph }) => {
         overflow:'auto', padding:'14px 16px',
         display:'flex', flexDirection:'column', gap:14,
       }}>
-        {/* Date breakpoint */}
-        <div style={{ display:'flex', alignItems:'center', gap:8, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
-          <span style={{ flex:1, height:1, background:LM.lineHair }}/>
-          <span>WEDNESDAY · MAY 13</span>
-          <span style={{ flex:1, height:1, background:LM.lineHair }}/>
-        </div>
-
-        {(node.messages || []).map((m, i) => <ChatTurn key={i} m={m} ix={i} onAction={onTurnAction} isLast={i === (node.messages || []).length - 1}/>)}
+        {/* Real date dividers — emitted whenever the message day changes,
+            computed from each turn's real timestamp (no hardcoded date). */}
+        {(() => {
+          const msgs = node.messages || [];
+          const out = [];
+          let prevKey = null;
+          msgs.forEach((m, i) => {
+            const key = _dayKeyOf(m);
+            if (key !== prevKey) {
+              out.push(
+                <div key={'div-' + key + '-' + i} style={{ display:'flex', alignItems:'center', gap:8, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+                  <span style={{ flex:1, height:1, background:LM.lineHair }}/>
+                  <span>{_dayLabelOf(key)}</span>
+                  <span style={{ flex:1, height:1, background:LM.lineHair }}/>
+                </div>
+              );
+              prevKey = key;
+            }
+            out.push(<ChatTurn key={i} m={m} ix={i} onAction={onTurnAction} isLast={i === msgs.length - 1}/>);
+          });
+          return out;
+        })()}
 
         {/* Live tool-trace (founder demand #10). When the bridge streams tool
             invocations they land in node.tool_trace; we surface them here. */}
@@ -11961,7 +15849,7 @@ const ChatCodeBlock = ({ lang, code }) => {
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkDim }}>
           {lines.length} line{lines.length === 1 ? '' : 's'}
         </span>
-        <div style={{ flex:1 }}/>
+        <div style={S_FLEX1}/>
         <button onClick={(e) => { e.stopPropagation();
           try { navigator.clipboard.writeText(code); } catch (er) {} }}
           style={{ background:'transparent', border:0, color:LM.inkMuted,
@@ -12049,7 +15937,7 @@ const ChatTurn = React.memo(({ m, ix, isLast, onAction }) => {
               <ChatAction onClick={fire('branch')}>⎘ branch</ChatAction>
               <ChatAction onClick={fire('edit')}>✎ edit</ChatAction>
               <ChatAction onClick={fire('copy')}>⧉ copy</ChatAction>
-              <div style={{ flex:1 }}/>
+              <div style={S_FLEX1}/>
               {(m.tokens_in || m.tokens_out) ? (
                 <span>{m.tokens_in || 0} → {m.tokens_out || 0} tok</span>
               ) : null}
@@ -12094,12 +15982,18 @@ const FullParam = ({ p, node, onChange }) => {
   if (p.type === 'slider' || p.type === 'number') {
     const pct = (p.max !== undefined && p.min !== undefined)
       ? ((Number(p.v) - p.min) / (p.max - p.min)) * 100 : 50;
+    // tick = debounced mid-drag write; commit = flush-on-release.
+    // The second arg threads through onParamChange → flushGraphParamTick.
+    const tick   = (v) => onChange && onChange(v);
+    const commit = (v) => onChange && onChange(v, true);
+    const num = (e) => p.type === 'number' ? Number(e.target.value) : e.target.value;
     return (
       <div>
         <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
           <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
           <input value={p.v}
-            onChange={(e) => onChange && onChange(p.type === 'number' ? Number(e.target.value) : e.target.value)}
+            onChange={(e) => tick(num(e))}
+            onBlur={(e) => commit(num(e))}
             style={{
               fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500,
               border:0, background:'transparent', width:60, textAlign:'right', outline:'none',
@@ -12107,8 +16001,15 @@ const FullParam = ({ p, node, onChange }) => {
         </div>
         {p.max !== undefined && p.min !== undefined && (
           <>
+            {/* onChange fires per drag tick (debounced persist, instant visual).
+                pointerup/mouseup/keyup/blur are the release edges → flush the
+                final value to disk immediately so a drag-end never loses it. */}
             <input type="range" min={p.min} max={p.max} step={p.step || 1} value={p.v}
-              onChange={(e) => onChange && onChange(Number(e.target.value))}
+              onChange={(e) => tick(Number(e.target.value))}
+              onPointerUp={(e) => commit(Number(e.target.value))}
+              onMouseUp={(e) => commit(Number(e.target.value))}
+              onKeyUp={(e) => commit(Number(e.target.value))}
+              onBlur={(e) => commit(Number(e.target.value))}
               style={{ width:'100%', accentColor:LM.accent, marginTop:6 }}/>
             <div style={{ display:'flex', justifyContent:'space-between', marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
               <span>{p.min}</span><span>{p.max}</span>
@@ -12149,11 +16050,13 @@ const FullParam = ({ p, node, onChange }) => {
     React.useEffect(() => {
       // Audit 2026-05-21: bridgeJson is `async` → returns a Promise.
       // `Array.isArray(Promise)` is always false, so the version /
-      // document dropdowns NEVER populated.  Await the Promise.
+      // document dropdowns NEVER populated.  bridgeAsync resolves AND
+      // JSON-parses the slot result (Promise.resolve(bridgeJson()) left
+      // the payload an unparsed string — same async-slot class of bug).
       let cancelled = false;
       const slot = p.type === 'version' ? 'list_host_sessions' : 'list_host_documents';
       const args = p.type === 'version' ? [family] : [family, p.session || ''];
-      Promise.resolve(bridgeJson(slot, ...args)).then((data) => {
+      bridgeAsync(slot, ...args).then((data) => {
         if (cancelled) return;
         if (Array.isArray(data)) setOptions(data);
         else if (data && Array.isArray(data.items)) setOptions(data.items);
@@ -12197,207 +16100,64 @@ const FullParam = ({ p, node, onChange }) => {
   );
 };
 
-// ──────────────────────── SETTINGS ────────────────────────
-// Founder demand #4 / brutal-audit #17: bridge.open_settings() opens the
-// native PyQt SettingsDialog (single source of truth). The React Settings
-// overlay was a mountain of hardcoded numbers that never reflected real
-// state. We keep only a thin stub: when the fallback path mounts us (bridge
-// missing in dev preview), we immediately delegate and close.
-// AgDR-0024 sub-slice S2 + AgDR-0043 Sprint 2 — full in-app Settings.
-// Was a thin stub that delegated to the native Qt window (which had no
-// JSX-level toggles). Now exposes every JSX-controlled preference:
-// HostNodeV2 default, perf HUD, theme picker (locked to Forge today),
-// JSX cache controls, prefs reset. Founder feedback 2026-05-25:
-// "no DevTools to flip toggles, must be a panel".
-// ──────────────────────── BRAIN SETTINGS · AgDR-0044/0045 ──────────
-// (BrainSection removed 2026-05-26 — was unmounted in an earlier wave;
-// function body lived here as dead code. Brain UI lives in the native
-// PyQt SettingsDialog. The brain_* slots in bridge.py still exist for
-// the native dialog; nothing in studio-lm.jsx references them after
-// this deletion.)
-
+// ──────────────────────── SETTINGS (thin stub) ────────────────────────
+// IA-FIX (ia-critique-ai-stemcells-2026-06-03 = signed contract):
+// The native PyQt SettingsDialog (app/settings_dialog.py) is the SINGLE
+// source of truth for every preference. The big React Settings overlay was
+// a SECOND full settings renderer — a mountain of hardcoded numbers that
+// drifted from real state. Its 3 React-ONLY controls (Perf HUD, JSX bundle
+// cache clear/reload, Reset-prefs) were MIGRATED into the native dialog's
+// System section, and the theme taxonomy (Forge/Blueprint/Vellum) was
+// folded into one native theme control — so NOTHING is lost by reducing
+// this to a true thin stub.
+//
+// Every entry point (gear / Cmd-K / server-strip / brain-modal) already
+// converges on openSettingsResolved → bridgeCall('open_settings') → the
+// NATIVE dialog. This React component now mounts ONLY on the bridge-missing
+// dev-preview fallback (openSettingsResolved sets settingsOpen=true only
+// when bridgeCall returns null). In that case there is no native window to
+// host the controls, so the honest surface is a one-line notice that points
+// the user at the desktop app — plus a best-effort re-delegate in case the
+// bridge appeared after the fallback decision.
+//
+// (Removed with this stub: the SettingsRow/SettingsSwitch helpers and the
+// CANVAS/THEME/PERFORMANCE/BACKUP/DANGER sections — all now live native.
+// Brain UI already lived in the native SettingsDialog.)
 const Settings = ({ onClose }) => {
-  const [hostNodeV2, setHostNodeV2] = React.useState(() => {
-    try { const v = localStorage.getItem('archhub.hostnode.v2');
-      return v === null ? true : v === 'true';
-    } catch (e) { return true; }
-  });
-  const [perfHud, setPerfHud] = React.useState(() => {
-    try { return localStorage.getItem('archhub.perfhud') === 'true'; } catch (e) { return false; }
-  });
-  const [theme, setTheme] = React.useState(() => {
-    try { return localStorage.getItem('archhub.theme') || 'forge'; } catch (e) { return 'forge'; }
-  });
-  const [savedTick, setSavedTick] = React.useState(0);
-  const _flash = () => { setSavedTick(t => t + 1); setTimeout(() => setSavedTick(0), 1200); };
-  const setHN2 = (v) => {
-    setHostNodeV2(v);
-    try { localStorage.setItem('archhub.hostnode.v2', String(v)); } catch (e) {}
-    _flash();
-  };
-  const setHud = (v) => {
-    setPerfHud(v);
-    try { localStorage.setItem('archhub.perfhud', String(v)); } catch (e) {}
-    _flash();
-  };
-  const setT = (v) => {
-    setTheme(v);
-    try { localStorage.setItem('archhub.theme', v); } catch (e) {}
-    // Two-layer swap:
-    // (1) body[data-theme] — rebinds --lm-* CSS vars for var() consumers.
-    // (2) window.__archhubSetTheme — swaps the LM proxy's backing object
-    //     so every inline `style={{ background:LM.bg }}` returns the new
-    //     palette on next render. Then bumps a global counter that
-    //     forces the React tree to re-render.
-    try { document.body.setAttribute('data-theme', v); } catch (e) {}
-    try { window.__archhubSetTheme && window.__archhubSetTheme(v); } catch (e) {}
-    _flash();
-  };
-  const clearJsxCache = () => {
+  React.useEffect(() => {
+    // Best-effort: if the bridge is in fact reachable (it appeared after the
+    // fallback chose to mount us), open the real native dialog and close the
+    // stub immediately — the native window is the single source of truth.
     try {
-      let n = 0;
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i);
-        if (k && k.indexOf('jsx_cache_v1_') === 0) { localStorage.removeItem(k); n++; }
-      }
-      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
-        { detail:{ msg:`Cleared ${n} JSX cache entries · reload to recompile`, kind:'info' } })); } catch (e) {}
+      const ok = bridgeCall('open_settings');
+      if (ok !== null) { try { onClose && onClose(); } catch (e) {} }
     } catch (e) {}
-  };
-  const reload = () => { try { window.location.reload(); } catch (e) {} };
-  const resetPrefs = () => {
-    try {
-      const keys = ['archhub.hostnode.v2','archhub.perfhud','archhub.theme'];
-      keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-      window.dispatchEvent(new CustomEvent('lm-canvas-toast',
-        { detail:{ msg:'Prefs reset · reload to apply', kind:'info' } }));
-    } catch (e) {}
-  };
-  const Row = ({ label, sub, children }) => (
-    <div style={{ display:'flex', alignItems:'center', gap:14,
-      padding:'12px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ flex:1 }}>
-        <div style={{ fontSize:13, color:LM.ink, fontFamily:LM.sans }}>{label}</div>
-        {sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>}
-      </div>
-      {children}
-    </div>
-  );
-  const Switch = ({ on, onChange }) => (
-    <button onClick={() => onChange(!on)} aria-pressed={on} style={{
-      width:40, height:22, padding:0, borderRadius:11,
-      border:`1px solid ${on ? LM.accent : LM.line}`,
-      background: on ? LM.accent : LM.bgPanel,
-      cursor:'pointer', position:'relative', transition:'all .15s',
-    }}>
-      <span style={{
-        position:'absolute', top:2, left: on ? 20 : 2,
-        width:16, height:16, borderRadius:'50%',
-        background:'#fff', transition:'left .15s',
-      }}/>
-    </button>
-  );
+    // Esc closes the dev-preview notice.
+    const onKey = (e) => { if (e.key === 'Escape') { try { onClose && onClose(); } catch (e2) {} } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
-    <div onClick={onClose} style={{
+    <div onClick={onClose} data-testid="settings-stub" style={{
       position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
       display:'grid', placeItems:'center',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width:620, maxWidth:'92%', maxHeight:'86%',
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:10,
-        boxShadow:'0 18px 48px rgba(0,0,0,.6)',
-        display:'flex', flexDirection:'column',
-      }}>
-        <div style={{ padding:'16px 22px', borderBottom:`1px solid ${LM.line}`,
-          display:'flex', alignItems:'center', gap:12 }}>
-          <span style={{ fontFamily:LM.serif, fontSize:22, fontWeight:500 }}>Settings</span>
-          {savedTick > 0 && <span style={{ fontFamily:LM.mono, fontSize:9.5,
-            color:LM.ok, letterSpacing:'0.14em' }}>SAVED</span>}
-          <div style={{ flex:1 }}/>
-          <button onClick={onClose} style={{
-            width:24, height:24, border:0, background:LM.bgPanel, color:LM.inkSoft,
-            borderRadius:4, cursor:'pointer', fontFamily:LM.mono,
-          }}>✕</button>
+      <div onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings"
+        style={{
+          width:380, maxWidth:'92%',
+          background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:10,
+          boxShadow:'0 18px 48px rgba(0,0,0,.6)',
+          padding:'22px 24px', textAlign:'center',
+        }}>
+        <div style={{ fontFamily:LM.serif, fontSize:20, fontWeight:500, marginBottom:8 }}>Settings</div>
+        <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, lineHeight:1.6 }}>
+          Settings open in the desktop app.
         </div>
-        <div style={{ overflow:'auto', padding:'8px 22px 18px' }}>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-            letterSpacing:'0.18em', marginTop:14, marginBottom:6 }}>CANVAS</div>
-          <Row label="Host Node v2"
-               sub="11-constraint host node with op grid + OUTPUTS PLUCK (AgDR-0024). Off = legacy host card.">
-            <Switch on={hostNodeV2} onChange={setHN2}/>
-          </Row>
-          <Row label="Perf HUD overlay"
-               sub="FPS · save-call rate · RAF frames. Toggle anytime with Ctrl+Shift+P.">
-            <Switch on={perfHud} onChange={setHud}/>
-          </Row>
-
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>THEME</div>
-          <Row label="Active theme"
-               sub="Forge · dark warm · ships today as default. Blueprint · cool engineering blue · Vellum · warm light · live-swap the CSS-var-driven surfaces instantly; legacy inline-style surfaces pick up the new palette after a reload.">
-            <div style={{ display:'flex', gap:6 }}>
-              {[
-                { id:'forge',     label:'Forge'     },
-                { id:'blueprint', label:'Blueprint' },
-                { id:'vellum',    label:'Vellum'    },
-              ].map(t => (
-                <button key={t.id}
-                  onClick={() => setT(t.id)}
-                  style={{
-                    padding:'6px 12px', borderRadius:5,
-                    border:`1px solid ${theme === t.id ? LM.accent : LM.line}`,
-                    background: theme === t.id ? LM.accentDim : LM.bgPanel,
-                    color: theme === t.id ? LM.accent : LM.ink,
-                    cursor:'pointer',
-                    fontFamily:LM.mono, fontSize:10.5,
-                  }}>
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </Row>
-
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>PERFORMANCE</div>
-          <Row label="JSX bundle cache"
-               sub="Cached transpile keyed by sha256 — skip Babel on cold start (saves ~15s). Clear if a file change isn't taking effect.">
-            <button onClick={clearJsxCache} style={{
-              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.line}`,
-              background:LM.bgPanel, color:LM.ink, cursor:'pointer',
-              fontFamily:LM.mono, fontSize:10.5,
-            }}>Clear cache</button>
-          </Row>
-          <Row label="Reload now"
-               sub="Force a fresh JSX boot. Use after clearing the cache.">
-            <button onClick={reload} style={{
-              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.accent}`,
-              background:LM.accentDim, color:LM.accent, cursor:'pointer',
-              fontFamily:LM.mono, fontSize:10.5,
-            }}>Reload</button>
-          </Row>
-
-          {/* Brain section moved to native PyQt SettingsDialog tab
-              (app/settings_dialog.py BrainTab). The JSX fallback modal
-              is only reached when bridge.open_settings isn't wired,
-              which is never in production — keeping brain UI here would
-              be invisible dead code. */}
-
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent,
-            letterSpacing:'0.18em', marginTop:20, marginBottom:6 }}>DANGER</div>
-          <Row label="Reset all preferences"
-               sub="Clears every archhub.* localStorage key. Does not touch sessions or canvases.">
-            <button onClick={resetPrefs} style={{
-              padding:'6px 12px', borderRadius:5, border:`1px solid ${LM.err}66`,
-              background:'transparent', color:LM.err, cursor:'pointer',
-              fontFamily:LM.mono, fontSize:10.5,
-            }}>Reset prefs</button>
-          </Row>
-
-          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
-            marginTop:22, letterSpacing:'0.06em' }}>
-            ArchHub Studio · v1.4 prototype · changes apply on next render (theme + HostNodeV2 require reload).
-          </div>
-        </div>
+        <button onClick={onClose} autoFocus style={{
+          marginTop:18, padding:'7px 16px', borderRadius:6,
+          border:`1px solid ${LM.accent}`, background:LM.accentDim, color:LM.accent,
+          cursor:'pointer', fontFamily:LM.mono, fontSize:11,
+        }}>Got it</button>
       </div>
     </div>
   );
@@ -12577,7 +16337,7 @@ const ModelPicker = ({ setModel, onClose, model }) => {
 // Hat 3 audit Fix #12 — PerfHud overlay. Press Ctrl+Shift+P (Cmd on
 // macOS) to toggle. Shows FPS · save_graph calls/min · React render
 // count. Lets the founder A/B subjective perf wins against numbers.
-const PerfHud = () => {
+const PerfHudInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);
   const [tick, setTick] = React.useState(0);
   const baselineRef = React.useRef({ saveCalls: 0, t: Date.now() });
@@ -12635,6 +16395,11 @@ const PerfHud = () => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): always-mounted, early-returns null when closed
+// (only shown on Ctrl+Shift+P). Memo'd so root focus/settings/panel/picker
+// re-renders skip it; `_themeBump` (= root paletteBump) repaints it on theme
+// swap while open.
+const PerfHud = React.memo(PerfHudInner);
 
 // AgDR-0042 — bottom-strip live memory readout. Polls memory_stats
 // every 30s. Click → flashToast with breakdown by kind.
@@ -12653,12 +16418,20 @@ const MemoryStripItem = () => {
       try {
         const r = await bridgeAsync('memory_stats');
         if (cancelled) return;
-        if (r && r.status === 'ok') setStats(r);
+        // AgDR-0036 — memory_stats is off-thread now: ignore the cold-cache
+        // 'pending' placeholder; the real snapshot arrives via memory_changed
+        // (re-broadcast as lm-memory-changed) which re-pulls the warm cache.
+        if (r && r.status === 'ok' && r.source && r.source !== 'pending') setStats(r);
       } catch (e) {}
     };
     pull();
     const t = setInterval(pull, 30000);
-    return () => { cancelled = true; clearInterval(t); };
+    const onChanged = () => pull();
+    window.addEventListener('lm-memory-changed', onChanged);
+    return () => {
+      cancelled = true; clearInterval(t);
+      window.removeEventListener('lm-memory-changed', onChanged);
+    };
   }, []);
   if (!stats) return null;
   const onClick = () => {
@@ -12683,30 +16456,90 @@ const MemoryStripItem = () => {
 };
 
 // ──────────────────────── SERVER STRIP ────────────────────────
-const ServerStrip = ({ session, model, setSettingsOpen }) => {
-  const live = (LM_HOSTS || []).filter(h => h.state !== 'off').length;
-  // Founder + ui-ux-check 2026-05-25: footer text was `inkMuted`
-  // (#5e574f on #15151a ≈ 3.5:1) — fails WCAG AA 4.5:1. Bumped to
-  // `inkSoft` (#9b938a ≈ 7.8:1).
-  const StripItem = ({ onClick, children, accent }) => {
-    const [h, setH] = React.useState(false);
-    return (
-      <button onClick={onClick}
-        onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-        style={{
-          background:'transparent', border:0, padding:'0 6px',
-          cursor: onClick ? 'pointer' : 'default',
-          color: h && onClick ? LM.ink : (accent || LM.inkSoft),
-          fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
-          transition:'color .12s',
-        }}>{children}</button>
-    );
-  };
-  // Visual group separator — replaces the inline `·` with a thin
-  // vertical line so the eye groups [system] [session] [diag] [actions].
-  const GroupSep = () => (
-    <span style={{ width:1, height:14, background:LM.line, margin:'0 6px' }}/>
+// LAG-ROOT FIX (2026-06-01): StripItem + GroupSep were declared INSIDE
+// ServerStrip's render body → a NEW function identity every render →
+// React UNMOUNTED + REMOUNTED all 5 StripItems + 3 GroupSeps on every
+// shell re-render (and 11×/AI-stream via lm-usage-bump). Hoisted to
+// module scope so their identity is stable; they read only LM.* getters
+// (theme-reactive at access time) + props, so behavior is identical.
+const StripItem = ({ onClick, children, accent }) => {
+  const [h, setH] = React.useState(false);
+  return (
+    <button onClick={onClick}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{
+        background:'transparent', border:0, padding:'0 6px',
+        cursor: onClick ? 'pointer' : 'default',
+        color: h && onClick ? LM.ink : (accent || LM.inkSoft),
+        fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+        transition:'color .12s',
+      }}>{children}</button>
   );
+};
+// Visual group separator — replaces the inline `·` with a thin
+// vertical line so the eye groups [system] [session] [diag] [actions].
+const GroupSep = () => (
+  <span style={{ width:1, height:14, background:LM.line, margin:'0 6px' }}/>
+);
+const ServerStrip = ({ session, model, setSettingsOpen, _themeBump }) => {
+  const live = (LM_HOSTS || []).filter(h => h.state !== 'off').length;
+  // Audit 2026-05-28: the strip hardcoded `server :7300` + `4.2k tok · $0.024`.
+  // Pull the REAL runtime port (debug port if set, else the brain daemon) from
+  // get_runtime_info.
+  const [rt, setRt] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    bridgeAsync('get_runtime_info').then(r => { if (!cancelled && r) setRt(r); });
+    return () => { cancelled = true; };
+  }, []);
+  // REAL token usage — from the bridge `get_token_usage` slot, which the
+  // router fills from each completion's provider-reported usage block
+  // (Anthropic/OpenAI/OpenRouter usage{}, Ollama eval_count). This REPLACES
+  // the old client-side chars/4 estimate (window.__archhub_usage) that
+  // guessed tokens from streamed character count. Re-pulled on every
+  // `lm-usage-bump` (fired per chunk during streaming) so the footer tracks
+  // the real running total. tokens stays 0 — honestly — until a real
+  // completion lands. `cost` shown only when cost_known (metered model with
+  // a known price); local/subscription models show tokens only.
+  const [usage, setUsage] = React.useState({ tokens: 0, cost: 0, cost_known: false });
+  React.useEffect(() => {
+    let cancelled = false;
+    const doPull = () => {
+      bridgeAsync('get_token_usage').then(u => {
+        if (!cancelled && u) setUsage(u);
+      }).catch(() => {});
+    };
+    // LAG-ROOT FIX (2026-06-01): `lm-usage-bump` fires once PER STREAM CHUNK
+    // (30+/response) and each fired a get_token_usage pull → a footer
+    // re-render per chunk (measured 11×/30-chunk stream). Coalesce the pulls
+    // with rAF — duplicate bumps in the same frame collapse into ONE pull —
+    // mirroring the root bumpGraph rAF-coalesce. The footer still tracks the
+    // real running total (final value identical); it just updates per-frame
+    // (≤60Hz) instead of per-chunk. No fabricated numbers, same source slot.
+    let pendPull = false;
+    const pull = () => {
+      if (pendPull) return;
+      pendPull = true;
+      requestAnimationFrame(() => { pendPull = false; doPull(); });
+    };
+    doPull();                                // initial real read (immediate)
+    window.addEventListener('lm-usage-bump', pull);
+    return () => { cancelled = true; window.removeEventListener('lm-usage-bump', pull); };
+  }, []);
+  const tokFmt = (t) => t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t || 0);
+  // REAL cost — the router computed it from real tokens × the model's real
+  // per-token price. Shown only when the provider's price is known
+  // (usage.cost_known); otherwise tokens are shown without a fabricated $.
+  const costFmt = (c) => '$' + (c || 0).toFixed(3);
+  // The real "server" surface: prefer the active remote-debug port, else the
+  // local brain daemon port (with a live/down dot). Falls back gracefully
+  // before get_runtime_info resolves.
+  const realPort = rt && rt.debug_port ? rt.debug_port
+                  : (rt && rt.brain_port ? rt.brain_port : null);
+  const portOk = rt ? (rt.debug_port ? true : !!rt.brain_ok) : true;
+  // Footer text uses `inkSoft` (≈7.8:1 on the panel bg) — WCAG AA pass
+  // (was `inkMuted` ≈3.5:1, ui-ux-check 2026-05-25). StripItem + GroupSep
+  // are now module-scoped (hoisted above) so they don't remount per render.
   return (
     <div style={{
       gridColumn:'1 / -1', gridRow:'2',
@@ -12714,9 +16547,10 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
       padding:'0 12px', display:'flex', alignItems:'center', gap:2,
       minHeight:28,
     }}>
-      {/* GROUP — SYSTEM */}
+      {/* GROUP — SYSTEM — real runtime port + live/down dot */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-        <span style={{ color:LM.ok }}>●</span> server :7300 · {live}/{(LM_HOSTS || []).length} hosts
+        <span style={{ color: portOk ? LM.ok : LM.inkMuted }}>●</span>
+        {realPort ? ` server :${realPort}` : ' server'} · {live}/{(LM_HOSTS || []).length} hosts
       </StripItem>
       <GroupSep/>
       {/* GROUP — SESSION / MODEL */}
@@ -12725,7 +16559,13 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
           <StripItem>{session.file}</StripItem>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
             <span style={{ color:LM.ink }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
-            <span style={{ color:LM.inkMuted }}> · 4.2k tok · $0.024</span>
+            {/* REAL accumulated session usage from the provider — shown only
+                once a real completion has reported tokens (no fabricated
+                baseline). Cost appended only when the model's real price is
+                known; local/subscription models show tokens alone. */}
+            {usage.tokens > 0 && (
+              <span style={{ color:LM.inkMuted }}> · {tokFmt(usage.tokens)} tok{usage.cost_known ? ` · ${costFmt(usage.cost)}` : ''}</span>
+            )}
           </StripItem>
         </>
       ) : (
@@ -12736,7 +16576,7 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
           now; footer pill removed since the rail map is always visible. */}
       <MemoryStripItem/>
       <HealthStripItem/>
-      <div style={{ flex:1 }}/>
+      <div style={S_FLEX1}/>
       {/* GROUP — ACTIONS */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <GroupSep/>
@@ -12744,6 +16584,22 @@ const ServerStrip = ({ session, model, setSettingsOpen }) => {
     </div>
   );
 };
+// LAG-ROOT FIX (2026-06-01): the footer is ALWAYS mounted and was re-executing
+// on every root re-render (focus/settings/panel/picker). Wrapped in React.memo
+// (ServerStripMemo — the root renders that) with a comparator over its real
+// inputs. `setSettingsOpen` (= openSettingsResolved) is a stable useCallback
+// from the root, so a reference check is correct (and fails-closed → re-render
+// if it ever becomes unstable). `_themeBump` (= root paletteBump) repaints the
+// strip on theme swap. ServerStrip's own `usage`/`rt` state + the
+// MemoryStripItem/HealthStripItem children re-render via their own listeners
+// (lm-usage-bump / lm-graph-bump) — unaffected by memo.
+const _ssPropsEqual = (a, b) => (
+  a.session === b.session &&
+  a.model === b.model &&
+  a.setSettingsOpen === b.setSettingsOpen &&
+  a._themeBump === b._themeBump
+);
+const ServerStripMemo = React.memo(ServerStrip, _ssPropsEqual);
 
 // AgDR-0041 — footer-anchored Graph Health pill + popover.
 // Replaces the in-canvas GraphHealthBadge which cramped the working
@@ -12757,10 +16613,16 @@ const HealthStripItem = () => {
   const [bump, setBump] = React.useState(0);
   React.useEffect(() => {
     // Re-poll when canvas mutates; piggyback off the same bumpGraph
-    // signal the old badge listened to via window event.
+    // signal the old badge listened to via window event. Also re-poll on
+    // lm-graph-validated — graph_validate is off-thread (AgDR-0036), so the
+    // real result lands via that signal after a cached placeholder.
     const onBump = () => setBump(b => b + 1);
     window.addEventListener('lm-graph-bump', onBump);
-    return () => window.removeEventListener('lm-graph-bump', onBump);
+    window.addEventListener('lm-graph-validated', onBump);
+    return () => {
+      window.removeEventListener('lm-graph-bump', onBump);
+      window.removeEventListener('lm-graph-validated', onBump);
+    };
   }, []);
   React.useEffect(() => {
     let cancelled = false;

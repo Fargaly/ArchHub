@@ -26,10 +26,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         # Limit to the last 50 commits so a fresh branch from upstream
         # doesn't re-flag historical broker changes.
         cs_changes=$(git log --name-only --pretty=format: -50 "$range" -- \
-                     'payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+                     ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
     else
         cs_changes=$(git log --name-only --pretty=format: "$remote_sha..$local_sha" -- \
-                     'payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+                     ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
     fi
 
     if [[ -n "$cs_changes" ]]; then
@@ -47,5 +47,27 @@ EOF
         exit 1
     fi
 done
+
+# ─────────────────────────────────────────────────────────────────────────
+# AgDR-0050 — no-brain-on-commit floor (ADDITIVE; runs AFTER the .cs guard).
+# Second line for the brain gate too, mirroring pre-commit. At push time there
+# is no staged index, so brain_commit_gate.py (which reads `git diff --cached`)
+# normally finds nothing staged and SKIPS (exit 0) — the commit-time hook is
+# where this gate really bites. It is wired here for parity + WARN-mode
+# completeness; it still warns by default and only blocks on the explicit
+# ARCHHUB_BRAIN_COMMIT_GATE=block opt-in. Default is WARN
+# (ARCHHUB_BRAIN_COMMIT_GATE unset/warn). Fail-open is absolute: a missing
+# python, an absent gate file, or any invocation error must NOT block the push.
+PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
+if command -v "$PYTHON_BIN" >/dev/null 2>&1 \
+   && [ -f tools/brain_commit_gate.py ]; then
+    GATE_RC=0
+    "$PYTHON_BIN" tools/brain_commit_gate.py || GATE_RC=$?
+    if [ "$GATE_RC" = "1" ]; then
+        exit 1
+    fi
+else
+    echo "[brain-commit-gate] python or gate script unavailable — fail-open, not blocking." >&2
+fi
 
 exit 0

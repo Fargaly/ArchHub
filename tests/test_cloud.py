@@ -33,6 +33,18 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "SETTINGS_FILE", app_dir / "settings.json")
 
 
+# Realistic-length bearer tokens for tests. A REAL bearer (POST
+# /v1/auth/exchange) is always long (32+ chars); cloud_client now refuses to
+# persist anything shorter than MIN_TOKEN_LEN (16) as junk. These constants keep
+# every test's intent while using lengths a real token would have — distinct
+# values where a test needs to tell two tokens apart. (The OLD literals
+# "ah_test_123"/"ah_old"/"ah_test"/"ah_forever" were 6–11 chars and now
+# correctly fail validation.)
+_VALID = "ah_" + "b" * 40          # 43 chars — clearly >= MIN_TOKEN_LEN
+_VALID_OLD = "ah_old_" + "c" * 40       # distinct, realistic length
+_VALID_FOREVER = "ah_forever_" + "d" * 40   # distinct, realistic length
+
+
 # ---------------------------------------------------------------------------
 class TestTokenStorage:
     def test_initially_signed_out(self):
@@ -42,27 +54,27 @@ class TestTokenStorage:
 
     def test_set_token_persists(self):
         import cloud_client as c
-        c.set_token("ah_test_123", expires_at=time.time() + 3600)
-        assert c.current_token() == "ah_test_123"
+        c.set_token(_VALID, expires_at=time.time() + 3600)
+        assert c.current_token() == _VALID
         assert c.is_signed_in() is True
 
     def test_expired_token_returns_none(self):
         import cloud_client as c
-        c.set_token("ah_old", expires_at=time.time() - 10)
+        c.set_token(_VALID_OLD, expires_at=time.time() - 10)
         assert c.current_token() is None
         assert c.is_signed_in() is False
 
     def test_clear_token(self):
         import cloud_client as c
-        c.set_token("ah_test", expires_at=time.time() + 3600)
+        c.set_token(_VALID, expires_at=time.time() + 3600)
         c.clear_token()
         assert c.current_token() is None
 
     def test_zero_expiry_means_never_expires(self):
         import cloud_client as c
-        c.set_token("ah_forever", expires_at=None)
+        c.set_token(_VALID_FOREVER, expires_at=None)
         # current_token() should still return the token when expires_at=0
-        assert c.current_token() == "ah_forever"
+        assert c.current_token() == _VALID_FOREVER
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +202,7 @@ class TestRouterRegistration:
 
     def test_cloud_appears_when_signed_in(self):
         import cloud_client as c
-        c.set_token("ah_test", expires_at=time.time() + 3600)
+        c.set_token(_VALID, expires_at=time.time() + 3600)
         router = self._router()
         providers = router.configured_providers()
         assert "archhub_cloud" in providers
@@ -203,7 +215,7 @@ class TestRouterRegistration:
 
     def test_get_client_returns_archhub_cloud_client(self):
         import cloud_client as c
-        c.set_token("ah_test", expires_at=time.time() + 3600)
+        c.set_token(_VALID, expires_at=time.time() + 3600)
         router = self._router()
         try:
             client = router._get_client("archhub_cloud")
@@ -226,7 +238,7 @@ class TestRequestHelper:
 
     def test_unreachable_backend_reports_unreachable(self, monkeypatch):
         import cloud_client as c, urllib.error
-        c.set_token("ah_test", expires_at=time.time() + 3600)
+        c.set_token(_VALID, expires_at=time.time() + 3600)
         def boom(*a, **kw):
             raise urllib.error.URLError("connection refused")
         monkeypatch.setattr("urllib.request.urlopen", boom)

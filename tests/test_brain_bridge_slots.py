@@ -96,6 +96,7 @@ def test_bridge_has_brain_slots():
         "brain_firm_leave",
         "brain_promote",
         "brain_wiring_announce",
+        "brain_export_dataset",   # Brain #32 — dataset export button
     ]
     missing = [m for m in required if not hasattr(ArchHubBridge, m)]
     assert not missing, f"Bridge missing brain slots: {missing}"
@@ -123,6 +124,7 @@ def test_brain_slots_return_str_annotation():
         "brain_firm_leave",
         "brain_promote",
         "brain_wiring_announce",
+        "brain_export_dataset",
     ):
         fn = getattr(ArchHubBridge, name)
         sig = inspect.signature(fn)
@@ -313,3 +315,270 @@ def test_brain_slot_returns_error_when_brainclient_import_fails(
     data = json.loads(raw)
     assert data.get("ok") is False
     assert "error" in data
+
+
+# ─────────────────────── Brain #32 dataset export ───────────────────
+
+
+class _SyncPool:
+    """Stand-in for the bridge background pool — runs work inline so the
+    threaded export slot is deterministic in tests (no real thread / no
+    waiting on the brain_dataset_done signal)."""
+
+    def submit(self, fn, *a, **k):
+        fn(*a, **k)
+        return None
+
+
+def _patch_sync_pool(bridge_inst, monkeypatch):
+    monkeypatch.setattr(bridge_inst, "_bg_pool", lambda: _SyncPool())
+
+
+def test_brain_export_dataset_returns_started_envelope(
+    bridge_inst, mock_brain_call, monkeypatch
+):
+    """The slot returns immediately with {async, request_id, out_dir,
+    scope} — the threaded contract the JSX awaits before listening for
+    the brain_dataset_done signal."""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    mock_brain_call["set"]({"ok": True, "row_count": 3,
+                            "files": {"jsonl": {"path": "x", "bytes": 9}}})
+    raw = bridge_inst.brain_export_dataset("user", "my-brain")
+    data = json.loads(raw)
+    assert data.get("async") is True
+    assert data.get("request_id")
+    assert data.get("scope") == "user"
+    assert isinstance(data.get("out_dir"), str) and data["out_dir"]
+
+
+def test_brain_export_dataset_proxies_to_tool_with_user_scope(
+    bridge_inst, mock_brain_call, monkeypatch
+):
+    """USER scope → brain.dataset_export called with scopes=['user'],
+    the dataset_name, and an out_dir. (Pool patched to run inline.)"""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    mock_brain_call["set"]({"ok": True, "row_count": 2,
+                            "scope_distribution": {"user": 2}})
+    bridge_inst.brain_export_dataset("user", "my-brain")
+    assert len(mock_brain_call["calls"]) == 1
+    rec = mock_brain_call["calls"][0]
+    assert rec["tool"] == "brain.dataset_export"
+    assert rec["params"]["scopes"] == ["user"]
+    assert rec["params"]["dataset_name"] == "my-brain"
+    assert isinstance(rec["params"]["out_dir"], str)
+    assert rec["params"]["out_dir"]
+
+
+def test_brain_export_dataset_maps_collective_scope(
+    bridge_inst, mock_brain_call, monkeypatch
+):
+    """The founder-facing 'collective' key maps to the brain's
+    privacy-gated scope string — the export tool routes it through the
+    DP aggregate path (no raw rows)."""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    mock_brain_call["set"]({"ok": True, "mode": "collective_dp",
+                            "differential_privacy": True, "row_count": 0})
+    bridge_inst.brain_export_dataset("collective", "firm-pool")
+    rec = mock_brain_call["calls"][0]
+    assert rec["tool"] == "brain.dataset_export"
+    assert rec["params"]["scopes"] == ["collective"]
+
+
+def test_brain_export_dataset_emits_done_signal_with_request_id(
+    bridge_inst, mock_brain_call, monkeypatch
+):
+    """When the worker finishes it emits brain_dataset_done(result_json)
+    carrying the manifest + the stamped request_id the JSX matches on."""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    mock_brain_call["set"]({"ok": True, "row_count": 5,
+                            "files": {"jsonl": {"path": "p", "bytes": 1}}})
+    captured: list = []
+    bridge_inst.brain_dataset_done.connect(captured.append)
+
+    raw = bridge_inst.brain_export_dataset("user", "my-brain")
+    started = json.loads(raw)
+
+    assert len(captured) == 1
+    payload = json.loads(captured[0])
+    assert payload.get("ok") is True
+    assert payload.get("row_count") == 5
+    # request_id on the signal matches the one returned synchronously.
+    assert payload.get("request_id") == started.get("request_id")
+
+
+def test_brain_export_dataset_degrades_when_daemon_down(
+    bridge_inst, monkeypatch
+):
+    """Daemon unreachable → the worker emits an {ok:false, error} payload
+    on brain_dataset_done (never raises); the started envelope still
+    comes back so the JSX doesn't hang."""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    import memory_gate
+
+    def fake_call(self, tool, params, timeout=None):
+        raise ConnectionRefusedError("daemon down")
+    monkeypatch.setattr(memory_gate.BrainClient, "_call", fake_call)
+
+    captured: list = []
+    bridge_inst.brain_dataset_done.connect(captured.append)
+
+    raw = bridge_inst.brain_export_dataset("user", "my-brain")
+    assert json.loads(raw).get("async") is True
+    assert len(captured) == 1
+    payload = json.loads(captured[0])
+    assert payload.get("ok") is False
+    assert "error" in payload
+    assert payload.get("request_id")
+
+
+# ─────────────────────── Cloud-DB backup ("Back up my brain") ─────────
+
+
+def test_bridge_has_cloud_backup_slots():
+    """The Brain view's backup button wires to brain_cloud_backup (the
+    threaded push) + brain_cloud_backup_status (the enable/disable probe).
+    Silent renames break the button."""
+    from bridge import ArchHubBridge
+    for name in ("brain_cloud_backup", "brain_cloud_backup_status"):
+        assert hasattr(ArchHubBridge, name), f"missing slot {name}"
+        assert callable(getattr(ArchHubBridge, name))
+
+
+def test_brain_cloud_backup_status_reports_not_signed_in(
+    bridge_inst, monkeypatch
+):
+    """No cloud token → {signed_in: false}. The JSX keeps the button in the
+    honest 'Sign in to enable' state. Probe does NO network I/O."""
+    import cloud_client
+    monkeypatch.setattr(cloud_client, "current_token", lambda: None)
+    monkeypatch.setattr(cloud_client, "base_url",
+                        lambda: "http://127.0.0.1:8789")
+    raw = bridge_inst.brain_cloud_backup_status()
+    data = json.loads(raw)
+    assert data.get("signed_in") is False
+    assert data.get("cloud_url") == "http://127.0.0.1:8789"
+
+
+def test_brain_cloud_backup_status_reports_signed_in(
+    bridge_inst, monkeypatch
+):
+    """A present token → {signed_in: true}. The JSX enables the button."""
+    import cloud_client
+    monkeypatch.setattr(cloud_client, "current_token",
+                        lambda: "sk_test_fake_for_unit_test")
+    raw = bridge_inst.brain_cloud_backup_status()
+    data = json.loads(raw)
+    assert data.get("signed_in") is True
+
+
+def test_brain_cloud_backup_emits_need_signin_when_no_token(
+    bridge_inst, monkeypatch
+):
+    """No token → the worker emits {ok:false, need_signin:true} on
+    brain_backup_done (never a fake success); the started envelope comes
+    back so the JSX doesn't hang. This is the honest-disabled path — the
+    agent never signs in (founder's manual step)."""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    import cloud_client
+    monkeypatch.setattr(cloud_client, "current_token", lambda: None)
+    monkeypatch.setattr(cloud_client, "base_url",
+                        lambda: "http://127.0.0.1:8789")
+
+    captured: list = []
+    bridge_inst.brain_backup_done.connect(captured.append)
+
+    raw = bridge_inst.brain_cloud_backup()
+    started = json.loads(raw)
+    assert started.get("async") is True
+    assert started.get("request_id")
+
+    assert len(captured) == 1
+    payload = json.loads(captured[0])
+    assert payload.get("ok") is False
+    assert payload.get("need_signin") is True
+    assert payload.get("request_id") == started.get("request_id")
+
+
+def test_brain_cloud_backup_posts_delta_and_reports_synced(
+    bridge_inst, monkeypatch, tmp_path
+):
+    """Slice-17 fanout: token present → the worker gathers USER+FIRM+
+    COMMUNITY rows from brain.fanout_export, POSTs the delta to
+    /v1/brain/sync (Bearer auth), and emits {ok:true, synced:N} carrying the
+    server's `accepted` count + request_id. (Replaces the old USER-only
+    dataset_export + JSONL path.)"""
+    _patch_sync_pool(bridge_inst, monkeypatch)
+    import cloud_client
+    monkeypatch.setattr(cloud_client, "current_token", lambda: "tok-test")
+    monkeypatch.setattr(cloud_client, "base_url",
+                        lambda: "http://127.0.0.1:8789")
+
+    import memory_gate
+
+    # brain.fanout_export now returns fragment rows directly (no JSONL file).
+    # A firm row is included to prove non-USER scope rides the push.
+    def fake_call(self, tool, params, timeout=None):
+        if tool == "brain.fanout_export":
+            assert params["scopes"] == ["user", "firm", "community"]
+            return {"ok": True, "count": 2, "fragments": [
+                {"id": "f1", "kind": "fact", "text": "ACME uses Revit",
+                 "subject": "ACME", "predicate": "uses", "object": "Revit",
+                 "scope": "user", "owner_user": "Fargaly", "extra": {},
+                 "hlc": "0000000000000001000"},
+                {"id": "f2", "kind": "fact", "text": "firm wall lib",
+                 "scope": "firm", "firm_id": "firm-K", "owner_user": "Fargaly",
+                 "extra": {}, "hlc": "0000000000000002000"},
+            ]}
+        if tool == "brain.community_groups":
+            return {"ok": True, "communities": []}  # no relay communities
+        if tool == "brain.fanout_apply":
+            return {"ok": True, "applied": 0, "skipped": 0, "refused": 0}
+        raise AssertionError(f"unexpected brain tool {tool}")
+    monkeypatch.setattr(memory_gate.BrainClient, "_call", fake_call)
+
+    # Capture the HTTP POST cloud_client.brain_sync makes to /v1/brain/sync —
+    # assert the Bearer header + delta, return a realistic server response.
+    posted = {}
+
+    class _FakeResp:
+        def __init__(self, body): self._b = body
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        status = 200
+
+    def fake_urlopen(req, timeout=None):
+        posted["url"] = req.full_url
+        posted["auth"] = req.headers.get("Authorization")
+        posted["body"] = json.loads(req.data.decode("utf-8"))
+        return _FakeResp(json.dumps({
+            "accepted": 2, "rejected": [],
+            "new_hlc": "0000000000000009.abcdabcd",
+            "merged": {"fragments": [], "wiring": []},
+            "firm_keys": ["firm-K"], "community_keys": [],
+        }).encode("utf-8"))
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    captured: list = []
+    bridge_inst.brain_backup_done.connect(captured.append)
+
+    raw = bridge_inst.brain_cloud_backup()
+    started = json.loads(raw)
+    assert started.get("async") is True
+
+    assert len(captured) == 1
+    payload = json.loads(captured[0])
+    assert payload.get("ok") is True
+    assert payload.get("synced") == 2
+    assert payload.get("new_hlc") == "0000000000000009.abcdabcd"
+    assert payload.get("request_id") == started.get("request_id")
+
+    # Transport assertions — real Bearer auth + BOTH scopes in the delta.
+    assert posted["url"] == "http://127.0.0.1:8789/v1/brain/sync"
+    assert posted["auth"] == "Bearer tok-test"
+    frag_ids = {f["id"] for f in posted["body"]["delta"]["fragments"]}
+    assert frag_ids == {"f1", "f2"}, "USER + FIRM scope both pushed (fanout)"
+    # since_hlc is sent (full pull); community_keys present when relay groups.
+    assert "since_hlc" in posted["body"]

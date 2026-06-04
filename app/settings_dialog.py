@@ -1,8 +1,9 @@
-"""ArchHub — SettingsDialog (v1.5 IA refresh).
+"""ArchHub — SettingsDialog (v1.6 IA refresh — Accessibility tab added).
 
-Eight tabs, each a small QWidget subclass: General, Providers, Hosts,
-Memory, Permissions, Storage, Shortcuts, About. Every button fires a
-real bridge slot; nothing is decorative. Public constructor stays
+Eleven tabs, each a small QWidget subclass: General, Providers, Secrets,
+Hosts, Memory, Brain, Permissions, Storage, Shortcuts, Accessibility,
+About. Every button fires a real bridge slot; nothing is decorative.
+Public constructor stays
 `SettingsDialog(router, parent, manager=None, tools=None, **_kwargs)`
 to keep existing callers working.
 """
@@ -13,20 +14,19 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
-    QTabWidget, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from secrets_store import (
     load_api_key, delete_api_key, save_setting, load_setting,
 )
-from sign_in_dialog import SignInDialog
 
 
 # ── Dark-theme tokens (LM aesthetic) ──────────────────────────────────────
@@ -131,6 +131,72 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
 """
 
 
+# ── SIGNED palette (docs/prototypes/signed/brain-settings-2026-05-25,
+#    AgDR-0045/0046) — used ONLY by the sidebar-shell rebuild. These are the
+#    founder-signed tokens; do NOT invent new hexes. ───────────────────────
+SIGNED = {
+    "bg":     "#0a0a0c",   # window
+    "bg2":    "#111114",   # sidebar fill
+    "bg3":    "#16161b",   # active row / hover
+    "line":   "#22222a",
+    "ink":    "#e8e8ea",
+    "ink2":   "#9a9aa3",
+    "ink3":   "#5e5e68",
+    "accent": "#e8743a",
+    "mono":   TOKENS["mono"],
+}
+
+# QSS applied to the new sidebar shell on top of DIALOG_QSS. Keyed object
+# names: settingsDialog (window bg), settingsNav (QListWidget sidebar),
+# settingsBrand* (lockup), settingsDivider, settingsStack (content host),
+# sectionSubLabel (mono-uppercase per-tab divider inside multi-tab pages).
+SHELL_QSS = f"""
+QDialog#settingsDialog {{ background:{SIGNED['bg']}; color:{SIGNED['ink']}; }}
+
+/* LEFT SIDEBAR — 220px nav of 5 sections */
+QListWidget#settingsNav {{
+    background:{SIGNED['bg2']};
+    border:none; border-right:1px solid {SIGNED['line']};
+    outline:0; padding:6px 0 6px 0;
+}}
+QListWidget#settingsNav::item {{
+    color:{SIGNED['ink2']};
+    padding:9px 12px 9px 14px;
+    margin:1px 0 1px 0;
+    border-left:2px solid transparent;
+    border-top-right-radius:8px; border-bottom-right-radius:8px;
+}}
+QListWidget#settingsNav::item:hover {{
+    color:{SIGNED['ink']}; background:{SIGNED['bg3']};
+}}
+QListWidget#settingsNav::item:selected {{
+    color:{SIGNED['ink']};
+    background:{SIGNED['bg3']};
+    border-left:2px solid {SIGNED['accent']};
+}}
+
+/* Brand lockup top-left of sidebar */
+QLabel#settingsBrand {{ font-size:20px; font-weight:600; padding:0; }}
+QLabel#settingsBrandSub {{
+    font-family:{SIGNED['mono']}; font-size:10px; font-weight:600;
+    color:{SIGNED['ink3']}; letter-spacing:0.16em;
+}}
+QFrame#settingsDivider {{ background:{SIGNED['line']}; border:none; max-height:1px; min-height:1px; }}
+
+/* Content host */
+QStackedWidget#settingsStack {{ background:{SIGNED['bg']}; }}
+QWidget#settingsSectionPage {{ background:{SIGNED['bg']}; }}
+
+/* Mono-uppercase per-tab sub-label inside a multi-tab section page */
+QLabel#sectionSubLabel {{
+    font-family:{SIGNED['mono']}; font-size:11px; font-weight:600;
+    color:{SIGNED['ink3']};
+    text-transform:uppercase; letter-spacing:0.14em;
+    padding:2px 0 0 2px;
+}}
+"""
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 def _safe(call, default=None):
     try:
@@ -197,6 +263,28 @@ def _add_title(layout, title: str, blurb: str, scope: str = "") -> None:
     layout.addWidget(s)
 
 
+def _danger_row(label: str, blurb: str, on_click) -> QFrame:
+    """A single destructive-action row: bold label + muted blurb on the
+    left, a red `danger` button on the right. Body uses only module-level
+    TOKENS + Qt classes (no `self`), so it lives here as one shared helper
+    rather than being duplicated per tab."""
+    row = QFrame()
+    row.setStyleSheet(
+        f"QFrame {{ background: {TOKENS['card']}; "
+        f"border: 1px solid {TOKENS['border']}; border-radius: 6px; }}"
+    )
+    rl = QHBoxLayout(row); rl.setContentsMargins(12, 10, 12, 10); rl.setSpacing(10)
+    col = QVBoxLayout(); col.setSpacing(2)
+    l1 = QLabel(label); l1.setStyleSheet("font-weight: 600;")
+    l2 = QLabel(blurb); l2.setObjectName("muted"); l2.setWordWrap(True)
+    col.addWidget(l1); col.addWidget(l2)
+    rl.addLayout(col, 1)
+    btn = QPushButton(label); btn.setObjectName("danger")
+    btn.clicked.connect(on_click)
+    rl.addWidget(btn)
+    return row
+
+
 def _make_scope_chip(scope: str) -> QLabel:
     """Render a small rounded scope chip. Scope is one of:
     USER / PROJECT / FIRM / DEVICE. Visual-only — does not change
@@ -248,6 +336,72 @@ def _groupbox_with_chip(title: str, scope: str = "") -> QGroupBox:
     grp.resizeEvent = _resize  # type: ignore[assignment]
     _position()
     return grp
+
+
+def _run_js_best_effort(parent, js: str) -> bool:
+    """Walk up the parent chain to the bridge and call `run_js(js)` if the
+    slot exists. Returns True if the call was dispatched, False if no
+    bridge / no run_js slot (headless / tests) — in which case the caller
+    relies on the persisted secrets_store value being read on the NEXT
+    reload.
+
+    This is the SAME bridge-gap pattern documented on
+    `GeneralTab._on_host_node_v2`: the JSX side reads its prefs from
+    localStorage, and the native dialog mirrors a write through `run_js`
+    when (and only when) the WebChannel exposes it. When it doesn't, the
+    write is an honest no-op rather than a crash."""
+    obj = parent
+    seen = set()
+    while obj is not None and id(obj) not in seen:
+        seen.add(id(obj))
+        bridge = getattr(obj, "bridge", None) or getattr(obj, "_bridge", None)
+        run_js = getattr(bridge, "run_js", None) if bridge else None
+        if callable(run_js):
+            try:
+                run_js(js)
+                return True
+            except Exception:
+                return False
+        obj = obj.parent() if hasattr(obj, "parent") else None
+    return False
+
+
+# JSX localStorage keys the native System controls mirror (kept byte-for-
+# byte aligned with studio-lm.jsx so behaviour is preserved across the
+# migration — see ia-critique-ai-stemcells-2026-06-03 §1):
+#   archhub.perfhud         — Perf HUD overlay on/off (read in PerfHud)
+#   archhub.theme           — 'forge'|'blueprint'|'vellum' (applied as
+#                             document.body[data-theme]; default 'forge')
+#   jsx_cache_v1_<sha>      — the in-browser Babel compile cache entries
+#                             clearJsxCache() purges
+LS_PERFHUD = "archhub.perfhud"
+LS_THEME = "archhub.theme"
+JSX_CACHE_PREFIX = "jsx_cache_v1_"
+
+# The founder-authored, signed theme vocabulary (PROTOTYPE-IS-CONTRACT).
+# The native dark/light/system combo folds INTO this single control:
+# 'system' maps to 'forge' (the default branded dark theme = "auto"),
+# 'dark' → forge, 'light' → vellum. ONE theme control, no second taxonomy.
+THEME_CHOICES = (
+    ("Forge — warm dark (default)", "forge"),
+    ("Blueprint — cool dark",       "blueprint"),
+    ("Vellum — warm light",         "vellum"),
+)
+# Legacy dark/light/system → branded theme, so an old saved value still
+# resolves to a real branded theme (back-compat: system==auto==forge).
+_LEGACY_THEME_MAP = {
+    "dark": "forge", "system": "forge", "auto": "forge", "light": "vellum",
+}
+
+
+def _normalize_theme(value: str | None) -> str:
+    """Coerce any saved theme value (branded or legacy dark/light/system)
+    to one of the three branded ids. Unknown/empty → 'forge' (the signed
+    default)."""
+    v = (value or "").strip().lower()
+    if v in ("forge", "blueprint", "vellum"):
+        return v
+    return _LEGACY_THEME_MAP.get(v, "forge")
 
 
 def _local_appdata() -> Path:
@@ -446,10 +600,15 @@ class GeneralTab(QWidget):
 
         appe = QGroupBox("Appearance")
         af = QFormLayout(appe); af.setSpacing(8); af.setContentsMargins(12, 18, 12, 12)
-        self._theme = QComboBox()
-        for label, val in (("Dark", "dark"), ("Light", "light"), ("System", "system")):
-            self._theme.addItem(label, val)
-        af.addRow("Theme", self._theme)
+        # Theme moved to the System section (ONE unified Forge/Blueprint/
+        # Vellum control — the old dark/light/system combo folded into it,
+        # ia-critique-ai-stemcells-2026-06-03 §1). A pointer row keeps the
+        # founder's muscle-memory: "theme lives in System now".
+        theme_ptr = QLabel(
+            "Theme moved to <b>System</b> — Forge / Blueprint / Vellum."
+        )
+        theme_ptr.setObjectName("muted"); theme_ptr.setWordWrap(True)
+        af.addRow("Theme", theme_ptr)
         self._lang = QComboBox()
         for code, label in (("en", "English"), ("es", "Español"), ("fr", "Français"),
                             ("de", "Deutsch"), ("ja", "日本語"), ("zh", "中文")):
@@ -511,21 +670,8 @@ class GeneralTab(QWidget):
         except Exception:
             pass
 
-        # Theme — bridge.get_theme returns {"theme": "dark|light|system"}.
-        theme = "dark"
-        bt = _bridge_call(self._parent_dlg, "get_theme", default={}) or {}
-        if isinstance(bt, dict) and bt.get("theme") in ("dark", "light", "system"):
-            theme = bt["theme"]
-        elif _theme_path().is_file():
-            try:
-                t = json.loads(_theme_path().read_text(encoding="utf-8") or "{}")
-                if t.get("theme") in ("dark", "light", "system"):
-                    theme = t["theme"]
-            except Exception:
-                pass
-        idx = self._theme.findData(theme)
-        if idx >= 0:
-            self._theme.setCurrentIndex(idx)
+        # Theme now lives in the System section (SystemTab) — one unified
+        # Forge/Blueprint/Vellum control. GeneralTab no longer owns it.
 
         # Language — just a saved setting; not yet wired to i18n.
         lang = (load_setting("language") or "en") or "en"
@@ -597,9 +743,7 @@ class GeneralTab(QWidget):
         except Exception as ex:
             QMessageBox.warning(self, "Profile", f"Save failed: {ex}")
 
-        # Theme via bridge so the rest of the app picks it up.
-        theme = self._theme.currentData() or "dark"
-        _bridge_call(self._parent_dlg, "set_theme", theme, default={})
+        # Theme is saved from the System section now (SystemTab._save).
 
         # Language + default model — local settings.
         save_setting("language", self._lang.currentData() or "en")
@@ -610,94 +754,6 @@ class GeneralTab(QWidget):
 
 
 # ── Tab: Providers ───────────────────────────────────────────────────────
-class _ProviderRow(QFrame):
-    """Single provider row — icon · name · status · Sign-in/Sign-out."""
-
-    def __init__(self, provider: str, env_var: str, supports_oauth: bool,
-                 parent_tab: "ProvidersTab"):
-        super().__init__()
-        self.provider = provider
-        self.env_var = env_var
-        self.supports_oauth = supports_oauth
-        self._tab = parent_tab
-        self.setStyleSheet(
-            f"_ProviderRow {{ background: {TOKENS['card']}; "
-            f"border: 1px solid {TOKENS['border']}; border-radius: 8px; }}"
-        )
-
-        h = QHBoxLayout(self)
-        h.setContentsMargins(14, 10, 14, 10)
-        h.setSpacing(12)
-
-        self._dot = QLabel("●")
-        self._dot.setFixedWidth(14)
-        h.addWidget(self._dot)
-
-        name = QLabel(PROVIDER_LABELS.get(provider, provider.title()))
-        font = QFont(); font.setBold(True); font.setPointSize(11)
-        name.setFont(font)
-        h.addWidget(name)
-
-        self._status = QLabel("")
-        self._status.setObjectName("mono")
-        h.addWidget(self._status, 1)
-
-        self._btn = QPushButton(""); self._btn.setMinimumWidth(120)
-        self._btn.clicked.connect(self._on_click)
-        h.addWidget(self._btn)
-
-        self.refresh()
-
-    def refresh(self) -> None:
-        signed = _key_present(self.provider, self.env_var)
-        if signed:
-            self._dot.setText("●")
-            self._dot.setStyleSheet(f"color: {TOKENS['good']};")
-            key = load_api_key(self.provider) or os.environ.get(self.env_var, "")
-            masked = (f"…{key[-4:]}" if key else "")
-            self._status.setText(f"signed in {masked}".strip())
-            self._btn.setText("Sign out")
-            self._btn.setObjectName("")
-        else:
-            self._dot.setText("○")
-            self._dot.setStyleSheet(f"color: {TOKENS['muted']};")
-            if self.provider in ("ollama", "lmstudio"):
-                self._status.setText("optional — local server")
-            else:
-                self._status.setText("not signed in")
-            self._btn.setText("Sign in")
-            self._btn.setObjectName("primary")
-        # Re-polish so QSS object-name change repaints.
-        self._btn.style().unpolish(self._btn)
-        self._btn.style().polish(self._btn)
-
-    def _on_click(self) -> None:
-        if _key_present(self.provider, self.env_var):
-            label = PROVIDER_LABELS.get(self.provider, self.provider.title())
-            if QMessageBox.question(
-                self, f"Sign out of {label}?",
-                f"Remove the saved {label} key from this device?",
-            ) == QMessageBox.StandardButton.Yes:
-                delete_api_key(self.provider)
-                self.refresh()
-                self._tab.notify_changed()
-            return
-        # Local-only providers don't have a real sign-in — surface help.
-        if self.provider in ("ollama", "lmstudio"):
-            QMessageBox.information(
-                self,
-                PROVIDER_LABELS[self.provider],
-                "Local providers are auto-detected when their server is "
-                "running on localhost. Start Ollama / LM Studio, then click "
-                "Refresh on this tab — no key required.",
-            )
-            return
-        dlg = SignInDialog(self.provider, self)
-        dlg.signed_in.connect(lambda _p: self._tab.notify_changed())
-        dlg.exec()
-        self.refresh()
-
-
 class ProvidersTab(QWidget):
     """All LLM providers — sign-in state + connection counts."""
 
@@ -711,9 +767,9 @@ class ProvidersTab(QWidget):
         outer.setSpacing(10)
 
         _add_title(outer, "Providers",
-                    "ArchHub never asks you to type or paste an API key. "
-                    "Click <b>Sign in</b>, copy the key from the provider's "
-                    "site, and ArchHub will detect it on your clipboard.",
+                    "Which AI providers you've connected, and their live "
+                    "status. Key management now lives in one place — "
+                    "<b>Connections › Keys &amp; Secrets</b>.",
                     scope="USER")
 
         # Status banner — uses bridge.get_provider_stats.
@@ -721,11 +777,37 @@ class ProvidersTab(QWidget):
         self._banner.setObjectName("mono")
         outer.addWidget(self._banner)
 
-        self._rows: list[_ProviderRow] = []
-        for pid, env, oauth in PROVIDER_META:
-            row = _ProviderRow(pid, env, oauth, self)
-            self._rows.append(row)
-            outer.addWidget(row)
+        # No per-provider key rows here anymore — anthropic/openai/etc keys
+        # are managed in the comprehensive Keys & Secrets table (SecretsTab),
+        # so this tab stops duplicating key management. `self._rows` stays an
+        # empty list so refresh()'s `for row in self._rows` is a safe no-op.
+        self._rows: list = []
+
+        # Prototype "Provider keys" card (settings-redesign-2026-06-02.html
+        # line 226): one row that routes to the single key surface.
+        keys_card = QFrame()
+        keys_card.setObjectName("settingsCard")
+        keys_card.setStyleSheet(
+            f"QFrame#settingsCard {{ background: {TOKENS['card']}; "
+            f"border: 1px solid {TOKENS['border']}; border-radius: 8px; }}"
+        )
+        kc = QHBoxLayout(keys_card)
+        kc.setContentsMargins(14, 10, 14, 10)
+        kc.setSpacing(12)
+        kcol = QVBoxLayout(); kcol.setSpacing(2)
+        klabel = QLabel("Manage API keys")
+        klabel.setStyleSheet("font-weight: 600;")
+        kdesc = QLabel("Now one place — see Connections › Keys & Secrets")
+        kdesc.setObjectName("muted"); kdesc.setWordWrap(True)
+        kcol.addWidget(klabel); kcol.addWidget(kdesc)
+        kc.addLayout(kcol, 1)
+        keys_btn = QPushButton("Go to Keys && Secrets")
+        keys_btn.setObjectName("primary")
+        keys_btn.clicked.connect(
+            lambda: self._parent_dlg.focus_section("secrets")
+        )
+        kc.addWidget(keys_btn)
+        outer.addWidget(keys_card)
 
         # Trailing toggle: show local Ollama models in the picker.
         self._show_local = QCheckBox(
@@ -1271,6 +1353,247 @@ class PermissionsTab(QWidget):
         self.refresh()
 
 
+# ── Tab: System ──────────────────────────────────────────────────────────
+class SystemTab(QWidget):
+    """Native home for the controls migrated off the vestigial React
+    Settings modal (ia-critique-ai-stemcells-2026-06-03 §1: SETTINGS-
+    EVERYWHERE). MAKE-IT-REAL: nothing was deleted from the JSX without a
+    native home — these ARE that home.
+
+    Holds:
+      • Theme — the unified Forge/Blueprint/Vellum control (the signed
+        vocabulary), into which the old native dark/light/system combo
+        folds (system → forge "auto"). ONE theme taxonomy.
+      • Performance HUD overlay toggle (Ctrl+Shift+P) — `archhub.perfhud`.
+      • JSX bundle cache — clear `jsx_cache_v1_*` + reload the UI.
+      • Reset UI preferences — restore Host-Node-v2 / Perf-HUD / theme.
+
+    Every write goes to secrets_store (the SAFE persisted value the JSX
+    reads on the next reload) AND, best-effort, mirrors through the bridge
+    `run_js` slot for a live flip — the exact bridge-gap pattern
+    documented on GeneralTab._on_host_node_v2. Headless / no-bridge →
+    honest no-op on the live flip; the persisted value still lands."""
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(10)
+
+        _add_title(outer, "System",
+                    "Appearance, performance, and the dev controls that "
+                    "used to live in a second settings window. All values "
+                    "stay on this machine.",
+                    scope="DEVICE")
+
+        # ── Theme (unified Forge/Blueprint/Vellum) ───────────────────
+        theme_grp = QGroupBox("Theme")
+        tf = QFormLayout(theme_grp); tf.setSpacing(8); tf.setContentsMargins(12, 18, 12, 12)
+        theme_hint = QLabel(
+            "ArchHub's three signed themes. <b>Forge</b> is the default "
+            "warm dark; <b>Blueprint</b> a cool dark; <b>Vellum</b> a warm "
+            "light. (The old dark / light / system options folded in here — "
+            "system maps to Forge.)"
+        )
+        theme_hint.setObjectName("muted"); theme_hint.setWordWrap(True)
+        self._theme = QComboBox()
+        for label, val in THEME_CHOICES:
+            self._theme.addItem(label, val)
+        tf.addRow(theme_hint)
+        tf.addRow("Theme", self._theme)
+        outer.addWidget(theme_grp)
+
+        # ── Performance HUD ──────────────────────────────────────────
+        perf_grp = QGroupBox("Performance")
+        pg = QVBoxLayout(perf_grp); pg.setSpacing(8); pg.setContentsMargins(12, 18, 12, 12)
+        perf_hint = QLabel(
+            "The Perf HUD overlays live frame-rate, save-call rate and "
+            "RAF frames on the canvas — handy for A/B-ing perf wins. "
+            "Toggle it any time with <kbd>Ctrl+Shift+P</kbd>."
+        )
+        perf_hint.setObjectName("muted"); perf_hint.setWordWrap(True)
+        pg.addWidget(perf_hint)
+        self._perfhud = QCheckBox("Show performance HUD overlay")
+        self._perfhud.toggled.connect(self._on_perfhud)
+        pg.addWidget(self._perfhud)
+        outer.addWidget(perf_grp)
+
+        # ── JSX bundle cache (dev) ───────────────────────────────────
+        cache_grp = QGroupBox("Interface cache")
+        cg = QVBoxLayout(cache_grp); cg.setSpacing(8); cg.setContentsMargins(12, 18, 12, 12)
+        cache_hint = QLabel(
+            "ArchHub caches its compiled interface bundle for fast boot. "
+            "Clear it if the UI looks stale after an update, then reload."
+        )
+        cache_hint.setObjectName("muted"); cache_hint.setWordWrap(True)
+        cg.addWidget(cache_hint)
+        cache_row = QHBoxLayout(); cache_row.setSpacing(8)
+        self._clear_cache_btn = QPushButton("Clear interface cache")
+        self._clear_cache_btn.clicked.connect(self._on_clear_jsx_cache)
+        self._reload_btn = QPushButton("Reload UI now")
+        self._reload_btn.clicked.connect(self._on_reload_ui)
+        cache_row.addWidget(self._clear_cache_btn)
+        cache_row.addWidget(self._reload_btn)
+        cache_row.addStretch(1)
+        cg.addLayout(cache_row)
+        outer.addWidget(cache_grp)
+
+        # ── Reset preferences (danger) ───────────────────────────────
+        reset_grp = QGroupBox("Reset")
+        rg = QVBoxLayout(reset_grp); rg.setSpacing(8); rg.setContentsMargins(12, 18, 12, 12)
+        rg.addWidget(_danger_row(
+            "Reset UI preferences",
+            "Restore Host-Node-v2, Perf-HUD and theme to their defaults. "
+            "Sessions, skills and memory are untouched.",
+            self._on_reset_prefs,
+        ))
+        outer.addWidget(reset_grp)
+
+        # Save row — theme is the only persisted-on-save control; the
+        # toggles/buttons persist immediately on interaction.
+        save_row = QHBoxLayout()
+        self._save_btn = QPushButton("Save changes"); self._save_btn.setObjectName("primary")
+        self._save_btn.clicked.connect(self._save)
+        save_row.addStretch(1); save_row.addWidget(self._save_btn)
+        outer.addLayout(save_row)
+
+        outer.addStretch(1)
+        self._load()
+
+    # ── load / save ──────────────────────────────────────────────────
+    def _load(self) -> None:
+        # Theme — prefer the bridge (so we agree with the live app), then
+        # the saved setting, normalising any legacy dark/light/system.
+        theme = None
+        bt = _bridge_call(self._parent_dlg, "get_theme", default={}) or {}
+        if isinstance(bt, dict) and bt.get("theme"):
+            theme = bt.get("theme")
+        if not theme:
+            theme = load_setting("theme")
+        theme = _normalize_theme(theme)
+        idx = self._theme.findData(theme)
+        if idx >= 0:
+            self._theme.setCurrentIndex(idx)
+
+        # Perf HUD — saved setting drives the checkbox (JSX default OFF).
+        self._perfhud.blockSignals(True)
+        self._perfhud.setChecked(bool(load_setting(LS_PERFHUD)))
+        self._perfhud.blockSignals(False)
+
+    def _on_perfhud(self, on: bool) -> None:
+        """Persist + best-effort live-flip the Perf HUD overlay. JSX reads
+        localStorage['archhub.perfhud'] AND listens for the toggle event
+        the command palette fires (lm-toggle-perf-hud); we set the stored
+        value, then dispatch that same event so a visible HUD flips now."""
+        save_setting(LS_PERFHUD, bool(on))
+        _run_js_best_effort(
+            self._parent_dlg,
+            "try{localStorage.setItem('%s',String(%s));"
+            "window.dispatchEvent(new CustomEvent('lm-toggle-perf-hud',"
+            "{detail:{force:%s}}));}catch(e){}"
+            % (LS_PERFHUD, str(bool(on)).lower(), str(bool(on)).lower()),
+        )
+
+    def _on_clear_jsx_cache(self) -> None:
+        """Purge every `jsx_cache_v1_*` key — the exact body clearJsxCache
+        runs in the JSX. Needs the live page (that's where localStorage
+        is), so this is bridge-only; headless → honest notice."""
+        ok = _run_js_best_effort(
+            self._parent_dlg,
+            "try{var n=0;for(var i=localStorage.length-1;i>=0;i--){"
+            "var k=localStorage.key(i);"
+            "if(k&&k.indexOf('%s')===0){localStorage.removeItem(k);n++;}}"
+            "console.log('[archhub] cleared '+n+' jsx cache entries');}"
+            "catch(e){}" % (JSX_CACHE_PREFIX,),
+        )
+        if ok:
+            QMessageBox.information(
+                self, "Interface cache",
+                "Interface cache cleared. Use “Reload UI now” to pick up "
+                "the fresh bundle.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Interface cache",
+                "Open ArchHub's main window to clear its interface cache — "
+                "there's no live UI attached here.",
+            )
+
+    def _on_reload_ui(self) -> None:
+        """Reload the live web UI (window.location.reload)."""
+        ok = _run_js_best_effort(
+            self._parent_dlg, "try{window.location.reload();}catch(e){}"
+        )
+        if not ok:
+            QMessageBox.information(
+                self, "Reload UI",
+                "No live UI is attached here — reload from ArchHub's main "
+                "window.",
+            )
+
+    def _on_reset_prefs(self) -> None:
+        """Restore Host-Node-v2 / Perf-HUD / theme to defaults. Mirrors the
+        JSX resetPrefs: remove archhub.host_node_v2 / perfhud / theme from
+        localStorage + re-broadcast the host-node-v2 event so the canvas
+        repaints. Also resets the persisted secrets_store values so the
+        NEXT reload (no-bridge case) honours the reset."""
+        if QMessageBox.question(
+            self, "Reset UI preferences?",
+            "Restore Host-Node-v2, Perf-HUD and theme to defaults? "
+            "Sessions, skills and memory are untouched.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        # Persisted side (SAFE value read on next reload).
+        save_setting("host_node_v2", True)   # JSX default is ON
+        save_setting(LS_PERFHUD, False)      # JSX default is OFF
+        save_setting("theme", "forge")       # signed default
+        _bridge_call(self._parent_dlg, "set_theme", "forge", default={})
+        # Live side (best-effort): clear the JSX-owned keys + rebroadcast.
+        _run_js_best_effort(
+            self._parent_dlg,
+            "try{localStorage.removeItem('archhub.host_node_v2');"
+            "localStorage.removeItem('%s');"
+            "localStorage.removeItem('%s');"
+            "window.dispatchEvent(new CustomEvent('archhub-host-node-v2',"
+            "{detail:true}));}catch(e){}" % (LS_PERFHUD, LS_THEME),
+        )
+        # Reflect the reset in this tab's widgets.
+        self._load()
+        QMessageBox.information(self, "Reset", "UI preferences reset to defaults.")
+
+    def _save(self) -> None:
+        """Persist the theme. Theme via bridge (so the rest of the app
+        picks it up) AND a mirrored localStorage write + a saved setting,
+        so the JSX reads the same branded value on the next reload.
+
+        The live repaint goes through the JSX-owned global
+        window.__archhubSetTheme(v): it swaps the mutable theme backing
+        object (so inline-style surfaces repaint NOW, matching the deleted
+        React control), persists localStorage AND sets body[data-theme]
+        AND fires archhub-theme-changed in one call. If that global is
+        absent (stale bundle / no live UI), we fall back to the raw
+        localStorage + data-theme write so CSS-var surfaces + the next
+        cold start still pick up the branded value. Best-effort / no-op
+        when run_js is unavailable (mirrors _on_perfhud)."""
+        theme = self._theme.currentData() or "forge"
+        _bridge_call(self._parent_dlg, "set_theme", theme, default={})
+        save_setting("theme", theme)
+        _run_js_best_effort(
+            self._parent_dlg,
+            "try{var v=String('%s').toLowerCase();"
+            "if(typeof window.__archhubSetTheme==='function'){"
+            "window.__archhubSetTheme(v);}else{"
+            "localStorage.setItem('%s',v);"
+            "document.body.setAttribute('data-theme',v);}}"
+            "catch(e){}" % (theme, LS_THEME),
+        )
+        QMessageBox.information(self, "System", "Saved.")
+        self._parent_dlg.notify_changed()
+
+
 # ── Tab: Storage ─────────────────────────────────────────────────────────
 class StorageTab(QWidget):
     """Real disk usage + the buttons every user expects to find here."""
@@ -1335,17 +1658,17 @@ class StorageTab(QWidget):
         # Danger zone.
         dz = QGroupBox("Danger zone")
         dg = QVBoxLayout(dz); dg.setSpacing(8); dg.setContentsMargins(12, 18, 12, 12)
-        dg.addWidget(self._danger_row(
+        dg.addWidget(_danger_row(
             "Clear model cache",
             "Free disk used by cached LLM responses. Won't affect saved sessions.",
             self._on_clear_cache,
         ))
-        dg.addWidget(self._danger_row(
+        dg.addWidget(_danger_row(
             "Forget all memory",
             "Wipes every memory fact (local + cloud). Sessions are untouched.",
             self._on_forget_memory,
         ))
-        dg.addWidget(self._danger_row(
+        dg.addWidget(_danger_row(
             "Delete all sessions",
             "Permanently removes every saved canvas. There is no undo.",
             self._on_delete_sessions,
@@ -1359,24 +1682,80 @@ class StorageTab(QWidget):
         outer.addLayout(refresh_row)
 
         outer.addStretch(1)
+        # AgDR-0036 follow-up — export_all + clear_model_cache run OFF the Qt
+        # main thread now: the slot returns {async, request_id} instantly and
+        # emits settings_op_done when the glob+zip / glob+delete lands. We
+        # correlate by request_id so the button click never freezes the UI.
+        self._pending_ops: dict[str, str] = {}   # request_id -> kind
+        self._connect_bridge_signals()
         self.refresh()
 
-    def _danger_row(self, label: str, blurb: str, on_click) -> QFrame:
-        row = QFrame()
-        row.setStyleSheet(
-            f"QFrame {{ background: {TOKENS['card']}; "
-            f"border: 1px solid {TOKENS['border']}; border-radius: 6px; }}"
-        )
-        rl = QHBoxLayout(row); rl.setContentsMargins(12, 10, 12, 10); rl.setSpacing(10)
-        col = QVBoxLayout(); col.setSpacing(2)
-        l1 = QLabel(label); l1.setStyleSheet("font-weight: 600;")
-        l2 = QLabel(blurb); l2.setObjectName("muted"); l2.setWordWrap(True)
-        col.addWidget(l1); col.addWidget(l2)
-        rl.addLayout(col, 1)
-        btn = QPushButton(label); btn.setObjectName("danger")
-        btn.clicked.connect(on_click)
-        rl.addWidget(btn)
-        return row
+    # ── Bridge plumbing (off-thread Settings ops) ─────────────────────
+    def _bridge(self):
+        obj = self._parent_dlg
+        seen = set()
+        while obj is not None and id(obj) not in seen:
+            seen.add(id(obj))
+            b = getattr(obj, "bridge", None) or getattr(obj, "_bridge", None)
+            if b is not None:
+                return b
+            obj = obj.parent() if hasattr(obj, "parent") else None
+        return None
+
+    def _connect_bridge_signals(self) -> None:
+        """Listen for settings_op_done so the UI flips the moment the
+        background export / cache-clear finishes. Mirrors AccountTab's
+        cloud_signin_done wiring."""
+        b = self._bridge()
+        if b is None:
+            return
+        sig = getattr(b, "settings_op_done", None)
+        if sig is not None and hasattr(sig, "connect"):
+            try:
+                sig.connect(self._on_settings_op_done)
+            except Exception:
+                pass
+
+    def _new_request_id(self, kind: str) -> str:
+        import uuid as _uuid
+        rid = f"{kind}-{_uuid.uuid4().hex[:12]}"
+        self._pending_ops[rid] = kind
+        return rid
+
+    def _on_settings_op_done(self, result_json: str) -> None:
+        """Runs on the GUI thread (Qt auto-queues the cross-thread signal).
+        Routes the result to the matching button by request_id."""
+        try:
+            res = json.loads(result_json or "null")
+        except Exception:
+            res = None
+        if not isinstance(res, dict):
+            return
+        rid = str(res.get("request_id") or "")
+        kind = self._pending_ops.pop(rid, "")
+        if not kind:
+            return   # not ours (another tab / stale)
+        if kind == "export":
+            self._export_btn.setEnabled(True)
+            self._export_btn.setText("Export everything to zip")
+            if res.get("ok") and res.get("path"):
+                QMessageBox.information(
+                    self, "Export complete",
+                    f"Saved to:\n{res['path']}\n\n"
+                    f"Size: {_fmt_bytes(int(res.get('size') or 0))}",
+                )
+            else:
+                msg = res.get("error", "unknown error")
+                QMessageBox.warning(self, "Export", f"Export failed: {msg}")
+        elif kind == "clear_cache":
+            if res.get("ok"):
+                freed = int(res.get("freed_bytes") or 0)
+                QMessageBox.information(self, "Model cache",
+                                        f"Freed {_fmt_bytes(freed)}.")
+            else:
+                QMessageBox.warning(self, "Model cache",
+                                    f"Clear failed: {res.get('error', 'unknown error')}")
+            self.refresh()
 
     def refresh(self) -> None:
         stats = _bridge_call(self._parent_dlg, "get_storage_stats", default={}) or {}
@@ -1421,23 +1800,34 @@ class StorageTab(QWidget):
                 QMessageBox.warning(self, "Open folder", f"Could not open: {ex}")
 
     def _on_export(self) -> None:
-        self._export_btn.setEnabled(False)
-        self._export_btn.setText("Exporting…")
-        QApplication.processEvents()
-        try:
-            res = _bridge_call(self._parent_dlg, "export_all", default={}) or {}
-            if isinstance(res, dict) and res.get("ok") and res.get("path"):
-                QMessageBox.information(
-                    self, "Export complete",
-                    f"Saved to:\n{res['path']}\n\n"
-                    f"Size: {_fmt_bytes(int(res.get('size') or 0))}",
-                )
-            else:
-                msg = res.get("error", "unknown error") if isinstance(res, dict) else "no bridge"
-                QMessageBox.warning(self, "Export", f"Export failed: {msg}")
-        finally:
-            self._export_btn.setEnabled(True)
-            self._export_btn.setText("Export everything to zip")
+        # Off-thread: fire export_all with a request_id + let settings_op_done
+        # land the result (no QApplication.processEvents spin on the GUI thread,
+        # no frozen window while a big library zips). AgDR-0036 follow-up.
+        b = self._bridge()
+        sig = getattr(b, "settings_op_done", None) if b is not None else None
+        if b is not None and sig is not None and hasattr(b, "export_all"):
+            self._export_btn.setEnabled(False)
+            self._export_btn.setText("Exporting…")
+            rid = self._new_request_id("export")
+            try:
+                b.export_all(rid)   # returns {async, request_id} instantly
+                return
+            except Exception as ex:
+                self._pending_ops.pop(rid, None)
+                self._export_btn.setEnabled(True)
+                self._export_btn.setText("Export everything to zip")
+                QMessageBox.warning(self, "Export", f"Export failed: {ex}")
+                return
+        # Fallback (no bridge signal, e.g. headless tests) — synchronous path.
+        res = _bridge_call(self._parent_dlg, "export_all", default={}) or {}
+        if isinstance(res, dict) and res.get("ok") and res.get("path"):
+            QMessageBox.information(
+                self, "Export complete",
+                f"Saved to:\n{res['path']}\n\nSize: {_fmt_bytes(int(res.get('size') or 0))}",
+            )
+        else:
+            msg = res.get("error", "unknown error") if isinstance(res, dict) else "no bridge"
+            QMessageBox.warning(self, "Export", f"Export failed: {msg}")
 
     def _on_clear_cache(self) -> None:
         if QMessageBox.question(
@@ -1445,10 +1835,20 @@ class StorageTab(QWidget):
             "Remove cached LLM responses? Saved sessions are untouched.",
         ) != QMessageBox.StandardButton.Yes:
             return
+        # Off-thread (AgDR-0036 follow-up) — same idiom as _on_export.
+        b = self._bridge()
+        sig = getattr(b, "settings_op_done", None) if b is not None else None
+        if b is not None and sig is not None and hasattr(b, "clear_model_cache"):
+            rid = self._new_request_id("clear_cache")
+            try:
+                b.clear_model_cache(rid)
+                return
+            except Exception:
+                self._pending_ops.pop(rid, None)
+        # Fallback — synchronous path.
         res = _bridge_call(self._parent_dlg, "clear_model_cache", default={}) or {}
         freed = int((res or {}).get("freed_bytes") or 0)
-        QMessageBox.information(self, "Model cache",
-                                f"Freed {_fmt_bytes(freed)}.")
+        QMessageBox.information(self, "Model cache", f"Freed {_fmt_bytes(freed)}.")
         self.refresh()
 
     def _on_forget_memory(self) -> None:
@@ -1611,6 +2011,395 @@ class AboutTab(QWidget):
         outer.addWidget(lic_grp)
 
         outer.addStretch(1)
+
+
+# ── Tab: Account (ArchHub Cloud sign-in / sign-out) ──────────────────────
+class AccountTab(QWidget):
+    """ArchHub Cloud account — the REAL in-app sign-in / sign-out surface.
+
+    Before this tab existed, the ONLY token-minting path in the whole UI was
+    the first-run onboarding dialog (cloud_auth.SignInWorker). After first run
+    there was no way to sign in from the UI, and the Brain "Back up my brain"
+    button dead-ended here (Settings → Account) with no sign-in handler.
+
+    This tab makes the SAME real PKCE browser sign-in reachable any time, via
+    bridge.cloud_sign_in() (which launches cloud_auth.SignInWorker off the Qt
+    main thread), plus a real bridge.cloud_sign_out() that revokes the token
+    server-side (POST /v1/auth/logout) and clears it locally. A live status
+    line shows the signed-in email + plan.
+
+    SAFETY: the button OPENS the browser to the magic-link — the actual
+    sign-in (the founder's one manual step) happens there. This UI never
+    types credentials or creates an account.
+    """
+
+    # A signed-in account-detail fetch (cloud_client.me()) hits the network,
+    # so it runs on a worker thread and lands back on the UI thread via this
+    # signal — never block the dialog on a slow / unreachable cloud.
+    account_loaded = pyqtSignal(dict)
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+        self._busy = False           # a sign-in browser flow is open
+        self._signed_in = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(10)
+
+        _add_title(outer, "Account",
+                    "Sign in to ArchHub Cloud to back up your brain, sync "
+                    "across devices, and route AI through the managed relay. "
+                    "Bring-your-own-keys still works without an account.",
+                    scope="USER")
+
+        # ── Status card ───────────────────────────────────────────────
+        st = QGroupBox("ArchHub Cloud")
+        sv = QVBoxLayout(st); sv.setSpacing(10); sv.setContentsMargins(12, 18, 12, 12)
+
+        status_row = QHBoxLayout(); status_row.setSpacing(10)
+        self._dot = QLabel("○"); self._dot.setFixedWidth(14)
+        self._dot.setStyleSheet(f"color:{TOKENS['muted']}; font-size:14px;")
+        status_row.addWidget(self._dot)
+        self._status_text = QLabel("Checking sign-in…")
+        self._status_text.setObjectName("muted")
+        status_row.addWidget(self._status_text, 1)
+        sv.addLayout(status_row)
+
+        # Detail line (email / plan / remaining) — mono, selectable.
+        self._detail = QLabel("")
+        self._detail.setObjectName("mono")
+        self._detail.setWordWrap(True)
+        self._detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sv.addWidget(self._detail)
+
+        # Cloud URL (honest about where it points — env-overridable).
+        self._url_lbl = QLabel("")
+        self._url_lbl.setObjectName("mono")
+        self._url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sv.addWidget(self._url_lbl)
+
+        # ── Action row: Sign in (signed-out) / Sign out (signed-in) ────
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        self._signin_btn = QPushButton("Sign in to ArchHub Cloud")
+        self._signin_btn.setObjectName("primary")
+        self._signin_btn.clicked.connect(self._on_sign_in)
+        btn_row.addWidget(self._signin_btn)
+
+        # "Sign in with Google" — same real PKCE browser flow, via
+        # bridge.cloud_sign_in_google() (cloud_auth.GoogleSignInWorker).
+        self._signin_google_btn = QPushButton("Sign in with Google")
+        self._signin_google_btn.clicked.connect(self._on_sign_in_google)
+        btn_row.addWidget(self._signin_google_btn)
+
+        self._signout_btn = QPushButton("Sign out")
+        self._signout_btn.setObjectName("danger")
+        self._signout_btn.clicked.connect(self._on_sign_out)
+        self._signout_btn.setVisible(False)
+        btn_row.addWidget(self._signout_btn)
+
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self._refresh)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._refresh_btn)
+        sv.addLayout(btn_row)
+
+        # Inline hint shown while the browser sign-in is in flight.
+        self._hint = QLabel("")
+        self._hint.setObjectName("muted")
+        self._hint.setWordWrap(True)
+        self._hint.setVisible(False)
+        sv.addWidget(self._hint)
+
+        outer.addWidget(st)
+        outer.addStretch(1)
+
+        # ── Wire bridge signals so the UI flips when sign-in/out finish ─
+        self.account_loaded.connect(self._apply_account)
+        self._connect_bridge_signals()
+
+        self._refresh()
+
+    # ── Bridge plumbing ───────────────────────────────────────────────
+    def _bridge(self):
+        return (getattr(self._parent_dlg, "bridge", None)
+                or getattr(self._parent_dlg, "_bridge", None))
+
+    def _connect_bridge_signals(self) -> None:
+        """Listen for cloud_signin_done / cloud_signout_done so the tab
+        flips to the right state the moment the founder finishes (or
+        cancels) the browser flow, or a sign-out completes."""
+        b = self._bridge()
+        if b is None:
+            return
+        for name, handler in (
+            ("cloud_signin_done", self._on_signin_done),
+            ("cloud_signout_done", self._on_signout_done),
+        ):
+            sig = getattr(b, name, None)
+            if sig is not None and hasattr(sig, "connect"):
+                try:
+                    sig.connect(handler)
+                except Exception:
+                    pass
+
+    # ── Refresh / render ──────────────────────────────────────────────
+    def _refresh(self) -> None:
+        """Probe sign-in state (cheap, synchronous) then, if signed in,
+        fetch richer account detail on a worker thread."""
+        signed_in = False
+        cloud_url = ""
+        cc = _cloud_client()
+        if cc is not None:
+            try:
+                signed_in = bool(cc.is_signed_in())
+                cloud_url = cc.base_url()
+            except Exception:
+                signed_in = False
+        # Bridge cloud_status is the same probe; prefer the direct client
+        # call (synchronous, no bridge needed in tests) and fall back to
+        # the bridge slot when the client module isn't importable.
+        if cc is None:
+            st = _bridge_call(self._parent_dlg, "cloud_status", default={}) or {}
+            if isinstance(st, dict):
+                signed_in = bool(st.get("signed_in"))
+                cloud_url = st.get("cloud_url") or ""
+
+        self._signed_in = signed_in
+        self._url_lbl.setText(f"relay: {cloud_url}" if cloud_url else "")
+        self._render_state()
+
+        if signed_in:
+            # Fetch email / plan off-thread; lands via account_loaded.
+            self._detail.setText("Loading account…")
+            import threading
+            threading.Thread(target=self._load_account_worker,
+                             daemon=True).start()
+        else:
+            self._detail.setText("")
+
+    def _load_account_worker(self) -> None:
+        """Worker thread: cloud_client.me() (network). Emit result on the
+        UI thread via the account_loaded signal."""
+        info = {}
+        cc = _cloud_client()
+        if cc is not None:
+            try:
+                info = cc.me() or {}
+            except Exception:
+                info = {}
+        try:
+            self.account_loaded.emit(info if isinstance(info, dict) else {})
+        except Exception:
+            pass
+
+    def _apply_account(self, info: dict) -> None:
+        """UI-thread: render the email / plan / remaining line."""
+        if not self._signed_in:
+            return
+        info = info or {}
+        email = info.get("email") or ""
+        plan = info.get("plan") or ""
+        remaining = info.get("remaining_messages")
+        if email or plan:
+            line = email or "(signed in)"
+            if plan:
+                line += f"  ·  {plan} plan"
+            if isinstance(remaining, int):
+                line += f"  ·  {remaining} messages left"
+            self._detail.setText(line)
+        else:
+            # Signed in but cloud detail unreachable — stay honest.
+            self._detail.setText("Signed in — account detail unreachable "
+                                  "(offline?).")
+
+    def _render_state(self) -> None:
+        """Flip dot / status text / which button shows, by sign-in state."""
+        if self._busy:
+            self._dot.setText("◍")
+            self._dot.setStyleSheet(f"color:{TOKENS['warn']}; font-size:14px;")
+            self._status_text.setText("Waiting for sign-in in your browser…")
+            self._signin_btn.setEnabled(False)
+            self._signin_btn.setVisible(True)
+            self._signin_google_btn.setEnabled(False)
+            self._signin_google_btn.setVisible(True)
+            self._signout_btn.setVisible(False)
+            self._hint.setVisible(True)
+            self._hint.setText(
+                "Your browser opened on the ArchHub sign-in page. Finish "
+                "there and come back — we detect it automatically."
+            )
+            return
+        self._hint.setVisible(False)
+        if self._signed_in:
+            self._dot.setText("●")
+            self._dot.setStyleSheet(f"color:{TOKENS['good']}; font-size:14px;")
+            self._status_text.setText("Signed in to ArchHub Cloud.")
+            self._signin_btn.setVisible(False)
+            self._signin_google_btn.setVisible(False)
+            self._signout_btn.setVisible(True)
+            self._signout_btn.setEnabled(True)
+        else:
+            self._dot.setText("○")
+            self._dot.setStyleSheet(f"color:{TOKENS['muted']}; font-size:14px;")
+            self._status_text.setText("Not signed in.")
+            self._signin_btn.setVisible(True)
+            self._signin_btn.setEnabled(True)
+            self._signin_btn.setText("Sign in to ArchHub Cloud")
+            self._signin_google_btn.setVisible(True)
+            self._signin_google_btn.setEnabled(True)
+            self._signout_btn.setVisible(False)
+
+    # ── Actions ───────────────────────────────────────────────────────
+    def _on_sign_in(self) -> None:
+        """Launch the real PKCE browser sign-in via bridge.cloud_sign_in().
+        Non-blocking; the result lands via the cloud_signin_done signal.
+
+        Fallback when no bridge is wired (preview / odd harness): call
+        cloud_auth.SignInWorker directly, same flow. The agent never signs
+        in — opening the browser is the founder's one manual step."""
+        if self._busy:
+            return
+        self._busy = True
+        self._render_state()
+        b = self._bridge()
+        if b is not None and hasattr(b, "cloud_sign_in"):
+            try:
+                b.cloud_sign_in()
+                return
+            except Exception:
+                pass
+        # Direct fallback — wire SignInWorker straight to this tab.
+        try:
+            from cloud_auth import SignInWorker
+            self._direct_worker = SignInWorker(self)
+            self._direct_worker.succeeded.connect(
+                lambda payload: self._on_signin_done(json.dumps({
+                    "ok": True, "signed_in": True,
+                    "email": (payload.get("me") or {}).get("email", ""),
+                    "plan": (payload.get("me") or {}).get("plan", ""),
+                })))
+            self._direct_worker.failed.connect(
+                lambda msg: self._on_signin_done(json.dumps({
+                    "ok": False, "signed_in": False, "error": msg})))
+            self._direct_worker.start()
+        except Exception as ex:
+            self._busy = False
+            QMessageBox.warning(self, "Sign in",
+                                 f"Couldn't start sign-in: {ex}")
+            self._render_state()
+
+    def _on_sign_in_google(self) -> None:
+        """Launch the real "Sign in with Google" PKCE browser flow via
+        bridge.cloud_sign_in_google(). Same pattern as _on_sign_in — non-
+        blocking; the result lands via the shared cloud_signin_done signal.
+
+        Fallback when no bridge is wired (preview / odd harness): drive
+        cloud_auth.GoogleSignInWorker directly. The agent never signs in —
+        opening the browser is the founder's one manual step."""
+        if self._busy:
+            return
+        self._busy = True
+        self._render_state()
+        b = self._bridge()
+        if b is not None and hasattr(b, "cloud_sign_in_google"):
+            try:
+                b.cloud_sign_in_google()
+                return
+            except Exception:
+                pass
+        # Direct fallback — wire GoogleSignInWorker straight to this tab.
+        try:
+            from cloud_auth import GoogleSignInWorker
+            self._direct_worker = GoogleSignInWorker(self)
+            self._direct_worker.succeeded.connect(
+                lambda payload: self._on_signin_done(json.dumps({
+                    "ok": True, "signed_in": True,
+                    "email": (payload.get("me") or {}).get("email", ""),
+                    "plan": (payload.get("me") or {}).get("plan", ""),
+                })))
+            self._direct_worker.failed.connect(
+                lambda msg: self._on_signin_done(json.dumps({
+                    "ok": False, "signed_in": False, "error": msg})))
+            self._direct_worker.start()
+        except Exception as ex:
+            self._busy = False
+            QMessageBox.warning(self, "Sign in",
+                                 f"Couldn't start Google sign-in: {ex}")
+            self._render_state()
+
+    def _on_signin_done(self, result_json: str) -> None:
+        """cloud_signin_done handler — flip out of busy, refresh state."""
+        self._busy = False
+        res = {}
+        try:
+            res = json.loads(result_json or "{}") or {}
+        except Exception:
+            res = {}
+        if res.get("ok") and res.get("signed_in"):
+            self._signed_in = True
+            self._render_state()
+            # Render the email/plan we already have, then refresh fully.
+            self._apply_account({
+                "email": res.get("email"),
+                "plan": res.get("plan"),
+                "remaining_messages": res.get("remaining_messages"),
+            })
+            self._refresh()
+            self._parent_dlg.notify_changed()
+        else:
+            # Failed / cancelled — stay signed-out, surface the reason.
+            self._signed_in = bool(self._signed_in and False)
+            self._render_state()
+            err = res.get("error") or "Sign-in didn't finish."
+            self._status_text.setText(f"Not signed in — {err}")
+
+    def _on_sign_out(self) -> None:
+        """Sign out via bridge.cloud_sign_out() (server revoke + local
+        clear). Falls back to cloud_client.logout() directly with no
+        bridge. Result lands via cloud_signout_done (or inline on
+        fallback)."""
+        if QMessageBox.question(
+            self, "Sign out of ArchHub Cloud?",
+            "Sign out on this device? Your local brain stays; only the "
+            "cloud session ends.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._signout_btn.setEnabled(False)
+        b = self._bridge()
+        if b is not None and hasattr(b, "cloud_sign_out"):
+            try:
+                b.cloud_sign_out()
+                return
+            except Exception:
+                pass
+        # Direct fallback.
+        cc = _cloud_client()
+        if cc is not None and hasattr(cc, "logout"):
+            try:
+                cc.logout()
+            except Exception:
+                pass
+        self._on_signout_done(json.dumps({"ok": True, "signed_in": False}))
+
+    def _on_signout_done(self, result_json: str) -> None:
+        """cloud_signout_done handler — flip to signed-out, refresh."""
+        res = {}
+        try:
+            res = json.loads(result_json or "{}") or {}
+        except Exception:
+            res = {}
+        self._signed_in = False
+        self._busy = False
+        self._render_state()
+        self._detail.setText("")
+        msg = res.get("msg") or "Signed out."
+        self._status_text.setText(msg if not res.get("ok")
+                                   else "Not signed in.")
+        self._refresh()
+        self._parent_dlg.notify_changed()
 
 
 # ── Tab: Brain (AgDR-0044 · personal-brain-mcp) ──────────────────────────
@@ -1859,17 +2648,17 @@ class BrainTab(QWidget):
             f"color:{TOKENS['bad']}; font-weight:600; }}"
         )
         dv = QVBoxLayout(dz); dv.setSpacing(8); dv.setContentsMargins(12, 18, 12, 12)
-        dv.addWidget(self._danger_row(
+        dv.addWidget(_danger_row(
             "Export brain",
             "Download the full SQLite + skill markdowns. Restorable on any device.",
             self._on_export_brain,
         ))
-        dv.addWidget(self._danger_row(
+        dv.addWidget(_danger_row(
             "Clear cache",
             "Wipes the resilient-client journal + cached context. Daemon untouched.",
             self._on_clear_brain_cache,
         ))
-        dv.addWidget(self._danger_row(
+        dv.addWidget(_danger_row(
             "Reset brain",
             "Wipes everything. Skills, facts, wiring, secrets refs, audit log. Cannot be undone.",
             self._on_reset_brain,
@@ -2166,23 +2955,6 @@ class BrainTab(QWidget):
 
     # ── danger zone handlers ─────────────────────────────────────────
 
-    def _danger_row(self, label: str, blurb: str, on_click) -> QFrame:
-        row = QFrame()
-        row.setStyleSheet(
-            f"QFrame {{ background:{TOKENS['card']}; "
-            f"border:1px solid {TOKENS['border']}; border-radius:6px; }}"
-        )
-        rl = QHBoxLayout(row); rl.setContentsMargins(12, 10, 12, 10); rl.setSpacing(10)
-        col = QVBoxLayout(); col.setSpacing(2)
-        l1 = QLabel(label); l1.setStyleSheet("font-weight:600;")
-        l2 = QLabel(blurb); l2.setObjectName("muted"); l2.setWordWrap(True)
-        col.addWidget(l1); col.addWidget(l2)
-        rl.addLayout(col, 1)
-        btn = QPushButton(label); btn.setObjectName("danger")
-        btn.clicked.connect(on_click)
-        rl.addWidget(btn)
-        return row
-
     def _on_export_brain(self) -> None:
         # Try the daemon first; if no export tool, point at the SQLite
         # file location so the founder can grab it manually.
@@ -2249,6 +3021,361 @@ class BrainTab(QWidget):
             f"{_local_appdata() / 'brain' / 'brain.db'}, restart the "
             "daemon.",
         )
+
+
+# ── Tab: Accessibility (Track E, WCAG 2.1 AA work in progress) ─────────
+class AccessibilityTab(QWidget):
+    """Per-user accessibility preferences — font size · contrast ·
+    motion · screen-reader optimisation.
+
+    Talks to ``brain.a11y_prefs`` on the local daemon. Prefs land at
+    USER scope in the brain so they sync cross-device via the federation
+    transport (per AgDR-0044 + Track E of the Content Ecosystem plan).
+
+    Honest scope (ANTI-LIE):
+        - Controls render + persist LOCALLY (secrets_store, keys
+          ``a11y_*``) as the reliable source of truth, and ALSO sync to
+          the brain best-effort when the daemon exposes
+          ``brain.a11y_prefs`` (the save no longer fails if it doesn't).
+        - reduce-motion is APPLIED: the React UI reads bridge
+          ``get_a11y_prefs`` on mount and toggles the ``lm-reduce-motion``
+          class (disables canvas animations app-wide, beyond the OS
+          ``prefers-reduced-motion`` query).
+        - font-size, contrast, and screen-reader-optimised PERSIST but are
+          not applied yet (px→scale refactor / high-contrast palette /
+          component aria-live work) — deferred pending a design decision,
+          NOT faked.
+        - The audit doc + full WCAG sweep is multi-session work; this
+          tab is the entry point, not the conclusion.
+    """
+
+    DAEMON_URL = "http://127.0.0.1:8473/mcp"
+
+    FONT_SIZES = [
+        ("Small",   "small"),
+        ("Medium",  "medium"),
+        ("Large",   "large"),
+        ("X-Large", "xlarge"),
+    ]
+    CONTRASTS = [
+        ("Normal",  "normal"),
+        ("High",    "high"),
+    ]
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(10)
+
+        _add_title(
+            outer, "Accessibility",
+            "Font size, contrast, motion. Preferences live in your brain "
+            "so they follow you across every device you sign in on.",
+            scope="USER",
+        )
+
+        # ── Display card (font size · contrast) ─────────────────────
+        disp = QGroupBox("Display")
+        df = QFormLayout(disp); df.setSpacing(8); df.setContentsMargins(12, 18, 12, 12)
+
+        self._font_pick = QComboBox()
+        self._font_pick.setObjectName("a11yFontSize")
+        self._font_pick.setAccessibleName("Font size")
+        self._font_pick.setAccessibleDescription(
+            "Choose the base font size used across ArchHub surfaces."
+        )
+        for label, val in self.FONT_SIZES:
+            self._font_pick.addItem(label, val)
+        df.addRow("Font size", self._font_pick)
+
+        self._contrast_pick = QComboBox()
+        self._contrast_pick.setObjectName("a11yContrast")
+        self._contrast_pick.setAccessibleName("Contrast")
+        self._contrast_pick.setAccessibleDescription(
+            "High contrast strengthens text + border colours to meet "
+            "WCAG 2.1 AAA where the default theme is AA-borderline."
+        )
+        for label, val in self.CONTRASTS:
+            self._contrast_pick.addItem(label, val)
+        df.addRow("Contrast", self._contrast_pick)
+
+        outer.addWidget(disp)
+
+        # ── Motion + reader card ────────────────────────────────────
+        motion = QGroupBox("Motion & assistive tech")
+        mv = QVBoxLayout(motion); mv.setSpacing(8); mv.setContentsMargins(12, 18, 12, 12)
+        mv_hint = QLabel(
+            "Reduce motion turns off canvas animations + transitions "
+            "(maps to <code>prefers-reduced-motion</code>). "
+            "Screen-reader optimised expands ARIA live regions so a "
+            "screen reader narrates every state change."
+        )
+        mv_hint.setObjectName("muted"); mv_hint.setWordWrap(True)
+        mv.addWidget(mv_hint)
+
+        self._reduce_motion = QCheckBox("Reduce motion")
+        self._reduce_motion.setObjectName("a11yReduceMotion")
+        self._reduce_motion.setAccessibleName("Reduce motion")
+        self._reduce_motion.setAccessibleDescription(
+            "Disable canvas + UI animations."
+        )
+        mv.addWidget(self._reduce_motion)
+
+        self._sr_opt = QCheckBox("Screen-reader optimised")
+        self._sr_opt.setObjectName("a11yScreenReader")
+        self._sr_opt.setAccessibleName("Screen-reader optimised")
+        self._sr_opt.setAccessibleDescription(
+            "Expand ARIA live regions so screen readers narrate state."
+        )
+        mv.addWidget(self._sr_opt)
+        outer.addWidget(motion)
+
+        # ── Status / audit doc link ─────────────────────────────────
+        status = QGroupBox("Audit status")
+        sv = QVBoxLayout(status); sv.setSpacing(6); sv.setContentsMargins(12, 18, 12, 12)
+        self._status_label = QLabel("Loading prefs from brain…")
+        self._status_label.setObjectName("muted")
+        self._status_label.setWordWrap(True)
+        sv.addWidget(self._status_label)
+        audit_hint = QLabel(
+            "Full WCAG 2.1 AA audit lives at "
+            "<code>docs/ACCESSIBILITY-AUDIT-2026-05-26.md</code>. "
+            "Per ANTI-LIE: this tab + a11y_prefs storage is the "
+            "current floor — not the AA finish line."
+        )
+        audit_hint.setObjectName("muted"); audit_hint.setWordWrap(True)
+        sv.addWidget(audit_hint)
+        outer.addWidget(status)
+
+        outer.addStretch(1)
+
+        # ── Save row ───────────────────────────────────────────────
+        save_row = QHBoxLayout()
+        self._save_btn = QPushButton("Save changes")
+        self._save_btn.setObjectName("primary")
+        self._save_btn.setAccessibleName("Save accessibility preferences")
+        self._save_btn.clicked.connect(self._save)
+        save_row.addStretch(1)
+        save_row.addWidget(self._save_btn)
+        outer.addLayout(save_row)
+
+        # Load current prefs on construction.
+        self._load()
+
+    # ── HTTP helpers ─────────────────────────────────────────────────
+
+    def _mcp_call(self, tool: str, args: dict | None = None,
+                  *, timeout: float = 2.0) -> dict:
+        """Same SSE-aware POST as BrainTab._mcp_call. Kept local so the
+        tab can be exercised without instantiating BrainTab."""
+        import urllib.error
+        import urllib.request
+        import json as _json
+        import time as _time
+        body = _json.dumps({
+            "jsonrpc": "2.0", "id": int(_time.time() * 1000),
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args or {}},
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                self.DAEMON_URL, data=body, method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8")
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                 TimeoutError, OSError) as ex:
+            return {"ok": False, "error": f"daemon unreachable: {ex}"}
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                obj = _json.loads(line[5:].strip())
+            except _json.JSONDecodeError:
+                continue
+            result = obj.get("result") or {}
+            if isinstance(result, dict):
+                sc = result.get("structuredContent")
+                if sc is not None:
+                    return sc
+                content = result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    txt = content[0].get("text", "")
+                    try:
+                        return _json.loads(txt)
+                    except Exception:
+                        return {"ok": False, "text": txt}
+            return result
+        return {"ok": False, "error": "no SSE data line in response"}
+
+    # ── load / save ──────────────────────────────────────────────────
+
+    DEFAULT_PREFS = {
+        "font_size": "medium",
+        "contrast": "normal",
+        "reduce_motion": False,
+        "screen_reader_optimised": False,
+    }
+
+    def _load(self) -> None:
+        """Populate the widgets from the most reliable source available.
+
+        Order of precedence (2026-06-03 — a11y prefs made REAL):
+          1. LOCAL persisted prefs (secrets_store.save_setting), the
+             source of truth — written every Save, always present once
+             the user has saved once, works with the daemon absent.
+          2. brain.a11y_prefs (best-effort cross-device sync) — fills
+             only the keys the local store hasn't set yet.
+          3. DEFAULT_PREFS for anything still unset.
+
+        Local-first means the controls round-trip RELIABLY: a saved
+        Reduce-motion choice survives a restart even when the daemon
+        never exposes brain.a11y_prefs."""
+        prefs = dict(self.DEFAULT_PREFS)
+
+        # (2) Best-effort brain sync — non-fatal, may be absent.
+        synced = False
+        resp = self._mcp_call("brain.a11y_prefs", {"mode": "get"})
+        if isinstance(resp, dict) and resp.get("ok") and isinstance(
+            resp.get("prefs"), dict
+        ):
+            prefs.update(resp["prefs"])
+            synced = True
+
+        # (1) LOCAL persisted prefs win over brain + defaults.
+        local_font = load_setting("a11y_font_size")
+        local_contrast = load_setting("a11y_contrast")
+        local_motion = load_setting("a11y_reduce_motion")
+        local_sr = load_setting("a11y_screen_reader")
+        have_local = any(v is not None for v in (
+            local_font, local_contrast, local_motion, local_sr))
+        if local_font is not None:
+            prefs["font_size"] = local_font
+        if local_contrast is not None:
+            prefs["contrast"] = local_contrast
+        if local_motion is not None:
+            prefs["reduce_motion"] = bool(local_motion)
+        if local_sr is not None:
+            prefs["screen_reader_optimised"] = bool(local_sr)
+
+        if have_local and synced:
+            self._status_label.setText(
+                "Prefs loaded from this device (also synced to your "
+                "brain so they follow you across devices)."
+            )
+            self._status_label.setStyleSheet(f"color:{TOKENS['good']};")
+        elif have_local:
+            self._status_label.setText(
+                "Prefs loaded from this device. They are saved locally "
+                "and will sync to your brain when it's available."
+            )
+            self._status_label.setStyleSheet(f"color:{TOKENS['good']};")
+        elif synced:
+            self._status_label.setText(
+                "Prefs loaded from your brain — these sync across every "
+                "device you sign in on."
+            )
+            self._status_label.setStyleSheet(f"color:{TOKENS['good']};")
+        else:
+            self._status_label.setText(
+                "No saved preferences yet — showing defaults. Save "
+                "stores them on this device (and syncs to your brain "
+                "when available)."
+            )
+            self._status_label.setStyleSheet(f"color:{TOKENS['muted']};")
+
+        # Push values into widgets.
+        idx = self._font_pick.findData(prefs.get("font_size", "medium"))
+        if idx >= 0:
+            self._font_pick.setCurrentIndex(idx)
+        idx = self._contrast_pick.findData(prefs.get("contrast", "normal"))
+        if idx >= 0:
+            self._contrast_pick.setCurrentIndex(idx)
+        self._reduce_motion.setChecked(bool(prefs.get("reduce_motion")))
+        self._sr_opt.setChecked(bool(prefs.get("screen_reader_optimised")))
+
+    def _collect(self) -> dict:
+        return {
+            "font_size": self._font_pick.currentData() or "medium",
+            "contrast": self._contrast_pick.currentData() or "normal",
+            "reduce_motion": bool(self._reduce_motion.isChecked()),
+            "screen_reader_optimised": bool(self._sr_opt.isChecked()),
+        }
+
+    def _save(self) -> None:
+        prefs = self._collect()
+
+        # (1) RELIABLE local persistence — the source of truth. Written
+        # under stable keys so bridge.get_a11y_prefs (consumed by the
+        # React UI) and _load() both read them back. This makes Save
+        # actually persist regardless of whether the daemon exposes the
+        # brain.a11y_prefs MCP tool.
+        local_ok = True
+        try:
+            save_setting("a11y_reduce_motion", bool(prefs["reduce_motion"]))
+            save_setting("a11y_screen_reader",
+                         bool(prefs["screen_reader_optimised"]))
+            save_setting("a11y_font_size", str(prefs["font_size"]))
+            save_setting("a11y_contrast", str(prefs["contrast"]))
+        except Exception as ex:  # pragma: no cover - disk failure is rare
+            local_ok = False
+            local_err = str(ex)
+
+        # (2) Best-effort cross-device sync via the brain. Absence here is
+        # NOT a failure any more — local persistence already succeeded.
+        resp = self._mcp_call("brain.a11y_prefs", {
+            "mode": "set", "prefs": prefs,
+        })
+        synced = isinstance(resp, dict) and resp.get("ok")
+
+        if not local_ok:
+            # The only real failure mode left: the local write itself
+            # failed. Surface it honestly.
+            QMessageBox.warning(
+                self, "Couldn't save preferences",
+                "ArchHub could not write your accessibility preferences "
+                "to this device.\n\n"
+                f"Error: {local_err[:200]}",
+            )
+            self._status_label.setText(
+                "Save failed — could not write to this device."
+            )
+            self._status_label.setStyleSheet(f"color:{TOKENS['bad']};")
+            return
+
+        if synced:
+            QMessageBox.information(
+                self, "Saved",
+                "Accessibility preferences saved on this device and "
+                "synced to your brain, so they follow you across every "
+                "device you sign in on.",
+            )
+            self._status_label.setText(
+                "Prefs saved on this device — also synced via brain "
+                "federation."
+            )
+        else:
+            QMessageBox.information(
+                self, "Saved",
+                "Accessibility preferences saved on this device. They "
+                "will sync to your brain automatically when it's "
+                "available.",
+            )
+            self._status_label.setText(
+                "Prefs saved on this device (brain sync will catch up "
+                "when available)."
+            )
+        self._status_label.setStyleSheet(f"color:{TOKENS['good']};")
 
 
 # ── Tab: Secrets & Keys ──────────────────────────────────────────────────
@@ -2519,9 +3646,32 @@ class _SetSecretDialog(QDialog):
         self.accept()
 
 
+# ── Back-compat shim for the retired QTabWidget ───────────────────────────
+class _TabsCompat:
+    """Read-only stand-in for the old `SettingsDialog._tabs` QTabWidget.
+
+    The shell is now a sidebar + QStackedWidget, so there is no real
+    QTabWidget. A small amount of dev tooling still reads
+    `dlg._tabs.count()` / `dlg._tabs.tabText(i)` (e.g.
+    tools/audit_a11y_tab.py). This adapter answers those over the frozen
+    canonical TABS label order so that tooling keeps working without a
+    crash. It is intentionally minimal — not a QWidget."""
+
+    __slots__ = ("_labels",)
+
+    def __init__(self, labels: list[str]):
+        self._labels = list(labels)
+
+    def count(self) -> int:
+        return len(self._labels)
+
+    def tabText(self, i: int) -> str:
+        return self._labels[i] if 0 <= i < len(self._labels) else ""
+
+
 # ── Dialog shell ─────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    """ArchHub settings — eight tabs, every button fires a real bridge slot.
+    """ArchHub settings — sidebar + stacked content (5 sections, 12 tabs).
 
     Public constructor preserved from v1.4:
 
@@ -2531,18 +3681,111 @@ class SettingsDialog(QDialog):
     settings_page) hit this signature; tests don't import this dialog
     directly."""
 
-    TABS = [
-        ("General",     GeneralTab),
-        ("Providers",   ProvidersTab),
-        ("Secrets",     SecretsTab),
-        ("Hosts",       HostsTab),
-        ("Memory",      MemoryTab),
-        ("Brain",       BrainTab),
-        ("Permissions", PermissionsTab),
-        ("Storage",     StorageTab),
-        ("Shortcuts",   ShortcutsTab),
-        ("About",       AboutTab),
+    # ── Signed IA: a LEFT SIDEBAR of 5 sections, NOT a 12-tab strip ──────
+    # AgDR-0045/0046 + docs/prototypes/settings-redesign-2026-06-02.html lock
+    # this shape. Each section is one scrollable page; a section with >1 tab
+    # stacks its tab widgets vertically, each under a mono-uppercase
+    # sub-label. The 12 original *Tab classes are UNCHANGED (shell rebuild —
+    # internal merges are a later pass), so all 12 still live, grouped 5-ways.
+    #   (section title, sidebar icon glyph, [(tab-label, Tab cls), …])
+    SECTIONS = [
+        ("General",        "◐", [   # ◐
+            ("General",       GeneralTab),
+            ("Accessibility", AccessibilityTab),
+        ]),
+        ("Account & Brain", "◈", [  # ◈
+            ("Account",       AccountTab),
+            ("Brain",         BrainTab),
+            ("Memory",        MemoryTab),
+        ]),
+        ("AI & Tools",     "✦", [   # ✦
+            ("Providers",     ProvidersTab),
+            ("Permissions",   PermissionsTab),
+        ]),
+        ("Connections",    "⛓", [   # ⛓
+            ("Hosts",         HostsTab),
+            ("Secrets",       SecretsTab),
+        ]),
+        ("System",         "⚙", [   # ⚙
+            # SystemTab FIRST — the native home for the controls migrated
+            # off the vestigial React Settings modal (Perf HUD / JSX cache
+            # / Reset-prefs) + the unified Forge/Blueprint/Vellum theme.
+            # It lives ONLY in SECTIONS (the visual grouping the shell
+            # iterates); the frozen TABS contract below stays the 12-label
+            # list the tests pin, so this is purely additive to the UI.
+            ("System",        SystemTab),
+            ("Storage",       StorageTab),
+            ("Shortcuts",     ShortcutsTab),
+            ("About",         AboutTab),
+        ]),
     ]
+
+    # Map a bridge.open_settings(section=...) keyword to a SIDEBAR SECTION
+    # title so the founder lands on the right page (e.g. the Brain backup CTA
+    # → "Account & Brain"). Every keyword the old flat SECTION_TO_TAB carried
+    # is preserved here so focus_section keeps returning True for all of them.
+    SECTION = {
+        "account":     "Account & Brain",
+        "cloud":       "Account & Brain",
+        "brain":       "Account & Brain",
+        "memory":      "Account & Brain",
+        "providers":   "AI & Tools",
+        "permissions": "AI & Tools",
+        "hosts":       "Connections",
+        "secrets":     "Connections",
+        "general":     "General",
+        "accessibility": "General",
+        "about":       "System",
+        "storage":     "System",
+        "shortcuts":   "System",
+    }
+
+    # ── Frozen downstream IA contract (NOT the visual grouping) ───────────
+    # The sidebar shell above renders the 12 tabs grouped into 5 sections.
+    # These two class attributes remain the documented, order-pinned contract
+    # that downstream agents + tests depend on:
+    #   • tests/test_settings_dialog_tabs.py asserts TABS == this exact order
+    #     (len 12, Brain@5, Secrets@2, Accessibility@9, Account@11).
+    #   • tests/test_cloud_signin_wiring.py asserts "Account" in TABS labels
+    #     and SECTION_TO_TAB["account"] == "Account".
+    # Keeping them here (a) honours PROTOTYPE-IS-CONTRACT without breaking the
+    # signed test surface, and (b) gives any code that wants "the canonical
+    # list of (label, Tab cls)" a single source. The shell does NOT iterate
+    # these — it iterates SECTIONS — so the visual order and this contract
+    # order are intentionally independent.
+    TABS = [
+        ("General",       GeneralTab),
+        ("Providers",     ProvidersTab),
+        ("Secrets",       SecretsTab),
+        ("Hosts",         HostsTab),
+        ("Memory",        MemoryTab),
+        ("Brain",         BrainTab),
+        ("Permissions",   PermissionsTab),
+        ("Storage",       StorageTab),
+        ("Shortcuts",     ShortcutsTab),
+        ("Accessibility", AccessibilityTab),
+        ("About",         AboutTab),
+        ("Account",       AccountTab),
+    ]
+
+    # Legacy keyword → tab-label map (superseded at runtime by SECTION, which
+    # maps keyword → sidebar-section title). Retained because downstream code
+    # + tests read SECTION_TO_TAB directly; focus_section uses SECTION.
+    SECTION_TO_TAB = {
+        "account":     "Account",
+        "cloud":       "Account",
+        "brain":       "Brain",
+        "memory":      "Memory",
+        "providers":   "Providers",
+        "permissions": "Permissions",
+        "secrets":     "Secrets",
+        "hosts":       "Hosts",
+        "general":     "General",
+        "accessibility": "General",
+        "about":       "About",
+        "storage":     "Storage",
+        "shortcuts":   "Shortcuts",
+    }
 
     def __init__(self, router=None, parent=None, manager=None, tools=None,
                  **_kwargs):
@@ -2558,31 +3801,137 @@ class SettingsDialog(QDialog):
 
         self.setObjectName("settingsDialog")
         self.setWindowTitle("ArchHub — Settings")
-        self.resize(960, 680)
-        self.setStyleSheet(DIALOG_QSS)
+        # Wider than the old 960 to seat the 220px sidebar AND give the content
+        # area ~940px — the width the tab cards were built for — so nothing
+        # overflows horizontally (signed shape is sidebar + content, not tabs).
+        self.resize(1160, 760)
+        self.setStyleSheet(DIALOG_QSS + SHELL_QSS)
 
         shell = QVBoxLayout(self)
-        shell.setContentsMargins(14, 14, 14, 12)
-        shell.setSpacing(10)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
 
-        self._tabs = QTabWidget(self)
-        self._tabs.setDocumentMode(False)
-        shell.addWidget(self._tabs, 1)
+        # ── Body: LEFT SIDEBAR (220px) + content QStackedWidget ──────────
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        shell.addLayout(body, 1)
 
+        # Sidebar column: brand lockup → divider → nav list.
+        sidebar = QWidget(self)
+        sidebar.setObjectName("settingsSidebar")
+        sidebar.setFixedWidth(220)
+        sidebar.setStyleSheet(f"QWidget#settingsSidebar {{ background:{SIGNED['bg2']}; }}")
+        side_col = QVBoxLayout(sidebar)
+        side_col.setContentsMargins(12, 18, 0, 12)
+        side_col.setSpacing(10)
+
+        # Brand: "Arch" + accent "Hub" + mono "Settings" (top-left).
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(2, 0, 12, 0)
+        brand_row.setSpacing(6)
+        brand = QLabel(self)
+        brand.setObjectName("settingsBrand")
+        brand.setTextFormat(Qt.TextFormat.RichText)
+        brand.setText(
+            f"Arch<span style='color:{SIGNED['accent']}'>Hub</span>"
+        )
+        brand_row.addWidget(brand)
+        brand_sub = QLabel("Settings", self)
+        brand_sub.setObjectName("settingsBrandSub")
+        brand_sub.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom
+        )
+        brand_row.addStretch(1)
+        brand_row.addWidget(brand_sub)
+        side_col.addLayout(brand_row)
+
+        divider = QFrame(self)
+        divider.setObjectName("settingsDivider")
+        divider.setFrameShape(QFrame.Shape.HLine)
+        side_col.addWidget(divider)
+
+        self._nav = QListWidget(self)
+        self._nav.setObjectName("settingsNav")
+        self._nav.setAccessibleName("Settings sections")
+        self._nav.setFrameShape(QFrame.Shape.NoFrame)
+        self._nav.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        side_col.addWidget(self._nav, 1)
+        body.addWidget(sidebar)
+
+        # Content host.
+        self._stack = QStackedWidget(self)
+        self._stack.setObjectName("settingsStack")
+        body.addWidget(self._stack, 1)
+
+        # ── Build the 5 section pages; keep every tab in _tab_widgets ────
+        # _tab_widgets[label] -> tab widget (tests + tab() + focus_section).
+        # _tab_section[label] -> stack index of the page that hosts the tab.
+        # _tab_scroll[label]  -> the QScrollArea wrapping that page (so
+        #                        focus_section can scroll the tab into view).
         self._tab_widgets: dict[str, QWidget] = {}
-        for label, cls in self.TABS:
-            w = cls(self)
-            # Wrap in a scroll area so long tabs (Memory, Hosts) never
-            # clip on smaller displays.
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setWidget(w)
-            self._tabs.addTab(scroll, label)
-            self._tab_widgets[label] = w
+        self._tab_section: dict[str, int] = {}
+        self._tab_scroll: dict[str, QScrollArea] = {}
+        self._section_index: dict[str, int] = {}
 
-        # Footer — a single Close button per founder's "no save dialog
-        # whiplash" rule. Per-tab Save lives inside each tab.
+        for sec_idx, (title, glyph, tabs) in enumerate(self.SECTIONS):
+            self._section_index[title] = sec_idx
+
+            # Each section is ONE scrollable page. A page with >1 tab stacks
+            # its tab widgets vertically, each under a mono-uppercase label.
+            scroll = QScrollArea(self)
+            scroll.setObjectName("settingsScroll")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            # Vertical-only: content fits the widened area, so never a
+            # horizontal scrollbar (founder 2026-06-03 screenshot caught one).
+            scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+
+            page = QWidget()
+            page.setObjectName("settingsSectionPage")
+            page_col = QVBoxLayout(page)
+            page_col.setContentsMargins(28, 26, 28, 26)
+            page_col.setSpacing(14)
+
+            multi = len(tabs) > 1
+            for label, cls in tabs:
+                if multi:
+                    page_col.addWidget(self._make_sub_label(label))
+                w = cls(self)
+                page_col.addWidget(w)
+                self._tab_widgets[label] = w
+                self._tab_section[label] = sec_idx
+                self._tab_scroll[label] = scroll
+            page_col.addStretch(1)
+
+            scroll.setWidget(page)
+            self._stack.addWidget(scroll)
+
+            item = QListWidgetItem(f"{glyph}   {title}")
+            # a11y: screen readers announce the clean section title, not the
+            # decorative glyph prefix (AccessibleTextRole overrides display text).
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, title)
+            self._nav.addItem(item)
+
+        # Wire the sidebar selection to the content stack.
+        self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
+        self._nav.setCurrentRow(0)
+
+        # Back-compat: the old shell exposed a QTabWidget at self._tabs.
+        # Downstream dev tooling (tools/audit_a11y_tab.py) reads
+        # self._tabs.count() / .tabText(i). The sidebar shell has no
+        # QTabWidget, so expose a tiny read-only adapter over the frozen
+        # TABS order (the canonical 12-label list) so that tooling keeps
+        # resolving labels.index("Accessibility") etc. without a crash.
+        self._tabs = _TabsCompat([label for label, _cls in self.TABS])
+
+        # ── Footer — single Close button (founder's "no save whiplash"). ─
         footer = QHBoxLayout()
+        footer.setContentsMargins(28, 10, 28, 12)
         version_lbl = QLabel(f"v{_read_version()}")
         version_lbl.setObjectName("muted")
         footer.addWidget(version_lbl)
@@ -2592,20 +3941,70 @@ class SettingsDialog(QDialog):
         footer.addWidget(close)
         shell.addLayout(footer)
 
-    # ── Public API consumed by SignInDialog + _ProviderRow ────────────
+    # ── Mono-uppercase section sub-label (per signed tokens) ──────────────
+    def _make_sub_label(self, text: str) -> QLabel:
+        """A small mono-uppercase divider shown above each tab widget inside
+        a multi-tab section page. Qt QSS ignores text-transform/letter-spacing,
+        so uppercase here + set tracking on the QFont for signed fidelity."""
+        lbl = QLabel((text or "").upper(), self)
+        lbl.setObjectName("sectionSubLabel")
+        f = QFont(lbl.font())
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 114)  # ~.14em
+        lbl.setFont(f)
+        return lbl
+
+    # ── Public API consumed by ProvidersTab (provider sign-in changes) ────
     def notify_changed(self) -> None:
         """A provider signed in / out; clear router cache + nudge parent."""
         if self.router and hasattr(self.router, "invalidate_clients"):
             try: self.router.invalidate_clients()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — best-effort router client-cache invalidation on provider change
         if self.router and hasattr(self.router, "_clients"):
             try: self.router._clients.clear()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — best-effort router client-cache clear on provider change
         parent = self.parent()
         if parent is not None and hasattr(parent, "_refresh_model_picker"):
             try: parent._refresh_model_picker()
-            except Exception: pass
+            except Exception: pass  # audit: deliberate-fail-soft — best-effort model-picker refresh nudge
 
     # ── Convenience used in tests / scripts that want a tab by name ───
     def tab(self, label: str) -> QWidget | None:
         return self._tab_widgets.get(label)
+
+    # ── Focus a section by keyword (bridge.open_settings(section)) ────────
+    def focus_section(self, section: str) -> bool:
+        """Select the SIDEBAR ROW whose section owns `section` (e.g.
+        "account"/"brain"/"memory" → the "Account & Brain" row) and scroll
+        that section's target tab into view. Returns True if a row was
+        selected. Called by bridge.open_settings BEFORE exec() so the founder
+        lands on the right page — e.g. the Brain "Back up my brain" signed-out
+        CTA routes here with section="account". Unknown / empty section is a
+        no-op (keeps the default first row)."""
+        key = (section or "").strip().lower()
+        title = self.SECTION.get(key)
+        if not title:
+            return False
+        sec_idx = self._section_index.get(title)
+        if sec_idx is None:
+            return False
+        self._nav.setCurrentRow(sec_idx)  # fires currentRowChanged -> stack
+
+        # Best-effort: scroll the specific tab the keyword names into view
+        # (sections with >1 tab stack vertically). Most keywords map 1:1 to a
+        # tab label (brain→Brain, memory→Memory, secrets→Secrets, …); fall
+        # back to the section's first tab when there's no exact tab match.
+        section_tabs = next(
+            (tabs for t, g, tabs in self.SECTIONS if t == title), []
+        )
+        target_label = next(
+            (lbl for lbl, _cls in section_tabs if lbl.lower() == key),
+            section_tabs[0][0] if section_tabs else None,
+        )
+        w = self._tab_widgets.get(target_label) if target_label else None
+        scroll = self._tab_scroll.get(target_label) if target_label else None
+        if w is not None and scroll is not None:
+            try:
+                scroll.ensureWidgetVisible(w, 0, 0)
+            except Exception:
+                pass  # audit: deliberate-fail-soft — scroll-into-view is cosmetic
+        return True

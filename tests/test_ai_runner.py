@@ -62,6 +62,99 @@ class TestStaticSurface:
         assert "no public api" in r["error"].lower()
 
 
+class TestGeminiRestFallbackHonesty:
+    """The SDK-absent fallback (`_gemini_via_rest`) used to return
+    status:ok even when the REST call yielded no completion — an
+    API-level error (HTTP 200 + an `error` payload, or a blocked prompt
+    with no candidates) was masked as a successful empty response. The
+    helper now RAISES on those, so `gemini_ask` reports status:error.
+    A genuine completion still returns status:ok with the text."""
+
+    def _force_rest(self):
+        """Make the SDK import fail so gemini_ask takes the REST path."""
+        import builtins
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **k):
+            if name.startswith("google"):
+                raise ImportError("SDK absent (forced)")
+            return real_import(name, *a, **k)
+        return patch.object(builtins, "__import__", fake_import)
+
+    def test_rest_api_error_payload_surfaces_as_error(self):
+        from connectors import ai_runner
+
+        def raises(*_a, **_k):
+            raise RuntimeError("Gemini API error: quota exceeded")
+        with patch.object(ai_runner, "_load_key", return_value="k"), \
+                patch.object(ai_runner, "_gemini_via_rest", side_effect=raises), \
+                self._force_rest():
+            r = ai_runner.gemini_ask("hi")
+        assert r["status"] == "error"
+        assert "quota exceeded" in r["error"]
+
+    def test_rest_success_still_reports_ok(self):
+        from connectors import ai_runner
+        with patch.object(ai_runner, "_load_key", return_value="k"), \
+                patch.object(ai_runner, "_gemini_via_rest",
+                             return_value=("hello there", "gemini-2.5-flash")), \
+                self._force_rest():
+            r = ai_runner.gemini_ask("hi")
+        assert r["status"] == "ok"
+        assert r["text"] == "hello there"
+        assert r["model"] == "gemini-2.5-flash"
+        assert r["provider"] == "google"
+
+    def test_rest_helper_raises_on_error_envelope(self):
+        """Unit-level: a {"error": {...}} payload raises, not returns ''."""
+        import io
+        import json as _json
+        from connectors import ai_runner
+
+        body = _json.dumps({"error": {"message": "bad model"}}).encode()
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with patch.object(ai_runner.urllib.request, "urlopen",
+                          return_value=_Resp(body)):
+            try:
+                ai_runner._gemini_via_rest("k", "hi", None, None, None)
+                raised = False
+            except RuntimeError as ex:
+                raised = True
+                assert "bad model" in str(ex)
+        assert raised, "expected RuntimeError on API error payload"
+
+    def test_rest_helper_raises_on_empty_candidates(self):
+        import io
+        import json as _json
+        from connectors import ai_runner
+
+        body = _json.dumps(
+            {"candidates": [],
+             "promptFeedback": {"blockReason": "SAFETY"}}).encode()
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with patch.object(ai_runner.urllib.request, "urlopen",
+                          return_value=_Resp(body)):
+            try:
+                ai_runner._gemini_via_rest("k", "hi", None, None, None)
+                raised = False
+            except RuntimeError as ex:
+                raised = True
+                assert "SAFETY" in str(ex) or "no candidates" in str(ex)
+        assert raised, "expected RuntimeError on empty candidates"
+
+
 class TestListProviders:
     def test_shape_includes_four_providers(self):
         from connectors import ai_runner

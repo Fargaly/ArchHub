@@ -16,8 +16,8 @@
     "extract-pricing": "python scripts/extract_pricing.py"
   },
   "dependencies": {
-    "astro": "^4.16.0",
-    "@astrojs/mdx": "^3.1.0"
+    "astro": "^6.4.4",
+    "@astrojs/mdx": "^6.0.2"
   },
   "devDependencies": {},
   "engines": {

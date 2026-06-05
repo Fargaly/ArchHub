@@ -209,6 +209,143 @@ explicit reshaping.
    built yet. The palette can SHOW the node but placing it surfaces
    an honest "not yet implemented" error — never silent-fail.
 
+## The stem-field layer — R1 → R5 (Phase-0 closure)
+
+> The grammar above is the CATALOGUE (what nodes exist). The stem-field
+> layer is the MACHINERY underneath: how a node's typed `config_schema`
+> becomes editable knobs, how typed ports get promoted into a reusable
+> cell, and how a composed/minted cell persists into the SAME registry
+> the runner cooks from. These five rungs (R1–R5) were the open gaps in
+> the "every node is a typed, modular stem cell" picture; Phase-0 closes
+> them. Each rung names its real artifact so the claim is verifiable, not
+> aspirational (ANTI-LIE).
+
+The single source for a node's knobs is its `config_schema` on the
+`NodeSpec` (`app/workflows/registry.py`). One schema, authored once next
+to the executor, drives **both** the inspector UI **and** the engine —
+there is no second hand-maintained widget list to drift. R1–R5 are the
+five hops that carry that one schema from the executor to a running,
+re-composable cell:
+
+### R1 — ONE renderer: `config_schema` → typed knobs
+
+A node's `config_schema` (JSON-Schema-ish: `{type, default, description,
+enum, min, max, …}` per property) is rendered by a SINGLE generic
+inspector renderer — never a per-node hand-built form. In the JSX
+inspector, `_configSchemaFor(node)` pulls the placed node's schema from
+the one grammar payload, and the renderer emits one editable `FullParam`
+field per schema property (`app/web_ui/studio-lm.jsx`, the "stem-FIELD
+gap" block, ~L15417). Each field seeds from `node.config` → `node.params`
+→ `schema.default` and writes back through the SAME `onParamChange` path
+as the legacy flat params (which mirrors into `node.params`; the engine
+folds `params → config` via `_params_to_config`, contract unchanged). A
+node with no `config_schema` falls back to its flat `node.params` —
+additive and reversible. The schema is intentionally RICHER than the old
+flat params (e.g. `assert`'s flat params were `mode/expr`; its schema
+adds `safe_mode/op/expected/message`), so the renderer exposes the full
+typed surface, not a hand-picked subset.
+
+### R2 — the bridge EMITS `config_schema`
+
+The renderer can only render what the backend hands it. `get_node_grammar`
+(`app/bridge.py`, ~L1976) returns `grammar_payload()`
+(`app/workflows/node_grammar.py`), and that payload now carries each
+entry's `config_schema`, read straight off the registry `NodeSpec` by
+`_config_schema_for(engine_type)` (`node_grammar.py`, ~L1149/L1197) — the
+JSX keeps NO second copy of the grammar. The schema crosses the
+QWebChannel bridge with the catalogue, so the inspector (R1) and the
+engine see one identical schema. (`get_node_library` still emits the
+lighter ports-only view for the palette list; the schema-bearing source
+of truth for knobs is the grammar payload.)
+
+### R3 — promote param ↔ input
+
+A typed knob is not locked to the inspector: a node's `config_schema`
+property can be PROMOTED to a wired input port (and a wired input can
+fall back to a knob when unconnected) so the same typed value is editable
+inline OR fed by a wire — the Blender "promote to Group Input" /
+Substance "expose parameter" pattern. Promotion is what lets an inner
+node's knob become a facade input when the node is wrapped into a cell
+(R4/R5). Because the knob and the port share one typed `config_schema`
+entry, promoting does not mint a second definition — it re-routes the one
+that already exists.
+
+### R4 — promote output / field-split
+
+The output side of the same move. When a selection is composed into a
+cell, each wire that crossed the selection boundary becomes ONE typed
+facade port: inbound wires → facade **inputs**, outbound wires → facade
+**outputs**, with multiple wires into the same inner port sharing one
+facade port (`compose_subgraph` in `app/workflows/subgraph.py`,
+`facade_inputs`/`facade_outputs`, ~L191–L224). "Field-split" is the
+record-shaped case of an output promotion: a structured output row (e.g.
+`fs.list`'s `{path, name, ext, size, is_dir, mtime}` rows, or any
+record) can be promoted field-by-field into distinct typed downstream
+ports rather than carrying one opaque blob — the same typed-port
+discipline applied to the fields of a record. The promoted ports are
+persisted as the composite's `inner_inputs` / `inner_outputs` and the
+internal wires are rewritten onto the facade.
+
+### R5 — persist through compose → mint, on the registry the runner reads
+
+The closure rung. A cell that is **composed** (`subgraph.register` →
+`subgraph.user`, dynamic ports off `inner_inputs`/`inner_outputs`) or
+**minted** from the "Create node…" modal (`bridge.create_node_type` →
+`custom_nodes.register_spec`, `app/workflows/custom_nodes.py` ~L433) is
+registered into **`app/workflows/registry.py`'s `_REGISTRY`** — the exact
+same dict the runner cooks from. The runner resolves every executor via
+`registry.get(node_type)` (`app/workflows/runner.py` ~L545), which reads
+`_REGISTRY`. So a freshly composed or minted cell COOKS immediately, no
+relaunch, with no copy step.
+
+**The dual-registry trap — CLOSED in this Phase-0.** The trap is the
+class of bug where compose/mint persist a new cell into ONE registry
+while the runner reads a DIFFERENT one — the minted node then shows in
+the palette but `no executor for <type>` at run time (a silent
+dead-node, the ANTI-LIE failure: "looks shipped, doesn't cook"). Phase-0
+forecloses it structurally by having a SINGLE node-type registry:
+`registry.register` / `custom_nodes.register_spec` (which does
+`_REGISTRY.pop(...)` + `register(...)` to allow edits) / `subgraph.register`
+ALL write `_REGISTRY`, and `runner.get` / `bridge.get_node_library` /
+`bridge.get_node_grammar` ALL read that same `_REGISTRY`. There is no
+second node-type registry for a cell to get stranded in; write-path and
+read-path are the one dict, so compose→mint→cook is one continuous chain.
+
+> NOTE — scope: "dual-registry" here means the NODE-TYPE registry
+> (executors the runner cooks). It is a different concern from the
+> separate, tracked LLM-tool-surface drift between `tool_engine.TOOLS`
+> and `connectors.base` ops (`docs/ROADMAP.md`, "Tool-registry
+> unification") — that is the AI's tool list, not the node executor
+> registry, and is out of scope for this stem-field closure.
+
+## `fs` is a CELL family, not a connector host (ONE-SYSTEM)
+
+`fs.list` / `fs.read` / `fs.write` / `fs.move` (`app/workflows/nodes/fs.py`)
+are **PURE STEM CELLS** — in-process executors registered into `_REGISTRY`
+exactly like `data.join` (`relate.py`) and `aggregate.py`, with typed
+ports + a `config_schema`. They are deliberately **NOT** a stateful
+connector host, and **no `app/connectors/fs_connector.py` exists** (nor
+should one).
+
+The reason is ONE-SYSTEM + LIBRARY-FIRST. Every `app/connectors/` entry
+is a stateful adapter to an *external running application* — it probes
+reachability, holds a session, and surfaces "host unreachable" because
+Revit / Excel / Rhino / etc. are out-of-process. The local filesystem is
+none of that: `os.scandir` / `open` / `shutil.move` are in-process,
+synchronous, always reachable, and need no probe / auth / session.
+Wrapping a local read or write in a connector would mint ceremony with
+zero payload — a parallel "host" system for something that is just a
+function call. So the `fs` cells stay modeled 1:1 on the other pure data
+cells: typed I/O, `config_schema`, total-tolerant (a bad path is a typed
+error dict with every output present + empty, never a raise),
+deterministic (sorted output → byte-stable cook). The read pair
+(`fs.list` / `fs.read`) performs ZERO mutation; the write pair
+(`fs.write` / `fs.move`) is side-effecting by design — it writes/moves
+bytes the way any IO function does — and guards accidental clobber with
+an explicit `overwrite` flag. Runtime safety of AI-driven writes is the
+already-shipped plan-mode approval gate on the composer/agent path
+(USER-AGENCY), not a connector wrapper.
+
 ## Library taxonomy (palette grouping)
 
 Per AgDR-0014, the palette groups by category. Section order:

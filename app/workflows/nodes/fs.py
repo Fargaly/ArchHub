@@ -38,6 +38,16 @@ No host, no LLM — the local filesystem is in-process, synchronous, always
 reachable, needs no probe / auth / session, so these stay pure stem cells
 (not stateful connectors). Lives alongside relate.py (data.join) and
 aggregate.py (reduce / group_by / sort) as a keep-as-cell stem family.
+
+CONFIRMED (Phase-0, ONE-SYSTEM): there is intentionally NO
+`app/connectors/fs_connector.py`, and none should ever be minted —
+fs.list/read/write/move are PURE CELLS registered into the one node-type
+registry (`app/workflows/registry.py`'s `_REGISTRY`, the registry the
+runner cooks from), NOT a stateful connector host. A connector exists
+only for an out-of-process app that needs a reachability probe + session;
+the local FS has neither, so a connector would be pure ceremony (a
+LIBRARY-FIRST / ONE-SYSTEM violation). See `docs/NODE_GRAMMAR.md`
+("`fs` is a CELL family, not a connector host") for the full rationale.
 """
 from __future__ import annotations
 

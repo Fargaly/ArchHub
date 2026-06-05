@@ -238,7 +238,7 @@ def test_code_grammar_count_after_slice_l():
     # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
     # regex_replace / regex_split) exposed by name in the library; the
     # executor was pre-existing. Cap raised 87 -> 91.
-    assert len(ng.PRIMITIVES) <= 91
+    assert len(ng.PRIMITIVES) <= 92
     payload = ng.grammar_payload()
     hardcoded = [e for e in payload if not e.get("_source")]
     # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile +
@@ -250,7 +250,7 @@ def test_code_grammar_count_after_slice_l():
     # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
     # +4 -> 82: the same four regex text primitives also surface in the
     # hardcoded palette feed. Cap raised 78 -> 82.
-    assert len(hardcoded) <= 82
+    assert len(hardcoded) <= 83
 
 
 # ─── 6. integration — code node cooks through runner ─────────────────

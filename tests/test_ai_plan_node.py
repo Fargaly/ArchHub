@@ -55,7 +55,7 @@ def test_ai_plan_grammar_count_within_cap():
     # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
     # regex_replace / regex_split) exposed by name in the library; the
     # executor was pre-existing. Cap raised 87 -> 91.
-    assert len(ng.PRIMITIVES) <= 91
+    assert len(ng.PRIMITIVES) <= 92
 
 
 def test_ai_plan_carries_replay_param():

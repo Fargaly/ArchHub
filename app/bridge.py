@@ -692,6 +692,24 @@ class ArchHubBridge(QObject):
                 _load_custom()
             except Exception:
                 pass
+            # R5 — close the dual-registry trap on boot. A node minted +
+            # persisted in a prior session lives in the library's disk
+            # registry; library.load_from_disk now mirrors each spec into
+            # the workflow runner registry (library._mirror_to_runner) so it
+            # can COOK this session, not merely be searchable. We call
+            # load_from_disk ONLY when a registry file already exists —
+            # never the seeding _library_bootstrap here, so the deferred
+            # thread can't race a first-run seed-and-persist onto disk
+            # (the lazy _library_bootstrap still seeds on the first JSX
+            # library call). Fail-soft: a boot mirror hiccup must not crash
+            # the boot thread.
+            try:
+                import library as _lib_boot
+                import library_persistence as _lp_boot
+                if _lp_boot.default_registry_path().exists():
+                    _lib_boot.load_from_disk()
+            except Exception:
+                pass
             try:
                 from connectors.base import load_all_connectors
                 load_all_connectors()

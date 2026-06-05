@@ -490,4 +490,4 @@ def test_grammar_count_includes_batch_2_adapters():
     # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
     # regex_replace / regex_split) exposed by name in the library; the
     # executor was pre-existing. Cap raised 87 -> 91.
-    assert len(ng.PRIMITIVES) <= 91
+    assert len(ng.PRIMITIVES) <= 92

@@ -660,6 +660,49 @@ PRIMITIVES: list[Primitive] = [
                 {"k": "pattern", "v": "", "type": "text"}),
         blurb="Regex match",
     ),
+    # Regex ops — the text.op executor already implements regex_findall /
+    # regex_match / regex_replace / regex_split (math_text.py:229-242) and lists
+    # them in the op dropdown, but they had NO discoverable library primitive
+    # (a user could only reach them by spawning a generic Text node + switching
+    # the dropdown). Expose each by name so the library surfaces them like
+    # concat/split/replace/match. (Finishes "extend text.op with regex".)
+    Primitive(
+        "regex_findall", "Regex Find All", "text", "",
+        {"": "text.op"}, READY,
+        "text.op op=regex_findall — every regex match as a list",
+        params=({"k": "op", "v": "regex_findall", "type": "text"},
+                {"k": "pattern", "v": "", "type": "text"},
+                {"k": "ignore_case", "v": False, "type": "boolean"}),
+        blurb="All regex matches → list",
+    ),
+    Primitive(
+        "regex_match", "Regex Match", "text", "",
+        {"": "text.op"}, READY,
+        "text.op op=regex_match — first match: {matched, groups, group0}",
+        params=({"k": "op", "v": "regex_match", "type": "text"},
+                {"k": "pattern", "v": "", "type": "text"},
+                {"k": "ignore_case", "v": False, "type": "boolean"}),
+        blurb="First regex match + groups",
+    ),
+    Primitive(
+        "regex_replace", "Regex Replace", "text", "",
+        {"": "text.op"}, READY,
+        "text.op op=regex_replace — regex sub (backrefs in repl)",
+        params=({"k": "op", "v": "regex_replace", "type": "text"},
+                {"k": "pattern", "v": "", "type": "text"},
+                {"k": "repl", "v": "", "type": "text"},
+                {"k": "ignore_case", "v": False, "type": "boolean"}),
+        blurb="Regex replace",
+    ),
+    Primitive(
+        "regex_split", "Regex Split", "text", "",
+        {"": "text.op"}, READY,
+        "text.op op=regex_split — split a string by a regex",
+        params=({"k": "op", "v": "regex_split", "type": "text"},
+                {"k": "pattern", "v": "", "type": "text"},
+                {"k": "ignore_case", "v": False, "type": "boolean"}),
+        blurb="Split by regex → list",
+    ),
     # ── SHARE category — Speckle worksharing (M1.5).
     # Founder decision 2026-05-21: DiskTransport default, server opt-in
     # via these nodes. share.server starts the localhost Docker stack

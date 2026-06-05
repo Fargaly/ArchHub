@@ -757,11 +757,16 @@ let _reCookPendingNode = null;
 const _RECOOK_DEBOUNCE_MS = 200;   // ~200ms trailing idle, per cook.debounce_plan
 const _fireReCook = (nodeId) => {
   if (!nodeId) return;
-  // Off-thread, non-blocking: the slot returns {request_id,status:'started'}
-  // synchronously and cooks on a Python worker thread. We pass the live
-  // in-memory LM_GRAPH so the cook sees the just-edited config (no disk
-  // roundtrip), exactly like the per-node "Rerun" button (L14553).
-  try { bridgeCall('recook_node', currentSid(), nodeId, JSON.stringify(LM_GRAPH)); } catch (e) {}
+  // MONEY-SHOT (court 2026-06-04, correcting the 2026-06-01 recook_node attempt
+  // that was a false-green — the slider STILL only saved+repainted): a param
+  // edit must RE-COOK the dataflow. `run_workflow` is the LIVE idiom the RUN
+  // button uses (L2193 / L2979) and streams results back through the path the
+  // UI already repaints from; runner.py's dirty-cascade re-cooks ONLY the
+  // changed node + its downstream (cheap) and skips frozen nodes. Off-thread
+  // async slot → returns instantly. `nodeId` stays as the "a param actually
+  // changed" guard (no spurious cook). Pass the live in-memory LM_GRAPH so the
+  // cook sees the just-edited config with no disk roundtrip.
+  try { bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH)); } catch (e) {}
 };
 // Idle-reset trailing debounce: each tick pushes the re-cook further out, so a
 // continuous drag coalesces into a few cooks (one per ~200ms idle), never one

@@ -6,6 +6,26 @@ is enough for capturing chat conversations and running them as workflows.
   control.if      — branch on a boolean condition (true / false output ports)
   control.foreach — iterate a list, fan out to a sub-graph (single-step v0)
   control.merge   — coalesce two inputs, prefer first non-null
+
+control.if is the FIRST in-place stem-cell rebuild (G3, the byte-identical
+cook). Its logic is no longer a bespoke ``_if_executor`` code blob — it is a
+typed sub-graph composed from existing pure cells (``impl.kind=graph``), so the
+node's behaviour IS a composition of library primitives, not an opaque
+hand-written function. See ``_IF_INNER_GRAPH`` below and
+``tests/test_rebuild_in_place_parity.py`` (the parity gate that proved the
+rebuild byte-identical to the retired bespoke over its full declared output
+contract — true / false / taken — on every input, including the adversarial
+ones: None, missing, a non-list, the falsy-string forms, unicode + float).
+
+Why control.if was the clean pick (where the round-1 schedule_builder rebuild
+was REFUTED): ``_if_executor`` was a PURE FUNCTION of its two declared input
+ports — it read ONLY ``inputs['condition']`` and ``inputs['value']``, its
+``config_schema`` was EMPTY (so there was structurally no ``config.get(...)``
+fallback for an unwired value to lose), it did NO ``x or []`` falsy-list
+normalization, and it had NO ``isinstance``-guard-to-``status:error`` branch
+(it has exactly two return shapes, never an error status). So a stem-cell
+composition reproduces it EXACTLY on every input — there is nothing for a
+pure-cell graph to fail to reproduce.
 """
 from __future__ import annotations
 
@@ -14,35 +34,138 @@ from ..registry import NodeSpec, register
 
 
 # ---------------------------------------------------------------------------
-def _if_executor(config: dict, inputs: dict, ctx) -> dict:
-    cond = inputs.get("condition")
-    truthy = bool(cond) and cond not in ("false", "False", "0", 0, "")
-    value = inputs.get("value")
-    if truthy:
-        return {"true": value, "false": None, "taken": "true"}
-    return {"true": None, "false": value, "taken": "false"}
-
-
-register(
-    NodeSpec(
-        type="control.if",
-        category="control",
-        display_name="If",
-        description="Pass `value` through `true` or `false` based on `condition`.",
-        inputs=[
-            Port(name="condition", type=PortType.ANY, required=True),
-            Port(name="value",     type=PortType.ANY),
-        ],
-        outputs=[
-            Port(name="true",  type=PortType.ANY),
-            Port(name="false", type=PortType.ANY),
-            Port(name="taken", type=PortType.STRING),
-        ],
-        config_schema={},
-        icon="?",
-    ),
-    _if_executor,
+# control.if — the in-place stem-cell rebuild (G3 byte-identical cook).
+#
+# The bespoke truthiness predicate was:
+#     truthy = bool(cond) and cond not in ("false", "False", "0", 0, "")
+# and the routing was: value -> true (truthy) / false (falsy), plus a `taken`
+# label. The rebuild expresses BOTH purely as a sub-graph of existing cells:
+#
+#   vin    (data.passthrough)  — the `value` entry; fans `value` to gtrue+gfalse
+#   pred   (code.expression)   — computes the SAME truthiness `t` from condition
+#   gtrue  (code.expression)   — `v if t else None`   -> the `true`  output
+#   gfalse (code.expression)   — `None if t else v`   -> the `false` output
+#   gtaken (code.expression)   — `"true" if t else "false"` -> the `taken` label
+#
+# `value` enters through ONE passthrough and fans out via INNER wires (so the
+# single facade input seeds a single inner port — the lesson from the round-1
+# refutation, where a facade input could only ever seed one inner endpoint).
+# `condition` enters `pred`, whose `t` fans to the three gate cells. The facade
+# port ids mirror the bespoke signature EXACTLY (condition/value ->
+# true/false/taken), so the in-place swap keeps the frozen G4 port contract.
+#
+# Determinism / total-tolerance: `condition` and `value` are always seeded, so
+# every expression has its names defined; `bool(...)`, `... in (...)`, and the
+# ternaries never raise on any input — the composition is a pure function with
+# no error path, matching the bespoke (which also had none).
+_IF_TRUTHY_EXPR = (
+    'bool(condition) and condition not in ("false", "False", "0", 0, "")'
 )
+
+_IF_INNER_GRAPH = {
+    "nodes": [
+        {"id": "vin", "type": "data.passthrough", "config": {},
+         "ins":  [{"id": "value", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "pred", "type": "code.expression",
+         "config": {"expr": _IF_TRUTHY_EXPR},
+         "ins":  [{"id": "condition", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gtrue", "type": "code.expression",
+         "config": {"expr": "v if t else None"},
+         "ins":  [{"id": "v", "t": "any"}, {"id": "t", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gfalse", "type": "code.expression",
+         "config": {"expr": "None if t else v"},
+         "ins":  [{"id": "v", "t": "any"}, {"id": "t", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gtaken", "type": "code.expression",
+         "config": {"expr": '"true" if t else "false"'},
+         "ins":  [{"id": "t", "t": "any"}],
+         "outs": [{"id": "value", "t": "string"}]},
+    ],
+    "wires": [
+        {"from": ["vin", "value"],  "to": ["gtrue", "v"]},
+        {"from": ["vin", "value"],  "to": ["gfalse", "v"]},
+        {"from": ["pred", "value"], "to": ["gtrue", "t"]},
+        {"from": ["pred", "value"], "to": ["gfalse", "t"]},
+        {"from": ["pred", "value"], "to": ["gtaken", "t"]},
+    ],
+}
+
+# Explicit facade maps — hand-mirrored to the bespoke port signature so the
+# derived outer contract is EXACTLY condition/value -> true/false/taken (G4).
+_IF_INNER_INPUTS = [
+    {"port": "condition", "inner_node": "pred", "inner_port": "condition",
+     "type": "any"},
+    {"port": "value", "inner_node": "vin", "inner_port": "value",
+     "type": "any"},
+]
+_IF_INNER_OUTPUTS = [
+    {"port": "true",  "inner_node": "gtrue",  "inner_port": "value",
+     "type": "any"},
+    {"port": "false", "inner_node": "gfalse", "inner_port": "value",
+     "type": "any"},
+    {"port": "taken", "inner_node": "gtaken", "inner_port": "value",
+     "type": "string"},
+]
+
+# The spec dict (the SAME shape the library / custom-node loader consumes) —
+# an `impl.kind=graph` cell. The declared NodeSpec ports below are IDENTICAL to
+# the retired bespoke's (condition/value -> true/false/taken), so this is a
+# genuine in-place rebuild, not a new type.
+_IF_SPEC = {
+    "type": "control.if",
+    "category": "control",
+    "display_name": "If",
+    "description": "Pass `value` through `true` or `false` based on "
+                   "`condition`.",
+    "inputs": [
+        {"name": "condition", "type": "any"},
+        {"name": "value", "type": "any"},
+    ],
+    "outputs": [
+        {"name": "true", "type": "any"},
+        {"name": "false", "type": "any"},
+        {"name": "taken", "type": "string"},
+    ],
+    "config_schema": {},
+    "icon": "?",
+    "impl": {
+        "kind": "graph",
+        "graph": _IF_INNER_GRAPH,
+        "inner_inputs": _IF_INNER_INPUTS,
+        "inner_outputs": _IF_INNER_OUTPUTS,
+    },
+}
+
+
+def _register_if_node() -> None:
+    """Register control.if as the stem-cell graph composition.
+
+    Built through the EXACT machinery the library / in-place swap path uses
+    (``custom_nodes._build_executor`` dispatching on ``impl.kind=graph`` ->
+    ``_graph_executor`` -> the nested-WorkflowRunner subgraph engine). ONE
+    system: no bespoke executor, no parallel composition mechanism. The
+    ``custom_nodes`` import is deferred (it imports ``nodes.code``; importing
+    it at this module's top would re-enter the ``nodes`` package mid-load),
+    mirroring the deferred ``_subgraph_executor`` import in ``_run_one`` below.
+
+    `condition` keeps ``required=True`` (the retired bespoke marked it so;
+    ``_spec_from_dict`` defaults ``required`` to False, so we re-stamp it) — the
+    declared contract stays byte-identical to the bespoke, including the
+    required flag the graph validator reads.
+    """
+    from ..custom_nodes import _build_executor, _spec_from_dict
+
+    node_spec = _spec_from_dict(_IF_SPEC)
+    for p in node_spec.inputs:
+        if p.name == "condition":
+            p.required = True
+    register(node_spec, _build_executor(_IF_SPEC, node_spec))
+
+
+_register_if_node()
 
 
 # ---------------------------------------------------------------------------

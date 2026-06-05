@@ -487,4 +487,4 @@ def test_grammar_count_includes_batch_2_adapters():
     # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
     # + data.json) — cap bumped in lockstep with their node_grammar entries.
     # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
-    assert len(ng.PRIMITIVES) <= 87
+    assert len(ng.PRIMITIVES) <= 91

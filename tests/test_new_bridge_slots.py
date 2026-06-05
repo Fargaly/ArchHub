@@ -471,7 +471,7 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     # their node_grammar Primitive() entries (same pattern as the PRIMITIVES
     # cap in test_node_grammar.py).
     # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
-    assert len(hardcoded) <= 78, "a grammar, not a catalogue"
+    assert len(hardcoded) <= 82, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
     # Required families now represented by typed-node anchors:
     #   input  → number    · logic   → if      · output → result

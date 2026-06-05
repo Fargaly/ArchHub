@@ -100,7 +100,11 @@ class TestGrammarShape:
         # stem-rebuild Phase-0 IO-write → +2 (`write_file` = fs.write text
         # write; `move_file` = fs.move rename/relocate). Two real grounded
         # stem cells like the read pair, not filler. Cap raised 85 → 87.
-        assert len(ng.PRIMITIVES) <= 87
+        # +4 → 91: text.op regex primitives (regex_findall / regex_match /
+        # regex_replace / regex_split) — the executor already implemented them
+        # (math_text.py); these expose each by name in the library so they're
+        # discoverable instead of buried in the op dropdown. Cap raised 87 → 91.
+        assert len(ng.PRIMITIVES) <= 91
 
 
 class TestEngineTypeResolution:

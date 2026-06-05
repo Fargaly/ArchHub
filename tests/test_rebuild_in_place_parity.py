@@ -297,3 +297,238 @@ def test_bespoke_executor_is_retired():
     # And the live registration is the graph executor, not the old function.
     _spec, ex = registry.get(TYPE_ID)
     assert getattr(ex, "__name__", "") != "_if_executor"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# control.merge — the SECOND in-place stem-cell rebuild (wave-3), same G3
+# recipe that proved control.if. The bespoke ``_merge_executor`` (a two-port
+# coalescer) is RETIRED and replaced IN PLACE by a stem-cell composition
+# (``impl.kind=graph`` — passthroughs + code.expression cells). The block below
+# is the same court applied to it: FAIL TO REFUTE the rebuild by proving the
+# LIVE registered ``control.merge`` is byte-identical to the retired bespoke
+# over its FULL declared output contract (value / source) on EVERY fixture,
+# including the adversarial ones.
+#
+# WHY control.merge is clean (the round-1 schedule_builder refutations CANNOT
+# arise here — the same three absences that made control.if safe):
+#   1. NO ``x or []`` / ``x or y`` falsy-normalization. The bespoke tests
+#      ``a is not None`` (an EXPLICIT None check), so a falsy-but-PRESENT ``a``
+#      (0, "", [], False) is KEPT on ``value`` and labelled source "a" — never
+#      coalesced to ``b``. The FALSY fixtures below pin this exactly (a
+#      ``x or y`` rebuild would wrongly pick ``b`` for a=0/""/[]/False).
+#   2. NO ``config.get(...)`` fallback. ``config_schema`` is EMPTY; no config
+#      value feeds an output, so the subgraph (which threads only INPUTS) loses
+#      nothing. The CONFIG_ONLY fixture pins config is inert on both sides.
+#   3. NO ``isinstance``-guard-to-``status:error``. Exactly one return shape,
+#      NEVER ``status:error`` on any input — the MERGE_STATUS_AXIS test pins it.
+# ═════════════════════════════════════════════════════════════════════════════
+MERGE_TYPE_ID = "control.merge"
+
+
+# THE FROZEN BESPOKE ORACLE — captured PRE-SWAP, verbatim from the retired
+# ``_merge_executor`` (git HEAD ``app/workflows/nodes/control.py`` lines 172-176,
+# before this change-set deleted it). This is the reference the court grades
+# against; NOT the rebuilt spec compared to itself — the original hand-written
+# behaviour, frozen so the gate keeps meaning after the bespoke is gone.
+def _retired_bespoke_merge(config: dict, inputs: dict, ctx) -> dict:
+    a = inputs.get("a")
+    b = inputs.get("b")
+    chosen = a if a is not None else b
+    return {"value": chosen,
+            "source": "a" if a is not None else ("b" if b is not None else None)}
+
+
+# The retired bespoke's PORT SIGNATURE, captured pre-swap as a frozen literal.
+# (a/b -> value/source; value:any, source:string.) The G4 test asserts the LIVE
+# rebuilt spec equals THIS captured contract — bespoke-vs-rebuild, never
+# rebuild-vs-rebuild.
+_BESPOKE_MERGE_INPUT_SIG = [("a", "any"), ("b", "any")]
+_BESPOKE_MERGE_OUTPUT_SIG = [("value", "any"), ("source", "string")]
+_DECLARED_MERGE_OUTPUT_PORTS = [name for name, _t in _BESPOKE_MERGE_OUTPUT_SIG]
+
+
+# ADVERSARIAL FIXTURES — every divergence class round-1 was blind to. Each
+# entry is ``(label, inputs, config)``.
+MERGE_ADVERSARIAL_FIXTURES = [
+    # ── the basic coalesce truth table ──────────────────────────────────────
+    ("both_none",          {"a": None, "b": None},              {}),
+    ("a_only",             {"a": 1, "b": None},                 {}),
+    ("b_only",             {"a": None, "b": 2},                 {}),
+    ("both_present",       {"a": 1, "b": 2},                    {}),
+    # ── missing ports (the get-returns-None path) ───────────────────────────
+    ("missing_both",       {},                                  {}),
+    ("missing_a",          {"b": 9},                            {}),
+    ("missing_b",          {"a": 9},                            {}),
+    # ── FALSY-but-PRESENT `a` — the `is not None` vs `or` divergence (a
+    #    `x or y` rebuild would wrongly pick b here; `a is not None` keeps a) ─
+    ("a_falsy_zero",       {"a": 0, "b": 5},                    {}),
+    ("a_falsy_empty_str",  {"a": "", "b": "x"},                 {}),
+    ("a_falsy_empty_list", {"a": [], "b": [1]},                 {}),
+    ("a_falsy_empty_dict", {"a": {}, "b": {"k": 1}},            {}),
+    ("a_falsy_false",      {"a": False, "b": True},             {}),
+    ("a_falsy_zero_float", {"a": 0.0, "b": 1.5},                {}),
+    # ── FALSY-but-PRESENT `b` with a=None (b kept; source "b") ──────────────
+    ("b_falsy_zero",       {"a": None, "b": 0},                 {}),
+    ("b_falsy_empty_str",  {"a": None, "b": ""},                {}),
+    ("b_falsy_false",      {"a": None, "b": False},             {}),
+    # ── non-scalar payloads survive the cell transcode intact ───────────────
+    ("dict_a",             {"a": {"k": 1}, "b": 2},             {}),
+    ("str_a",              {"a": "abc", "b": "def"},            {}),
+    ("list_both",          {"a": [1, 2], "b": [3, 4]},          {}),
+    ("nested_a",           {"a": {"x": [1, {"y": 2}]}, "b": 0}, {}),
+    # ── numeric / unicode safe axis ─────────────────────────────────────────
+    ("float_both",         {"a": 3.14, "b": 2.71},             {}),
+    ("unicode_a",          {"a": "café-naïve-✓", "b": "x"},     {}),
+    ("unicode_b",          {"a": None, "b": "résumé-naïve"},    {}),
+    # ── CONFIG-ONLY: control.merge has an EMPTY config_schema. A stray config
+    #    key must be IGNORED by BOTH the bespoke and the rebuild (round-1's
+    #    refutation #2 was a config value silently lost; here there is none to
+    #    lose — config is inert on this node). ────────────────────────────────
+    ("config_only_ignored", {"a": "kept", "b": "other"},
+                            {"columns": ["X"], "title": "ignored", "junk": 1}),
+]
+
+
+def _live_merge_executor():
+    """The LIVE registered control.merge (the rebuilt graph composition) — the
+    SAME (config, inputs, ctx) -> outputs callable the WorkflowRunner invokes,
+    resolved straight from the registry by type id."""
+    hit = registry.get(MERGE_TYPE_ID)
+    assert hit is not None, f"{MERGE_TYPE_ID} is not registered"
+    _spec, executor = hit
+    return executor
+
+
+def _project_merge(out: dict) -> dict:
+    """Project an executor return down to the DECLARED output contract — the
+    ports the runner actually reads + wires (value / source)."""
+    return {port: out.get(port) for port in _DECLARED_MERGE_OUTPUT_PORTS}
+
+
+@pytest.mark.parametrize("label,inputs,config",
+                         MERGE_ADVERSARIAL_FIXTURES,
+                         ids=[f[0] for f in MERGE_ADVERSARIAL_FIXTURES])
+def test_merge_rebuild_byte_identical_to_bespoke(label, inputs, config):
+    """The rebuilt control.merge's declared outputs (value/source) are
+    byte-identical to the retired bespoke's on this fixture."""
+    bespoke_out = _retired_bespoke_merge(dict(config), dict(inputs), None)
+    rebuilt_out = _live_merge_executor()(dict(config), dict(inputs), None)
+
+    assert _project_merge(rebuilt_out) == _project_merge(bespoke_out), (
+        f"[{label}] declared-contract divergence\n"
+        f"  inputs   = {inputs}\n"
+        f"  bespoke  = {_project_merge(bespoke_out)}\n"
+        f"  rebuilt  = {_project_merge(rebuilt_out)}")
+
+
+def test_merge_every_declared_port_present_on_every_fixture():
+    """The rebuilt node emits ALL declared output ports (value + source) on
+    every fixture — a missing port is a silent contract break the per-fixture
+    equality could mask if both sides omitted it."""
+    ex = _live_merge_executor()
+    for label, inputs, config in MERGE_ADVERSARIAL_FIXTURES:
+        out = ex(dict(config), dict(inputs), None)
+        for port in _DECLARED_MERGE_OUTPUT_PORTS:
+            assert port in out, f"[{label}] rebuilt output missing port {port!r}"
+
+
+def test_merge_status_axis_no_ok_vs_error_conflict():
+    """Round-1 refutation #3 was a status DIVERGENCE (bespoke status:error vs
+    rebuild status:ok on a guarded input). Pin that NO such conflict exists:
+    on every fixture, neither the bespoke nor the rebuild yields status:error.
+    (The bespoke omits status entirely — success — and the rebuild's subgraph
+    engine sets status:ok; the runner treats absent and 'ok' identically.)"""
+    ex = _live_merge_executor()
+    for label, inputs, config in MERGE_ADVERSARIAL_FIXTURES:
+        bespoke_out = _retired_bespoke_merge(dict(config), dict(inputs), None)
+        rebuilt_out = ex(dict(config), dict(inputs), None)
+        assert bespoke_out.get("status") != "error", (
+            f"[{label}] (sanity) bespoke unexpectedly errored")
+        assert rebuilt_out.get("status") != "error", (
+            f"[{label}] rebuilt control.merge returned status:error — a status "
+            f"divergence (the round-1 refutation class). inputs={inputs} "
+            f"out={rebuilt_out}")
+
+
+def test_merge_g4_live_port_signature_equals_captured_bespoke():
+    """G4 — port-signature equality vs the CAPTURED bespoke spec (pre-swap),
+    NOT a self-comparison. The live rebuilt spec carries exactly the frozen
+    bespoke contract: a/b -> value/source, same types."""
+    spec, _ex = registry.get(MERGE_TYPE_ID)
+    live_in = [(p.name, p.type.value) for p in spec.inputs]
+    live_out = [(p.name, p.type.value) for p in spec.outputs]
+    assert live_in == _BESPOKE_MERGE_INPUT_SIG, (
+        f"input signature drifted from the captured bespoke contract: "
+        f"{live_in} != {_BESPOKE_MERGE_INPUT_SIG}")
+    assert live_out == _BESPOKE_MERGE_OUTPUT_SIG, (
+        f"output signature drifted from the captured bespoke contract: "
+        f"{live_out} != {_BESPOKE_MERGE_OUTPUT_SIG}")
+
+
+def test_merge_g4_inplace_swap_refuses_a_port_rename():
+    """The G4 gate is LIVE on control.merge's slot: an in-place re-register
+    that renames a port is refused. Proves the rebuilt slot is still
+    contract-frozen, not just that the current spec happens to match."""
+    from workflows.custom_nodes import PortSignatureError, register_spec
+
+    bad = {
+        "type": MERGE_TYPE_ID,
+        "category": "control",
+        "display_name": "Merge",
+        "description": "x",
+        # rename output 'value' -> 'val' — a delete-by-mutation.
+        "inputs": [{"name": "a", "type": "any"},
+                   {"name": "b", "type": "any"}],
+        "outputs": [{"name": "val", "type": "any"},
+                    {"name": "source", "type": "string"}],
+        "impl": {"kind": "passthrough"},
+    }
+    saved = dict(registry._REGISTRY)
+    try:
+        with pytest.raises(PortSignatureError):
+            register_spec(bad)
+        # the refusal is total — the live slot is untouched.
+        spec, _ex = registry.get(MERGE_TYPE_ID)
+        assert [p.name for p in spec.outputs] == ["value", "source"]
+    finally:
+        registry._REGISTRY.clear()
+        registry._REGISTRY.update(saved)
+
+
+def test_merge_rebuild_is_a_graph_composition_of_existing_cells():
+    """control.merge's logic is now a typed sub-graph of EXISTING registered
+    cells (data.passthrough + code.expression), not a bespoke python executor.
+    Two passthroughs (one per facade input, so each can fan to BOTH expression
+    cells) + two expression cells (value + 3-way source)."""
+    from workflows.nodes import control as control_mod
+
+    spec_dict = control_mod._MERGE_SPEC
+    assert spec_dict["impl"]["kind"] == "graph", (
+        "control.merge must be rebuilt as impl.kind=graph, got "
+        f"{spec_dict['impl'].get('kind')!r}")
+
+    inner = spec_dict["impl"]["graph"]
+    inner_types = sorted({n["type"] for n in inner["nodes"]})
+    for t in inner_types:
+        assert registry.get(t) is not None, (
+            f"inner cell type {t!r} is not a registered library node — the "
+            f"rebuild must compose EXISTING cells")
+    # A real multi-cell composition (a 1-node wrapper hiding a blob would be a
+    # cheat). The merge rebuild is genuinely 4 cells.
+    assert len(inner["nodes"]) >= 4, (
+        "the merge rebuild should be a real multi-cell composition "
+        "(2 passthroughs + 2 expression cells)")
+    assert "data.passthrough" in inner_types
+    assert "code.expression" in inner_types
+
+
+def test_merge_bespoke_executor_is_retired():
+    """The hand-written ``_merge_executor`` is GONE from the control module —
+    the in-place rebuild RETIRED it (no twin, no dead parallel impl)."""
+    from workflows.nodes import control as control_mod
+
+    assert not hasattr(control_mod, "_merge_executor"), (
+        "the retired bespoke _merge_executor must be deleted from the module")
+    # And the live registration is the graph executor, not the old function.
+    _spec, ex = registry.get(MERGE_TYPE_ID)
+    assert getattr(ex, "__name__", "") != "_merge_executor"

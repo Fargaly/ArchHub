@@ -99,8 +99,11 @@ def _keys(value):
     if isinstance(value, dict):
         try:
             ks = sorted(value.keys())
-        except TypeError:                       # unsortable mixed keys
-            ks = [str(k) for k in value.keys()]
+        except TypeError:                       # unsortable mixed keys →
+            # sort by the stringified key so the output is DETERMINISTIC
+            # (never insertion-order-dependent), matching the "sorted" contract
+            # — load-bearing for reproducible / byte-identical cooks.
+            ks = sorted(str(k) for k in value.keys())
         return ks, len(ks) > 0, f"keys = {ks}"
     return [], False, f"keys = [] (not a dict: {type(value).__name__})"
 

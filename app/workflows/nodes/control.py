@@ -169,27 +169,131 @@ _register_if_node()
 
 
 # ---------------------------------------------------------------------------
-def _merge_executor(config: dict, inputs: dict, ctx) -> dict:
-    a = inputs.get("a")
-    b = inputs.get("b")
-    chosen = a if a is not None else b
-    return {"value": chosen, "source": "a" if a is not None else ("b" if b is not None else None)}
+# control.merge — the SECOND in-place stem-cell rebuild (same G3 recipe that
+# proved control.if). The bespoke coalescer was:
+#     a = inputs.get("a"); b = inputs.get("b")
+#     chosen = a if a is not None else b
+#     return {"value": chosen,
+#             "source": "a" if a is not None else ("b" if b is not None else None)}
+# i.e. a PURE FUNCTION of its two declared input ports — it read ONLY
+# inputs['a'] + inputs['b'], its config_schema was EMPTY (no config.get(...)
+# fallback for an unwired value to lose), it did NO `x or []` / `x or y`
+# falsy-normalization (it tests `a is not None`, an EXPLICIT None check, so a
+# falsy-but-present `a` — 0, "", [], False — is KEPT, never coalesced), and it
+# had NO isinstance-guard-to-status:error (exactly two return shapes, never an
+# error status). So a stem-cell composition reproduces it EXACTLY on every
+# input — there is nothing for a pure-cell graph to fail to reproduce. (This is
+# precisely the cleanliness control.if had and round-1's schedule_builder
+# lacked: schedule_builder had `rows or []`, a `columns or config.get(...)`
+# fallback, AND an isinstance-guard-to-error — all three absent here.)
+#
+# The rebuild expresses BOTH outputs purely as a sub-graph of existing cells:
+#
+#   ain    (data.passthrough)  — the `a` entry; fans `a` to gval+gsrc
+#   bin    (data.passthrough)  — the `b` entry; fans `b` to gval+gsrc
+#   gval   (code.expression)   — `a if a is not None else b`         -> `value`
+#   gsrc   (code.expression)   — the 3-way source label              -> `source`
+#
+# Each facade input enters through ITS OWN passthrough and fans out via INNER
+# wires (the round-1 lesson: a facade input can only ever seed ONE inner port,
+# so `a` and `b` each need a passthrough to reach BOTH gval and gsrc). The two
+# expressions reference the names `a` + `b` (the inner port ids on gval/gsrc),
+# both ALWAYS seeded (facade always provides a + b, defaulting to None when
+# absent), so `... is not None` + the ternaries never raise on any input — a
+# pure function with no error path, matching the bespoke (which also had none).
+# The facade port ids mirror the bespoke signature EXACTLY (a/b -> value/source,
+# value:any source:string), so the in-place swap keeps the frozen G4 contract.
+_MERGE_VALUE_EXPR = "a if a is not None else b"
+_MERGE_SOURCE_EXPR = '"a" if a is not None else ("b" if b is not None else None)'
+
+_MERGE_INNER_GRAPH = {
+    "nodes": [
+        {"id": "ain", "type": "data.passthrough", "config": {},
+         "ins":  [{"id": "value", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "bin", "type": "data.passthrough", "config": {},
+         "ins":  [{"id": "value", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gval", "type": "code.expression",
+         "config": {"expr": _MERGE_VALUE_EXPR},
+         "ins":  [{"id": "a", "t": "any"}, {"id": "b", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gsrc", "type": "code.expression",
+         "config": {"expr": _MERGE_SOURCE_EXPR},
+         "ins":  [{"id": "a", "t": "any"}, {"id": "b", "t": "any"}],
+         "outs": [{"id": "value", "t": "string"}]},
+    ],
+    "wires": [
+        {"from": ["ain", "value"], "to": ["gval", "a"]},
+        {"from": ["bin", "value"], "to": ["gval", "b"]},
+        {"from": ["ain", "value"], "to": ["gsrc", "a"]},
+        {"from": ["bin", "value"], "to": ["gsrc", "b"]},
+    ],
+}
+
+# Explicit facade maps — hand-mirrored to the bespoke port signature so the
+# derived outer contract is EXACTLY a/b -> value/source (G4).
+_MERGE_INNER_INPUTS = [
+    {"port": "a", "inner_node": "ain", "inner_port": "value", "type": "any"},
+    {"port": "b", "inner_node": "bin", "inner_port": "value", "type": "any"},
+]
+_MERGE_INNER_OUTPUTS = [
+    {"port": "value",  "inner_node": "gval", "inner_port": "value",
+     "type": "any"},
+    {"port": "source", "inner_node": "gsrc", "inner_port": "value",
+     "type": "string"},
+]
+
+# The spec dict (the SAME shape the library / in-place swap path consumes) — an
+# `impl.kind=graph` cell. The declared NodeSpec ports below are IDENTICAL to the
+# retired bespoke's (a/b -> value/source), so this is a genuine in-place
+# rebuild, not a new type.
+_MERGE_SPEC = {
+    "type": "control.merge",
+    "category": "control",
+    "display_name": "Merge",
+    "description": "Coalesce two inputs; emit the first non-null on `value`.",
+    "inputs": [
+        {"name": "a", "type": "any"},
+        {"name": "b", "type": "any"},
+    ],
+    "outputs": [
+        {"name": "value", "type": "any"},
+        {"name": "source", "type": "string"},
+    ],
+    "config_schema": {},
+    "icon": "∪",
+    "impl": {
+        "kind": "graph",
+        "graph": _MERGE_INNER_GRAPH,
+        "inner_inputs": _MERGE_INNER_INPUTS,
+        "inner_outputs": _MERGE_INNER_OUTPUTS,
+    },
+}
 
 
-register(
-    NodeSpec(
-        type="control.merge",
-        category="control",
-        display_name="Merge",
-        description="Coalesce two inputs; emit the first non-null on `value`.",
-        inputs=[Port(name="a", type=PortType.ANY), Port(name="b", type=PortType.ANY)],
-        outputs=[Port(name="value", type=PortType.ANY),
-                 Port(name="source", type=PortType.STRING)],
-        config_schema={},
-        icon="∪",
-    ),
-    _merge_executor,
-)
+def _register_merge_node() -> None:
+    """Register control.merge as the stem-cell graph composition.
+
+    Built through the EXACT machinery control.if uses
+    (``custom_nodes._build_executor`` dispatching on ``impl.kind=graph`` ->
+    ``_graph_executor`` -> the nested-WorkflowRunner subgraph engine). ONE
+    system: no bespoke executor, no parallel composition mechanism. The
+    ``custom_nodes`` import is deferred (it imports ``nodes.code``; importing
+    it at this module's top would re-enter the ``nodes`` package mid-load),
+    mirroring control.if's ``_register_if_node``.
+
+    The bespoke marked NEITHER input required (both ``a`` and ``b`` were plain
+    ``inputs.get``), and ``_spec_from_dict`` defaults ``required`` to False, so
+    no re-stamp is needed — the declared contract stays byte-identical.
+    """
+    from ..custom_nodes import _build_executor, _spec_from_dict
+
+    node_spec = _spec_from_dict(_MERGE_SPEC)
+    register(node_spec, _build_executor(_MERGE_SPEC, node_spec))
+
+
+_register_merge_node()
 
 
 # ---------------------------------------------------------------------------

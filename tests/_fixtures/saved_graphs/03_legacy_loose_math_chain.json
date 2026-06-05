@@ -1,0 +1,98 @@
+{
+  "id": "corpus-legacy-loose-math-chain",
+  "name": "Legacy loose math chain",
+  "description": "Deliberately OLD on-disk shape: ports carry only name+type (no speckle_type, no exec/multiple/required/default keys); edges carry only the routing fields (no cache_key/state/value_preview/src_field/dst_field). This is a graph saved before the AgDR-0012 Stage-2 speckle_type emission and before the v1.4 profound-wire fields. Port.from_dict / Edge.from_dict must back-fill every missing key. Math: (6 + 7) * 2 = 26.",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "a",
+      "type": "data.constant",
+      "label": "a",
+      "config": {"value": 6},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "number"}
+      ],
+      "position": {"x": 60, "y": 60}
+    },
+    {
+      "id": "b",
+      "type": "data.constant",
+      "label": "b",
+      "config": {"value": 7},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "number"}
+      ],
+      "position": {"x": 60, "y": 200}
+    },
+    {
+      "id": "sum",
+      "type": "math.op",
+      "label": "a + b",
+      "config": {"op": "add"},
+      "inputs": [
+        {"name": "a", "type": "any"},
+        {"name": "b", "type": "any"}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any"}
+      ],
+      "position": {"x": 300, "y": 130}
+    },
+    {
+      "id": "two",
+      "type": "data.constant",
+      "label": "2",
+      "config": {"value": 2},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "number"}
+      ],
+      "position": {"x": 300, "y": 300}
+    },
+    {
+      "id": "product",
+      "type": "math.op",
+      "label": "sum * 2",
+      "config": {"op": "mul"},
+      "inputs": [
+        {"name": "a", "type": "any"},
+        {"name": "b", "type": "any"}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any"}
+      ],
+      "position": {"x": 560, "y": 200}
+    },
+    {
+      "id": "result",
+      "type": "output.parameter",
+      "label": "result",
+      "config": {"name": "result"},
+      "inputs": [
+        {"name": "value", "type": "any"}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any"}
+      ],
+      "position": {"x": 820, "y": 200}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "a", "src_port": "value", "dst_node": "sum", "dst_port": "a"},
+    {"id": "e2", "src_node": "b", "src_port": "value", "dst_node": "sum", "dst_port": "b"},
+    {"id": "e3", "src_node": "sum", "src_port": "value", "dst_node": "product", "dst_port": "a"},
+    {"id": "e4", "src_node": "two", "src_port": "value", "dst_node": "product", "dst_port": "b"},
+    {"id": "e5", "src_node": "product", "src_port": "value", "dst_node": "result", "dst_port": "value"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual"}
+  ],
+  "inputs": [],
+  "outputs": [
+    {"name": "result", "type": "number"}
+  ],
+  "created_at": "2026-05-04T08:00:00",
+  "updated_at": "2026-05-04T08:00:00"
+}

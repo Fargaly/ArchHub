@@ -22,6 +22,7 @@ from . import ai_plan       # noqa: F401  M4 foundation (AgDR-0021): registers a
 from . import aggregate     # noqa: F401  AgDR-0040 slice 2: registers data.reduce + accumulate + sort + group_by
 from . import relate        # noqa: F401  stem-rebuild Phase-0: registers data.join (the reconcile core — matched / left_only / right_only)
 from . import verify        # noqa: F401  stem-rebuild Phase-0: registers verify.assert (the per-node verify gate + branch primitive)
+from . import sense         # noqa: F401  stem-rebuild Phase-0: registers sense.extract (the PROPERTY-checker sibling of verify.assert)
 from . import fs            # noqa: F401  stem-rebuild Phase-0: registers fs.list (READ-ONLY directory listing → typed file-rows)
 from . import serialize     # noqa: F401  stem-rebuild Phase-0: registers data.json (parse or stringify)
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

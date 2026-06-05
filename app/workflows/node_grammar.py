@@ -446,6 +446,21 @@ PRIMITIVES: list[Primitive] = [
                 {"k": "expr", "v": "value", "type": "text"}),
         blurb="Check a condition, branch on pass/fail",
     ),
+    # ── stem-rebuild Phase-0 — the PROPERTY-checker sibling of verify.assert.
+    # `sense.extract` reads a property of `value` (length / type / keys /
+    # exists / is_empty / in_bounds / contains / shape) → value(the property) /
+    # passed / report. assert tests a relation; sense reads an attribute. Wire
+    # `passed` into If/Switch to branch, or feed the extracted `value` (e.g. a
+    # row count) downstream. Reuses math.op for the in_bounds fences (no new
+    # evaluator). cat="logic" — it lives with the control.* branch primitives.
+    Primitive(
+        "sense", "Sense", "logic", "",
+        {"": "sense.extract"}, READY,
+        "sense.extract — read a property of value (length/type/keys/exists/"
+        "is_empty/in_bounds/contains/shape) → value/passed/report",
+        params=({"k": "op", "v": "length", "type": "text"},),
+        blurb="Read a property of a value, branch on it",
+    ),
     # ── stem-rebuild Phase-0 — the IO read cell. `fs.list` is a READ-ONLY
     # directory listing → typed file-rows {path,name,ext,size,is_dir,mtime}.
     # Turns the raw os.walk/glob blob that file-walk jobs (BBC4 submittal QC)

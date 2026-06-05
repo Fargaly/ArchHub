@@ -177,6 +177,120 @@ def inspect(node_type: str) -> dict:
     return dict(_REGISTRY[node_type])  # shallow copy — caller can't mutate
 
 
+# Behaviour keys that live on the runner side (AgDR-0038 custom_nodes
+# contract) but have no field on the library's ModularNodeSpec model. We
+# carry them VERBATIM on the stored library entry so the minted node's real
+# executor survives persistence — `model_dump()` would otherwise drop them.
+_BEHAVIOUR_KEYS = ("impl", "code")
+
+
+def _with_behaviour(stored: dict, raw: Optional[dict]) -> dict:
+    """Return a copy of the canonical spec with any `impl`/`code` body from
+    the raw spec folded back in, so the behaviour survives `save_to_disk`
+    + the next boot's `load_from_disk` re-validation (extra keys are
+    ignored by the validator + round-tripped by library_persistence)."""
+    out = dict(stored)
+    raw = raw or {}
+    for key in _BEHAVIOUR_KEYS:
+        if key in raw and key not in out:
+            out[key] = raw[key]
+    return out
+
+
+# Types the library mirror itself registered into the workflow runner
+# registry. The library OWNS these and may freely replace them (an edited
+# re-mint) or drop them (a delete). It must NEVER touch a runner entry it
+# did not create — those are the engine's BUILT-IN executors (data.constant,
+# control.if, connector.run, …), many of which the library SEED set also
+# describes. A bare library description re-registering one as a passthrough
+# would clobber the real executor (data.constant would emit None). Gap-fill
+# only: the mirror closes the trap for NODES THE RUNNER LACKS; it is not a
+# second registrar for primitives the engine already owns (ONE-SYSTEM).
+_MIRRORED: set[str] = set()
+
+
+def _mirror_to_runner(stored: dict, raw: Optional[dict] = None) -> None:
+    """Bridge a library-minted spec into the workflow RUNNER's registry.
+
+    Closes the DUAL-REGISTRY TRAP (R5): `_REGISTRY` here is the
+    LIBRARY-FIRST inventory the Composer + LLM tools read, but the runner
+    cooks from `app.workflows.registry._REGISTRY`, a SEPARATE store keyed
+    by the same `type`. A node minted through the library never reached
+    the runner, so a user/AI-minted node could not cook.
+
+    We REUSE the one in-place registration path —
+    `workflows.custom_nodes.register_spec` — which pops any prior binding,
+    builds the executor (passthrough / python / connector / ai / graph via
+    `_build_executor`), and registers `(NodeSpec, executor)` for the
+    runner. No parallel mechanism (ONE-SYSTEM mandate).
+
+    GAP-FILL guard: we register into the runner ONLY when the runner has no
+    executor for this type yet, OR when the library itself created the
+    existing entry (an edited re-mint of a library node). We never overwrite
+    an entry the library did not create — those are the engine's BUILT-IN
+    executors, and the library seed set re-describes several of them
+    (data.constant, control.*, connector.run). Clobbering a built-in with a
+    bodyless library passthrough is the regression this guard prevents.
+
+    `stored` is the canonical ModularNodeSpec dump (the library's source of
+    truth). `raw` is the un-narrowed spec as the caller supplied it — it
+    may carry an `impl`/`code` block that the ModularNodeSpec dump drops,
+    so we fold those behaviour keys back in before building the executor.
+    Without them a minted node would still register but only as a
+    passthrough; with them the runner cooks the real body.
+
+    Best-effort + import-local: a runner-registry hiccup (or the workflows
+    package being unavailable on a cold/headless boot) must never fail a
+    library mint or a disk hydrate.
+    """
+    try:
+        from workflows import custom_nodes as _cn
+        from workflows import registry as _reg
+    except Exception:
+        return
+    type_name = stored.get("type")
+    if not type_name:
+        return
+    # Don't shadow a built-in executor the library didn't put there.
+    if _reg.get(type_name) is not None and type_name not in _MIRRORED:
+        return
+    bridged = dict(stored)
+    raw = raw or {}
+    for behaviour_key in ("impl", "code"):
+        if behaviour_key in raw and behaviour_key not in bridged:
+            bridged[behaviour_key] = raw[behaviour_key]
+    try:
+        _cn.register_spec(bridged)
+        _MIRRORED.add(type_name)
+    except Exception:
+        # The library copy is authoritative; a failed runner mirror leaves
+        # the inventory intact. The node simply won't cook until the next
+        # successful registration — surfaced honestly as "no executor",
+        # never a fabricated value.
+        pass
+
+
+def _unmirror_from_runner(type_name: str) -> None:
+    """Drop a type from the runner registry when the library deletes it,
+    so no orphan executor outlives its library spec. Reuses the in-place
+    `custom_nodes.delete_spec` (pops the live registry; the missing
+    on-disk custom-node file for a library type is a harmless no-op).
+
+    Only drops an entry the library mirror created — a delete of a library
+    node that merely DESCRIBES a built-in must not unregister the engine's
+    real executor (symmetry with `_mirror_to_runner`'s gap-fill guard)."""
+    if type_name not in _MIRRORED:
+        return
+    try:
+        from workflows import custom_nodes as _cn
+    except Exception:
+        return
+    try:
+        _cn.delete_spec(type_name)
+    finally:
+        _MIRRORED.discard(type_name)
+
+
 def create_node_type(spec: dict) -> dict:
     """Validate + register a new node-type.
 
@@ -184,6 +298,10 @@ def create_node_type(spec: dict) -> dict:
     On failure raises:
       - RegistrationError(violations) — spec is not modular.
       - DuplicateTypeError — type already registered.
+
+    Registration is DUAL: the spec enters the library inventory AND is
+    mirrored into the workflow runner's registry (`_mirror_to_runner`) so
+    the minted node can immediately cook — closing the dual-registry trap.
     """
     result: ValidationResult = validate_spec(spec)
     if not result.ok:
@@ -199,7 +317,17 @@ def create_node_type(spec: dict) -> dict:
             f"(use library.inspect to view, or library.delete_node_type "
             f"to remove first)"
         )
-    _REGISTRY[type_name] = validated
+    # The ModularNodeSpec model has no `impl`/`code` field, so model_dump()
+    # DROPS the behaviour body. Persist it on the stored entry (extra keys
+    # round-trip through library_persistence + survive re-validation) so a
+    # node minted this session still cooks its REAL body — not a degraded
+    # passthrough — after a restart. Without this, boot-load (R5's boot
+    # half) would silently rebuild the executor as passthrough.
+    stored = _with_behaviour(validated, spec)
+    _REGISTRY[type_name] = stored
+    # Reach the runner so the node cooks (R5). Pass the raw spec too so an
+    # `impl`/`code` body survives into the executor build.
+    _mirror_to_runner(stored, spec)
     return {"id": type_name, "registered": True, "type": type_name}
 
 
@@ -213,6 +341,8 @@ def delete_node_type(node_type: str) -> dict:
     if node_type not in _REGISTRY:
         raise UnknownTypeError(f"no registered node-type named '{node_type}'")
     del _REGISTRY[node_type]
+    # Keep the runner registry in lock-step — no orphan executor (R5).
+    _unmirror_from_runner(node_type)
     return {"id": node_type, "ok": True}
 
 
@@ -221,8 +351,19 @@ def delete_node_type(node_type: str) -> dict:
 
 
 def reset_registry() -> None:
-    """Empty the in-process registry. Tests call this before seeding."""
+    """Empty the in-process registry. Tests call this before seeding.
+
+    Also drops every runner-registry executor the library mirror created
+    (R5), so a library reset leaves NO library-owned binding behind in
+    `workflows.registry` — built-in executors are untouched (the mirror
+    never owned them). Keeps the two stores consistent across resets."""
     _REGISTRY.clear()
+    if _MIRRORED:
+        for _type in list(_MIRRORED):
+            _unmirror_from_runner(_type)
+        # Unconditional post-condition: a reset leaves no library-owned
+        # mirror state, even if the runner package was unimportable above.
+        _MIRRORED.clear()
 
 
 def registry_size() -> int:
@@ -269,7 +410,16 @@ def load_from_disk(path=None) -> int:
             # Drift / corruption — skip the entry. Don't fail boot.
             continue
         canonical = ModularNodeSpec.model_validate(spec).model_dump()
-        _REGISTRY[canonical["type"]] = canonical
+        # Re-attach the behaviour block the dump dropped so a re-save keeps
+        # the executor across MULTIPLE restart cycles, and so the in-memory
+        # entry stays the single source of truth for behaviour.
+        stored = _with_behaviour(canonical, spec)
+        _REGISTRY[stored["type"]] = stored
+        # Boot-load must ALSO reach the runner registry (R5) — otherwise a
+        # node minted in a prior session loads into the library inventory
+        # on cold boot but still can't cook. `spec` is the on-disk dict,
+        # which preserves any `impl`/`code` behaviour block.
+        _mirror_to_runner(stored, spec)
         accepted += 1
     return accepted
 

@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from .graph import Port, PortType
-from .registry import NodeSpec, _REGISTRY, register
+from .registry import NodeSpec, _REGISTRY, get as _registry_get, register
 # AgDR-0038 Delta 4 — reuse the code.python sandbox contract (AgDR-0020)
 # so a Capability Node's python body runs with RESTRICTED builtins, not
 # the real __builtins__.  One sandbox contract for the whole codebase.
@@ -67,6 +67,26 @@ def custom_nodes_dir() -> Path:
 
 
 _TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-]*$")
+
+
+class PortSignatureError(ValueError):
+    """G4 — an in-place ``register_spec`` swap tried to change the port
+    signature (a port id or its type) of an already-registered type.
+
+    A type id is a CONTRACT: every saved graph stores its wires keyed on
+    the port ids of the node types it uses. Renaming / retyping a port in
+    a same-type re-register silently breaks every saved graph wired on the
+    old id — a delete-by-mutation. So an in-place swap may change BEHAVIOUR
+    (the executor) freely, but the typed I/O contract (the ordered port
+    ids + types) is frozen for the life of the type id. A genuine contract
+    change is a NEW type, never a silent re-register."""
+
+
+def _port_signature(ports: list) -> list[tuple[str, str]]:
+    """The frozen identity of a spec's I/O on one side: the ordered list
+    of ``(port_id, port_type)`` pairs. This is what saved graphs key their
+    wires on, so it is exactly what an in-place swap must preserve (G4)."""
+    return [(p.name, getattr(p.type, "value", str(p.type))) for p in ports]
 
 
 def _coerce_port(p: Any) -> Port:
@@ -431,10 +451,33 @@ def write_spec(spec: dict) -> Path:
 
 
 def register_spec(spec: dict) -> NodeSpec:
-    """Validate, register, and return the NodeSpec. Replaces any prior
-    registration for the same type so an edit doesn't crash."""
+    """Validate, register, and return the NodeSpec. An in-place swap
+    (re-registering the same type id) replaces the prior registration so
+    an edit doesn't crash — but only if the new spec keeps the SAME port
+    signature.
+
+    G4 — port-signature equality on every in-place swap. The executor may
+    change freely (swap an `add` body for a `multiply` body), but the
+    typed I/O contract is frozen: if the new spec renames or retypes any
+    input/output port of an already-registered type, the swap is REFUSED
+    with `PortSignatureError`. Renaming a port silently breaks every saved
+    graph keyed on the old id — a delete-by-mutation — so it must be a NEW
+    type, not a same-type re-register. (A genuine duplicate that is not an
+    in-place edit still hits `registry.register`'s own dupe-raise.)"""
     node_spec = _spec_from_dict(spec)
-    # Replace existing registration (registry.register raises on dupes).
+    prior = _registry_get(node_spec.type)
+    if prior is not None:
+        prior_spec = prior[0]
+        old_in, new_in = _port_signature(prior_spec.inputs), _port_signature(node_spec.inputs)
+        old_out, new_out = _port_signature(prior_spec.outputs), _port_signature(node_spec.outputs)
+        if old_in != new_in or old_out != new_out:
+            raise PortSignatureError(
+                f"in-place swap of '{node_spec.type}' changes its port "
+                f"signature — refused (renaming/retyping a port breaks every "
+                f"saved graph keyed on the old id; mint a new type instead). "
+                f"inputs {old_in} -> {new_in}; outputs {old_out} -> {new_out}")
+    # Same-signature swap: replace the prior registration (registry.register
+    # raises on dupes, so pop first) and rebind the new executor.
     _REGISTRY.pop(node_spec.type, None)
     register(node_spec, _build_executor(spec, node_spec))
     return node_spec

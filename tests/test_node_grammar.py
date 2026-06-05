@@ -104,7 +104,12 @@ class TestGrammarShape:
         # regex_replace / regex_split) — the executor already implemented them
         # (math_text.py); these expose each by name in the library so they're
         # discoverable instead of buried in the op dropdown. Cap raised 87 → 91.
-        assert len(ng.PRIMITIVES) <= 91
+        # stem-rebuild Phase-0 → +1 (`sense`, the sense.extract PROPERTY-checker
+        # — the property-reading sibling of `assert`: length/type/keys/exists/
+        # is_empty/in_bounds/contains/shape → value/passed/report). A real
+        # grounded stem cell like `join`/`assert`, not filler. Cap raised
+        # 91 → 92.
+        assert len(ng.PRIMITIVES) <= 92
 
 
 class TestEngineTypeResolution:

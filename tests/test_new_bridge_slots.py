@@ -473,7 +473,7 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
     # +4 -> 82: the same four regex text primitives also surface in the
     # hardcoded palette feed. Cap raised 78 -> 82.
-    assert len(hardcoded) <= 82, "a grammar, not a catalogue"
+    assert len(hardcoded) <= 83, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
     # Required families now represented by typed-node anchors:
     #   input  → number    · logic   → if      · output → result

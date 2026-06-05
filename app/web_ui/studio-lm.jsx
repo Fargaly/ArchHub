@@ -757,11 +757,48 @@ let _reCookPendingNode = null;
 const _RECOOK_DEBOUNCE_MS = 200;   // ~200ms trailing idle, per cook.debounce_plan
 const _fireReCook = (nodeId) => {
   if (!nodeId) return;
-  // Off-thread, non-blocking: the slot returns {request_id,status:'started'}
-  // synchronously and cooks on a Python worker thread. We pass the live
-  // in-memory LM_GRAPH so the cook sees the just-edited config (no disk
-  // roundtrip), exactly like the per-node "Rerun" button (L14553).
-  try { bridgeCall('recook_node', currentSid(), nodeId, JSON.stringify(LM_GRAPH)); } catch (e) {}
+  // MONEY-SHOT (court 2026-06-04, correcting the 2026-06-01 recook_node attempt
+  // that was a false-green — the slider STILL only saved+repainted): a param
+  // edit must RE-COOK the dataflow. `run_workflow` is the LIVE idiom the RUN
+  // button uses (L2193 / L2979) and streams results back through the path the
+  // UI already repaints from; runner.py's dirty-cascade re-cooks ONLY the
+  // changed node + its downstream (cheap) and skips frozen nodes. Off-thread
+  // async slot → returns instantly. `nodeId` stays as the "a param actually
+  // changed" guard (no spurious cook). Pass the live in-memory LM_GRAPH so the
+  // cook sees the just-edited config with no disk roundtrip.
+  //
+  // MONEY-SHOT 2nd HALF (court 2026-06-04 live diagnosis): the wire fired but
+  // the OUTPUT never changed. ROOT: the rail FullParam edit writes node.params[
+  // ].v, but a primitive's cook (e.g. data.constant) reads node.config[k] — and
+  // for a flat-params node the two were NOT in sync (config stayed unset while
+  // params[].v held the new value), so the re-cook read the stale 0. Proven via
+  // CDP: setting node.config.value + run_workflow → cooked changed 0→9, but the
+  // field-driven edit left config empty. Fold every node's params INTO its
+  // config right before serialising, so the dragged value ALWAYS reaches where
+  // the cook reads it. Spread existing config first → param keys overlay,
+  // non-param config keys preserved. Same params↔config mirror onParamChange
+  // intends (studio-lm.jsx:~15331), made authoritative at cook time.
+  try {
+    (LM_GRAPH.nodes || []).forEach((n) => {
+      if (n && Array.isArray(n.params) && n.params.length) {
+        const cfg = { ...(n.config || {}) };
+        n.params.forEach((p) => {
+          if (!p || p.k == null) return;
+          let v = p.v;
+          // Coerce a number-typed param from its string field value to a real
+          // JS number, so e.g. a Number node cooks {value:9} not {value:"9"}
+          // (a downstream math/aggregate node would break on a string). Guard:
+          // only coerce a finite numeric string; leave '' / non-numeric as-is.
+          if (p.type === 'number' && typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))) {
+            v = Number(v);
+          }
+          cfg[p.k] = v;
+        });
+        n.config = cfg;
+      }
+    });
+  } catch (e) {}
+  try { bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH)); } catch (e) {}
 };
 // Idle-reset trailing debounce: each tick pushes the re-cook further out, so a
 // continuous drag coalesces into a few cooks (one per ~200ms idle), never one

@@ -20,17 +20,28 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
-    # New branch: compare against remote HEAD.
+    # Determine the commit range this push INTRODUCES (what's new on the
+    # remote), then look for broker .cs edits ONLY within it.
     if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
-        range="$local_sha"
-        # Limit to the last 50 commits so a fresh branch from upstream
-        # doesn't re-flag historical broker changes.
-        cs_changes=$(git log --name-only --pretty=format: -50 "$range" -- \
-                     ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+        # New branch on the remote. Inspect only the commits NOT already on the
+        # remote's main — a branch cut from upstream (INCLUDING a squashed main
+        # that itself contains every .cs) introduces no NEW .cs and must not be
+        # flagged. (Bug fixed 2026-06-04: the old `-50 $local_sha` heuristic
+        # walked back THROUGH origin/main's squash commit — which touches all
+        # .cs — and false-blocked every clean feature-branch first-push.)
+        # Fall back to the last-50 heuristic only when there is genuinely no
+        # origin/main to diff against (the very first push of the repo).
+        base=$(git rev-parse --verify --quiet refs/remotes/origin/main || true)
+        if [[ -n "$base" ]]; then
+            range_args=("$base..$local_sha")
+        else
+            range_args=(-50 "$local_sha")
+        fi
     else
-        cs_changes=$(git log --name-only --pretty=format: "$remote_sha..$local_sha" -- \
-                     ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
+        range_args=("$remote_sha..$local_sha")
     fi
+    cs_changes=$(git log --name-only --pretty=format: "${range_args[@]}" -- \
+                 ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
 
     if [[ -n "$cs_changes" ]]; then
         cat >&2 <<EOF

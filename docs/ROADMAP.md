@@ -84,6 +84,18 @@ State by range:
 
 Per-version detail: `CHANGELOG.md` and git history.
 
+## #P0 — COURT DIRECTIVE (2026-06-04) — DO BEFORE ANYTHING ELSE. WIP=1.
+
+> Standing-court ruling (2026-06-01 + 2026-06-04 re-run). Binding constraint:
+> the founder is the ONLY reality-check; build the machine that checks instead.
+> Until the money-shot loop runs end-to-end UNDER A GATE, nothing else merges.
+
+- [x] #P0 COURT: Wire the money-shot re-cook. `onParamChange` (studio-lm.jsx:~15325) + connector `setParam` (~12245) fire `flushReCook`/`reCookParamTick` (280ms idle-reset debounce) → `_fireReCook` → `bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH))`. The 2026-06-01 `recook_node` attempt was DEAD (false-green); root #2 (2026-06-04 live): the field wrote `params[].v` but the cook read `config[k]` — UNSYNCED, so the re-cook read stale 0. Fixed by folding `params→config` (+ number-coercion) in `_fireReCook` before serialise. LIVE-PROVEN via CDP: drag value → cooked 0→9. (eng — branch `fix/slider-recook`)
+- [x] #P0 COURT: Gate the money-shot. `tests/test_ui_cdp_smoke.py::test_param_edit_recooks_output` — spawns a Number node from the library, seed-cooks (out 0), drives the rail `value` field via the real native-setter+`input` path, asserts the cooked OUTPUT NUMBER transitions 0→9 (fail if not). GREEN live (attach 9223) + on fresh auto-launch. The court's exact bar — "drag a param → assert output changed → fail if not" — is met. FOLLOW (out of WIP=1 scope, NOT this gate): broaden to a 2-node chain + a real `aec.mass` node + a "new render appeared" assert (the fuller VISION-8). (qa)
+- [ ] #P0 COURT: STOP bypassing safety. No `--no-verify`, no force-push to `main`, no squash-to-hide to dodge secret-scanning (logged 2026-06-04: branch protection bypassed twice). All work on a branch → PR → gate green → merge. Defeating the honesty guards is the worst failure class. (ops)
+- [ ] #P0 COURT: FREEZE the rulebook. No 30th mandate, no new AgDR until the money-shot loop is green (NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES). When a fake is caught: narrow scope + add a gate assertion — never write another forever-rule. (eng)
+- [ ] #P0 COURT: WIP=1 — freeze ALL non-loop work (telemetry, billing, cloud, SOC2, trademark, settings polish, new connectors, agent swarm) until the money-shot test is green under the gate. (ops)
+
 ## NEXT 7 DAYS
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot / daily-audit) is unverified and inert until the default branch is pushed (ops)

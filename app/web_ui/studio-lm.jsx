@@ -766,6 +766,38 @@ const _fireReCook = (nodeId) => {
   // async slot → returns instantly. `nodeId` stays as the "a param actually
   // changed" guard (no spurious cook). Pass the live in-memory LM_GRAPH so the
   // cook sees the just-edited config with no disk roundtrip.
+  //
+  // MONEY-SHOT 2nd HALF (court 2026-06-04 live diagnosis): the wire fired but
+  // the OUTPUT never changed. ROOT: the rail FullParam edit writes node.params[
+  // ].v, but a primitive's cook (e.g. data.constant) reads node.config[k] — and
+  // for a flat-params node the two were NOT in sync (config stayed unset while
+  // params[].v held the new value), so the re-cook read the stale 0. Proven via
+  // CDP: setting node.config.value + run_workflow → cooked changed 0→9, but the
+  // field-driven edit left config empty. Fold every node's params INTO its
+  // config right before serialising, so the dragged value ALWAYS reaches where
+  // the cook reads it. Spread existing config first → param keys overlay,
+  // non-param config keys preserved. Same params↔config mirror onParamChange
+  // intends (studio-lm.jsx:~15331), made authoritative at cook time.
+  try {
+    (LM_GRAPH.nodes || []).forEach((n) => {
+      if (n && Array.isArray(n.params) && n.params.length) {
+        const cfg = { ...(n.config || {}) };
+        n.params.forEach((p) => {
+          if (!p || p.k == null) return;
+          let v = p.v;
+          // Coerce a number-typed param from its string field value to a real
+          // JS number, so e.g. a Number node cooks {value:9} not {value:"9"}
+          // (a downstream math/aggregate node would break on a string). Guard:
+          // only coerce a finite numeric string; leave '' / non-numeric as-is.
+          if (p.type === 'number' && typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))) {
+            v = Number(v);
+          }
+          cfg[p.k] = v;
+        });
+        n.config = cfg;
+      }
+    });
+  } catch (e) {}
   try { bridgeCall('run_workflow', currentSid(), JSON.stringify(LM_GRAPH)); } catch (e) {}
 };
 // Idle-reset trailing debounce: each tick pushes the re-cook further out, so a

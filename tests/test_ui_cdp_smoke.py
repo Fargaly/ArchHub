@@ -462,10 +462,120 @@ def test_settings_opens_from_strip(cdp):
     before = cdp.eval("document.body.innerText.length")
     # The composer/command bus opens settings via 'lm-action-open-settings'.
     cdp.eval("window.dispatchEvent(new CustomEvent('lm-action-open-settings'))")
+    # POLL, don't single-shot: this QtWebEngine build mounts the Settings modal
+    # slowly (measured ~1.2s live), so a lone 200ms read was a FLAKE — the
+    # surface does open, it just takes up to ~1.5s here. Poll to ~3s (same
+    # patience the money-shot gate uses) so a real regression still fails fast
+    # but slow-mount latency doesn't.
     opened = cdp.eval(
-        "new Promise(r => setTimeout(() => { const t = document.body.innerText; "
-        "r(/settings|appearance|providers|brain/i.test(t) && t.length >= "
-        f"{before}); }}, 200))",
+        "new Promise(r=>{var t0=Date.now();(function p(){"
+        "var t=document.body.innerText;"
+        f"if(/settings|appearance|providers|brain/i.test(t)&&t.length>={before})"
+        "{r(true);return;}"
+        "if(Date.now()-t0>3000){r(false);return;}"
+        "setTimeout(p,150);})();})",
         await_promise=True,
     )
     assert opened is True, "Settings did not open from the strip's command path"
+
+
+def test_param_edit_recooks_output(cdp):
+    """THE money-shot (founder #1 + standing-court P0): editing a node's param
+    must RE-COOK the dataflow so its OUTPUT actually changes — not merely
+    save+repaint. Gated here so neither regression can return:
+      * 2026-06-01: the param-commit fired the dead ``recook_node`` slot — the
+        graph saved + the canvas repainted, but nothing re-cooked (false-green).
+      * 2026-06-04: the re-cook wire fired ``run_workflow`` correctly, but the
+        rail field wrote ``node.params[].v`` while the cook read
+        ``node.config[k]`` — the two were unsynced, so the re-cook read the
+        stale value and the output never moved.
+
+    Drives the REAL field path (no synthetic backdoor): spawn a Number node from
+    the library, seed-cook it (output 0), then mutate its rail ``value`` field
+    with the SAME native-setter + ``input`` event a user keystroke fires, and
+    assert the node's COOKED output transitions 0 → 9. Green == a param drag
+    moves the graph end-to-end. Pure JS (no Input domain) so it runs on the
+    patient cdp.eval client. Skips (never fails) if the library can't spawn a
+    Number node in this build — an environment gap, not a code regression.
+    """
+    def _wait(ms):
+        cdp.eval(f"new Promise(r=>setTimeout(()=>r(1),{int(ms)}))", await_promise=True)
+
+    # 1. fresh canvas
+    cdp.eval("window.dispatchEvent(new CustomEvent('lm-action-new-canvas'))")
+    _wait(1800)
+    sid = cdp.eval("window.__archhub_session_id || null")
+    # 2. open the library + spawn a Number node via the real addNodeFromLibrary
+    #    path (React-tracked, rail renders) — same gesture a user makes.
+    cdp.eval("window.dispatchEvent(new CustomEvent('lm-action-open-library'))")
+    _wait(700)
+    cdp.eval(
+        r"""(function(){var s=Array.from(document.querySelectorAll('input'))"""
+        r""".find(function(i){return /search|find|node/i.test(i.placeholder||'');});"""
+        r"""if(s){Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value')"""
+        r""".set.call(s,'number');s.dispatchEvent(new Event('input',{bubbles:true}));}})()"""
+    )
+    _wait(500)
+    cdp.eval(
+        r"""(function(){var el=Array.from(document.querySelectorAll('button,[role=button],li'))"""
+        r""".find(function(e){var t=(e.textContent||'').trim();"""
+        r"""return t&&t.length<40&&e.offsetParent!==null&&/^number/i.test(t);});"""
+        r"""if(el)el.click();})()"""
+    )
+    _wait(1100)
+    nid = cdp.eval(
+        "(function(){var n=(window.__archhub_LM_GRAPH.nodes||[]);"
+        "return n.length?n[n.length-1].id:null;})()"
+    )
+    if not nid:
+        pytest.skip("library could not spawn a Number node in this build — "
+                    "environment gap, not a re-cook regression")
+    nidj = json.dumps(nid)
+    # 3. seed-cook → baseline output (expect {value:0})
+    cdp.eval(
+        "new Promise(r=>{try{window.archhub.run_workflow("
+        "window.__archhub_session_id||'default',"
+        "JSON.stringify(window.__archhub_LM_GRAPH),x=>r(1));}catch(e){r(0)}})",
+        await_promise=True,
+    )
+    _wait(1000)
+    seed = cdp.eval(
+        f"JSON.stringify((window.__archhub_LM_GRAPH.nodes||[])"
+        f".find(function(x){{return x.id==={nidj};}}).cooked)"
+    )
+    # 4. drive the rail 'value' field → 9 (native-setter + input/change/blur —
+    #    exactly what a keystroke + commit fires through the controlled input).
+    drove = cdp.eval(
+        r"""(function(){var inp=Array.from(document.querySelectorAll('aside input'))"""
+        r""".find(function(i){return /value/i.test((i.closest('label,div')||{}).textContent||'');})"""
+        r"""||document.querySelectorAll('aside input')[0];if(!inp)return false;"""
+        r"""var s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;"""
+        r"""s.call(inp,'9');inp.dispatchEvent(new Event('input',{bubbles:true}));"""
+        r"""inp.dispatchEvent(new Event('change',{bubbles:true}));"""
+        r"""inp.dispatchEvent(new Event('blur',{bubbles:true}));return true;})()"""
+    )
+    if not drove:
+        pytest.skip("Number node rail exposed no editable value field in this build")
+    # 5. poll the cooked output for the re-cook (debounce + cook + stream-back).
+    cooked = cdp.eval(
+        "new Promise(r=>{var t0=Date.now();(function p(){"
+        f"var n=(window.__archhub_LM_GRAPH.nodes||[]).find(function(x){{return x.id==={nidj};}});"
+        "var v=n&&n.cooked?n.cooked.value:undefined;"
+        "if(String(v)==='9'){r(JSON.stringify(n.cooked));return;}"
+        "if(Date.now()-t0>6000){r(JSON.stringify(n?n.cooked:null));return;}"
+        "setTimeout(p,400);})();})",
+        await_promise=True,
+    )
+    # cleanup the throwaway session so the gate leaves no litter.
+    if sid:
+        cdp.eval(
+            f"new Promise(r=>{{try{{window.archhub.delete_session({json.dumps(sid)},"
+            f"x=>r(1));}}catch(e){{r(0)}}}})",
+            await_promise=True,
+        )
+    parsed = json.loads(cooked) if isinstance(cooked, str) and cooked else None
+    assert parsed and parsed.get("value") == 9, (
+        f"param edit did NOT re-cook the output — money-shot dead "
+        f"(seed cooked={seed}, after-drive cooked={cooked!r}). A slider/param "
+        f"drag must change the downstream cooked value, not just save+repaint."
+    )

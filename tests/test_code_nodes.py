@@ -235,7 +235,10 @@ def test_code_grammar_count_after_slice_l():
     # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
     # + data.json) — cap bumped in lockstep with their node_grammar entries.
     # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
-    assert len(ng.PRIMITIVES) <= 87
+    # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
+    # regex_replace / regex_split) exposed by name in the library; the
+    # executor was pre-existing. Cap raised 87 -> 91.
+    assert len(ng.PRIMITIVES) <= 91
     payload = ng.grammar_payload()
     hardcoded = [e for e in payload if not e.get("_source")]
     # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile +
@@ -245,7 +248,9 @@ def test_code_grammar_count_after_slice_l():
     # +3 → 76: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe +
     # data.json), real palette primitives.
     # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
-    assert len(hardcoded) <= 78
+    # +4 -> 82: the same four regex text primitives also surface in the
+    # hardcoded palette feed. Cap raised 78 -> 82.
+    assert len(hardcoded) <= 82
 
 
 # ─── 6. integration — code node cooks through runner ─────────────────

@@ -151,6 +151,9 @@ def test_grammar_count_after_ai_split():
     # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
     # + data.json) — cap bumped in lockstep with their node_grammar entries.
     # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
+    # regex_replace / regex_split) exposed by name in the library; the
+    # executor was pre-existing. Cap raised 87 -> 91.
     assert len(ng.PRIMITIVES) <= 91
     payload = ng.grammar_payload()
     hardcoded = [p for p in payload if not p.get("_source")]
@@ -160,6 +163,8 @@ def test_grammar_count_after_ai_split():
     # +3 → 76: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe +
     # data.json), real palette primitives.
     # +2 → 78: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    # +4 -> 82: the same four regex text primitives also surface in the
+    # hardcoded palette feed. Cap raised 78 -> 82.
     assert len(hardcoded) <= 82
     # Adapter (6) + share (3) + AI typed (4) → at least 13 AgDR-derived
     # primitives in the visible payload. Count only HARDCODED entries

@@ -52,6 +52,9 @@ def test_ai_plan_grammar_count_within_cap():
     # +3 -> 85: stem-rebuild Phase-0 batch-2 cells (fs.read + data.dedupe
     # + data.json) — cap bumped in lockstep with their node_grammar entries.
     # +2 -> 87: stem-rebuild Phase-0 IO-write cells fs.write + fs.move.
+    # +4 -> 91: text.op regex primitives (regex_findall / regex_match /
+    # regex_replace / regex_split) exposed by name in the library; the
+    # executor was pre-existing. Cap raised 87 -> 91.
     assert len(ng.PRIMITIVES) <= 91
 
 

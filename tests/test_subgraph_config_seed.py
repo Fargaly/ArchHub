@@ -208,3 +208,52 @@ def test_input_overrides_config_then_config_fallback():
     out2 = WorkflowRunner({"nodes": [node2], "wires": []}).pull("facade2")
     assert out2.get("status") == "ok", out2
     assert out2.get("out") == "cfg-val"
+
+
+# ── impl.kind=graph path: the config-seed must reach a REBUILT node ──────────
+# Copilot review on #78: the subgraph.user tests above don't exercise the
+# impl.kind=graph path that custom_nodes._graph_executor builds — where the
+# facade node's runtime config is threaded under the inner-graph wrapper. The
+# rebuilt composites (control.switch, aec.*, adapter.*) are ALL that path, so
+# this pins the threading directly so it cannot regress.
+def test_config_seed_reaches_impl_kind_graph_node():
+    """A node built via custom_nodes._build_executor with impl.kind=graph and a
+    config-sourced inner seed reads the FACADE node's config — proving
+    _graph_executor threads the runtime config down to the seed (not just the
+    raw subgraph.user path)."""
+    from workflows.custom_nodes import _spec_from_dict, _build_executor
+
+    inner = {
+        "nodes": [
+            {"id": "e", "type": "code.expression", "config": {"expr": "cfg"},
+             "ins": [{"id": "cfg", "t": "any"}],
+             "outs": [{"id": "value", "t": "any"}]},
+        ],
+        "wires": [],
+    }
+    spec = {
+        "type": "test.cfgseed_graph",
+        "impl": {
+            "kind": "graph",
+            "inner_graph": inner,
+            "inner_inputs": [
+                {"port": "cfgport", "inner_node": "e", "inner_port": "cfg",
+                 "source": "config", "config_key": "param"},
+            ],
+            "inner_outputs": [
+                {"port": "out", "inner_node": "e", "inner_port": "value"},
+            ],
+        },
+        "config_schema": {"param": {}},
+        "inputs": [],
+        "outputs": [{"name": "out", "type": "any"}],
+    }
+    node_spec = _spec_from_dict(spec)
+    executor = _build_executor(spec, node_spec)
+    # The facade node's runtime config carries `param`; the config-sourced seed
+    # must deliver it to the inner code.expression (which echoes `cfg`).
+    out = executor({"param": "CFG-VAL"}, {}, None)
+    assert out.get("out") == "CFG-VAL", out
+    # Not a constant — a different config value flows through too.
+    out2 = executor({"param": 42}, {}, None)
+    assert out2.get("out") == 42, out2

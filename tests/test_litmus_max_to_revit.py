@@ -37,10 +37,15 @@ from connectors.revit_speckle_ops import (  # noqa: E402
     build_create_script,
     send_to_speckle,
 )
-from workflows.nodes.adapter import (  # noqa: E402
-    _max_to_revit_family_executor,
-)
+# adapter.max_to_revit_family / cad_to_revit_wall are now `impl.kind=graph`
+# stem-cell compositions — the bespoke `_*_executor` blobs were RETIRED. Resolve
+# the LIVE executors from the registry (the same way this file resolves the beam
+# / detail-line / excel adapters), so the litmus exercises what the engine runs.
+import workflows.nodes.adapter  # noqa: E402,F401  registers every adapter
+from workflows.registry import get as registry_get  # noqa: E402
 from speckle_wire import SpeckleWire  # noqa: E402
+
+_, _max_to_revit_family_executor = registry_get("adapter.max_to_revit_family")
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +87,7 @@ def test_litmus_max_mass_to_revit_family(tmp_path):
 
     # ── Stage 2: adapter.max_to_revit_family enriches ────────────
     adapted = _max_to_revit_family_executor(
-        config={
+        _config={
             "target_category": "Mass",
             "family_name":     "ArchHub_WingFamily",
             "family_template": "Metric Mass.rft",
@@ -174,7 +179,7 @@ def test_litmus_chain_handles_a_list_of_masses(tmp_path):
         for i in range(3)
     ]
     adapted = _max_to_revit_family_executor(
-        config={
+        _config={
             "target_category": "Mass",
             "family_name":     "BatchFamily",
             "parameters":      {},
@@ -241,7 +246,7 @@ def test_litmus_cad_to_wall_chain(tmp_path):
     """Parallel chain: CAD polyline → adapter.cad_to_revit_wall →
     Speckle round-trip → Wall.Create C#. Documents that the same
     pattern works for the AutoCAD → Revit Wall path."""
-    from workflows.nodes.adapter import _cad_to_revit_wall_executor
+    _, _cad_to_revit_wall_executor = registry_get("adapter.cad_to_revit_wall")
 
     polyline = {
         "speckle_type": "Objects.Geometry.Polyline",
@@ -249,7 +254,7 @@ def test_litmus_cad_to_wall_chain(tmp_path):
         "revit_polyline": [[0, 0, 0], [5000, 0, 0], [5000, 4000, 0]],
     }
     adapted = _cad_to_revit_wall_executor(
-        config={
+        _config={
             "level":      "Level 1",
             "wall_type":  "Generic - 200mm",
             "height":     3200,

@@ -330,17 +330,32 @@ def _graph_executor(impl: dict, output_names: list[str]):
             inner_inputs = d_in
         if inner_outputs is None:
             inner_outputs = d_out
-    sub_config = {
-        "inner_graph":   inner_graph,
-        "inner_inputs":  inner_inputs,
-        "inner_outputs": inner_outputs,
-    }
 
     def _exec(_config: dict, inputs: dict, ctx) -> dict:
         try:
             from .subgraph import _subgraph_executor
         except Exception as ex:
             return {"error": f"subgraph machinery unavailable: {ex}"}
+        # Thread the facade node's RUNTIME config under the inner-graph wrapper
+        # so a CONFIG-SOURCED inner seed (wave-4 infra: an `inner_inputs` entry
+        # with `source:"config"` + `config_key:k`) can read `config.get(k)` —
+        # the facade node's own config, not just its wired inputs. Part A's
+        # `_subgraph_executor` reads config keys for those seeds, but the raw
+        # `subgraph.user` path carried the config keys in the SAME dict as the
+        # inner-graph wrapper; the `impl.kind=graph` path builds the wrapper
+        # itself, so without this merge the facade config never reaches the
+        # seed and a config-fallback rebuild (control.switch) would lose it.
+        # The reserved wrapper keys ALWAYS win (spread last), so a stray
+        # `inner_graph`/`inner_inputs`/`inner_outputs` config key can never
+        # shadow the real maps; every OTHER runtime key (e.g. `case`) flows
+        # through. Backward-compatible: a node with no config-sourced seed is
+        # unaffected (the extra keys are simply never read).
+        sub_config = {
+            **(_config or {}),
+            "inner_graph":   inner_graph,
+            "inner_inputs":  inner_inputs,
+            "inner_outputs": inner_outputs,
+        }
         return _subgraph_executor(sub_config, inputs or {}, ctx)
 
     return _exec

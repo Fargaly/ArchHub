@@ -556,7 +556,15 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
             out["error"]  = f"{type(ex).__name__}: {ex}"
             continue
         if isinstance(cooked, dict):
-            if cooked.get("status") == "error":
+            # Propagate an inner error whether it surfaced DIRECTLY on this
+            # output endpoint (status:"error") or was carried here from a
+            # deeper inner node (runner.py stamps an upstream miss as
+            # status:"upstream_error"). Both mean "an inner cell failed", so
+            # the composite must error EXACTLY as a bespoke that early-returned
+            # {status:error} would — this lets a data.ensure(on_fail=error)
+            # guard sitting UPSTREAM of the output extractors propagate out of
+            # the subgraph (the wave-4 type-guard path).
+            if cooked.get("status") in ("error", "upstream_error"):
                 out[port_id] = None
                 out["status"] = "error"
                 out["error"]  = cooked.get("error")

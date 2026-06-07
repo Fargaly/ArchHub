@@ -546,6 +546,31 @@ PRIMITIVES: list[Primitive] = [
         params=({"k": "mode", "v": "parse", "type": "text"},),
         blurb="Parse or stringify JSON",
     ),
+    # ── stem-rebuild Phase-0 (NORMALIZATION INFRA) — the config-fallback cell.
+    # `data.coalesce` is the reusable `x or default` / `x if x is not None else
+    # y` pattern the messy composites hand-rolled inline: mode=none falls back
+    # only on None, mode=falsy falls back on any falsy value. Pure — always ok.
+    Primitive(
+        "coalesce", "Coalesce", "shape", "",
+        {"": "data.coalesce"}, READY,
+        "data.coalesce — first-present-of-two: value, else fallback "
+        "(mode = none/falsy). The reusable `x or default` cell",
+        params=({"k": "mode", "v": "none", "type": "text"},),
+        blurb="Use a value, or a fallback if it's missing",
+    ),
+    # ── stem-rebuild Phase-0 (NORMALIZATION INFRA) — the type-guard cell.
+    # `data.ensure` checks `value` against `type` (list/dict/number/string/bool/
+    # any) → value + ok; on a miss, on_fail picks error (status:error, which a
+    # subgraph propagates so a composite fails) / coerce / passthrough. Pure.
+    Primitive(
+        "ensure", "Ensure", "shape", "",
+        {"": "data.ensure"}, READY,
+        "data.ensure — type-guard value (list/dict/number/string/bool/any) → "
+        "value/ok; on miss: error (subgraph-propagated) / coerce / passthrough",
+        params=({"k": "type", "v": "any", "type": "text"},
+                {"k": "on_fail", "v": "error", "type": "text"}),
+        blurb="Make sure a value is the right type",
+    ),
     # ── MATH category — typed arithmetic / comparison / logic (slice J).
     # All map to `math.op` with `op` pre-set. One engine, many typed nodes.
     Primitive(

@@ -567,34 +567,188 @@ register(
 
 
 # ---------------------------------------------------------------------------
-def _switch_executor(config: dict, inputs: dict, ctx) -> dict:
-    """Route `value` to `match` when it equals `case` (wired input, else
-    config), otherwise to `default`. A value-equality router — distinct
-    from control.if, which branches on a boolean condition."""
-    value = inputs.get("value")
-    case = inputs.get("case")
-    if case is None:
-        case = (config or {}).get("case")
-    matched = value == case or str(value) == str(case)
-    if matched:
-        return {"match": value, "default": None, "taken": "match"}
-    return {"match": None, "default": value, "taken": "default"}
+# control.switch — the THIRD in-place stem-cell rebuild (wave-4), the FIRST to
+# exercise the NORMALIZATION INFRA. Where control.if / control.merge were clean
+# pure functions of their inputs (empty config_schema → nothing to lose), the
+# bespoke ``_switch_executor`` carried the one pattern the bare subgraph engine
+# does NOT give for free — a CONFIG-FALLBACK:
+#     value = inputs.get("value")
+#     case  = inputs.get("case")
+#     if case is None:                       # ← the config-fallback
+#         case = config.get("case")
+#     matched = value == case or str(value) == str(case)
+#     if matched:  return {"match": value, "default": None, "taken": "match"}
+#     return        {"match": None,  "default": value, "taken": "default"}
+#
+# This is precisely refutation #2 that sank round-1's schedule_builder (a
+# ``columns or config.get('columns')`` fallback the subgraph lost because the
+# inner runner threads only INPUTS, never the facade node's config). The wave-4
+# infra closes it: a ``data.coalesce`` (mode ``none`` → ``x if x is not None
+# else fallback``) cell whose ``value`` is seeded from the facade ``case`` INPUT
+# and whose ``fallback`` is seeded from the facade node's ``config.get('case')``
+# via a CONFIG-SOURCED inner-input (``source:"config"`` + ``config_key:"case"``,
+# subgraph.py). That reproduces ``case = inputs.get('case') if
+# inputs.get('case') is not None else config.get('case')`` BYTE-IDENTICALLY —
+# the config value reaches the inner graph through the config-seed, no longer
+# lost. (No ``data.ensure`` here: the bespoke has NO isinstance-guard-to-error —
+# its only return shapes are the two routes, never ``status:error`` — so adding
+# a type-guard would FABRICATE an error path the bespoke never had. switch is a
+# config-fallback rebuild, not a type-guard one.)
+#
+# The rest is the same recipe control.if/merge proved — pure cells:
+#
+#   vin    (data.passthrough) — the `value` entry; fans `value` to pred+gmatch+gdefault
+#   ccoa   (data.coalesce, mode=none) — the `case` config-fallback: value=case input,
+#                                      fallback=config['case'] (config-seed) → resolved case
+#   pred   (code.expression)  — the SAME match predicate `value == case or
+#                               str(value) == str(case)`            -> `m`
+#   gmatch   (code.expression) — `v if m else None`     -> the `match`   output
+#   gdefault (code.expression) — `None if m else v`     -> the `default` output
+#   gtaken   (code.expression) — `"match" if m else "default"` -> the `taken` label
+#
+# `value` enters through ONE passthrough and fans out via INNER wires (the
+# round-1 lesson: a facade input seeds exactly ONE inner port, so it needs a
+# passthrough to reach pred + both gates). `case` enters the coalesce cell
+# directly (its `value` port IS the entry; its single output fans only to pred).
+# Every expression's names (`value`, `case`, `v`, `m`) are ALWAYS seeded —
+# `value`+`case` always flow (facade seeds them, defaulting to None), `m` is
+# pred's always-cooked output — so `==`, `str(...)`, and the ternaries never
+# raise on any input: a pure function with no error path, matching the bespoke.
+# The facade port ids mirror the bespoke signature EXACTLY (value/case ->
+# match/default/taken; match:any default:any taken:string), so the in-place swap
+# keeps the frozen G4 port contract.
+_SWITCH_MATCH_EXPR = "value == case or str(value) == str(case)"
+
+_SWITCH_INNER_GRAPH = {
+    "nodes": [
+        {"id": "vin", "type": "data.passthrough", "config": {},
+         "ins":  [{"id": "value", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        # The config-fallback cell — mode `none` reproduces `case if case is
+        # not None else config['case']`. `value` is seeded from the `case`
+        # INPUT, `fallback` from the facade `config['case']` (config-seed).
+        {"id": "ccoa", "type": "data.coalesce", "config": {"mode": "none"},
+         "ins":  [{"id": "value", "t": "any"}, {"id": "fallback", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "pred", "type": "code.expression",
+         "config": {"expr": _SWITCH_MATCH_EXPR},
+         "ins":  [{"id": "value", "t": "any"}, {"id": "case", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gmatch", "type": "code.expression",
+         "config": {"expr": "v if m else None"},
+         "ins":  [{"id": "v", "t": "any"}, {"id": "m", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gdefault", "type": "code.expression",
+         "config": {"expr": "None if m else v"},
+         "ins":  [{"id": "v", "t": "any"}, {"id": "m", "t": "any"}],
+         "outs": [{"id": "value", "t": "any"}]},
+        {"id": "gtaken", "type": "code.expression",
+         "config": {"expr": '"match" if m else "default"'},
+         "ins":  [{"id": "m", "t": "any"}],
+         "outs": [{"id": "value", "t": "string"}]},
+    ],
+    "wires": [
+        # value fans to the predicate + both value-gates.
+        {"from": ["vin", "value"],  "to": ["pred", "value"]},
+        {"from": ["vin", "value"],  "to": ["gmatch", "v"]},
+        {"from": ["vin", "value"],  "to": ["gdefault", "v"]},
+        # the resolved (config-fallen-back) case feeds the predicate.
+        {"from": ["ccoa", "value"], "to": ["pred", "case"]},
+        # the match flag fans to all three gates.
+        {"from": ["pred", "value"], "to": ["gmatch", "m"]},
+        {"from": ["pred", "value"], "to": ["gdefault", "m"]},
+        {"from": ["pred", "value"], "to": ["gtaken", "m"]},
+    ],
+}
+
+# Explicit facade maps — hand-mirrored to the bespoke port signature so the
+# derived outer contract is EXACTLY value/case -> match/default/taken (G4).
+# `value` seeds the passthrough; `case` seeds the coalesce's `value` port (the
+# INPUT half of the fallback); the coalesce's `fallback` port is seeded from the
+# facade node's own ``config['case']`` via a CONFIG-SOURCED entry — this is the
+# wave-4 infra reproducing ``inputs.get('case') or-None-fallback config['case']``.
+_SWITCH_INNER_INPUTS = [
+    {"port": "value", "inner_node": "vin", "inner_port": "value",
+     "type": "any"},
+    {"port": "case", "inner_node": "ccoa", "inner_port": "value",
+     "type": "any"},
+    # CONFIG-SEED: the coalesce fallback is the facade node's config['case'],
+    # threaded into the inner graph by subgraph.py's source:"config" path. This
+    # is the config-fallback the bare subgraph engine lost; the infra closes it
+    # byte-identically. `port` is a SYNTHETIC seed-node id (``case_cfg``), NOT a
+    # facade input — the outer caller never wires it; it only names the internal
+    # ``__seed__case_cfg`` node (subgraph.py builds ``seed_id`` from ``port``),
+    # exactly as Part A's test_subgraph_config_seed pins (a config-sourced entry
+    # carries a `port` but is filtered out of the facade `ins`). The declared
+    # NodeSpec inputs stay value/case — this entry is invisible to the contract.
+    {"port": "case_cfg", "inner_node": "ccoa", "inner_port": "fallback",
+     "source": "config", "config_key": "case", "type": "any"},
+]
+_SWITCH_INNER_OUTPUTS = [
+    {"port": "match",   "inner_node": "gmatch",   "inner_port": "value",
+     "type": "any"},
+    {"port": "default", "inner_node": "gdefault", "inner_port": "value",
+     "type": "any"},
+    {"port": "taken",   "inner_node": "gtaken",   "inner_port": "value",
+     "type": "string"},
+]
+
+# The spec dict (the SAME shape the library / in-place swap path consumes) — an
+# `impl.kind=graph` cell. The declared NodeSpec ports below are IDENTICAL to the
+# retired bespoke's (value/case -> match/default/taken), so this is a genuine
+# in-place rebuild, not a new type. config_schema keeps the `case` key (the
+# config-fallback source the config-seed reads).
+_SWITCH_SPEC = {
+    "type": "control.switch",
+    "category": "control",
+    "display_name": "Switch",
+    "description": "Route `value` to `match` when it equals `case`, "
+                   "else to `default`.",
+    "inputs": [
+        {"name": "value", "type": "any"},
+        {"name": "case", "type": "any"},
+    ],
+    "outputs": [
+        {"name": "match", "type": "any"},
+        {"name": "default", "type": "any"},
+        {"name": "taken", "type": "string"},
+    ],
+    "config_schema": {"case": {}},
+    "icon": "⎇",
+    "impl": {
+        "kind": "graph",
+        "graph": _SWITCH_INNER_GRAPH,
+        "inner_inputs": _SWITCH_INNER_INPUTS,
+        "inner_outputs": _SWITCH_INNER_OUTPUTS,
+    },
+}
 
 
-register(
-    NodeSpec(
-        type="control.switch",
-        category="control",
-        display_name="Switch",
-        description="Route `value` to `match` when it equals `case`, "
-                    "else to `default`.",
-        inputs=[Port(name="value", type=PortType.ANY, required=True),
-                Port(name="case",  type=PortType.ANY)],
-        outputs=[Port(name="match",   type=PortType.ANY),
-                 Port(name="default", type=PortType.ANY),
-                 Port(name="taken",   type=PortType.STRING)],
-        config_schema={"case": {}},
-        icon="⎇",
-    ),
-    _switch_executor,
-)
+def _register_switch_node() -> None:
+    """Register control.switch as the stem-cell graph composition.
+
+    Built through the EXACT machinery control.if / control.merge use
+    (``custom_nodes._build_executor`` dispatching on ``impl.kind=graph`` ->
+    ``_graph_executor`` -> the nested-WorkflowRunner subgraph engine, with the
+    wave-4 config-sourced seed threading ``config['case']`` into the inner
+    coalesce). ONE system: no bespoke executor, no parallel composition
+    mechanism, no new fallback machinery. The ``custom_nodes`` import is deferred
+    (it imports ``nodes.code``; importing it at this module's top would re-enter
+    the ``nodes`` package mid-load), mirroring the sibling registrations.
+
+    `value` keeps ``required=True`` (the retired bespoke marked it so;
+    ``_spec_from_dict`` defaults ``required`` to False, so we re-stamp it) — the
+    declared contract stays byte-identical to the bespoke, including the required
+    flag the graph validator reads. `case` stays optional (the bespoke marked it
+    a plain ``inputs.get``).
+    """
+    from ..custom_nodes import _build_executor, _spec_from_dict
+
+    node_spec = _spec_from_dict(_SWITCH_SPEC)
+    for p in node_spec.inputs:
+        if p.name == "value":
+            p.required = True
+    register(node_spec, _build_executor(_SWITCH_SPEC, node_spec))
+
+
+_register_switch_node()

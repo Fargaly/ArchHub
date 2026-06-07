@@ -23,11 +23,24 @@ from ..registry import NodeSpec, register
 # ── Sandbox helpers ──────────────────────────────────────────────────
 
 # Safe built-ins — common, pure, side-effect-free.
+#
+# The exception CLASSES at the tail are pure, harmless type objects (they open
+# no file, touch no host, and `_FORBIDDEN_TOKENS` still blocks the dangerous
+# dunders / import / open / exec). They are present so a sandboxed `code.python`
+# body can actually USE the `try/except` the grammar already permits — without a
+# name to catch, `except (TypeError, ValueError):` raised `NameError` inside the
+# restricted namespace, making error-handling silently impossible. This closes
+# that latent gap so a composed stem-cell can mirror a bespoke's literal
+# `try/except` (e.g. the `int(x)`-or-0 coercion in adapter.excel_to_revit_params)
+# byte-identically, instead of re-deriving the builtin's grammar by hand.
 _SAFE_BUILTIN_NAMES = {
     "abs", "min", "max", "sum", "len", "range", "enumerate", "zip",
     "sorted", "reversed", "map", "filter", "round", "int", "float",
     "str", "bool", "list", "dict", "tuple", "set", "any", "all",
     "isinstance", "type", "print", "repr",
+    # Pure exception classes — make `try/except` usable in a sandboxed body.
+    "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
+    "AttributeError", "ZeroDivisionError", "StopIteration",
 }
 
 # Source tokens that the user must not include in safe-mode source.

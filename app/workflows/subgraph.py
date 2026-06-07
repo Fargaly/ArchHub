@@ -466,6 +466,21 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
     sees the outer value. This is done by stashing a per-port `_seed`
     on a wrapper node that the inner runner pulls from.
 
+    Seed source — `input` (default) vs `config`:
+        Each `inner_inputs` entry seeds an inner port. By default
+        (`source` absent or `"input"`) the seed value is pulled from
+        the outer `inputs` at the facade port id — the historical
+        behaviour, unchanged. An entry MAY instead carry
+        ``"source": "config"`` + ``"config_key": k`` to seed that inner
+        port from ``config.get(k)`` (the FACADE node's own config)
+        rather than from a wire. This lets a rebuilt config-fallback
+        node wire BOTH an input-seed and a config-seed into a coalesce
+        expression inside the inner graph, reproducing
+        ``inputs.get(x) or config.get(x)`` byte-identically — closing
+        the gap that the inner runner only ever threads INPUTS, never
+        the node's config. A missing/None `config_key` seeds ``None``
+        (total-tolerant — never raises).
+
     Returns a dict mapping the composite's outer output port ids to
     values cooked at the corresponding inner endpoints.
     """
@@ -494,11 +509,18 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
     # (inner_node, inner_port). Inside the inner graph there's no wire
     # corresponding to that input (it was an OUTER wire). So we need
     # to seed the inner_port directly.
+    cfg = config or {}
     for fp in inner_inputs:
         port_id     = fp["port"]
         inner_node  = fp["inner_node"]
         inner_port  = fp["inner_port"]
-        value       = inputs.get(port_id)
+        # Seed source: "input" (default — pull from the outer wire) or
+        # "config" (pull from the facade node's own config). Any value
+        # other than "config" preserves the historical input behaviour.
+        if fp.get("source") == "config":
+            value = cfg.get(fp.get("config_key"))
+        else:
+            value = inputs.get(port_id)
         seed_id     = f"__seed__{port_id}"
         # The seed node exposes a single port named "value".
         seeded_nodes.append({
@@ -534,7 +556,15 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
             out["error"]  = f"{type(ex).__name__}: {ex}"
             continue
         if isinstance(cooked, dict):
-            if cooked.get("status") == "error":
+            # Propagate an inner error whether it surfaced DIRECTLY on this
+            # output endpoint (status:"error") or was carried here from a
+            # deeper inner node (runner.py stamps an upstream miss as
+            # status:"upstream_error"). Both mean "an inner cell failed", so
+            # the composite must error EXACTLY as a bespoke that early-returned
+            # {status:error} would — this lets a data.ensure(on_fail=error)
+            # guard sitting UPSTREAM of the output extractors propagate out of
+            # the subgraph (the wave-4 type-guard path).
+            if cooked.get("status") in ("error", "upstream_error"):
                 out[port_id] = None
                 out["status"] = "error"
                 out["error"]  = cooked.get("error")

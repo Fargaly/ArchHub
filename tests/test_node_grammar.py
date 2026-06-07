@@ -109,7 +109,11 @@ class TestGrammarShape:
         # is_empty/in_bounds/contains/shape → value/passed/report). A real
         # grounded stem cell like `join`/`assert`, not filler. Cap raised
         # 91 → 92.
-        assert len(ng.PRIMITIVES) <= 92
+        # stem-rebuild Phase-0 NORMALIZATION INFRA → +2 (`coalesce` =
+        # data.coalesce config-fallback `x or default`; `ensure` = data.ensure
+        # type-guard whose on_fail:error is the status:error a subgraph
+        # propagates). Two real grounded stem cells, not filler. Cap 92 → 94.
+        assert len(ng.PRIMITIVES) <= 94
 
 
 class TestEngineTypeResolution:

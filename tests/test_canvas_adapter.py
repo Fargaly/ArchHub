@@ -124,14 +124,23 @@ def test_trigger_executor_emits_event():
 
 def test_switch_executor_routes_by_equality():
     """control.switch — the `logic` primitive's switch op: routes value
-    to `match` on equality with `case`, else `default`."""
-    from workflows.nodes.control import _switch_executor
-    m = _switch_executor({"case": "wall"}, {"value": "wall"}, None)
+    to `match` on equality with `case`, else `default`.
+
+    The bespoke ``_switch_executor`` was RETIRED in the wave-4 in-place
+    stem-cell rebuild (control.switch is now ``impl.kind=graph`` — a
+    passthrough + a ``data.coalesce`` config-fallback cell + ``code.expression``
+    gates; see ``tests/test_rebuild_in_place_parity.py``). So this resolves the
+    LIVE registered executor from the registry — the SAME
+    ``(config, inputs, ctx) -> outputs`` callable the WorkflowRunner invokes —
+    rather than importing the deleted function. The routing contract it asserts
+    is unchanged (equality on `case` from config → `match`, else `default`)."""
+    hit = workflows.get("control.switch")
+    assert hit is not None          # registered + grammar-resolvable
+    _spec, switch_exec = hit
+    m = switch_exec({"case": "wall"}, {"value": "wall"}, None)
     assert m["match"] == "wall" and m["default"] is None and m["taken"] == "match"
-    d = _switch_executor({"case": "wall"}, {"value": "door"}, None)
+    d = switch_exec({"case": "wall"}, {"value": "door"}, None)
     assert d["match"] is None and d["default"] == "door" and d["taken"] == "default"
-    # registered + grammar-resolvable
-    assert workflows.get("control.switch") is not None
 
 
 def test_params_to_config_handles_list_and_dict():

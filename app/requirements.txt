@@ -21,7 +21,7 @@ cryptography>=48.0.0
 # is the kind of break the upper bound guards against.
 # (merge 2026-06-04: declined origin/main dependabot bump to 3.2.8 — keeps the
 # deliberate 3.0.8 floor that matches the installed interpreter.)
-specklepy>=3.0.8,<4
+specklepy>=3.2.8,<4
 # mcp powers app/archhub_mcp_server.py (AgDR-0031) — the MCP server
 # that exposes ArchHub to other Claude sessions. Hard-imported at
 # module load; tests/test_archhub_mcp_server.py runs its --selftest.

@@ -1,6 +1,6 @@
 PyQt6>=6.11.0
 anthropic>=0.107.1
-openai>=2.39.0
+openai>=2.41.0
 keyring>=25.7.0
 # v1.1.0 added marketplace signing — needs cryptography for Ed25519.
 # Was implicitly satisfied locally; CI revealed the missing dep.

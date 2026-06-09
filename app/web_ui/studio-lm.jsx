@@ -1234,6 +1234,15 @@ const _lmGport = (p) => ({ id: p.id, label: p.id, t: String((p && p.type) || 'an
 // existing lookup pattern (lines ~7864 / ~11734). {} → flat-param fallback.
 const _configSchemaFor = (node) => {
   if (!node) return {};
+  // #1 stem-FIELD gap for USER-COMPOSED cells (founder 2026-06-09: "stem cells
+  // = fields of pure concepts"). A custom / skill / graph cell is NOT in the
+  // grammar, so the by-kind lookup below misses it and the cell renders ZERO
+  // knobs. Prefer the node's OWN carried `config_schema` (stamped on placement
+  // from the spec) so a user-composed cell exposes its fields like a grammar
+  // primitive does. Grammar nodes have no node.config_schema → fall through,
+  // unchanged. Empty schema → fall through too (a cell with no declared knobs).
+  if (node.config_schema && typeof node.config_schema === 'object'
+      && Object.keys(node.config_schema).length > 0) return node.config_schema;
   const g = (node._grammar) ||
             (LM_NODE_GRAMMAR || []).find(p => p && p.kind === node.kind);
   const cs = g && g.config_schema;
@@ -1800,6 +1809,10 @@ const StudioLM = () => {
         ins:  (spec.inputs  || []).map((p,i) => port(p,i,'in')),
         outs: (spec.outputs || []).map((p,i) => port(p,i,'out')),
         params: [], _user: true,
+        // #1 stem-FIELD: carry the spec's config_schema so the rail compiles it
+        // into EDITABLE knobs (_configSchemaFor reads node.config_schema first).
+        // Without this a custom/minted cell lands with zero controls.
+        config_schema: (spec.config_schema && typeof spec.config_schema === 'object') ? spec.config_schema : {},
       };
       LM_GRAPH.nodes.push(node);
       setFocusId(id);
@@ -1887,6 +1900,9 @@ const StudioLM = () => {
       outs: libItem.outs || tmpl.outs || [],
       params: libItem.params || tmpl.params || [],
       _user: true,
+      // #1 stem-FIELD: carry any declared config_schema onto the cell so its
+      // fields render as editable knobs (the legacy/template placement path).
+      config_schema: (libItem.config_schema || tmpl.config_schema || {}),
     };
     // Push directly into LM_GRAPH so saveCurrentGraph() captures it
     // (userNodes state was a parallel array that never persisted —

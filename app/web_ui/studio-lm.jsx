@@ -213,6 +213,23 @@ const CAT = {
   trigger:   { col:LM.warn,    icon:'⚡', label:'TRIGGER',   role:'Event-sourced graph entry' },
   connector_op: { col:LM.cyan, icon:'⚙', label:'CONNECTOR', role:'A live host operation' },
   custom:    { col:LM.blue,    icon:'⊕', label:'CUSTOM',    role:'AI-minted custom node' },
+  // The node grammar (app/workflows/node_grammar.py) emits 15 category tags;
+  // the 11 below were absent from this map, so `catMeta` fell through to
+  // _CAT_FALLBACK and the LIBRARY rendered "NODE" for every one of them
+  // (founder 2026-06-09: "why does the UI show NODES instead of the right
+  // categorization"). These restore a real, recognisable label/icon/role per
+  // grammar cat so a visual user reads the palette by domain, not "NODE".
+  input:     { col:LM.blue,    icon:'◦', label:'INPUT',     role:'Values + sources' },
+  connector: { col:LM.cyan,    icon:'⚙', label:'CONNECTOR', role:'A live host operation' },
+  shape:     { col:LM.warn,    icon:'◫', label:'SHAPE',     role:'Filter / join / sort / reshape data' },
+  math:      { col:LM.warn,    icon:'∑', label:'MATH',      role:'Arithmetic + numbers' },
+  text:      { col:LM.inkSoft, icon:'¶', label:'TEXT',      role:'String operations' },
+  code:      { col:LM.purple,  icon:'λ', label:'CODE',      role:'Expressions + scripts' },
+  adapter:   { col:LM.warn,    icon:'⇄', label:'ADAPTER',   role:'Convert between hosts' },
+  skill:     { col:LM.blue,    icon:'★', label:'SKILL',     role:'Saved reusable cell' },
+  share:     { col:LM.ok,      icon:'⇅', label:'SHARE',     role:'Publish / subscribe' },
+  watch:     { col:LM.warn,    icon:'◉', label:'WATCH',     role:'Preview / monitor a value' },
+  note:      { col:LM.inkSoft, icon:'✎', label:'NOTE',      role:'Canvas annotation' },
 };
 
 // SLICE D (AgDR-0007): wire colours per engine PortType (lowercased

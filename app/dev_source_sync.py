@@ -213,11 +213,20 @@ def pull_source_to_main(source_root: Path) -> bool:
         if _git(source_root, "status", "--porcelain"):
             return False  # local edits present — never disturb them
         before = source_commit(source_root)
+        if not before:
+            return False  # can't read HEAD (git broken/unavailable) → unknown
         # fetch needs a longer cap than the 3s default (network round-trip);
         # offline fails fast, only a black-hole link waits the full bound.
         _git(source_root, "fetch", "origin", "main", timeout=12.0)
         _git(source_root, "merge", "--ff-only", "origin/main", timeout=8.0)
-        return source_commit(source_root) != before
+        after = source_commit(source_root)
+        # An empty `after` means a fetch/merge timeout flipped `_GIT_BROKEN` and
+        # `source_commit()` now returns "" — that is UNKNOWN, never an advance.
+        # Without this guard the "" != before comparison would falsely report a
+        # fast-forward on a timed-out fetch (Copilot review, PR #91).
+        if not after:
+            return False
+        return after != before
     except Exception:
         return False
 

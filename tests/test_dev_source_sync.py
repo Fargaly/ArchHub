@@ -57,9 +57,17 @@ def test_dev_source_sync_copies_configured_checkout_without_relaunch(tmp_path):
 import subprocess  # noqa: E402
 
 
-def _g(repo, *args):
-    return subprocess.run(["git", "-C", str(repo), *args],
-                          capture_output=True, text=True)
+def _g(repo, *args, check=True):
+    r = subprocess.run(["git", "-C", str(repo), *args],
+                       capture_output=True, text=True)
+    if check:
+        # Assert at the call site so a setup-command failure surfaces
+        # immediately with stderr — not as a confusing downstream assertion
+        # (Copilot review, PR #91).
+        assert r.returncode == 0, (
+            f"git {' '.join(args)} failed (rc={r.returncode}): "
+            f"{(r.stderr or r.stdout).strip()}")
+    return r
 
 
 def _init_main_repo(path):

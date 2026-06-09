@@ -2004,6 +2004,146 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── In-app update notification (founder 2026-06-09: a Claude-desktop-
+    # style "Update available — Relaunch" prompt for the installed/dev-sync
+    # app, so the user KNOWS an update landed instead of a silent re-sync) ────
+    @pyqtSlot(result=str)
+    def update_status(self) -> str:
+        """Is newer code available than what's running? FAST + non-blocking —
+        reads only LOCAL git refs + the sync marker (NO network fetch), so it can
+        never freeze the Qt UI thread. The network fetch that refreshes the local
+        `origin/main` ref is done off-thread by `refresh_updates()`; this just
+        reports the last-known delta. Drives the web-UI 'Update available' poll."""
+        try:
+            import subprocess
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+
+            def _rev(root, ref):
+                try:
+                    r = subprocess.run(
+                        ["git", "-C", str(root), "rev-parse", "--short", ref],
+                        capture_output=True, text=True, timeout=3,
+                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                    return r.stdout.strip() if r.returncode == 0 else ""
+                except Exception:
+                    return ""
+
+            if dss.is_git_checkout(install_root):
+                head = _rev(install_root, "HEAD")
+                upstream = _rev(install_root, "@{u}")   # local upstream ref
+                return _safe_json({
+                    "available": bool(head and upstream and head != upstream),
+                    "current": head, "latest": upstream, "kind": "git",
+                })
+            src = dss.find_source_root(install_root)
+            if src is None:
+                return _safe_json({"available": False, "kind": "none"})
+            latest = _rev(src, "origin/main") or _rev(src, "HEAD")
+            marker = dss._read_json(install_root / dss.SYNC_MARKER)
+            current = (marker.get("source_stamp") or {}).get("commit", "")
+            return _safe_json({
+                "available": bool(latest and current and latest != current),
+                "current": current, "latest": latest, "kind": "dev",
+            })
+        except Exception as ex:
+            return _safe_json({"available": False, "error": str(ex)[:200]})
+
+    @pyqtSlot(result=str)
+    def refresh_updates(self) -> str:
+        """Fire-and-forget: fetch the latest `origin/main` into the source
+        checkout OFF the UI thread, so the next `update_status()` reflects
+        newly-merged code. Returns INSTANTLY (no freeze); the network fetch runs
+        in a daemon thread guarded by a busy flag so overlapping polls never
+        stack git processes."""
+        try:
+            import threading
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+            if getattr(self, "_update_fetch_busy", False):
+                return _safe_json({"started": False, "busy": True})
+            self._update_fetch_busy = True
+
+            def _work():
+                try:
+                    if dss.is_git_checkout(install_root):
+                        import subprocess
+                        subprocess.run(
+                            ["git", "-C", str(install_root), "fetch", "origin"],
+                            capture_output=True, text=True, timeout=20,
+                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                    else:
+                        src = dss.find_source_root(install_root)
+                        if src is not None:
+                            dss.pull_source_to_main(src)
+                except Exception:
+                    pass
+                finally:
+                    self._update_fetch_busy = False
+
+            threading.Thread(target=_work, daemon=True).start()
+            return _safe_json({"started": True})
+        except Exception as ex:
+            return _safe_json({"started": False, "error": str(ex)[:160]})
+
+    @pyqtSlot(result=str)
+    def last_sync_info(self) -> str:
+        """Post-update confirmation feed: when did the dev-sync last copy new
+        code in, and to which commit? The web UI shows a '✓ Updated to <commit>'
+        toast on launch when `seconds_ago` is small (the sync just happened on
+        THIS launch)."""
+        try:
+            import time
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+            marker = dss._read_json(install_root / dss.SYNC_MARKER)
+            stamp = marker.get("source_stamp") or {}
+            synced_at = marker.get("synced_at") or ""
+            seconds_ago = None
+            if synced_at:
+                try:
+                    t = time.strptime(synced_at[:19], "%Y-%m-%dT%H:%M:%S")
+                    seconds_ago = max(0, int(time.time() - time.mktime(t)))
+                except Exception:
+                    seconds_ago = None
+            return _safe_json({
+                "commit": stamp.get("commit", ""),
+                "synced_at": synced_at, "seconds_ago": seconds_ago,
+            })
+        except Exception as ex:
+            return _safe_json({"error": str(ex)[:160]})
+
+    @pyqtSlot(result=str)
+    def apply_update_and_relaunch(self) -> str:
+        """Install the available update + relaunch so the app runs it — the
+        web-UI 'Relaunch' button. Reuses the proven paths: dev-sync
+        `force_sync_now` (installed) or `updater.apply_update` (git checkout),
+        then `updater.restart()` (spawns a fresh instance + os._exit's this one;
+        does NOT return). The web UI flushes its graph save BEFORE calling this."""
+        try:
+            import sys
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+            if dss.is_git_checkout(install_root):
+                import updater
+                ok, msg = updater.apply_update()
+                if not ok:
+                    return _safe_json({"ok": False, "message": msg})
+            else:
+                src = dss.find_source_root(install_root)
+                if src is not None:
+                    dss.pull_source_to_main(src)
+                    dss.force_sync_now(install_root, sys.argv)
+            import updater
+            updater.restart()   # relaunches + os._exit(0) — does not return
+            return _safe_json({"ok": True})
+        except Exception as ex:
+            return _safe_json({"ok": False, "message": str(ex)[:200]})
+
     # ─── M4 (AgDR-0021) — Plan history surface ─────────────────
     @pyqtSlot(str, int, result=str)
     @pyqtSlot(str, int, str, result=str)

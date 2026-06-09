@@ -149,7 +149,7 @@ def _suppress_win_error_dialogs() -> None:
         pass
 
 
-def _git(source_root: Path, *args: str) -> str:
+def _git(source_root: Path, *args: str, timeout: float = 3.0) -> str:
     global _GIT_BROKEN
     if _GIT_BROKEN:
         return ""
@@ -165,7 +165,7 @@ def _git(source_root: Path, *args: str) -> str:
             cwd=str(source_root),
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=timeout,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             creationflags=creationflags,
         )
@@ -189,6 +189,46 @@ def _git(source_root: Path, *args: str) -> str:
 
 def source_commit(source_root: Path) -> str:
     return _git(source_root, "rev-parse", "--short", "HEAD")
+
+
+def pull_source_to_main(source_root: Path) -> bool:
+    """Best-effort: fast-forward the source checkout to ``origin/main`` so the
+    installed copy syncs MERGED code, not just whatever was last pulled — the
+    "ALWAYS runs up-to-date code" guarantee (founder 2026-06-09).
+
+    SAFE + bounded by construction:
+      • Acts ONLY when the checkout is on ``main`` with a CLEAN tree. A feature
+        branch (active dev) or ANY local edits are left untouched — we then sync
+        exactly what's checked out, never clobbering work in progress.
+      • Every git call is the same AV-hardened, timeout-capped, ``_GIT_BROKEN``-
+        gated ``_git``. Offline / detached / no-remote / git-blocked all fail
+        fast and are swallowed; the launch proceeds on the current code.
+      • ``--ff-only`` can only advance the branch — never a merge commit, never
+        a rewrite. Never raises.
+
+    Returns True when a fast-forward actually advanced HEAD, else False."""
+    try:
+        if _git(source_root, "rev-parse", "--abbrev-ref", "HEAD") != "main":
+            return False
+        if _git(source_root, "status", "--porcelain"):
+            return False  # local edits present — never disturb them
+        before = source_commit(source_root)
+        if not before:
+            return False  # can't read HEAD (git broken/unavailable) → unknown
+        # fetch needs a longer cap than the 3s default (network round-trip);
+        # offline fails fast, only a black-hole link waits the full bound.
+        _git(source_root, "fetch", "origin", "main", timeout=12.0)
+        _git(source_root, "merge", "--ff-only", "origin/main", timeout=8.0)
+        after = source_commit(source_root)
+        # An empty `after` means a fetch/merge timeout flipped `_GIT_BROKEN` and
+        # `source_commit()` now returns "" — that is UNKNOWN, never an advance.
+        # Without this guard the "" != before comparison would falsely report a
+        # fast-forward on a timed-out fetch (Copilot review, PR #91).
+        if not after:
+            return False
+        return after != before
+    except Exception:
+        return False
 
 
 def _iter_sync_files(source_root: Path):
@@ -419,6 +459,12 @@ def maybe_sync_and_relaunch(
     if source_root is None:
         return False
 
+    # ALWAYS up-to-date (founder 2026-06-09): advance the source checkout to
+    # latest origin/main BEFORE stamping, so a merged PR reaches the installed
+    # app on the next launch with no manual pull. Best-effort + guarded (on
+    # main + clean only); a no-op on a dev branch or a dirty tree.
+    pull_source_to_main(source_root)
+
     should_sync, stamp = needs_sync(source_root, install_root)
     if not should_sync:
         return False
@@ -485,6 +531,7 @@ def force_sync_now(install_root: Path, argv: Sequence[str] | None = None) -> boo
         source_root = find_source_root(install_root)
         if source_root is None:
             return False
+        pull_source_to_main(source_root)   # advance to merged main first
         stamp = source_stamp(source_root)
         _log(install_root, f"force-sync (dev-verify) from {source_root}")
         sync_source_to_install(source_root, install_root, stamp)

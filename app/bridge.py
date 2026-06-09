@@ -2040,10 +2040,12 @@ class ArchHubBridge(QObject):
         origin/main + recompute the `_update_status_cache` that update_status()
         serves. ALL blocking git I/O lives here, never on the Qt UI thread."""
         try:
-            import subprocess
-            from pathlib import Path
-            install_root = Path(__file__).resolve().parent.parent
-            import dev_source_sync as dss
+            import os          # bridge.py has NO module-level `os` (it does
+            import subprocess  # `import os as _os` locally elsewhere) — without
+            from pathlib import Path        # this, env={**os.environ,...} below
+            install_root = Path(__file__).resolve().parent.parent  # NameErrors,
+            import dev_source_sync as dss    # silently killing update detection
+            #                                  (Copilot review, PR #92)
 
             def _rev(root, ref):
                 try:
@@ -2095,7 +2097,7 @@ class ArchHubBridge(QObject):
         toast on launch when `seconds_ago` is small (the sync just happened on
         THIS launch)."""
         try:
-            import time
+            import datetime
             from pathlib import Path
             install_root = Path(__file__).resolve().parent.parent
             import dev_source_sync as dss
@@ -2105,8 +2107,15 @@ class ArchHubBridge(QObject):
             seconds_ago = None
             if synced_at:
                 try:
-                    t = time.strptime(synced_at[:19], "%Y-%m-%dT%H:%M:%S")
-                    seconds_ago = max(0, int(time.time() - time.mktime(t)))
+                    # dev_source_sync writes a tz-AWARE stamp (strftime %z, e.g.
+                    # +0400). Parse WITH the offset + compare in UTC so the delta
+                    # is right regardless of the machine's local tz — the old
+                    # strptime[:19]+mktime assumed local time and skewed the
+                    # "<45s" toast gate for non-local offsets (Copilot #92).
+                    dt = datetime.datetime.strptime(
+                        synced_at, "%Y-%m-%dT%H:%M:%S%z")
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    seconds_ago = max(0, int((now - dt).total_seconds()))
                 except Exception:
                     seconds_ago = None
             return _safe_json({

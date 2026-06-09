@@ -467,33 +467,59 @@ function UpdateNotifier() {
     return () => { alive = false; };
   }, []);
 
-  // Periodic poll: kick an off-thread fetch, then read the fast status. First
-  // check 25s after load (launch already fetched), then every 5 min.
+  // Periodic poll. The bridge cache (`update_status`) is populated by the
+  // OFF-THREAD `refresh_updates` fetch — which finishes a few seconds AFTER the
+  // call returns. So we must read status AFTER the fetch settles, not in the
+  // same tick (else the first read is always {pending:true} and the banner is
+  // up to 5 min late — Copilot #92). Each cycle kicks a fetch, then reads twice
+  // (6s + 14s) to catch a slow fetch without waiting a whole 5-min cycle.
   React.useEffect(() => {
     let alive = true;
-    const poll = async () => {
+    const timers = [];
+    const readStatus = async () => {
       try {
-        bridgeAsync('refresh_updates');                 // fire-and-forget bg fetch
         const s = await bridgeAsync('update_status');
-        if (!alive) return;
-        setAvail(s && s.available ? s : null);
+        if (alive && s && !s.pending) setAvail(s.available ? s : null);
       } catch (e) {}
     };
-    const t0 = setTimeout(poll, 25000);
-    const iv = setInterval(poll, 5 * 60 * 1000);
-    return () => { alive = false; clearTimeout(t0); clearInterval(iv); };
+    const cycle = async () => {
+      try { await bridgeAsync('refresh_updates'); } catch (e) {}
+      timers.push(setTimeout(readStatus, 6000));
+      timers.push(setTimeout(readStatus, 14000));
+    };
+    const t0 = setTimeout(cycle, 8000);              // first check ~8s after load
+    const iv = setInterval(cycle, 5 * 60 * 1000);    // then every 5 min
+    return () => {
+      alive = false; clearTimeout(t0); clearInterval(iv);
+      timers.forEach(clearTimeout);
+    };
   }, []);
 
   if (!avail) return null;
 
-  const relaunch = () => {
+  const relaunch = async () => {
     if (busy) return;
     setBusy(true);
-    // Flush the pending graph save FIRST — apply_update_and_relaunch os._exit's
-    // this process after spawning the fresh one, so anything unsaved is lost.
+    // Flush the pending graph save FIRST — apply spawns the fresh instance then
+    // os._exit's this one, so anything unsaved is lost.
     try { if (window.__archhub_flushGraphSave) window.__archhub_flushGraphSave(); } catch (e) {}
-    try { window.archhub && window.archhub.apply_update_and_relaunch(); }
-    catch (e) { setBusy(false); }   // (does not return on success — app relaunches)
+    const fail = (msg) => {
+      setBusy(false);
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail: { msg: msg, kind: 'error' } })); } catch (e) {}
+    };
+    let res = null;
+    try { res = await bridgeAsync('apply_update_and_relaunch'); }
+    catch (e) { return fail('Update failed to start.'); }
+    // The slot returns {ok:true,started:true} instantly, then the daemon thread
+    // syncs + relaunches (this JS vanishes on success). Surface an explicit
+    // failure, and un-stick the button if no relaunch happened after a grace
+    // window — instead of leaving it stuck on "Relaunching…" forever (Copilot #92).
+    if (res && res.ok === false) return fail('Update failed: ' + (res.message || 'could not apply'));
+    // Only reached on the {ok:true} path; a SUCCESSFUL relaunch os._exit's this
+    // process long before 12s, so if this timer ever fires the relaunch didn't
+    // happen — surface it + free the button.
+    setTimeout(() => fail('Update did not relaunch — try reopening ArchHub.'), 12000);
   };
 
   return (

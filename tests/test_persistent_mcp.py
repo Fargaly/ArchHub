@@ -76,3 +76,53 @@ def test_write_mcp_config_falls_back_to_stdio_when_down(monkeypatch, tmp_path):
     cfg = _read_cfg(path)["mcpServers"]["archhub"]
     assert "command" in cfg                  # historical stdio spawn (fallback)
     assert "type" not in cfg                 # NOT sse
+
+
+def _eval_in_server_subprocess(body: str, env_extra=None) -> str:
+    """Run `body` (which prints one result) against archhub_mcp_server in a
+    SUBPROCESS. The server's import-time sys.path surgery (it drops + re-appends
+    app/) is destructive to the importing process — importing it in the test
+    runner reorders sys.path and breaks ~50 unrelated suites loaded after this
+    one. So, like test_archhub_mcp_server, we exercise it out-of-process."""
+    import os
+    import subprocess
+    env = dict(os.environ)
+    if env_extra:
+        env.update(env_extra)
+    code = "import archhub_mcp_server as s\n" + body
+    r = subprocess.run([sys.executable, "-c", code], cwd=str(APP),
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
+
+
+def test_serve_mode_http_requires_explicit_flag():
+    """THE regression Copilot caught: HTTP mode is opt-in via `--http` ONLY.
+    With ARCHHUB_MCP_HTTP_PORT set but NO `--http` (exactly the stdio fallback
+    spawn's situation, since it inherits the app env) the server must serve
+    STDIO — never accidentally start HTTP, which would break tool connectivity."""
+    out = _eval_in_server_subprocess(
+        "print(s._serve_mode([]), s._serve_mode(['--http']), "
+        "s._serve_mode(['x','--http','y']), s._serve_mode(['archhub_mcp_server.py']))",
+        env_extra={"ARCHHUB_MCP_HTTP_PORT": "48700"})  # env set, must not force http
+    assert out == "stdio http http stdio", out
+
+
+def test_http_port_from_env_tolerates_bad_value():
+    bad = _eval_in_server_subprocess(
+        "print(s._http_port_from_env())",
+        env_extra={"ARCHHUB_MCP_HTTP_PORT": "not-a-port"})
+    assert bad == "48700", bad                             # falls back, no crash
+    good = _eval_in_server_subprocess(
+        "print(s._http_port_from_env())",
+        env_extra={"ARCHHUB_MCP_HTTP_PORT": "59123"})
+    assert good == "59123", good
+
+
+def test_client_mcp_http_port_tolerates_bad_value(monkeypatch):
+    """A bogus user-set ARCHHUB_MCP_HTTP_PORT must not crash importing the
+    provider module (it would take the whole CLI brain down)."""
+    monkeypatch.setenv("ARCHHUB_MCP_HTTP_PORT", "garbage")
+    assert c._mcp_http_port() == 48700
+    monkeypatch.setenv("ARCHHUB_MCP_HTTP_PORT", "47001")
+    assert c._mcp_http_port() == 47001

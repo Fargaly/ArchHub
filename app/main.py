@@ -223,11 +223,24 @@ def _start_persistent_mcp_at_startup() -> None:
             creationflags = (getattr(subprocess, "DETACHED_PROCESS", 0)
                              | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                              | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # Route the detached server's stderr to a log file (not DEVNULL) so a
+        # crash — e.g. the loud non-zero exit when starlette/uvicorn are missing —
+        # is DIAGNOSABLE instead of vanishing. stdout stays discarded.
+        import tempfile
+        try:
+            err = open(os.path.join(tempfile.gettempdir(),
+                                    "archhub_mcp_server.log"), "ab", buffering=0)
+        except Exception:
+            err = subprocess.DEVNULL
         subprocess.Popen(
-            [sys.executable, str(server)],
+            # `--http` is the EXPLICIT opt-in for HTTP/SSE mode (the server no
+            # longer infers it from the env var), so the persistent server starts
+            # HTTP while a stdio fallback spawn — which may inherit the same env —
+            # still serves stdio. The env var supplies only the port.
+            [sys.executable, str(server), "--http"],
             env=env, cwd=str(APP_ROOT.parent),
             creationflags=creationflags, close_fds=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=err,
         )
     except Exception:
         pass

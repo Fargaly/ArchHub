@@ -65,7 +65,17 @@ _MCP_SERVER = os.path.join(_APP_DIR, "archhub_mcp_server.py")
 # racing a COLD per-turn stdio spawn (the 'pending'/0-tools bug that left the
 # brain tool-less). If it isn't up we fall back to the historical stdio spawn —
 # zero regression. Founder 2026-06-09 "why is it not working".
-_MCP_HTTP_PORT = int(os.environ.get("ARCHHUB_MCP_HTTP_PORT", "48700"))
+def _mcp_http_port(default: int = 48700) -> int:
+    """Persistent-MCP port from env, falling back to the default if the env var
+    is unset or not a valid integer — a user-set bogus value must never crash
+    importing this provider module."""
+    try:
+        return int(os.environ.get("ARCHHUB_MCP_HTTP_PORT", "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+_MCP_HTTP_PORT = _mcp_http_port()
 
 
 def _persistent_mcp_url() -> Optional[str]:

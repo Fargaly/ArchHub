@@ -30,6 +30,14 @@ specklepy>=3.2.8,<4
 # the in-house brain MCP only uses mcp.types, and app/archhub_mcp_server uses the
 # stable server surface.
 mcp>=1.27.2,<2
+# starlette + uvicorn power archhub_mcp_server.py's persistent HTTP/SSE mode
+# (`--http`) — the always-ready MCP the app starts on launch so the Claude-CLI
+# brain connects to a READY url instead of racing a cold per-turn stdio spawn
+# (founder 2026-06-09 "why is it not working"). Hard-imported in _serve_http,
+# which now fails LOUD (non-zero exit) if they're missing — declared here so the
+# install-from-source flow ships them. stdio MCP mode does not need them.
+starlette>=0.40.0
+uvicorn>=0.30.0
 # posthog powers app/telemetry.py product analytics (track-G, AgDR pending).
 # Same implicit-local / silent-off-if-missing class as cryptography +
 # specklepy + mcp: telemetry._client_or_none() returns None when the SDK

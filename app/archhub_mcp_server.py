@@ -217,14 +217,29 @@ def _serve_http(host: str, port: int) -> None:
     connects to the ready URL instead of spawning a COLD stdio server per turn —
     whose 'pending'/0-tools startup race left the brain tool-less and made it
     fabricate host calls (founder 2026-06-09 'why is it not working')."""
-    from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
-    import uvicorn
+    try:
+        from mcp.server.sse import SseServerTransport
+        from starlette.applications import Starlette
+        from starlette.routing import Mount, Route
+        import uvicorn
+    except ImportError as exc:
+        # HTTP/SSE mode needs starlette+uvicorn (declared in app/requirements.txt).
+        # Fail LOUD + non-zero so the app's startup spawn surfaces a diagnosable
+        # error instead of dying silently — a silent death here would reintroduce
+        # the very per-turn stdio race this server exists to kill. stdio mode has
+        # no such deps and is unaffected.
+        sys.stderr.write(
+            "archhub-mcp: HTTP/SSE mode requires 'starlette' and 'uvicorn' "
+            f"({exc}). Install: pip install starlette uvicorn\n")
+        raise SystemExit(3)
 
     server = _build_server(_load_ops())
     sse = SseServerTransport("/messages/")
 
+    # SSE endpoint — the canonical MCP SDK pattern (its own SSE examples use
+    # `request._send`). A raw-ASGI `Mount("/sse", handler)` alternative was tried
+    # to avoid the "private" attr, but it breaks EXACT "/sse" routing — the MCP
+    # handshake hangs (verified live 2026-06-09), so `Route` + `_send` stays.
     async def handle_sse(request):
         async with sse.connect_sse(
                 request.scope, request.receive, request._send) as (r, w):
@@ -249,16 +264,32 @@ def _selftest() -> int:
     return 0 if ops else 1
 
 
+def _http_port_from_env(default: int = 48700) -> int:
+    """HTTP port from ARCHHUB_MCP_HTTP_PORT, or `default` if it is unset or not a
+    valid integer (a user-set bogus value must never crash the server)."""
+    try:
+        return int(os.environ.get("ARCHHUB_MCP_HTTP_PORT", "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _serve_mode(argv) -> str:
+    """Pick the transport. HTTP is EXPLICIT opt-in via `--http` ONLY — never
+    inferred from an env var. That keeps a stdio fallback spawn (which inherits
+    the app's environment, possibly incl. ARCHHUB_MCP_HTTP_PORT) serving stdio,
+    not HTTP — the zero-regression guarantee the per-turn fallback relies on."""
+    return "http" if "--http" in (argv or []) else "stdio"
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
     _resolve_secret_env()  # op:// env refs -> real values before serving
-    import os as _os
-    _http_port = _os.environ.get("ARCHHUB_MCP_HTTP_PORT", "")
-    if "--http" in sys.argv or _http_port:
-        # Persistent HTTP/SSE mode — the app starts one of these on launch.
-        _serve_http(_os.environ.get("ARCHHUB_MCP_HTTP_HOST", "127.0.0.1"),
-                    int(_http_port or "48700"))
+    if _serve_mode(sys.argv) == "http":
+        # Persistent HTTP/SSE mode — the app starts one of these on launch with
+        # an explicit `--http`; the env var supplies only the port.
+        _serve_http(os.environ.get("ARCHHUB_MCP_HTTP_HOST", "127.0.0.1"),
+                    _http_port_from_env())
     else:
         try:
             asyncio.run(_serve())

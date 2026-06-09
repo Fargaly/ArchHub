@@ -813,12 +813,16 @@ def main() -> int:
                     "window.__archhub_flushGraphSave()}catch(e){}")
                 # runJavaScript is async + the sync save runs a QWebChannel slot on
                 # THIS thread — pump events briefly (hard-bounded) so it lands.
+                # WaitForMoreEvents makes each pump BLOCK up to 50ms for an event
+                # instead of returning instantly when idle (no busy-spin); the
+                # deadline hard-bounds the total to ~700ms.
                 from PyQt6.QtCore import (QCoreApplication, QEventLoop,
                                           QDeadlineTimer)
+                _flags = (QEventLoop.ProcessEventsFlag.AllEvents
+                          | QEventLoop.ProcessEventsFlag.WaitForMoreEvents)
                 dl = QDeadlineTimer(700)
                 while not dl.hasExpired():
-                    QCoreApplication.processEvents(
-                        QEventLoop.ProcessEventsFlag.AllEvents, 50)
+                    QCoreApplication.processEvents(_flags, 50)
             except Exception:
                 pass
         app._archhub_flush_before_quit = _flush_before_quit

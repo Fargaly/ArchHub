@@ -2004,6 +2004,160 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    # ─── In-app update notification (founder 2026-06-09: a Claude-desktop-
+    # style "Update available — Relaunch" prompt for the installed/dev-sync
+    # app, so the user KNOWS an update landed instead of a silent re-sync) ────
+    @pyqtSlot(result=str)
+    def update_status(self) -> str:
+        """Is newer code available than what's running? NON-BLOCKING — returns the
+        cached delta computed OFF-THREAD by `refresh_updates()`. Does ZERO git /
+        subprocess / network I/O on the Qt UI thread (so it can never freeze it; see
+        tests/test_no_blocking_slots). Empty `{pending:true}` until the first
+        refresh populates the cache. Drives the web-UI 'Update available' poll."""
+        cache = getattr(self, "_update_status_cache", None)
+        if cache is None:
+            return _safe_json({"available": False, "pending": True})
+        return _safe_json(cache)
+
+    @pyqtSlot(result=str)
+    def refresh_updates(self) -> str:
+        """Fire-and-forget: kick the OFF-THREAD fetch + status recompute, so the
+        next `update_status()` reflects newly-merged code. Returns INSTANTLY — the
+        slot body only starts a daemon thread (NO blocking I/O on the UI thread);
+        a busy flag stops overlapping polls stacking git processes."""
+        try:
+            import threading
+            if getattr(self, "_update_fetch_busy", False):
+                return _safe_json({"started": False, "busy": True})
+            self._update_fetch_busy = True
+            threading.Thread(target=self._refresh_updates_work, daemon=True).start()
+            return _safe_json({"started": True})
+        except Exception as ex:
+            return _safe_json({"started": False, "error": str(ex)[:160]})
+
+    def _refresh_updates_work(self) -> None:
+        """Daemon-thread body for refresh_updates (NOT a @pyqtSlot): fetch
+        origin/main + recompute the `_update_status_cache` that update_status()
+        serves. ALL blocking git I/O lives here, never on the Qt UI thread."""
+        try:
+            import subprocess
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+
+            def _rev(root, ref):
+                try:
+                    r = subprocess.run(
+                        ["git", "-C", str(root), "rev-parse", "--short", ref],
+                        capture_output=True, text=True, timeout=5,
+                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                    return r.stdout.strip() if r.returncode == 0 else ""
+                except Exception:
+                    return ""
+
+            if dss.is_git_checkout(install_root):
+                try:
+                    subprocess.run(
+                        ["git", "-C", str(install_root), "fetch", "origin"],
+                        capture_output=True, text=True, timeout=20,
+                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                except Exception:
+                    pass
+                head = _rev(install_root, "HEAD")
+                upstream = _rev(install_root, "@{u}")
+                self._update_status_cache = {
+                    "available": bool(head and upstream and head != upstream),
+                    "current": head, "latest": upstream, "kind": "git"}
+            else:
+                src = dss.find_source_root(install_root)
+                if src is None:
+                    self._update_status_cache = {"available": False, "kind": "none"}
+                else:
+                    try:
+                        dss.pull_source_to_main(src)   # fetch + ff origin/main (guarded)
+                    except Exception:
+                        pass
+                    latest = _rev(src, "origin/main") or _rev(src, "HEAD")
+                    marker = dss._read_json(install_root / dss.SYNC_MARKER)
+                    current = (marker.get("source_stamp") or {}).get("commit", "")
+                    self._update_status_cache = {
+                        "available": bool(latest and current and latest != current),
+                        "current": current, "latest": latest, "kind": "dev"}
+        except Exception:
+            pass
+        finally:
+            self._update_fetch_busy = False
+
+    @pyqtSlot(result=str)
+    def last_sync_info(self) -> str:
+        """Post-update confirmation feed: when did the dev-sync last copy new
+        code in, and to which commit? The web UI shows a '✓ Updated to <commit>'
+        toast on launch when `seconds_ago` is small (the sync just happened on
+        THIS launch)."""
+        try:
+            import time
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+            marker = dss._read_json(install_root / dss.SYNC_MARKER)
+            stamp = marker.get("source_stamp") or {}
+            synced_at = marker.get("synced_at") or ""
+            seconds_ago = None
+            if synced_at:
+                try:
+                    t = time.strptime(synced_at[:19], "%Y-%m-%dT%H:%M:%S")
+                    seconds_ago = max(0, int(time.time() - time.mktime(t)))
+                except Exception:
+                    seconds_ago = None
+            return _safe_json({
+                "commit": stamp.get("commit", ""),
+                "synced_at": synced_at, "seconds_ago": seconds_ago,
+            })
+        except Exception as ex:
+            return _safe_json({"error": str(ex)[:160]})
+
+    @pyqtSlot(result=str)
+    def apply_update_and_relaunch(self) -> str:
+        """Install the available update + relaunch — the web-UI 'Relaunch' button.
+        Returns INSTANTLY: the slot only starts a daemon thread (NO blocking I/O on
+        the UI thread; see tests/test_no_blocking_slots). The thread does the
+        install (force_sync_now / updater.apply_update) then `updater.restart()`
+        (spawns a fresh instance + os._exit's this one). The web UI flushes its
+        graph save BEFORE calling this."""
+        try:
+            import threading
+            if getattr(self, "_update_applying", False):
+                return _safe_json({"ok": True, "busy": True})
+            self._update_applying = True
+            threading.Thread(target=self._apply_update_work, daemon=True).start()
+            return _safe_json({"ok": True, "started": True})
+        except Exception as ex:
+            return _safe_json({"ok": False, "message": str(ex)[:200]})
+
+    def _apply_update_work(self) -> None:
+        """Daemon-thread body for apply_update_and_relaunch (NOT a @pyqtSlot): all
+        blocking work + the os._exit restart, off the Qt UI thread."""
+        try:
+            import sys
+            from pathlib import Path
+            install_root = Path(__file__).resolve().parent.parent
+            import dev_source_sync as dss
+            if dss.is_git_checkout(install_root):
+                import updater
+                ok, _msg = updater.apply_update()
+                if not ok:
+                    self._update_applying = False
+                    return
+            else:
+                src = dss.find_source_root(install_root)
+                if src is not None:
+                    dss.pull_source_to_main(src)
+                    dss.force_sync_now(install_root, sys.argv)
+            import updater
+            updater.restart()   # relaunches + os._exit(0) — does not return
+        except Exception:
+            self._update_applying = False
+
     # ─── M4 (AgDR-0021) — Plan history surface ─────────────────
     @pyqtSlot(str, int, result=str)
     @pyqtSlot(str, int, str, result=str)

@@ -24,7 +24,12 @@ jobs:
   test:
     name: ${{ matrix.os }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # 30 (was 20): the windows runner is ~6x slower than macos/ubuntu on the
+    # fs/subprocess-heavy cloud_backend suite and intermittently grazed the 20m
+    # wall → the job was cancelled mid-run (a false red). macos/ubuntu finish
+    # both suites in ~3m, so the extra margin only ever applies to a slow windows
+    # runner; it never masks a real hang (a genuine deadlock still trips 30m).
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false

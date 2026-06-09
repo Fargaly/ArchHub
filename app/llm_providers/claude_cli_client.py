@@ -60,6 +60,34 @@ _TIMEOUT_S = 300
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MCP_SERVER = os.path.join(_APP_DIR, "archhub_mcp_server.py")
 
+# Persistent HTTP/SSE MCP — the app starts ONE archhub_mcp_server on this port at
+# launch (always ready), so the chat brain connects to a READY url instead of
+# racing a COLD per-turn stdio spawn (the 'pending'/0-tools bug that left the
+# brain tool-less). If it isn't up we fall back to the historical stdio spawn —
+# zero regression. Founder 2026-06-09 "why is it not working".
+def _mcp_http_port(default: int = 48700) -> int:
+    """Persistent-MCP port from env, falling back to the default if the env var
+    is unset or not a valid integer — a user-set bogus value must never crash
+    importing this provider module."""
+    try:
+        return int(os.environ.get("ARCHHUB_MCP_HTTP_PORT", "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+_MCP_HTTP_PORT = _mcp_http_port()
+
+
+def _persistent_mcp_url() -> Optional[str]:
+    """SSE URL if a persistent archhub MCP is already serving on the configured
+    port, else None (→ caller spawns the stdio server). Fast loopback TCP probe."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", _MCP_HTTP_PORT), timeout=0.4):
+            return f"http://127.0.0.1:{_MCP_HTTP_PORT}/sse"
+    except Exception:
+        return None
+
 
 def claude_cli_path() -> Optional[str]:
     """Absolute path to the `claude` binary, or None if not installed."""
@@ -103,15 +131,20 @@ class ClaudeCliClient:
         self._mcp_config = self._write_mcp_config()
 
     def _write_mcp_config(self) -> Optional[str]:
-        """Write the --mcp-config JSON pointing at the ArchHub MCP
-        server. Returns the path, or None if the server file is
-        missing (the client then runs completion-only)."""
-        if not os.path.exists(_MCP_SERVER):
+        """Write the --mcp-config JSON. PREFERS the persistent HTTP/SSE server
+        (always-ready → no per-turn startup race) when it's up; otherwise FALLS
+        BACK to spawning the stdio server per turn (historical behaviour). Returns
+        the path, or None if neither is available."""
+        url = _persistent_mcp_url()
+        if url:
+            cfg = {"mcpServers": {"archhub": {"type": "sse", "url": url}}}
+        elif os.path.exists(_MCP_SERVER):
+            cfg = {"mcpServers": {"archhub": {
+                "command": _server_python(),
+                "args": [_MCP_SERVER],
+            }}}
+        else:
             return None
-        cfg = {"mcpServers": {"archhub": {
-            "command": _server_python(),
-            "args": [_MCP_SERVER],
-        }}}
         path = os.path.join(tempfile.gettempdir(), "archhub_claude_mcp.json")
         try:
             with open(path, "w", encoding="utf-8") as fh:

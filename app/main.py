@@ -197,6 +197,58 @@ def _maybe_sync_dev_source_at_startup() -> None:
 _maybe_sync_dev_source_at_startup()
 
 
+def _start_persistent_mcp_at_startup() -> None:
+    """Start ONE persistent archhub MCP HTTP server (an always-ready tool surface
+    for the chat brain) if not already serving. Port-probed so repeat launches /
+    multiple instances don't stack servers; daemon-detached so it outlives this
+    process; failures swallowed (the brain then falls back to a per-turn stdio
+    spawn). This is the fix for the chat-can't-touch-hosts startup race (founder
+    2026-06-09 "why is it not working"): the brain connects to a READY url instead
+    of racing a COLD per-turn spawn that snapshots 0 tools."""
+    try:
+        import socket
+        import subprocess
+        port = int(os.environ.get("ARCHHUB_MCP_HTTP_PORT", "48700"))
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+                return  # already serving (a prior launch / another instance)
+        except Exception:
+            pass
+        server = APP_ROOT / "archhub_mcp_server.py"
+        if not server.exists():
+            return
+        env = {**os.environ, "ARCHHUB_MCP_HTTP_PORT": str(port)}
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                             | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # Route the detached server's stderr to a log file (not DEVNULL) so a
+        # crash — e.g. the loud non-zero exit when starlette/uvicorn are missing —
+        # is DIAGNOSABLE instead of vanishing. stdout stays discarded.
+        import tempfile
+        try:
+            err = open(os.path.join(tempfile.gettempdir(),
+                                    "archhub_mcp_server.log"), "ab", buffering=0)
+        except Exception:
+            err = subprocess.DEVNULL
+        subprocess.Popen(
+            # `--http` is the EXPLICIT opt-in for HTTP/SSE mode (the server no
+            # longer infers it from the env var), so the persistent server starts
+            # HTTP while a stdio fallback spawn — which may inherit the same env —
+            # still serves stdio. The env var supplies only the port.
+            [sys.executable, str(server), "--http"],
+            env=env, cwd=str(APP_ROOT.parent),
+            creationflags=creationflags, close_fds=True,
+            stdout=subprocess.DEVNULL, stderr=err,
+        )
+    except Exception:
+        pass
+
+
+_start_persistent_mcp_at_startup()
+
+
 def _precompile_jsx_at_startup() -> None:
     """Pre-launch hook (founder, 2026-06-01 — boot-lag root fix).
 

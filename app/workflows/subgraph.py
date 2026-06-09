@@ -265,8 +265,21 @@ def compose_subgraph(graph: dict,
     composite_schema: dict = {}
     composite_defaults: dict = {}
     for nid in inner_ids:
-        ncfg = nodes_by_id[nid].get("config") or {}
-        for k, v in ncfg.items():
+        _inner = nodes_by_id[nid]
+        # Canvas nodes keep their current/default scalar values in `params`
+        # (the flat rail) and only materialise `config` on a cook/edit — so an
+        # UNTOUCHED just-placed node has params but no config. Fold both into
+        # one view (config wins where present) so knob-surfacing works for
+        # default/untouched nodes too, and guard a non-dict config so .items()
+        # never raises (Copilot review, PR #90).
+        _ncfg = _inner.get("config")
+        merged: dict = {}
+        for _p in (_inner.get("params") or []):
+            if isinstance(_p, dict) and "k" in _p:
+                merged[_p["k"]] = _p.get("v")
+        if isinstance(_ncfg, dict):
+            merged.update(_ncfg)
+        for k, v in merged.items():
             if isinstance(v, bool):
                 t = "boolean"
             elif isinstance(v, (int, float)):
@@ -558,7 +571,9 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
     if _inner_params and isinstance(config, dict):
         _overrides: dict = {}
         for _ip in _inner_params:
-            _pk = _ip.get("param"); _inn = _ip.get("inner_node"); _ik = _ip.get("inner_key")
+            _pk = _ip.get("param")
+            _inn = _ip.get("inner_node")
+            _ik = _ip.get("inner_key")
             if _pk and _inn and _ik and _pk in config:
                 _overrides.setdefault(_inn, {})[_ik] = config[_pk]
         if _overrides:
@@ -566,7 +581,16 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
             for _n in seeded_nodes:
                 if _n.get("id") in _overrides:
                     _n = copy.deepcopy(_n)
-                    _n["config"] = {**(_n.get("config") or {}), **_overrides[_n["id"]]}
+                    _ov = _overrides[_n["id"]]
+                    _n["config"] = {**(_n.get("config") or {}), **_ov}
+                    # Also reflect into `params` so an inner node that keeps its
+                    # value in the flat rail (untouched/default, no materialised
+                    # config) re-cooks with the overridden knob — not only
+                    # config-keyed executors (Copilot review, PR #90).
+                    if isinstance(_n.get("params"), list):
+                        for _p in _n["params"]:
+                            if isinstance(_p, dict) and _p.get("k") in _ov:
+                                _p["v"] = _ov[_p["k"]]
                 _patched.append(_n)
             seeded_nodes = _patched
 

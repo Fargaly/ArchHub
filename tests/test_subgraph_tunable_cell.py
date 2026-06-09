@@ -157,3 +157,54 @@ def test_pre_existing_composite_without_inner_params_is_unaffected():
     legacy["config"]["k__value"] = 999
     out = WorkflowRunner(g).pull("sink")
     assert out.get("value") == 10  # inner constant's ORIGINAL 5 → 5*2, knob ignored
+
+
+# ── 4. params-only inner nodes: the canvas's real shape (Copilot review #90) ──
+def _params_only_graph(kval=5, expr="a*2"):
+    """The shape a freshly-placed canvas node actually has: scalar values live
+    in `params` (the flat rail); `config` is unset until a cook materialises it.
+    The composite must still surface those params as knobs."""
+    return {
+        "nodes": [
+            {"id": "k", "type": "data.constant",
+             # NO config key — untouched/just-placed node
+             "params": [{"k": "value", "v": kval, "type": "number"},
+                        {"k": "value_type", "v": "number", "type": "text"}],
+             "outs": [{"id": "value"}]},
+            {"id": "e", "type": "code.expression",
+             "params": [{"k": "expr", "v": expr, "type": "text"}],
+             "ins": [{"id": "a"}], "outs": [{"id": "value"}]},
+            {"id": "sink", "type": "data.passthrough",
+             "ins": [{"id": "value"}], "outs": [{"id": "value"}]},
+        ],
+        "wires": [
+            {"from": ["k", "value"], "to": ["e", "a"]},
+            {"from": ["e", "value"], "to": ["sink", "value"]},
+        ],
+    }
+
+
+def test_compose_derives_knobs_from_params_only_nodes():
+    """An UNTOUCHED node keeps its default in `params`, not `config` — the
+    composite must still derive its `config_schema` knobs (the real-canvas case
+    Copilot flagged: deriving from config-only surfaced ZERO knobs)."""
+    _newg, comp = _composite_of(_params_only_graph(kval=5), ["k", "e"])
+    schema = comp.get("config_schema") or {}
+    assert "k__value" in schema, schema          # surfaced from params, no config
+    assert schema["k__value"]["type"] == "number"
+    assert schema["k__value"]["default"] == 5
+    assert "e__expr" in schema
+    # seeded default surfaced on the composite config so the rail shows it
+    assert comp["config"]["k__value"] == 5
+
+
+def test_compose_tolerates_non_dict_inner_config():
+    """A malformed inner node whose `config` is NOT a dict must not crash knob
+    derivation (Copilot: `.items()` on a non-dict raises) — it's ignored and the
+    params still surface the knob."""
+    g = _params_only_graph(kval=9)
+    g["nodes"][0]["config"] = "oops-not-a-dict"   # malformed config on `k`
+    _newg, comp = _composite_of(g, ["k", "e"])    # must not raise
+    schema = comp.get("config_schema") or {}
+    assert "k__value" in schema                   # params still read despite bad config
+    assert schema["k__value"]["default"] == 9

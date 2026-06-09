@@ -173,7 +173,10 @@ def main() -> int:
     # COOK the real chain. Pull the partition cell — the runner walks upstream
     # and cooks fs.list (real scandir), fs.read (real open), data.json (parse).
     part_out = runner.pull("partition")
-    if part_out.get("status") == "error":
+    # "upstream_error" propagates a failed upstream cell (fs.list/fs.read/
+    # data.json); treat it as failure too, else an upstream break would slip
+    # through as a false success with partition=None.
+    if part_out.get("status") in ("error", "upstream_error"):
         print(f"FAIL — partition cook errored: {part_out.get('error')}")
         return 1
     partition = part_out.get("value") or {}

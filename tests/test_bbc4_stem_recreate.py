@@ -21,25 +21,28 @@ from __future__ import annotations
 import os
 import sys
 
-import pytest
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
-for _p in (_REPO, os.path.join(_REPO, "tools"), os.path.join(_REPO, "app")):
+# APPEND (never insert(0)) and only app/ + tools/ — prepending, or adding the
+# repo root itself, would change import precedence for the whole test session
+# and can cause order-dependent failures in unrelated suites.
+for _p in (os.path.join(_REPO, "tools"), os.path.join(_REPO, "app")):
     if _p not in sys.path:
-        sys.path.insert(0, _p)
+        sys.path.append(_p)
 
-# Importing the proof module loads the whole node registry (its import side
-# effect) and gives us the SAME build_graph the live proof uses.
-proof = pytest.importorskip("proof_bbc4_recreate")
+# HARD import — this is a CI GATE, so a missing/broken proof module or fixture
+# must FAIL LOUD, never silently skip (a skip would let a regression sail
+# through CI green). proof_bbc4/ is committed beside this test, so it is always
+# present in CI. Importing the proof module also loads the whole node registry
+# (its import side effect) and gives us the SAME build_graph the live proof uses.
+import proof_bbc4_recreate as proof  # noqa: E402
 
 from workflows import registry              # noqa: E402
 from workflows.runner import WorkflowRunner  # noqa: E402
 from workflows.subgraph import compose_subgraph  # noqa: E402
 
-_FIXTURE_OK = os.path.isdir(proof.SUBMITTALS) and os.path.isfile(proof.MASTER)
-pytestmark = pytest.mark.skipif(
-    not _FIXTURE_OK, reason="proof_bbc4/ fixture not present")
+assert os.path.isdir(proof.SUBMITTALS) and os.path.isfile(proof.MASTER), (
+    "proof_bbc4/ fixture missing — this CI gate requires it present, not skipped")
 
 USED_CELLS = ["fs.list", "fs.read", "data.json", "code.python",
               "verify.assert", "subgraph.user"]
@@ -49,7 +52,9 @@ def _cook_partition():
     graph = proof.build_graph()
     runner = WorkflowRunner(graph)
     out = runner.pull("partition")
-    assert out.get("status") != "error", out.get("error")
+    # upstream_error propagates an upstream cell's failure (fs.read / data.json);
+    # treat it as a failure too — never let it slip through as a false success.
+    assert out.get("status") not in ("error", "upstream_error"), out.get("error")
     part = out.get("value") or {}
     return runner, {k: part.get(k) for k in ("matched", "strays", "missing")}
 

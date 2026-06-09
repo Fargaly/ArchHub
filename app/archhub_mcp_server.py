@@ -163,10 +163,11 @@ def _load_ops() -> dict:
 
 # ── MCP server ───────────────────────────────────────────────────────
 
-async def _serve() -> None:
+def _build_server(ops):
+    """Build the MCP Server (list_tools + call_tool) over the loaded ops —
+    transport-agnostic so the stdio path and the persistent HTTP/SSE path share
+    exactly the same tool surface."""
     from connectors.base import run_op
-
-    ops = _load_ops()
     server = Server("archhub")
 
     @server.list_tools()
@@ -199,9 +200,41 @@ async def _serve() -> None:
         return [mcp_types.TextContent(type="text",
                                        text=json.dumps(payload, default=str))]
 
+    return server
+
+
+async def _serve() -> None:
+    """stdio transport — the historical per-turn spawn path (default)."""
+    server = _build_server(_load_ops())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream,
                           server.create_initialization_options())
+
+
+def _serve_http(host: str, port: int) -> None:
+    """Persistent HTTP/SSE transport. The app starts ONE of these on launch so
+    the tool surface is ALWAYS ready; the chat brain (claude --transport sse)
+    connects to the ready URL instead of spawning a COLD stdio server per turn —
+    whose 'pending'/0-tools startup race left the brain tool-less and made it
+    fabricate host calls (founder 2026-06-09 'why is it not working')."""
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    import uvicorn
+
+    server = _build_server(_load_ops())
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(
+                request.scope, request.receive, request._send) as (r, w):
+            await server.run(r, w, server.create_initialization_options())
+
+    app = Starlette(routes=[
+        Route("/sse", endpoint=handle_sse),
+        Mount("/messages/", app=sse.handle_post_message),
+    ])
+    uvicorn.run(app, host=host, port=int(port), log_level="warning")
 
 
 def _selftest() -> int:
@@ -220,7 +253,14 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
     _resolve_secret_env()  # op:// env refs -> real values before serving
-    try:
-        asyncio.run(_serve())
-    except KeyboardInterrupt:
-        pass
+    import os as _os
+    _http_port = _os.environ.get("ARCHHUB_MCP_HTTP_PORT", "")
+    if "--http" in sys.argv or _http_port:
+        # Persistent HTTP/SSE mode — the app starts one of these on launch.
+        _serve_http(_os.environ.get("ARCHHUB_MCP_HTTP_HOST", "127.0.0.1"),
+                    int(_http_port or "48700"))
+    else:
+        try:
+            asyncio.run(_serve())
+        except KeyboardInterrupt:
+            pass

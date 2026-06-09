@@ -250,6 +250,52 @@ def compose_subgraph(graph: dict,
         "wires": [copy.deepcopy(w) for w in inner_wires],
     }
 
+    # ── #5 stem-cell DIFFERENTIATION (founder 2026-06-09: "save the composed
+    # cell as ONE tunable cell whose inner knobs are its fields"). Re-surface
+    # each inner node's SCALAR config as composite knobs, namespaced
+    # `<innerId>__<key>`. The composite carries a top-level `config_schema` (so
+    # the rail renders them as editable fields — `_configSchemaFor` reads
+    # node.config_schema first) + `config.inner_params` descriptors (so
+    # `_subgraph_executor` pushes each edited knob back into the matching inner
+    # node's config at cook). Without this a composed cell's inner sliders are
+    # baked frozen — a wirable shell, not a differentiable stem cell. Additive:
+    # an inner node with no scalar config contributes no knob; a composite with
+    # no knobs carries an empty schema and behaves exactly as before.
+    inner_params: list[dict] = []
+    composite_schema: dict = {}
+    composite_defaults: dict = {}
+    for nid in inner_ids:
+        _inner = nodes_by_id[nid]
+        # Canvas nodes keep their current/default scalar values in `params`
+        # (the flat rail) and only materialise `config` on a cook/edit — so an
+        # UNTOUCHED just-placed node has params but no config. Fold both into
+        # one view (config wins where present) so knob-surfacing works for
+        # default/untouched nodes too, and guard a non-dict config so .items()
+        # never raises (Copilot review, PR #90).
+        _ncfg = _inner.get("config")
+        merged: dict = {}
+        for _p in (_inner.get("params") or []):
+            if isinstance(_p, dict) and "k" in _p:
+                merged[_p["k"]] = _p.get("v")
+        if isinstance(_ncfg, dict):
+            merged.update(_ncfg)
+        for k, v in merged.items():
+            if isinstance(v, bool):
+                t = "boolean"
+            elif isinstance(v, (int, float)):
+                t = "number"
+            elif isinstance(v, str):
+                t = "string"
+            else:
+                # Skip structural config (inner_graph, port maps, lists/dicts)
+                # so a nested composite or a wired body never leaks into knobs.
+                continue
+            pk = f"{nid}__{k}"
+            composite_schema[pk] = {"type": t, "default": v,
+                                    "description": f"{nid} · {k}"}
+            composite_defaults[pk] = v
+            inner_params.append({"param": pk, "inner_node": nid, "inner_key": k})
+
     composite_node = {
         "id":   new_node_id,
         "type": "subgraph.user",
@@ -264,11 +310,19 @@ def compose_subgraph(graph: dict,
                   for p in facade_inputs],
         "outs": [{"id": p["port"], "label": p["label"], "t": p["type"]}
                   for p in facade_outputs],
+        # #5: the composite's tunable fields (rendered by the rail via
+        # _configSchemaFor → node.config_schema). Empty when no inner scalar
+        # knobs exist — harmless, falls through to the flat-param path.
+        "config_schema": composite_schema,
         "config": {
             "inner_graph":   inner_graph_payload,
             "inner_inputs":  facade_inputs,
             "inner_outputs": facade_outputs,
+            # #5: knob → inner-node-config map (consumed by _subgraph_executor)
+            # + the seeded current values so each knob shows its live default.
+            "inner_params":  inner_params,
             "title":         new_title,
+            **composite_defaults,
         },
     }
 
@@ -503,6 +557,42 @@ def _subgraph_executor(config: dict, inputs: dict, ctx: Any) -> dict:
     # way to bridge outer values into an inner graph.
     seeded_nodes = list(inner_graph.get("nodes") or [])
     seeded_wires = list(_iter_wires(inner_graph))
+
+    # ── #5 stem-cell DIFFERENTIATION: apply composite-knob overrides to inner
+    # node configs BEFORE cooking. Each `inner_params` descriptor (built by
+    # `compose_subgraph`) maps a composite config knob `<innerId>__<key>` → an
+    # inner node's config key. When the composite's runtime config carries a
+    # value for that knob (the user turned the dial), push it into the matching
+    # inner node's config so the inner cell re-cooks with the new value. We
+    # deepcopy only the patched inner nodes (the rest stay shared) so the stored
+    # `inner_graph` is never mutated across cooks. Additive: no `inner_params`
+    # (every pre-#5 composite + every foreach body) → this is a no-op.
+    _inner_params = (config or {}).get("inner_params") or []
+    if _inner_params and isinstance(config, dict):
+        _overrides: dict = {}
+        for _ip in _inner_params:
+            _pk = _ip.get("param")
+            _inn = _ip.get("inner_node")
+            _ik = _ip.get("inner_key")
+            if _pk and _inn and _ik and _pk in config:
+                _overrides.setdefault(_inn, {})[_ik] = config[_pk]
+        if _overrides:
+            _patched = []
+            for _n in seeded_nodes:
+                if _n.get("id") in _overrides:
+                    _n = copy.deepcopy(_n)
+                    _ov = _overrides[_n["id"]]
+                    _n["config"] = {**(_n.get("config") or {}), **_ov}
+                    # Also reflect into `params` so an inner node that keeps its
+                    # value in the flat rail (untouched/default, no materialised
+                    # config) re-cooks with the overridden knob — not only
+                    # config-keyed executors (Copilot review, PR #90).
+                    if isinstance(_n.get("params"), list):
+                        for _p in _n["params"]:
+                            if isinstance(_p, dict) and _p.get("k") in _ov:
+                                _p["v"] = _ov[_p["k"]]
+                _patched.append(_n)
+            seeded_nodes = _patched
 
     # Per the spec: facade-input `port` → (inner_node, inner_port).
     # An inbound wire in the outer graph terminated at that

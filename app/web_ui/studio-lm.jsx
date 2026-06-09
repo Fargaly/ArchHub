@@ -440,6 +440,113 @@ const bridgeAsync = (slot, ...args) => new Promise((resolve) => {
   }
 });
 
+// ─── In-app update notifier (founder 2026-06-09) ──────────────────────────
+// Claude-desktop-style "Update available — Relaunch" banner + a post-update
+// confirmation toast, so a dev-sync update is VISIBLE (the user KNOWS it
+// landed) instead of a silent background re-sync. Backed by the bridge slots
+// update_status (fast, local-ref read) / refresh_updates (off-thread fetch) /
+// last_sync_info (post-update) / apply_update_and_relaunch (install+relaunch).
+function UpdateNotifier() {
+  const [avail, setAvail] = React.useState(null);   // {current, latest} when available
+  const [busy, setBusy] = React.useState(false);
+
+  // Post-update confirmation: if a dev-sync copied new code in on THIS launch
+  // (synced within the last ~45s), tell the user what they're now running.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await bridgeAsync('last_sync_info');
+        if (alive && s && typeof s.seconds_ago === 'number'
+            && s.seconds_ago >= 0 && s.seconds_ago < 45 && s.commit) {
+          window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+            detail: { msg: '✓ Updated — now running ' + s.commit, kind: 'info' } }));
+        }
+      } catch (e) {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Periodic poll. The bridge cache (`update_status`) is populated by the
+  // OFF-THREAD `refresh_updates` fetch — which finishes a few seconds AFTER the
+  // call returns. So we must read status AFTER the fetch settles, not in the
+  // same tick (else the first read is always {pending:true} and the banner is
+  // up to 5 min late — Copilot #92). Each cycle kicks a fetch, then reads twice
+  // (6s + 14s) to catch a slow fetch without waiting a whole 5-min cycle.
+  React.useEffect(() => {
+    let alive = true;
+    const timers = [];
+    const readStatus = async () => {
+      try {
+        const s = await bridgeAsync('update_status');
+        if (alive && s && !s.pending) setAvail(s.available ? s : null);
+      } catch (e) {}
+    };
+    const cycle = async () => {
+      try { await bridgeAsync('refresh_updates'); } catch (e) {}
+      timers.push(setTimeout(readStatus, 6000));
+      timers.push(setTimeout(readStatus, 14000));
+    };
+    const t0 = setTimeout(cycle, 8000);              // first check ~8s after load
+    const iv = setInterval(cycle, 5 * 60 * 1000);    // then every 5 min
+    return () => {
+      alive = false; clearTimeout(t0); clearInterval(iv);
+      timers.forEach(clearTimeout);
+    };
+  }, []);
+
+  if (!avail) return null;
+
+  const relaunch = async () => {
+    if (busy) return;
+    setBusy(true);
+    // Flush the pending graph save FIRST — apply spawns the fresh instance then
+    // os._exit's this one, so anything unsaved is lost.
+    try { if (window.__archhub_flushGraphSave) window.__archhub_flushGraphSave(); } catch (e) {}
+    const fail = (msg) => {
+      setBusy(false);
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail: { msg: msg, kind: 'error' } })); } catch (e) {}
+    };
+    let res = null;
+    try { res = await bridgeAsync('apply_update_and_relaunch'); }
+    catch (e) { return fail('Update failed to start.'); }
+    // The slot returns {ok:true,started:true} instantly, then the daemon thread
+    // syncs + relaunches (this JS vanishes on success). Surface an explicit
+    // failure, and un-stick the button if no relaunch happened after a grace
+    // window — instead of leaving it stuck on "Relaunching…" forever (Copilot #92).
+    if (res && res.ok === false) return fail('Update failed: ' + (res.message || 'could not apply'));
+    // Only reached on the {ok:true} path; a SUCCESSFUL relaunch os._exit's this
+    // process long before 12s, so if this timer ever fires the relaunch didn't
+    // happen — surface it + free the button.
+    setTimeout(() => fail('Update did not relaunch — try reopening ArchHub.'), 12000);
+  };
+
+  return (
+    <div data-testid="update-banner" style={{
+      position:'fixed', right:18, bottom:18, zIndex:90,
+      display:'flex', alignItems:'center', gap:12,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderLeft:`3px solid ${LM.accent}`, borderRadius:10,
+      padding:'12px 14px', boxShadow:'0 12px 40px rgba(0,0,0,.5)',
+      fontFamily:LM.sans, maxWidth:360,
+    }}>
+      <span style={{ fontSize:16, color:LM.accent, lineHeight:1 }}>⟳</span>
+      <div style={{ display:'flex', flexDirection:'column', gap:2, minWidth:0 }}>
+        <span style={{ fontSize:13, fontWeight:600, color:LM.ink }}>Update available</span>
+        <span style={{ fontSize:11, color:LM.inkSoft, fontFamily:LM.mono }}>
+          {(avail.current || '?')} → {(avail.latest || 'latest')}
+        </span>
+      </div>
+      <button onClick={relaunch} disabled={busy} data-testid="update-relaunch" style={{
+        marginLeft:'auto', padding:'7px 13px', border:'none', borderRadius:6,
+        background: busy ? LM.line : LM.accent, color:'#fff', fontWeight:600,
+        fontSize:12, cursor: busy ? 'default' : 'pointer', whiteSpace:'nowrap',
+      }}>{busy ? 'Relaunching…' : 'Relaunch to update'}</button>
+    </div>
+  );
+}
+
 // AgDR-0036 follow-up — request/response over a result-signal.
 // Some slots that need a DEFINITIVE, per-request answer (graph_on_node_delete,
 // library_suggest_swaps) now run their work on the Python `_bg_pool` so the
@@ -3294,6 +3401,7 @@ const StudioLM = () => {
       <BrainViewModal _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
+      <UpdateNotifier/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
       {aiNodeOpen && <AINodeModal onClose={() => setAiNodeOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary}/>}
@@ -11577,6 +11685,12 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
                     animation: recording ? 'lmPulse 1s ease-in-out infinite' : 'none' }}>
           {recording ? '● rec' : '🎤'}
         </button>
+        {/* Pi-loop made visible (slice 1): the brain's recall shown right at
+            the composer where you act. Reuses the proven BrainChip
+            (get_brain_stats poll → '⌬ brain · Ns · Nf · Δms', click → brain
+            map). After each turn it reflects the skills+facts recalled for
+            that gesture — the loop you already run, now felt. */}
+        <BrainChip compact />
         {/* USER-AGENCY MANDATE — Composer mode picker. Tooltip on each
             tells what the mode does. YOLO carries an err-tinted glow so
             it never feels neutral. */}

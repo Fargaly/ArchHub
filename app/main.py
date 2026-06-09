@@ -611,6 +611,17 @@ def main() -> int:
         # the app to quit so app.exec() returns and the clean-shutdown tail
         # runs. atexit-registered release() is a belt-and-braces backstop.
         def _do_graceful_quit():
+            # Flush any pending graph save BEFORE quitting — a superseding launch
+            # is about to replace us, and app.quit() tears the page down without
+            # reliably firing the JS beforeunload/pagehide flush, so the user's
+            # open work would be lost (founder 2026-06-09 "data not persistent").
+            # Fail-safe + bounded: never blocks or hangs the quit.
+            try:
+                _fb = getattr(app, "_archhub_flush_before_quit", None)
+                if _fb is not None:
+                    _fb()
+            except Exception:
+                pass
             try:
                 _si_release()
             except Exception:
@@ -782,6 +793,35 @@ def main() -> int:
         sm = getattr(app, "_archhub_summoner", None)
         if sm is not None:
             sm.requested.connect(lambda: surface.show_centered())
+    except Exception:
+        pass
+
+    # reopen=latest data-safety: when a superseding launch QUITs this instance to
+    # load new code, _do_graceful_quit must flush pending graph saves first (the JS
+    # unload-flush doesn't reliably fire on a programmatic app.quit()). Stash an
+    # explicit, bounded, fail-safe flusher the quit handler calls. Scoped to the
+    # supersede path; never runs on a normal user close.
+    try:
+        def _flush_before_quit():
+            try:
+                v = getattr(surface, "view", None)
+                pg = v.page() if v is not None else None
+                if pg is None:
+                    return
+                pg.runJavaScript(
+                    "try{window.__archhub_flushGraphSave&&"
+                    "window.__archhub_flushGraphSave()}catch(e){}")
+                # runJavaScript is async + the sync save runs a QWebChannel slot on
+                # THIS thread — pump events briefly (hard-bounded) so it lands.
+                from PyQt6.QtCore import (QCoreApplication, QEventLoop,
+                                          QDeadlineTimer)
+                dl = QDeadlineTimer(700)
+                while not dl.hasExpired():
+                    QCoreApplication.processEvents(
+                        QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            except Exception:
+                pass
+        app._archhub_flush_before_quit = _flush_before_quit
     except Exception:
         pass
 

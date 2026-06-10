@@ -3298,6 +3298,41 @@ const StudioLM = () => {
       try { saveCurrentGraph(); } catch (e) {}
       bumpGraph();
     };
+    // PARAM→SOCKET PROMOTE (stem-surface #4 — the Houdini gesture): toggle a
+    // connector-op knob into a typed input socket and back. The engine needs
+    // NO change — _connector_run_executor merges wired inputs by param key
+    // over config, so a wire into the named socket overrides that param.
+    // Un-promoting drops the socket AND any wires feeding it (no dangling).
+    const onParamPromote = (ev) => {
+      const d = ev && ev.detail;
+      if (!d || !d.node_id || !d.key) return;
+      const node = (LM_GRAPH.nodes || []).find(x => x.id === d.node_id);
+      if (!node || !node.op_id) return;   // connector/host op tiles only
+      node.ins = Array.isArray(node.ins) ? node.ins : [];
+      const at = node.ins.findIndex(s => s && s.id === d.key);
+      if (at >= 0) {
+        node.ins.splice(at, 1);
+        LM_GRAPH.wires = (LM_GRAPH.wires || []).filter(w =>
+          !(w && w.to && w.to[0] === node.id && w.to[1] === d.key));
+      } else {
+        const pr = (node.params || []).find(x => x.k === d.key);
+        // Full ParamSpec→socket type map (connector ParamSpec types: text /
+        // number / bool / boolean / choice / multi / list / range / file).
+        // 'range' is Excel A1 notation = a string; choice/file are strings
+        // too. A real type (not 'any') keeps can_wire checks + wire coloring
+        // meaningful on the promoted socket.
+        const pt = String((pr && pr.type) || '').toLowerCase();
+        const t = (pt === 'number' || pt === 'slider') ? 'number'
+                : (pt === 'bool' || pt === 'boolean') ? 'boolean'
+                : (pt === 'list' || pt === 'multi') ? 'list'
+                : (pt === 'text' || pt === 'choice' || pt === 'file'
+                   || pt === 'range' || pt === 'version' || pt === 'document') ? 'string'
+                : 'any';
+        node.ins.push({ id: d.key, label: d.key, t });
+      }
+      try { saveCurrentGraph(); } catch (e) {}
+      bumpGraph();
+    };
     const onToggleBypass = _verbToggle('bypass');
     const onToggleFreeze = _verbToggle('frozen');
     const onTogglePreview = _verbToggle('preview_off');
@@ -3358,6 +3393,7 @@ const StudioLM = () => {
       if (!node || node.op_id === d.op_id) return;
       if (applyConnectorOp(node, d.op_id)) bumpGraph();
     };
+    window.addEventListener('lm-param-promote', onParamPromote);
     window.addEventListener('lm-node-toggle-bypass', onToggleBypass);
     window.addEventListener('lm-node-toggle-freeze', onToggleFreeze);
     window.addEventListener('lm-node-toggle-preview', onTogglePreview);
@@ -3410,6 +3446,7 @@ const StudioLM = () => {
       window.removeEventListener('lm-action-run-canvas', onCmdRunCanvas);
       window.removeEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
       window.removeEventListener('lm-toggle-perf-hud', onTogglePerfHud);
+      window.removeEventListener('lm-param-promote', onParamPromote);
       window.removeEventListener('lm-node-toggle-bypass', onToggleBypass);
       window.removeEventListener('lm-node-toggle-freeze', onToggleFreeze);
       window.removeEventListener('lm-node-toggle-preview', onTogglePreview);
@@ -12793,8 +12830,13 @@ const ConnectorRail = ({ node, bumpGraph }) => {
           )}
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
             {(groups[activeTab] || []).map(p => (
-              <ParamField key={p.k} p={p} siblings={params}
-                onChange={(v, commit) => setParam(p.k, v, commit)}/>
+              <div key={p.k} style={{ display:'flex', gap:7, alignItems:'flex-start' }}>
+                <ParamPromoteDot node={node} k={p.k}/>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <ParamField p={p} siblings={params}
+                    onChange={(v, commit) => setParam(p.k, v, commit)}/>
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -15814,8 +15856,13 @@ const NodeRail = ({ node, bumpGraph }) => {
                 {/* onChange(v) = mid-edit tick (debounced); onChange(v, true) =
                     commit/release edge (flush now) — same contract as flat params. */}
                 {schemaKeys.map(k => (
-                  <FullParam key={k} p={_schemaFieldToParam(k, schema[k], curVal(k))} node={node}
-                    onChange={(v, commit) => onParamChange(k, v, commit)}/>
+                  <div key={k} style={{ display:'flex', gap:7, alignItems:'flex-start' }}>
+                    <ParamPromoteDot node={node} k={k}/>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <FullParam p={_schemaFieldToParam(k, schema[k], curVal(k))} node={node}
+                        onChange={(v, commit) => onParamChange(k, v, commit)}/>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -15831,7 +15878,14 @@ const NodeRail = ({ node, bumpGraph }) => {
               {/* onChange(v) = mid-drag tick (debounced); onChange(v, true) =
                   commit/release edge (flush now). FullParam fires the commit
                   form on pointerup/mouseup/blur/change of its inputs. */}
-              {(node.params || []).map(p => <FullParam key={p.k} p={p} node={node} onChange={(v, commit) => onParamChange(p.k, v, commit)}/>)}
+              {(node.params || []).map(p => (
+                <div key={p.k} style={{ display:'flex', gap:7, alignItems:'flex-start' }}>
+                  <ParamPromoteDot node={node} k={p.k}/>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <FullParam p={p} node={node} onChange={(v, commit) => onParamChange(p.k, v, commit)}/>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         );
@@ -16385,6 +16439,38 @@ const railBtn = () => ({
   color:LM.ink, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer', textAlign:'center',
   justifyContent:'center', fontWeight:500,
 });
+
+// PARAM→SOCKET PROMOTE dot (stem-surface #4 — the Houdini gesture). Shown
+// beside every knob of a CONNECTOR/HOST op tile (node.op_id present): click
+// exposes that param as a typed input socket so data can be WIRED into it
+// instead of typed; click again returns it to a knob (and drops its wires).
+// Scoped to connector tiles because their executor provably merges wired
+// inputs by param key over config (_connector_run_executor params.update) —
+// on other cells a named socket would be a dead plug, which is banned.
+const ParamPromoteDot = ({ node, k }) => {
+  if (!node || !node.op_id) return null;
+  const exposed = Array.isArray(node.ins) && node.ins.some(s => s && s.id === k);
+  return (
+    <button data-testid={'param-promote-' + k}
+      aria-label={exposed
+        ? 'Convert ' + k + ' back to a knob (disconnects its wires)'
+        : 'Expose ' + k + ' as an input socket'}
+      title={exposed
+        ? k + ' is a wired input socket — click to make it a knob again (disconnects its wires)'
+        : 'Expose ' + k + ' as an input socket — wire data into it instead of typing'}
+      onClick={() => {
+        try { window.dispatchEvent(new CustomEvent('lm-param-promote',
+          { detail: { node_id: node.id, key: k } })); } catch (e) {}
+      }}
+      style={{ width:14, height:14, marginTop:2, padding:0, borderRadius:7,
+        cursor:'pointer', flexShrink:0,
+        border:`1px solid ${exposed ? LM.accent : LM.line}`,
+        background: exposed ? LM.accentSoft : 'transparent',
+        color: exposed ? LM.accent : LM.inkMuted, fontSize:9, lineHeight:1 }}>
+      ⊙
+    </button>
+  );
+};
 
 const FullParam = ({ p, node, onChange }) => {
   // Founder demand #10: text/number/boolean/enum/version/document widgets.

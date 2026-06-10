@@ -9,7 +9,25 @@
   "addin_manifests": [],
   "record_shas_on_build": true,
   "sha256": {
-    "RevitMCPCore.dll": "528ebdf51533c8b8d3c274ea5a91dfd3de1353bf27e4d9a28c5d5b3625b35319",
+    "RevitMCPCore.dll": "1a425442907b28c4b757515f35b0d50765719991528d443d1f481a9e648acc11",
     "RevitMCPCore.deps.json": "7487702cb6a650b446894ed657247bf0888667bf585b61c780328ec4a97c7ce9"
+  },
+  "frameworks": {
+    "net47": {
+      "expected_artifacts": [
+        "RevitMCPCore.dll"
+      ],
+      "sha256": {
+        "RevitMCPCore.dll": "99e5b5e3ca6801a7900fcc51662b827ccd230c3b8d1422e8884a2fbe2864f202"
+      }
+    },
+    "net48": {
+      "expected_artifacts": [
+        "RevitMCPCore.dll"
+      ],
+      "sha256": {
+        "RevitMCPCore.dll": "0b6bb0cb118d91376674a9e4d5d80ad8ad4688bd954633e435fcc48ed7af583f"
+      }
+    }
   }
 }

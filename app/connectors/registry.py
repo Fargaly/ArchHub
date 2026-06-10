@@ -66,6 +66,17 @@ class _RevitSpec:
 
         addin = self._addin_path(year)
         addin.parent.mkdir(parents=True, exist_ok=True)
+        # Tidy the interim alias manifest (2026-06-10): while pre-ownership-
+        # guard instances were still running, the manifest had to live under
+        # a name their unconditional auto-clean didn't know. Once a fixed
+        # build writes the canonical file, the alias must go — two manifests
+        # with the same ClientId would trip Revit's duplicate-GUID check.
+        legacy = addin.parent / "ArchHubRevitMCP.addin"
+        if legacy.exists():
+            try:
+                legacy.unlink()
+            except OSError:
+                pass
         dll_path = dst_dir / "RevitMCP.dll"
         addin.write_text(f"""<?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>

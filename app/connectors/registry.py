@@ -95,7 +95,17 @@ class _RevitSpec:
     def deactivate(self, entry: ConnectorEntry) -> None:
         year = entry.version or ""
         addin = self._addin_path(year)
-        if addin.exists():
+        if not addin.exists():
+            return
+        # Same ownership guard as is_active: a profile (e.g. a temp test
+        # clone with LOCALAPPDATA redirected) may only remove a manifest
+        # that points into ITS OWN staged dir — never the real install's.
+        try:
+            mine = str(self._staged_dir(year)).lower() in \
+                addin.read_text(encoding="utf-8").lower()
+        except OSError:
+            mine = False
+        if mine:
             addin.unlink()
 
     def is_active(self, entry: ConnectorEntry) -> bool:
@@ -103,13 +113,26 @@ class _RevitSpec:
         addin = self._addin_path(year)
         if not addin.exists():
             return False
-        # DLL must also exist — if missing, clean up the stale manifest
+        # DLL must also exist — if missing, clean up the stale manifest.
+        # OWNERSHIP GUARD (2026-06-10): only unlink a manifest whose
+        # <Assembly> points into THIS profile's staged dir. Test instances
+        # run with LOCALAPPDATA redirected to a temp clone (the founder-state
+        # repro trick), so their staged dir is empty — but %APPDATA% is NOT
+        # redirected, so `addin` here is the REAL install's manifest. The
+        # unconditional unlink made every running test clone repeatedly
+        # delete the founder's live Revit connector manifests.
         dll = self._staged_dir(year) / "RevitMCP.dll"
         if not dll.exists():
             try:
-                addin.unlink()
+                mine = str(self._staged_dir(year)).lower() in \
+                    addin.read_text(encoding="utf-8").lower()
             except OSError:
-                pass
+                mine = False
+            if mine:
+                try:
+                    addin.unlink()
+                except OSError:
+                    pass
             return False
         return True
 

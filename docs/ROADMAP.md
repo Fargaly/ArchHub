@@ -96,6 +96,26 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P0 COURT: FREEZE the rulebook. No 30th mandate, no new AgDR until the money-shot loop is green (NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES). When a fake is caught: narrow scope + add a gate assertion — never write another forever-rule. (eng)
 - [ ] #P0 COURT: WIP=1 — freeze ALL non-loop work (telemetry, billing, cloud, SOC2, trademark, settings polish, new connectors, agent swarm) until the money-shot test is green under the gate. (ops)
 
+## AgDR-0054 — Collective Mind (founder-signed 2026-06-10 "EXECUTE") — main builder owns this
+
+> The collective brain = ONE entity (sessions + graphs + memory + skills + thinking + training),
+> neurons syncing through a bidirectional dam-gated river, flywheel → collective AEC models.
+> Design + court verdict + sourced research in `docs/agdr/AgDR-0054-collective-mind-one-brain.md` +
+> `docs/research/{memory-km-agentic-evolution,training-endgame,training-gaps-addendum}-*.md`.
+> **CONFLICT (surfaced, not resolved silently):** the #P0 COURT directive above freezes new AgDRs +
+> non-loop work until the money-shot loop is green (NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES). AgDR-0054 was
+> founder-signed despite that freeze — main builder reconcile WIP=1 priority before charging in.
+> **Slice 1 (per-trace schema) + slice 2a (export tier-filter) are COMMITTED on branch
+> `feat/agdr0054-trace-schema` — merge that branch first; the main working tree kept flipping
+> branches under the chat session so the build was isolated there.**
+
+- [ ] #P1 AgDR-0054 slice 2 — populate the per-trace fields: `write_fragment` + the Fragment model write the AgDR-0054 columns (origin_kind/training_rights_tier/generating_model_id/format_shape_descriptor/content_hash/action+language payload), and wire `export_trainable_fragments` into `brain.dataset_export`. Schema + filter already on `feat/agdr0054-trace-schema`. (eng)
+- [ ] #P1 AgDR-0054 slice 3 — capture every SESSION + node-GRAPH + connected-agent session (composer · Claude Code · Codex · fleet) as first-class, recallable, dam-gated brain entities, not skills-only (acceptance #20). (eng)
+- [ ] #P1 AgDR-0054 slice 4 — server-side sandboxed verify (move the ROMA court off the contributor's machine — kills bus-factor-one, CRITICAL #3) + fix the cloud 401 sign-in. (eng)
+- [ ] #P1 AgDR-0054 slice 5 — mandate projector (versioned brain → CLAUDE.md/settings.json/pre-prompts, founder-signature gate on mandate-class) + store unification (brain.db absorbs `app/memory/graph.sqlite` — the ONE-SYSTEM debt). (eng)
+- [ ] #P1 AgDR-0054 slice 6 — the 19-test acceptance suite before any fine-tune: poisoning stack (content-hash + per-contributor cap <250 + checkpoint activation-probe + base-model audit), clean-corpus export filter, eval time-split + decontamination, unlearning-by-export-gate honesty, forgetting/alignment regression gate. (qa)
+- [ ] #P0 AgDR-0054 FOUNDER RULING — provider-ToS / clean-corpus path for the collective AEC model (training on provider OUTPUTS is a facial ToS breach; **action-signal corpus recommended**). Blocks the training/flywheel half only; the dam + schema build regardless. (founder)
+
 ## NEXT 7 DAYS
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot / daily-audit) is unverified and inert until the default branch is pushed (ops)

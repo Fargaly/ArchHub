@@ -326,6 +326,57 @@ class BrainStore:
     def path(self) -> Path:
         return self._path
 
+    # ── AgDR-0054 training export — the legal/privacy dam at export time ──────
+    def export_trainable_fragments(
+        self, target: str = "collective", allow_provider_prose: bool = False
+    ) -> list[dict]:
+        """Select the trainable corpus per the AgDR-0054 tiers.
+
+        Export-gating is the ONLY reliable unlearning (weights-level erasure is
+        impossible — TOFU/quantization), so rights + quarantine are enforced HERE,
+        not at recall.
+          - quarantine_flag=1            -> NEVER trainable (any target).
+          - target='collective'          -> only training_rights_tier='collective_ok'.
+          - target='firm_private'        -> 'collective_ok' or 'firm_private_only'.
+        Per row: action_payload (Tier-0, ArchHub-owned) is ALWAYS included;
+        language_payload only for human-authored traces (Tier-1) unless
+        allow_provider_prose (Tier-2 provider-prose gate — needs founder ToS ruling §7a).
+        """
+        if target == "collective":
+            rights = ("collective_ok",)
+        elif target == "firm_private":
+            rights = ("collective_ok", "firm_private_only")
+        else:
+            raise ValueError(f"unknown export target: {target!r}")
+        placeholders = ",".join("?" for _ in rights)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""SELECT id, origin_kind, training_rights_tier, action_payload,
+                           language_payload, content_hash_post
+                    FROM fragments
+                    WHERE quarantine_flag = 0
+                      AND training_rights_tier IN ({placeholders})""",
+                rights,
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            lang = r["language_payload"]
+            if (
+                lang is not None
+                and r["origin_kind"] != "human_verified"
+                and not allow_provider_prose
+            ):
+                lang = None  # Tier-2 provider-prose gated out of the competing-model corpus
+            out.append(
+                {
+                    "id": r["id"],
+                    "action_payload": r["action_payload"],  # Tier-0 — always
+                    "language_payload": lang,               # Tier-1 human / Tier-2 gated
+                    "content_hash_post": r["content_hash_post"],
+                }
+            )
+        return out
+
     # ── fragments ────────────────────────────────────────────────────────
 
     def write_fragment(self, fragment: Fragment) -> bool:

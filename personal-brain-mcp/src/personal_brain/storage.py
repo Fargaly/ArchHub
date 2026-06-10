@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS fragments (
     blob_path TEXT,                -- sidecar blob pointer (sha256-addressed)
     blob_mime TEXT,                -- 'application/octet-stream' / 'image/png' / etc
     blob_bytes INTEGER NOT NULL DEFAULT 0,
+    -- AgDR-0054 per-trace schema (founder-signed 2026-06-10). A trace/session record carries the
+    -- fields the dam needs to compute training/export tiers, poisoning provenance, and unlearning
+    -- (which is export-gating, since weights-level erasure is impossible). Legacy-safe defaults:
+    -- untagged rows are human_verified + firm_private_only so old data is never auto-trained.
+    origin_kind TEXT NOT NULL DEFAULT 'human_verified',            -- human_verified | model_generated
+    generating_model_id TEXT,                                      -- e.g. claude-* ; keys the ToS/legal tier
+    training_rights_tier TEXT NOT NULL DEFAULT 'firm_private_only',-- collective_ok|firm_private_only|quarantine_never_trains
+    format_shape_descriptor TEXT,                                  -- prompt->tool->result fingerprint (mix + per-format poison cap)
+    content_hash_pre TEXT,                                         -- integrity (Carlini split-view) + dedup
+    content_hash_post TEXT,                                        -- post-redaction; train<->eval decontamination scan
+    action_payload TEXT,                                           -- JSON: tool-calls + structured outcomes (Tier-0, ALWAYS trainable, ArchHub-owned)
+    language_payload TEXT,                                         -- JSON: prose (Tier-1 human / Tier-2 provider-prose, gated)
+    quarantine_flag INTEGER NOT NULL DEFAULT 0,                    -- 1 = never trains, never recalls
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -266,6 +279,16 @@ class BrainStore:
             "ALTER TABLE fragments ADD COLUMN blob_path TEXT",
             "ALTER TABLE fragments ADD COLUMN blob_mime TEXT",
             "ALTER TABLE fragments ADD COLUMN blob_bytes INTEGER NOT NULL DEFAULT 0",
+            # AgDR-0054 per-trace schema (founder-signed 2026-06-10) — additive, legacy-safe.
+            "ALTER TABLE fragments ADD COLUMN origin_kind TEXT NOT NULL DEFAULT 'human_verified'",
+            "ALTER TABLE fragments ADD COLUMN generating_model_id TEXT",
+            "ALTER TABLE fragments ADD COLUMN training_rights_tier TEXT NOT NULL DEFAULT 'firm_private_only'",
+            "ALTER TABLE fragments ADD COLUMN format_shape_descriptor TEXT",
+            "ALTER TABLE fragments ADD COLUMN content_hash_pre TEXT",
+            "ALTER TABLE fragments ADD COLUMN content_hash_post TEXT",
+            "ALTER TABLE fragments ADD COLUMN action_payload TEXT",
+            "ALTER TABLE fragments ADD COLUMN language_payload TEXT",
+            "ALTER TABLE fragments ADD COLUMN quarantine_flag INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 conn.execute(col_sql)
@@ -281,6 +304,15 @@ class BrainStore:
             )
         except sqlite3.OperationalError:
             pass
+        # AgDR-0054 — indexes the export/dam filters ride (training tier + quarantine).
+        for ix_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_fragments_rights ON fragments(training_rights_tier)",
+            "CREATE INDEX IF NOT EXISTS idx_fragments_quarantine ON fragments(quarantine_flag)",
+        ):
+            try:
+                conn.execute(ix_sql)
+            except sqlite3.OperationalError:
+                pass
         return cls(conn, Path(str(path)))
 
     def close(self) -> None:

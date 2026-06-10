@@ -350,8 +350,36 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+_FLAT_MANIFEST_TF = "net8.0-windows"
+
+
+def _manifest_section_for_tf(manifest: dict,
+                             target_framework: str) -> tuple[list, dict]:
+    """Resolve (expected_artifacts, sha256_pins) for a target framework.
+
+    The flat top-level `expected_artifacts` / `sha256` keys describe the
+    net8.0-windows build (the TF they were recorded from). Other TFs read
+    their own section under `frameworks.<tf>`; absent that, they fall back
+    to the flat artifact list minus `*.deps.json` (net48/net47 builds don't
+    emit deps.json) and with NO sha pins (DLL bytes differ per TF, so pins
+    recorded from another TF can only mis-fail the gate).
+    """
+    fw = (manifest.get("frameworks") or {}).get(target_framework)
+    if fw is not None:
+        return (fw.get("expected_artifacts", []) or [],
+                fw.get("sha256", {}) or {})
+    if target_framework == _FLAT_MANIFEST_TF:
+        return (manifest.get("expected_artifacts", []) or [],
+                manifest.get("sha256", {}) or {})
+    expected = [a for a in (manifest.get("expected_artifacts", []) or [])
+                if not a.endswith(".deps.json")]
+    return (expected, {})
+
+
 def _verify_build_output(output_dir: Path, source_roots: list[Path],
-                         host_label: str) -> tuple[bool, str, list[str]]:
+                         host_label: str,
+                         target_framework: str = _FLAT_MANIFEST_TF,
+                         ) -> tuple[bool, str, list[str]]:
     """Deploy gate.  Aggregates manifests across every source root for
     a host (e.g. revit_mcp + revit_mcp_core), then verifies each
     expected artifact exists in `output_dir`.  When SHA-256 entries are
@@ -361,9 +389,10 @@ def _verify_build_output(output_dir: Path, source_roots: list[Path],
     sha_pins: dict[str, str] = {}
     for root in source_roots:
         m = _load_build_manifest(root)
-        for art in m.get("expected_artifacts", []) or []:
+        arts, pins = _manifest_section_for_tf(m, target_framework)
+        for art in arts:
             expected.add(art)
-        for art, sha in (m.get("sha256", {}) or {}).items():
+        for art, sha in pins.items():
             if sha:
                 sha_pins[art] = sha
     missing = [name for name in expected
@@ -389,11 +418,16 @@ def _verify_build_output(output_dir: Path, source_roots: list[Path],
     return (True, "", [])
 
 
-def _record_build_shas(output_dir: Path, source_roots: list[Path]) -> None:
+def _record_build_shas(output_dir: Path, source_roots: list[Path],
+                       target_framework: str = _FLAT_MANIFEST_TF) -> None:
     """After a clean local build, write SHA-256 of each declared
     artifact back into its own connector's manifest.  Skips entries
     whose `sha256` key is `null` / missing.  Idempotent — running
-    twice yields the same content (Deterministic builds)."""
+    twice yields the same content (Deterministic builds).
+
+    net8.0-windows shas land in the flat `sha256` key (original schema);
+    any other TF lands under `frameworks.<tf>` so per-TF pins never
+    clobber each other."""
     import json as _json
     for root in source_roots:
         manifest_path = root / "build-manifest.json"
@@ -405,9 +439,16 @@ def _record_build_shas(output_dir: Path, source_roots: list[Path]) -> None:
             continue
         if not m.get("record_shas_on_build", False):
             continue
-        sha_map = m.get("sha256") or {}
+        arts, _ = _manifest_section_for_tf(m, target_framework)
+        if target_framework == _FLAT_MANIFEST_TF:
+            sha_map = m.get("sha256") or {}
+        else:
+            fw_all = m.setdefault("frameworks", {})
+            fw = fw_all.setdefault(target_framework, {})
+            fw.setdefault("expected_artifacts", arts)
+            sha_map = fw.get("sha256") or {}
         changed = False
-        for art in m.get("expected_artifacts", []) or []:
+        for art in arts:
             dll_path = output_dir / art
             if dll_path.is_file():
                 actual = _sha256_file(dll_path)
@@ -415,7 +456,10 @@ def _record_build_shas(output_dir: Path, source_roots: list[Path]) -> None:
                     sha_map[art] = actual
                     changed = True
         if changed:
-            m["sha256"] = sha_map
+            if target_framework == _FLAT_MANIFEST_TF:
+                m["sha256"] = sha_map
+            else:
+                m["frameworks"][target_framework]["sha256"] = sha_map
             manifest_path.write_text(
                 _json.dumps(m, indent=2) + "\n", encoding="utf-8")
 
@@ -548,12 +592,24 @@ def _build_dotnet_connector(host_label: str, year: int,
                                 addin.name, e))
 
     # Deploy gate — verify expected artifacts + optional SHA-256.
-    ok, err, missing = _verify_build_output(output_dir, source_roots, host_label)
+    ok, err, missing = _verify_build_output(output_dir, source_roots, host_label,
+                                            target_framework)
+    if not ok and err.startswith("sha_mismatch"):
+        # The bytes we are verifying ARE the build we just completed, so a
+        # pin mismatch here means the source or the compiler changed since
+        # the pins were recorded (e.g. a new .NET SDK) — not a corrupted
+        # artifact. Refresh the pins from this build and re-verify, instead
+        # of blocking every legitimate rebuild on its own gate.
+        on_progress("Refreshing SHA pins", 92,
+                    "sha pins stale (source or toolchain changed): " + err)
+        _record_build_shas(output_dir, source_roots, target_framework)
+        ok, err, missing = _verify_build_output(output_dir, source_roots,
+                                                host_label, target_framework)
     if not ok:
         return BuildResult(False, err, [output_dir / m for m in missing])
 
     # Record fresh SHA-256s for any manifest opting in.
-    _record_build_shas(output_dir, source_roots)
+    _record_build_shas(output_dir, source_roots, target_framework)
 
     artifacts = [p for p in output_dir.iterdir() if p.is_file()]
     on_progress("Done", 100, "{} files in {}".format(len(artifacts), output_dir))

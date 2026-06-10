@@ -199,6 +199,149 @@ def test_record_shas_writes_back_to_manifest(tmp_path, monkeypatch):
     assert updated["sha256"]["RevitMCP.dll"] == expected_sha
 
 
+def test_deploy_gate_self_heals_stale_pins_when_recording(tmp_path, monkeypatch):
+    """A manifest with record_shas_on_build=true must not be blocked by
+    its own stale pins after a toolchain/SDK change — the post-build gate
+    refreshes them from the bytes it just built. Regression: Revit 2025
+    rebuilds died sha_mismatch against pins recorded under an older SDK."""
+    sources = tmp_path / "sources"
+    (sources / "revit_mcp").mkdir(parents=True)
+    (sources / "revit_mcp" / "RevitMCP.csproj").write_text("<Project/>")
+    manifest_p = sources / "revit_mcp" / "build-manifest.json"
+    manifest_p.write_text(json.dumps({
+        "expected_artifacts": ["RevitMCP.dll"],
+        "record_shas_on_build": True,
+        "sha256": {"RevitMCP.dll": "0" * 64},  # stale pin (old SDK)
+    }))
+    monkeypatch.setattr(auto_build, "SOURCES_DIR", sources)
+    monkeypatch.setattr(auto_build, "PAYLOAD_DIR", tmp_path / "payload")
+
+    test_bytes = b"new toolchain bytes"
+    expected_sha = hashlib.sha256(test_bytes).hexdigest()
+
+    def _fake_run(project_path, **_kw):
+        out = _kw["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "RevitMCP.dll").write_bytes(test_bytes)
+        return (True, "ok")
+
+    monkeypatch.setattr(auto_build, "_run_dotnet_build", _fake_run)
+    result = auto_build._build_dotnet_connector(
+        host_label="revit", year=2025,
+        sources_glob="revit_mcp*", output_subdir="revit",
+        msbuild_props={}, target_framework="net8.0-windows",
+        on_progress=lambda *_a, **_kw: None)
+    assert result.success, result.detail
+    updated = json.loads(manifest_p.read_text(encoding="utf-8"))
+    assert updated["sha256"]["RevitMCP.dll"] == expected_sha
+
+
+def test_deploy_gate_net48_skips_deps_json_and_foreign_sha_pins(tmp_path, monkeypatch):
+    """net48 builds emit no *.deps.json and produce different DLL bytes
+    than net8 — the flat manifest (recorded from net8) must not fail the
+    gate for them. Regression: Revit 2023/2024 builds died with
+    `incomplete_build: missing RevitMCP.deps.json` forever."""
+    sources = tmp_path / "sources"
+    (sources / "revit_mcp").mkdir(parents=True)
+    (sources / "revit_mcp" / "RevitMCP.csproj").write_text("<Project/>")
+    (sources / "revit_mcp" / "build-manifest.json").write_text(json.dumps({
+        "expected_artifacts": ["RevitMCP.dll", "RevitMCP.deps.json"],
+        "record_shas_on_build": False,
+        "sha256": {"RevitMCP.dll": "0" * 64},  # net8 pin — wrong for net48
+    }))
+    monkeypatch.setattr(auto_build, "SOURCES_DIR", sources)
+    monkeypatch.setattr(auto_build, "PAYLOAD_DIR", tmp_path / "payload")
+
+    def _fake_run(project_path, **_kw):
+        out = _kw["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        # net48 output: DLL only, no deps.json, bytes differ from the pin.
+        (out / "RevitMCP.dll").write_bytes(b"net48 bytes")
+        return (True, "ok")
+
+    monkeypatch.setattr(auto_build, "_run_dotnet_build", _fake_run)
+    result = auto_build._build_dotnet_connector(
+        host_label="revit", year=2023,
+        sources_glob="revit_mcp*", output_subdir="revit",
+        msbuild_props={}, target_framework="net48",
+        on_progress=lambda *_a, **_kw: None)
+    assert result.success, result.detail
+
+
+def test_record_shas_net48_lands_in_frameworks_section(tmp_path, monkeypatch):
+    """Per-TF sha pins: net48 shas go under frameworks.net48.sha256 and
+    never clobber the flat net8 `sha256` map."""
+    sources = tmp_path / "sources"
+    (sources / "revit_mcp").mkdir(parents=True)
+    (sources / "revit_mcp" / "RevitMCP.csproj").write_text("<Project/>")
+    manifest_p = sources / "revit_mcp" / "build-manifest.json"
+    net8_pin = "a" * 64
+    manifest_p.write_text(json.dumps({
+        "expected_artifacts": ["RevitMCP.dll", "RevitMCP.deps.json"],
+        "record_shas_on_build": True,
+        "sha256": {"RevitMCP.dll": net8_pin},
+    }))
+    monkeypatch.setattr(auto_build, "SOURCES_DIR", sources)
+    monkeypatch.setattr(auto_build, "PAYLOAD_DIR", tmp_path / "payload")
+
+    test_bytes = b"net48 deterministic payload"
+    expected_sha = hashlib.sha256(test_bytes).hexdigest()
+
+    def _fake_run(project_path, **_kw):
+        out = _kw["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "RevitMCP.dll").write_bytes(test_bytes)
+        return (True, "ok")
+
+    monkeypatch.setattr(auto_build, "_run_dotnet_build", _fake_run)
+    result = auto_build._build_dotnet_connector(
+        host_label="revit", year=2023,
+        sources_glob="revit_mcp*", output_subdir="revit",
+        msbuild_props={}, target_framework="net48",
+        on_progress=lambda *_a, **_kw: None)
+    assert result.success, result.detail
+    updated = json.loads(manifest_p.read_text(encoding="utf-8"))
+    assert updated["frameworks"]["net48"]["sha256"]["RevitMCP.dll"] == expected_sha
+    # Flat net8 pin untouched.
+    assert updated["sha256"]["RevitMCP.dll"] == net8_pin
+    # net48 expected list excludes deps.json.
+    assert "RevitMCP.deps.json" not in updated["frameworks"]["net48"]["expected_artifacts"]
+
+
+def test_deploy_gate_net48_uses_own_frameworks_section_pins(tmp_path, monkeypatch):
+    """Once frameworks.net48 pins exist, a net48 build with different
+    bytes must fail sha_mismatch — determinism gate stays real per-TF."""
+    sources = tmp_path / "sources"
+    (sources / "revit_mcp").mkdir(parents=True)
+    (sources / "revit_mcp" / "RevitMCP.csproj").write_text("<Project/>")
+    (sources / "revit_mcp" / "build-manifest.json").write_text(json.dumps({
+        "expected_artifacts": ["RevitMCP.dll", "RevitMCP.deps.json"],
+        "record_shas_on_build": False,
+        "sha256": {},
+        "frameworks": {"net48": {
+            "expected_artifacts": ["RevitMCP.dll"],
+            "sha256": {"RevitMCP.dll": "0" * 64},
+        }},
+    }))
+    monkeypatch.setattr(auto_build, "SOURCES_DIR", sources)
+    monkeypatch.setattr(auto_build, "PAYLOAD_DIR", tmp_path / "payload")
+
+    def _fake_run(project_path, **_kw):
+        out = _kw["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "RevitMCP.dll").write_bytes(b"bytes that do not match pin")
+        return (True, "ok")
+
+    monkeypatch.setattr(auto_build, "_run_dotnet_build", _fake_run)
+    result = auto_build._build_dotnet_connector(
+        host_label="revit", year=2023,
+        sources_glob="revit_mcp*", output_subdir="revit",
+        msbuild_props={}, target_framework="net48",
+        on_progress=lambda *_a, **_kw: None)
+    assert not result.success
+    assert "sha_mismatch" in result.detail
+
+
 # ─── 3. real source tree carries the manifests ─────────────────────
 
 

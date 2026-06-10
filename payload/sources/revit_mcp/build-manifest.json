@@ -11,7 +11,25 @@
   ],
   "record_shas_on_build": true,
   "sha256": {
-    "RevitMCP.dll": "8ac089734e6b795d52776c27452535cf0e590fab93833b0c48863873fc597798",
+    "RevitMCP.dll": "8580c41c3fdf80980830bb97517b96c0dc8fcb71f0644098473e20e70d8effc4",
     "RevitMCP.deps.json": "705e37ff27fe577e9580a231b687fc6a6ed55cffb686eb1cbd2e5bb4e2cbd6f2"
+  },
+  "frameworks": {
+    "net47": {
+      "expected_artifacts": [
+        "RevitMCP.dll"
+      ],
+      "sha256": {
+        "RevitMCP.dll": "c405b5cb3373f654de34203cbe489fdf28cf29e053cd6aa5f44fdde185b938d1"
+      }
+    },
+    "net48": {
+      "expected_artifacts": [
+        "RevitMCP.dll"
+      ],
+      "sha256": {
+        "RevitMCP.dll": "d9561f15a563491a85bd1410190eeada193e96ab453303a11f8aa30b5a0bd60d"
+      }
+    }
   }
 }

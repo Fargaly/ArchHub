@@ -55,7 +55,10 @@ def test_env_key_builds_a_client_without_a_store_key(monkeypatch):
     client = r._get_client("nvidia")
     assert client is not None
     base = getattr(getattr(client, "_client", None), "base_url", "")
-    assert "integrate.api.nvidia.com" in str(base), f"wrong endpoint: {base!r}"
+    # Exact-equality check (not a substring) — CodeQL flags `"domain" in url`
+    # as incomplete URL sanitization even in test assertions.
+    assert str(base).rstrip("/") == "https://integrate.api.nvidia.com/v1", (
+        f"wrong endpoint: {base!r}")
 
 
 def test_no_key_raises_nvidia_specific_error(monkeypatch):

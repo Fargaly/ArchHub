@@ -63,6 +63,8 @@ try {
 // theme, because vellum is light), so it survives theme switches and rides the
 // exact same LM-getter + archhub-theme-changed repaint path as a theme change.
 let _a11yContrastHigh = false;
+let _srLive = null;          // the #lm-sr-live region while screen_reader is ON
+let _srToastHandler = null;  // its lm-canvas-toast listener (removed on teardown)
 const _CONTRAST_OVERLAYS = {
   forge:     { ink:'#ffffff', inkSoft:'#cfc8be', inkMuted:'#9a9288',
                line:'#3f3f4a', lineSoft:'#34343e', lineHair:'#2c2c34' },
@@ -71,11 +73,15 @@ const _CONTRAST_OVERLAYS = {
   vellum:    { ink:'#1a1208', inkSoft:'#43361f', inkMuted:'#5f4f36',
                line:'#a8946e', lineSoft:'#b5a384', lineHair:'#c2b298' },
 };
-const _savedThemeName = () => {
-  try {
-    return (typeof localStorage !== 'undefined' && localStorage.getItem('archhub.theme')) || 'forge';
-  } catch (e) { return 'forge'; }
-};
+// In-memory theme name is the SESSION source of truth — localStorage is only
+// persistence. If setItem fails (storage full/unavailable) the theme still
+// changes for the current session instead of silently staying stale.
+let _themeName = 'forge';
+try {
+  const _boot = (typeof localStorage !== 'undefined' && localStorage.getItem('archhub.theme')) || 'forge';
+  _themeName = THEMES[_boot] ? _boot : 'forge';
+} catch (e) { _themeName = 'forge'; }
+const _savedThemeName = () => _themeName;
 const _recomputeTheme = () => {
   const name = _savedThemeName();
   const base = THEMES[name] || THEMES.forge;
@@ -87,7 +93,8 @@ if (typeof window !== 'undefined') {
   window.__archhubSetTheme = (name) => {
     const t = THEMES[String(name || '').toLowerCase()];
     if (!t) return false;
-    try { localStorage.setItem('archhub.theme', String(name).toLowerCase()); } catch (e) {}
+    _themeName = String(name).toLowerCase();  // session truth FIRST — persistence below is best-effort
+    try { localStorage.setItem('archhub.theme', _themeName); } catch (e) {}
     _recomputeTheme();  // composes the high-contrast overlay when it is on
     try { document.body && document.body.setAttribute('data-theme', String(name).toLowerCase()); } catch (e) {}
     try { window.dispatchEvent(new CustomEvent('archhub-theme-changed', { detail: name })); } catch (e) {}
@@ -129,20 +136,31 @@ if (typeof window !== 'undefined') {
       //    are otherwise visual-only.
       const sr = !!prefs.screen_reader;
       el.classList.toggle('lm-sr-optimized', sr);
-      if (sr && document.body && !document.getElementById('lm-sr-live')) {
-        const live = document.createElement('div');
-        live.id = 'lm-sr-live';
-        live.setAttribute('role', 'status');
-        live.setAttribute('aria-live', 'polite');
-        live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;'
-          + 'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;';
-        document.body.appendChild(live);
-        window.addEventListener('lm-canvas-toast', (ev) => {
+      if (sr && document.body && !_srLive) {
+        // Adopt a pre-existing region if one survived (idempotence), else create.
+        let live = document.getElementById('lm-sr-live');
+        if (!live) {
+          live = document.createElement('div');
+          live.id = 'lm-sr-live';
+          live.setAttribute('role', 'status');
+          live.setAttribute('aria-live', 'polite');
+          live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;'
+            + 'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;';
+          document.body.appendChild(live);
+        }
+        _srLive = live;
+        _srToastHandler = (ev) => {
           try {
             const m = ev && ev.detail && ev.detail.msg;
             if (m) { live.textContent = ''; live.textContent = String(m); }
           } catch (e) {}
-        });
+        };
+        window.addEventListener('lm-canvas-toast', _srToastHandler);
+      } else if (!sr && _srLive) {
+        // True teardown — disabling the setting stops announcements entirely.
+        try { window.removeEventListener('lm-canvas-toast', _srToastHandler); } catch (e) {}
+        try { _srLive.remove(); } catch (e) {}
+        _srLive = null; _srToastHandler = null;
       }
       // Cache for instant next-boot apply (the bridge round-trip lands later).
       try {
@@ -8253,9 +8271,16 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
           }}
           onBypass={() => {
             // AgDR-0041 Property 6 — skip executor, passthrough upstream.
+            // `bypass` is the ONE canonical flag; read legacy `bypassed` /
+            // `config.bypass` (saved graphs, bridge patches) so toggling a
+            // legacy-bypassed node un-bypasses it, and clear the legacy key
+            // on write so stale state can't pin the badge on.
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
             if (node) {
-              node.bypass = !node.bypass;
+              node.bypass = !(node.bypass || node.bypassed
+                              || (node.config && node.config.bypass));
+              if ('bypassed' in node) delete node.bypassed;
+              if (node.config && 'bypass' in node.config) node.config.bypass = node.bypass;
               if (node.bypass) node.frozen = false;
               saveCurrentGraph(); bumpGraph && bumpGraph();
             }
@@ -8535,7 +8560,7 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
           dstBypassed={(() => {
             const dstId = wireMenu.wire && wireMenu.wire.to && wireMenu.wire.to[0];
             const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
-            return !!(dst && (dst.bypassed || (dst.config && dst.config.bypass)));
+            return !!(dst && (dst.bypass || dst.bypassed || (dst.config && dst.config.bypass)));
           })()}
           onSwapTarget={async () => {
             // AgDR-0041 P2 — swap the wire's destination node with a
@@ -8607,11 +8632,12 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
             const dstId = wire.to && wire.to[0];
             const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
             if (!dst) { setWireMenu(null); flashToast('Target node missing', 'err'); return; }
-            const next = !(dst.bypassed || (dst.config && dst.config.bypass));
+            const next = !(dst.bypass || dst.bypassed || (dst.config && dst.config.bypass));
             try {
               const res = await bridgeAsync('node_bypass', dstId, !!next);
               if (res && res.status !== 'error') {
-                dst.bypassed = next;
+                dst.bypass = next;                       // the ONE canonical flag (badge reads it)
+                if ('bypassed' in dst) delete dst.bypassed;  // clear legacy so it can't pin stale state
                 dst.config = { ...(dst.config || {}), bypass: next };
                 saveCurrentGraph(); bumpGraph && bumpGraph();
                 flashToast(next ? `Bypassed ${dst.title || dstId}` : `Un-bypassed ${dst.title || dstId}`);
@@ -9656,10 +9682,10 @@ const _NodeRenderer_inner = ({ n, focused, selected, dimmed, expanded, onToggleE
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         <div style={S_FLEX1}/>
         {/* SLICE B (AgDR-0002): disable-verb state indicators. */}
-        {(n.bypass || n.frozen || n.preview_off || n.pinned) && (
+        {((n.bypass || n.bypassed || (n.config && n.config.bypass)) || n.frozen || n.preview_off || n.pinned) && (
           <span style={{ display:'flex', alignItems:'center', gap:5,
             fontFamily:LM.mono, fontSize:11, marginRight:4 }}>
-            {n.bypass && <span title="Bypassed (○) — skip executor, passthrough upstream" style={{ color:LM.inkSoft }}>○</span>}
+            {(n.bypass || n.bypassed || (n.config && n.config.bypass)) && <span title="Bypassed (○) — skip executor, passthrough upstream" style={{ color:LM.inkSoft }}>○</span>}
             {n.frozen && <span title="Frozen (❄) — return cached value, downstream keeps cooking" style={{ color:LM.cyan }}>❄</span>}
             {n.preview_off && <span title="Preview-off (Ctrl+Shift+P) — render suppressed" style={{ color:LM.inkSoft }}>⊘</span>}
             {n.pinned && (

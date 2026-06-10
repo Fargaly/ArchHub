@@ -58,20 +58,127 @@ try {
 // + fires archhub-theme-changed which the StudioLM root listens for to
 // bump its React tree. Persists to localStorage so a cold start picks
 // up the same theme.
+// ── Accessibility apply layer (a11y wave-2 — founder-authorized 2026-06-10).
+// High-contrast is a TOKEN OVERLAY composed onto the saved base theme (per
+// theme, because vellum is light), so it survives theme switches and rides the
+// exact same LM-getter + archhub-theme-changed repaint path as a theme change.
+let _a11yContrastHigh = false;
+let _srLive = null;          // the #lm-sr-live region while screen_reader is ON
+let _srToastHandler = null;  // its lm-canvas-toast listener (removed on teardown)
+const _CONTRAST_OVERLAYS = {
+  forge:     { ink:'#ffffff', inkSoft:'#cfc8be', inkMuted:'#9a9288',
+               line:'#3f3f4a', lineSoft:'#34343e', lineHair:'#2c2c34' },
+  blueprint: { ink:'#ffffff', inkSoft:'#b3d0e8', inkMuted:'#7da4c4',
+               line:'#2e4a6b', lineSoft:'#27405c', lineHair:'#203450' },
+  vellum:    { ink:'#1a1208', inkSoft:'#43361f', inkMuted:'#5f4f36',
+               line:'#a8946e', lineSoft:'#b5a384', lineHair:'#c2b298' },
+};
+// In-memory theme name is the SESSION source of truth — localStorage is only
+// persistence. If setItem fails (storage full/unavailable) the theme still
+// changes for the current session instead of silently staying stale.
+let _themeName = 'forge';
+try {
+  const _boot = (typeof localStorage !== 'undefined' && localStorage.getItem('archhub.theme')) || 'forge';
+  _themeName = THEMES[_boot] ? _boot : 'forge';
+} catch (e) { _themeName = 'forge'; }
+const _savedThemeName = () => _themeName;
+const _recomputeTheme = () => {
+  const name = _savedThemeName();
+  const base = THEMES[name] || THEMES.forge;
+  _currentTheme = _a11yContrastHigh
+    ? Object.assign({}, base, _CONTRAST_OVERLAYS[name] || _CONTRAST_OVERLAYS.forge)
+    : base;
+};
 if (typeof window !== 'undefined') {
   window.__archhubSetTheme = (name) => {
     const t = THEMES[String(name || '').toLowerCase()];
     if (!t) return false;
-    _currentTheme = t;
-    try { localStorage.setItem('archhub.theme', String(name).toLowerCase()); } catch (e) {}
+    _themeName = String(name).toLowerCase();  // session truth FIRST — persistence below is best-effort
+    try { localStorage.setItem('archhub.theme', _themeName); } catch (e) {}
+    _recomputeTheme();  // composes the high-contrast overlay when it is on
     try { document.body && document.body.setAttribute('data-theme', String(name).toLowerCase()); } catch (e) {}
     try { window.dispatchEvent(new CustomEvent('archhub-theme-changed', { detail: name })); } catch (e) {}
     return true;
   };
+  // Name from storage, not object identity — the contrast overlay makes
+  // _currentTheme a derived object that is never === a THEMES entry.
   window.__archhubGetTheme = () => {
-    for (const k of Object.keys(THEMES)) if (THEMES[k] === _currentTheme) return k;
-    return 'forge';
+    const name = _savedThemeName();
+    return THEMES[name] ? name : 'forge';
   };
+
+  // ONE apply point for every Settings → Accessibility pref. Idempotent —
+  // safe to call at boot (cached), on bridge mount, and on live changes.
+  window.__archhubApplyA11y = (prefs) => {
+    if (!prefs || typeof prefs !== 'object') return;
+    try {
+      const el = document.documentElement;
+      // 1) reduce motion — the existing kill-animations class.
+      if (prefs.reduce_motion) el.classList.add('lm-reduce-motion');
+      else el.classList.remove('lm-reduce-motion');
+      // 2) font size — Chromium-native CSS zoom on the root (QtWebEngine IS
+      //    Chromium): real reflow, crisp text, scales the whole inline-px UI
+      //    without a 5k-style px→rem refactor. The VS-Code-zoom model.
+      const zoom = ({ small:0.9, medium:1, 'default':1, large:1.1, xlarge:1.25 })[
+        String(prefs.font_size || 'default').toLowerCase()];
+      el.style.zoom = (zoom && zoom !== 1) ? String(zoom) : '';
+      // 3) contrast — token overlay + the same repaint event as a theme swap.
+      const high = String(prefs.contrast || 'normal').toLowerCase() === 'high';
+      if (high !== _a11yContrastHigh) {
+        _a11yContrastHigh = high;
+        _recomputeTheme();
+        try { window.dispatchEvent(new CustomEvent('archhub-theme-changed',
+          { detail: window.__archhubGetTheme() })); } catch (e) {}
+      }
+      el.classList.toggle('lm-high-contrast', high);
+      // 4) screen reader — opt-in class (forced focus outlines via the a11y
+      //    sheet) + a polite live region that announces canvas toasts, which
+      //    are otherwise visual-only.
+      const sr = !!prefs.screen_reader;
+      el.classList.toggle('lm-sr-optimized', sr);
+      if (sr && document.body && !_srLive) {
+        // Adopt a pre-existing region if one survived (idempotence), else create.
+        let live = document.getElementById('lm-sr-live');
+        if (!live) {
+          live = document.createElement('div');
+          live.id = 'lm-sr-live';
+          live.setAttribute('role', 'status');
+          live.setAttribute('aria-live', 'polite');
+          live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;'
+            + 'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;';
+          document.body.appendChild(live);
+        }
+        _srLive = live;
+        _srToastHandler = (ev) => {
+          try {
+            const m = ev && ev.detail && ev.detail.msg;
+            if (m) { live.textContent = ''; live.textContent = String(m); }
+          } catch (e) {}
+        };
+        window.addEventListener('lm-canvas-toast', _srToastHandler);
+      } else if (!sr && _srLive) {
+        // True teardown — disabling the setting stops announcements entirely.
+        try { window.removeEventListener('lm-canvas-toast', _srToastHandler); } catch (e) {}
+        try { _srLive.remove(); } catch (e) {}
+        _srLive = null; _srToastHandler = null;
+      }
+      // Cache for instant next-boot apply (the bridge round-trip lands later).
+      try {
+        localStorage.setItem('archhub.a11y', JSON.stringify({
+          reduce_motion: !!prefs.reduce_motion,
+          font_size: String(prefs.font_size || 'default'),
+          contrast: String(prefs.contrast || 'normal'),
+          screen_reader: !!prefs.screen_reader,
+        }));
+      } catch (e) {}
+    } catch (e) { /* a11y must never block boot */ }
+  };
+  // Boot-time: apply the cached prefs immediately — no flash-of-default while
+  // the QWebChannel bridge connects; the mount handler re-applies the truth.
+  try {
+    const cached = JSON.parse(localStorage.getItem('archhub.a11y') || 'null');
+    if (cached) window.__archhubApplyA11y(cached);
+  } catch (e) {}
 }
 
 const LM = {
@@ -1660,20 +1767,18 @@ const StudioLM = () => {
     });
     return () => { cancelled = true; };
   }, []);
-  // Accessibility prefs → live UI (2026-06-03). On mount, pull the prefs
+  // Accessibility prefs → live UI (a11y wave-2 COMPLETE, founder-authorized
+  // 2026-06-10 "you have full authority... proceed"). On mount, pull the prefs
   // the Settings → Accessibility tab persists (bridge.get_a11y_prefs) and
-  // APPLY reduce-motion by toggling html.lm-reduce-motion — the class the
-  // _LM_A11Y_STYLES sheet keys its "kill animations/transitions" rule on.
-  // This is the one pref with zero-risk CSS infrastructure already in
-  // place, so it's the clean slice to make real this pass.
-  //
-  // INTENTIONALLY DEFERRED (read but NOT applied): font_size, contrast,
-  // and screen_reader. Applying them honestly needs design-gated work —
-  // font_size a px → scale refactor of the inline-style UI, contrast a
-  // dedicated high-contrast palette, screen_reader component-level
-  // aria-live changes. We do NOT inject any no-op styling that pretends
-  // to apply them; that would be a decorative lie. They wait on a design
-  // decision. (See settings_dialog.AccessibilityTab + AgDR a11y wave-2.)
+  // apply ALL FOUR through the one idempotent apply point
+  // (window.__archhubApplyA11y, defined beside the theme machinery):
+  //   reduce_motion → html.lm-reduce-motion (kill animations/transitions)
+  //   font_size     → Chromium-native root zoom (small .9 / large 1.1 / xl 1.25)
+  //   contrast      → per-theme high-contrast token overlay, repainted live
+  //   screen_reader → html.lm-sr-optimized (forced focus outlines) + a polite
+  //                   aria-live region announcing canvas toasts
+  // The 2026-06-03 pass applied only reduce_motion and deliberately deferred
+  // the rest on a design decision; that decision landed — applied for real now.
   React.useEffect(() => {
     let cancelled = false;
     try {
@@ -1681,12 +1786,7 @@ const StudioLM = () => {
       bridgeAsync('get_a11y_prefs').then((prefs) => {
         if (cancelled || !prefs || typeof prefs !== 'object') return;
         try {
-          const el = document.documentElement;
-          if (prefs.reduce_motion) el.classList.add('lm-reduce-motion');
-          else el.classList.remove('lm-reduce-motion');
-          // font_size / contrast / screen_reader: deliberately not applied
-          // (see note above) — reading them here only documents that the
-          // boot path sees them; no DOM/style mutation is made for them.
+          if (window.__archhubApplyA11y) window.__archhubApplyA11y(prefs);
         } catch (e) { /* DOM not ready / unavailable — never block boot */ }
       });
     } catch (e) { /* bridge unavailable — accessibility stays at OS defaults */ }
@@ -8165,16 +8265,23 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
             if (node) {
               node.frozen = !node.frozen;
               // Mutually exclusive — a frozen node can't also be bypassed.
-              if (node.frozen) node.bypassed = false;
+              if (node.frozen) node.bypass = false;
               saveCurrentGraph(); bumpGraph && bumpGraph();
             }
           }}
           onBypass={() => {
             // AgDR-0041 Property 6 — skip executor, passthrough upstream.
+            // `bypass` is the ONE canonical flag; read legacy `bypassed` /
+            // `config.bypass` (saved graphs, bridge patches) so toggling a
+            // legacy-bypassed node un-bypasses it, and clear the legacy key
+            // on write so stale state can't pin the badge on.
             const node = (LM_GRAPH.nodes || []).find(n => n.id === nodeMenu.id);
             if (node) {
-              node.bypassed = !node.bypassed;
-              if (node.bypassed) node.frozen = false;
+              node.bypass = !(node.bypass || node.bypassed
+                              || (node.config && node.config.bypass));
+              if ('bypassed' in node) delete node.bypassed;
+              if (node.config && 'bypass' in node.config) node.config.bypass = node.bypass;
+              if (node.bypass) node.frozen = false;
               saveCurrentGraph(); bumpGraph && bumpGraph();
             }
           }}
@@ -8453,7 +8560,7 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
           dstBypassed={(() => {
             const dstId = wireMenu.wire && wireMenu.wire.to && wireMenu.wire.to[0];
             const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
-            return !!(dst && (dst.bypassed || (dst.config && dst.config.bypass)));
+            return !!(dst && (dst.bypass || dst.bypassed || (dst.config && dst.config.bypass)));
           })()}
           onSwapTarget={async () => {
             // AgDR-0041 P2 — swap the wire's destination node with a
@@ -8525,11 +8632,12 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
             const dstId = wire.to && wire.to[0];
             const dst = dstId && (LM_GRAPH.nodes || []).find(n => n.id === dstId);
             if (!dst) { setWireMenu(null); flashToast('Target node missing', 'err'); return; }
-            const next = !(dst.bypassed || (dst.config && dst.config.bypass));
+            const next = !(dst.bypass || dst.bypassed || (dst.config && dst.config.bypass));
             try {
               const res = await bridgeAsync('node_bypass', dstId, !!next);
               if (res && res.status !== 'error') {
-                dst.bypassed = next;
+                dst.bypass = next;                       // the ONE canonical flag (badge reads it)
+                if ('bypassed' in dst) delete dst.bypassed;  // clear legacy so it can't pin stale state
                 dst.config = { ...(dst.config || {}), bypass: next };
                 saveCurrentGraph(); bumpGraph && bumpGraph();
                 flashToast(next ? `Bypassed ${dst.title || dstId}` : `Un-bypassed ${dst.title || dstId}`);
@@ -9196,6 +9304,11 @@ select:focus-visible, [tabindex]:focus-visible {
    + declarations mirror the @media rule exactly so both paths behave
    identically. */
 html.lm-reduce-motion *, html.lm-reduce-motion *::before, html.lm-reduce-motion *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+/* Screen-reader-optimised mode (Settings → Accessibility, a11y wave-2).
+   Forces a visible focus indicator on EVERY focused element — not just
+   :focus-visible — because SR + keyboard users need the focus point to be
+   unmissable at all times. currentColor adapts to any theme/contrast token. */
+html.lm-sr-optimized *:focus { outline: 2px solid currentColor !important; outline-offset: 2px !important; }
 `;
 const _injectA11yStyles = (() => {
   if (typeof document === 'undefined') return;
@@ -9569,10 +9682,10 @@ const _NodeRenderer_inner = ({ n, focused, selected, dimmed, expanded, onToggleE
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         <div style={S_FLEX1}/>
         {/* SLICE B (AgDR-0002): disable-verb state indicators. */}
-        {(n.bypass || n.frozen || n.preview_off || n.pinned) && (
+        {((n.bypass || n.bypassed || (n.config && n.config.bypass)) || n.frozen || n.preview_off || n.pinned) && (
           <span style={{ display:'flex', alignItems:'center', gap:5,
             fontFamily:LM.mono, fontSize:11, marginRight:4 }}>
-            {(n.bypassed || n.bypass) && <span title="Bypassed (○) — skip executor, passthrough upstream" style={{ color:LM.inkSoft }}>○</span>}
+            {(n.bypass || n.bypassed || (n.config && n.config.bypass)) && <span title="Bypassed (○) — skip executor, passthrough upstream" style={{ color:LM.inkSoft }}>○</span>}
             {n.frozen && <span title="Frozen (❄) — return cached value, downstream keeps cooking" style={{ color:LM.cyan }}>❄</span>}
             {n.preview_off && <span title="Preview-off (Ctrl+Shift+P) — render suppressed" style={{ color:LM.inkSoft }}>⊘</span>}
             {n.pinned && (

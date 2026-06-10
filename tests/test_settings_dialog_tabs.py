@@ -187,6 +187,38 @@ def test_secretstab_imports_if_present():
     assert issubclass(SecretsTab, QWidget)
 
 
+# ── Update controls (2026-06-11): opt-in auto-update + check button ───
+def test_storage_tab_renders_update_controls(qapp):
+    """StorageTab actually RENDERS the opt-in update controls (founder
+    2026-06-11 — the visible half of the 'app updates itself / relaunch button
+    doesn't appear' fix):
+
+      * a 'Install updates automatically when I quit' QCheckBox that DEFAULTS
+        OFF (auto-update is opt-in), bound to auto_apply_updates_on_quit, and
+      * a 'Check for updates now' QPushButton.
+
+    Instantiates the real tab under a QApplication and finds the live widgets —
+    not a source grep. Offscreen-safe."""
+    pytest.importorskip("PyQt6.QtWidgets")
+    from PyQt6.QtWidgets import QCheckBox, QPushButton
+    from settings_dialog import StorageTab
+
+    tab = StorageTab(None)   # parent only stored; Updates group builds up-front
+
+    auto = [c for c in tab.findChildren(QCheckBox)
+            if "automatically when I quit" in c.text()]
+    assert auto, (
+        "Storage tab is missing the 'Install updates automatically when I "
+        "quit' checkbox — the user-visible opt-in control.")
+    assert auto[0].isChecked() is False, (
+        "auto-apply-on-quit must DEFAULT OFF — updates are opt-in; a checked "
+        "default would resurrect 'the app keeps updating by itself'.")
+
+    btns = [b for b in tab.findChildren(QPushButton)
+            if "Check for updates" in b.text()]
+    assert btns, "Storage tab is missing the 'Check for updates now' button."
+
+
 # ── Track E (Accessibility, 2026-05-26): AccessibilityTab must import
 def test_accessibility_tab_imports():
     """AccessibilityTab is importable + is a QWidget subclass + carries

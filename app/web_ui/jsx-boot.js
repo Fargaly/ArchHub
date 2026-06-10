@@ -103,14 +103,16 @@
     return hex;
   }
 
+  // Cache-buster: QtWebEngine's persistent profile can serve BOTH the .jsx
+  // and its .compiled.js from cache after a source sync swaps them on disk —
+  // a stale-but-CONSISTENT pair passes the sha pairing below, so the app
+  // paints the PREVIOUS UI against the NEW Python bridge (version-skew
+  // "UI bugs", founder 2026-06-10). ONE boot-scoped value (evaluated once at
+  // script load) forces Chromium to read the real files while keeping every
+  // fetch of the same boot consistent; these are local file:// reads — free.
+  const BOOT_BUST = 'v=' + Date.now();
   async function fetchText(url) {
-    // Cache-buster: QtWebEngine's persistent profile can serve BOTH the .jsx
-    // and its .compiled.js from cache after a source sync swaps them on disk —
-    // a stale-but-CONSISTENT pair passes the sha pairing below, so the app
-    // paints the PREVIOUS UI against the NEW Python bridge (version-skew
-    // "UI bugs", founder 2026-06-10). A per-boot query param forces Chromium
-    // to read the real files; these are local file:// reads, so it is free.
-    const bust = (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + Date.now();
+    const bust = (url.indexOf('?') === -1 ? '?' : '&') + BOOT_BUST;
     const r = await fetch(url + bust);
     if (!r.ok) throw new Error('fetch ' + url + ' ' + r.status);
     return await r.text();

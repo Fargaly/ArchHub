@@ -521,8 +521,13 @@ def apply_staged_update(install_root: Path) -> bool:
 
     Called from main.py's clean-shutdown tail. Same guards as the launch path
     (installed copies only, configured source, marker-gated), pulls the source
-    checkout to merged origin/main first (guarded ff), and is best-effort:
-    any failure leaves the install exactly as it was.
+    checkout to merged origin/main first (guarded ff), and is best-effort.
+
+    Failure semantics: each file copy is atomic (tmp + os.replace) but the sync
+    is NOT transactional across files — an exception mid-way can leave a mixed
+    tree. That state SELF-HEALS: the marker is only written after a complete
+    sync, so the next quit-apply (or the banner's apply path) re-syncs
+    everything. Any exception is swallowed and reported as False.
 
     Returns True when an update was applied."""
     try:

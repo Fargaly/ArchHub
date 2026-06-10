@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -1594,6 +1594,57 @@ class SystemTab(QWidget):
         self._parent_dlg.notify_changed()
 
 
+# ── Update-check worker (off the Qt main thread) ─────────────────────────
+class _UpdateCheckWorker(QObject):
+    """Runs `updater.check_for_updates()` on a background QThread and emits
+    a single founder-readable status line. The check does a `git fetch`
+    (network) so it MUST NOT run on the GUI thread — same rule as every
+    other slow op in this file.
+
+    `updater` is imported INSIDE run() (not at module load) so the dialog
+    never hard-depends on it: if the module is absent or raises, the worker
+    emits an honest "couldn't check" line instead of crashing the UI
+    (ANTI-LIE: never fake a capability that isn't reachable)."""
+
+    done = pyqtSignal(str)
+
+    def run(self) -> None:
+        text = ""
+        try:
+            # Pick the RIGHT channel, same split as update_dialog._CheckWorker:
+            # a git checkout (developer) → git updater; an installed .exe →
+            # the official signed-release channel. The old code only ever ran
+            # the git checker, so an installer user got a wrong/empty answer.
+            import release_updater
+            if release_updater.in_git_checkout():
+                import updater  # app/updater.py — real git-backed checker
+                status = updater.check_for_updates()
+                if getattr(status, "error", ""):
+                    text = status.error
+                elif getattr(status, "has_updates", False):
+                    n = int(getattr(status, "behind", 0) or 0)
+                    text = (f"Update available — {n} new change(s) on "
+                            f"{getattr(status, 'branch', '') or 'your branch'}. "
+                            f"Click Relaunch to install.")
+                else:
+                    commit = getattr(status, "local_commit", "") or "current build"
+                    text = f"You're up to date ({commit})."
+            else:
+                # Installer user → official GitHub Releases (the production path).
+                avail, info, local = release_updater.has_update_available()
+                if getattr(info, "error", "") and not getattr(info, "tag", ""):
+                    text = info.error
+                elif avail:
+                    text = (f"Update available — {getattr(info, 'tag', '')}. "
+                            f"Click Relaunch to install.")
+                else:
+                    cur = local or getattr(info, "tag", "") or "current build"
+                    text = f"You're up to date ({cur})."
+        except Exception as ex:  # pragma: no cover - defensive
+            text = f"Couldn't check for updates: {ex}"
+        self.done.emit(text)
+
+
 # ── Tab: Storage ─────────────────────────────────────────────────────────
 class StorageTab(QWidget):
     """Real disk usage + the buttons every user expects to find here."""
@@ -1612,6 +1663,45 @@ class StorageTab(QWidget):
                     "<code>%LOCALAPPDATA%\\ArchHub</code>. Nothing is "
                     "uploaded unless you sign in to a cloud relay.",
                     scope="DEVICE")
+
+        # ── Updates ──────────────────────────────────────────────────
+        # The founder's plain-English control over how ArchHub updates.
+        # The checkbox is the UI for the EXISTING `auto_apply_updates_on_quit`
+        # gate read by dev_source_sync.apply_staged_update (default OFF — a
+        # safe, quiet update model). The button runs the real git-backed
+        # updater.check_for_updates() off the GUI thread.
+        upd_grp = QGroupBox("Updates")
+        upg = QVBoxLayout(upd_grp); upg.setSpacing(8); upg.setContentsMargins(12, 18, 12, 12)
+        upd_hint = QLabel(
+            "ArchHub improves itself in the background. Choose when those "
+            "improvements actually switch on."
+        )
+        upd_hint.setObjectName("muted"); upd_hint.setWordWrap(True)
+        upg.addWidget(upd_hint)
+
+        self._auto_apply = QCheckBox("Install updates automatically when I quit")
+        # DEFAULT UNCHECKED — the setting is absent/False by default (the SAFE
+        # quiet-update state). Persist immediately on toggle (MemoryTab idiom).
+        self._auto_apply.setChecked(bool(load_setting("auto_apply_updates_on_quit")))
+        self._auto_apply.toggled.connect(
+            lambda v: save_setting("auto_apply_updates_on_quit", bool(v))
+        )
+        upg.addWidget(self._auto_apply)
+        auto_sub = QLabel(
+            "Off = updates only install when you click the Relaunch button."
+        )
+        auto_sub.setObjectName("muted"); auto_sub.setWordWrap(True)
+        upg.addWidget(auto_sub)
+
+        chk_row = QHBoxLayout(); chk_row.setSpacing(8)
+        self._check_updates_btn = QPushButton("Check for updates now")
+        self._check_updates_btn.clicked.connect(self._on_check_updates)
+        self._update_status = QLabel("")
+        self._update_status.setObjectName("muted"); self._update_status.setWordWrap(True)
+        chk_row.addWidget(self._check_updates_btn)
+        chk_row.addWidget(self._update_status, 1)
+        upg.addLayout(chk_row)
+        outer.addWidget(upd_grp)
 
         # Usage list.
         usage_grp = QGroupBox("Disk usage")
@@ -1687,6 +1777,9 @@ class StorageTab(QWidget):
         # emits settings_op_done when the glob+zip / glob+delete lands. We
         # correlate by request_id so the button click never freezes the UI.
         self._pending_ops: dict[str, str] = {}   # request_id -> kind
+        # Update-check thread holder (kept on self so it isn't GC'd mid-run).
+        self._update_thread: QThread | None = None
+        self._update_worker: _UpdateCheckWorker | None = None
         self._connect_bridge_signals()
         self.refresh()
 
@@ -1798,6 +1891,54 @@ class StorageTab(QWidget):
                 os.startfile(str(p))  # type: ignore[attr-defined]
             except Exception as ex:
                 QMessageBox.warning(self, "Open folder", f"Could not open: {ex}")
+
+    def _on_check_updates(self) -> None:
+        """Check for updates without ever blocking the UI thread.
+
+        Prefer a live bridge refresh slot if the running app exposes one
+        (it surfaces the same update banner the founder already knows); if
+        none is reachable, fall back to running the real git-backed
+        updater.check_for_updates() on a background QThread and show the
+        returned status inline. Re-entrancy is guarded so a double-click
+        doesn't spawn two threads."""
+        if self._update_thread is not None:
+            return  # a check is already running
+
+        # 1) Best-effort: ALSO refresh the in-app update banner if the running
+        # app exposes a slot — fire-and-forget. We do NOT return here: the old
+        # code set "Checking via ArchHub…" and returned, leaving the line stuck
+        # forever because nothing updated it when the bridge refresh finished
+        # (Copilot review, PR #102). The definitive status always comes from the
+        # off-thread check below.
+        b = self._bridge()
+        for slot in ("refresh_updates", "check_for_updates", "check_updates"):
+            fn = getattr(b, slot, None) if b is not None else None
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+                break
+
+        # 2) Definitive off-thread check — ALWAYS runs, always resolves the line.
+        self._check_updates_btn.setEnabled(False)
+        self._update_status.setText("Checking…")
+        self._update_thread = QThread(self)
+        self._update_worker = _UpdateCheckWorker()
+        self._update_worker.moveToThread(self._update_thread)
+        self._update_thread.started.connect(self._update_worker.run)
+        self._update_worker.done.connect(self._on_update_checked)
+        self._update_thread.start()
+
+    def _on_update_checked(self, text: str) -> None:
+        """GUI-thread slot: show the status line + tear the worker down."""
+        self._update_status.setText(text or "")
+        self._check_updates_btn.setEnabled(True)
+        if self._update_thread is not None:
+            self._update_thread.quit()
+            self._update_thread.wait()
+        self._update_thread = None
+        self._update_worker = None
 
     def _on_export(self) -> None:
         # Off-thread: fire export_all with a request_id + let settings_op_done

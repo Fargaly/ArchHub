@@ -2073,10 +2073,30 @@ class ArchHubBridge(QObject):
             else:
                 src = dss.find_source_root(install_root)
                 if src is None:
-                    self._update_status_cache = {"available": False, "kind": "none"}
+                    # Installer user (no git checkout, no dev-source): the PRODUCTION update
+                    # path is signed GitHub Releases. The banner used to return 'none' here,
+                    # so real installs NEVER saw an update (founder 2026-06-11). Version-gated
+                    # by release_updater (semver compare) => forward-only by construction.
+                    try:
+                        import release_updater as _ru
+                        avail, info, local = _ru.has_update_available()
+                        self._update_status_cache = {
+                            "available": bool(avail),
+                            "current": local or "",
+                            "latest": (getattr(info, "tag", "") or "").lstrip("vV"),
+                            "kind": "release",
+                        }
+                    except Exception:
+                        self._update_status_cache = {"available": False, "kind": "none"}
                 else:
                     try:
-                        dss.pull_source_to_main(src)   # fetch + ff origin/main (guarded)
+                        # READ-ONLY: fetch refs so origin/main is current, but NEVER ff-merge the
+                        # working tree on a mere status poll — advancing is user-initiated only
+                        # (the Relaunch button's apply path). Silent ff on poll was a root cause
+                        # of "the app updates itself" (founder 2026-06-11).
+                        subprocess.run(["git", "-C", str(src), "fetch", "origin", "main"],
+                            capture_output=True, text=True, timeout=20,
+                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
                     except Exception:
                         pass
                     latest = _rev(src, "origin/main") or _rev(src, "HEAD")
@@ -2162,8 +2182,24 @@ class ArchHubBridge(QObject):
                 if src is not None:
                     dss.pull_source_to_main(src)
                     dss.force_sync_now(install_root, sys.argv)
+                else:
+                    # Installer user -> signed release: download the .exe + run it. The
+                    # installer takes over (silent, relaunch) and exits THIS process, so
+                    # we must NOT fall through to updater.restart() (which would restart
+                    # the OLD version). Founder 2026-06-11 production apply path.
+                    try:
+                        import release_updater as _ru
+                        avail, info, local = _ru.has_update_available()
+                        if avail and info:
+                            path = _ru.download_asset(info)
+                            _ru.run_installer(path, silent=True, relaunch=True)
+                            return   # run_installer exits; guard if it ever returns
+                    except Exception:
+                        pass
+                    self._update_applying = False
+                    return   # nothing to apply / failed -> do NOT blind-restart
             import updater
-            updater.restart()   # relaunches + os._exit(0) — does not return
+            updater.restart()   # git + dev paths only
         except Exception:
             self._update_applying = False
 
@@ -5235,6 +5271,21 @@ class ArchHubBridge(QObject):
                                         "error_code": "unlink_failed",
                                         "error": str(ex)})
                 method = "unlinked"
+                # If a shipped seed shares this slug, a plain unlink would let the
+                # seed resurface (dedup-by-slug reveals it once the user file is
+                # gone). Detect that twin by re-scanning AFTER the unlink: if a
+                # same-slug entry STILL resolves under the shipped skills dir,
+                # tombstone the slug so it stays hidden everywhere — a delete means
+                # "I don't want to see this" (founder 2026-06-11).
+                try:
+                    shipped_root = _shipped_skills_dir().resolve()
+                    still = next((s for s in _scan_canvas_skills()
+                                  if s.get("slug") == sid), None)
+                    if still is not None and shipped_root in _Path(still["path"]).resolve().parents:
+                        _add_skill_tombstone(sid)   # shipped twin would resurface — hide it
+                        method = "tombstoned"
+                except Exception:
+                    pass
             else:
                 _add_skill_tombstone(sid)
                 method = "tombstoned"

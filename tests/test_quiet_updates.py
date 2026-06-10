@@ -52,10 +52,30 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
     return source, install
 
 
+def test_apply_staged_update_opt_in_off_by_default(tmp_path):
+    """Quit-apply is OPT-IN (founder 2026-06-11). With default settings — no
+    auto_apply_updates_on_quit — a quit-apply must apply NOTHING; updates land
+    only when the user clicks the in-app Relaunch banner. This is the fix for
+    'the application keeps updating by itself': nothing happens silently."""
+    import dev_source_sync
+
+    source, install = _fixture(tmp_path)          # settings lack the opt-in flag
+    assert dev_source_sync.apply_staged_update(install) is False
+    assert (install / "app" / "studio_shell.py").read_text(
+        encoding="utf-8") == "OLD_UI = True\n"     # untouched
+
+
 def test_apply_staged_update_syncs_files_quietly(tmp_path):
+    """When the user OPTS IN (auto_apply_updates_on_quit=True), a quit-apply
+    syncs the staged files quietly + is idempotent (marker-gated)."""
     import dev_source_sync
 
     source, install = _fixture(tmp_path)
+    settings = json.loads(
+        (install / "settings.json").read_text(encoding="utf-8"))
+    settings["auto_apply_updates_on_quit"] = True   # opt in
+    _write(install / "settings.json", json.dumps(settings))
+
     applied = dev_source_sync.apply_staged_update(install)
     assert applied is True
     assert (install / "app" / "studio_shell.py").read_text(

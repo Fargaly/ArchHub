@@ -1041,8 +1041,15 @@ def main() -> int:
     # launches (--no-dev-source-sync) and git checkouts inside the helper.
     try:
         if "--no-dev-source-sync" not in sys.argv:
-            from dev_source_sync import apply_staged_update
-            apply_staged_update(APP_ROOT.parent)
+            try:
+                # Quiet apply-on-quit is OPT-IN (Settings → "Install updates when I quit",
+                # default OFF). apply_staged_update self-gates on that flag and is forward-only;
+                # default behaviour applies NOTHING at quit — updates land only when the user
+                # clicks the in-app "Relaunch to update" banner (founder 2026-06-11).
+                from dev_source_sync import apply_staged_update
+                apply_staged_update(APP_ROOT.parent)
+            except Exception:
+                pass
     except Exception:
         pass
     return rc

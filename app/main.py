@@ -173,21 +173,25 @@ THEME = APP_ROOT / "theme.qss"
 
 
 def _maybe_sync_dev_source_at_startup() -> None:
-    """Let an installed AppData launch refresh from a configured checkout.
+    """QUIET-UPDATE MODEL (founder 2026-06-10 — "initiation process repeats
+    with every launch... that's not acceptable").
 
-    Dev-verify launches (ARCHHUB_DEV_VERIFY=1 / --dev-verify) FORCE a sync
-    that ignores the marker, so the running app is guaranteed to reflect HEAD
-    before CDP verification — even if the marker already matches. A normal
-    launch keeps the marker-gated, relaunch-once behaviour unchanged."""
+    A normal launch now boots INSTANTLY on the code already on disk — it never
+    syncs and never relaunches itself. The old launch-time sync+relaunch made
+    every launch a double-boot ("the app re-initiates every time") whenever
+    main had moved. Updates now reach the user two quiet ways instead:
+      • the in-app banner (UpdateNotifier → apply_update_and_relaunch) when
+        THEY choose "Relaunch to update", and
+      • apply-on-quit (dev_source_sync.apply_staged_update in the shutdown
+        tail) — files sync silently at exit, so the NEXT launch is already
+        the new code with zero interruption. The Chrome/VS-Code model.
+
+    Dev-verify launches (ARCHHUB_DEV_VERIFY=1 / --dev-verify) still FORCE a
+    sync that ignores the marker, so CDP verification runs on HEAD."""
     try:
         if _dev_verify_requested():
             from dev_source_sync import force_sync_now
             force_sync_now(APP_ROOT.parent, sys.argv)
-            # Fall through to the normal path too: it is a marker no-op after
-            # the force-sync wrote the marker, and it preserves the existing
-            # relaunch guard semantics for any edge case.
-        from dev_source_sync import maybe_sync_and_relaunch
-        maybe_sync_and_relaunch(APP_ROOT.parent, sys.argv)
     except Exception:
         # Startup sync is a convenience path. If it fails, the normal launch
         # should continue so release updates and diagnostics remain available.
@@ -633,13 +637,13 @@ def main() -> int:
         summoner.quit_requested.connect(_do_graceful_quit)
 
         def _should_supersede() -> bool:
-            # "Is there new code to load?" — gated + graceful (False on any
-            # error / git-checkout install / no configured source).
-            try:
-                from dev_source_sync import has_new_source
-                return bool(has_new_source(APP_ROOT.parent))
-            except Exception:
-                return False
+            # QUIET-UPDATE MODEL (founder 2026-06-10): a second launch never
+            # quits the running instance to load new code anymore — it always
+            # summons the existing window. The interrupting supersede path is
+            # retired with the launch-time sync+relaunch (updates land via the
+            # banner or apply-on-quit instead). Machinery + the #95 save-flush
+            # stay wired for safety, but this gate is now permanently closed.
+            return False
 
         first_instance = acquire_or_summon(
             _on_summon,
@@ -1029,6 +1033,16 @@ def main() -> int:
     try:
         import telemetry as _t
         _t.shutdown()
+    except Exception:
+        pass
+    # QUIET-UPDATE MODEL: apply any pending source update at exit — files only,
+    # never a relaunch — so the NEXT launch boots the new code instantly with
+    # no double-boot "initiation". Best-effort + silent; skipped for dev
+    # launches (--no-dev-source-sync) and git checkouts inside the helper.
+    try:
+        if "--no-dev-source-sync" not in sys.argv:
+            from dev_source_sync import apply_staged_update
+            apply_staged_update(APP_ROOT.parent)
     except Exception:
         pass
     return rc

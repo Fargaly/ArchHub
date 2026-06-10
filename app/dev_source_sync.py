@@ -513,6 +513,44 @@ def has_new_source(install_root: Path) -> bool:
         return False
 
 
+def apply_staged_update(install_root: Path) -> bool:
+    """QUIET-UPDATE MODEL (founder 2026-06-10 — "initiation process repeats
+    with every launch... that's not acceptable"): apply any pending source
+    update at QUIT — files only, NEVER a relaunch — so the next launch boots
+    the new code instantly with no double-boot.
+
+    Called from main.py's clean-shutdown tail. Same guards as the launch path
+    (installed copies only, configured source, marker-gated), pulls the source
+    checkout to merged origin/main first (guarded ff), and is best-effort.
+
+    Failure semantics: each file copy is atomic (tmp + os.replace) but the sync
+    is NOT transactional across files — an exception mid-way can leave a mixed
+    tree. That state SELF-HEALS: the marker is only written after a complete
+    sync, so the next quit-apply (or the banner's apply path) re-syncs
+    everything. Any exception is swallowed and reported as False.
+
+    Returns True when an update was applied."""
+    try:
+        install_root = Path(install_root)
+        if is_git_checkout(install_root):
+            return False
+        source_root = find_source_root(install_root)
+        if source_root is None:
+            return False
+        pull_source_to_main(source_root)   # advance to merged main first
+        should_sync, stamp = needs_sync(source_root, install_root)
+        if not should_sync:
+            return False
+        _log(install_root, f"quit-apply: syncing from {source_root}")
+        sync_source_to_install(source_root, install_root, stamp)
+        _log(install_root,
+             f"quit-apply: synced {stamp.get('file_count', 0)} files "
+             f"commit={stamp.get('commit', '')}")
+        return True
+    except Exception:
+        return False
+
+
 def force_sync_now(install_root: Path, argv: Sequence[str] | None = None) -> bool:
     """Dev-verify launch: sync from the configured checkout IGNORING the
     sync marker (so even an up-to-date install is force-refreshed once),

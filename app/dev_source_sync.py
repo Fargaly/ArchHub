@@ -200,7 +200,19 @@ def _git_ok(source_root: Path, *args: str, timeout: float = 5.0) -> bool | None:
         result = subprocess.run(["git", *args], cwd=str(source_root),
             capture_output=True, text=True, timeout=timeout,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, creationflags=creationflags)
+    except subprocess.TimeoutExpired:
+        # git hung (e.g. AV DLL injection holding the process) — mark broken so
+        # every subsequent forward-only check skips the wait, mirroring `_git`
+        # (Copilot review, PR #102). Without this a wedged git stalls each poll.
+        _GIT_BROKEN = True
+        return None
     except Exception:
+        _GIT_BROKEN = True
+        return None
+    # STATUS_DLL_INIT_FAILED (0xc0000142 / -1073741502): AV broke git.exe init.
+    # Treat as broken so we stop paying the timeout, same as `_git`.
+    if result.returncode in (-1073741502, 0xc0000142):
+        _GIT_BROKEN = True
         return None
     if result.returncode == 0:
         return True

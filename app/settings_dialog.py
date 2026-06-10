@@ -1611,18 +1611,35 @@ class _UpdateCheckWorker(QObject):
     def run(self) -> None:
         text = ""
         try:
-            import updater  # app/updater.py — real git-backed checker
-            status = updater.check_for_updates()
-            if getattr(status, "error", ""):
-                text = status.error
-            elif getattr(status, "has_updates", False):
-                n = int(getattr(status, "behind", 0) or 0)
-                text = (f"Update available — {n} new change(s) on "
-                        f"{getattr(status, 'branch', '') or 'your branch'}. "
-                        f"Click Relaunch to install.")
+            # Pick the RIGHT channel, same split as update_dialog._CheckWorker:
+            # a git checkout (developer) → git updater; an installed .exe →
+            # the official signed-release channel. The old code only ever ran
+            # the git checker, so an installer user got a wrong/empty answer.
+            import release_updater
+            if release_updater.in_git_checkout():
+                import updater  # app/updater.py — real git-backed checker
+                status = updater.check_for_updates()
+                if getattr(status, "error", ""):
+                    text = status.error
+                elif getattr(status, "has_updates", False):
+                    n = int(getattr(status, "behind", 0) or 0)
+                    text = (f"Update available — {n} new change(s) on "
+                            f"{getattr(status, 'branch', '') or 'your branch'}. "
+                            f"Click Relaunch to install.")
+                else:
+                    commit = getattr(status, "local_commit", "") or "current build"
+                    text = f"You're up to date ({commit})."
             else:
-                commit = getattr(status, "local_commit", "") or "current build"
-                text = f"You're up to date ({commit})."
+                # Installer user → official GitHub Releases (the production path).
+                avail, info, local = release_updater.has_update_available()
+                if getattr(info, "error", "") and not getattr(info, "tag", ""):
+                    text = info.error
+                elif avail:
+                    text = (f"Update available — {getattr(info, 'tag', '')}. "
+                            f"Click Relaunch to install.")
+                else:
+                    cur = local or getattr(info, "tag", "") or "current build"
+                    text = f"You're up to date ({cur})."
         except Exception as ex:  # pragma: no cover - defensive
             text = f"Couldn't check for updates: {ex}"
         self.done.emit(text)
@@ -1887,19 +1904,23 @@ class StorageTab(QWidget):
         if self._update_thread is not None:
             return  # a check is already running
 
-        # 1) Live bridge refresh path, if the app exposes one.
+        # 1) Best-effort: ALSO refresh the in-app update banner if the running
+        # app exposes a slot — fire-and-forget. We do NOT return here: the old
+        # code set "Checking via ArchHub…" and returned, leaving the line stuck
+        # forever because nothing updated it when the bridge refresh finished
+        # (Copilot review, PR #102). The definitive status always comes from the
+        # off-thread check below.
         b = self._bridge()
-        for slot in ("check_for_updates", "refresh_updates", "check_updates"):
+        for slot in ("refresh_updates", "check_for_updates", "check_updates"):
             fn = getattr(b, slot, None) if b is not None else None
             if callable(fn):
                 try:
                     fn()
-                    self._update_status.setText("Checking via ArchHub…")
-                    return
                 except Exception:
-                    pass  # fall through to the local off-thread check
+                    pass
+                break
 
-        # 2) Off-thread local check (updater.check_for_updates()).
+        # 2) Definitive off-thread check — ALWAYS runs, always resolves the line.
         self._check_updates_btn.setEnabled(False)
         self._update_status.setText("Checking…")
         self._update_thread = QThread(self)

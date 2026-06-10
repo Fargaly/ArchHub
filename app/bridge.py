@@ -2073,7 +2073,21 @@ class ArchHubBridge(QObject):
             else:
                 src = dss.find_source_root(install_root)
                 if src is None:
-                    self._update_status_cache = {"available": False, "kind": "none"}
+                    # Installer user (no git checkout, no dev-source): the PRODUCTION update
+                    # path is signed GitHub Releases. The banner used to return 'none' here,
+                    # so real installs NEVER saw an update (founder 2026-06-11). Version-gated
+                    # by release_updater (semver compare) => forward-only by construction.
+                    try:
+                        import release_updater as _ru
+                        avail, info, local = _ru.has_update_available()
+                        self._update_status_cache = {
+                            "available": bool(avail),
+                            "current": local or "",
+                            "latest": (getattr(info, "tag", "") or "").lstrip("vV"),
+                            "kind": "release",
+                        }
+                    except Exception:
+                        self._update_status_cache = {"available": False, "kind": "none"}
                 else:
                     try:
                         # READ-ONLY: fetch refs so origin/main is current, but NEVER ff-merge the
@@ -2168,8 +2182,24 @@ class ArchHubBridge(QObject):
                 if src is not None:
                     dss.pull_source_to_main(src)
                     dss.force_sync_now(install_root, sys.argv)
+                else:
+                    # Installer user -> signed release: download the .exe + run it. The
+                    # installer takes over (silent, relaunch) and exits THIS process, so
+                    # we must NOT fall through to updater.restart() (which would restart
+                    # the OLD version). Founder 2026-06-11 production apply path.
+                    try:
+                        import release_updater as _ru
+                        avail, info, local = _ru.has_update_available()
+                        if avail and info:
+                            path = _ru.download_asset(info)
+                            _ru.run_installer(path, silent=True, relaunch=True)
+                            return   # run_installer exits; guard if it ever returns
+                    except Exception:
+                        pass
+                    self._update_applying = False
+                    return   # nothing to apply / failed -> do NOT blind-restart
             import updater
-            updater.restart()   # relaunches + os._exit(0) — does not return
+            updater.restart()   # git + dev paths only
         except Exception:
             self._update_applying = False
 

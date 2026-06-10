@@ -119,3 +119,47 @@ def test_deactivate_removes_own_manifest(tmp_path, monkeypatch):
     spec = registry._RevitSpec()
     spec.deactivate(_entry())
     assert not addin.exists()
+
+
+def test_malformed_manifest_is_never_deleted(tmp_path, monkeypatch):
+    """Unparseable XML → ownership unknown → leave it alone."""
+    app_dir = tmp_path / "localappdata" / "ArchHub"
+    appdata = tmp_path / "roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setattr(registry, "APP_DIR", app_dir)
+
+    addin = (appdata / "Autodesk" / "Revit" / "Addins" / "2023"
+             / "RevitMCP.addin")
+    addin.parent.mkdir(parents=True, exist_ok=True)
+    addin.write_text("<RevitAddIns><AddIn>broken", encoding="utf-8")
+
+    spec = registry._RevitSpec()
+    assert spec.is_active(_entry()) is False
+    spec.deactivate(_entry())
+    assert addin.exists(), "malformed manifest must never be auto-deleted"
+
+
+def test_manifest_merely_mentioning_staged_dir_is_foreign(tmp_path, monkeypatch):
+    """A manifest whose <Assembly> points elsewhere is foreign even if our
+    staged dir appears in some other text (e.g. VendorDescription) —
+    substring matching would have false-positived here."""
+    app_dir = tmp_path / "localappdata" / "ArchHub"
+    appdata = tmp_path / "roaming"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setattr(registry, "APP_DIR", app_dir)
+
+    staged = app_dir / "Revit" / "2023"
+    foreign_dll = tmp_path / "other_profile" / "Revit" / "2023" / "RevitMCP.dll"
+    addin = (appdata / "Autodesk" / "Revit" / "Addins" / "2023"
+             / "RevitMCP.addin")
+    addin.parent.mkdir(parents=True, exist_ok=True)
+    addin.write_text(
+        "<?xml version=\"1.0\"?><RevitAddIns><AddIn Type=\"Application\">"
+        f"<Assembly>{foreign_dll}</Assembly>"
+        f"<VendorDescription>previously staged at {staged}</VendorDescription>"
+        "</AddIn></RevitAddIns>", encoding="utf-8")
+
+    spec = registry._RevitSpec()
+    assert spec.is_active(_entry()) is False
+    assert addin.exists(), \
+        "mention of our staged dir in other fields must not mark it ours"

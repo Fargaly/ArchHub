@@ -103,20 +103,44 @@ class _RevitSpec:
         except OSError:
             return False
 
+    def _owns_manifest(self, year: str, addin: Path) -> bool:
+        """True iff the manifest's <Assembly> path lives inside THIS
+        profile's staged dir.
+
+        OWNERSHIP GUARD (2026-06-10): test instances run with LOCALAPPDATA
+        redirected to a temp clone (the founder-state repro trick), so their
+        staged dir is empty — but %APPDATA% is NOT redirected, so `addin`
+        resolves to the REAL install's manifest. An unconditional unlink made
+        every running test clone repeatedly delete the founder's live Revit
+        connector manifests. Parse the XML (not substring-match the file) so
+        a foreign manifest that merely MENTIONS our staged dir somewhere
+        can't be mistaken for ours. Unparseable / unreadable → not ours.
+        """
+        try:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(addin.read_text(encoding="utf-8"))
+        except (OSError, ET.ParseError):
+            return False
+        staged = self._staged_dir(year)
+        for asm in root.iter("Assembly"):
+            raw = (asm.text or "").strip()
+            if not raw:
+                continue
+            try:
+                if Path(raw).parent.resolve() == staged.resolve():
+                    return True
+            except OSError:
+                continue
+        return False
+
     def deactivate(self, entry: ConnectorEntry) -> None:
         year = entry.version or ""
         addin = self._addin_path(year)
         if not addin.exists():
             return
-        # Same ownership guard as is_active: a profile (e.g. a temp test
-        # clone with LOCALAPPDATA redirected) may only remove a manifest
-        # that points into ITS OWN staged dir — never the real install's.
-        try:
-            mine = str(self._staged_dir(year)).lower() in \
-                addin.read_text(encoding="utf-8").lower()
-        except OSError:
-            mine = False
-        if mine:
+        # A profile may only remove a manifest it owns (see _owns_manifest)
+        # — never the real install's.
+        if self._owns_manifest(year, addin):
             addin.unlink()
 
     def is_active(self, entry: ConnectorEntry) -> bool:
@@ -124,22 +148,11 @@ class _RevitSpec:
         addin = self._addin_path(year)
         if not addin.exists():
             return False
-        # DLL must also exist — if missing, clean up the stale manifest.
-        # OWNERSHIP GUARD (2026-06-10): only unlink a manifest whose
-        # <Assembly> points into THIS profile's staged dir. Test instances
-        # run with LOCALAPPDATA redirected to a temp clone (the founder-state
-        # repro trick), so their staged dir is empty — but %APPDATA% is NOT
-        # redirected, so `addin` here is the REAL install's manifest. The
-        # unconditional unlink made every running test clone repeatedly
-        # delete the founder's live Revit connector manifests.
+        # DLL must also exist — if missing, auto-clean the stale manifest,
+        # but ONLY when this profile owns it (see _owns_manifest).
         dll = self._staged_dir(year) / "RevitMCP.dll"
         if not dll.exists():
-            try:
-                mine = str(self._staged_dir(year)).lower() in \
-                    addin.read_text(encoding="utf-8").lower()
-            except OSError:
-                mine = False
-            if mine:
+            if self._owns_manifest(year, addin):
                 try:
                     addin.unlink()
                 except OSError:

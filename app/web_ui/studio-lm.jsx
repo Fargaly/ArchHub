@@ -12037,6 +12037,65 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   }, []);
   const groups = filter === 'all' ? _allGroups
                : _allGroups.filter(g => g.cat === filter);
+  // ── Discovery ranking (stem-surface #2 — founder "mostly visual user",
+  // 2026-06-09). Typing INTENT ranks the whole palette into one flat
+  // best-matches list (tokenized scoring over display/kind/engine/cat/blurb
+  // /note + a small AEC synonym net) instead of burying substring hits
+  // inside category groups. USER-AGENCY: category browse is untouched when
+  // the query is empty.
+  const _SYN = {
+    file:['fs','folder','directory','path'], files:['fs','folder','directory'],
+    read:['load','open','parse','import'], write:['save','export','set'],
+    excel:['xlsx','sheet','workbook','range','cell'], table:['rows','csv','grid'],
+    revit:['wall','sheet','element','family','host'], cad:['autocad','dwg','layer'],
+    image:['render','photo','picture','texture'], ai:['llm','chat','prompt','agent'],
+    schedule:['qto','quantity','takeoff','table'], move:['copy','relocate','organize'],
+    check:['assert','verify','validate','compare'], join:['merge','combine','match','reconcile'],
+    loop:['foreach','each','iterate','batch'], folder:['directory','fs','path'],
+  };
+  const _ranked = React.useMemo(() => {
+    const qq = q.trim().toLowerCase();
+    if (!qq) return null;
+    const toks = qq.split(/\s+/).filter(Boolean);
+    const expand = (t) => [t].concat(_SYN[t] || []);
+    const score = (p) => {
+      const title = String(p.display || '').toLowerCase();
+      const kind = String(p.kind || '').toLowerCase();
+      const eng = Object.values(p.engine_types || {}).join(' ').toLowerCase();
+      const cat = String(p.cat || '').toLowerCase();
+      const body = (String(p.blurb || '') + ' ' + String(p.note || '')).toLowerCase();
+      const hay = title + ' ' + kind + ' ' + eng + ' ' + cat + ' ' + body;
+      // every query token must land somewhere (synonyms count) — else no match
+      if (!toks.every(t => expand(t).some(w => w && hay.includes(w)))) return 0;
+      let s = 0;
+      toks.forEach(t => {
+        let best = 0;
+        expand(t).forEach(w => {
+          if (!w) return;
+          if (title === w) best = Math.max(best, 6);
+          else if (title.startsWith(w)) best = Math.max(best, 5);
+          else if (title.includes(w)) best = Math.max(best, 3.5);
+          if (kind.includes(w) || eng.includes(w)) best = Math.max(best, 2.5);
+          if (cat === w) best = Math.max(best, 2);
+          if (body.includes(w)) best = Math.max(best, 1.5);
+        });
+        s += best;
+      });
+      return s;
+    };
+    return (LM_NODE_GRAMMAR || [])
+      .map(p => ({ p, s: score(p) }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 24)
+      .map(x => ({ id: 'ng:' + x.p.kind, title: x.p.display || x.p.kind,
+                   sub: x.p.blurb || x.p.kind, _grammar: x.p }));
+  }, [q]);
+  // When ranked discovery is active, ONE flat best-matches section renders in
+  // place of the category groups (they return [] → null below).
+  const renderGroups = _ranked
+    ? [{ cat: '__best', items: _ranked }]
+    : groups;
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
@@ -12051,7 +12110,8 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
-            {(LM_NODE_GRAMMAR || []).length} NODES · CLICK TO ADD
+            {_ranked ? `${_ranked.length} MATCHES · RANKED BY INTENT`
+                     : `${(LM_NODE_GRAMMAR || []).length} NODES · CLICK TO ADD`}
           </span>
           <div style={S_FLEX1}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
@@ -12176,9 +12236,13 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
               </div>
             </div>
           )}
-          {groups.map(g => {
-            const c = catMeta(g.cat);
-            const items = q ? (g.items || []).filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : (g.items || []);
+          {renderGroups.map(g => {
+            // '__best' = the flat intent-ranked discovery section (replaces the
+            // old per-category substring filter whenever a query is typed).
+            const c = g.cat === '__best'
+              ? { col: LM.accent, icon: '✦', label: 'BEST MATCHES', role: 'ranked by intent' }
+              : catMeta(g.cat);
+            const items = g.items || [];
             if (items.length === 0) return null;
             return (
               <div key={g.cat} style={{ marginBottom:18 }}>
@@ -12242,6 +12306,11 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                           )}
                         </div>
                         <span style={{ fontSize:11, color:LM.inkSoft }}>{i.sub}</span>
+                        {/* VISIBLE PLUGS (stem-surface #2): the cell's typed
+                            sockets at a glance — what plugs in, what comes
+                            out — BEFORE placing it. Type-colored dots match
+                            the canvas wire colors. */}
+                        <LibPlugRow ports={i._grammar && i._grammar.ports}/>
                       </button>
                     );
                   })}
@@ -12251,6 +12320,51 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
           })}
         </div>
       </div>
+    </div>
+  );
+};
+
+// Type → color, mirroring the canvas tile's typeCol so the palette's plug
+// dots and the wires a user will actually drag share one visual language.
+const _libTypeCol = (t) => {
+  const k = String(t || '').toLowerCase();
+  if (k.includes('element')) return LM.accent;
+  if (k.includes('list')) return LM.cyan;
+  if (k.includes('number') || k === 'int' || k === 'float') return LM.blue;
+  if (k === 'bool' || k === 'boolean') return LM.warn;
+  if (k === 'id') return LM.ok;
+  return LM.inkSoft;
+};
+
+// VISIBLE PLUGS row (stem-surface #2 — founder "mostly visual user"): a
+// library item shows its typed input sockets → output sockets before the
+// user ever places it, so connectability is visible at a glance.
+const LibPlugRow = ({ ports }) => {
+  const ins = (ports && ports.in) || [];
+  const outs = (ports && ports.out) || [];
+  if (!ins.length && !outs.length) return null;
+  const Dot = ({ p }) => (
+    <span title={`${p.id} · ${p.type}`}
+      style={{ display:'inline-flex', alignItems:'center', gap:3, minWidth:0 }}>
+      <span style={{ width:6, height:6, borderRadius:3, flexShrink:0,
+        background:_libTypeCol(p.type), display:'inline-block' }}/>
+      <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted,
+        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+        maxWidth:54 }}>{p.id}</span>
+    </span>
+  );
+  return (
+    <div data-testid="lib-plugs"
+      style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', marginTop:1 }}>
+      {ins.slice(0, 4).map((p, i) => <Dot key={'i' + i} p={p}/>)}
+      {ins.length > 4 && (
+        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>+{ins.length - 4}</span>
+      )}
+      <span style={{ color:LM.inkDim, fontSize:9 }}>→</span>
+      {outs.slice(0, 4).map((p, i) => <Dot key={'o' + i} p={p}/>)}
+      {outs.length > 4 && (
+        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>+{outs.length - 4}</span>
+      )}
     </div>
   );
 };

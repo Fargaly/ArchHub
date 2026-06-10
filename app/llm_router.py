@@ -433,6 +433,14 @@ KNOWN_MODELS: list[tuple[str, str]] = [
     ("openrouter:google/gemini-2.5-flash",              "Gemini 2.5 Flash (OR)"),
     ("openrouter:meta-llama/llama-3.3-70b-instruct",    "Llama 3.3 70B (OR)"),
     ("openrouter:qwen/qwen-2.5-coder-32b-instruct",     "Qwen 2.5 Coder 32B (OR)"),
+    # NVIDIA NIM (build.nvidia.com) — OpenAI-compatible cloud endpoint; ONE
+    # NVIDIA_API_KEY covers every catalog model below the nvidia prefix
+    # (founder 2026-06-10 "can we utilize NVIDIA models?").
+    ("nvidia:nvidia/llama-3.3-nemotron-super-49b-v1",   "Nemotron Super 49B (NV)"),
+    ("nvidia:nvidia/llama-3.1-nemotron-ultra-253b-v1",  "Nemotron Ultra 253B (NV)"),
+    ("nvidia:meta/llama-3.3-70b-instruct",              "Llama 3.3 70B (NV)"),
+    ("nvidia:deepseek-ai/deepseek-r1",                  "DeepSeek R1 (NV)"),
+    ("nvidia:qwen/qwen2.5-coder-32b-instruct",          "Qwen 2.5 Coder 32B (NV)"),
     ("relay:auto",                                      "Firm relay"),
 ]
 
@@ -695,7 +703,8 @@ class LLMRouter:
         # Add env-var detected providers
         import os
         env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
-                   "google": "GOOGLE_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+                   "google": "GOOGLE_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+                   "nvidia": "NVIDIA_API_KEY"}
         for p, env in env_map.items():
             if (os.environ.get(env) or "").strip():
                 providers.add(p)
@@ -829,6 +838,23 @@ class LLMRouter:
         elif provider == "openrouter":
             from llm_providers.openrouter_client import OpenRouterClient
             self._clients[provider] = OpenRouterClient(api_key)
+        elif provider == "nvidia":
+            from llm_providers.openrouter_client import CustomOpenAICompatibleClient
+            # NVIDIA NIM speaks the OpenAI chat-completions dialect at a fixed
+            # cloud endpoint — same client the relay/LM Studio paths use. Key
+            # comes from the secrets store ('nvidia') or NVIDIA_API_KEY; free
+            # keys at build.nvidia.com. (Do NOT re-import load_api_key here —
+            # see the relay branch note below.)
+            import os as _os
+            nv_key = (api_key or "").strip() or (_os.environ.get("NVIDIA_API_KEY") or "").strip()
+            if not nv_key:
+                raise RuntimeError(
+                    "NVIDIA is selected but no key is configured. Save an "
+                    "'nvidia' key in Settings → Keys & Secrets or set "
+                    "NVIDIA_API_KEY (free keys at build.nvidia.com).")
+            self._clients[provider] = CustomOpenAICompatibleClient(
+                api_key=nv_key, base_url="https://integrate.api.nvidia.com/v1",
+            )
         elif provider == "relay":
             from llm_providers.openrouter_client import CustomOpenAICompatibleClient
             # Don't re-import load_api_key here — it's already at

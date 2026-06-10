@@ -3316,8 +3316,18 @@ const StudioLM = () => {
           !(w && w.to && w.to[0] === node.id && w.to[1] === d.key));
       } else {
         const pr = (node.params || []).find(x => x.k === d.key);
-        const t = pr && pr.type === 'number' ? 'number'
-                : pr && pr.type === 'bool' ? 'boolean' : 'any';
+        // Full ParamSpec→socket type map (connector ParamSpec types: text /
+        // number / bool / boolean / choice / multi / list / range / file).
+        // 'range' is Excel A1 notation = a string; choice/file are strings
+        // too. A real type (not 'any') keeps can_wire checks + wire coloring
+        // meaningful on the promoted socket.
+        const pt = String((pr && pr.type) || '').toLowerCase();
+        const t = (pt === 'number' || pt === 'slider') ? 'number'
+                : (pt === 'bool' || pt === 'boolean') ? 'boolean'
+                : (pt === 'list' || pt === 'multi') ? 'list'
+                : (pt === 'text' || pt === 'choice' || pt === 'file'
+                   || pt === 'range' || pt === 'version' || pt === 'document') ? 'string'
+                : 'any';
         node.ins.push({ id: d.key, label: d.key, t });
       }
       try { saveCurrentGraph(); } catch (e) {}
@@ -16442,6 +16452,9 @@ const ParamPromoteDot = ({ node, k }) => {
   const exposed = Array.isArray(node.ins) && node.ins.some(s => s && s.id === k);
   return (
     <button data-testid={'param-promote-' + k}
+      aria-label={exposed
+        ? 'Convert ' + k + ' back to a knob (disconnects its wires)'
+        : 'Expose ' + k + ' as an input socket'}
       title={exposed
         ? k + ' is a wired input socket — click to make it a knob again (disconnects its wires)'
         : 'Expose ' + k + ' as an input socket — wire data into it instead of typing'}

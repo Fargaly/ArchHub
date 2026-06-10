@@ -44,7 +44,9 @@ def test_compiled_artifact_carries_param_promote():
         pytest.skip("precompiled artifact not present (built at launch)")
     out = _read(_COMPILED)
     missing = [m for m in _MARKERS if m not in out]
-    assert not missing, f"compiled bundle stale — missing: {missing} (run tools/build_jsx)"
+    assert not missing, (
+        f"compiled bundle stale — missing: {missing} "
+        f"(run `python tools/build_jsx.py`)")
 
 
 def test_dot_is_scoped_to_connector_tiles():

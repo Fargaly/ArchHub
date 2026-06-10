@@ -83,10 +83,16 @@ def scan_file(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     bad: list[tuple[Path, int, str]] = []
     for py in REPO_ROOT.rglob("*.py"):
-        # Skip third-party / venv / __pycache__ noise.
+        # Skip third-party / venv / __pycache__ noise — and NESTED CHECKOUTS:
+        # .claude/ holds agent worktrees (git worktrees parked on OTHER, often
+        # older commits, e.g. .claude/worktrees/<task>/). Their files are a
+        # different revision of this repo, not this tree's code — scanning
+        # them makes the guard fail on history (a pre-fix copy of a test
+        # tripped both the pre-commit hook and the suite's static-guard test,
+        # 2026-06-10). Same reasoning as .git: not part of THIS working tree.
         parts = set(py.parts)
         if parts & {"__pycache__", "site-packages", "venv",
-                    ".venv", "build", "dist"}:
+                    ".venv", "build", "dist", ".claude", ".git"}:
             continue
         if py.resolve() in {p.resolve() for p in ALLOWED}:
             continue

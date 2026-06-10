@@ -187,8 +187,49 @@ def _git(source_root: Path, *args: str, timeout: float = 3.0) -> str:
     return (result.stdout or "").strip()
 
 
+def _git_ok(source_root: Path, *args: str, timeout: float = 5.0) -> bool | None:
+    """Run git for its EXIT CODE (not stdout). Returns True on exit 0,
+    False on exit 1, None on any other/error (unknown). Used for
+    'merge-base --is-ancestor' which emits no stdout."""
+    global _GIT_BROKEN
+    if _GIT_BROKEN:
+        return None
+    _suppress_win_error_dialogs()
+    creationflags = 0x08000000 if sys.platform == "win32" else 0
+    try:
+        result = subprocess.run(["git", *args], cwd=str(source_root),
+            capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, creationflags=creationflags)
+    except Exception:
+        return None
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    return None
+
+
 def source_commit(source_root: Path) -> str:
     return _git(source_root, "rev-parse", "--short", "HEAD")
+
+
+def _source_is_forward(source_root: Path, install_root: Path) -> bool:
+    """True iff syncing source into install is a FORWARD move (never a
+    revert to older code). Empty marker (never synced) -> True (first sync).
+    Same commit -> True (dirty-tree resync). Otherwise True ONLY when the
+    installed commit is an ANCESTOR of the source commit. Unknown/error -> False
+    (conservative: never auto-revert; the user can still force via the button)."""
+    marker = _read_json(install_root / SYNC_MARKER)
+    installed = (marker.get("source_stamp") or {}).get("commit", "")
+    if not installed:
+        return True
+    cur = source_commit(source_root)
+    if not cur:
+        return False
+    if cur == installed:
+        return True
+    anc = _git_ok(source_root, "merge-base", "--is-ancestor", installed, cur)
+    return anc is True
 
 
 def pull_source_to_main(source_root: Path) -> bool:
@@ -279,7 +320,11 @@ def source_stamp(source_root: Path) -> dict:
 def needs_sync(source_root: Path, install_root: Path) -> tuple[bool, dict]:
     stamp = source_stamp(source_root)
     marker = _read_json(install_root / SYNC_MARKER)
-    return marker.get("source_stamp") != stamp, stamp
+    if marker.get("source_stamp") == stamp:
+        return False, stamp
+    if not _source_is_forward(source_root, install_root):
+        return False, stamp   # source is BEHIND / unrelated — never revert the install
+    return True, stamp
 
 
 def _copy_file(src: Path, dst: Path) -> None:
@@ -360,10 +405,10 @@ def sync_source_to_install(source_root: Path, install_root: Path, stamp: dict | 
     })
     _write_json(install_root / VERSION_FILE, manifest)
 
-    settings = _read_json(_settings_path(install_root))
-    settings["enable_dev_source_sync"] = True
-    settings["dev_source_path"] = str(source_root)
-    _write_json(_settings_path(install_root), settings)
+    # NOTE: sync NEVER arms auto-sync. enable_dev_source_sync / dev_source_path
+    # are owned solely by an explicit user action (Settings toggle / update button).
+    # Re-writing them here was the doom-loop that re-enabled auto-update after
+    # every deploy (founder 2026-06-11). Do not reintroduce.
 
 
 def _log(install_root: Path, message: str) -> None:
@@ -459,12 +504,8 @@ def maybe_sync_and_relaunch(
     if source_root is None:
         return False
 
-    # ALWAYS up-to-date (founder 2026-06-09): advance the source checkout to
-    # latest origin/main BEFORE stamping, so a merged PR reaches the installed
-    # app on the next launch with no manual pull. Best-effort + guarded (on
-    # main + clean only); a no-op on a dev branch or a dirty tree.
-    pull_source_to_main(source_root)
-
+    # Source advance (git fetch + ff to origin/main) is USER-INITIATED only
+    # (update button / dev-verify), never silent on a launch/quit (founder 2026-06-11).
     should_sync, stamp = needs_sync(source_root, install_root)
     if not should_sync:
         return False
@@ -537,7 +578,11 @@ def apply_staged_update(install_root: Path) -> bool:
         source_root = find_source_root(install_root)
         if source_root is None:
             return False
-        pull_source_to_main(source_root)   # advance to merged main first
+        settings = _read_json(_settings_path(install_root))
+        if not settings.get("auto_apply_updates_on_quit", False):
+            return False   # default: quit-apply OFF — updates land only via the user's Relaunch button
+        # Source advance (git fetch + ff to origin/main) is USER-INITIATED only
+        # (update button / dev-verify), never silent on a launch/quit (founder 2026-06-11).
         should_sync, stamp = needs_sync(source_root, install_root)
         if not should_sync:
             return False

@@ -2076,7 +2076,13 @@ class ArchHubBridge(QObject):
                     self._update_status_cache = {"available": False, "kind": "none"}
                 else:
                     try:
-                        dss.pull_source_to_main(src)   # fetch + ff origin/main (guarded)
+                        # READ-ONLY: fetch refs so origin/main is current, but NEVER ff-merge the
+                        # working tree on a mere status poll — advancing is user-initiated only
+                        # (the Relaunch button's apply path). Silent ff on poll was a root cause
+                        # of "the app updates itself" (founder 2026-06-11).
+                        subprocess.run(["git", "-C", str(src), "fetch", "origin", "main"],
+                            capture_output=True, text=True, timeout=20,
+                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
                     except Exception:
                         pass
                     latest = _rev(src, "origin/main") or _rev(src, "HEAD")
@@ -5235,6 +5241,21 @@ class ArchHubBridge(QObject):
                                         "error_code": "unlink_failed",
                                         "error": str(ex)})
                 method = "unlinked"
+                # If a shipped seed shares this slug, a plain unlink would let the
+                # seed resurface (dedup-by-slug reveals it once the user file is
+                # gone). Detect that twin by re-scanning AFTER the unlink: if a
+                # same-slug entry STILL resolves under the shipped skills dir,
+                # tombstone the slug so it stays hidden everywhere — a delete means
+                # "I don't want to see this" (founder 2026-06-11).
+                try:
+                    shipped_root = _shipped_skills_dir().resolve()
+                    still = next((s for s in _scan_canvas_skills()
+                                  if s.get("slug") == sid), None)
+                    if still is not None and shipped_root in _Path(still["path"]).resolve().parents:
+                        _add_skill_tombstone(sid)   # shipped twin would resurface — hide it
+                        method = "tombstoned"
+                except Exception:
+                    pass
             else:
                 _add_skill_tombstone(sid)
                 method = "tombstoned"

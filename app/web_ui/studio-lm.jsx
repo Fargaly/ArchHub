@@ -125,23 +125,18 @@ if (typeof window !== 'undefined') {
       if (zoom && zoom !== 1) {
         // ZOOM COMPENSATION (founder 2026-06-11 "REVISE THE UI SOMETHING IS
         // WRONG" — screenshot: filter chips + "+ new canvas" clipped off the
-        // right edge at font_size=large). Under root `zoom`, QtWebEngine's
-        // Chromium PAINTS layout units zoom× larger but still resolves
-        // viewport-derived lengths (100% on html, 100vw/100vh on the #root
-        // mount, index.html:24) against the UNzoomed viewport — so the whole
-        // app painted (zoom−1)·viewport too wide and every right-anchored
-        // element bled off-screen (10% at large, 25% at xlarge; `small`
-        // mirrored it as a dead right strip). The standard compensation for
-        // the CSS `zoom` property: lay the zoomed tree out in size/zoom so it
-        // RENDERS exactly one viewport. BOTH sizing roots need it — html
-        // (percentage-sized) AND the #root mount (viewport-unit-sized;
-        // proven live: with html alone compensated, mainRect still painted
-        // 1584px wide in a 1440px window).
-        // Compensate ONLY the #root mount, and ONLY with viewport units:
-        // proven live on QtWebEngine — vw/vh resolve against the REAL window
-        // (so 100vw/zoom paints exactly one window width), while a %-width on
-        // <html> resolves against the already-zoomed box (so calc(100%/zoom)
-        // OVER-shrinks html and its box then clips right-edge children).
+        // right edge, status bar + SETTINGS icon off the bottom, at
+        // font_size=large). Under root `zoom`, QtWebEngine's Chromium PAINTS
+        // layout units zoom× larger but resolves the #root mount's
+        // 100vw/100vh (index.html) against the UNzoomed window — so the app
+        // painted (zoom−1)·viewport too wide AND too tall (10% at large, 25%
+        // at xlarge; `small` mirrored it as dead strips).
+        // THE fix, proven live via CDP geometry: compensate ONLY the #root
+        // mount, and ONLY with viewport units — vw/vh divided by the zoom
+        // paint exactly one window. Do NOT add a %-based compensation on
+        // <html>: % resolves against the already-zoomed box on this engine,
+        // which OVER-shrinks html and its box then clips right-edge children
+        // (tried first, rejected on live evidence).
         el.style.zoom = String(zoom);
         if (mount) {
           mount.style.width = `calc(100vw / ${zoom})`;

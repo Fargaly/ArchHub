@@ -45,6 +45,9 @@ _MARKERS = (
                                # 2026-06-11 screenshot). vw/vh ONLY — a %-based
                                # compensation on <html> resolves against the
                                # zoomed box and over-shrinks (clips) instead.
+    "calc(100vh / ",           # …and the HEIGHT half: without it the bottom
+                               # edge (status bar, SETTINGS rail icon) clips
+                               # off-screen the same way (Copilot, PR #104).
 )
 
 

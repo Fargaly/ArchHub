@@ -121,7 +121,39 @@ if (typeof window !== 'undefined') {
       //    without a 5k-style px→rem refactor. The VS-Code-zoom model.
       const zoom = ({ small:0.9, medium:1, 'default':1, large:1.1, xlarge:1.25 })[
         String(prefs.font_size || 'default').toLowerCase()];
-      el.style.zoom = (zoom && zoom !== 1) ? String(zoom) : '';
+      const mount = document.getElementById('root');
+      if (zoom && zoom !== 1) {
+        // ZOOM COMPENSATION (founder 2026-06-11 "REVISE THE UI SOMETHING IS
+        // WRONG" — screenshot: filter chips + "+ new canvas" clipped off the
+        // right edge at font_size=large). Under root `zoom`, QtWebEngine's
+        // Chromium PAINTS layout units zoom× larger but still resolves
+        // viewport-derived lengths (100% on html, 100vw/100vh on the #root
+        // mount, index.html:24) against the UNzoomed viewport — so the whole
+        // app painted (zoom−1)·viewport too wide and every right-anchored
+        // element bled off-screen (10% at large, 25% at xlarge; `small`
+        // mirrored it as a dead right strip). The standard compensation for
+        // the CSS `zoom` property: lay the zoomed tree out in size/zoom so it
+        // RENDERS exactly one viewport. BOTH sizing roots need it — html
+        // (percentage-sized) AND the #root mount (viewport-unit-sized;
+        // proven live: with html alone compensated, mainRect still painted
+        // 1584px wide in a 1440px window).
+        // Compensate ONLY the #root mount, and ONLY with viewport units:
+        // proven live on QtWebEngine — vw/vh resolve against the REAL window
+        // (so 100vw/zoom paints exactly one window width), while a %-width on
+        // <html> resolves against the already-zoomed box (so calc(100%/zoom)
+        // OVER-shrinks html and its box then clips right-edge children).
+        el.style.zoom = String(zoom);
+        if (mount) {
+          mount.style.width = `calc(100vw / ${zoom})`;
+          mount.style.height = `calc(100vh / ${zoom})`;
+        }
+      } else {
+        el.style.zoom = '';
+        if (mount) {
+          mount.style.width = '';
+          mount.style.height = '';
+        }
+      }
       // 3) contrast — token overlay + the same repaint event as a theme swap.
       const high = String(prefs.contrast || 'normal').toLowerCase() === 'high';
       if (high !== _a11yContrastHigh) {
@@ -5677,11 +5709,19 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
                      display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
         {s.title || 'untitled'}
       </div>
-      {/* Last message preview — single line */}
-      {s.last && (
+      {/* Last message preview — single line. Sessions with no chat yet get
+          an italic placeholder instead of a dead void (the grid stretches
+          cards to equal height, so an absent row read as broken — founder
+          2026-06-11 home-view revise). */}
+      {s.last ? (
         <div style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.35,
                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {s.last}
+        </div>
+      ) : (
+        <div style={{ fontSize:11, color:LM.inkMuted, lineHeight:1.35,
+                       fontStyle:'italic' }}>
+          No messages yet
         </div>
       )}
       {/* Footer: file + host pills, only render if there's data */}

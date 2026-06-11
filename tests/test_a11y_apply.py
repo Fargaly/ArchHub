@@ -38,6 +38,16 @@ _MARKERS = (
     "lm-sr-live",              # polite live region id
     "_CONTRAST_OVERLAYS",      # per-theme high-contrast token overlays
     "xlarge:1.25",             # the zoom map's extreme — font_size really maps to zoom
+    "calc(100vw / ",           # ZOOM COMPENSATION on the #root mount — without
+                               # it the zoomed app paints zoom× wider than the
+                               # window and the right edge (filter chips,
+                               # "+ new canvas") clips off-screen (founder
+                               # 2026-06-11 screenshot). vw/vh ONLY — a %-based
+                               # compensation on <html> resolves against the
+                               # zoomed box and over-shrinks (clips) instead.
+    "calc(100vh / ",           # …and the HEIGHT half: without it the bottom
+                               # edge (status bar, SETTINGS rail icon) clips
+                               # off-screen the same way (Copilot, PR #104).
 )
 
 

@@ -121,7 +121,34 @@ if (typeof window !== 'undefined') {
       //    without a 5k-style px→rem refactor. The VS-Code-zoom model.
       const zoom = ({ small:0.9, medium:1, 'default':1, large:1.1, xlarge:1.25 })[
         String(prefs.font_size || 'default').toLowerCase()];
-      el.style.zoom = (zoom && zoom !== 1) ? String(zoom) : '';
+      const mount = document.getElementById('root');
+      if (zoom && zoom !== 1) {
+        // ZOOM COMPENSATION (founder 2026-06-11 "REVISE THE UI SOMETHING IS
+        // WRONG" — screenshot: filter chips + "+ new canvas" clipped off the
+        // right edge, status bar + SETTINGS icon off the bottom, at
+        // font_size=large). Under root `zoom`, QtWebEngine's Chromium PAINTS
+        // layout units zoom× larger but resolves the #root mount's
+        // 100vw/100vh (index.html) against the UNzoomed window — so the app
+        // painted (zoom−1)·viewport too wide AND too tall (10% at large, 25%
+        // at xlarge; `small` mirrored it as dead strips).
+        // THE fix, proven live via CDP geometry: compensate ONLY the #root
+        // mount, and ONLY with viewport units — vw/vh divided by the zoom
+        // paint exactly one window. Do NOT add a %-based compensation on
+        // <html>: % resolves against the already-zoomed box on this engine,
+        // which OVER-shrinks html and its box then clips right-edge children
+        // (tried first, rejected on live evidence).
+        el.style.zoom = String(zoom);
+        if (mount) {
+          mount.style.width = `calc(100vw / ${zoom})`;
+          mount.style.height = `calc(100vh / ${zoom})`;
+        }
+      } else {
+        el.style.zoom = '';
+        if (mount) {
+          mount.style.width = '';
+          mount.style.height = '';
+        }
+      }
       // 3) contrast — token overlay + the same repaint event as a theme swap.
       const high = String(prefs.contrast || 'normal').toLowerCase() === 'high';
       if (high !== _a11yContrastHigh) {
@@ -5677,11 +5704,19 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
                      display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
         {s.title || 'untitled'}
       </div>
-      {/* Last message preview — single line */}
-      {s.last && (
+      {/* Last message preview — single line. Sessions with no chat yet get
+          an italic placeholder instead of a dead void (the grid stretches
+          cards to equal height, so an absent row read as broken — founder
+          2026-06-11 home-view revise). */}
+      {s.last ? (
         <div style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.35,
                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {s.last}
+        </div>
+      ) : (
+        <div style={{ fontSize:11, color:LM.inkMuted, lineHeight:1.35,
+                       fontStyle:'italic' }}>
+          No messages yet
         </div>
       )}
       {/* Footer: file + host pills, only render if there's data */}

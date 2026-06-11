@@ -83,14 +83,13 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.3.3 — backend P0 + UI takeover:
-        # per-company quota actor (Studio/Firm seats share one bucket),
-        # release_updater.tag rename (silent-install crash fixed),
-        # reality.yml + status_report.yml crons paused while Fly cloud
-        # remains undeployed, ADR-001 cloud-hosting decision recorded,
-        # Codex UI pass merged (contextual right inspector, ACTIVE
-        # MODEL replaces LLM ROUTER billboard, dev_source_sync bridges
-        # repo → installed AppData copy), Memory/Training page added
-        # (Codex priority #5: Capture→Redact→Judge→Train pipeline +
-        # POST /v1/memory/capture + GET /v1/memory/stats + 17 tests).
-        assert v == "1.3.3"
+        # Track the latest stable. v1.4.0 — first release since v1.3.3
+        # (2026-05-13); ships 75 merged PRs that had piled up unreleased.
+        # Headline: #102 production update channel (the in-app banner now
+        # checks signed GitHub Releases, ending the dev-source-sync
+        # self-update churn — forward-only, no data-loss); #93 chat→host
+        # persistent MCP; #92 update banner; #95/#97 quiet updates;
+        # #96 accessibility apply; #98 discovery palette; #99 param→socket
+        # promote; #101 NVIDIA models; #100 connector build fixes; #90 +
+        # stem-cell visual surface; plus ~40 dependency/security bumps.
+        assert v == "1.4.0"

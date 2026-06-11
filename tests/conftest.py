@@ -17,6 +17,7 @@ guarantee must be structural, not per-test discipline.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
@@ -26,6 +27,13 @@ import pytest
 _APP = Path(__file__).resolve().parent.parent / "app"
 if str(_APP) not in sys.path:
     sys.path.insert(0, str(_APP))
+
+# ConnectorHealth._maybe_self_heal fires COM NETLOAD into a LIVE AutoCAD when
+# acad.exe is up and :48885 is dead — a pytest run on a dev box must never
+# inject commands into the founder's open AutoCAD. Module level (not a
+# fixture) so it precedes every test-module import; setdefault so a box that
+# deliberately set the env keeps its value.
+os.environ.setdefault("ARCHHUB_NO_SELF_HEAL", "1")
 
 
 @pytest.fixture(autouse=True)

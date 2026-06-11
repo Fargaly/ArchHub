@@ -25,9 +25,8 @@ Self-heal logic per family:
 """
 from __future__ import annotations
 
+import os
 import socket
-import subprocess
-import sys
 import threading
 import time
 import urllib.error
@@ -37,9 +36,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from proc_utils import any_process_running
+
 
 PROBE_INTERVAL_SECONDS = 5.0
 PROBE_TIMEOUT_SECONDS = 0.6
+# Measured 2026-06-11 (Windows 11, loaded box): a dead loopback port does NOT
+# refuse fast — the firewall drops loopback SYN (no RST), so the connect burns
+# the FULL timeout (0.62s at 0.6) — while a live loopback listener accepts in
+# <10ms even under load. So the TCP pre-connect stays tight, and only the HTTP
+# stage (a listener that already accepted) gets the generous budget.
+CONNECT_TIMEOUT_SECONDS = 0.2
 
 
 # Family → loopback MCP listener URL.
@@ -82,39 +89,27 @@ class _FamilyState:
     sessions: int = 0
 
 
-def _hidden_run(args: list[str], **kw):
-    """Run subprocess without flashing a console window."""
-    if sys.platform == "win32":
-        kw.setdefault("creationflags",
-                      getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = 0
-        kw.setdefault("startupinfo", si)
-    return subprocess.run(args, **kw)
-
-
 def _process_running(name: str) -> bool:
-    try:
-        r = _hidden_run(
-            ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=2,
-        )
-        return name.lower() in (r.stdout or "").lower()
-    except Exception:
-        return False
+    # Kept as a module-level name: tests + callers monkeypatch it here.
+    # Delegates to proc_utils' TTL-cached snapshot, so a tick's burst of
+    # per-family checks costs ONE process enumeration — not one ~620ms
+    # `tasklist /FI` spawn each (five per tick before, ~3.1s of a tick).
+    return any_process_running(name)
 
 
 def _port_open(host: str, port: int, timeout: float) -> bool:
     """Hard-bounded TCP connect. Returns True iff something is listening.
 
-    `socket.create_connection` with an explicit timeout bounds the connect at
-    the OS level — a refused port returns in ~ms (ConnectionRefused), and an
-    unreachable/filtered one can NEVER exceed `timeout`. This is the guarantee
-    `urllib.request.urlopen` did not give us: urlopen's timeout is per resolved
-    address, so a dual-stack hostname (localhost → ::1 then 127.0.0.1) doubled
-    the wait and could wedge the poll thread past stop()'s join. We connect to
-    a single pinned IPv4 loopback here so the upper bound is exactly `timeout`.
+    The BOUND, not a fast refusal, is the guarantee. Do not count on a dead
+    port refusing in ~ms: on a firewalled Windows box the firewall silently
+    drops loopback SYN (no RST ever arrives), so connecting to a dead loopback
+    port burns the FULL `timeout` — only a live listener returns quickly.
+    `socket.create_connection` with an explicit timeout caps that at the OS
+    level, the guarantee `urllib.request.urlopen` did not give us: urlopen's
+    timeout is per resolved address, so a dual-stack hostname (localhost →
+    ::1 then 127.0.0.1) doubled the wait and could wedge the poll thread past
+    stop()'s join. We connect to a single pinned IPv4 loopback here so the
+    upper bound is exactly `timeout`.
     """
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -127,13 +122,15 @@ def _probe_listener(family: str) -> tuple[bool, str]:
     """Single-port probe (used for autocad/max/blender).
 
     Two-stage + hard-bounded so a single probe can NEVER block longer than
-    PROBE_TIMEOUT_SECONDS: (1) a bounded TCP connect to the pinned 127.0.0.1
-    loopback — a dead port refuses instantly, an unreachable one is capped by
-    the connect timeout; (2) only if the port is open do we pay for the HTTP
-    GET (also bounded). Bounding the probe is the root fix for the leaked
-    poll thread: the loop now always returns to its stop-event check within
-    one timeout, so stop()'s join reliably wins and the daemon cannot survive
-    teardown."""
+    its stage budgets: (1) a TCP connect to the pinned 127.0.0.1 loopback,
+    capped at the tight CONNECT_TIMEOUT_SECONDS — a dead loopback port may
+    burn that WHOLE cap (a firewalled box drops loopback SYN, no fast RST)
+    while a live listener accepts in <10ms, so the cap stays small; (2) only
+    if the port is open do we pay for the HTTP GET, bounded by the generous
+    PROBE_TIMEOUT_SECONDS. Bounding the probe is the root fix for the leaked
+    poll thread: the loop always returns to its stop-event check within one
+    bounded probe, so stop()'s join reliably wins and the daemon cannot
+    survive teardown."""
     url = LISTENER_URL.get(family)
     if not url:
         return False, "no listener url"
@@ -143,9 +140,11 @@ def _probe_listener(family: str) -> tuple[bool, str]:
         port = parsed.port or 80
     except Exception:
         return False, "bad listener url"
-    # Stage 1: bounded TCP pre-connect. Closed port → instant, honest 'down'
-    # with no HTTP cost and no chance of a multi-address stall.
-    if not _port_open(host, port, PROBE_TIMEOUT_SECONDS):
+    # Stage 1: tight TCP pre-connect. A dead port costs the FULL connect cap
+    # on a firewalled box (no RST), so the cap is the small one. The min()
+    # keeps a test's PROBE_TIMEOUT_SECONDS pin the effective bound.
+    if not _port_open(host, port,
+                      min(CONNECT_TIMEOUT_SECONDS, PROBE_TIMEOUT_SECONDS)):
         return False, "closed"
     # Stage 2: port is open — confirm it actually speaks HTTP / 2xx.
     try:
@@ -177,7 +176,8 @@ def _probe_revit_multi() -> tuple[bool, str, int]:
     """
     try:
         import revit_broker
-        alive = revit_broker.live_session_count(timeout=PROBE_TIMEOUT_SECONDS)
+        alive = revit_broker.live_session_count(
+            timeout=min(CONNECT_TIMEOUT_SECONDS, PROBE_TIMEOUT_SECONDS))
         if alive >= 1:
             return True, "", alive
         # No live session file — fall back to the bounded legacy single-port
@@ -243,7 +243,7 @@ class ConnectorHealth:
         t.start()
         self._thread = t
 
-    def stop(self, *, join_timeout: float = 2.0) -> None:
+    def stop(self, *, join_timeout: float = 3.0) -> None:
         """Signal the poll loop to exit AND wait for the thread to die.
 
         Joining matters: without it the daemon can still service one more
@@ -262,6 +262,11 @@ class ConnectorHealth:
         `_tick_once` re-checks the stop event before each family — so once
         `_stop` is set the thread returns to the loop's wait within a single
         bounded probe, comfortably inside `join_timeout`.
+
+        `join_timeout` must exceed the largest single bounded operation a
+        tick can be mid-flight in — that is now the shared process-snapshot
+        refresh (proc_utils enumeration, tasklist fallback bounded at 2s),
+        not a socket probe. 3.0 > 2.0 keeps the join winning by construction.
         """
         self._stop.set()
         t = self._thread
@@ -324,6 +329,12 @@ class ConnectorHealth:
 
     def _maybe_self_heal(self, family: str, now: float) -> None:
         """For AutoCAD: try NETLOAD via COM with backoff (5s, 30s, 5min)."""
+        # Self-heal fires COM NETLOAD into a LIVE AutoCAD — test runs must
+        # never do that, and a stopping monitor must not spawn new work.
+        # Value semantics: "0"/"false"/"no"/empty mean OFF (gate inactive).
+        gate = os.environ.get("ARCHHUB_NO_SELF_HEAL", "").strip().lower()
+        if gate not in ("", "0", "false", "no") or self._stop.is_set():
+            return
         if family != "autocad":
             return
         host = HOST_PROCESS.get(family)

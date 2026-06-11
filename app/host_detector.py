@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -68,9 +69,39 @@ def _cached(key: str, ttl: float = _CACHE_TTL_SECONDS):
 
 # ---------------------------------------------------------------------------
 # Process detection — psutil if available, PowerShell fallback if not.
+# Snapshot cache for the raw process table — separate from _CACHE (which
+# holds per-probe result dicts). A cold detect_all_hosts() pass calls
+# _find_process many times (antigravity, outlook/teams fallbacks, notion,
+# 4 broker fallbacks) and one full enumeration costs ~1.6s cold via
+# psutil / ~1s+ via PowerShell, so one enumeration must serve them all.
+_PROC_SNAPSHOT_TTL_SECONDS = 2.0
+_PROC_SNAPSHOT_LOCK = threading.Lock()  # held across the fetch — single-flight
+_PROC_SNAPSHOT: Optional[tuple[float, list[dict]]] = None  # (monotonic ts, rows)
+
+
 def _running_processes() -> list[dict]:
     """Return a list of {name, exe, pid} dicts for every running
-    process. Cached for the whole probe pass (rebuilt next call)."""
+    process. Cached for _PROC_SNAPSHOT_TTL_SECONDS (2.0s, monotonic)
+    so one enumeration serves the whole probe pass instead of one per
+    _find_process call. detect_all_hosts(force=True) busts _CACHE but
+    not this snapshot — a forced refresh tolerates <=2s staleness of
+    the process table. The lock is held across the fetch so concurrent
+    probe threads wait for the in-flight enumeration rather than
+    stacking their own; a failed enumeration ([]) is cached too."""
+    global _PROC_SNAPSHOT
+    with _PROC_SNAPSHOT_LOCK:
+        now = time.monotonic()
+        if _PROC_SNAPSHOT is not None:
+            ts, rows = _PROC_SNAPSHOT
+            if now - ts < _PROC_SNAPSHOT_TTL_SECONDS:
+                return rows
+        rows = _enumerate_processes()
+        _PROC_SNAPSHOT = (now, rows)
+        return rows
+
+
+def _enumerate_processes() -> list[dict]:
+    """Uncached process-table fetch — call via _running_processes()."""
     try:
         import psutil
         out: list[dict] = []

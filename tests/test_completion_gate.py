@@ -91,6 +91,23 @@ def test_load_tolerates_bom_and_parses():
         assert gates[0].name == "x" and iters == 2
 
 
+def test_scan_deferral_flags_bare_later():
+    assert "later" in cg.scan_deferral("I'll wire the rest later")
+
+
+def test_scan_deferral_flags_todo_and_partial():
+    found = cg.scan_deferral("partial pass for now; TODO finish")
+    assert "todo" in found and ("partial" in found or "for now" in found)
+
+
+def test_scan_deferral_clean_when_done():
+    assert cg.scan_deferral("All gates green; nothing outstanding.") == []
+
+
+def test_scan_deferral_exempts_justified_hold():
+    assert cg.scan_deferral("S5 rollout safety-gated: after red-team") == []
+
+
 def _run_standalone() -> int:
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

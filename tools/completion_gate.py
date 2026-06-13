@@ -34,6 +34,31 @@ from typing import Callable, List, Optional
 
 CAP_DEFAULT = 12  # max consecutive blocks before escalate (anti-infinite-grind)
 
+# THE NO-LATER DETECTOR (shared by every surface: Claude Code hook, the ArchHub
+# composer, the ai.plan planner). Bare deferral is banned; a not-now item is
+# legal ONLY if it carries a justified-hold tag (depends-on: / safety-gated:).
+_DEFERRAL = re.compile(
+    r"(?i)\b("
+    r"later|for now|next session|follow[\s-]?up|to be done|for hardening|"
+    r"nice[\s-]?to[\s-]?have|partial(?:ly)?|punt|defer(?:red)?|"
+    r"i['’]?ll (?:wire|finish|do|add|build|handle)|"
+    r"TODO|FIXME"
+    r")\b"
+)
+_JUSTIFIED = re.compile(r"(?i)(depends-on:|safety-gated:)")
+
+
+def scan_deferral(text: str) -> List[str]:
+    """Return the distinct bare-deferral markers in `text`, or [] if clean OR
+    if a justified-hold tag (depends-on:/safety-gated:) is present. This is the
+    'no planning later / no partial' check applied to an agent's own output
+    (composer reply, plan body) before it may be accepted as done."""
+    if not text:
+        return []
+    if _JUSTIFIED.search(text):
+        return []
+    return sorted({m.lower() for m in _DEFERRAL.findall(text)})
+
 
 @dataclass
 class Gate:

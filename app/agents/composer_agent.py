@@ -465,5 +465,23 @@ def run_agent_step(
             "gated": gated_count[0],
         }
 
-    return {"actions": actions, "text": text,
-            "mode": mode, "gated": gated_count[0]}
+    # THE DRIVE (AgDR-0054): the composer may not return a turn that defers /
+    # partials its own answer. Reuse the ONE shared no-later detector.
+    completion = {"action": "allow", "deferral": []}
+    try:
+        import sys as _sys
+        from pathlib import Path as _P
+        _tools = str(_P(__file__).resolve().parents[2] / "tools")
+        if _tools not in _sys.path:
+            _sys.path.insert(0, _tools)
+        import completion_gate as _cg
+        _defer = _cg.scan_deferral(text)
+        if _defer:
+            completion = {"action": "block", "deferral": _defer,
+                          "reason": "NOT DONE: composer reply defers work ("
+                                    + ", ".join(_defer) + "). finish it or tag "
+                                    "depends-on: / safety-gated:."}
+    except Exception:
+        pass
+    return {"actions": actions, "text": text, "mode": mode,
+            "gated": gated_count[0], "completion": completion}

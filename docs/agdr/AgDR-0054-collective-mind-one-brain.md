@@ -225,3 +225,85 @@ corpus critical mass. No code until signed.
 ## Build order (after sign-off)
 Firm-scoped verified loop FIRST (the corpus pump) → open the river past own firm only after the dam survives
 real workloads → flywheel at corpus critical mass. The collective AEC model is the endgame the architecture feeds.
+
+---
+
+## Execution control plane — the wall (added 2026-06-13; plan-locked, NO BUILD until founder "go")
+
+**Why (root cause of the recurring failure).** ArchHub keeps producing half-built work claimed "done"
+because work is governed by *chat, summaries, mandates* — descriptive authority a model can infer around
+(it can mis-scope, trust stale context, call an apply-log "done," over-batch, or forget the source of truth
+across sessions). The fix is an **enforceable control plane**: a machine-readable **active-work ledger**
+every session must load and obey BEFORE acting; "done" is derivable only from the ledger's gates, never
+from prose. (Diagnosis relayed by the founder from ChatGPT 2026-06-13. Verdict: correct on the gap, but
+~70% of the machinery already exists as a *library* — `requirement_tree.py` (task_tree), `court_harness.py`
+(acceptance_gates + independent verify), the per-trace schema (provenance), `sweep().dry` (done_rule) — it
+is simply not wired as a mandatory wall, and there is no per-job work-state record. So this is wiring +
+one new record, NOT a new system.)
+
+**It is the SAME brain gate, turned inward — not a parallel system (ONE-SYSTEM holds).** The dam governs
+*knowledge* flowing outward (stream→river→recall); the wall governs a *session's work* flowing inward
+(chat→done). Both pass the one gate: ROMA court + per-trace provenance + scope. Three gates, one standard,
+cascading: **WALL** (per job, source) → **DAM** (per contribution, mid) → **RIVER** (collective). A trace
+cannot reach the dam, the river, or the training corpus unless it cleared the wall — source-water treatment,
+the upstream answer to the poisoning / false-green threats (Court #2/#3/#7; acceptance #7/#15). It is the
+**precondition for the multi-user brain**: every neuron runs the same wall, so the river is fed only governed
+water; the collective is only as clean as the dirtiest contributor's *process*.
+
+**The active-work ledger (the one genuinely-missing record).** A new fragment kind in `brain.db` (NOT a new
+store), reusing existing primitives:
+
+| Ledger field | Backed by | State |
+|---|---|---|
+| `scope` (in / out, refuse-if-undefined) | brain scopes USER/PROJECT/FIRM | NEW (the lock) |
+| `source_of_truth` (per artifact type) | `docs/ROADMAP.md` + provenance | partial |
+| `artifact_manifest` (files/models/exports + ts) | per-trace provenance (slice 1) | partial |
+| `task_tree` (atomic leaves + owners) | `requirement_tree.py` | HAVE |
+| `acceptance_gates` (machine check per leaf) | `court_harness.py` 3-lens jury | HAVE |
+| `verification_status` (pass/fail/blocked + evidence path) | ROMA court verdicts | NEW (per in-flight job) |
+| `last_verified` (freshness vs the thing it proves) | per-trace timestamps | partial |
+| `done_rule` (no prose overrides a failed/missing gate) | `sweep().dry` | HAVE (make non-optional) |
+
+**Multi-user lock (resolves the founder's 2026-06-13 concern "do other users get Lubb?").** Lubb is the
+**engine for all** — shipped to every ArchHub install as a pinned dependency (every user runs their own
+neuron + own private `brain.db`); the skill-mint / workflow-save / redeployable-diagram capability reaches
+every user; the collective value (a skill one user mints → recall to others) is the dam-gated river on top.
+"Private repo" = source IP, **not** user lockout; the built package + capability ship to all (engine = shared
+code · data = per-user private · river = collective gated). Lubb is **never** framed as a personal box.
+Design reference: `docs/prototypes/control-plane-execution-ledger-2026-06-13.html`.
+
+## Build contract — Lubb extraction (P0–P3) + control plane (S1–S4) (added 2026-06-13; NO BUILD until "go")
+
+Every phase is **reversible**, **gated on a real machine check the founder can see**, and reported under
+ANTI-LIE (the word "done" is banned without the 5-row proof table green + an openable artifact). The founder
+may **stop at any gate**; `brain.db` is backed up first and **never touched** (worst case = where we started,
+minus minutes). Governance: **S0 rides AgDR-0002 (ECHO, executed) + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`**;
+the control-plane layer **extends this AgDR** — no new AgDR is minted (NO-NEW-AGDR honored). All build runs in
+an **isolated worktree on a build branch, never the founder's live tree** (the branch-flip lesson).
+
+### S0 — extract the brain to its own repo (Lubb): the de-risk
+Kills the root cause of the branch-flip/stranding chaos: the brain is editable-installed into ArchHub's tree,
+so auto-sync branch switches silently change the LIVE brain's code and strand commits (proven this session).
+
+| Phase | What you get | Gate (machine check you see) | Proof | Rollback |
+|---|---|---|---|---|
+| **P0** | backup + baseline | backup file exists; `brain.health` reads the baseline counts | the counts, shown | none needed (read-only + file copy) |
+| **P1** | birth `Fargaly/lubb` (no live impact) | full brain pytest green in the new clone (incl. the 602-test schema suite) | green pytest + the repo | delete the repo; nothing live changed |
+| **P2** | repoint the live daemon (~5 min) | `brain.health` ok + identical counts post-cutover; ArchHub recalls | same counts + a live recall | re-point the old install (~2 min); db untouched |
+| **P3** | ArchHub becomes a dependent | app boots + composer recalls on the new brain; grep proves zero stale `personal-brain-mcp/` path refs | the live app on the new brain | `git revert` the one deletion commit |
+
+### S1–S4 — the control plane (each its own gated slice, same contract)
+| Slice | What it builds | Gate (acceptance) | Rollback |
+|---|---|---|---|
+| **S1** | gates non-optional — every session loads + obeys the active-work ledger before acting | a session that skips the load-gate is refused (test) + the load-gate fires in a real run | branch revert; gates return to opt-in |
+| **S2** | `active_work` ledger record in `brain.db` (scope · manifest · verification_status · last_verified) | the new fragment kind persists + round-trips; fields populated from a real session | additive schema; migration reversible |
+| **S3** | scope-lock — refuse to act if in/out scope undefined; pilot-before-batch | an undefined-scope action is refused; a batch over an unclassified set is refused | flag-gated; default off until verified |
+| **S4** | done == green sweep (universal) + tamper-proof ledger writes (a gate-write needs an evidence path) | "done" derivable only from `sweep().dry`; a ledger write without evidence is rejected | branch revert |
+
+(**S5** — every neuron obeys the wall — is the collective rollout; it coincides with acceptance #1/#7/#11
+already in this suite and lands only after the river survives red-team.)
+
+**Acceptance additions** (extend the suite above):
+21. **Control plane fires**: a session that does not load the `active_work` ledger is refused before any file write (the wall blocks it).
+22. **Tamper-proof done-rule**: "done" is computed from `sweep().dry`; a hand-asserted done over a red/missing gate is rejected; a ledger gate-write without an evidence path is refused.
+23. **Scope-lock**: an action outside the declared in-scope set — or a batch over an unclassified set — is refused with a typed recovery (pilot-first).

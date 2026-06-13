@@ -112,16 +112,18 @@ Per-version detail: `CHANGELOG.md` and git history.
 > **Build contract (2026-06-13): Lubb extraction (P0–P3) + execution control plane (S1–S4) appended to
 > the AgDR (§Execution control plane / §Build contract). Every phase reversible, gated on a machine check
 > the founder sees, no "done" without proof, stop at any gate, isolated worktree — never the live tree.
-> Order: S0 FIRST (de-risk), then the control plane S1–S4 is the foundation the collective slices 2–6 build
-> on. PLAN-LOCKED: NO BUILD until the founder says "go" (S0 rides AgDR-0002 + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`;
+> Order: S0 FIRST (de-risk, hours), then **S1–S4 are THE CORE — built back-to-back, none "later"** (they kill
+> false-greens, creep, sessions-as-truth) and are the foundation the collective slices 2–6 build on; **S5**
+> (every neuron obeys the wall) is **safety-gated** on red-team survival, not deprioritized.
+> PLAN-LOCKED: NO BUILD until the founder says "go" (S0 rides AgDR-0002 + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`;
 > the control plane extends this AgDR — no new AgDR minted). Prototype:
 > `docs/prototypes/control-plane-execution-ledger-2026-06-13.html`.**
 
 - [ ] PLAN-LOCKED (needs founder "go" — NO BUILD) · AgDR-0054 S0 — extract the brain to its own repo (Lubb), the de-risk that kills editable-install branch-flip stranding. P0 backup + baseline (gate: backup file exists + `brain.health` baseline counts shown) → P1 birth `Fargaly/lubb` (gate: full brain pytest green incl. the 602-test schema suite in the new clone) → P2 repoint the live daemon ~5 min (gate: `brain.health` ok + identical counts + ArchHub recalls; rollback ~2 min, db untouched) → P3 ArchHub becomes a dependent (gate: app boots + composer recalls + grep proves zero stale `personal-brain-mcp/` path refs). Rides AgDR-0002 + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`. (eng)
-- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S1 — control plane: gates non-optional — every session loads + obeys the active-work ledger before acting (acceptance #21). (eng)
-- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S2 — `active_work` ledger record in `brain.db` (scope · artifact_manifest · verification_status · last_verified), reusing existing primitives — NOT a new store (ONE-SYSTEM). (eng)
-- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S3 — scope-lock: refuse to act if in/out scope undefined; pilot-before-batch (acceptance #23). (eng)
-- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S4 — done == `sweep().dry` universal + tamper-proof ledger writes (a gate-write requires an evidence path) (acceptance #22). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S1 (CORE) — `active_work` ledger record in `brain.db` (scope · artifact_manifest · verification_status · last_verified), the substrate everything writes to — NOT a new store (ONE-SYSTEM). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S2 (CORE) — gates non-optional: every session loads + obeys the ledger before acting (acceptance #21). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S3 (CORE) — scope-lock: refuse to act if in/out scope undefined; pilot-before-batch — kills over-batch/creep (acceptance #23). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S4 (CORE) — done == `sweep().dry` universal + tamper-proof ledger writes (a gate-write needs an evidence path) — kills false-greens/lying (acceptance #22). (eng)
 - [ ] #P1 AgDR-0054 slice 2 — populate the per-trace fields: `write_fragment` + the Fragment model write the AgDR-0054 columns (origin_kind/training_rights_tier/generating_model_id/format_shape_descriptor/content_hash/action+language payload), and wire `export_trainable_fragments` into `brain.dataset_export`. Schema + filter already on `feat/agdr0054-trace-schema`. (eng)
 - [ ] #P1 AgDR-0054 slice 3 — capture every SESSION + node-GRAPH + connected-agent session (composer · Claude Code · Codex · fleet) as first-class, recallable, dam-gated brain entities, not skills-only (acceptance #20). (eng)
 - [ ] #P1 AgDR-0054 slice 4 — server-side sandboxed verify (move the ROMA court off the contributor's machine — kills bus-factor-one, CRITICAL #3) + fix the cloud 401 sign-in. (eng)

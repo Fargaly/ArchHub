@@ -292,16 +292,23 @@ so auto-sync branch switches silently change the LIVE brain's code and strand co
 | **P2** | repoint the live daemon (~5 min) | `brain.health` ok + identical counts post-cutover; ArchHub recalls | same counts + a live recall | re-point the old install (~2 min); db untouched |
 | **P3** | ArchHub becomes a dependent | app boots + composer recalls on the new brain; grep proves zero stale `personal-brain-mcp/` path refs | the live app on the new brain | `git revert` the one deletion commit |
 
-### S1–S4 — the control plane (each its own gated slice, same contract)
+### S1–S4 — the control plane: THE CORE (built back-to-back, NONE "later")
+These are the parts that kill the recurring failure — false-greens, scope-creep, lying, sessions-as-truth.
+They are **not** deferred. Build order = dependency order: the ledger is the substrate, so it is **S1**
+(corrected 2026-06-13 after the founder flagged the core was wrongly tagged "later"; the first draft mis-numbered
+the gate ahead of the ledger it loads). S0 is the **only** thing before them, and it is hours of reversible
+plumbing, not a feature.
+
 | Slice | What it builds | Gate (acceptance) | Rollback |
 |---|---|---|---|
-| **S1** | gates non-optional — every session loads + obeys the active-work ledger before acting | a session that skips the load-gate is refused (test) + the load-gate fires in a real run | branch revert; gates return to opt-in |
-| **S2** | `active_work` ledger record in `brain.db` (scope · manifest · verification_status · last_verified) | the new fragment kind persists + round-trips; fields populated from a real session | additive schema; migration reversible |
-| **S3** | scope-lock — refuse to act if in/out scope undefined; pilot-before-batch | an undefined-scope action is refused; a batch over an unclassified set is refused | flag-gated; default off until verified |
-| **S4** | done == green sweep (universal) + tamper-proof ledger writes (a gate-write needs an evidence path) | "done" derivable only from `sweep().dry`; a ledger write without evidence is rejected | branch revert |
+| **S1 · core** | `active_work` ledger record in `brain.db` (scope · manifest · verification_status · last_verified) — the substrate everything writes to | the new fragment kind persists + round-trips; fields populated from a real session | additive schema; migration reversible |
+| **S2 · core** | gates non-optional — every session loads + obeys the ledger before acting | a session that skips the load-gate is refused (test) + the load-gate fires in a real run | branch revert; gates return to opt-in |
+| **S3 · core** | scope-lock — refuse to act if in/out scope undefined; pilot-before-batch (**kills over-batch/creep**) | an undefined-scope action is refused; a batch over an unclassified set is refused | flag-gated; default off until verified |
+| **S4 · core** | done == green sweep (universal) + tamper-proof ledger writes — a gate-write needs an evidence path (**kills false-greens/lying**) | "done" derivable only from `sweep().dry`; a ledger write without evidence is rejected | branch revert |
 
-(**S5** — every neuron obeys the wall — is the collective rollout; it coincides with acceptance #1/#7/#11
-already in this suite and lands only after the river survives red-team.)
+(**S5** — every neuron obeys the wall — is the collective rollout. It is **safety-gated**, not deprioritized:
+the wall must survive red-team before it is exposed to every neuron + the river, or one bad neuron poisons all.
+Coincides with acceptance #1/#7/#11.)
 
 **Acceptance additions** (extend the suite above):
 21. **Control plane fires**: a session that does not load the `active_work` ledger is refused before any file write (the wall blocks it).

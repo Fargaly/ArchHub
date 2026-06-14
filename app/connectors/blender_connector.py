@@ -44,30 +44,12 @@ _BRAND = "#E87D0D"  # Blender orange — see HOST_NODE_UI_GRAMMAR §2.1
 def _blender_process_running() -> bool:
     """True if a Blender process is alive on this machine — used to tell
     `loaded_dead` (Blender up, addon silent) from `missing` (Blender
-    closed). Best-effort: psutil if present, else a tasklist/pgrep poke.
-    Never raises.
+    closed). Reads proc_utils' shared 2s process snapshot, so probe
+    bursts cost one enumeration. Never raises.
     """
     try:
-        import psutil  # type: ignore
-        for p in psutil.process_iter(["name"]):
-            name = (p.info.get("name") or "").lower()
-            if "blender" in name:
-                return True
-        return False
-    except Exception:
-        pass
-    # No psutil — fall back to the OS process list.
-    import subprocess
-    import sys as _sys
-    try:
-        if _sys.platform.startswith("win"):
-            out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq blender.exe", "/NH"],
-                capture_output=True, text=True, timeout=5)
-            return "blender.exe" in (out.stdout or "").lower()
-        out = subprocess.run(["pgrep", "-i", "blender"],
-                             capture_output=True, text=True, timeout=5)
-        return bool((out.stdout or "").strip())
+        from proc_utils import any_process_running
+        return any_process_running("blender")
     except Exception:
         return False
 

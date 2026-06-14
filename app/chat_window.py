@@ -2333,17 +2333,15 @@ class ChatWindow(QMainWindow):
 
     def _host_process_running(self, host: str) -> bool:
         """Cheap process-list scan. True iff the host application's exe
-        is in the process table — even if its MCP listener isn't up."""
+        is in the process table — even if its MCP listener isn't up.
+        Reads proc_utils' shared 2s process snapshot, so repeated calls
+        across hosts cost one enumeration, not one subprocess each."""
         names = self._HOST_PROCESS_NAMES.get(host)
         if not names:
             return False
         try:
-            from proc_utils import run_hidden
-            r = run_hidden(
-                ["tasklist", "/FI", f"IMAGENAME eq {names[0]}", "/FO", "CSV", "/NH"],
-                capture_output=True, timeout=2,
-            )
-            return names[0].lower() in (r.stdout or "").lower()
+            from proc_utils import any_process_running
+            return any_process_running(*names)
         except Exception:
             return False
 

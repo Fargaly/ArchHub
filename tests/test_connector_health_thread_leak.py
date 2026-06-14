@@ -23,7 +23,10 @@ These tests lock in the mechanism so the class cannot silently regress again:
   2. `_probe_revit_multi()` returns within the bounded budget even when every
      port is dead and the broker scan would be slow;
   3. a started monitor is provably stopped + joined by `shutdown()` — the
-     unit-level twin of the conftest guard.
+     unit-level twin of the conftest guard;
+  4. a tick's dead-listener diagnosis costs AT MOST ONE process enumeration
+     (the shared proc_utils TTL snapshot) — never one `tasklist /FI` spawn
+     per family, which at ~0.6s each loaded made ticks flake near 3s.
 """
 from __future__ import annotations
 
@@ -39,6 +42,7 @@ if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 import connector_health  # noqa: E402
+import proc_utils  # noqa: E402
 import revit_broker  # noqa: E402
 
 
@@ -91,15 +95,24 @@ def test_full_tick_is_bounded_when_all_ports_dead(monkeypatch):
                         Path("does-not-exist-zzz"))
     # Make the BOUNDED primitives instant so the measurement reflects only
     # control flow — never real-socket connect/teardown jitter (which made a
-    # wall-clock ceiling flaky under full-suite load). The regression we guard
-    # against does NOT go through these instant stubs: it goes through
+    # wall-clock ceiling flaky under full-suite load). Process listing is one
+    # of those bounded primitives: un-stubbed, the dead-listener diagnosis
+    # path (state() → _process_running per family + the autocad self-heal
+    # check) spawned one tasklist per family — ~0.6s each on a loaded box,
+    # five per tick = the ~2.4–3.2s flake this test showed on loaded Windows.
+    # That cost is bounded (each spawn has its own 2s timeout), so it is NOT
+    # the regression this test guards; test_tick_costs_at_most_one_process_
+    # enumeration below guards it instead. The regression we DO guard does
+    # not go through these instant stubs: it goes through
     # revit_broker.list_sessions(prune=True) → _discover_in_port_range, a real
     # 16-port dual-stack scan (~2.4s) that this test leaves un-stubbed. So a
-    # regressed _probe_revit_multi blows seconds past the ceiling, while the
-    # fixed bounded path returns in ~0.
+    # regressed _probe_revit_multi still blows seconds past the 2.0s
+    # tripwire, while the fixed bounded path returns in ~0.
     monkeypatch.setattr(connector_health, "_port_open",
                         lambda host, port, timeout: False)
     monkeypatch.setattr(revit_broker, "_probe", lambda port, **k: False)
+    monkeypatch.setattr(connector_health, "_process_running",
+                        lambda name: False)
     ch = connector_health.ConnectorHealth()
     t0 = time.perf_counter()
     ch._tick_once()
@@ -110,6 +123,47 @@ def test_full_tick_is_bounded_when_all_ports_dead(monkeypatch):
         f"a tick with all ports dead took {elapsed:.2f}s — an unbounded probe "
         f"(dual-stack localhost / port-range scan) regressed"
     )
+
+
+def test_tick_costs_at_most_one_process_enumeration(monkeypatch):
+    """Mechanism guard for the shared process snapshot: a full tick must cost
+    AT MOST ONE process enumeration. Before proc_utils' TTL snapshot, every
+    dead family's diagnosis (state() → _process_running) plus the autocad
+    self-heal check each spawned its own `tasklist /FI` — five spawns/tick at
+    ~0.6s each loaded was the ~2.4–3.2s flake in
+    test_full_tick_is_bounded_when_all_ports_dead. Sockets are stubbed
+    instant exactly as there, but `_process_running` is deliberately NOT
+    stubbed: the real delegation chain (connector_health._process_running →
+    proc_utils.any_process_running → process_names) is what gets counted."""
+    monkeypatch.setattr(connector_health, "PROBE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(revit_broker, "SESSIONS_DIR",
+                        Path("does-not-exist-zzz"))
+    monkeypatch.setattr(connector_health, "_port_open",
+                        lambda host, port, timeout: False)
+    monkeypatch.setattr(revit_broker, "_probe", lambda port, **k: False)
+
+    counter = {"n": 0}
+
+    def _counting_enumeration(*a, **k):
+        counter["n"] += 1
+        return frozenset()   # nothing running → every family 'host_offline'
+
+    monkeypatch.setattr(proc_utils, "_enumerate_process_names",
+                        _counting_enumeration)
+    # Cold cache so the tick's FIRST check is the one allowed enumeration.
+    proc_utils._reset_process_snapshot_for_tests()
+    try:
+        connector_health.ConnectorHealth()._tick_once()
+        assert counter["n"] <= 1, (
+            f"a single tick performed {counter['n']} process enumerations — "
+            f"per-call process enumeration regressed (one tasklist spawn per "
+            f"_process_running call, 5/tick at ~0.6s each, was the "
+            f"loaded-Windows flake)"
+        )
+    finally:
+        # Drop the poisoned empty snapshot — inside the TTL a later test
+        # would otherwise see every host process as not-running.
+        proc_utils._reset_process_snapshot_for_tests()
 
 
 def test_shutdown_stops_and_joins_the_poll_thread(monkeypatch):

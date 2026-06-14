@@ -35,6 +35,27 @@ def _project_dir(config: dict) -> str:
         return str(Path.cwd())
 
 
+def _lint_plan(text):
+    try:
+        import sys as _sys
+        from pathlib import Path as _P
+        _tools = str(_P(__file__).resolve().parents[3] / "tools")
+        if _tools not in _sys.path:
+            _sys.path.insert(0, _tools)
+        import completion_gate as _cg
+        defer = _cg.scan_deferral(text or "")
+    except Exception as _e:
+        # FAIL CLOSED — a gate that cannot run must not silently pass deferrals.
+        return {"action": "error", "deferral": [],
+                "reason": "plan lint unavailable (fail-closed): " + str(_e)}
+    if defer:
+        return {"action": "block", "deferral": defer,
+                "reason": "plan defers work (" + ", ".join(defer)
+                          + "); reject bare deferral — finish it or register a "
+                            "structured hold in the active_work ledger."}
+    return {"action": "allow", "deferral": []}
+
+
 def _ai_plan_executor(config: dict, inputs: dict, ctx) -> dict:
     config = config or {}
     inputs = inputs or {}
@@ -113,6 +134,9 @@ def _ai_plan_executor(config: dict, inputs: dict, ctx) -> dict:
         "error":   nested_out.get("error"),
         "ts":      int(time.time()),
     }
+    record["completion"] = _lint_plan(record.get("result", ""))
+    if record["completion"]["action"] in ("block", "error") and record.get("status") == "ok":
+        record["status"] = "needs_rework"
     # Persist regardless of success/failure — audit needs the
     # failure trail too.
     history.save(record)
@@ -123,6 +147,7 @@ def _ai_plan_executor(config: dict, inputs: dict, ctx) -> dict:
         "cached":  False,
         "status":  record["status"],
         "error":   record["error"],
+        "completion": record["completion"],
     }
 
 

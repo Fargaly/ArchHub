@@ -96,6 +96,43 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P0 COURT: FREEZE the rulebook. No 30th mandate, no new AgDR until the money-shot loop is green (NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES). When a fake is caught: narrow scope + add a gate assertion — never write another forever-rule. (eng)
 - [ ] #P0 COURT: WIP=1 — freeze ALL non-loop work (telemetry, billing, cloud, SOC2, trademark, settings polish, new connectors, agent swarm) until the money-shot test is green under the gate. (ops)
 
+## AgDR-0054 — Collective Mind (founder-signed 2026-06-10 "EXECUTE") — main builder owns this
+
+> The collective brain = ONE entity (sessions + graphs + memory + skills + thinking + training),
+> neurons syncing through a bidirectional dam-gated river, flywheel → collective AEC models.
+> Design + court verdict + sourced research in `docs/agdr/AgDR-0054-collective-mind-one-brain.md` +
+> `docs/research/{memory-km-agentic-evolution,training-endgame,training-gaps-addendum}-*.md`.
+> **CONFLICT (surfaced, not resolved silently):** the #P0 COURT directive above freezes new AgDRs +
+> non-loop work until the money-shot loop is green (NO-NEW-AGDR-UNTIL-LAST-ONE-LIVES). AgDR-0054 was
+> founder-signed despite that freeze — main builder reconcile WIP=1 priority before charging in.
+> **Slice 1 (per-trace schema) + slice 2a (export tier-filter) are COMMITTED on branch
+> `feat/agdr0054-trace-schema` — merge that branch first; the main working tree kept flipping
+> branches under the chat session so the build was isolated there.**
+>
+> **Build contract (2026-06-13): Lubb extraction (P0–P3) + execution control plane (S1–S4) appended to
+> the AgDR (§Execution control plane / §Build contract). Every phase reversible, gated on a machine check
+> the founder sees, no "done" without proof, stop at any gate, isolated worktree — never the live tree.
+> Order: S0 FIRST (de-risk, hours), then **S1–S4 are THE CORE — built back-to-back, none "later"** (they kill
+> false-greens, creep, sessions-as-truth) and are the foundation the collective slices 2–6 build on; **S5**
+> (every neuron obeys the wall) is **safety-gated** on red-team survival, not deprioritized.
+> PLAN-LOCKED: NO BUILD until the founder says "go" (S0 rides AgDR-0002 + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`;
+> the control plane extends this AgDR — no new AgDR minted). Prototype:
+> `docs/prototypes/control-plane-execution-ledger-2026-06-13.html`.**
+
+- [ ] PLAN-LOCKED (needs founder "go" — NO BUILD) · AgDR-0054 S0 — extract the brain to its own repo (Lubb), the de-risk that kills editable-install branch-flip stranding. P0 backup + baseline (gate: backup file exists + `brain.health` baseline counts shown) → P1 birth `Fargaly/lubb` (gate: full brain pytest green incl. the 602-test schema suite in the new clone) → P2 repoint the live daemon ~5 min (gate: `brain.health` ok + identical counts + ArchHub recalls; rollback ~2 min, db untouched) → P3 ArchHub becomes a dependent (gate: app boots + composer recalls + grep proves zero stale `personal-brain-mcp/` path refs). Rides AgDR-0002 + `01.ECHO/BRAIN_EXTRACTION_PLAN.md`. (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S1 (CORE) — `active_work` ledger record in `brain.db` (scope · artifact_manifest · verification_status · last_verified), the substrate everything writes to — NOT a new store (ONE-SYSTEM). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S2 (CORE) — gates non-optional: every session loads + obeys the ledger before acting (acceptance #21). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S3 (CORE) — scope-lock: refuse to act if in/out scope undefined; pilot-before-batch — kills over-batch/creep (acceptance #23). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 S4 (CORE) — done == `sweep().dry` universal + tamper-proof ledger writes (a gate-write needs an evidence path) — kills false-greens/lying (acceptance #22). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 — THE DRIVE (completion gate, founder-requested "sense of responsibility"; FRONT of core, part of S2/S4) — `tools/completion_gate.py` wired in `~/.claude/settings.json` → Stop (before skill_mint): blocks turn-exit while the ledger's done-gates are red (re-enters the agent with the unfinished list); escalates `needs_root`/cap-hit to the founder (honest stop — never silent-quit / fake-done / infinite-grind); authoritative "done" held server-side (slice-4), NOT a hook the agent can disable (acceptance #24). (eng)
+- [ ] PLAN-LOCKED (needs "go") · AgDR-0054 — UNIVERSAL ENFORCEMENT of the drive (founder: no planning-later, no partial-acceptable, ALL agents): (1) requirement-tree has NO "later" state — a not-now item needs a `depends-on:`/`safety-gated:` tag or it's rejected; (2) plan-lint pre-commit+CI scans ROADMAP/AgDR/touched-code for bare deferral markers ("later/phase-2/follow-up/partial/for-hardening/TODO(later)") + rejects; (3) partial can't land — parent `green` iff all children green + CI blocks any red/partial merge; (4) authoritative gates at the SHARED chokepoints — brain (`:8473` done-adjudication, BRAIN-FIRST) + git/CI (un-bypassable) — so it binds Codex/Gemini/composer/fleet/humans, not just hook-bearing Claude Code (acceptance #25/#26/#27). (eng/ops)
+- [ ] #P1 AgDR-0054 slice 2 — populate the per-trace fields: `write_fragment` + the Fragment model write the AgDR-0054 columns (origin_kind/training_rights_tier/generating_model_id/format_shape_descriptor/content_hash/action+language payload), and wire `export_trainable_fragments` into `brain.dataset_export`. Schema + filter already on `feat/agdr0054-trace-schema`. (eng)
+- [ ] #P1 AgDR-0054 slice 3 — capture every SESSION + node-GRAPH + connected-agent session (composer · Claude Code · Codex · fleet) as first-class, recallable, dam-gated brain entities, not skills-only (acceptance #20). (eng)
+- [ ] #P1 AgDR-0054 slice 4 — server-side sandboxed verify (move the ROMA court off the contributor's machine — kills bus-factor-one, CRITICAL #3) + fix the cloud 401 sign-in. (eng)
+- [ ] #P1 AgDR-0054 slice 5 — mandate projector (versioned brain → CLAUDE.md/settings.json/pre-prompts, founder-signature gate on mandate-class) + store unification (brain.db absorbs `app/memory/graph.sqlite` — the ONE-SYSTEM debt). (eng)
+- [ ] #P1 AgDR-0054 slice 6 — the 19-test acceptance suite before any fine-tune: poisoning stack (content-hash + per-contributor cap <250 + checkpoint activation-probe + base-model audit), clean-corpus export filter, eval time-split + decontamination, unlearning-by-export-gate honesty, forgetting/alignment regression gate. (qa)
+- [ ] #P0 AgDR-0054 FOUNDER RULING — provider-ToS / clean-corpus path for the collective AEC model (training on provider OUTPUTS is a facial ToS breach; **action-signal corpus recommended**). Blocks the training/flywheel half only; the dam + schema build regardless. (founder)
+
 ## NEXT 7 DAYS
 
 - [ ] #P0 Push the repo to GitHub — CI (AppImage / macOS / test / CodeQL / Dependabot / daily-audit) is unverified and inert until the default branch is pushed (ops)

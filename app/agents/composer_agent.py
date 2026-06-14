@@ -479,9 +479,11 @@ def run_agent_step(
         if _defer:
             completion = {"action": "block", "deferral": _defer,
                           "reason": "NOT DONE: composer reply defers work ("
-                                    + ", ".join(_defer) + "). finish it or tag "
-                                    "depends-on: / safety-gated:."}
-    except Exception:
-        pass
+                                    + ", ".join(_defer) + "). finish it or "
+                                    "register a structured hold in active_work."}
+    except Exception as _e:
+        # FAIL CLOSED — surface the gate failure, never silently allow.
+        completion = {"action": "error", "deferral": [],
+                      "reason": "completion gate unavailable: " + str(_e)}
     return {"actions": actions, "text": text, "mode": mode,
             "gated": gated_count[0], "completion": completion}

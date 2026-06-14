@@ -18,8 +18,12 @@ config + blocks his live turns -> founder-gated), and the server-authoritative,
 all-agents adjudication lives brain-side (AgDR-0054 S1/S4 + slice-4) -- this
 local hook is skippable and therefore not authoritative on its own.
 
-Stop-hook contract (Claude Code): read the hook JSON on stdin; to BLOCK print
-{"decision":"block","reason": "..."} and exit 0; to ALLOW exit 0 with no block.
+Stop-hook contract (Claude Code): this gate is driven by the active_work LEDGER,
+NOT stdin — it locates the ledger via argv[0] or $ARCHHUB_ACTIVE_WORK (the hook
+JSON on stdin carries no ledger pointer and is not read). Output contract: to
+BLOCK, print {"decision":"block","reason": "..."} and exit 0; to ALLOW, exit 0
+with no block. With no ledger registered it ALLOWS (safe default); the
+authoritative, non-skippable gate is the brain-side adjudication (AgDR-0054 S1/S4).
 """
 from __future__ import annotations
 
@@ -35,8 +39,9 @@ from typing import Callable, List, Optional
 CAP_DEFAULT = 12  # max consecutive blocks before escalate (anti-infinite-grind)
 
 # THE NO-LATER DETECTOR (shared by every surface: Claude Code hook, the ArchHub
-# composer, the ai.plan planner). Bare deferral is banned; a not-now item is
-# legal ONLY if it carries a justified-hold tag (depends-on: / safety-gated:).
+# composer, the ai.plan planner). Bare deferral is banned. A legitimate not-now
+# item is a STRUCTURED gate in the active_work ledger, NOT a prose tag (a
+# co-located 'safety-gated:' in free text was a trivial bypass — removed).
 _DEFERRAL = re.compile(
     r"(?i)\b("
     r"later|for now|next session|follow[\s-]?up|to be done|for hardening|"
@@ -45,17 +50,17 @@ _DEFERRAL = re.compile(
     r"TODO|FIXME"
     r")\b"
 )
-_JUSTIFIED = re.compile(r"(?i)(depends-on:|safety-gated:)")
 
 
 def scan_deferral(text: str) -> List[str]:
-    """Return the distinct bare-deferral markers in `text`, or [] if clean OR
-    if a justified-hold tag (depends-on:/safety-gated:) is present. This is the
-    'no planning later / no partial' check applied to an agent's own output
-    (composer reply, plan body) before it may be accepted as done."""
+    """Return the distinct deferral markers in `text` (empty if clean).
+
+    A PURE detector — it flags 'later/partial/TODO/...' wherever they occur and
+    does NOT exempt on a co-located 'safety-gated:'/'depends-on:' tag, which was
+    a trivial bypass ("I'll do X later, safety-gated: n/a"). A legitimate not-now
+    item must be a STRUCTURED gate in the active_work ledger
+    (machine_resolvable=False / a depends_on field), never a word in a reply."""
     if not text:
-        return []
-    if _JUSTIFIED.search(text):
         return []
     return sorted({m.lower() for m in _DEFERRAL.findall(text)})
 
@@ -138,7 +143,8 @@ def _load(path: Path):
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Try to read stdin hook JSON for a ledger pointer; tolerate empty/no stdin.
+    # Locate the active_work ledger via argv[0] or $ARCHHUB_ACTIVE_WORK. (The
+    # Stop-hook stdin JSON carries no ledger pointer, so it is not read.)
     ledger: Optional[Path] = None
     if argv:
         ledger = Path(argv[0])

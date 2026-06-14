@@ -41,16 +41,17 @@ def test_all_done_allows():
     assert _lint_plan("all done, every sheet tagged")["action"] == "allow"
 
 
-def test_safety_gated_allows():
-    assert _lint_plan(
-        "S5 rollout safety-gated: after red-team")["action"] == "allow"
+def test_inline_tag_does_not_exempt():
+    # Closed bypass (Copilot #107): a co-located 'safety-gated:' no longer
+    # exempts a real deferral — the plan is blocked (status -> needs_rework).
+    assert _lint_plan("do it later, safety-gated: n/a")["action"] == "block"
 
 
 if __name__ == "__main__":
     cases = [
         ("bare_later_blocks", test_bare_later_blocks),
         ("all_done_allows", test_all_done_allows),
-        ("safety_gated_allows", test_safety_gated_allows),
+        ("inline_tag_not_exempt", test_inline_tag_does_not_exempt),
     ]
     failures = 0
     for name, fn in cases:

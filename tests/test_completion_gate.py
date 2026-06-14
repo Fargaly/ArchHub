@@ -104,8 +104,16 @@ def test_scan_deferral_clean_when_done():
     assert cg.scan_deferral("All gates green; nothing outstanding.") == []
 
 
-def test_scan_deferral_exempts_justified_hold():
-    assert cg.scan_deferral("S5 rollout safety-gated: after red-team") == []
+def test_scan_deferral_clean_holds_phrasing_ok():
+    # A hold phrased with NO deferral word is clean.
+    assert cg.scan_deferral("S5 rollout, gated on red-team") == []
+
+
+def test_scan_deferral_not_bypassed_by_inline_tag():
+    # Closed bypass (Copilot #107): the old blanket 'safety-gated:' exemption
+    # let "later ... safety-gated: n/a" slip — now a real deferral is flagged
+    # regardless of a co-located tag.
+    assert "later" in cg.scan_deferral("I'll do it later, safety-gated: n/a")
 
 
 def _run_standalone() -> int:

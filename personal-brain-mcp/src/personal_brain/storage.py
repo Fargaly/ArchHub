@@ -1187,8 +1187,12 @@ class BrainStore:
         itself call ``get_meta`` / ``set_meta`` (or recover via the durable load)
         without deadlocking or "cannot start a transaction within a transaction"
         — the inner statements simply join the outer transaction. This is what
-        lets the JSON-doc stores (active_work, requirement_tree) route their
-        read-modify-write through one serialised critical section.
+        lets the JSON-doc stores route their read-modify-write through one
+        serialised critical section. BOTH such stores do so for real:
+        ``active_work.ActiveWorkStore._mutate`` AND
+        ``requirement_tree.TreeStore._mutate`` (the latter wired here so its
+        ``claim_leaf`` is a genuine cross-process CAS — exactly one winner per
+        contested leaf across processes, no TOCTOU double-claim).
         """
         with self._lock:
             # Re-entrancy guard: if we're ALREADY inside a transaction (a nested

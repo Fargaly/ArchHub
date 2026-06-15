@@ -1,0 +1,56 @@
+name: Doc reconcile
+
+# DOC-01/02 — documentation always up to date.
+#
+# The merge-time gate that keeps docs/ROADMAP.md + the AgDR ledger honest:
+#   * R1 — a `- [x]` marked done with NO proof receipt → FAIL
+#   * R2 — two docs/agdr/*.md files declaring the same `id:` → FAIL
+#   * R3 — a shipped item (its PR receipt is in the merged ledger) left
+#          `- [ ]` open, or undocumented → FAIL
+#
+# Pure-stdlib, deterministic, no brain / network needed — so it runs the same
+# on a CI runner as it does locally. (tools/build_map.py is NOT run here: its
+# requirement-tree GREEN-leaf section reads the founder's live brain DB, which
+# CI has no copy of — running --check in CI would be machine-dependent. The
+# AgDR-status half of the map IS covered by the unit tests below.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: doc-reconcile-${{ github.workflow }}-${{ github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    name: ROADMAP + AgDR reconciled
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # The gate itself — stdlib only, no pip install. Fails the job (exit 1)
+      # on any drift, printing the human report to the log.
+      - name: Run doc-reconcile gate
+        run: python tools/doc_reconcile.py
+
+      # The gate's own test suite — proves R1/R2/R3 catch drift (RED) and the
+      # reconciled real files pass (GREEN), plus the build-map derivation.
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run doc-reconcile gate tests
+        run: python -m pytest tests/test_doc_reconcile.py -v

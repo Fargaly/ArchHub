@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ArchHub marketing + docs site. Static Astro 4 build off COMMITTED content under src/content/ + public/ — no live daemon needed. Maintainers refresh that content with `npm run refresh-content`.",
+  "description": "ArchHub marketing + docs site. Static Astro 6 build off COMMITTED content under src/content/ + public/ — no live daemon needed. Maintainers refresh that content with `npm run refresh-content`. NOTE: Astro 6 needs Node >=22.12.0 (see engines.node + web/Dockerfile build base).",
   "scripts": {
     "build": "astro build",
     "dev": "astro dev",
@@ -21,6 +21,6 @@
   },
   "devDependencies": {},
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=22.12.0"
   }
 }

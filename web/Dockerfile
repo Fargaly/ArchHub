@@ -8,7 +8,12 @@
 # cloud_backend which also deploys to Fly.
 
 # ---- build stage -----------------------------------------------------------
-FROM node:20-alpine AS build
+# Astro 6 (see package.json `astro: ^6.x`) REQUIRES Node 22+ — it dropped
+# Node 18 AND Node 20 (min 22.12.0). node:20-alpine made `npm run build`
+# fail at go-live ("not supported by Astro"); node:22-alpine is the correct
+# base. Keep this in lock-step with package.json `engines.node` (>=22.12.0)
+# — that declarative field is the single source of the version contract.
+FROM node:22-alpine AS build
 WORKDIR /app
 
 # Install deps from the committed lockfile for reproducibility.

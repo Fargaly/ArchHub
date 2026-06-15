@@ -13,11 +13,19 @@ Transport (mirrors tools/brainwrap.py + personal_brain.client_hook EXACTLY):
   1. DAEMON (preferred). If the brain daemon answers on $BRAIN_DAEMON_URL,
      every read/write goes over MCP `brain.work_*`. This funnels ALL clients
      (Claude Code / Codex / Gemini / composer / this hook) through the daemon's
-     single BrainStore + RLock — so the atomic `update_meta` critical section
-     actually protects cross-process concurrency.
+     SINGLE BrainStore, so within that one process the RLock fully serialises
+     concurrent threads. (The RLock alone is IN-PROCESS only — it does NOT make
+     a claim safe across processes; that guarantee comes from `update_meta`
+     wrapping its read-decide-write in a `BEGIN IMMEDIATE` transaction, see
+     storage.py — so even two separate processes racing on the SAME brain.db
+     serialise correctly.)
   2. IN-PROCESS. If the daemon is down BUT `personal_brain` imports, open the
      SAME on-disk `brain.db` directly (WAL-safe) and call the ledger functions
-     in-process. Still the ONE store — just reached without the daemon.
+     in-process. Still the ONE store — just reached without the daemon. Two
+     processes BOTH on this path stay correct because the claim's critical
+     section is serialised by SQLite's `BEGIN IMMEDIATE` RESERVED lock (the
+     RLock would NOT be enough here — each process has its own), not merely by
+     "being the one store".
   3. DEGRADED (file cache). Only when the brain is genuinely unreachable AND the
      package can't be imported (e.g. a stripped contributor box) do we fall back
      to the legacy JSON file — and we say so loudly via `transport()`. This is a

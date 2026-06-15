@@ -149,10 +149,14 @@ class ActiveWorkStore:
     TWO hard guarantees the court demanded (and the v0 forked copy lacked):
 
       * ATOMIC mutation. Every read-modify-write goes through ONE
-        ``BrainStore.update_meta`` call, which holds the store's RLock across
-        the WHOLE get→decide→set. The decide step is INSIDE the lock, so two
-        racing pulls can never both read OPEN and both claim (no TOCTOU
-        double-claim, no lost update).
+        ``BrainStore.update_meta`` call, whose critical section is serialised on
+        TWO levels: the store's RLock (across THREADS in one process) AND a
+        ``BEGIN IMMEDIATE`` RESERVED-lock transaction (across CONNECTIONS /
+        PROCESSES). The decide step is INSIDE both, so two racing pulls — whether
+        two threads OR two separate daemon/hook processes on the same brain.db —
+        can never both read OPEN and both claim (no TOCTOU double-claim, no lost
+        update). The RLock alone is in-process only; the cross-process guarantee
+        rests on BEGIN IMMEDIATE (see storage.update_meta).
 
       * DURABLE read. A corrupt/partial blob is NEVER silently dropped: the bad
         bytes are quarantined under a ``corrupt_*`` key, and the loader RECOVERS

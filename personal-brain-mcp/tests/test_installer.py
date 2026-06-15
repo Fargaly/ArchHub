@@ -59,11 +59,16 @@ def test_claude_code_idempotent(fake_home):
     installer.install_all(only=["claude-code"])
     res2 = installer.install_all(only=["claude-code"])
     # Second run: no functional change (notes may say "replaced" but config
-    # converges to same shape).
+    # converges to same shape). UserPromptSubmit now carries TWO brain mcp_tool
+    # hooks — RECALL (brain.context) AND the DRIVE (brain.work_assigned_block) —
+    # and re-install must dedupe each to exactly one (never stack).
     cfg = json.loads(installer._claude_code_path().read_text())
     entries = cfg["hooks"]["UserPromptSubmit"]
-    brain_entries = [e for e in entries if e.get("server") == "brain"]
-    assert len(brain_entries) == 1, "must dedupe brain hook entries"
+    tools = [e.get("tool") for e in entries if e.get("server") == "brain"]
+    assert tools.count("brain.context") == 1, "must dedupe brain.context hook"
+    assert tools.count("brain.work_assigned_block") == 1, (
+        "must dedupe the brain.work_assigned_block DRIVE hook")
+    assert len(tools) == 2, f"expected exactly the 2 brain pre-prompt hooks, got {tools}"
 
 
 def test_claude_code_preserves_existing_servers(fake_home):
@@ -87,10 +92,14 @@ def test_claude_code_preserves_existing_servers(fake_home):
     cmds = [e for e in cfg["hooks"]["UserPromptSubmit"]
              if e.get("type") == "command"]
     assert any(c.get("command") == "echo hi" for c in cmds)
-    # brain hook added
-    brains = [e for e in cfg["hooks"]["UserPromptSubmit"]
-               if e.get("server") == "brain"]
-    assert len(brains) == 1
+    # brain hooks added — BOTH the recall (brain.context) and the DRIVE
+    # (brain.work_assigned_block) pre-prompt hooks, alongside the preserved user
+    # command hook.
+    brain_tools = [e.get("tool") for e in cfg["hooks"]["UserPromptSubmit"]
+                   if e.get("server") == "brain"]
+    assert "brain.context" in brain_tools
+    assert "brain.work_assigned_block" in brain_tools
+    assert len(brain_tools) == 2
 
 
 def test_dry_run_does_not_write(fake_home):

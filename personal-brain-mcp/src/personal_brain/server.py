@@ -1988,6 +1988,19 @@ def build_server(
         print(f"[brain] roma tools registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
+    # BRV-01: the brain-driver active-work ledger (brain.work_*). The
+    # server-authoritative, all-agents drive — every runtime pulls its next
+    # leaf from brain.work_next + reports completion to brain.work_release.
+    # ADDITIVE: one brain_meta JSON doc (key 'active_work_v1'), no new table,
+    # no schema migration, no touch of fragments/skills. Fail-soft like the
+    # families above so the core tools never depend on it building.
+    try:
+        from .active_work import register_active_work_tools
+        register_active_work_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] active_work tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
     return mcp
 
 

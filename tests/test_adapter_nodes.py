@@ -377,8 +377,13 @@ def test_build_create_script_parameter_set_items_show_in_skipped():
     items = [
         {"revit_element_id": 1, "revit_parameters": {"X": 1}},
         # Sandwich with a real creatable item to confirm only the
-        # param-set is skipped.
-        {"revit_directshape_category": "OST_GenericModel"},
+        # param-set is skipped. CON-01: a DirectShape is only "creatable"
+        # when it carries real geometry — a geometry-less one is now an
+        # honest error, not a fabricated empty element.
+        {"revit_directshape_category": "OST_GenericModel",
+         "revit_geometry_json": {"vertices": [[0, 0, 0], [1, 0, 0],
+                                              [0, 1, 0]],
+                                 "faces": [[0, 1, 2]]}},
     ]
     script = build_create_script(items)
     assert "skipped = new System.Collections.Generic.List<int> { 0 }" in script

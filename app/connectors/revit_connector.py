@@ -1583,13 +1583,26 @@ def _receive_from_speckle_op(instance: str = "",
             return _broker_offline_result("revit.receive_from_speckle")
     result = receive_from_speckle(source_url=source_url,
                                     instance=instance or None)
-    if result.get("status") == "error":
-        return OpResult.fail(result.get("error", ""),
-                              "revit.receive_from_speckle")
+    # Honest status (CON-02): receive_from_speckle now derives its status
+    # from the Revit-side per-item outcome, not just the /exec HTTP code.
+    # "error" = nothing created (a failed write — never report ok=True);
+    # "partial" = some created + some failed (ok=True, but carry the error
+    # detail so the partial failure is visible); "ok" = clean.
+    status = result.get("status")
+    made = result.get("created_count", 0)
+    errs = result.get("error_count", 0)
+    if status == "error":
+        return OpResult.fail(
+            result.get("error",
+                       "Revit created no elements from the received model."),
+            "revit.receive_from_speckle")
+    preview = f"created={made} errors={errs}"
+    if status == "partial":
+        preview = f"PARTIAL · {preview}"
     return OpResult(ok=True, value=result,
                      op_id="revit.receive_from_speckle",
-                     value_preview=f"created={(result.get('result') or {}).get('created_count', 0)} "
-                                   f"errors={(result.get('result') or {}).get('error_count', 0)}")
+                     error=result.get("error", "") if status == "partial" else "",
+                     value_preview=preview)
 
 
 def _batch_set_parameters_op(instance: str = "",
@@ -1610,13 +1623,23 @@ def _batch_set_parameters_op(instance: str = "",
     from connectors.revit_speckle_ops import batch_set_parameters
     result = batch_set_parameters(source_url=source_url,
                                     instance=instance or None)
-    if result.get("status") == "error":
-        return OpResult.fail(result.get("error", ""),
-                              "revit.batch_set_parameters")
+    # Honest status (CON-02): a parameter write that updated zero elements
+    # while erroring is a failed write — never report ok=True for it.
+    status = result.get("status")
+    made = result.get("updated_count", 0)
+    errs = result.get("error_count", 0)
+    if status == "error":
+        return OpResult.fail(
+            result.get("error",
+                       "Revit updated no elements' parameters."),
+            "revit.batch_set_parameters")
+    preview = f"updated={made} errors={errs}"
+    if status == "partial":
+        preview = f"PARTIAL · {preview}"
     return OpResult(ok=True, value=result,
                      op_id="revit.batch_set_parameters",
-                     value_preview=f"updated={(result.get('result') or {}).get('updated_count', 0)} "
-                                   f"errors={(result.get('result') or {}).get('error_count', 0)}")
+                     error=result.get("error", "") if status == "partial" else "",
+                     value_preview=preview)
 
 
 # ── connector ───────────────────────────────────────────────────────

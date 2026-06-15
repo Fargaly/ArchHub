@@ -233,9 +233,30 @@ class MemoryGraph:
     # ── factory helpers ──
 
     @classmethod
-    def open(cls, path: Optional[Path | str] = None) -> "MemoryGraph":
+    def open(
+        cls,
+        path: Optional[Path | str] = None,
+        *,
+        brain_store: Any = None,
+    ) -> "MemoryGraph":
         """Open (creating if missing) the graph at `path`. None →
-        default_graph_path(). Pass ':memory:' for an in-RAM graph."""
+        default_graph_path(). Pass ':memory:' for an in-RAM graph.
+
+        ONE-SYSTEM unify (ONE-SYSTEM-PLAN-BEFORE-BUILD mandate, 2026-05-28):
+        pass ``brain_store=<BrainStore>`` to back this graph with the personal
+        brain's ``brain.db`` instead of a separate ``graph.sqlite``. The app's
+        knowledge graph and the daemon's brain then read/write ONE store — a
+        node added here is the same Fragment row the brain serves, so the
+        manual ``tools/brain_unify.py`` graph→brain copy is no longer needed.
+        The returned object presents the full ``MemoryGraph`` API
+        (``MemoryGraphStore`` from ``personal_brain.graph_adapter``), so every
+        caller (extractors / query / sync / bridge) is unchanged.
+
+        Without ``brain_store`` the standalone ``graph.sqlite`` behaviour is
+        preserved exactly (back-compat for any path that hasn't been pointed at
+        the unified store yet)."""
+        if brain_store is not None:
+            return cls._open_unified(brain_store)  # type: ignore[return-value]
         if path is None:
             path = default_graph_path()
         if str(path) != ":memory:":
@@ -245,6 +266,15 @@ class MemoryGraph:
         else:
             conn = sqlite3.connect(":memory:")
         return cls(conn)
+
+    @staticmethod
+    def _open_unified(brain_store: Any) -> Any:
+        """Return a MemoryGraphStore (MemoryGraph-compatible) backed by the
+        given BrainStore. Imported lazily so app/memory keeps working even when
+        personal-brain-mcp isn't on the path — but if a brain_store was passed,
+        the adapter MUST be importable (the caller asked for unify)."""
+        from personal_brain.graph_adapter import MemoryGraphStore
+        return MemoryGraphStore(brain_store)
 
     def close(self) -> None:
         try:

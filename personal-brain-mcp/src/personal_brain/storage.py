@@ -1262,6 +1262,337 @@ class BrainStore:
         resp.write_ms = (_t.perf_counter() - t0) * 1000.0
         return resp
 
+    # ── MemoryGraph absorb (ONE-SYSTEM unify — AgDR-0042 ⇄ AgDR-0044) ──────
+    #
+    # The app's knowledge-graph store (app/memory/graph.py MemoryGraph,
+    # graph.sqlite) and this brain store (brain.db) used to be TWO disjoint
+    # SQLite files reconciled only by the manual band-aid tools/brain_unify.py
+    # (the ONE-SYSTEM-PLAN-BEFORE-BUILD debt the founder flagged 2026-05-28).
+    # These primitives let the brain store BE the graph: a MemoryGraph node is
+    # persisted as ONE Fragment row in brain.db using the EXACT id + kind
+    # convention brain_unify.unify() established (`graph:<node.id>`,
+    # capability→FACT/predicate="capability", decision→DOCUMENT/predicate=
+    # "decision", skill→FACT/predicate=<kind>), so a fact written through
+    # either surface is the SAME row. graph_adapter.MemoryGraphStore wraps
+    # these to present the full MemoryGraph API over this one store — no second
+    # store, no sync, no schema migration (edges are kept BOTH as first-class
+    # edge fragments AND as the legacy extra["graph_edges"] sidecar so prior
+    # readers and the topology queries both keep working).
+
+    GRAPH_NODE_ID_PREFIX = "graph:"
+    GRAPH_EDGE_ID_PREFIX = "graphedge:"
+    # graph node.kind → (FragmentKind, predicate). Mirrors brain_unify._KIND_MAP
+    # exactly so both surfaces encode identically. Unmapped kinds fall back to
+    # FACT with the raw kind as predicate (nothing is ever dropped).
+    _GRAPH_KIND_MAP: dict[str, "tuple[FragmentKind, str]"] = {
+        "capability": (FragmentKind.FACT, "capability"),
+        "decision": (FragmentKind.DOCUMENT, "decision"),
+        "skill": (FragmentKind.FACT, "skill"),
+    }
+
+    def write_graph_node(
+        self,
+        node: "Any",
+        *,
+        owner_user: str = "founder",
+        scope: "Scope" = Scope.PROJECT,
+        visibility: "Visibility" = Visibility.PRIVATE,
+        contributing_agent: str = "memory_graph",
+    ) -> bool:
+        """Persist a MemoryGraph-shaped node as a Fragment in THIS brain.db.
+
+        `node` is duck-typed to app.memory.graph.MemoryNode — it must expose
+        ``id``, ``kind``, ``label``, ``props``. The row id is the canonical
+        ``graph:<node.id>`` so it is byte-for-byte the same fragment
+        brain_unify.unify() would have written; the original graph kind +
+        props ride in ``extra`` so the reverse decode is lossless. Returns
+        True on insert, False on update (mirrors write_fragment)."""
+        kind, predicate = self._GRAPH_KIND_MAP.get(
+            node.kind, (FragmentKind.FACT, node.kind)
+        )
+        label = node.label or node.id
+        props = dict(node.props or {})
+        # Deterministic props blob so re-writes of an unchanged node are
+        # idempotent (matches brain_unify._serialize_props).
+        if props:
+            try:
+                props_blob = json.dumps(props, sort_keys=True, ensure_ascii=False)
+            except (TypeError, ValueError):
+                props_blob = repr(sorted(props.items()))
+        else:
+            props_blob = ""
+        text = f"{label} {props_blob}".rstrip() if props_blob else label
+        extra: dict[str, Any] = {
+            "graph_node_id": node.id,
+            "graph_kind": node.kind,
+        }
+        if props:
+            extra["graph_props"] = props
+        # Preserve the legacy edge sidecar (incident edges) so prior readers
+        # (and the brain_unify tests) keep seeing extra["graph_edges"].
+        extra["graph_edges"] = self._incident_edge_dicts(node.id)
+        frag = Fragment(
+            id=f"{self.GRAPH_NODE_ID_PREFIX}{node.id}",
+            kind=kind,
+            text=text,
+            subject=label,
+            predicate=predicate,
+            object=None,
+            scope=scope,
+            visibility=visibility,
+            owner_user=owner_user,
+            confidence=Confidence.EXTRACTED,
+            provenance=Provenance(
+                contributing_agent=contributing_agent,
+                contributing_user=owner_user,
+                created_at=datetime.now(timezone.utc),
+            ),
+            extra=extra,
+        )
+        return self.write_fragment(frag)
+
+    def get_graph_node(self, node_id: str) -> Optional[dict[str, Any]]:
+        """Read a graph node back as a plain dict ``{id, kind, label, props}``
+        (the MemoryNode shape) from its Fragment row. None if absent.
+
+        The original graph kind is recovered from ``extra.graph_kind``
+        (authoritative — survives the lossy decision→DOCUMENT fold); props
+        from ``extra.graph_props``. This is the reverse of write_graph_node,
+        so a node written via the MemoryGraph surface round-trips exactly."""
+        frag = self.get_fragment(f"{self.GRAPH_NODE_ID_PREFIX}{node_id}")
+        if frag is None:
+            return None
+        return self._fragment_to_graph_node(frag)
+
+    def all_graph_nodes(self, kind: Optional[str] = None) -> list[dict[str, Any]]:
+        """Every graph node (optionally filtered by ORIGINAL graph kind),
+        as MemoryNode-shaped dicts. Walks the fragment rows whose id carries
+        the ``graph:`` prefix."""
+        like = f"{self.GRAPH_NODE_ID_PREFIX}%"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM fragments WHERE id LIKE ? ESCAPE '\\'",
+                (like.replace("_", r"\_"),),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            frag = _row_to_fragment(r)
+            node = self._fragment_to_graph_node(frag)
+            if kind is not None and node["kind"] != kind:
+                continue
+            out.append(node)
+        return out
+
+    def count_graph_nodes(self, kind: Optional[str] = None) -> int:
+        """Count graph nodes (optionally by original graph kind)."""
+        if kind is None:
+            like = f"{self.GRAPH_NODE_ID_PREFIX}%".replace("_", r"\_")
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM fragments "
+                    "WHERE id LIKE ? ESCAPE '\\'",
+                    (like,),
+                ).fetchone()
+            return int(row["n"]) if row else 0
+        # kind-filtered: decode is needed (graph kind lives in extra), so
+        # fall back to the python filter.
+        return len(self.all_graph_nodes(kind=kind))
+
+    def remove_graph_node(self, node_id: str) -> bool:
+        """Delete a graph node fragment AND every edge fragment incident to
+        it (keeps the unified graph consistent, mirroring
+        MemoryGraph.remove_node). Returns False if the node didn't exist."""
+        with self._lock:
+            # Drop incident edge fragments first.
+            for ed in self._incident_edge_dicts(node_id):
+                eid = self._edge_fragment_id(
+                    ed["source"], ed["target"], ed["relation"]
+                )
+                self._conn.execute("DELETE FROM fragments WHERE id = ?", (eid,))
+            cur = self._conn.execute(
+                "DELETE FROM fragments WHERE id = ?",
+                (f"{self.GRAPH_NODE_ID_PREFIX}{node_id}",),
+            )
+            return cur.rowcount > 0
+
+    # ── graph edges (first-class edge fragments) ──────────────────────────
+
+    # Edge id separator — a printable, id-safe sequence that cannot appear in a
+    # MemoryGraph node id (node ids use ':' / '.' / alnum, never '|'), so the
+    # (source, target, relation) triple round-trips out of the id unambiguously.
+    GRAPH_EDGE_ID_SEP = "||"
+
+    def _edge_fragment_id(self, source: str, target: str, relation: str) -> str:
+        sep = self.GRAPH_EDGE_ID_SEP
+        return f"{self.GRAPH_EDGE_ID_PREFIX}{source}{sep}{target}{sep}{relation}"
+
+    def write_graph_edge(
+        self,
+        source: str,
+        target: str,
+        relation: str,
+        *,
+        confidence: str = "EXTRACTED",
+        props: Optional[dict[str, Any]] = None,
+        owner_user: str = "founder",
+        scope: "Scope" = Scope.PROJECT,
+        contributing_agent: str = "memory_graph",
+    ) -> bool:
+        """Persist a graph edge as a dedicated Fragment (kind=TRACE,
+        predicate='graph_edge'). The (source,target,relation) triple is the
+        natural key, encoded in the fragment id, so re-writing the same triple
+        upserts (matches MemoryGraph.add_edge semantics). Endpoint existence
+        is the caller's responsibility (the adapter enforces it, exactly like
+        MemoryGraph.add_edge)."""
+        props = dict(props or {})
+        try:
+            props_blob = json.dumps(props, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            props_blob = "{}"
+        frag = Fragment(
+            id=self._edge_fragment_id(source, target, relation),
+            kind=FragmentKind.TRACE,
+            text=f"{source} -{relation}-> {target}",
+            subject=source,
+            predicate="graph_edge",
+            object=target,
+            scope=scope,
+            visibility=Visibility.PRIVATE,
+            owner_user=owner_user,
+            confidence=Confidence.EXTRACTED,
+            provenance=Provenance(
+                contributing_agent=contributing_agent,
+                contributing_user=owner_user,
+                created_at=datetime.now(timezone.utc),
+            ),
+            extra={
+                "graph_edge": True,
+                "source": source,
+                "target": target,
+                "relation": relation,
+                "confidence": confidence,
+                "props": props,
+                "props_blob": props_blob,
+            },
+        )
+        return self.write_fragment(frag)
+
+    def all_graph_edges(
+        self, relation: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Every graph edge as a plain dict
+        ``{source, target, relation, confidence, props}``."""
+        like = f"{self.GRAPH_EDGE_ID_PREFIX}%".replace("_", r"\_")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM fragments WHERE id LIKE ? ESCAPE '\\'",
+                (like,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            frag = _row_to_fragment(r)
+            ed = self._fragment_to_graph_edge(frag)
+            if relation is not None and ed["relation"] != relation:
+                continue
+            out.append(ed)
+        return out
+
+    def graph_edges_incident(
+        self, node_id: str, *, direction: str = "out",
+        relation: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Edges incident to ``node_id`` — mirrors MemoryGraph.neighbors.
+        direction in {'out','in','both'}; relation filters all three."""
+        if direction not in ("out", "in", "both"):
+            raise ValueError(
+                f"graph_edges_incident: direction must be 'out'|'in'|'both', "
+                f"got {direction!r}"
+            )
+        out: list[dict[str, Any]] = []
+        for ed in self.all_graph_edges(relation=relation):
+            if direction == "out" and ed["source"] == node_id:
+                out.append(ed)
+            elif direction == "in" and ed["target"] == node_id:
+                out.append(ed)
+            elif direction == "both" and (
+                ed["source"] == node_id or ed["target"] == node_id
+            ):
+                out.append(ed)
+        return out
+
+    def count_graph_edges(self, relation: Optional[str] = None) -> int:
+        if relation is None:
+            like = f"{self.GRAPH_EDGE_ID_PREFIX}%".replace("_", r"\_")
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM fragments "
+                    "WHERE id LIKE ? ESCAPE '\\'",
+                    (like,),
+                ).fetchone()
+            return int(row["n"]) if row else 0
+        return len(self.all_graph_edges(relation=relation))
+
+    def remove_graph_edge(self, source: str, target: str, relation: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM fragments WHERE id = ?",
+                (self._edge_fragment_id(source, target, relation),),
+            )
+            return cur.rowcount > 0
+
+    def _incident_edge_dicts(self, node_id: str) -> list[dict[str, Any]]:
+        """The incident edges of ``node_id`` as the legacy sidecar shape
+        (sorted for determinism). Used to keep extra['graph_edges'] populated
+        on node fragments so brain_unify-era readers keep working."""
+        incident = self.graph_edges_incident(node_id, direction="both")
+        sidecar = [
+            {
+                "source": e["source"],
+                "target": e["target"],
+                "relation": e["relation"],
+                "confidence": e["confidence"],
+                "props": e["props"],
+            }
+            for e in incident
+        ]
+        return sorted(
+            sidecar,
+            key=lambda e: (e["source"], e["target"], e["relation"]),
+        )
+
+    @staticmethod
+    def _fragment_to_graph_node(frag: "Fragment") -> dict[str, Any]:
+        extra = frag.extra or {}
+        node_id = extra.get("graph_node_id")
+        if not node_id and frag.id.startswith(BrainStore.GRAPH_NODE_ID_PREFIX):
+            node_id = frag.id[len(BrainStore.GRAPH_NODE_ID_PREFIX):]
+        # Original graph kind is authoritative in extra; fall back to the
+        # predicate (which brain_unify set to the graph kind), then "".
+        kind = extra.get("graph_kind") or frag.predicate or ""
+        props = extra.get("graph_props")
+        if not isinstance(props, dict):
+            props = {}
+        return {
+            "id": node_id,
+            "kind": kind,
+            "label": frag.subject or node_id or "",
+            "props": dict(props),
+        }
+
+    @staticmethod
+    def _fragment_to_graph_edge(frag: "Fragment") -> dict[str, Any]:
+        extra = frag.extra or {}
+        props = extra.get("props")
+        if not isinstance(props, dict):
+            props = {}
+        return {
+            "source": extra.get("source") or frag.subject or "",
+            "target": extra.get("target") or frag.object or "",
+            "relation": extra.get("relation") or "",
+            "confidence": extra.get("confidence") or "EXTRACTED",
+            "props": dict(props),
+        }
+
 
 # ─────────────────────────── helpers ────────────────────────────────────
 

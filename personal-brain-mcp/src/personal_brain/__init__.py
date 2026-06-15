@@ -27,6 +27,7 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 from .storage import BrainStore  # noqa: F401
+from .graph_adapter import MemoryGraphStore  # noqa: F401
 from .models import (  # noqa: F401
     Fragment,
     FragmentKind,
@@ -52,6 +53,7 @@ from .personal_cloud_sync import PersonalCloudSync, PersonalSyncResult  # noqa: 
 
 __all__ = [
     "BrainStore",
+    "MemoryGraphStore",
     "CloudConfig",
     "load_cloud_config",
     "save_cloud_config",

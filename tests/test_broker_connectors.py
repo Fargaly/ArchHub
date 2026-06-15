@@ -219,6 +219,10 @@ class TestOpMetadata:
             "revit.run_script", "revit.import_mesh",
             # AgDR-0017: receive creates native elements → destructive.
             "revit.receive_from_speckle",
+            # CON-02: send writes a Speckle commit to disk (+ optional
+            # remote push) — an outside-world side effect → destructive,
+            # so it is approval-gated like every other write.
+            "revit.send_to_speckle",
             # AgDR-0018: batch_set mutates existing elements.
             "revit.batch_set_parameters",
         }
@@ -226,14 +230,24 @@ class TestOpMetadata:
     def test_autocad_destructive_set(self):
         c = autocad_connector.AutoCADConnector()
         destructive = {o.op_id for o in c.ops() if o.destructive}
-        assert destructive == {"autocad.run_command", "autocad.set_layer"}
+        assert destructive == {
+            "autocad.run_command", "autocad.set_layer",
+            # CON-02: send writes a Speckle commit to disk (+ optional
+            # remote push) → destructive, approval-gated like other writes.
+            "autocad.send_to_speckle",
+        }
 
     def test_max_destructive_set(self):
         c = max_connector.MaxConnector()
         destructive = {o.op_id for o in c.ops() if o.destructive}
         # AgDR-0041 P1: import_mesh mutates the scene → destructive.
         # (export_viewport is a read-only viewport grab.)
-        assert destructive == {"max.run_maxscript", "max.import_mesh"}
+        assert destructive == {
+            "max.run_maxscript", "max.import_mesh",
+            # CON-02: send writes a Speckle commit to disk (+ optional
+            # remote push) → destructive, approval-gated like other writes.
+            "max.send_to_speckle",
+        }
 
     def test_every_op_has_host_and_fn(self):
         for conn_module, _ in _TRIO:

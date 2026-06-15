@@ -1924,19 +1924,24 @@ class RevitConnector(Connector):
                 fn=_import_mesh,
             ),
             # ── M2-Python (AgDR-0017) — Revit ↔ Speckle ────────
-            # NB: send_to_speckle is kind="read" because it does
-            # NOT mutate Revit state — it ships an upstream value
-            # through SpeckleWire. The connector-op `kind`
-            # describes the op's effect on the HOST. receive does
-            # create native Revit elements → kind="action",
-            # destructive=True.
+            # CON-02: send_to_speckle is kind="action" + destructive=True.
+            # It calls SpeckleWire.send, which WRITES a commit to .speckle/
+            # on disk and OPTIONALLY pushes to a remote Speckle Server. Per
+            # the base contract a side effect on the outside world is an
+            # ACTION — read means "no side effects". The connector-op `kind`
+            # describes the op's effect on the WORLD, not only on the host;
+            # "does not mutate Revit" does not make a disk/remote write a
+            # read. As an action it is approval-gated by default
+            # (USER-AGENCY) via the kind-derived policy. receive likewise
+            # creates native Revit elements → kind="action", destructive.
             ConnectorOp(
                 op_id="revit.send_to_speckle", host="revit",
-                kind="read",
+                kind="action",
                 label="Send to Speckle",
-                description="Wrap upstream value + write through "
-                            "SpeckleWire. Optional push to a "
-                            "Speckle Server. Does not mutate Revit.",
+                description="Wrap upstream value + write a Speckle commit "
+                            "to disk (.speckle/), optionally pushing to a "
+                            "Speckle Server. Writes to disk/remote — does "
+                            "not mutate Revit.",
                 inputs=[
                     inst,
                     ParamSpec(id="value", label="Value", type="any",
@@ -1956,7 +1961,7 @@ class RevitConnector(Connector):
                               help="Speckle Server URL "
                                    "(http://localhost:3000 for local)."),
                 ],
-                output_type="any", destructive=False,
+                output_type="any", destructive=True,
                 fn=_send_to_speckle_op,
             ),
             ConnectorOp(

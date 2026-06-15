@@ -31,8 +31,11 @@ def test_acad_send_to_speckle_op_registered():
     op = next((o for o in acad.ops()
                 if o.op_id == "autocad.send_to_speckle"), None)
     assert op is not None
-    assert op.kind == "read"  # does NOT mutate AutoCAD
-    assert op.destructive is False
+    # CON-02: writes a Speckle commit to disk (+ optional remote push) —
+    # an outside-world side effect — so it is an ACTION, not a read, even
+    # though it does NOT mutate AutoCAD. As an action it is approval-gated.
+    assert op.kind == "action"
+    assert op.destructive is True
 
 
 def test_max_send_to_speckle_op_registered():
@@ -41,8 +44,11 @@ def test_max_send_to_speckle_op_registered():
     op = next((o for o in mx.ops()
                 if o.op_id == "max.send_to_speckle"), None)
     assert op is not None
-    assert op.kind == "read"
-    assert op.destructive is False
+    # CON-02: writes a Speckle commit to disk (+ optional remote push) —
+    # an outside-world side effect — so it is an ACTION, not a read, even
+    # though it does NOT mutate 3ds Max. As an action it is approval-gated.
+    assert op.kind == "action"
+    assert op.destructive is True
 
 
 # ─── 2. ops execute end-to-end through SpeckleWire ───────────────────

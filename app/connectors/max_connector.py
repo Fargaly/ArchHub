@@ -630,13 +630,21 @@ class MaxConnector(Connector):
                 fn=_import_mesh,
             ),
             # ── M5 parity (AgDR-0017 send-pattern, 3ds Max symmetric)
+            # CON-02: kind="action" + destructive=True. This op calls
+            # SpeckleWire.send, which WRITES a commit to .speckle/ on disk
+            # and OPTIONALLY pushes to a remote Speckle Server. Per the base
+            # contract a side effect on the outside world is an ACTION, not a
+            # read — "does not mutate 3ds Max" is irrelevant to that. As an
+            # action it is approval-gated by default (USER-AGENCY), since the
+            # policy derives from this kind (ai_behaviour._connector_op_policy).
             ConnectorOp(
                 op_id="max.send_to_speckle", host="max",
-                kind="read",
+                kind="action",
                 label="Send to Speckle",
-                description="Wrap upstream value + write through "
-                            "SpeckleWire. Optional push to a Speckle "
-                            "Server. Does not mutate 3ds Max.",
+                description="Wrap upstream value + write a Speckle commit "
+                            "to disk (.speckle/), optionally pushing to a "
+                            "Speckle Server. Writes to disk/remote — does "
+                            "not mutate 3ds Max.",
                 inputs=[
                     inst,
                     ParamSpec(id="value", label="Value", type="any",
@@ -656,7 +664,7 @@ class MaxConnector(Connector):
                               help="Speckle Server URL "
                                    "(http://localhost:3000 for local)."),
                 ],
-                output_type="any", destructive=False,
+                output_type="any", destructive=True,
                 fn=_max_send_to_speckle_op,
             ),
         ]

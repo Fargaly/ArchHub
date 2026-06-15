@@ -344,8 +344,17 @@ class _FakeRouter:
 
 
 def test_get_provider_stats_with_router():
+    # APP-01 (court-root): get_provider_stats is now NON-BLOCKING — the
+    # cold call returns the {0,0} fallback instantly and the real counts
+    # land on the background pool (configured_providers can reach a slow
+    # LM Studio probe).  Poll for the fill-in, exactly like get_models.
+    import time
     b = _bridge_module.ArchHubBridge(router=_FakeRouter())
+    deadline = time.time() + 5
     out = json.loads(b.get_provider_stats())
+    while time.time() < deadline and out.get("configured", 0) == 0:
+        time.sleep(0.05)
+        out = json.loads(b.get_provider_stats())
     assert out["configured"] == 3
     assert out["blocked"] == 1
 

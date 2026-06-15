@@ -659,6 +659,14 @@ class ArchHubBridge(QObject):
     # SettingsTab (settings_dialog.py) and the JSX SettingsModal correlate by
     # request_id, so the click stays responsive and the allowlist is empty.
     settings_op_done = pyqtSignal(str)              # (result_json) — Settings housekeeping op finished
+    # APP-01 (court-root): the memory-fact MUTATIONS (add/update/forget)
+    # called cloud_client._request synchronously in the @pyqtSlot body —
+    # a full HTTP round-trip on the Qt main thread on a slow/down network.
+    # Converted to the same off-thread idiom: the slot submits the write
+    # to _bg_pool, returns {async, request_id} instantly, and emits this
+    # signal with the real result + request_id when the write lands (the
+    # JSX correlates by request_id, like connector_op_done / settings_op_done).
+    memory_op_done   = pyqtSignal(str)              # (result_json) — memory-fact write finished
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None,
@@ -1968,49 +1976,88 @@ class ArchHubBridge(QObject):
             f"memory_facts:{q}", _work, empty={},
             signal_name="memory_changed"))
 
+    # ─── Memory mutations ──────────────────────────────────────
+    # APP-01 (court-root) — every mutation is OFF-THREAD.  Each does a
+    # cloud_client._request HTTP round-trip; run inline on the Qt main
+    # thread that froze the UI for the full network timeout.  The shared
+    # `_memory_write_async` helper submits the write to `_bg_pool`,
+    # returns {async, request_id} instantly, and emits `memory_op_done`
+    # (request_id-stamped) + `memory_changed` when the write lands — the
+    # connector_op_done / settings_op_done idiom.
+    def _memory_write_async(self, build_request, *, ok_extra=None):
+        """Run a memory-fact write on the bg pool.  `build_request` is a
+        zero-arg callable returning (method, path, body|None, on_ok) where
+        on_ok maps the server json → the success payload.  Returns the
+        {async, request_id} envelope synchronously."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict):
+            payload.setdefault("request_id", request_id)
+            try:
+                self.memory_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver must not crash the backend
+
+        def _runner():
+            try:
+                method, path, body, on_ok = build_request()
+                from cloud_client import _request
+                r = _request(method, path, body=body) if body is not None \
+                    else _request(method, path)
+                if r.get("status") != "ok":
+                    _emit({"ok": False, "error": "cloud unavailable"})
+                    return
+                payload = on_ok(r.get("json") or {})
+                payload.setdefault("ok", True)
+                _emit(payload)
+                try:
+                    self.memory_changed.emit()
+                except Exception:
+                    pass  # audit: deliberate-fail-soft — fire-and-forget UI re-pull; absent receiver must not crash
+            except Exception as ex:
+                _emit({"ok": False, "error": str(ex)})
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
     @pyqtSlot(str, str, result=str)
     def add_memory_fact(self, text: str, scope: str = "user") -> str:
-        try:
-            from cloud_client import _request
-            r = _request("POST", "/v1/memory/facts",
-                          body={"text": text, "scope": scope})
-            if r["status"] != "ok":
-                return _safe_json({"error": "cloud unavailable"})
-            try: self.memory_changed.emit()
-            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-            return _safe_json(r.get("json") or {})
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+        return self._memory_write_async(lambda: (
+            "POST", "/v1/memory/facts",
+            {"text": text, "scope": scope},
+            lambda j: dict(j),
+        ))
 
-    # ─── Memory mutations ──────────────────────────────────────
     @pyqtSlot(str, str, result=str)
     def update_memory_fact(self, fact_id: str, text: str) -> str:
         try:
             fid_int = int(fact_id)
-            from cloud_client import _request
-            r = _request("PUT", f"/v1/memory/facts/{fid_int}",
-                          body={"text": text})
-            if r["status"] != "ok":
-                return _safe_json({"error": "update failed"})
-            try: self.memory_changed.emit()
-            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-            return _safe_json(r.get("json") or {})
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+        except (TypeError, ValueError):
+            return _safe_json({"async": False, "ok": False,
+                               "error": "bad fact_id"})
+        return self._memory_write_async(lambda: (
+            "PUT", f"/v1/memory/facts/{fid_int}",
+            {"text": text},
+            lambda j: dict(j),
+        ))
 
     @pyqtSlot(str, result=str)
     def forget_memory_fact(self, fact_id: str) -> str:
         try:
             fid_int = int(fact_id)
-            from cloud_client import _request
-            r = _request("DELETE", f"/v1/memory/facts/{fid_int}")
-            if r["status"] != "ok":
-                return _safe_json({"error": "forget failed"})
-            try: self.memory_changed.emit()
-            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-            return _safe_json({"ok": True, "id": fid_int})
-        except Exception as ex:
-            return _safe_json({"error": str(ex)})
+        except (TypeError, ValueError):
+            return _safe_json({"async": False, "ok": False,
+                               "error": "bad fact_id"})
+        return self._memory_write_async(lambda: (
+            "DELETE", f"/v1/memory/facts/{fid_int}",
+            None,
+            lambda j: {"id": fid_int},
+        ))
 
     # ─── Session graph ─────────────────────────────────────────
     @pyqtSlot(str, result=str)
@@ -2711,47 +2758,94 @@ class ArchHubBridge(QObject):
             })
 
     # ─── Providers (LLM vendor keys) ───────────────────────────
-    @pyqtSlot(result=str)
-    def get_providers(self) -> str:
-        """Cloud/local LLM providers in the design's Settings → Providers
-        tab shape: [{id, name, state, key, usage, col}]."""
-        try:
-            from llm_router import lmstudio_models
+    # The provider-metadata table is shared by the live slot and its
+    # static fallback so the two never drift.
+    _PROVIDERS_META = [
+        ("anthropic",  "Anthropic",   "#cc785c"),
+        ("openai",     "OpenAI",      "#10a37f"),
+        ("google",     "Google",      "#4285f4"),
+        ("openrouter", "OpenRouter",  "#a98cd6"),
+        ("ollama",     "Ollama",      "#7ec18e"),
+        ("lmstudio",   "LM Studio",   "#5fb3b3"),
+    ]
+
+    def _providers_payload(self, configured: set, *,
+                           read_keys: bool = True) -> list:
+        """Build the Settings → Providers rows from a `configured` set.
+
+        `read_keys` reads each provider's masked key from the secrets
+        store.  Those reads hit the Windows Credential Manager and
+        measured ~210 ms for six providers — a SECOND boot-thread stall
+        (on top of the LM Studio probe) since this slot is in the boot
+        pullAll batch.  So the synchronous cold fallback passes
+        `read_keys=False` (pure data, instant); the real masked keys fill
+        in on the background refresh alongside the live probe."""
+        load_api_key = None
+        if read_keys:
             from secrets_store import load_api_key
-            configured = set((self.router.configured_providers()
-                              if self.router else None) or [])
-            providers_meta = [
-                ("anthropic",  "Anthropic",   "#cc785c"),
-                ("openai",     "OpenAI",      "#10a37f"),
-                ("google",     "Google",      "#4285f4"),
-                ("openrouter", "OpenRouter",  "#a98cd6"),
-                ("ollama",     "Ollama",      "#7ec18e"),
-                ("lmstudio",   "LM Studio",   "#5fb3b3"),
-            ]
-            out = []
-            for pid, pname, col in providers_meta:
-                k = ""
+        out = []
+        for pid, pname, col in self._PROVIDERS_META:
+            k = ""
+            if read_keys:
                 try:
                     k = load_api_key(pid) or ""
                 except Exception:
                     pass
-                if pid in configured:
-                    state = "connected"
-                elif pid in ("ollama", "lmstudio"):
-                    state = "local" if pid in configured else "off"
-                else:
-                    state = "off"
-                # Mask the key for transport (last 4 chars).
-                masked = (("…" + k[-4:]) if k else "")
-                out.append({
-                    "id":     pid,
-                    "name":   pname,
-                    "state":  state,
-                    "key":    masked,
-                    "usage":  "—",
-                    "col":    col,
-                })
-            return _safe_json(out)
+            if pid in configured:
+                state = "connected"
+            elif pid in ("ollama", "lmstudio"):
+                state = "local" if pid in configured else "off"
+            else:
+                state = "off"
+            masked = (("…" + k[-4:]) if k else "")
+            out.append({
+                "id":     pid,
+                "name":   pname,
+                "state":  state,
+                "key":    masked,
+                "usage":  "—",
+                "col":    col,
+            })
+        return out
+
+    @pyqtSlot(result=str)
+    def get_providers(self) -> str:
+        """Cloud/local LLM providers in the design's Settings → Providers
+        tab shape: [{id, name, state, key, usage, col}].
+
+        APP-01 (court-root) — NON-BLOCKING.  `router.configured_providers()`
+        calls `llm_detector.probe_lmstudio` (and probes Ollama), which on a
+        HALF-OPEN LM Studio port pays the full ~1.5 s `urlopen` timeout.
+        This slot is in the boot `pullAll` batch (`app-boot.jsx`), so that
+        stall froze the app on launch.  Routed through `_cached_async` (the
+        same idiom as `get_models`): the static fallback (keys present, no
+        live probe) renders instantly, the real probe runs on the
+        background pool, and `hosts_changed` fires so the JS re-pulls."""
+        if not self.router:
+            # No router → no probe needed, but the masked-key reads still
+            # hit the credential store (~210 ms), so do them off-thread too:
+            # cold fallback is the cheap no-key view, the keys fill in on
+            # the background refresh.
+            def _work_keys_only():
+                return self._providers_payload(set(), read_keys=True)
+            try:
+                return _safe_json(self._cached_async(
+                    "providers", _work_keys_only,
+                    empty=self._providers_payload(set(), read_keys=False)))
+            except Exception as ex:
+                return _safe_json({"error": str(ex)})
+
+        def _work():
+            configured = set(self.router.configured_providers() or [])
+            return self._providers_payload(configured, read_keys=True)
+
+        try:
+            empty = self._providers_payload(set(), read_keys=False)
+        except Exception:
+            empty = []
+        try:
+            return _safe_json(self._cached_async(
+                "providers", _work, empty=empty))
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
@@ -6063,27 +6157,66 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 
+    def _provider_counts(self) -> dict:
+        """{configured, blocked} counts — the slow part is
+        `configured_providers()` (it probes LM Studio / Ollama).  Always
+        called off the Qt main thread via `_cached_async`."""
+        configured = 0
+        blocked = 0
+        if self.router is not None:
+            try:
+                cfg = self.router.configured_providers() or []
+                configured = len(list(cfg))
+            except Exception:
+                configured = 0
+            try:
+                blk = self.router.blocked_providers() or {}
+                blocked = len(list(blk))
+            except Exception:
+                blocked = 0
+        return {"configured": configured, "blocked": blocked}
+
     @pyqtSlot(result=str)
     def get_provider_stats(self) -> str:
-        """Return {configured, blocked} provider counts for badges."""
+        """Return {configured, blocked} provider counts for badges.
+
+        APP-01 (court-root) — NON-BLOCKING.  `configured_providers()`
+        reaches `probe_lmstudio` (full ~1.5 s stall on a half-open port),
+        so this is routed off the Qt main thread through `_cached_async`
+        and shares the `provider_counts` cache key with `get_runtime_info`
+        — one background probe feeds both badges."""
+        if self.router is None:
+            return _safe_json({"configured": 0, "blocked": 0})
         try:
-            configured = 0
-            blocked = 0
-            if self.router is not None:
-                try:
-                    cfg = self.router.configured_providers() or []
-                    configured = len(list(cfg))
-                except Exception:
-                    configured = 0
-                try:
-                    blk = self.router.blocked_providers() or {}
-                    blocked = len(list(blk))
-                except Exception:
-                    blocked = 0
-            return _safe_json({"configured": configured,
-                                "blocked":    blocked})
+            return _safe_json(self._cached_async(
+                "provider_counts", self._provider_counts,
+                empty={"configured": 0, "blocked": 0}))
         except Exception as ex:
             return _safe_json({"error": str(ex)})
+
+    _BRAIN_PORT = 8473
+
+    def _runtime_probe(self) -> dict:
+        """The SLOW half of get_runtime_info — a brain-port reachability
+        connect (0.25 s timeout) + provider counts (`configured_providers`
+        probes LM Studio / Ollama).  Both block, so this only ever runs on
+        the `_cached_async` background pool, never the Qt main thread."""
+        import socket
+        brain_ok = False
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.25)
+            brain_ok = (s.connect_ex(("127.0.0.1", self._BRAIN_PORT)) == 0)
+            s.close()
+        except Exception:
+            brain_ok = False
+        counts = self._provider_counts() if self.router is not None \
+            else {"configured": 0, "blocked": 0}
+        return {
+            "brain_ok": brain_ok,
+            "providers_configured": int(counts.get("configured", 0)),
+            "providers_blocked": int(counts.get("blocked", 0)),
+        }
 
     @pyqtSlot(result=str)
     def get_runtime_info(self) -> str:
@@ -6096,39 +6229,37 @@ class ArchHubBridge(QObject):
         tells the truth:
           - `debug_port`: the actual remote-debugging port if enabled
             (env QTWEBENGINE_REMOTE_DEBUGGING), else null.
-          - `brain_port` / `brain_ok`: the brain daemon port + a cheap
+          - `brain_port` / `brain_ok`: the brain daemon port + a
             reachability check (the daemon is the app's real backend).
           - `providers`: configured / blocked LLM provider counts.
+
+        APP-01 (court-root) — NON-BLOCKING.  Both `brain_ok` (a 0.25 s
+        socket connect) and the provider counts (`configured_providers`
+        reaches `probe_lmstudio` → full ~1.5 s stall on a half-open port)
+        used to run inline on the Qt main thread.  They are now the
+        `_runtime_probe` work routed through `_cached_async`; the cheap
+        env-only fields return instantly and `hosts_changed` re-pulls when
+        the probe lands.
         """
         import os as _os
         info: dict = {}
         # Real remote-debug port (only present when launched with the env).
         dbg = (_os.environ.get("QTWEBENGINE_REMOTE_DEBUGGING") or "").strip()
         info["debug_port"] = int(dbg) if dbg.isdigit() else None
-        # Brain daemon — the app's real local backend (AgDR-0044, :8473).
-        brain_port = 8473
-        info["brain_port"] = brain_port
-        brain_ok = False
+        info["brain_port"] = self._BRAIN_PORT
+        # Slow half (brain connect + provider probe) — off the Qt thread.
         try:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.25)
-            brain_ok = (s.connect_ex(("127.0.0.1", brain_port)) == 0)
-            s.close()
+            probe = self._cached_async(
+                "runtime_info", self._runtime_probe,
+                empty={"brain_ok": False,
+                       "providers_configured": 0,
+                       "providers_blocked": 0})
         except Exception:
-            brain_ok = False
-        info["brain_ok"] = brain_ok
-        # Provider counts (real — same source as get_provider_stats).
-        try:
-            if self.router is not None:
-                info["providers_configured"] = len(list(self.router.configured_providers() or []))
-                info["providers_blocked"] = len(list(self.router.blocked_providers() or {}))
-            else:
-                info["providers_configured"] = 0
-                info["providers_blocked"] = 0
-        except Exception:
-            info["providers_configured"] = 0
-            info["providers_blocked"] = 0
+            probe = {"brain_ok": False,
+                     "providers_configured": 0, "providers_blocked": 0}
+        info["brain_ok"] = bool(probe.get("brain_ok", False))
+        info["providers_configured"] = int(probe.get("providers_configured", 0))
+        info["providers_blocked"] = int(probe.get("providers_blocked", 0))
         return _safe_json(info)
 
     @pyqtSlot(result=str)

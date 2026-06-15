@@ -90,25 +90,206 @@ def scan_bare_except(audit: Audit, path: Path, lines: list[str]) -> None:
 # `detect_all_*` / a recursive `glob("**/...")` — each blocks one or
 # two hops down.  Those five+ hidden offenders are what kept the
 # founder pointing at the lag.
-_BLOCKING_PATTERNS = re.compile(
-    r"\b(urlopen|subprocess\.(run|call|check_output|Popen)|"
-    r"\.recv\(|time\.sleep|socket\.create_connection|"
-    r"requests\.(get|post)|"
-    r"\.forward\(|\.probe\(\)|_request\(|"
+#
+# APP-01 (court-root, 2026-06-15): added the LLM-provider probe helpers.
+# `get_providers` / `get_provider_stats` / `get_runtime_info` called
+# `router.configured_providers()`, which calls `llm_detector.probe_lmstudio`
+# (+ probes Ollama) → a full ~1.5 s `urlopen` stall on a half-open LM
+# Studio port, ON the Qt main thread, INSIDE the boot pullAll batch.  The
+# old pattern set listed `.probe()` (empty-parens only) so none of
+# `configured_providers(` / `lmstudio_models(` / `ollama_models(` /
+# `probe_lmstudio` / `probe_ollama` matched, and the guard stayed green
+# over three real blocking slots.  These names make the CALL SITE in the
+# slot body match directly; the two-hop resolver below catches the general
+# case where a slot calls a same-package helper that blocks.
+# NOTE on regex shape (APP-01 court-root fix): the previous single
+# pattern wrapped the whole alternation in `\b(...)\b`.  A trailing `\b`
+# after a `name\(` alternative requires a WORD char right after `(` — so
+# `configured_providers()`, `_request("POST"`, `list_sessions()` (a `(`
+# followed by `)` or `"`) silently FAILED to match.  That is a second
+# reason the guard stayed green over real blocking slots.  Split into two
+# patterns: identifier-form blockers carry their own `\b`; call-form
+# blockers anchor on `\(` with NO trailing boundary so they match
+# regardless of the next char.
+_BLOCKING_IDENT = re.compile(
+    r"\b(urlopen|time\.sleep|socket\.create_connection|"
     r"detect_all_hosts|detect_all_local_llms|_probe_host_status|"
-    r"list_sessions\(|sessions_count\(|is_reachable\(|"
-    r"com_thread\(|GetActiveObject)\b")
+    r"probe_lmstudio|probe_ollama|GetActiveObject)\b")
+_BLOCKING_CALL = re.compile(
+    r"(subprocess\.(run|call|check_output|Popen)|"
+    r"\.recv|requests\.(get|post)|"
+    r"\.forward|\.probe|_request|"
+    r"configured_providers|lmstudio_models|ollama_models|"
+    r"detect_all|list_local_models|"
+    r"list_sessions|sessions_count|is_reachable|com_thread)\s*\(")
+
+
+def _blocking_search(txt: str):
+    """True-ish if `txt` contains a blocking primitive in either form."""
+    return _BLOCKING_IDENT.search(txt) or _BLOCKING_CALL.search(txt)
+
+
+# Back-compat shim: some callers/tests referenced `_BLOCKING_PATTERNS`
+# directly.  Expose an object whose `.search` checks both sub-patterns.
+class _BlockingPatternsCompat:
+    @staticmethod
+    def search(txt: str):
+        return _blocking_search(txt)
+
+
+_BLOCKING_PATTERNS = _BlockingPatternsCompat()
 # A recursive glob is a separate, multi-line-safe check.
 _RECURSIVE_GLOB = re.compile(r"\.glob\(\s*['\"]\*\*")
 # Markers that prove the slow work was moved OFF the Qt main thread.
 _OFFTHREAD = ("Thread(", "to_thread", "QThread", "_cached_async",
               "_async_state", ".submit(", "singleShot")
 
+# Generic method names that recur across unrelated classes.  Even within
+# one file the same-file two-hop resolver must not treat a benign
+# `x.search(...)` / `p.resolve()` as "calls a blocking helper" just
+# because SOME class in the file has a blocking method by that name.  The
+# genuinely-dangerous cross-file helpers are matched precisely by name in
+# `_BLOCKING_CALL`, so excluding these from the fuzzy resolver only drops
+# false positives, never a real catch.
+_GENERIC_HELPER_NAMES = {
+    "run", "search", "stop", "start", "resolve", "register", "me",
+    "ops", "get", "post", "close", "open", "read", "write", "load",
+    "save", "send", "emit", "call", "probe", "forward", "request",
+    "to_dict", "keys", "values", "items", "update", "clear", "list",
+}
 
-def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
-    """Flag any @pyqtSlot whose body does blocking I/O — directly OR
-    one helper-hop down — without an off-thread marker.  This is the
-    guard for the whole UI-freeze CLASS (AgDR-0035 / AgDR-0036)."""
+
+# ─── two-hop helper resolution (APP-01 court-root, defect #2) ─────────
+#
+# The first detector only inspected a slot's OWN body text — so a slot
+# that calls a clean-looking helper whose blocking lives one MORE hop
+# down stayed invisible.  TWO complementary fixes close the class:
+#
+#   (a) PRECISE cross-file names — the specific dangerous helpers a slot
+#       reaches into another module for (`configured_providers`,
+#       `lmstudio_models`, `probe_lmstudio`, `_request`, …) are matched
+#       by name in `_BLOCKING_CALL`, regardless of the receiver.  This is
+#       what catches the court's `self.router.configured_providers()`.
+#
+#   (b) GENERAL same-file resolution — for a slot that calls a private
+#       helper DEFINED IN THE SAME FILE (bare `foo()` or `self.foo()`),
+#       we build that file's index of blocking helpers and flag the call.
+#       Scoping (b) to same-file + self/bare receivers is deliberate: a
+#       static scanner cannot type an arbitrary `obj.foo()`, so resolving
+#       generic method names (`search`, `stop`, `resolve`) repo-wide
+#       produced rampant collision false positives.  Same-file + `self.`
+#       is provably the same object, so it stays sound.
+#
+# Hardcoding every helper name forever would be the "patch one call site"
+# whack-a-mole the engineering mandate bans; (b) is the structural net
+# that catches new same-file blockers without a code change.
+
+def _build_blocking_helper_index(py_files: list[Path]) -> set[str]:
+    """Return the set of function/method NAMES (across the given files)
+    whose body does blocking I/O directly and is not itself moved
+    off-thread.  A slot that calls any of these names is blocking one or
+    two hops down.
+
+    Indent-STACK based: real modules alternate between module-level
+    functions (indent 0) and class methods (indent 4), so a naive
+    monotonic "deeper == nested" rule mis-attributes a method that
+    follows a module-level def (it read `4 > 0` as nested and never
+    opened the method's own scope — the exact bug that hid
+    `configured_providers`).  Here each `def` pushes a frame; a `def`/
+    dedent to indent I closes (commits) every open frame whose indent
+    >= I; a blocking primitive marks the INNERMOST open frame, and an
+    off-thread marker clears it.  A nested closure dispatched off-thread
+    (the `_work` passed to `_cached_async`) therefore does NOT mark its
+    enclosing helper."""
+    blocking: set[str] = set()
+    for path in py_files:
+        try:
+            lines = path.read_text(encoding="utf-8",
+                                   errors="replace").splitlines()
+        except Exception:
+            continue
+        # stack of frames: [name, indent, blocks, off_thread]
+        stack: list[list] = []
+
+        def _commit(frame):
+            if frame[0] and frame[2] and not frame[3]:
+                blocking.add(frame[0])
+
+        for ln in lines:
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            indent = len(ln) - len(ln.lstrip())
+            # A line at indent I closes every frame whose def-indent >= I
+            # (the frame's body has ended).  A `def` line at indent I is
+            # itself a sibling/outer of any frame with indent >= I.
+            while stack and indent <= stack[-1][1]:
+                _commit(stack.pop())
+            dm = re.match(r"(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(", s)
+            if dm:
+                stack.append([dm.group(1), indent, False, False])
+                continue
+            if stack:
+                top = stack[-1]
+                if any(m in ln for m in _OFFTHREAD):
+                    top[3] = True
+                if _BLOCKING_PATTERNS.search(ln) or _RECURSIVE_GLOB.search(ln):
+                    top[2] = True
+        while stack:
+            _commit(stack.pop())
+    # Never let the generic resolver treat the async plumbing itself as a
+    # "blocking helper" — these MOVE work off-thread, they don't block.
+    # `_work` / `_refresh` are the closure convention for the body that
+    # RUNS on the background pool (passed to `_cached_async` / `_bg_pool`),
+    # so a reference to them is not a blocking call on the Qt thread.
+    for safe in ("_cached_async", "_bg_pool", "_refresh", "_work"):
+        blocking.discard(safe)
+    return blocking
+
+
+def _helper_call_re(names: set[str]) -> Optional[re.Pattern]:
+    """A regex matching a call to a SAME-FILE helper in `names`, invoked
+    either bare (``name(``) or on ``self`` (``self.name(``).
+
+    Deliberately NOT matching an arbitrary attribute chain
+    (``obj.name(``): a static text scanner cannot know the type of
+    ``obj``, so resolving ``obj.search()`` against every ``search`` method
+    in the repo produced rampant name-collision false positives
+    (``Path(...).resolve()`` tripping a connector's ``resolve``, etc.).
+    Two-hop resolution is therefore scoped to names DEFINED in the same
+    file and reached bare or through ``self`` — which is provably the
+    same object.  Dangerous cross-file helpers (``configured_providers``,
+    ``probe_lmstudio``, ``_request`` …) are matched precisely by name in
+    ``_BLOCKING_CALL`` instead, so the court's
+    ``self.router.configured_providers()`` is still caught — just not via
+    this fuzzy resolver."""
+    if not names:
+        return None
+    alt = "|".join(re.escape(n) for n in sorted(names))
+    # Start-of-token or `self.` only — never a generic `obj.` receiver.
+    return re.compile(r"(?<![\w.])(?:self\.)?(?:" + alt + r")\s*\(")
+
+
+def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str],
+                          helper_index: "set[str] | None" = None) -> None:
+    """Flag any @pyqtSlot whose body does blocking I/O — directly OR via a
+    helper that blocks (one OR two hops down) — without an off-thread
+    marker.  This is the guard for the whole UI-freeze CLASS
+    (AgDR-0035 / AgDR-0036 / APP-01).
+
+    `helper_index` is the set of SAME-FILE blocking helper names (built by
+    `_build_blocking_helper_index([path])`).  When omitted it is built
+    from `path` itself on demand, so the 3-arg call shape (used by the
+    gate test) keeps working unchanged AND stays same-file-scoped (the
+    sound scope — see `_helper_call_re`)."""
+    if helper_index is None:
+        helper_index = _build_blocking_helper_index([path])
+    # Drop generic method names that collide across unrelated classes even
+    # within one file — the precise cross-file blockers are already in
+    # `_BLOCKING_CALL`, so excluding these here only removes noise.
+    helper_names = set(helper_index) - _GENERIC_HELPER_NAMES
+    helper_re = _helper_call_re(helper_names)
+
     in_slot = False
     slot_line = 0
     slot_off_thread = False
@@ -118,9 +299,13 @@ def scan_blocking_in_slot(audit: Audit, path: Path, lines: list[str]) -> None:
         nonlocal slot_body, slot_off_thread, slot_line
         if slot_body and not slot_off_thread:
             for ln_no, txt in slot_body:
-                if _BLOCKING_PATTERNS.search(txt) or _RECURSIVE_GLOB.search(txt):
+                two_hop = bool(helper_re and helper_re.search(txt))
+                if (_BLOCKING_PATTERNS.search(txt)
+                        or _RECURSIVE_GLOB.search(txt) or two_hop):
+                    why = ("calls a blocking helper" if two_hop and not
+                           _BLOCKING_PATTERNS.search(txt) else "blocking I/O")
                     audit.add("HIGH", "blocking-in-pyqtslot", path, ln_no,
-                              f"blocking I/O in @pyqtSlot (slot at line "
+                              f"{why} in @pyqtSlot (slot at line "
                               f"{slot_line}) — freezes the Qt UI thread; "
                               f"route through _cached_async or a thread")
         slot_body = []
@@ -366,13 +551,20 @@ def scan_jsx_console(audit: Audit, path: Path, text: str) -> None:
 
 def run_audit() -> Audit:
     audit = Audit()
-    for path in _py_files():
+    files = _py_files()
+    for path in files:
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception:
             continue
         scan_bare_except(audit, path, lines)
-        scan_blocking_in_slot(audit, path, lines)
+        # Same-file two-hop index (APP-01): a slot is also blocking if it
+        # calls a private helper DEFINED IN THIS FILE that blocks.  Built
+        # per-file so the resolver stays same-file-scoped (sound); the
+        # dangerous cross-file helpers are matched by name in
+        # `_BLOCKING_CALL` regardless of file.
+        helper_index = _build_blocking_helper_index([path])
+        scan_blocking_in_slot(audit, path, lines, helper_index)
         scan_blocking_in_timer_callback(audit, path, lines)
         scan_success_mask(audit, path, lines)
         scan_todos(audit, path, lines)

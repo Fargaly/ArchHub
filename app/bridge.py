@@ -1351,11 +1351,59 @@ class ArchHubBridge(QObject):
             return _safe_json({"error": str(ex)})
 
     # ─── Models ─────────────────────────────────────────────────
+    @staticmethod
+    def _static_models() -> list:
+        """The Auto row + every KNOWN_MODELS entry — pure data, no probe.
+        Used as the `_cached_async` empty fallback so the model picker is
+        NEVER blank on the cold (pre-probe) call: the static catalogue
+        shows instantly; `configured`/`blocked` flags + the local
+        (Ollama / LM Studio) rows fill in on the background refresh.
+        `configured` is left False here — the optimistic-true flips to a
+        real value once the probe lands ~instants later (hosts_changed
+        re-pull)."""
+        try:
+            from llm_router import KNOWN_MODELS, ROUTE_AUTO
+        except Exception:
+            return []
+        out = [{
+            "id":       ROUTE_AUTO,
+            "label":    "Auto · best model per task",
+            "provider": "auto",
+            "configured": True,
+            "blocked": "",
+        }]
+        for mid, label in KNOWN_MODELS:
+            out.append({
+                "id":       mid,
+                "label":    label,
+                "provider": mid.partition(":")[0],
+                "configured": False,
+                "blocked":  "",
+            })
+        return out
+
     @pyqtSlot(result=str)
     def get_models(self) -> str:
+        """AgDR-0035 follow-up — non-blocking.
+
+        `router.configured_providers()` and `lmstudio_models()` both call
+        `llm_detector.probe_lmstudio`, which on a HALF-OPEN LM Studio port
+        (TCP accepts but the HTTP `/models` GET stalls) pays the full
+        ~1.5 s `urlopen` timeout SYNCHRONOUSLY.  This slot is prefetched
+        on the Qt main thread during boot (`app-boot.jsx` pullAll), so
+        that stall froze the whole app on launch — the boot-hang.
+
+        Routed through `_cached_async` (the same mechanism `get_local_llms`
+        / `probe_connector` use): the cached model list returns instantly,
+        the real provider probing runs on the background pool, and
+        `hosts_changed` fires when fresh data lands so the JS side
+        re-pulls.  Empty fallback is the static KNOWN_MODELS catalogue so
+        the picker shows every known model immediately, with
+        `configured` flags + local models filling in ~instants later."""
         if not self.router:
             return _safe_json([])
-        try:
+
+        def _work():
             from llm_router import (
                 KNOWN_MODELS, ROUTE_AUTO, ollama_models, lmstudio_models,
             )
@@ -1385,7 +1433,11 @@ class ArchHubBridge(QObject):
                 out.append({"id": mid, "label": label,
                             "provider": "lmstudio",
                             "configured": True, "blocked": ""})
-            return _safe_json(out)
+            return out
+
+        try:
+            return _safe_json(self._cached_async(
+                "models", _work, empty=self._static_models()))
         except Exception as ex:
             return _safe_json({"error": str(ex)})
 

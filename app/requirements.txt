@@ -37,7 +37,7 @@ mcp>=1.27.2,<2
 # which now fails LOUD (non-zero exit) if they're missing — declared here so the
 # install-from-source flow ships them. stdio MCP mode does not need them.
 starlette>=0.40.0
-uvicorn>=0.30.0
+uvicorn>=0.49.0
 # posthog powers app/telemetry.py product analytics (track-G, AgDR pending).
 # Same implicit-local / silent-off-if-missing class as cryptography +
 # specklepy + mcp: telemetry._client_or_none() returns None when the SDK

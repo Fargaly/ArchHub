@@ -185,9 +185,9 @@ Per-version detail: `CHANGELOG.md` and git history.
       - [ ] **M2-Bundle — official Speckle Revit add-in** (deferred). Blocked on Roslyn 4.11 (RevitMCP) / 3.4 (pyRevit / Speckle) AppDomain conflict — separate .NET repo work. Required if/when the IPC C# path hits a feature ceiling (analytical model, sheets w/ viewports, complex geometry conversion). For 80% of cross-host use cases the IPC path is enough. (eng)
     - [ ] **M3 — Composer v1 + Library tools (6–8 wks).** Qt panel left. **Model-agnostic tool-use loop** (Anthropic / OpenAI / Gemini / Ollama / LM Studio). Tools: `library.search`/`list`/`create_node_type` (search-first), `graph.create_node`/`connect`/`set_param`/`run`, `speckle.send`/`receive`, `node.inspect`, `skill.save_as`. Plan / Auto / YOLO modes. Per-project `ARCHHUB.md` persistent memory. **LIBRARY-FIRST + USER-AGENCY mandates enforced via the 4-layer model in AgDR-0013** (system prompt + per-provider strict-tools where supported + router-level pre-execute gate + Pydantic NodeSpec validator). (eng)
       - [x] #P1 **AgDR-0038 slice 1 — Composer Capability Nodes** — `impl` discriminator in `app/workflows/custom_nodes.py` (`python`/`connector`/`ai`/`passthrough`) + restricted-builtins sandbox + bare-`code` back-compat + grounding test. Lets the Composer mint node types as data, not hand-coded per node. Design: `docs/agdr/AgDR-0038-composer-capability-nodes.md` · handoff: `docs/handoff/2026-05-22-composer-capability-nodes.md` (eng)
-      - [x] #P1 **AgDR-0038 slice 2** — `impl.kind=connector` (typed wrapper over a host op) + `impl.kind=ai` (LLM-backed) capability executors (eng)
-      - [x] #P2 **AgDR-0038 slice 3** — Composer tools in `app/tool_engine.py`: `node.search` / `node.create` / `node.place` / `graph.wire` (eng)
-      - [x] #P2 **AgDR-0038 slice 4** — search → reuse → library auto-promotion loop; LIBRARY-FIRST enforced on minted nodes (eng)
+      - [x] #P1 **AgDR-0038 slice 2** (#40) — `impl.kind=connector` (typed wrapper over a host op) + `impl.kind=ai` (LLM-backed) capability executors (eng)
+      - [x] #P2 **AgDR-0038 slice 3** (#41 + #42) — Composer tools in `app/tool_engine.py`: `node.search` / `node.create` / `node.place` / `graph.wire` (eng)
+      - [x] #P2 **AgDR-0038 slice 4** (#43) — search → reuse → library auto-promotion loop; LIBRARY-FIRST enforced on minted nodes (eng)
     - [ ] **M4 — `ai.plan` as canvas node (9–10 wks).** Persists Composer turn + tool-call history. Plan-mode preview. Deterministic re-run (temperature=0 + cache). (eng)
       - [x] **M4 foundation ✓ SHIPPED 2026-05-21** — Design AgDR-0021. Engine + persistence + grammar foundation; Composer panel JSX integration ships next tick. New module `app/plan_history.py` (`PlanHistory(project_dir)` rooted at `<project_dir>/.archhub/plans/<plan_id>.json`; atomic save via tempfile + os.replace; deterministic `PlanHistory.id_for(prompt, model, extra)` returns 16-hex sha256 prefix; corruption-resilient `load` returns None on bad JSON; `list_ids` ordered most-recent-first by mtime; `prune(keep_last)` for future cleanup). New executor `app/workflows/nodes/ai_plan.py` (`ai.plan`) wraps the registered `llm.complete_with_tools` engine + persists each cook's plan record (success OR failure both saved — audit trail must include failures). Replay mode (`config.replay=True`) returns the cached record without re-calling the LLM when input hash matches; cache miss + replay falls through to a fresh LLM call (graceful, never errors). `allowed_tools` config accepts comma-separated string OR list; threaded through to the wrapped executor so the LIBRARY-FIRST gate (AgDR-0013) still fires. New typed grammar primitive `ai_plan` (5th typed AI node after AgDR-0019). Grammar cap raised 75 → 80 in `test_node_grammar.test_grammar_is_small_a_grammar_not_a_catalogue` (75 was the post-SLICE-L peak; +1 for `ai_plan` is honest growth, still under the legacy 80-node sprawl). **29 new tests** cover: id determinism (same → same, different prompt/model/extra → different, 16-hex format), persistence (save/load round-trip, archhub/plans subdir creation, rejects-without-plan_id, non-dict rejection, list ids, delete, prune keep_last + no-op-under-cap, list-records-most-recent-first, corruption returns None), grammar (primitive registered + resolves + in payload + carries replay param + count under 80 cap), engine (fresh-run calls LLM + persists, persists to disk, replay returns cache without LLM call, replay-falls-through-on-miss, persists failure record, allowed_tools threading via comma-string parse). Updated `test_typed_ai_nodes.test_grammar_count_after_ai_split` from `ai == 4` to `ai == 5` (AgDR-0021 adds the 5th typed AI primitive). 1911 full suite green. Next M4 slice: bridge slot to surface `PlanHistory.list_records` + JSX Composer panel showing plan history with replay button. (eng)
       - [x] **M4 bridge slots ✓ SHIPPED 2026-05-21** — Three new bridge slots expose `PlanHistory` to the canvas via QWebChannel: `bridge.get_plan_history(project_dir, limit)` returns `{records:[...], count, project_dir}` (most-recent first, limit clamped to ≥1); `bridge.get_plan_record(plan_id, project_dir)` returns the full record or `{error: "not_found"}`; `bridge.delete_plan_record(plan_id, project_dir)` returns `{ok: bool}`. Empty `project_dir` falls back to `speckle_wire.default_project_dir()` (canonical `%LOCALAPPDATA%/ArchHub/projects/default`). Each slot wraps the bridge contract — return JSON string; typed error envelope on exception. **9 new tests** cover: list returns records sorted most-recent-first, limit respected, empty-dir → empty list, default project_dir fallback when project_dir is "", limit=0 clamped to ≥1, get-by-id returns record (record's own status/error fields distinct from bridge-level `not_found` sentinel), missing id → `not_found`, delete removes file + cascades into list output, delete missing returns `{ok: false}`. 1920 full suite green. Next M4 slice: JSX Composer panel renders the history list + replay button. (eng)
@@ -256,6 +256,38 @@ Per-version detail: `CHANGELOG.md` and git history.
 ## Done — last 7 days
 
 <!-- autopopulated by agents/roadmap_dispatcher.py — do not edit by hand -->
+
+### Reconciled against origin/main (2026-06-15) — merged this session, with receipts
+
+> Doc-reconcile pass (DOC-01/02). Every line below is flipped to `- [x]` ONLY
+> because a real merge commit on `origin/main` proves it. The `tools/doc_reconcile.py`
+> gate (run in CI by `.github/workflows/doc-reconcile.yml`) FAILS any PR that
+> marks an item done without a receipt, duplicates an AgDR id, or leaves a
+> shipped item open — so this section stays honest.
+
+- [x] #P1 NVIDIA NIM provider (#122) — NVIDIA models in the picker; one key unlocks the catalog via the OpenAI-compatible endpoint. (eng)
+- [x] #P0 boot-hang — LM Studio probe off the Qt main thread (#123) — APP-01: route the LM Studio probe in `get_models` off the Qt main thread so a slow/absent LM Studio can't hang the boot splash. (eng)
+- [x] #P0 boot-hang — off-thread the last 3 provider slots + close the blind guard (#129) — APP-01 class root: the final synchronous provider probes moved off the Qt main thread; `tests/test_no_blocking_slots.py`-style guard closed the remaining blind spot. (eng)
+- [x] #P1 brain-driver active-work ledger (#124) — BRV-01/02: server-authoritative `active_work` ledger record in `brain.db` (scope · artifact_manifest · verification_status · last_verified) — ONE store, no parallel JSON. (eng)
+- [x] #P1 wire THE DRIVE into the runtime (#128) — completion-gate driver wired into the runtime + the ledger claim made cross-process atomic (court defect #5 + a latent claim race); unifies the forked ledger to one store. The remaining step (installing the Stop/UserPromptSubmit hooks into `~/.claude/settings.json`) is FOUNDER-GATED — it edits his global config + gates his live turns. (eng)
+- [x] #P1 connector honesty — CON-01 (#125) — connectors no longer fabricate an empty DirectShape when a host returns nothing; honest `live`/`loaded_dead`/`missing`/`unauthorized` status surfaced instead. (eng)
+- [x] #P0 gate send_to_speckle — CON-02 (#127) — `*.send_to_speckle` re-classified `kind=action` (was a mislabeled `read`) so the AI write is approval-gated per USER-AGENCY; closes an un-gated host write. (eng)
+- [x] #P1 Skills + Search sidebar panels wired REAL (#126) — the `SkillsPanel` + `SearchPanel` JSX components are now reachable + functional (MAKE-IT-REAL), not decorative dead code. (eng)
+
+### Cloud sign-in everywhere + the missing-20% map (2026-06-15) — recorded, not yet built
+
+- [ ] #P1 Cloud-everywhere sign-in — one ArchHub account signs in across desktop + web + cloud API (the 401 fix rides AgDR-0054 slice 4). Recorded here so the reconcile gate tracks it; build is part of the AgDR-0054 server-side-verify slice. (eng)
+- [ ] #P0 Missing-20% map — the 119-item / 20-P0 gap audit across 11 areas (incl. emails + finances) is the live completion backlog driving the brain + Claude + Codex + local fleet; the 6-phase reversible plan AWAITS the founder's GO on Phase 0+1. (ops)
+
+> **AgDR ledger note (2026-06-15):** `AgDR-0054` is the founder-signed Collective
+> Mind (`docs/agdr/AgDR-0054-collective-mind-one-brain.md`, `status: executed`).
+> A SECOND, untracked file `docs/agdr/AgDR-0054-revit-transactionless-exec.md`
+> (Gemini/antigravity, Revit transactionless `/exec`) reuses the SAME id — an
+> AgDR-0054 COLLISION the `doc_reconcile.py` R2 check flags. It must be renumbered
+> to the next free id (AgDR-0055) before it is committed; until then the gate keeps
+> it out of the tracked ledger. The Revit transactionless-exec DECISION itself is
+> sound (optional `no_transaction` flag on `/exec` for UI-only ops like view
+> activation) — only its id is wrong.
 
 ## Design references
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -32,20 +33,64 @@ from typing import Optional
 _CACHE: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL_SECONDS = 25.0
 
+# In-flight de-dupe (court APP-01 defect #3).  The TTL cache alone does
+# NOT protect SIBLING callers that all hit a cold/stale key at the same
+# instant — each would fire its own ~1.5 s HTTP probe.  The boot pullAll
+# batch is exactly this shape: get_providers + get_provider_stats +
+# get_runtime_info + get_models all reach probe_lmstudio in the same
+# tick.  A per-key lock collapses that thundering herd to ONE real probe;
+# every other caller blocks on the lock, then re-reads the value the
+# winner just cached.  This is independent of any cache-warming step — we
+# do not rely on get_models having run first to shield the others.
+_CACHE_LOCK = threading.Lock()          # guards _CACHE + _KEY_LOCKS
+_KEY_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _key_lock(key: str) -> threading.Lock:
+    """Return the (lazily-created) per-key lock, atomically."""
+    with _CACHE_LOCK:
+        lk = _KEY_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _KEY_LOCKS[key] = lk
+        return lk
+
+
+def _cache_get(key: str, ttl: float):
+    """Return a FRESH cached value or None — under the cache lock."""
+    with _CACHE_LOCK:
+        ent = _CACHE.get(key)
+        if ent is not None:
+            ts, val = ent
+            if (time.time() - ts) < ttl:
+                return val
+    return None
+
 
 # ---------------------------------------------------------------------------
 def _cached(key: str, ttl: float = _CACHE_TTL_SECONDS):
-    """Decorator-like helper. `key` is the cache slot."""
+    """Decorator-like helper. `key` is the cache slot.
+
+    Two layers: (1) a TTL cache so the 30 s refresh doesn't re-probe in
+    the same tick, and (2) a per-key in-flight lock so concurrent SIBLING
+    callers that all miss the cache collapse onto ONE probe instead of
+    each paying the full timeout (court APP-01 defect #3)."""
     def wrap(fn):
         def inner():
-            now = time.time()
-            if key in _CACHE:
-                ts, val = _CACHE[key]
-                if now - ts < ttl:
-                    return val
-            val = fn()
-            _CACHE[key] = (now, val)
-            return val
+            hit = _cache_get(key, ttl)
+            if hit is not None:
+                return hit
+            # Cold/stale: serialise on the per-key lock so only the first
+            # caller runs the probe; the rest wait, then read the fresh
+            # value the winner stored (double-checked inside the lock).
+            with _key_lock(key):
+                hit = _cache_get(key, ttl)
+                if hit is not None:
+                    return hit
+                val = fn()
+                with _CACHE_LOCK:
+                    _CACHE[key] = (time.time(), val)
+                return val
         return inner
     return wrap
 
@@ -339,7 +384,8 @@ def detect_all(*, force: bool = False) -> dict[str, dict]:
     Refresh in Settings).
     """
     if force:
-        _CACHE.clear()
+        with _CACHE_LOCK:
+            _CACHE.clear()
     return {pid: probe() for pid, probe in PROBERS.items()}
 
 

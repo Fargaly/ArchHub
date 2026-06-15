@@ -2804,31 +2804,53 @@ class StudioShell(QMainWindow):
     def _maybe_show_no_llm_banner(self) -> None:
         """If no API keys are configured AND Ollama isn't reachable,
         surface a single toast nudging the user toward Settings —
-        otherwise the chat hangs silently the first time they send."""
-        try:
-            from secrets_store import load_api_key
-            keys = [load_api_key(p) for p in
-                    ("anthropic", "openai", "google", "openrouter", "relay")]
-            has_cloud_key = any(bool(k) for k in keys)
-        except Exception:
-            has_cloud_key = False
-        has_local = False
-        try:
-            from llm_router import ollama_models
-            has_local = bool(ollama_models())
-        except Exception:
+        otherwise the chat hangs silently the first time they send.
+
+        APP-01 (court-root) — this is a `QTimer.singleShot(800, ...)`
+        STARTUP callback that runs on the Qt GUI thread.  The check reads
+        five keys from the credential store (~175 ms) AND calls
+        `ollama_models()` (an Ollama HTTP probe) — both block the GUI
+        thread during boot, the same class as the bridge boot-hang.  So
+        the detection runs on a daemon thread and the toast is marshalled
+        back to the GUI thread via `QTimer.singleShot(0, ...)` (the only
+        Qt-safe way to touch widgets from off-thread)."""
+        import threading
+        from PyQt6.QtCore import QTimer
+
+        def _probe_then_maybe_toast():
+            try:
+                from secrets_store import load_api_key
+                keys = [load_api_key(p) for p in
+                        ("anthropic", "openai", "google", "openrouter", "relay")]
+                has_cloud_key = any(bool(k) for k in keys)
+            except Exception:
+                has_cloud_key = False
             has_local = False
-        if has_cloud_key or has_local:
-            return
-        try:
-            from toast import show_toast
-            show_toast(
-                self,
-                "No LLM configured. Open Settings → Sign-ins to add a key.",
-                kind="warn", duration_ms=6000,
-            )
-        except Exception:
-            pass
+            try:
+                from llm_router import ollama_models
+                has_local = bool(ollama_models())
+            except Exception:
+                has_local = False
+            if has_cloud_key or has_local:
+                return
+            # Back to the GUI thread to touch widgets.
+            def _show():
+                try:
+                    from toast import show_toast
+                    show_toast(
+                        self,
+                        "No LLM configured. Open Settings → Sign-ins to add a key.",
+                        kind="warn", duration_ms=6000,
+                    )
+                except Exception:
+                    pass  # audit: deliberate-fail-soft — toast is a best-effort nudge
+            try:
+                QTimer.singleShot(0, _show)
+            except Exception:
+                pass  # audit: deliberate-fail-soft — shell torn down before the probe returned
+
+        threading.Thread(target=_probe_then_maybe_toast,
+                          name="no-llm-banner-probe", daemon=True).start()
 
     def _open_palette(self) -> None:
         """Open the ⌘K command palette overlay (v0.31)."""

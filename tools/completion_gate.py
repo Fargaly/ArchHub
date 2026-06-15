@@ -12,18 +12,28 @@ agent tries to end a turn:
         ESCALATE: allow the stop but emit an honest escalation. Never a silent
         quit, never a fake-done, never an infinite grind.
 
-Honest scope (do not overclaim): this is the per-agent EARLY catch. It is NOT
-yet wired into ~/.claude/settings.json (that install edits the founder's global
-config + blocks his live turns -> founder-gated), and the server-authoritative,
-all-agents adjudication lives brain-side (AgDR-0054 S1/S4 + slice-4) -- this
-local hook is skippable and therefore not authoritative on its own.
+ONE-SYSTEM (AgDR-0054 S1 + ONE-SYSTEM mandate): this gate now reads its
+done-gates from the BRAIN LEDGER — the single server-authoritative
+`brain_meta['active_work_v1']` store the all-agents drive writes — via
+`tools/brain_ledger.py`. The gate's pending list is DERIVED from the brain's
+actionable (open/claimed) leaves; a DONE leaf is already green, a BLOCKED leaf
+escalates to the founder. There is no longer a forked local ledger: the legacy
+JSON file is consulted ONLY when the brain is genuinely unreachable (an offline
+cache, not a parallel store), and `brain_ledger.transport()` reports which
+backend answered so the founder can SEE which store the verdict came from.
 
-Stop-hook contract (Claude Code): this gate is driven by the active_work LEDGER,
-NOT stdin — it locates the ledger via argv[0] or $ARCHHUB_ACTIVE_WORK (the hook
-JSON on stdin carries no ledger pointer and is not read). Output contract: to
-BLOCK, print {"decision":"block","reason": "..."} and exit 0; to ALLOW, exit 0
-with no block. With no ledger registered it ALLOWS (safe default); the
-authoritative, non-skippable gate is the brain-side adjudication (AgDR-0054 S1/S4).
+Honest scope (do not overclaim): wiring this into ~/.claude/settings.json edits
+the founder's GLOBAL config + blocks his live turns -> founder-gated (the one
+remaining step). The brain-side adjudication is the authoritative, non-skippable
+gate (AgDR-0054 S4).
+
+Stop-hook contract (Claude Code): the gate's done-list comes from the brain
+ledger (owner-resolved like the daemon), NOT stdin. When the brain is
+unreachable it falls back to a file located via argv[0] or $ARCHHUB_ACTIVE_WORK
+(the hook JSON on stdin carries no ledger pointer and is not read). Output
+contract: to BLOCK, print {"decision":"block","reason":"...","source":"..."} and
+exit 0; to ALLOW, exit 0 with no block. Nothing actionable -> ALLOW (safe
+default).
 """
 from __future__ import annotations
 
@@ -68,8 +78,8 @@ def scan_deferral(text: str) -> List[str]:
 @dataclass
 class Gate:
     name: str
-    kind: str = "file_exists"   # file_exists | grep_clean | pytest | manual
-    arg: str = ""               # path / regex / pytest-selector
+    kind: str = "file_exists"   # file_exists | grep_clean | pytest | py_compile | manual
+    arg: str = ""               # path / regex / pytest-selector / py_compile target
     arg2: str = ""              # grep_clean: comma-separated relative paths
     machine_resolvable: bool = True  # human-only gates set False -> escalate
 
@@ -96,6 +106,14 @@ def run_gate(g: Gate, root: Path) -> bool:
     if g.kind == "pytest":
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", g.arg],
+            cwd=str(root), capture_output=True,
+        )
+        return proc.returncode == 0
+    if g.kind == "py_compile":
+        # PASS iff the named module byte-compiles (the brain leaf's py_compile
+        # gate, run against the real file).
+        proc = subprocess.run(
+            [sys.executable, "-m", "py_compile", g.arg],
             cwd=str(root), capture_output=True,
         )
         return proc.returncode == 0
@@ -135,34 +153,84 @@ def evaluate(
     )
 
 
+def _gate_from_dict(d: dict) -> Gate:
+    """Build a Gate from a dict, ignoring private (_-prefixed) hint keys that
+    brain_ledger attaches (e.g. _py_compile)."""
+    fields = {"name", "kind", "arg", "arg2", "machine_resolvable"}
+    return Gate(**{k: v for k, v in d.items() if k in fields})
+
+
 def _load(path: Path):
     data = json.loads(path.read_text(encoding="utf-8-sig"))  # tolerate Windows BOM
-    gates = [Gate(**g) for g in data.get("gates", [])]
+    gates = [_gate_from_dict(g) for g in data.get("gates", [])]
     return gates, int(data.get("iterations", 0)), int(data.get("cap", CAP_DEFAULT))
+
+
+def _gates_from_brain():
+    """Read done-gates from the BRAIN ledger (the ONE store). Returns
+    (gates, iterations, cap, transport) or None when the brain is unreachable.
+
+    This is the ONE-SYSTEM path: the gate's done-list is DERIVED from the brain's
+    actionable leaves (the same `brain_meta['active_work_v1']` the server-side
+    drive writes), not from a forked local file. A DONE leaf is already green and
+    omitted; a BLOCKED leaf surfaces as a needs-root escalation."""
+    try:
+        import brain_ledger as bl  # tools/ is on sys.path (added in main / by caller)
+    except Exception:
+        return None
+    gate_dicts = bl.leaves_as_gates()
+    if gate_dicts is None:
+        return None  # brain unreachable -> let caller fall back to the file
+    st = bl.status() or {}
+    gates = [_gate_from_dict(g) for g in gate_dicts]
+    return (gates, int(st.get("iterations", 0)), int(st.get("cap", CAP_DEFAULT)),
+            bl.transport())
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Locate the active_work ledger via argv[0] or $ARCHHUB_ACTIVE_WORK. (The
-    # Stop-hook stdin JSON carries no ledger pointer, so it is not read.)
+    # tools/ on sys.path so `import brain_ledger` works when run as a hook.
+    _tools = str(Path(__file__).resolve().parent)
+    if _tools not in sys.path:
+        sys.path.insert(0, _tools)
+
+    # ── ONE-SYSTEM: the brain ledger is authoritative. Read the done-gates from
+    # the brain FIRST; the local JSON file is only an offline fallback. ──────
+    from_brain = _gates_from_brain()
+    if from_brain is not None:
+        gates, iters, cap, transport = from_brain
+        if not gates:
+            # brain reachable + nothing actionable -> allow stop (drive is dry).
+            return 0
+        v = evaluate(gates, iters, cap, runner=lambda g: run_gate(g, Path.cwd()))
+        _emit(v, source=f"brain:{transport}")
+        return 0
+
+    # ── DEGRADED: brain genuinely unreachable -> fall back to the local file
+    # cache (legacy shape). Located via argv[0] or $ARCHHUB_ACTIVE_WORK. ─────
     ledger: Optional[Path] = None
     if argv:
         ledger = Path(argv[0])
     elif os.environ.get("ARCHHUB_ACTIVE_WORK"):
         ledger = Path(os.environ["ARCHHUB_ACTIVE_WORK"])
     if ledger is None or not ledger.is_file():
-        # v0 safe default: nothing registered -> allow stop. (Brain-side
-        # adjudication is the authoritative path; this local hook never
-        # blocks blindly.)
+        # safe default: nothing registered + brain down -> allow stop.
         return 0
     gates, iters, cap = _load(ledger)
     v = evaluate(gates, iters, cap, runner=lambda g: run_gate(g, Path.cwd()))
-    if v.action == "block":
-        print(json.dumps({"decision": "block", "reason": v.reason}))
-    elif v.action == "escalate":
-        sys.stderr.write("[completion_gate] ESCALATE -> founder: " + v.reason + "\n")
-        print(json.dumps({"escalate": True, "reason": v.reason, "red": v.red}))
+    _emit(v, source="file:degraded")
     return 0
+
+
+def _emit(v: Verdict, *, source: str) -> None:
+    """Print the gate verdict in the Stop-hook contract, tagging which store it
+    came from so the founder can SEE it read the brain (not a fork)."""
+    if v.action == "block":
+        print(json.dumps({"decision": "block", "reason": v.reason, "source": source}))
+    elif v.action == "escalate":
+        sys.stderr.write(f"[completion_gate/{source}] ESCALATE -> founder: " + v.reason + "\n")
+        print(json.dumps({"escalate": True, "reason": v.reason, "red": v.red,
+                          "source": source}))
 
 
 if __name__ == "__main__":

@@ -270,6 +270,14 @@ class BrainStore:
             conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA synchronous=NORMAL")
+        # busy_timeout is load-bearing for CROSS-PROCESS atomicity: update_meta's
+        # critical section opens a BEGIN IMMEDIATE (RESERVED lock). When a SECOND
+        # process is mid-claim and holds that lock, this connection's BEGIN
+        # IMMEDIATE would otherwise fail instantly with "database is locked";
+        # busy_timeout makes it WAIT (and retry) for the lock instead, so the two
+        # claims serialise rather than one erroring out. Without it the
+        # serialization degrades to a noisy error under contention.
+        conn.execute("PRAGMA busy_timeout=10000")  # 10s
         conn.executescript(_SCHEMA)
         # Brain #31 multimodal — add columns to pre-existing DBs that
         # were created before the schema gained them. Idempotent;
@@ -1148,6 +1156,77 @@ class BrainStore:
                 "SELECT value FROM brain_meta WHERE key = ?", (key,)
             ).fetchone()
         return row["value"] if row else None
+
+    def update_meta(self, key: str, fn: "Any") -> "Any":
+        """Atomic read-modify-write of a single brain_meta key — IN-PROCESS *and*
+        CROSS-PROCESS safe.
+
+        The RLock alone closes the in-PROCESS TOCTOU window (two THREADS sharing
+        this connection can't split the get→decide→set). But the RLock gives ZERO
+        protection across PROCESSES: a second daemon / an in-process hook has its
+        own connection and its own RLock. On the autocommit path
+        (``isolation_level=None``) the ``SELECT`` below holds no database lock, so
+        process A and process B could BOTH read the old value, BOTH decide, and
+        BOTH write — the cross-process double-claim the court reproduced.
+
+        The fix wraps the whole critical section in ``BEGIN IMMEDIATE … COMMIT``.
+        ``BEGIN IMMEDIATE`` takes a RESERVED lock on the database AT ONCE (not
+        deferred to the first write), and SQLite permits only one RESERVED lock
+        at a time — so a concurrent process's ``BEGIN IMMEDIATE`` blocks (and,
+        thanks to ``busy_timeout``, WAITS) until this COMMIT. The read-decide-
+        write therefore serialises across connections/processes, not just
+        threads. On error we ROLL BACK so a failed decide never half-writes.
+
+        ``fn(old_value: Optional[str]) -> (new_value: Optional[str], result)``:
+        receives the current raw string (or None), returns the new raw string to
+        persist plus an arbitrary result handed back to the caller. Returning
+        ``new_value is None`` leaves the key untouched (a pure read — the
+        transaction still COMMITs, releasing the lock). Because the RLock is
+        re-entrant AND a re-entrant call detects the already-open transaction
+        (``in_transaction``) and does NOT start a nested ``BEGIN``, ``fn`` may
+        itself call ``get_meta`` / ``set_meta`` (or recover via the durable load)
+        without deadlocking or "cannot start a transaction within a transaction"
+        — the inner statements simply join the outer transaction. This is what
+        lets the JSON-doc stores route their read-modify-write through one
+        serialised critical section. BOTH such stores do so for real:
+        ``active_work.ActiveWorkStore._mutate`` AND
+        ``requirement_tree.TreeStore._mutate`` (the latter wired here so its
+        ``claim_leaf`` is a genuine cross-process CAS — exactly one winner per
+        contested leaf across processes, no TOCTOU double-claim).
+        """
+        with self._lock:
+            # Re-entrancy guard: if we're ALREADY inside a transaction (a nested
+            # update_meta under the same re-entrant RLock), don't open a second
+            # one — let the outermost call own the BEGIN/COMMIT so the inner work
+            # joins it. Only the outer transaction-owner commits/rolls back.
+            owns_txn = not self._conn.in_transaction
+            if owns_txn:
+                # IMMEDIATE = grab the RESERVED write-lock now, so the SELECT that
+                # follows is already inside the serialised critical section (no
+                # other process can read-then-claim concurrently).
+                self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT value FROM brain_meta WHERE key = ?", (key,)
+                ).fetchone()
+                old = row["value"] if row else None
+                new_value, result = fn(old)
+                if new_value is not None:
+                    self._conn.execute(
+                        "INSERT INTO brain_meta(key, value) VALUES(?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, new_value),
+                    )
+                if owns_txn:
+                    self._conn.execute("COMMIT")
+                return result
+            except BaseException:
+                if owns_txn and self._conn.in_transaction:
+                    try:
+                        self._conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                raise
 
     # ── batch write (Mem0-style ops) ────────────────────────────────────
 

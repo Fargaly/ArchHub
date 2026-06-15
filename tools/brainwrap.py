@@ -161,6 +161,58 @@ def _injection_from_context(ctx: Optional[dict]) -> str:
     return ""
 
 
+def fetch_drive_block(*, runtime: str) -> str:
+    """THE DRIVE (pre-prompt). Ask the brain for this runtime's next leaf, CLAIM
+    it, and return the ready-to-prepend <assigned_leaf> block.
+
+    Two transports, ONE ledger (mirrors brain_ledger / client_hook):
+      1. DAEMON — POST brain.work_assigned_block (the daemon's single store +
+         the BEGIN IMMEDIATE critical section serialise the claim across every
+         client). Preferred so two runtimes never grab the same leaf.
+      2. IN-PROCESS fallback — if the daemon is down but the package imports,
+         claim through the SAME on-disk brain.db via client_hook.
+
+    Fail-OPEN: returns "" on any error / empty frontier so a pre-prompt is never
+    blocked by the drive being idle or offline."""
+    owner = os.environ.get("BRAIN_OWNER_USER")
+    fit = _drive_fit()
+    # 1) daemon — the cross-process-safe path.
+    res = call_tool("brain.work_assigned_block", {
+        "runtime": runtime,
+        "fit": fit,
+        "owner_user": owner,
+        "wrap": True,
+    })
+    if isinstance(res, dict) and res.get("ok") and res.get("block"):
+        return res["block"]
+    if isinstance(res, dict) and res.get("ok"):
+        return ""  # daemon answered, frontier dry
+    # 2) in-process fallback — same brain.db, no daemon.
+    try:
+        from personal_brain import client_hook as ch  # type: ignore
+        from personal_brain.storage import BrainStore, default_brain_path
+        db = os.environ.get("ARCHHUB_BRAIN_DB") or str(default_brain_path())
+        store = BrainStore.open(db)
+        try:
+            return ch.assigned_leaf_block(
+                runtime=runtime, fit=fit, owner_user=owner, store=store)
+        finally:
+            store.close()
+    except Exception:
+        return ""
+
+
+def _drive_fit() -> Optional[list[str]]:
+    """Capability tags this runtime advertises to the drive (so a specialised
+    leaf is never handed to a runtime that can't do it). Read from
+    BRAIN_RUNTIME_FIT (comma-separated) when set; else None (matches only
+    no-requirement leaves)."""
+    raw = os.environ.get("BRAIN_RUNTIME_FIT", "").strip()
+    if not raw:
+        return None
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 def cmd_context(vendor: str) -> int:
     payload = _read_stdin_json()
     prompt = payload.get("prompt") or payload.get("user_message") or ""
@@ -171,16 +223,23 @@ def cmd_context(vendor: str) -> int:
     })
     injection = _injection_from_context(ctx)
 
+    # THE DRIVE: in ADDITION to RECALL (brain.context), inject the next unit of
+    # work the brain hands this runtime (<assigned_leaf>, claimed atomically).
+    # This is what wires the foreign-vendor pre-prompt into the brain-driver —
+    # without it the brain drives Claude Code but not Codex/Gemini/Cursor.
+    drive = fetch_drive_block(runtime=vendor)
+    combined = "\n".join(b for b in (injection, drive) if b).strip()
+
     if vendor == "cursor":
         # Cursor merges user_message into the outgoing prompt context.
         out = {"continue": True}
-        if injection:
-            out["user_message"] = injection
+        if combined:
+            out["user_message"] = combined
         sys.stdout.write(json.dumps(out))
     else:
-        # generic: print the injection block for the agent/wrapper to prepend.
-        if injection:
-            sys.stdout.write(injection)
+        # generic: print recall + drive for the agent/wrapper to prepend.
+        if combined:
+            sys.stdout.write(combined)
     return 0
 
 
@@ -321,11 +380,87 @@ def flush_turn_memory(evidence: dict, *, vendor: str, blocked: bool,
         return None
 
 
+def _completion_gate_verdict(cwd: Optional[str] = None) -> tuple[bool, str]:
+    """THE DRIVE's Stop consumer for foreign vendors. Ask the BRAIN (over the
+    SAME daemon transport every other brainwrap call uses) for this owner's
+    active-work ledger, derive the pending done-gates from its actionable
+    (open/claimed) leaves, run each gate against the REAL artifact (resolved
+    against the AGENT's `cwd`, not brainwrap's), and return (block?, reason).
+
+    Mirrors what the Claude Code Stop hook gets from completion_gate.py — but
+    fetches the ledger via `call_tool("brain.work_get")` (the daemon's single
+    BEGIN-IMMEDIATE-serialised store) rather than opening brain.db directly, so:
+      * it goes through the cross-process-safe daemon arbiter, and
+      * it respects the same transport seam the rest of brainwrap does (a dead
+        daemon → no ledger → fall through to the diligence verdict, never a
+        spurious block off some unrelated on-disk default ledger).
+
+    A red machine-gate under the cap → BLOCK (keep working). A human-only/cdp
+    leaf or the cap → ESCALATE (surfaced as a block-with-reason so the agent is
+    told to escalate, never silently quits). Fail-OPEN: any error → (False, "")
+    so a dead/erroring brain never traps the agent."""
+    res = call_tool("brain.work_get",
+                    {"owner_user": os.environ.get("BRAIN_OWNER_USER")})
+    if not isinstance(res, dict) or not res.get("ok"):
+        return False, ""  # daemon down / no ledger → defer to diligence
+    ledger = res.get("ledger") or {}
+    try:
+        import completion_gate as cg  # tools/ already on sys.path
+        import brain_ledger as bl     # pure gate-mapping helpers
+    except Exception:
+        return False, ""
+    # Derive completion_gate Gates from the ledger's ACTIONABLE leaves (a DONE
+    # leaf is already green; a BLOCKED leaf is a needs-root escalation), reusing
+    # brain_ledger's pure (gate_kind, gate_spec) → Gate mapping — NO DB open.
+    gate_dicts: list[dict] = []
+    for lf in (ledger.get("leaves") or {}).values():
+        state = lf.get("state")
+        if state == "done":
+            continue
+        gk = lf.get("gate_kind", "manual")
+        spec = lf.get("gate_spec") or {}
+        if state == "blocked":
+            gate_dicts.append({"name": lf.get("title", ""), "kind": "manual",
+                               "arg": "", "machine_resolvable": False})
+            continue
+        gate_dicts.append({
+            "name": lf.get("title", ""),
+            "kind": bl._GATE_KIND_MAP.get(gk, "manual"),
+            "arg": bl._gate_arg_from_spec(gk, spec),
+            "arg2": ",".join(spec.get("paths", [])) if gk == "grep_clean" else "",
+            "machine_resolvable": gk not in ("manual", "cdp"),
+        })
+    if not gate_dicts:
+        return False, ""  # drive dry → nothing to block on
+    gates = [cg._gate_from_dict(g) for g in gate_dicts]
+    iters = int(ledger.get("iterations", 0))
+    cap = int(ledger.get("cap", cg.CAP_DEFAULT))
+    root = Path(cwd) if cwd else Path.cwd()
+    v = cg.evaluate(gates, iters, cap, runner=lambda g: cg.run_gate(g, root))
+    if v.action == "block":
+        return True, f"{v.reason} [brain:daemon]"
+    if v.action == "escalate":
+        return True, f"ESCALATE → founder: {v.reason} [brain:daemon]"
+    return False, ""
+
+
 def cmd_stop(vendor: str) -> int:
     payload = _read_stdin_json()
     verdict, evidence = _diligence_verdict(payload)
     blocked = bool(verdict) and verdict.get("verdict") == "block"
     reason = (verdict or {}).get("reason") or "Work incomplete — keep going."
+
+    # THE DRIVE's Stop gate: BEFORE the diligence verdict decides, check the
+    # BRAIN ledger — if a leaf this runtime pulled is still open/red, BLOCK the
+    # exit (the half that makes the pre-prompt pull binding for foreign vendors,
+    # same as Claude Code's Stop → completion_gate). The ledger gate takes
+    # precedence: undone, gated work is the strongest "keep going" signal. The
+    # gate predicate runs against the AGENT's cwd (from the stop payload).
+    drive_blocked, drive_reason = _completion_gate_verdict(
+        cwd=payload.get("cwd") or os.getcwd())
+    if drive_blocked:
+        blocked = True
+        reason = drive_reason or reason
 
     # PER-TURN BRAIN FLUSH (the brain-LEARNING gap closer). Claude Code writes
     # the brain per-tool via its PostToolUse→brain.write hook; hookless/foreign

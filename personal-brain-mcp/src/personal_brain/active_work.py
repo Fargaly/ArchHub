@@ -54,6 +54,18 @@ if TYPE_CHECKING:  # avoid a runtime import cycle; only needed for typing
 # NEW brain_meta key — never collides with requirement_tree_v1 / calibration_v1
 # / organize.clusters / diligence.stats / bound_owner_* / personal_cloud_sync.*
 LEDGER_META_KEY = "active_work_v1"
+# Durability siblings (same brain_meta table, additive keys). The last-good copy
+# lets a corrupt/partial read RECOVER instead of returning {} (the founder's
+# "data not persistent" fear); the corrupt blob is QUARANTINED, never discarded.
+LEDGER_LASTGOOD_KEY = "active_work_v1__lastgood"
+LEDGER_CORRUPT_PREFIX = "active_work_v1__corrupt_"
+
+
+class LedgerCorruptError(RuntimeError):
+    """The ledger blob would not parse AND no last-good copy exists to recover
+    from. Raised LOUD instead of silently returning an empty ledger — losing
+    every owner's open work on one bad read is the exact silent-data-loss the
+    court refuted. The bad blob is quarantined under a corrupt-* key first."""
 
 
 # ─────────────────────────── enums + models ────────────────────────────
@@ -110,35 +122,125 @@ class ActiveWork(BaseModel):
 # ─────────────────────────── persistence ───────────────────────────────
 
 
+def _parse_doc(raw: Optional[str]) -> Optional[dict[str, dict]]:
+    """Parse the ledger blob. Returns the owner→ledger dict on success, or None
+    when the blob is corrupt (unparseable / not a JSON object). An EMPTY blob
+    (None / "") is a valid empty ledger → {} (NOT corruption)."""
+    if not raw:
+        return {}
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
 class ActiveWorkStore:
-    """Thin wrapper over `BrainStore.get_meta` / `set_meta`.
+    """Thin wrapper over `BrainStore.update_meta` / `get_meta`.
 
     Stores ALL owners' ledgers as ONE JSON doc under
     `brain_meta[LEDGER_META_KEY]`:
 
         { owner_user: <ActiveWork json>, ... }
 
-    Mirrors `requirement_tree.TreeStore` EXACTLY — never creates a table, never
-    touches fragments / skills. Every mutation is a read-modify-write of that
-    single key, and because `set_meta` serialises under the store's RLock, the
-    doc-level write is atomic per call.
+    Mirrors `requirement_tree.TreeStore` shape — never creates a table, never
+    touches fragments / skills.
+
+    TWO hard guarantees the court demanded (and the v0 forked copy lacked):
+
+      * ATOMIC mutation. Every read-modify-write goes through ONE
+        ``BrainStore.update_meta`` call, whose critical section is serialised on
+        TWO levels: the store's RLock (across THREADS in one process) AND a
+        ``BEGIN IMMEDIATE`` RESERVED-lock transaction (across CONNECTIONS /
+        PROCESSES). The decide step is INSIDE both, so two racing pulls — whether
+        two threads OR two separate daemon/hook processes on the same brain.db —
+        can never both read OPEN and both claim (no TOCTOU double-claim, no lost
+        update). The RLock alone is in-process only; the cross-process guarantee
+        rests on BEGIN IMMEDIATE (see storage.update_meta).
+
+      * DURABLE read. A corrupt/partial blob is NEVER silently dropped: the bad
+        bytes are quarantined under a ``corrupt_*`` key, and the loader RECOVERS
+        from the last-good copy. Only when there is genuinely no recoverable
+        copy does it raise ``LedgerCorruptError`` — loud, never a silent {} that
+        wipes every owner's open work.
     """
 
     def __init__(self, store: "BrainStore"):
         self.store = store
 
+    # ── durable read ───────────────────────────────────────────────────
     def _load_all(self) -> dict[str, dict]:
-        raw = self.store.get_meta(LEDGER_META_KEY)
-        if not raw:
-            return {}
-        try:
-            doc = json.loads(raw)
-        except Exception:
-            return {}
-        return doc if isinstance(doc, dict) else {}
+        """Load the owner→ledger dict, recovering loudly on corruption.
 
-    def _save_all(self, doc: dict[str, dict]) -> None:
-        self.store.set_meta(LEDGER_META_KEY, json.dumps(doc, default=str))
+        Bad blob → quarantine it + fall back to the last-good copy. If even the
+        last-good copy is missing/corrupt → raise LedgerCorruptError (never
+        return {} and silently erase the ledger)."""
+        raw = self.store.get_meta(LEDGER_META_KEY)
+        doc = _parse_doc(raw)
+        if doc is not None:
+            return doc
+        # CORRUPT primary. Preserve the bad bytes, then try last-good. Only a
+        # last-good key that ACTUALLY EXISTS and parses is a valid recovery — a
+        # MISSING last-good key (None) is NOT a recoverable empty doc, it means
+        # there is nothing to recover from, so we must raise (never invent {}).
+        self._quarantine(raw)
+        good_raw = self.store.get_meta(LEDGER_LASTGOOD_KEY)
+        good = _parse_doc(good_raw) if good_raw is not None else None
+        if good is not None:
+            # Re-promote the recovered copy as the live ledger so the next
+            # writer extends the good state, not the corrupt blob.
+            self.store.set_meta(LEDGER_META_KEY, good_raw or json.dumps({}))
+            return good
+        raise LedgerCorruptError(
+            "active-work ledger blob is corrupt and no last-good copy exists; "
+            f"bad bytes quarantined under '{LEDGER_CORRUPT_PREFIX}*'. Refusing "
+            "to silently return an empty ledger (would lose every owner's open "
+            "work)."
+        )
+
+    def _quarantine(self, raw: Optional[str]) -> None:
+        """Stash a corrupt blob under a timestamped corrupt-* key so the bytes
+        are recoverable for forensics — never thrown away."""
+        if not raw:
+            return
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+        try:
+            self.store.set_meta(LEDGER_CORRUPT_PREFIX + ts, raw)
+        except Exception:
+            pass  # quarantine is best-effort; never block recovery on it
+
+    # ── atomic mutation (single critical section) ───────────────────────
+    def _mutate(self, fn: "Any") -> "Any":
+        """Run ``fn(doc) -> result`` as ONE atomic read-modify-write.
+
+        ``fn`` receives the live owner→ledger dict (already corruption-checked)
+        and MUTATES IT IN PLACE; its return value is handed back to the caller.
+        The whole load→fn→persist runs inside ``BrainStore.update_meta``'s lock,
+        so the decision ``fn`` makes (e.g. "is this leaf still OPEN?") cannot be
+        invalidated by a concurrent writer between read and write. On success the
+        new doc is also mirrored to the last-good key for durable recovery."""
+        box: dict[str, Any] = {}
+
+        def _apply(old_raw: Optional[str]):
+            doc = _parse_doc(old_raw)
+            if doc is None:
+                # Corrupt under the lock — recover via the durable path (which
+                # quarantines + falls back to last-good or raises loudly).
+                doc = self._load_all()
+            box["result"] = fn(doc)
+            new_raw = json.dumps(doc, default=str)
+            box["new_raw"] = new_raw
+            return new_raw, new_raw  # (value-to-persist, result passed through)
+
+        new_raw = self.store.update_meta(LEDGER_META_KEY, _apply)
+        # Mirror the just-persisted good state as the last-good copy (outside the
+        # decision but still serialised by the same RLock per call).
+        if new_raw is not None:
+            try:
+                self.store.set_meta(LEDGER_LASTGOOD_KEY, new_raw)
+            except Exception:
+                pass
+        return box.get("result")
 
     def load(self, owner_user: str) -> Optional[ActiveWork]:
         doc = self._load_all()
@@ -154,22 +256,57 @@ class ActiveWorkStore:
         return self.load(owner_user) or ActiveWork(owner_user=owner_user)
 
     def save(self, ledger: ActiveWork) -> None:
-        """Read-modify-write the single ledger-namespace key. Bumps updated_at."""
+        """Persist a ledger atomically (single critical section). Bumps
+        updated_at. Prefer the ``mutate_*`` helpers for read-modify-write — this
+        last-writer-wins setter is for callers that built the ledger fresh."""
         ledger.updated_at = datetime.now(timezone.utc)
-        doc = self._load_all()
-        doc[ledger.owner_user] = ledger.model_dump(mode="json")
-        self._save_all(doc)
+
+        def _fn(doc: dict[str, dict]):
+            doc[ledger.owner_user] = ledger.model_dump(mode="json")
+            return ledger
+
+        self._mutate(_fn)
+
+    def mutate_owner(self, owner_user: str, fn: "Any") -> "Any":
+        """THE atomic read-modify-write over a SINGLE owner's ledger.
+
+        Loads (or news) the owner's ActiveWork, calls ``fn(ledger) -> result``,
+        persists the mutated ledger, and returns ``result`` — all inside ONE
+        critical section. This is the choke point next_leaf / claim / release /
+        add_leaves / bump_iteration route through so their decide-then-write is
+        never split by a concurrent writer."""
+
+        def _fn(doc: dict[str, dict]):
+            raw = doc.get(owner_user)
+            ledger: ActiveWork
+            if raw is None:
+                ledger = ActiveWork(owner_user=owner_user)
+            else:
+                try:
+                    ledger = ActiveWork.model_validate(raw)
+                except Exception:
+                    # A single owner's slot is unparseable but the doc as a
+                    # whole is fine — start that owner fresh rather than nuking
+                    # the others. (Whole-doc corruption is handled in _load_all.)
+                    ledger = ActiveWork(owner_user=owner_user)
+            result = fn(ledger)
+            ledger.updated_at = datetime.now(timezone.utc)
+            doc[owner_user] = ledger.model_dump(mode="json")
+            return result
+
+        return self._mutate(_fn)
 
     def list_owners(self) -> list[str]:
         return sorted(self._load_all().keys())
 
     def delete(self, owner_user: str) -> bool:
-        doc = self._load_all()
-        if owner_user in doc:
-            del doc[owner_user]
-            self._save_all(doc)
-            return True
-        return False
+        def _fn(doc: dict[str, dict]):
+            if owner_user in doc:
+                del doc[owner_user]
+                return True
+            return False
+
+        return self._mutate(_fn)
 
 
 # ─────────────────────────── id helper ─────────────────────────────────
@@ -223,29 +360,33 @@ def add_leaves(
     if not leaves:
         raise ValueError("add_leaves requires at least one leaf")
     aws = ActiveWorkStore(store)
-    ledger = aws.load_or_new(owner_user)
-    now = datetime.now(timezone.utc)
-    for spec in leaves:
-        title = (spec.get("title") or "").strip()
-        if not title:
-            continue
-        lid = _leaf_id(owner_user, title)
-        if lid in ledger.leaves:
-            # idempotent: keep the existing leaf + its state (never re-open).
-            continue
-        ledger.leaves[lid] = WorkLeaf(
-            leaf_id=lid,
-            title=title,
-            gate_kind=(spec.get("gate_kind") or "manual"),
-            gate_spec=(spec.get("gate_spec") or {}),
-            fit=list(spec.get("fit") or []),
-            priority=int(spec.get("priority") or 0),
-            state=LeafState.OPEN,
-            created_at=now,
-            updated_at=now,
-        )
-    aws.save(ledger)
-    return ledger
+
+    def _fn(ledger: ActiveWork) -> ActiveWork:
+        now = datetime.now(timezone.utc)
+        for spec in leaves:
+            title = (spec.get("title") or "").strip()
+            if not title:
+                continue
+            lid = _leaf_id(owner_user, title)
+            if lid in ledger.leaves:
+                # idempotent: keep the existing leaf + its state (never re-open).
+                continue
+            ledger.leaves[lid] = WorkLeaf(
+                leaf_id=lid,
+                title=title,
+                gate_kind=(spec.get("gate_kind") or "manual"),
+                gate_spec=(spec.get("gate_spec") or {}),
+                fit=list(spec.get("fit") or []),
+                priority=int(spec.get("priority") or 0),
+                state=LeafState.OPEN,
+                created_at=now,
+                updated_at=now,
+            )
+        return ledger
+
+    # Atomic read-modify-write: the whole enqueue is one critical section, so a
+    # concurrent producer never clobbers leaves this call added (lost update).
+    return aws.mutate_owner(owner_user, _fn)
 
 
 def _fits(leaf: WorkLeaf, fit: Optional[list[str]]) -> bool:
@@ -282,21 +423,27 @@ def next_leaf(
     if not (runtime or "").strip():
         raise ValueError("next_leaf requires a non-empty runtime")
     aws = ActiveWorkStore(store)
-    ledger = aws.load_or_new(owner_user)
-    candidates = [
-        lf for lf in ledger.open_leaves() if _fits(lf, fit)
-    ]
-    if not candidates:
-        return None
-    # highest priority first; tie -> oldest created_at first (stable FIFO).
-    candidates.sort(key=lambda lf: (-lf.priority, lf.created_at, lf.leaf_id))
-    chosen = candidates[0]
-    chosen.state = LeafState.CLAIMED
-    chosen.claimed_by = (agent_id or runtime)
-    chosen.runtime = runtime
-    chosen.updated_at = datetime.now(timezone.utc)
-    aws.save(ledger)
-    return chosen
+
+    def _fn(ledger: ActiveWork) -> Optional[WorkLeaf]:
+        # SELECT + CLAIM are ONE critical section. On the old code the select
+        # (load) released the lock before the claim (save) re-acquired it, so
+        # two racing pulls both read the SAME leaf as OPEN and both claimed it
+        # (deterministic double-claim — court-reproduced). Here the decide step
+        # runs under the store's RLock, so the second pull sees state=CLAIMED
+        # and skips it. The arbiter is single-threaded by construction.
+        candidates = [lf for lf in ledger.open_leaves() if _fits(lf, fit)]
+        if not candidates:
+            return None
+        # highest priority first; tie -> oldest created_at first (stable FIFO).
+        candidates.sort(key=lambda lf: (-lf.priority, lf.created_at, lf.leaf_id))
+        chosen = candidates[0]
+        chosen.state = LeafState.CLAIMED
+        chosen.claimed_by = (agent_id or runtime)
+        chosen.runtime = runtime
+        chosen.updated_at = datetime.now(timezone.utc)
+        return chosen
+
+    return aws.mutate_owner(owner_user, _fn)
 
 
 def claim(
@@ -314,24 +461,28 @@ def claim(
     if not (agent_id or "").strip():
         raise ValueError("claim requires a non-empty agent_id (anti-self-certify anchor)")
     aws = ActiveWorkStore(store)
-    ledger = aws.load_or_new(owner_user)
-    leaf = ledger.leaves.get(leaf_id)
-    if leaf is None:
-        raise KeyError(f"leaf '{leaf_id}' not found for owner '{owner_user}'")
-    if leaf.state == LeafState.DONE:
-        raise ValueError(f"leaf '{leaf_id}' is DONE — nothing to claim")
-    if leaf.claimed_by and leaf.claimed_by != agent_id:
-        raise ValueError(
-            f"leaf '{leaf_id}' already claimed by '{leaf.claimed_by}' "
-            f"(requested by '{agent_id}')"
-        )
-    leaf.claimed_by = agent_id
-    if runtime:
-        leaf.runtime = runtime
-    leaf.state = LeafState.CLAIMED
-    leaf.updated_at = datetime.now(timezone.utc)
-    aws.save(ledger)
-    return leaf
+
+    def _fn(ledger: ActiveWork) -> WorkLeaf:
+        # check-then-set under one lock: the "already claimed by another?" guard
+        # and the claim write can't be split by a concurrent claimer.
+        leaf = ledger.leaves.get(leaf_id)
+        if leaf is None:
+            raise KeyError(f"leaf '{leaf_id}' not found for owner '{owner_user}'")
+        if leaf.state == LeafState.DONE:
+            raise ValueError(f"leaf '{leaf_id}' is DONE — nothing to claim")
+        if leaf.claimed_by and leaf.claimed_by != agent_id:
+            raise ValueError(
+                f"leaf '{leaf_id}' already claimed by '{leaf.claimed_by}' "
+                f"(requested by '{agent_id}')"
+            )
+        leaf.claimed_by = agent_id
+        if runtime:
+            leaf.runtime = runtime
+        leaf.state = LeafState.CLAIMED
+        leaf.updated_at = datetime.now(timezone.utc)
+        return leaf
+
+    return aws.mutate_owner(owner_user, _fn)
 
 
 def release(
@@ -356,25 +507,27 @@ def release(
     Mirrors requirement_tree.set_verdict's red-path (bump attempts + clear the
     claim). Returns the updated leaf."""
     aws = ActiveWorkStore(store)
-    ledger = aws.load_or_new(owner_user)
-    leaf = ledger.leaves.get(leaf_id)
-    if leaf is None:
-        raise KeyError(f"leaf '{leaf_id}' not found for owner '{owner_user}'")
-    now = datetime.now(timezone.utc)
-    leaf.note = note or leaf.note
-    leaf.updated_at = now
-    if done:
-        leaf.state = LeafState.DONE
-        leaf.evidence_ref = evidence_ref
-    elif blocked:
-        leaf.state = LeafState.BLOCKED
-        leaf.claimed_by = None
-    else:
-        leaf.state = LeafState.OPEN
-        leaf.claimed_by = None
-        leaf.attempts += 1
-    aws.save(ledger)
-    return leaf
+
+    def _fn(ledger: ActiveWork) -> WorkLeaf:
+        leaf = ledger.leaves.get(leaf_id)
+        if leaf is None:
+            raise KeyError(f"leaf '{leaf_id}' not found for owner '{owner_user}'")
+        now = datetime.now(timezone.utc)
+        leaf.note = note or leaf.note
+        leaf.updated_at = now
+        if done:
+            leaf.state = LeafState.DONE
+            leaf.evidence_ref = evidence_ref
+        elif blocked:
+            leaf.state = LeafState.BLOCKED
+            leaf.claimed_by = None
+        else:
+            leaf.state = LeafState.OPEN
+            leaf.claimed_by = None
+            leaf.attempts += 1
+        return leaf
+
+    return aws.mutate_owner(owner_user, _fn)
 
 
 def bump_iteration(store: "BrainStore", *, owner_user: str = "founder") -> int:
@@ -382,10 +535,12 @@ def bump_iteration(store: "BrainStore", *, owner_user: str = "founder") -> int:
     the agent the unfinished list). The cap on these is the anti-infinite-grind
     backstop — mirrors tools/active_work.bump but server-authoritative."""
     aws = ActiveWorkStore(store)
-    ledger = aws.load_or_new(owner_user)
-    ledger.iterations += 1
-    aws.save(ledger)
-    return ledger.iterations
+
+    def _fn(ledger: ActiveWork) -> int:
+        ledger.iterations += 1
+        return ledger.iterations
+
+    return aws.mutate_owner(owner_user, _fn)
 
 
 def status(store: "BrainStore", *, owner_user: str = "founder") -> dict[str, Any]:
@@ -610,5 +765,43 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
         if ledger is None:
             return {"ok": False, "error": f"no ledger for owner '{owner}'"}
         return {"ok": True, "ledger": ledger.model_dump(mode="json")}
+
+    @mcp.tool(
+        name="brain.work_assigned_block",
+        description=(
+            "THE DRIVER (pre-prompt) — the brain hands the calling runtime its "
+            "next leaf AND renders the ready-to-prepend <assigned_leaf> context "
+            "block (names the work, the gate, and how to report back). CLAIMS "
+            "the leaf atomically server-side (OPEN → CLAIMED) so two clients "
+            "never grab the same one. This is the daemon-served counterpart to "
+            "client_hook.assigned_leaf_block: an external client (Codex / Gemini "
+            "/ a CLI) calls THIS over MCP to get the drive block already "
+            "formatted by the brain — no client-side rendering. Returns {ok, "
+            "block, leaf} where block=\"\" when the frontier is dry."
+        ),
+    )
+    def brain_work_assigned_block(
+        runtime: str,
+        fit: Optional[list[str]] = None,
+        owner_user: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        wrap: bool = True,
+    ) -> dict[str, Any]:
+        owner = owner_user or _resolve_owner()
+        try:
+            # in-process: the daemon shares this store, so client_hook claims
+            # atomically through the SAME ledger every other tool writes (one
+            # store). This is what wires client_hook into the brain-side path.
+            from . import client_hook as ch
+            leaf = ch.next_assigned_leaf(
+                runtime=runtime, fit=fit, owner_user=owner,
+                agent_id=agent_id, store=store,
+            )
+            block = ch.format_assigned_leaf(leaf) if leaf else ""
+            if wrap:
+                block = ch._wrap(block)
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        return {"ok": True, "owner_user": owner, "block": block, "leaf": leaf}
 
     return mcp

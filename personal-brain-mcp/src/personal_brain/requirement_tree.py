@@ -130,16 +130,42 @@ class RequirementTree(BaseModel):
 # ─────────────────────────── persistence ───────────────────────────────
 
 
+def _parse_doc(raw: Optional[str]) -> dict[str, dict]:
+    """Parse the tree-namespace blob into the tree_id→tree dict. An empty blob
+    (None / "") OR an unparseable / non-object blob → ``{}`` (a fresh empty
+    namespace). Tree integrity is enforced fail-closed downstream by
+    ``dangling_child_refs`` / ``sweep`` (a corrupted tree can never read as a
+    full green sweep), so the loader stays lenient here — matching the prior
+    ``_load_all`` behaviour exactly."""
+    if not raw:
+        return {}
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 class TreeStore:
-    """Thin wrapper over `BrainStore.get_meta` / `set_meta`.
+    """Thin wrapper over `BrainStore.update_meta` (atomic) / `get_meta` (read).
 
     Stores ALL trees as ONE JSON doc under `brain_meta[TREE_META_KEY]`:
 
         { tree_id: <RequirementTree json>, ... }
 
-    Never creates a table, never touches fragments / skills. Every mutation is
-    a read-modify-write of that single key — and because `set_meta` already
-    serialises under the store's RLock, the doc-level write is atomic per call.
+    Never creates a table, never touches fragments / skills. Mirrors
+    `active_work.ActiveWorkStore` EXACTLY — it is ONE system, not a fork.
+
+    ATOMIC mutation (the court-demanded fix). Every read-decide-write goes
+    through ONE ``BrainStore.update_meta`` call, whose critical section is
+    serialised on TWO levels: the store's RLock (across THREADS in one process)
+    AND a ``BEGIN IMMEDIATE`` RESERVED-lock transaction (across CONNECTIONS /
+    PROCESSES — see storage.update_meta). The decide step (e.g. "is this leaf
+    still OPEN?") runs INSIDE both, so two racing claims — whether two threads OR
+    two separate daemon/hook processes on the same brain.db — can never both read
+    OPEN and both claim (no cross-process TOCTOU double-claim, no lost update).
+    The earlier ``get_meta`` → decide → ``set_meta`` shape took TWO separate
+    locks, leaving exactly that window open (the court reproduced 8/8 forced).
     """
 
     def __init__(self, store: "BrainStore"):
@@ -147,16 +173,28 @@ class TreeStore:
 
     def _load_all(self) -> dict[str, dict]:
         raw = self.store.get_meta(TREE_META_KEY)
-        if not raw:
-            return {}
-        try:
-            doc = json.loads(raw)
-        except Exception:
-            return {}
-        return doc if isinstance(doc, dict) else {}
+        return _parse_doc(raw)
 
-    def _save_all(self, doc: dict[str, dict]) -> None:
-        self.store.set_meta(TREE_META_KEY, json.dumps(doc, default=str))
+    # ── atomic mutation (single critical section) ───────────────────────
+    def _mutate(self, fn: "Any") -> "Any":
+        """Run ``fn(doc) -> result`` as ONE atomic read-modify-write.
+
+        ``fn`` receives the live tree_id→tree dict and MUTATES IT IN PLACE; its
+        return value is handed back to the caller. The whole load→fn→persist
+        runs inside ``BrainStore.update_meta``'s BEGIN IMMEDIATE critical
+        section, so the decision ``fn`` makes cannot be invalidated by a
+        concurrent writer (another thread OR another process) between read and
+        write. Mirrors ``active_work.ActiveWorkStore._mutate``."""
+        box: dict[str, Any] = {}
+
+        def _apply(old_raw: Optional[str]):
+            doc = _parse_doc(old_raw)
+            box["result"] = fn(doc)
+            new_raw = json.dumps(doc, default=str)
+            return new_raw, new_raw
+
+        self.store.update_meta(TREE_META_KEY, _apply)
+        return box.get("result")
 
     def load(self, tree_id: str) -> Optional[RequirementTree]:
         doc = self._load_all()
@@ -171,22 +209,51 @@ class TreeStore:
             return None
 
     def save(self, tree: RequirementTree) -> None:
-        """Read-modify-write the single tree-namespace key. Bumps updated_at."""
+        """Persist a tree atomically (single critical section). Bumps
+        updated_at. Prefer ``mutate_tree`` for read-modify-write — this
+        last-writer-wins setter is for callers that built the tree fresh
+        (e.g. create_root)."""
         tree.updated_at = datetime.now(timezone.utc)
-        doc = self._load_all()
-        doc[tree.tree_id] = tree.model_dump(mode="json")
-        self._save_all(doc)
+
+        def _fn(doc: dict[str, dict]):
+            doc[tree.tree_id] = tree.model_dump(mode="json")
+            return tree
+
+        self._mutate(_fn)
+
+    def mutate_tree(self, tree_id: str, fn: "Any") -> "Any":
+        """THE atomic read-modify-write over a SINGLE tree.
+
+        Loads the tree (raising KeyError if absent), calls ``fn(tree) ->
+        result``, persists the mutated tree, and returns ``result`` — all inside
+        ONE critical section. This is the choke point decompose / claim_leaf /
+        set_verdict route through so their decide-then-write is never split by a
+        concurrent writer (the cross-process CAS). Mirrors
+        ``active_work.ActiveWorkStore.mutate_owner``."""
+
+        def _fn(doc: dict[str, dict]):
+            raw = doc.get(tree_id)
+            if raw is None:
+                raise KeyError(f"tree '{tree_id}' not found")
+            tree = RequirementTree.model_validate(raw)
+            result = fn(tree)
+            tree.updated_at = datetime.now(timezone.utc)
+            doc[tree_id] = tree.model_dump(mode="json")
+            return result
+
+        return self._mutate(_fn)
 
     def list_trees(self) -> list[str]:
         return sorted(self._load_all().keys())
 
     def delete(self, tree_id: str) -> bool:
-        doc = self._load_all()
-        if tree_id in doc:
-            del doc[tree_id]
-            self._save_all(doc)
-            return True
-        return False
+        def _fn(doc: dict[str, dict]):
+            if tree_id in doc:
+                del doc[tree_id]
+                return True
+            return False
+
+        return self._mutate(_fn)
 
 
 # ─────────────────────────── id helper ─────────────────────────────────
@@ -272,58 +339,60 @@ def decompose(
     survives a parent re-split). Refuses to decompose a node already GREEN
     (a verified-complete node is not re-opened by fiat).
     """
-    ts = TreeStore(store)
-    tree = ts.load(tree_id)
-    if tree is None:
-        raise KeyError(f"tree '{tree_id}' not found")
-    parent = tree.nodes.get(node_id)
-    if parent is None:
-        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
-    if parent.state == NodeState.GREEN:
-        raise ValueError(
-            f"refusing to decompose GREEN node '{node_id}' — verified-complete "
-            f"nodes are not re-opened (supersede via a new root instead)"
-        )
     if not children:
         raise ValueError("decompose requires at least one child (SPLIT, never simplify)")
+    ts = TreeStore(store)
 
-    now = datetime.now(timezone.utc)
-    for spec in children:
-        title = (spec.get("title") or "").strip()
-        if not title:
-            continue
-        cid = _node_id(tree_id, node_id, title)
-        if cid in tree.nodes:
-            # idempotent re-decompose: keep the existing child (+ its state),
-            # just ensure it's linked under this parent.
+    def _fn(tree: RequirementTree) -> RequirementTree:
+        parent = tree.nodes.get(node_id)
+        if parent is None:
+            raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
+        if parent.state == NodeState.GREEN:
+            raise ValueError(
+                f"refusing to decompose GREEN node '{node_id}' — verified-complete "
+                f"nodes are not re-opened (supersede via a new root instead)"
+            )
+
+        now = datetime.now(timezone.utc)
+        for spec in children:
+            title = (spec.get("title") or "").strip()
+            if not title:
+                continue
+            cid = _node_id(tree_id, node_id, title)
+            if cid in tree.nodes:
+                # idempotent re-decompose: keep the existing child (+ its state),
+                # just ensure it's linked under this parent.
+                if cid not in parent.children:
+                    parent.children.append(cid)
+                continue
+            child = ReqNode(
+                node_id=cid,
+                parent=node_id,
+                title=title,
+                predicate=(spec.get("predicate") or ""),
+                gate_kind=(spec.get("gate_kind") or "manual"),
+                gate_spec=(spec.get("gate_spec") or {}),
+                state=NodeState.OPEN,
+                created_at=now,
+                updated_at=now,
+            )
+            tree.nodes[cid] = child
             if cid not in parent.children:
                 parent.children.append(cid)
-            continue
-        child = ReqNode(
-            node_id=cid,
-            parent=node_id,
-            title=title,
-            predicate=(spec.get("predicate") or ""),
-            gate_kind=(spec.get("gate_kind") or "manual"),
-            gate_spec=(spec.get("gate_spec") or {}),
-            state=NodeState.OPEN,
-            created_at=now,
-            updated_at=now,
-        )
-        tree.nodes[cid] = child
-        if cid not in parent.children:
-            parent.children.append(cid)
 
-    # The parent is now internal: clear any leaf-only verdict/claim it carried
-    # and let its state be derived. If it was RED/NEEDS_ROOT (the usual reason
-    # to decompose), it reopens as an internal node pending its children.
-    parent.claimed_by = None
-    parent.verdict = None
-    parent.evidence_ref = None
-    parent.state = NodeState.OPEN
-    parent.updated_at = now
-    ts.save(tree)
-    return tree
+        # The parent is now internal: clear any leaf-only verdict/claim it carried
+        # and let its state be derived. If it was RED/NEEDS_ROOT (the usual reason
+        # to decompose), it reopens as an internal node pending its children.
+        parent.claimed_by = None
+        parent.verdict = None
+        parent.evidence_ref = None
+        parent.state = NodeState.OPEN
+        parent.updated_at = now
+        return tree
+
+    # Atomic read-modify-write: the whole split is one critical section (a
+    # concurrent decompose/claim never clobbers nodes this call added).
+    return ts.mutate_tree(tree_id, _fn)
 
 
 def claim_leaf(
@@ -333,7 +402,17 @@ def claim_leaf(
     node_id: str,
     agent_id: str,
 ) -> ReqNode:
-    """An executor claims an OPEN leaf → CLAIMED, recording claimed_by=agent_id.
+    """An executor claims an OPEN/RED leaf → CLAIMED, recording claimed_by=agent_id.
+
+    A REAL cross-process CAS: the "is this leaf still claimable?" check and the
+    claim write run inside ONE ``BEGIN IMMEDIATE`` critical section (via
+    ``TreeStore.mutate_tree``), so exactly ONE caller wins a contested leaf —
+    whether the contenders are two threads OR two separate processes on the same
+    brain.db. The earlier shape did ``load`` (one lock) then ``save`` (another
+    lock), so two processes could BOTH read the leaf as OPEN and BOTH write the
+    claim (the court reproduced 8/8 forced). Now the second claimant sees
+    ``state == CLAIMED`` inside the lock and gets the typed already-claimed
+    refusal.
 
     `agent_id` is REQUIRED and is the anti-self-certify anchor: `set_verdict`
     later REFUSES if the judge == claimed_by (the executor never judges its own
@@ -342,26 +421,29 @@ def claim_leaf(
     if not (agent_id or "").strip():
         raise ValueError("claim_leaf requires a non-empty agent_id (anti-self-certify anchor)")
     ts = TreeStore(store)
-    tree = ts.load(tree_id)
-    if tree is None:
-        raise KeyError(f"tree '{tree_id}' not found")
-    node = tree.nodes.get(node_id)
-    if node is None:
-        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
-    if not node.is_leaf:
-        raise ValueError(f"cannot claim non-leaf '{node_id}' — only leaves are executable")
-    if node.state == NodeState.GREEN:
-        raise ValueError(f"leaf '{node_id}' is already GREEN — nothing to claim")
-    if node.claimed_by and node.claimed_by != agent_id:
-        raise ValueError(
-            f"leaf '{node_id}' already claimed by '{node.claimed_by}' "
-            f"(requested by '{agent_id}')"
-        )
-    node.claimed_by = agent_id
-    node.state = NodeState.CLAIMED
-    node.updated_at = datetime.now(timezone.utc)
-    ts.save(tree)
-    return node
+
+    def _fn(tree: RequirementTree) -> ReqNode:
+        # check-then-set under ONE lock (the cross-process CAS). The guards and
+        # the claim write can't be split by a concurrent claimer in another
+        # thread OR another process.
+        node = tree.nodes.get(node_id)
+        if node is None:
+            raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
+        if not node.is_leaf:
+            raise ValueError(f"cannot claim non-leaf '{node_id}' — only leaves are executable")
+        if node.state == NodeState.GREEN:
+            raise ValueError(f"leaf '{node_id}' is already GREEN — nothing to claim")
+        if node.claimed_by and node.claimed_by != agent_id:
+            raise ValueError(
+                f"leaf '{node_id}' already claimed by '{node.claimed_by}' "
+                f"(requested by '{agent_id}')"
+            )
+        node.claimed_by = agent_id
+        node.state = NodeState.CLAIMED
+        node.updated_at = datetime.now(timezone.utc)
+        return node
+
+    return ts.mutate_tree(tree_id, _fn)
 
 
 def set_verdict(
@@ -387,53 +469,54 @@ def set_verdict(
     RED bumps `attempts` and clears the claim so the leaf re-enters the
     frontier for re-work / re-decompose.
     """
-    ts = TreeStore(store)
-    tree = ts.load(tree_id)
-    if tree is None:
-        raise KeyError(f"tree '{tree_id}' not found")
-    node = tree.nodes.get(node_id)
-    if node is None:
-        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
-
     v = (verdict or "").strip().lower()
     if v not in ("green", "red", "needs_root"):
         raise ValueError(f"verdict must be green|red|needs_root, got '{verdict}'")
     if not (judged_by or "").strip():
         raise ValueError("set_verdict requires a non-empty judged_by (the court identity)")
+    ts = TreeStore(store)
 
-    # Anti-self-certify: the executor that CLAIMED the leaf may not green it.
-    if (
-        v == "green"
-        and node.claimed_by
-        and judged_by == node.claimed_by
-        and not is_root_authority
-    ):
-        raise PermissionError(
-            f"self-certification refused: judge '{judged_by}' is the same agent "
-            f"that claimed leaf '{node_id}'. The court must be an INDEPENDENT "
-            f"identity (executor never judges its own work). Founder override "
-            f"requires is_root_authority=True."
-        )
+    def _fn(tree: RequirementTree) -> ReqNode:
+        node = tree.nodes.get(node_id)
+        if node is None:
+            raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
 
-    now = datetime.now(timezone.utc)
-    node.judged_by = judged_by
-    node.evidence_ref = evidence_ref
-    node.updated_at = now
-    if v == "green":
-        node.state = NodeState.GREEN
-        node.verdict = "green"
-    elif v == "red":
-        node.state = NodeState.RED
-        node.verdict = "red"
-        node.attempts += 1
-        node.claimed_by = None  # re-enter the frontier
-    else:  # needs_root
-        node.state = NodeState.NEEDS_ROOT
-        node.verdict = None
+        # Anti-self-certify: the executor that CLAIMED the leaf may not green it.
+        # The claimed_by READ + this decision are inside the critical section so a
+        # concurrent claim can't slip the identity between check and write.
+        if (
+            v == "green"
+            and node.claimed_by
+            and judged_by == node.claimed_by
+            and not is_root_authority
+        ):
+            raise PermissionError(
+                f"self-certification refused: judge '{judged_by}' is the same agent "
+                f"that claimed leaf '{node_id}'. The court must be an INDEPENDENT "
+                f"identity (executor never judges its own work). Founder override "
+                f"requires is_root_authority=True."
+            )
 
-    _propagate_green(tree)
-    ts.save(tree)
-    return tree.nodes[node_id]
+        now = datetime.now(timezone.utc)
+        node.judged_by = judged_by
+        node.evidence_ref = evidence_ref
+        node.updated_at = now
+        if v == "green":
+            node.state = NodeState.GREEN
+            node.verdict = "green"
+        elif v == "red":
+            node.state = NodeState.RED
+            node.verdict = "red"
+            node.attempts += 1
+            node.claimed_by = None  # re-enter the frontier
+        else:  # needs_root
+            node.state = NodeState.NEEDS_ROOT
+            node.verdict = None
+
+        _propagate_green(tree)
+        return node
+
+    return ts.mutate_tree(tree_id, _fn)
 
 
 def _propagate_green(tree: RequirementTree) -> None:

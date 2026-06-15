@@ -640,6 +640,207 @@ class TestStopFlushesBrainMemory:
         assert cap.names().count("brain.write") == 1
 
 
+# ═══════════════ 8. THE DRIVE wired into brainwrap (court defect #5) ══════
+
+
+class TestDrivePrePromptInject:
+    """The pre-prompt DRIVE for foreign vendors: in ADDITION to RECALL
+    (brain.context), brainwrap's `context` hook injects the <assigned_leaf>
+    block the brain hands this runtime (brain.work_assigned_block, claimed
+    atomically). Without it the brain drives Claude Code but not Codex/Gemini/
+    Cursor — the headline court defect #5 for the foreign-vendor hook path."""
+
+    def _stdin(self, payload: dict):
+        return patch.object(brainwrap.sys, "stdin",
+                            io.StringIO(json.dumps(payload)))
+
+    def test_context_hook_calls_work_assigned_block_with_runtime(self):
+        """cmd_context fires brain.work_assigned_block (the DRIVE) with the
+        vendor as the runtime, alongside brain.context (the RECALL)."""
+        cap = _Capturing({
+            "brain.context": {"injection": "RECALL"},
+            "brain.work_assigned_block": {
+                "ok": True,
+                "block": "<assigned_leaf>\nwork: do X\n</assigned_leaf>"},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "hi"}):
+            rc = brainwrap.main(["context", "--vendor", "generic"])
+        assert rc == 0
+        # BOTH the recall and the drive tool were called.
+        assert "brain.context" in cap.names()
+        assert "brain.work_assigned_block" in cap.names()
+        args = cap.by_name("brain.work_assigned_block")["body"]["params"]["arguments"]
+        assert args["runtime"] == "generic"   # the vendor drives as this runtime
+
+    def test_generic_context_emits_recall_plus_drive_block(self, capsys):
+        cap = _Capturing({
+            "brain.context": {"injection": "RECALL-BLOCK"},
+            "brain.work_assigned_block": {
+                "ok": True, "block": "<assigned_leaf>\nwork: ship it\n</assigned_leaf>"},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "do the thing"}):
+            brainwrap.main(["context", "--vendor", "generic"])
+        out = capsys.readouterr().out
+        assert "RECALL-BLOCK" in out          # recall present
+        assert "<assigned_leaf>" in out       # DRIVE present
+        assert "ship it" in out
+
+    def test_cursor_context_merges_recall_and_drive_into_user_message(self, capsys):
+        cap = _Capturing({
+            "brain.context": {"injection": "RECALL"},
+            "brain.work_assigned_block": {
+                "ok": True, "block": "<assigned_leaf>\nwork: A\n</assigned_leaf>"},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "x"}):
+            brainwrap.main(["context", "--vendor", "cursor"])
+        out = json.loads(capsys.readouterr().out)
+        assert out["continue"] is True
+        assert "RECALL" in out["user_message"]
+        assert "<assigned_leaf>" in out["user_message"]
+
+    def test_drive_dry_frontier_emits_recall_only(self, capsys):
+        # Daemon answers but the frontier is dry (no block) → only recall shows;
+        # the turn is never blocked by an idle drive.
+        cap = _Capturing({
+            "brain.context": {"injection": "RECALL"},
+            "brain.work_assigned_block": {"ok": True, "block": ""},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "x"}):
+            brainwrap.main(["context", "--vendor", "generic"])
+        out = capsys.readouterr().out
+        assert "RECALL" in out
+        assert "<assigned_leaf>" not in out
+
+    def test_drive_fit_passed_from_env(self, monkeypatch):
+        monkeypatch.setenv("BRAIN_RUNTIME_FIT", "revit, python")
+        cap = _Capturing({
+            "brain.context": {"injection": ""},
+            "brain.work_assigned_block": {"ok": True, "block": ""},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "x"}):
+            brainwrap.main(["context", "--vendor", "generic"])
+        args = cap.by_name("brain.work_assigned_block")["body"]["params"]["arguments"]
+        assert args["fit"] == ["revit", "python"]
+
+
+class TestStopBrainLedgerGate:
+    """THE DRIVE's Stop consumer for foreign vendors: cmd_stop ALSO asks the
+    brain ledger (over the daemon) whether this runtime still has an open/red
+    leaf and BLOCKS the exit if so — the half that makes the pre-prompt pull
+    binding (the foreign-vendor analogue of Claude Code's Stop → completion_gate)."""
+
+    def _stdin(self, payload: dict):
+        return patch.object(brainwrap.sys, "stdin",
+                            io.StringIO(json.dumps(payload)))
+
+    def _transcript(self, tmp_path, text="all green") -> str:
+        tj = tmp_path / "t.jsonl"
+        tj.write_text(json.dumps({
+            "type": "assistant",
+            "message": {"role": "assistant",
+                        "content": [{"type": "text", "text": text}]},
+        }) + "\n", encoding="utf-8")
+        return str(tj)
+
+    def test_open_red_leaf_blocks_even_when_diligence_allows(self, tmp_path,
+                                                             capsys):
+        """Diligence says allow, but the brain ledger has a CLAIMED leaf whose
+        file_exists gate is RED → cmd_stop must BLOCK (the drive wins: undone,
+        gated work is the strongest keep-going signal)."""
+        tj = self._transcript(tmp_path)
+        ledger = {"leaves": {"L1": {
+            "state": "claimed", "title": "ship X",
+            "gate_kind": "file_exists",
+            "gate_spec": {"path": "definitely_absent.flag"}}},
+            "iterations": 0, "cap": 12}
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "allow", "violations": []},
+            "brain.work_get": {"ok": True, "ledger": ledger},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"transcript_path": tj, "cwd": str(tmp_path)}):
+            rc = brainwrap.cmd_stop("generic")
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out or "{}")
+        assert out.get("decision") == "block", (
+            f"open red leaf must block the foreign-vendor stop; got {out!r}")
+        assert "brain:daemon" in out.get("reason", "")
+
+    def test_done_leaf_allows_when_diligence_allows(self, tmp_path, capsys):
+        """Ledger leaf DONE + diligence allow → no block (drive dry)."""
+        tj = self._transcript(tmp_path)
+        ledger = {"leaves": {"L1": {
+            "state": "done", "title": "ship X", "gate_kind": "file_exists",
+            "gate_spec": {"path": "x"}}}, "iterations": 0, "cap": 12}
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "allow", "violations": []},
+            "brain.work_get": {"ok": True, "ledger": ledger},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"transcript_path": tj, "cwd": str(tmp_path)}):
+            rc = brainwrap.cmd_stop("generic")
+        assert rc == 0
+        assert capsys.readouterr().out == ""   # allow → no block JSON
+
+    def test_satisfied_gate_allows(self, tmp_path, capsys):
+        """A claimed leaf whose file_exists gate is GREEN (the file is present)
+        does not block — the gate runs against the REAL artifact."""
+        (tmp_path / "present.flag").write_text("ok", encoding="utf-8")
+        tj = self._transcript(tmp_path)
+        ledger = {"leaves": {"L1": {
+            "state": "claimed", "title": "ship X", "gate_kind": "file_exists",
+            "gate_spec": {"path": "present.flag"}}}, "iterations": 0, "cap": 12}
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "allow", "violations": []},
+            "brain.work_get": {"ok": True, "ledger": ledger},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"transcript_path": tj, "cwd": str(tmp_path)}):
+            rc = brainwrap.cmd_stop("generic")
+        assert rc == 0
+        assert capsys.readouterr().out == ""
+
+    def test_ledger_gate_fail_open_when_daemon_down(self, tmp_path):
+        """Daemon down → work_get returns None → the ledger gate fails open
+        (no spurious block off an unrelated on-disk default ledger)."""
+        # diligence local policy patched empty so the stop runs fully dead-brain.
+        import anti_laziness_gate as gate
+        tj = self._transcript(tmp_path)
+        with patch.object(brainwrap.urllib.request, "urlopen", _boom), \
+             patch.object(gate, "evaluate_local", return_value={}), \
+             self._stdin({"transcript_path": tj, "cwd": str(tmp_path)}):
+            rc = brainwrap.cmd_stop("generic")
+        assert rc == 0   # fail-open: no raise, no spurious block
+
+    def test_blocked_leaf_escalates(self, tmp_path, capsys):
+        """A BLOCKED ledger leaf (needs the founder) surfaces as a block-with-
+        escalation reason — never a silent allow."""
+        tj = self._transcript(tmp_path)
+        ledger = {"leaves": {"L1": {
+            "state": "blocked", "title": "needs a credential",
+            "gate_kind": "manual", "gate_spec": {}}}, "iterations": 0, "cap": 12}
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "allow", "violations": []},
+            "brain.work_get": {"ok": True, "ledger": ledger},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"transcript_path": tj, "cwd": str(tmp_path)}):
+            rc = brainwrap.cmd_stop("generic")
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out or "{}")
+        assert out.get("decision") == "block"
+        assert "ESCALATE" in out.get("reason", "")
+
+
 # ───────────────────────── shared opts builder ─────────────────────────
 
 

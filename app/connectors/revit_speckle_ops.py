@@ -176,28 +176,207 @@ def _emit_wall(idx: int, item: dict) -> str:
     }}"""
 
 
+def _coerce_mesh(geo: Any) -> tuple[list, list]:
+    """Normalise a DirectShape item's geometry into the canonical
+    ``(vertices, faces)`` shape ArchHub uses everywhere (vertices =
+    list of ``[x,y,z]`` floats; faces = list of ≥3-length 0-based
+    index lists). Honest about ambiguity — returns ``([], [])`` when no
+    real mesh is present so the caller can refuse to fabricate a shell.
+
+    Accepts:
+      * a dict with ``vertices`` (list of ``[x,y,z]`` OR a flat
+        ``[x,y,z,x,y,z,…]`` list) and ``faces`` (list of index-lists OR
+        a Speckle-encoded flat ``[n,i0,i1,…,in, n,…]`` list),
+      * a JSON string of the same,
+      * ``None`` / anything else → ``([], [])``.
+    """
+    if geo is None:
+        return [], []
+    if isinstance(geo, str):
+        s = geo.strip()
+        if not s:
+            return [], []
+        try:
+            geo = json.loads(s)
+        except Exception:
+            return [], []
+    if not isinstance(geo, dict):
+        return [], []
+    raw_v = geo.get("vertices")
+    raw_f = geo.get("faces")
+    if not isinstance(raw_v, list) or not raw_v:
+        return [], []
+
+    # Vertices: accept already-grouped [[x,y,z],…] or a flat triplet list.
+    verts: list = []
+    if isinstance(raw_v[0], (list, tuple)):
+        for p in raw_v:
+            if isinstance(p, (list, tuple)) and len(p) >= 3:
+                try:
+                    verts.append([float(p[0]), float(p[1]), float(p[2])])
+                except (TypeError, ValueError):
+                    return [], []
+    else:
+        # Flat [x,y,z,x,y,z,…] — must be a multiple of 3.
+        if len(raw_v) % 3 != 0:
+            return [], []
+        try:
+            for i in range(0, len(raw_v), 3):
+                verts.append([float(raw_v[i]), float(raw_v[i + 1]),
+                              float(raw_v[i + 2])])
+        except (TypeError, ValueError):
+            return [], []
+    nverts = len(verts)
+    if nverts < 3:
+        return [], []
+
+    # Faces: accept grouped [[i,j,k],…] or a Speckle-encoded flat list
+    # [n,i0,…,in-1, m,j0,…]. A leading count >=3 that walks the list
+    # cleanly is treated as encoded; otherwise grouped.
+    faces: list = []
+    if isinstance(raw_f, list) and raw_f and isinstance(raw_f[0], (list, tuple)):
+        for f in raw_f:
+            idx_list = [int(x) for x in f] if isinstance(f, (list, tuple)) else []
+            if len(idx_list) >= 3 and all(0 <= x < nverts for x in idx_list):
+                faces.append(idx_list)
+    elif isinstance(raw_f, list) and raw_f:
+        # Flat / encoded. Speckle prefixes each face with its vertex count
+        # (which may itself be offset by 3 in the 0/1/N convention — we
+        # accept a literal count of n>=3 that exactly consumes the list).
+        i = 0
+        ok_walk = True
+        tmp: list = []
+        while i < len(raw_f):
+            try:
+                n = int(raw_f[i])
+            except (TypeError, ValueError):
+                ok_walk = False
+                break
+            # Speckle 2.x encodes triangle as 0, quad as 1; older/other
+            # encodings use the literal count. Map the 0/1 convention up.
+            if n in (0, 1):
+                n = n + 3
+            if n < 3 or i + n >= len(raw_f) + 0:
+                ok_walk = False
+                break
+            face = []
+            valid = True
+            for k in range(n):
+                try:
+                    vi = int(raw_f[i + 1 + k])
+                except (TypeError, ValueError):
+                    valid = False
+                    break
+                if not (0 <= vi < nverts):
+                    valid = False
+                    break
+                face.append(vi)
+            if not valid:
+                ok_walk = False
+                break
+            tmp.append(face)
+            i += 1 + n
+        if ok_walk and i == len(raw_f):
+            faces = tmp
+        else:
+            faces = []
+
+    # Filter degenerate faces; a real mesh needs at least one valid face.
+    faces = [f for f in faces if len(f) >= 3]
+    if not faces:
+        return [], []
+    return verts, faces
+
+
 def _emit_directshape(idx: int, item: dict) -> str:
-    """Emit the C# `try { DirectShape.CreateElement(...) }` body for
-    one `adapter.to_revit_directshape` item.
+    """Emit the C# body for one `adapter.to_revit_directshape` item.
 
     Required annotations:
         revit_directshape_category   (built-in category enum NAME)
-        revit_geometry_json          (Speckle geometry JSON — handed
-                                      to a DirectShape SetShape call;
-                                      placeholder geometry if absent)
+        revit_geometry_json          (the mesh — ``{vertices, faces}`` or
+                                      JSON of same; the real geometry that
+                                      gets SetShape'd onto the element)
+
+    Honesty contract (CON-01): a DirectShape with NO geometry is a fake
+    success — the old MVP created an empty element and reported it in
+    `created` with an id, so the caller saw "1 created" for a shell with
+    nothing in it. This now mirrors `revit_connector._tessellate_cs`:
+      * when real ``(vertices, faces)`` are present, the element is built
+        with a TessellatedShapeBuilder + ``SetShape`` and reported in
+        `created` ONLY when the build yields geometry objects (with a
+        verifiable vertex/face/geometry-object count);
+      * when the build produces no geometry, OR no geometry was supplied,
+        the freshly-created element is DELETED and an honest entry lands
+        in `errors` — never a fabricated `created` row for an empty shell.
     """
     cat = item.get("revit_directshape_category") or \
           item.get("revit_builtin_category") or "OST_GenericModel"
-    # The geometry conversion is non-trivial in real Revit;
-    # for the MVP we create the DirectShape with a placeholder
-    # element (the user can later wire-in a real Mesh from Speckle).
+    geo = item.get("revit_geometry_json")
+    if geo is None:
+        geo = item.get("revit_geometry")  # tolerate the un-suffixed key
+    vertices, faces = _coerce_mesh(geo)
+
+    if not vertices or not faces:
+        # No real geometry to build → refuse to fabricate an empty
+        # DirectShape. Record an honest, machine-readable error so the
+        # receive caller sees this item FAILED, not silently "created".
+        return f"""    try {{
+      throw new InvalidOperationException(
+        "DirectShape item has no geometry (revit_geometry_json absent or "
+        + "unparseable) — refusing to create an empty element.");
+    }} catch (Exception ex) {{
+      errors.Add(new {{ idx = {idx}, kind = "directshape",
+                         error = ex.Message }});
+    }}"""
+
+    # Real geometry — build it for real, exactly like _tessellate_cs.
+    vert_lines = ",".join(
+        f"new XYZ({v[0]!r},{v[1]!r},{v[2]!r})" for v in vertices)
+    face_lines = ",".join(
+        "new int[]{" + ",".join(str(i) for i in f) + "}" for f in faces)
     return f"""    try {{
       var bic = (BuiltInCategory)Enum.Parse(typeof(BuiltInCategory),
                                               {_csharp_string(cat)});
       var ds = DirectShape.CreateElement(doc, new ElementId(bic));
-      ds.SetName("ArchHub-{idx}");
-      created.Add(new {{ idx = {idx}, kind = "directshape",
-                          id = ds.Id.IntegerValue }});
+      try {{ ds.SetName("ArchHub-{idx}"); }} catch {{ }}
+      var V = new XYZ[]{{{vert_lines}}};
+      var F = new int[][]{{{face_lines}}};
+      var tsb = new TessellatedShapeBuilder();
+      tsb.OpenConnectedFaceSet(false);
+      int faceCount = 0;
+      foreach (var f in F) {{
+        if (f.Length < 3) continue;
+        for (int k = 1; k + 1 < f.Length; k++) {{
+          var loop = new System.Collections.Generic.List<XYZ>{{
+            V[f[0]], V[f[k]], V[f[k+1]] }};
+          try {{
+            tsb.AddFace(new TessellatedFace(loop, ElementId.InvalidElementId));
+            faceCount++;
+          }} catch {{ }}
+        }}
+      }}
+      tsb.CloseConnectedFaceSet();
+      tsb.Target = TessellatedShapeBuilderTarget.Mesh;
+      tsb.Fallback = TessellatedShapeBuilderFallback.Salvage;
+      tsb.Build();
+      var br = tsb.GetBuildResult();
+      var objs = br.GetGeometricalObjects();
+      int geomCount = (objs != null) ? objs.Count : 0;
+      if (geomCount > 0) {{
+        ds.SetShape(objs);
+        created.Add(new {{ idx = {idx}, kind = "directshape",
+                            id = ds.Id.IntegerValue,
+                            vertex_count = V.Length,
+                            face_count = faceCount,
+                            geometry_object_count = geomCount }});
+      }} else {{
+        // Build produced nothing — delete the empty element + report
+        // the failure honestly rather than leaving a shell behind.
+        try {{ doc.Delete(ds.Id); }} catch {{ }}
+        errors.Add(new {{ idx = {idx}, kind = "directshape",
+                           error = "TessellatedShapeBuilder produced no "
+                                 + "geometry (build result empty)." }});
+      }}
     }} catch (Exception ex) {{
       errors.Add(new {{ idx = {idx}, kind = "directshape",
                          error = ex.Message }});
@@ -462,6 +641,110 @@ ctx.result = new {{
 """.strip()
 
 
+def _result_counts(result: Any, created_key: str) -> tuple[int, int, int]:
+    """Pull (created/updated, errors, skipped) counts out of a C# create /
+    set-parameters `ctx.result` payload. Honest defaults: when a count is
+    absent we DERIVE it from the corresponding list length rather than
+    assuming zero, so a malformed payload can't masquerade as a clean run.
+    Returns (made, errors, skipped)."""
+    if not isinstance(result, dict):
+        # No structured result at all — cannot claim any creates happened.
+        return 0, 0, 0
+    list_key = "created" if created_key == "created_count" else "updated"
+
+    def _count(count_key: str, lst_key: str) -> int:
+        v = result.get(count_key)
+        if isinstance(v, bool):  # guard: bool is an int subclass
+            v = None
+        if isinstance(v, int):
+            return v
+        lst = result.get(lst_key)
+        return len(lst) if isinstance(lst, list) else 0
+
+    made = _count(created_key, list_key)
+    errs = _count("error_count", "errors")
+    skipped = _count("skipped_count", "skipped")
+    return made, errs, skipped
+
+
+def _status_from_create_result(items: list, result: Any) -> dict:
+    """Derive an HONEST status for a receive/create call from the Revit-side
+    per-item outcome (CON-02).
+
+    The /exec HTTP layer returning 200 only proves the script *ran* — it
+    says NOTHING about whether any element was actually created. A write
+    that created zero elements while erroring on some is a FAILED write,
+    not a success. So:
+
+      * created>0, errors==0           → "ok"        (clean write)
+      * created>0, errors>0            → "partial"   (some made, some failed)
+      * created==0, errors>0           → "error"     (wrote NOTHING — failed)
+      * created==0, errors==0, items>0 → "error"     (nothing matched /
+                                                       built — not a success)
+      * created==0, errors==0, items==0→ "ok"        (genuinely nothing to do)
+    """
+    made, errs, skipped = _result_counts(result, "created_count")
+    base = {"items": items, "result": result,
+            "created_count": made, "error_count": errs,
+            "skipped_count": skipped}
+    if made > 0 and errs == 0:
+        base["status"] = "ok"
+    elif made > 0 and errs > 0:
+        base["status"] = "partial"
+        base["error"] = (f"{errs} of {made + errs} item(s) failed to create "
+                         f"in Revit; {made} succeeded.")
+    elif errs > 0:
+        base["status"] = "error"
+        base["error"] = (f"All {errs} creatable item(s) failed in Revit — "
+                         f"no elements were created.")
+    elif items:
+        # Items were sent but none were created and none errored — they
+        # were all skipped / unrecognised. Reporting "ok" here would be the
+        # same lie: the caller asked to create N and got 0.
+        base["status"] = "error"
+        base["error"] = ("No elements were created — none of the "
+                         f"{len(items)} item(s) carried a recognised, "
+                         "creatable Revit annotation.")
+    else:
+        base["status"] = "ok"
+    return base
+
+
+def _status_from_set_params_result(items: list, result: Any) -> dict:
+    """Honest status for batch_set_parameters (CON-02 sibling). Same rule:
+    a parameter write that updated zero elements while erroring is a failed
+    write, not a success.
+
+      * updated>0, errors==0            → "ok"
+      * updated>0, errors>0             → "partial"
+      * updated==0, errors>0            → "error"
+      * updated==0, errors==0, items>0  → "error" (nothing matched)
+      * updated==0, errors==0, items==0 → "ok"
+    """
+    made, errs, skipped = _result_counts(result, "updated_count")
+    base = {"items": items, "result": result,
+            "updated_count": made, "error_count": errs,
+            "skipped_count": skipped}
+    if made > 0 and errs == 0:
+        base["status"] = "ok"
+    elif made > 0 and errs > 0:
+        base["status"] = "partial"
+        base["error"] = (f"{errs} of {made + errs} element(s) failed to "
+                         f"update in Revit; {made} succeeded.")
+    elif errs > 0:
+        base["status"] = "error"
+        base["error"] = (f"All {errs} element(s) failed to update in Revit — "
+                         f"no parameters were set.")
+    elif items:
+        base["status"] = "error"
+        base["error"] = ("No elements were updated — none of the "
+                         f"{len(items)} item(s) carried a usable "
+                         "revit_element_id + revit_parameters.")
+    else:
+        base["status"] = "ok"
+    return base
+
+
 def receive_from_speckle(source_url: str = "", *,
                           instance: str | None = None,
                           project_dir: str | None = None,
@@ -521,11 +804,11 @@ def receive_from_speckle(source_url: str = "", *,
                 "error": f"/exec failed: {ex}"}
     # The /exec response shape is the C# `ctx.result` value.
     if isinstance(result, OpResult):
-        return {"status": "ok" if result.ok else "error",
-                "items": items,
-                "result": result.value,
-                "error": result.error}
-    return {"status": "ok", "items": items, "result": result}
+        if not result.ok:
+            return {"status": "error", "items": items,
+                    "result": result.value, "error": result.error}
+        return _status_from_create_result(items, result.value)
+    return _status_from_create_result(items, result)
 
 
 def build_set_parameters_script(items: list,
@@ -654,10 +937,11 @@ def batch_set_parameters(source_url: str = "", *,
         return {"status": "error",
                 "error": f"/exec failed: {ex}"}
     if isinstance(result, OpResult):
-        return {"status": "ok" if result.ok else "error",
-                "items": items, "result": result.value,
-                "error": result.error}
-    return {"status": "ok", "items": items, "result": result}
+        if not result.ok:
+            return {"status": "error", "items": items,
+                    "result": result.value, "error": result.error}
+        return _status_from_set_params_result(items, result.value)
+    return _status_from_set_params_result(items, result)
 
 
 __all__ = [
@@ -666,4 +950,7 @@ __all__ = [
     "build_create_script",
     "batch_set_parameters",
     "build_set_parameters_script",
+    "_coerce_mesh",
+    "_status_from_create_result",
+    "_status_from_set_params_result",
 ]

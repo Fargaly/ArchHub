@@ -26,6 +26,7 @@ if str(APP) not in sys.path:
 
 from connectors.revit_speckle_ops import (  # noqa: E402
     _classify_item,
+    _coerce_mesh,
     build_create_script,
     send_to_speckle,
     receive_from_speckle,
@@ -96,8 +97,16 @@ def test_build_create_script_wall_emits_wall_create():
 
 
 def test_build_create_script_directshape():
+    """A DirectShape item carrying real geometry emits a DirectShape
+    create under the chosen built-in category. (CON-01: a geometry-LESS
+    item no longer emits a create — see
+    test_directshape_without_geometry_is_an_honest_error_not_a_fake_create.)"""
     items = [{
         "revit_directshape_category": "OST_GenericModel",
+        "revit_geometry_json": {
+            "vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            "faces": [[0, 1, 2]],
+        },
     }]
     script = build_create_script(items)
     assert "DirectShape.CreateElement" in script
@@ -175,6 +184,118 @@ def test_build_create_script_escapes_quotes_in_strings():
     script = build_create_script(items)
     # Should contain the escaped form, not raw double-quotes.
     assert 'Level \\"1\\"' in script
+
+
+# ─── 2b. CON-01 — DirectShape honesty (no empty-shell fabrication) ────
+#
+# Root cause fixed: `_emit_directshape` used to emit
+# `DirectShape.CreateElement` + `SetName` with NO geometry, then push the
+# element into `created` with an id — so a receive of a geometry-less item
+# reported "1 created" for an EMPTY element (real result missing). The fix
+# mirrors `revit_connector._tessellate_cs`: build real geometry via a
+# TessellatedShapeBuilder + SetShape, report `created` ONLY when the build
+# yields geometry objects, and otherwise delete the element + record an
+# honest error — never a fabricated `created` row.
+
+
+def _mesh_cube():
+    """A unit cube as the canonical (vertices, faces) dict the receive
+    side hands to a DirectShape item via `revit_geometry_json`."""
+    verts = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+             [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    faces = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4],
+             [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]
+    return {"vertices": verts, "faces": faces}
+
+
+def test_directshape_without_geometry_is_an_honest_error_not_a_fake_create():
+    """CON-01: a DirectShape item with NO geometry must NOT emit a
+    `created.Add(...)` — the old empty-shell success. It must instead
+    surface an honest error block (refuse to create an empty element)."""
+    items = [{"revit_directshape_category": "OST_GenericModel"}]  # no geometry
+    script = build_create_script(items)
+    # An honest refusal — no fabricated `created` row for this item.
+    assert "created.Add" not in script
+    assert "errors.Add" in script
+    assert "no geometry" in script.lower()
+    # And it explicitly does NOT just create + name an empty element.
+    assert "DirectShape.CreateElement" not in script
+
+
+def test_directshape_with_geometry_builds_real_shape_and_reports_counts():
+    """CON-01: with real `(vertices, faces)` the script builds the shape
+    with a TessellatedShapeBuilder + SetShape, and only reports it in
+    `created` when the build yields geometry objects — carrying a
+    verifiable vertex/face/geometry-object count (the real result)."""
+    items = [{
+        "revit_directshape_category": "OST_GenericModel",
+        "revit_geometry_json": _mesh_cube(),
+    }]
+    script = build_create_script(items)
+    # Real geometry path — these are the load-bearing C# tokens.
+    assert "DirectShape.CreateElement" in script
+    assert "TessellatedShapeBuilder" in script
+    assert "SetShape(objs)" in script
+    # `created` is gated on the build actually producing geometry.
+    assert "geomCount > 0" in script
+    assert "created.Add" in script
+    # The created row carries a verifiable, non-empty result.
+    assert "geometry_object_count" in script
+    assert "vertex_count" in script
+    # On an empty build, the element is deleted + an honest error recorded —
+    # never a silent empty shell.
+    assert "doc.Delete(ds.Id)" in script
+    assert "produced no" in script.lower()
+
+
+def test_directshape_geometry_as_json_string_is_parsed():
+    """`revit_geometry_json` may arrive as a JSON STRING (the name says
+    'json') — it must still parse to real geometry, not be treated as
+    'no geometry' and fabricated as an empty shell."""
+    import json as _json
+    items = [{
+        "revit_directshape_category": "OST_GenericModel",
+        "revit_geometry_json": _json.dumps(_mesh_cube()),
+    }]
+    script = build_create_script(items)
+    assert "TessellatedShapeBuilder" in script
+    assert "SetShape(objs)" in script
+    assert "no geometry" not in script.lower()
+
+
+# --- _coerce_mesh unit coverage (the geometry normaliser) ---
+
+
+def test_coerce_mesh_grouped_vertices_and_faces():
+    v, f = _coerce_mesh(_mesh_cube())
+    assert len(v) == 8 and all(len(p) == 3 for p in v)
+    assert len(f) == 6 and all(len(face) >= 3 for face in f)
+
+
+def test_coerce_mesh_flat_vertices_and_encoded_faces():
+    """Speckle Mesh shape: flat vertex triplets + count-prefixed faces
+    (triangle encoded as 0, quad as 1 in the 2.x convention)."""
+    geo = {
+        "vertices": [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0],  # 4 verts, flat
+        "faces": [1, 0, 1, 2, 3],  # one quad (1 => 4 verts) over 0,1,2,3
+    }
+    v, f = _coerce_mesh(geo)
+    assert len(v) == 4
+    assert f == [[0, 1, 2, 3]]
+
+
+def test_coerce_mesh_rejects_empty_and_bad_input():
+    assert _coerce_mesh(None) == ([], [])
+    assert _coerce_mesh("") == ([], [])
+    assert _coerce_mesh("not json") == ([], [])
+    assert _coerce_mesh({}) == ([], [])
+    assert _coerce_mesh({"vertices": []}) == ([], [])
+    # Vertices but no usable faces → no real mesh.
+    assert _coerce_mesh({"vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+                         "faces": []}) == ([], [])
+    # Face index out of range → rejected (no fabricated geometry).
+    assert _coerce_mesh({"vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+                         "faces": [[0, 1, 9]]}) == ([], [])
 
 
 # ─── 3. send_to_speckle ──────────────────────────────────────────────

@@ -1819,7 +1819,7 @@ const StudioLM = () => {
     } catch (e) { /* bridge unavailable — accessibility stays at OS defaults */ }
     return () => { cancelled = true; };
   }, []);
-  const [panel, setPanel] = React.useState('nodes'); // only 'nodes' now — chats/skills/search panels removed
+  const [panel, setPanel] = React.useState('nodes'); // 'nodes' | 'skills' | 'search' — rail switches the sidebar body (skills+search RESTORED 2026-06-15)
   // Default focus to the first AI node so the right-rail isn't empty.
   const [focusId, setFocusId] = React.useState(() => {
     const ai = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai');
@@ -4263,18 +4263,28 @@ const SidebarInner = ({ panel, setPanel, openId, onOpen, onHome, onSettings, add
     overflow:'hidden', minHeight:0,
   }}>
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} _themeBump={_themeBump}/>
-    {/* Founder direction 2026-05-14: sidebar has Nodes library ONLY.
-        Sessions live on Home page. Skills + Search were empty shells —
-        purged. The icon rail still shows Nodes + Home + Settings. */}
-    <NodesPanelMemo addNodeFromLibrary={addNodeFromLibrary} _themeBump={_themeBump}/>
+    {/* RESTORED 2026-06-15 (MAKE-IT-REAL): Skills + Search are back as REAL,
+        rail-switchable panels. They were purged 2026-05-14 as "empty shells",
+        but the emptiness was the sync-bridgeJson bug (slots returned null),
+        not a wanted-feature decision — both now load real data via bridgeAsync
+        (get_saved_skills / get_sessions / list_memory_facts / library_search).
+        Nodes stays the default. The rail switches `panel`; the body renders the
+        matching panel. */}
+    {panel === 'skills'
+      ? <SkillsPanel/>
+      : panel === 'search'
+        ? <SearchPanel onOpen={onOpen} setFocusId={setFocusId} addNodeFromLibrary={addNodeFromLibrary}/>
+        : <NodesPanelMemo addNodeFromLibrary={addNodeFromLibrary} _themeBump={_themeBump}/>}
   </aside>
 );
 const Sidebar = React.memo(SidebarInner);
 
 const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
-  // Founder direction 2026-05-14: Nodes is the only mid-rail item; Home
-  // pin lives at the top, Share + Settings at the bottom. Rail uses
+  // Home pin lives at the top, Share + Settings at the bottom. Rail uses
   // 56px width so icons + labels read without crowding.
+  // RESTORED 2026-06-15 (MAKE-IT-REAL): Skills + Search rejoin Nodes as
+  // mid-rail destinations. (They were dropped 2026-05-14 when their panels
+  // were empty shells; the panels are now real, so the affordances return.)
   const items = [
     { id:'nodes',  title:'Nodes',  svg:(
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -4282,6 +4292,16 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
         <rect x="14" y="3" width="7" height="7" rx="1"/>
         <rect x="3" y="14" width="7" height="7" rx="1"/>
         <rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+    ) },
+    { id:'skills', title:'Skills', svg:(
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-2.8L7 19l1-6-4-4 5.5-.5z" strokeLinejoin="round"/>
+      </svg>
+    ) },
+    { id:'search', title:'Search', svg:(
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" strokeLinecap="round"/>
       </svg>
     ) },
   ];
@@ -4544,6 +4564,304 @@ const panelIconBtn = () => ({
   borderRadius:4, cursor:'pointer', color:LM.inkSoft,
   display:'grid', placeItems:'center',
 });
+
+// ─── Skills panel — saved-skill inventory + drag source ───
+// RESTORED 2026-06-15 (MAKE-IT-REAL mandate). This panel was purged
+// 2026-05-14 as an "empty shell" — but the shell was empty for a
+// MECHANICAL reason, not because the feature was unwanted: the original
+// read its list with the SYNC `bridgeJson('get_saved_skills')`, and a
+// QWebChannel slot never returns synchronously (the 2026-05-14 bug logged
+// at `bridgeAsync`), so it always rendered zero rows → looked dead → got
+// deleted. The fix is not deletion: it is to load the REAL slot the right
+// way. `get_saved_skills` (bridge.py:get_saved_skills → _scan_canvas_skills)
+// returns the shipped seeds + user store in canvas format — the SAME store
+// `load_skill` splices from, so every row here is actually spawnable. We
+// fetch it via `bridgeAsync` into state and refresh on `lm-skills-refresh`
+// (the event the Library's Promote handler already fires). Click OR drag a
+// row → `lm-spawn-skill` → onSpawnSkill → load_skill → real splice onto the
+// canvas. The canvas drop handler accepts the typed `application/x-archhub-skill`
+// payload (wired in NodeCanvas, see onDropSkill).
+const SkillsPanel = () => {
+  const [q, setQ] = React.useState('');
+  // Seed from the prefetched window var so the first paint isn't empty,
+  // then refresh from the real async slot on mount + on skill mutations.
+  const [skills, setSkills] = React.useState(() => window.__archhub_LM_SAVED_SKILLS || []);
+  const refresh = React.useCallback(async () => {
+    const items = await bridgeAsync('get_saved_skills');
+    if (Array.isArray(items)) {
+      window.__archhub_LM_SAVED_SKILLS = items;
+      setSkills(items);
+    }
+  }, []);
+  React.useEffect(() => {
+    refresh();
+    const onRefresh = () => { refresh(); };
+    window.addEventListener('lm-skills-refresh', onRefresh);
+    return () => window.removeEventListener('lm-skills-refresh', onRefresh);
+  }, [refresh]);
+  const filtered = React.useMemo(() => {
+    const items = skills || [];
+    if (!q) return items;
+    const needle = q.toLowerCase();
+    return items.filter(s =>
+      ((s.name || '') + ' ' + (s.args || '') + ' ' + (s.description || ''))
+        .toLowerCase().includes(needle));
+  }, [skills, q]);
+  const onNewSkill = () => {
+    // Share the current canvas as a skill — same real path the rail's
+    // "Share canvas as skill" icon uses (lm-share-canvas → save_as_skill).
+    try { window.dispatchEvent(new CustomEvent('lm-share-canvas')); } catch (e) {}
+  };
+  const spawn = (s) => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); } catch (e) {} };
+  return (
+    <div data-panel="skills" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+      <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
+        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
+        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{(skills || []).length} SAVED</span>
+        <div style={{ flex:1 }}/>
+        <button title="Save current canvas as a skill" aria-label="Save current canvas as a skill" onClick={onNewSkill} style={panelIconBtn()}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div style={{ padding:'0 10px 8px' }}>
+        <div style={{
+          display:'flex', alignItems:'center', gap:8, padding:'6px 10px',
+          background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:6, color:LM.inkMuted, fontSize:12,
+        }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search saved skills…" style={{
+            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
+          }}/>
+        </div>
+      </div>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
+        {filtered.map(s => {
+          const mode = (s.mode || 'private').toLowerCase();
+          const isShared = mode === 'shared';
+          return (
+            <div key={s.id || s.name}
+              draggable="true"
+              title="Click or drag onto the canvas to place this skill"
+              onClick={() => spawn(s)}
+              onDragStart={(e) => { try { e.dataTransfer.setData('application/x-archhub-skill', JSON.stringify(s)); e.dataTransfer.effectAllowed = 'copy'; } catch (ex) {} }}
+              style={{
+                padding:'7px 9px', borderRadius:5, cursor:'grab', marginBottom:1,
+                background:'transparent', borderLeft:`2px solid transparent`,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.accent; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
+              <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
+                <span style={{ flex:1, fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name || s.id}</span>
+                <span title={isShared ? 'Shared — edits propagate' : 'Private — inline expand on spawn'}
+                  style={{
+                    fontFamily:LM.mono, fontSize:9, fontWeight:600,
+                    color:(isShared ? LM.accent : LM.inkMuted),
+                    border:`1px solid ${isShared ? LM.accent : LM.lineSoft}`,
+                    borderRadius:3, padding:'0 4px', lineHeight:'14px',
+                  }}>{isShared ? 'S' : 'P'}</span>
+              </div>
+              {(s.description || s.node_count != null) && (
+                <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, paddingLeft:18, marginTop:1, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  {s.description ? s.description : ''}
+                  {s.description && s.node_count != null ? ' · ' : ''}
+                  {s.node_count != null ? (s.node_count + ' node' + (s.node_count === 1 ? '' : 's')) : ''}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (skills || []).length > 0 && (
+          <div style={{ padding:'18px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+            No skills match "{q}".
+          </div>
+        )}
+        {(skills || []).length === 0 && (
+          <div style={{ padding:'18px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+            No saved skills yet. Build a canvas, then use “Share canvas as skill” to save one here.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Global search panel — searches everything via REAL async slots ───
+// RESTORED 2026-06-15 (MAKE-IT-REAL mandate). Like SkillsPanel, the original
+// was purged 2026-05-14 because it read its sources with the SYNC `bridgeJson`
+// (sessions / memory / skills), which returns null for an async QWebChannel
+// slot — so every scope showed 0 and the panel looked dead. The real fix is
+// async loading: this version debounces the query and fans out to the REAL
+// slots — `get_sessions` (bridge.py), `get_saved_skills` (→ _scan_canvas_skills),
+// `list_memory_facts` (→ cloud /v1/memory/facts), and `library_search`
+// (→ library.search, AgDR-0014 token ranking) — plus the live in-memory
+// LM_GRAPH nodes + LM_HOSTS. A hit routes to its real destination: a session
+// opens (onOpen), a node focuses (setFocusId), a skill spawns (lm-spawn-skill),
+// a library node is added to the canvas (addNodeFromLibrary). Cmd+K still
+// exists and is complementary (USER-AGENCY mandate: library always browsable);
+// this panel adds the scoped, always-visible surface the rail exposes.
+const SearchPanel = ({ onOpen, setFocusId, addNodeFromLibrary } = {}) => {
+  const [q, setQ] = React.useState('');
+  const [scope, setScope] = React.useState('all');
+  // Async-loaded source caches. Sessions + skills load once on mount;
+  // memory + library are query-scoped and refetched debounced as you type.
+  const [sessions, setSessions] = React.useState([]);
+  const [skills, setSkills] = React.useState(() => window.__archhub_LM_SAVED_SKILLS || []);
+  const [memory, setMemory] = React.useState([]);
+  const [libNodes, setLibNodes] = React.useState([]);
+  React.useEffect(() => {
+    (async () => {
+      const s = await bridgeAsync('get_sessions');
+      if (Array.isArray(s)) setSessions(s);
+      const sk = await bridgeAsync('get_saved_skills');
+      if (Array.isArray(sk)) setSkills(sk);
+    })();
+  }, []);
+  // Query-scoped sources: memory facts + library node-types. Debounced so
+  // each keystroke doesn't hammer the bridge / cloud.
+  React.useEffect(() => {
+    const needle = q.trim();
+    if (!needle) { setMemory([]); setLibNodes([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const m = await bridgeAsync('list_memory_facts', needle);
+      // list_memory_facts returns {facts:[...]} | [...] | {error}. Normalise.
+      if (!cancelled) {
+        const arr = Array.isArray(m) ? m : (m && Array.isArray(m.facts) ? m.facts : []);
+        setMemory(arr);
+      }
+      const lib = await bridgeAsync('library_search', needle, '', 12);
+      if (!cancelled) {
+        const arr = (lib && Array.isArray(lib.results)) ? lib.results : [];
+        setLibNodes(arr);
+      }
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q]);
+  const results = React.useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return { chats:[], nodes:[], skills:[], memory:[], library:[], hosts:[] };
+    const matches = (s) => (s || '').toLowerCase().includes(needle);
+    const chats = (sessions || []).filter(s => matches(s.title) || matches(s.last));
+    const sk = (skills || []).filter(s => matches(s.name) || matches(s.args) || matches(s.description));
+    const nodes = (LM_GRAPH.nodes || []).filter(n => matches(n.title) || matches(n.sub) || matches(n.id));
+    const hosts = (LM_HOSTS || []).filter(h => matches(h.id) || matches(h.name) || matches(h.file));
+    return { chats, nodes, skills: sk, memory: memory || [], library: libNodes || [], hosts };
+  }, [q, sessions, skills, memory, libNodes]);
+  const counts = {
+    all: results.chats.length + results.nodes.length + results.skills.length + results.memory.length + results.library.length + results.hosts.length,
+    chats: results.chats.length, nodes: results.nodes.length, skills: results.skills.length,
+    memory: results.memory.length, library: results.library.length, hosts: results.hosts.length,
+  };
+  const show = (k) => scope === 'all' || scope === k;
+  return (
+    <div data-panel="search" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+      <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
+        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
+        <div style={{ flex:1 }}/>
+        <kbd style={kbd()}>⌘K</kbd>
+      </div>
+      <div style={{ padding:'0 10px 10px' }}>
+        <div style={{
+          display:'flex', alignItems:'center', gap:8, padding:'8px 12px',
+          background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:6,
+          boxShadow:`0 0 0 3px ${LM.accentDim}`,
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="everything in studio…" style={{
+            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:13, outline:'none',
+            fontFamily:LM.sans, fontStyle: q ? 'normal' : 'italic',
+          }}/>
+        </div>
+      </div>
+      <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>SCOPES</div>
+      <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
+        {[
+          ['all',     'everything',              counts.all],
+          ['chats',   'sessions + messages',     counts.chats],
+          ['nodes',   'in current graph',        counts.nodes],
+          ['skills',  'saved templates',         counts.skills],
+          ['memory',  'what Claude remembers',   counts.memory],
+          ['library', 'node library',            counts.library],
+          ['hosts',   'connectors',              counts.hosts],
+        ].map(([k, sub, n]) => {
+          const active = scope === k;
+          return (
+            <button key={k} onClick={() => setScope(k)} style={{
+              padding:'6px 10px', borderRadius:5,
+              background: active ? LM.bgSoft : 'transparent', border:0,
+              borderLeft: `2px solid ${active ? LM.accent : 'transparent'}`,
+              cursor:'pointer', textAlign:'left',
+              display:'flex', alignItems:'center', gap:8,
+            }}
+            onMouseEnter={e => !active && (e.currentTarget.style.background = LM.bgHover)}
+            onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
+              <span style={{ fontFamily:LM.mono, fontSize:11, color: active ? LM.accent : LM.ink, width:54 }}>{k}</span>
+              <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'8px 6px 8px', minHeight:0 }}>
+        {!q && (
+          <div style={{ padding:'24px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+            Type to search across sessions, nodes, skills, memory, the node library, and hosts.
+          </div>
+        )}
+        {q && counts[scope === 'all' ? 'all' : scope] === 0 && (
+          <div style={{ padding:'16px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+            No matches for "{q}".
+          </div>
+        )}
+        {q && show('chats') && results.chats.map(s => (
+          <SearchHit key={'ch_'+s.id} k="chat" label={s.title} sub={s.last}
+            onClick={() => onOpen && onOpen(s.id)}/>
+        ))}
+        {q && show('nodes') && results.nodes.map(n => (
+          <SearchHit key={'nd_'+n.id} k="node" label={n.title || n.id} sub={n.sub || n.cat}
+            onClick={() => setFocusId && setFocusId(n.id)}/>
+        ))}
+        {q && show('skills') && results.skills.map(s => (
+          <SearchHit key={'sk_'+(s.id || s.name)} k="skill" label={s.name} sub={s.description || s.args}
+            onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail:s })); } catch (e) {} }}/>
+        ))}
+        {q && show('memory') && results.memory.map((m, i) => (
+          <SearchHit key={'mm_'+(m.id != null ? m.id : i)} k="memory" label={(m && (m.text || m.fact)) || String(m)} sub={(m && (m.src || m.scope)) || ''}/>
+        ))}
+        {q && show('library') && results.library.map((it, i) => {
+          const nt = it.node_type || it.type || it.id;
+          return (
+            <SearchHit key={'lb_'+(nt || i)} k="lib" label={it.title || it.display || nt} sub={it.description || it.category || nt}
+              onClick={() => {
+                if (!addNodeFromLibrary) return;
+                addNodeFromLibrary({ id:'lib:'+nt, title:it.title || nt, sub:it.description || nt,
+                                      node_type:nt, cat:it.category || 'read' });
+              }}/>
+          );
+        })}
+        {q && show('hosts') && results.hosts.map(h => (
+          <SearchHit key={'hs_'+h.id} k="host" label={h.name || h.id} sub={`${h.state || 'idle'}${h.file ? ' · ' + h.file : ''}`}/>
+        ))}
+      </div>
+    </div>
+  );
+};
+const SearchHit = ({ k, label, sub, onClick }) => (
+  <button onClick={onClick} disabled={!onClick} style={{
+    width:'100%', padding:'6px 10px', borderRadius:5,
+    background:'transparent', border:0, cursor: onClick ? 'pointer' : 'default',
+    textAlign:'left', display:'flex', alignItems:'center', gap:8, marginBottom:1,
+  }}
+  onMouseEnter={e => onClick && (e.currentTarget.style.background = LM.bgHover)}
+  onMouseLeave={e => onClick && (e.currentTarget.style.background = 'transparent')}>
+    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, width:42, letterSpacing:'0.08em', textTransform:'uppercase' }}>{k}</span>
+    <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
+      <div style={{ fontSize:12, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</div>
+      {sub && <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{sub}</div>}
+    </div>
+  </button>
+);
 
 // ─── Nodes panel — primary drag source ───
 const NodesPanel = ({ addNodeFromLibrary }) => {
@@ -7413,7 +7731,13 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
 
   // ─── HTML5 drag-and-drop from sidebar library ───
   const onDragOver = (e) => {
-    if (![...e.dataTransfer.types].includes('application/x-lm-node')) return;
+    // Accept both a library node AND a skill (RESTORED 2026-06-15) — a skill
+    // dragged from the Skills panel carries `application/x-archhub-skill`.
+    // The guard must allow it through to preventDefault, else the browser
+    // refuses the drop and the skill drag silently dies over the canvas.
+    const types = [...e.dataTransfer.types];
+    if (!types.includes('application/x-lm-node')
+        && !types.includes('application/x-archhub-skill')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     // D10 sweep: HTML5 dragover fires continuously while hovering with
@@ -7427,6 +7751,20 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
     if (e.target === wrapRef.current) setDropTarget(null);
   };
   const onDrop = (e) => {
+    // RESTORED 2026-06-15 (MAKE-IT-REAL): accept a skill dragged from the
+    // Skills panel. The panel sets `application/x-archhub-skill`; route it
+    // through the SAME real splice path a click uses (lm-spawn-skill →
+    // onSpawnSkill → load_skill). Without this receiver the panel's drag was
+    // a no-op — which is the kind of half-wiring this restore exists to fix.
+    const skillRaw = e.dataTransfer.getData('application/x-archhub-skill');
+    if (skillRaw) {
+      e.preventDefault();
+      let skill;
+      try { skill = JSON.parse(skillRaw); } catch { return; }
+      try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: skill })); } catch (ex) {}
+      setDropTarget(null);
+      return;
+    }
     const raw = e.dataTransfer.getData('application/x-lm-node');
     if (!raw) return;
     e.preventDefault();

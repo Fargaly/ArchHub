@@ -1149,6 +1149,38 @@ class BrainStore:
             ).fetchone()
         return row["value"] if row else None
 
+    def update_meta(self, key: str, fn: "Any") -> "Any":
+        """Atomic read-modify-write of a single brain_meta key.
+
+        Holds the store's RLock across the WHOLE get→fn→set so the decide step
+        is inside the critical section — closing the TOCTOU window that a plain
+        ``get_meta`` … (decide) … ``set_meta`` pair leaves open (the lock is
+        released between the two calls, so two threads can both read the old
+        value, both decide, and both write — a lost update / double-claim).
+
+        ``fn(old_value: Optional[str]) -> (new_value: Optional[str], result)``:
+        receives the current raw string (or None), returns the new raw string
+        to persist plus an arbitrary result handed back to the caller. Returning
+        ``new_value is None`` leaves the key untouched (a pure read). Because the
+        RLock is re-entrant, ``fn`` may itself call ``get_meta`` / ``set_meta``
+        without deadlocking — this is what lets the JSON-doc stores
+        (active_work, requirement_tree) route their read-modify-write through
+        one lock acquisition.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM brain_meta WHERE key = ?", (key,)
+            ).fetchone()
+            old = row["value"] if row else None
+            new_value, result = fn(old)
+            if new_value is not None:
+                self._conn.execute(
+                    "INSERT INTO brain_meta(key, value) VALUES(?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, new_value),
+                )
+            return result
+
     # ── batch write (Mem0-style ops) ────────────────────────────────────
 
     def apply_write_ops(self, ops: list[WriteOp]) -> WriteResponse:

@@ -73,6 +73,26 @@ _META_SINCE_HLC = "personal_cloud_sync.since_hlc"
 _META_LAST_SYNC = "personal_cloud_sync.last_sync_ts"
 _META_LAST_RESULT = "personal_cloud_sync.last_result_json"
 _META_ERRORS = "personal_cloud_sync.error_count"
+# Set to the HTTP status (e.g. "401") when the SERVER verified our bearer and
+# REJECTED it — i.e. db.user_for_token returned None (revoked / expired /
+# unknown token). Its presence makes the worker INERT (it stops hammering the
+# cloud with a dead token every interval) and is the signal the UI/CLI reads
+# to prompt a fresh sign-in. Cleared the moment a tick succeeds again (e.g.
+# after the user re-runs cloud_login and a new token lands) OR when the token
+# itself changes (a new sign-in supersedes a stale rejection).
+_META_AUTH_INVALID = "personal_cloud_sync.auth_invalid"
+# Records WHICH token was rejected (fingerprint, never the raw secret) so a
+# fresh sign-in with a DIFFERENT token clears the inert latch automatically —
+# the rejection was about the old token, not the new one.
+_META_AUTH_INVALID_TOKEN = "personal_cloud_sync.auth_invalid_token_fp"
+
+# HTTP statuses that mean "the server VERIFIED this token and REJECTED it"
+# (vs. a transient network / 5xx blip that should just be retried). 401 =
+# missing/invalid/expired bearer (db.user_for_token → None); 403 = the token
+# authenticated but is forbidden. Both are token-identity verdicts, not
+# transient — retrying with the SAME token can never succeed, so we honor the
+# server's verdict and go inert rather than spin forever.
+_AUTH_REJECT_STATUSES = frozenset({401, 403})
 
 # Default cursor the cloud replica understands (export_delta floor).
 _HLC_FLOOR = "0000000000000000.00000000"
@@ -201,6 +221,7 @@ class PersonalSyncResult:
 
     ok: bool = True
     inert: bool = False                 # True when no token (signed-out)
+    auth_invalid: bool = False          # True when the SERVER rejected our token (401/403)
     started_at: float = field(default_factory=time.time)
     duration_ms: float = 0.0
     pushed_fragments: int = 0
@@ -384,9 +405,28 @@ class PersonalCloudSync:
             if not cfg.is_signed_in:
                 result.inert = True
                 result.ok = True
+                self._clear_auth_invalid()  # signed out cleanly — no stale latch
                 result.duration_ms = (time.perf_counter() - t0) * 1000.0
                 self._last_result = result
                 return result
+
+            # GATE: the SERVER already verified + rejected THIS token (401/403)
+            # on a prior tick. Honor that verdict — go inert instead of
+            # re-POSTing a known-dead bearer every interval (the 401-class
+            # hardening: don't hammer the cloud with a token the server told
+            # us is invalid). The latch is keyed to the rejected token's
+            # fingerprint, so a fresh sign-in with a DIFFERENT token clears it
+            # automatically and sync resumes without a daemon restart.
+            if self._is_auth_invalid_for(cfg.token):
+                result.inert = True
+                result.auth_invalid = True
+                result.ok = True
+                result.user_id = cfg.user_id or self._effective_owner(cfg)
+                result.duration_ms = (time.perf_counter() - t0) * 1000.0
+                self._last_result = result
+                return result
+            # A token change since the last rejection supersedes the latch.
+            self._clear_auth_invalid_if_token_changed(cfg.token)
 
             try:
                 owner = self._effective_owner(cfg)
@@ -446,6 +486,9 @@ class PersonalCloudSync:
                 result.ok = True
                 result.duration_ms = (time.perf_counter() - t0) * 1000.0
                 self._cycle_count += 1
+                # A clean round-trip proves the token is good again — drop any
+                # stale auth-invalid latch from a prior rejection.
+                self._clear_auth_invalid()
                 self._last_result = result
                 self._persist_status(result)
                 if dropped:
@@ -455,6 +498,16 @@ class PersonalCloudSync:
                     )
                 return result
             except urllib.error.HTTPError as ex:
+                # The server VERIFIED our bearer and REJECTED it (401/403) —
+                # db.user_for_token returned None for a revoked/expired/unknown
+                # token. This is a token-identity verdict, NOT a transient blip:
+                # retrying the SAME token can never succeed. Latch it (keyed to
+                # this token's fingerprint) so subsequent ticks go inert instead
+                # of hammering the cloud, and surface auth_invalid so the UI/CLI
+                # prompts a fresh sign-in. Cleared on the next success or a
+                # token change.
+                if ex.code in _AUTH_REJECT_STATUSES:
+                    return self._fail_auth(result, t0, cfg.token, ex.code, ex.reason)
                 return self._fail(result, t0, f"HTTP {ex.code}: {ex.reason}")
             except urllib.error.URLError as ex:
                 return self._fail(result, t0, f"network: {ex.reason}")
@@ -471,6 +524,90 @@ class PersonalCloudSync:
         self._persist_status(result)
         self._logmsg(f"degraded to local-only this tick: {msg}")
         return result
+
+    def _fail_auth(self, result: PersonalSyncResult, t0: float, token: str,
+                   code: int, reason: str) -> PersonalSyncResult:
+        """The server verified + rejected our bearer (401/403). Latch the
+        rejection (so future ticks go inert rather than re-POSTing a dead
+        token) and surface auth_invalid for the UI/CLI to prompt re-sign-in.
+
+        Distinct from `_fail`: this is NOT a transient degrade. We do NOT bump
+        the generic error_count (this isn't a flaky-network event), we set
+        result.auth_invalid, and we persist the latch keyed to the rejected
+        token's fingerprint so a later sign-in with a fresh token clears it.
+        """
+        self._set_auth_invalid(token, code)
+        result.ok = False
+        result.auth_invalid = True
+        result.error = f"auth_rejected: HTTP {code}: {reason}"
+        result.duration_ms = (time.perf_counter() - t0) * 1000.0
+        self._last_result = result
+        self._persist_status(result)
+        self._logmsg(
+            f"token rejected by server (HTTP {code}) — going inert until a "
+            f"fresh sign-in. Re-run cloud_login to resume cross-device sync."
+        )
+        return result
+
+    # ── auth-invalid latch (honor the server's token verdict) ────────
+
+    @staticmethod
+    def _token_fp(token: str) -> str:
+        """Stable, non-reversible fingerprint of a bearer token. Used to key
+        the auth-invalid latch so a NEW token (fresh sign-in) is never treated
+        as still-rejected. Never stores or logs the raw token."""
+        import hashlib
+        t = (token or "").strip()
+        if not t:
+            return ""
+        return hashlib.sha256(t.encode("utf-8")).hexdigest()[:16]
+
+    def _set_auth_invalid(self, token: str, code: int) -> None:
+        """Persist the auth-invalid latch + the rejected token's fingerprint."""
+        try:
+            self.store.set_meta(_META_AUTH_INVALID, str(code))
+            self.store.set_meta(_META_AUTH_INVALID_TOKEN, self._token_fp(token))
+        except Exception:
+            pass
+
+    def _clear_auth_invalid(self) -> None:
+        """Drop the auth-invalid latch (token is good again / signed out)."""
+        try:
+            if (self.store.get_meta(_META_AUTH_INVALID) or "").strip():
+                self.store.set_meta(_META_AUTH_INVALID, "")
+                self.store.set_meta(_META_AUTH_INVALID_TOKEN, "")
+        except Exception:
+            pass
+
+    def _is_auth_invalid_for(self, token: str) -> bool:
+        """True iff the latch is set AND it was set for THIS exact token. A
+        different (fresh) token is never considered rejected — the verdict was
+        about the old one."""
+        try:
+            latched = (self.store.get_meta(_META_AUTH_INVALID) or "").strip()
+            if not latched:
+                return False
+            latched_fp = (self.store.get_meta(_META_AUTH_INVALID_TOKEN) or "").strip()
+        except Exception:
+            return False
+        # No recorded fingerprint (legacy) → treat the latch as applying to the
+        # current token (fail-safe: stay inert rather than hammer the cloud).
+        if not latched_fp:
+            return True
+        return latched_fp == self._token_fp(token)
+
+    def _clear_auth_invalid_if_token_changed(self, token: str) -> None:
+        """If a latch exists but for a DIFFERENT token, clear it — a fresh
+        sign-in supersedes a stale rejection of the old token."""
+        try:
+            latched = (self.store.get_meta(_META_AUTH_INVALID) or "").strip()
+            if not latched:
+                return
+            latched_fp = (self.store.get_meta(_META_AUTH_INVALID_TOKEN) or "").strip()
+        except Exception:
+            return
+        if latched_fp and latched_fp != self._token_fp(token):
+            self._clear_auth_invalid()
 
     # ── collect local USER-scope rows ────────────────────────────────
 
@@ -809,12 +946,19 @@ class PersonalCloudSync:
 
     def status(self) -> dict[str, Any]:
         cfg = self._config()
+        # auth_invalid: the server verified + rejected the current token. The
+        # UI/CLI reads this to prompt a fresh sign-in (vs. a transient error).
+        # Only "active" when the latch applies to the token in effect right now
+        # — a fresh sign-in clears it on the next tick.
+        auth_invalid = bool(cfg.is_signed_in and self._is_auth_invalid_for(cfg.token))
         return {
             "running": self._thread is not None and self._thread.is_alive(),
             "kind": "personal-cloud-sync",
             "interval_s": self.interval_s,
             "transport": "archhub-cloud /v1/brain/sync",
             "signed_in": cfg.is_signed_in,
+            "auth_invalid": auth_invalid,
+            "needs_reauth": auth_invalid,   # alias the UI/CLI can key on
             "cloud": cfg.redacted(),
             "since_hlc": self._load_cursor(),
             "cycle_count": self._cycle_count,

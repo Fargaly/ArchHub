@@ -36,6 +36,31 @@ def _json_type(t: str) -> str:
     }.get((t or "").lower(), "string")
 
 
+# Verbs that signal a write OUT to disk / a remote / another system rather
+# than a mutation of the host application itself (CON-02). Kept in sync with
+# the class guard in tests/test_connector_contract.py.
+_OUTWARD_WRITE_PREFIXES = ("send_", "push_", "upload_")
+
+
+def _side_effect_tag(op) -> str:
+    """LLM-visible warning suffix for an op's description.
+
+    Honest about WHAT the side effect is so the model treats it with the
+    right care:
+      * a `destructive` op that writes OUT (send/push/upload) → it touches
+        disk/remote, not the host → "[WRITES TO DISK/REMOTE]".
+      * any other `destructive` op → it mutates the host → "[MUTATES THE HOST]".
+      * a non-destructive read → no tag.
+    Either tag is advisory; the actual gate is the kind-derived policy.
+    """
+    if not getattr(op, "destructive", False):
+        return ""
+    _, _, verb = (getattr(op, "op_id", "") or "").partition(".")
+    if verb.startswith(_OUTWARD_WRITE_PREFIXES):
+        return " [WRITES TO DISK/REMOTE]"
+    return " [MUTATES THE HOST]"
+
+
 # ---------------------------------------------------------------------------
 @dataclass
 class ToolInvocation:
@@ -1629,7 +1654,7 @@ class ToolEngine:
                         "name": _tname,
                         "description": (op.label or op.op_id) + " — "
                                        + (op.description or "")
-                                       + (" [MUTATES THE HOST]" if op.destructive else ""),
+                                       + _side_effect_tag(op),
                         "input_schema": {"type": "object",
                                           "properties": props,
                                           "required": required},

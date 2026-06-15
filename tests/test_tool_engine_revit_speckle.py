@@ -59,17 +59,27 @@ def test_revit_speckle_ops_appear_in_tool_specs():
 
 
 def test_destructive_ops_flag_mutates_in_description():
-    """Destructive ops get a [MUTATES THE HOST] hint in their
-    LLM-visible description — the model knows to confirm."""
+    """Destructive ops get a side-effect hint in their LLM-visible
+    description — the model knows the op has a consequence + is gated.
+    CON-02: the hint is HONEST about which side effect it is.
+
+    * receive + batch_set MUTATE the Revit host → "[MUTATES THE HOST]".
+    * send WRITES OUT to disk/remote (it does not touch Revit) →
+      "[WRITES TO DISK/REMOTE]". It must still be flagged (it is a
+      destructive write, approval-gated) — just not as a host mutation."""
     engine = _engine()
     specs = engine._connector_tool_specs()
     by_name = {s["name"]: s for s in specs}
 
-    # receive + batch_set are destructive.
+    # receive + batch_set mutate the host.
     assert "[MUTATES THE HOST]" in by_name["revit__receive_from_speckle"]["description"]
     assert "[MUTATES THE HOST]" in by_name["revit__batch_set_parameters"]["description"]
-    # send is NOT — it ships data outward, doesn't touch Revit.
-    assert "[MUTATES THE HOST]" not in by_name["revit__send_to_speckle"]["description"]
+    # send writes outward — flagged as a disk/remote write, NOT a host
+    # mutation. The CON-02 root: it IS a side-effecting write (so it is
+    # gated), it just doesn't mutate Revit.
+    send_desc = by_name["revit__send_to_speckle"]["description"]
+    assert "[WRITES TO DISK/REMOTE]" in send_desc
+    assert "[MUTATES THE HOST]" not in send_desc
 
 
 # ─── 2. invoke routing ────────────────────────────────────────────────

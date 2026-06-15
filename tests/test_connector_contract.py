@@ -259,3 +259,95 @@ def test_healthy_empty_connector_is_not_reported_as_errored():
     assert d["status"] == "live", "empty-but-ok host keeps its real status"
     assert d["ops_error"] == ""
     assert d["ops"] == []
+
+
+# ── CON-02 (blueprint P0) — a write-to-the-outside-world op may not be a
+#    free `read`. The `*.send_to_speckle` ops (max / autocad / revit) call
+#    `SpeckleWire.send`, which writes a commit to `.speckle/` on disk and
+#    OPTIONALLY pushes to a remote Speckle Server (`server_push=True`). The
+#    base contract (connectors/base.py) defines `read` as "no side effects,
+#    safe to call speculatively" and `action` as "mutates the host OR THE
+#    OUTSIDE WORLD". A disk/remote write is a side effect on the outside
+#    world → it is an `action`, regardless of whether the HOST app (Max /
+#    AutoCAD / Revit) is touched.
+#
+#    Why this is load-bearing (USER-AGENCY mandate): the permission default
+#    DERIVES from the op's own `kind`/`destructive`
+#    (`ai_behaviour._connector_op_policy`) — `action`/`destructive` → "ask",
+#    `read` → "allow" (fire un-gated). So a send op mislabeled `read`
+#    resolves to "allow" and the agent fires it WITHOUT approval, silently
+#    writing to disk (and possibly pushing to a remote server). That breaks
+#    "every AI write to a host is approval-gated by default". The fix is the
+#    correct CLASSIFICATION at the op (kind=action, destructive=True); the
+#    policy engine then gates it automatically — no per-op policy patch.
+#
+#    The test name carries `kind_is_action` so the blueprint's named gate
+#    `pytest -k "kind_is_action"` selects it.
+
+_SEND_OP_VERB = "send_to_speckle"
+
+
+def _send_to_speckle_ops(connectors):
+    return [o for c in connectors for o in c.ops()
+            if (o.op_id or "").endswith("." + _SEND_OP_VERB)]
+
+
+def test_send_to_speckle_kind_is_action_never_read(connectors):
+    """No `*.send_to_speckle` op may be `kind="read"`. It writes a commit
+    to disk (and optionally a remote server) — an outside-world side
+    effect — so it MUST be `kind="action"`. A `read` here is the CON-02
+    mislabel that lets the agent fire the write un-gated."""
+    sends = _send_to_speckle_ops(connectors)
+    # The ops must exist at all (max + autocad + revit register them).
+    assert sends, "no *.send_to_speckle ops registered — cannot guard CON-02"
+    mislabeled = sorted(o.op_id for o in sends if o.kind == "read")
+    assert not mislabeled, (
+        "send_to_speckle ops registered as kind='read' despite writing to "
+        f"disk/remote (must be kind='action'): {mislabeled}")
+    # Belt-and-braces: every send op is action AND destructive (the base
+    # contract pairs them; test_destructive_actions_flagged enforces it too).
+    for o in sends:
+        assert o.kind == "action", f"{o.op_id}: kind must be 'action'"
+        assert o.destructive is True, (
+            f"{o.op_id}: a disk/remote write must be destructive=True")
+
+
+def test_send_to_speckle_kind_is_action_so_policy_gates_it(connectors):
+    """The consequence that matters to the user: because the kind is now
+    `action`, the DERIVED permission default is 'ask' (approval-gated),
+    never 'allow'. This is the USER-AGENCY guarantee expressed end-to-end
+    — op metadata → policy. If a send op ever resolves to 'allow' the
+    agent could write to disk/remote without confirmation."""
+    sends = _send_to_speckle_ops(connectors)
+    assert sends, "no *.send_to_speckle ops registered — cannot guard CON-02"
+    ungated = []
+    for o in sends:
+        default = ai_behaviour._default_policy_for(_tool_name(o))
+        if default == "allow":
+            ungated.append(f"{o.op_id} -> '{default}'")
+    assert not ungated, (
+        "send_to_speckle ops whose DEFAULT policy is 'allow' (an AI write "
+        f"that fires WITHOUT approval — USER-AGENCY violation): {ungated}")
+
+
+def test_outside_world_writes_are_gated_class_guard(connectors):
+    """Generalise CON-02 to its whole CLASS so it can't recur under a new
+    name: any op whose verb signals a write OUT to disk / a remote / another
+    system (`send_*`, `push_*`, `upload_*`, `export_*` excluding viewport
+    screenshots) must NOT be a free `read` — it carries an outside-world
+    side effect and must be `action` (so the policy gates it).
+
+    This catches the next mislabeled exporter the way CON-02 should have
+    been caught, without depending on anyone remembering to special-case
+    the op."""
+    OUT_PREFIXES = ("send_", "push_", "upload_")
+    offenders = []
+    for c in connectors:
+        for o in c.ops():
+            _, _, verb = (o.op_id or "").partition(".")
+            if verb.startswith(OUT_PREFIXES) and o.kind == "read":
+                offenders.append(o.op_id)
+    assert not offenders, (
+        "ops that write OUT to disk/remote/another system but are "
+        f"registered kind='read' (must be 'action' so they are gated): "
+        f"{sorted(offenders)}")

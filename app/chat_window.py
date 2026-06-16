@@ -1258,6 +1258,11 @@ class ChatWindow(QMainWindow):
     # slot _on_host_pills_ready repaints from it. A signal (not a direct call)
     # is what marshals the worker's result back onto the Qt thread safely.
     _host_pills_ready = pyqtSignal(object)
+    # APP-01 residual boot-hang — the model picker's live provider /
+    # LM-Studio probe runs OFF the Qt thread (see _kick_model_picker_probe);
+    # this signal marshals "fresh data is ready, re-populate" back onto the
+    # GUI thread, where _refresh_model_picker does pure widget work.
+    _model_picker_ready = pyqtSignal()
 
     def _build_update_banner(self) -> QWidget:
         bar = QFrame()
@@ -1479,7 +1484,14 @@ class ChatWindow(QMainWindow):
 
         self.model_picker = QComboBox()
         self.model_picker.setObjectName("modelPicker")
-        self._populate_model_picker()
+        # APP-01 residual boot-hang fix: populate WITHOUT a synchronous LM
+        # Studio HTTP probe (defer_probe=True). The full probe ran INLINE
+        # here on the Qt main thread (configured_providers() + lmstudio_models()
+        # → probe_lmstudio → full ~1.5 s urlopen on a half-open :1234), freezing
+        # launch. The boot build now shows Auto + KNOWN_MODELS instantly; the
+        # live provider/local rows fill in via a background probe (signal below).
+        self._model_picker_ready.connect(self._refresh_model_picker)
+        self._populate_model_picker(defer_probe=True)
         h.addWidget(self.model_picker)
 
         # Top-level Add Host button — always visible, never buried.
@@ -3282,25 +3294,50 @@ class ChatWindow(QMainWindow):
 
     # ---- model picker -----------------------------------------------------
 
-    def _populate_model_picker(self) -> None:
+    def _populate_model_picker(self, defer_probe: bool = False) -> None:
         """Fill the model dropdown. Cloud-first when keys exist; if
         none do, Ollama models are surfaced automatically so the user
         always has SOMETHING they can pick. The Settings toggle
-        'Show local Ollama models' force-shows them regardless."""
+        'Show local Ollama models' force-shows them regardless.
+
+        `defer_probe=True` (the boot call from `ChatWindow.__init__`) builds
+        the picker WITHOUT the synchronous LM Studio HTTP probe — APP-01
+        residual boot-hang. `configured_providers()` + `lmstudio_models()`
+        both reach `llm_detector.probe_lmstudio`, a GET that stalls the full
+        ~1.5 s `urlopen` timeout on a half-open :1234 port; running that
+        inline here (Qt main thread) froze launch. With `defer_probe`, the
+        configured set comes from `configured_providers_cheap()` (no
+        network), local-model rows are skipped, and the live probe is kicked
+        on a background thread that re-populates via `_model_picker_ready`.
+        The non-boot (refresh / user-initiated) call keeps the full live
+        path."""
         from PyQt6.QtGui import QStandardItemModel, QStandardItem
         from secrets_store import load_setting
 
-        configured = set(self.router.configured_providers())
-        # Local Ollama + LM Studio models always surface when the
-        # respective service is reachable. The legacy `show_local_models`
-        # setting (default False) used to hide them — overriding that
-        # here because users repeatedly asked "where's qwen / llama?"
-        # when their local models were silently filtered out. To
-        # explicitly hide local models now, set `hide_local_models=True`
-        # in Settings.
-        hide_local = bool(load_setting("hide_local_models"))
-        show_ollama   = ("ollama"   in configured) and not hide_local
-        show_lmstudio = ("lmstudio" in configured) and not hide_local
+        if defer_probe:
+            # Boot-safe: cheap configured set (no LM Studio HTTP probe), no
+            # local-model rows yet. The background refresh flips them live.
+            try:
+                configured = set(self.router.configured_providers_cheap())
+            except Exception:
+                configured = set()
+            hide_local = False
+            show_ollama = False
+            show_lmstudio = False
+            # Kick the real probe off the Qt thread; it re-populates on land.
+            self._kick_model_picker_probe()
+        else:
+            configured = set(self.router.configured_providers())
+            # Local Ollama + LM Studio models always surface when the
+            # respective service is reachable. The legacy `show_local_models`
+            # setting (default False) used to hide them — overriding that
+            # here because users repeatedly asked "where's qwen / llama?"
+            # when their local models were silently filtered out. To
+            # explicitly hide local models now, set `hide_local_models=True`
+            # in Settings.
+            hide_local = bool(load_setting("hide_local_models"))
+            show_ollama   = ("ollama"   in configured) and not hide_local
+            show_lmstudio = ("lmstudio" in configured) and not hide_local
 
         self.model_picker.clear()
         # Replace the underlying model so we can disable individual items.
@@ -3372,6 +3409,51 @@ class ChatWindow(QMainWindow):
                 if self.model_picker.itemData(i) == current:
                     self.model_picker.setCurrentIndex(i)
                     break
+
+    def _kick_model_picker_probe(self) -> None:
+        """Run the LM Studio / live-provider probe OFF the Qt thread, then
+        ask the GUI thread to re-populate (APP-01 residual boot-hang).
+
+        `_populate_model_picker(defer_probe=True)` (the boot call) builds the
+        picker from the cheap, no-network set so launch never blocks. This
+        helper then does the blocking work the boot path skipped —
+        `configured_providers()` + `lmstudio_models()`, both of which reach
+        the ~1.5 s `probe_lmstudio` HTTP GET — on a daemon thread, warming
+        the 25 s `llm_detector` cache. When it lands it emits
+        `_model_picker_ready`; the GUI-thread `_refresh_model_picker` slot
+        (connected in `__init__`) then re-reads the now-warm cache and shows
+        the live provider flags + local-model rows. Mirrors the proven
+        off-thread idiom of `_refresh_host_pills` / `ArchHubBridge._cached_async`.
+
+        Re-entrancy guarded: a second kick while a probe is in flight is a
+        no-op, so repeated refreshes can never pile up worker threads."""
+        import threading
+        if getattr(self, "_model_probe_inflight", False):
+            return
+        self._model_probe_inflight = True
+
+        def _worker():
+            try:
+                # Touch the live probes so the llm_detector cache is warm
+                # by the time the GUI re-populates. Result discarded here —
+                # the re-populate re-reads via configured_providers().
+                self.router.configured_providers()
+                try:
+                    from llm_router import lmstudio_models
+                    lmstudio_models()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            finally:
+                self._model_probe_inflight = False
+                try:
+                    self._model_picker_ready.emit()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, name="archhub-model-picker-probe",
+                         daemon=True).start()
 
     # ---- background update check -----------------------------------------
 

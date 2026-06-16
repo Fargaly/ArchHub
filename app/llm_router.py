@@ -684,7 +684,23 @@ class LLMRouter:
             "completions": int(acc["completions"]),
         }
 
-    def configured_providers(self) -> list[str]:
+    def configured_providers_cheap(self) -> list[str]:
+        """The configured-provider set WITHOUT any network probe — safe to
+        call ON the Qt main thread (e.g. building the model picker at boot).
+
+        APP-01 residual boot-hang: `configured_providers()` reaches
+        `llm_detector.probe_lmstudio`, an HTTP GET that pays the full
+        ~1.5 s `urlopen` timeout on a HALF-OPEN LM Studio port. The Qt
+        model picker (`chat_window._populate_model_picker`) is built INLINE
+        in `ChatWindow.__init__` on the GUI thread at launch, so that stall
+        froze the app on boot. This variant skips ONLY the LM Studio HTTP
+        probe — every other signal (key/env/CLI presence, Ollama's
+        already-non-blocking cached list) is cheap. The live `lmstudio`
+        row is filled in moments later by the background refresh
+        (`_kick_model_picker_probe` → `_model_picker_ready`)."""
+        return self.configured_providers(_probe_lmstudio=False)
+
+    def configured_providers(self, *, _probe_lmstudio: bool = True) -> list[str]:
         # `list_keys()` returns providers with an entry in the secrets
         # store — including ones whose value is empty (a placeholder
         # row left over from a half-completed Sign-ins flow). That made
@@ -692,6 +708,9 @@ class LLMRouter:
         # "live" even when the actual key string was 0 chars, which
         # caused chats to hang on send. Filter through `load_api_key`
         # so only providers with a NON-EMPTY key count as configured.
+        #
+        # `_probe_lmstudio=False` (configured_providers_cheap) skips the one
+        # blocking call below so the result is safe on the Qt main thread.
         providers = set()
         for p in list_keys():
             try:
@@ -753,13 +772,16 @@ class LLMRouter:
             pass
         # LM Studio if running with at least one chat model loaded.
         # Server lives at 127.0.0.1:1234/v1; probe is cached 25s.
-        try:
-            from llm_detector import probe_lmstudio
-            res = probe_lmstudio() or {}
-            if res.get("status") == "live" and res.get("models"):
-                providers.add("lmstudio")
-        except Exception:
-            pass
+        # This is the ONE blocking (HTTP) signal — skipped when the caller
+        # asked for the cheap, Qt-main-thread-safe set (APP-01 boot-hang).
+        if _probe_lmstudio:
+            try:
+                from llm_detector import probe_lmstudio
+                res = probe_lmstudio() or {}
+                if res.get("status") == "live" and res.get("models"):
+                    providers.add("lmstudio")
+            except Exception:
+                pass
         # Drop providers we've blocked due to recent 4xx (no credits,
         # bad key, quota exceeded). They re-enter the set automatically
         # when the blocklist entry expires (~10 min).

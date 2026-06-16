@@ -1,13 +1,23 @@
 """brain_unify — one-way importer that unifies ArchHub's two brain stores.
 
     ┌─────────────────────────────────────────────────────────────────┐
-    │ RETIRED AS THE ONGOING BAND-AID (2026-05-28, ONE-SYSTEM mandate). │
-    │ Use `python tools/brain_migrate.py` — the ONE-TIME migration that │
-    │ folds graph.sqlite into the CANONICAL brain.db and writes a marker│
-    │ so a fresh run is a no-op. The in-app brain view now reads the     │
-    │ canonical store's counts via the daemon (bridge.memory_stats →    │
-    │ brain.health), so nothing needs periodic graph→brain re-syncing.  │
-    │ This module's `unify()` mapping is KEPT — brain_migrate imports it.│
+    │ OBSOLETE AS A STORE-BRIDGE (2026-06-16, ONE-SYSTEM unify, BRV-01).│
+    │ The two stores are now ONE: personal_brain.graph_adapter.         │
+    │ MemoryGraphStore presents the full MemoryGraph API directly over  │
+    │ the canonical brain.db (a graph node IS a `graph:<id>` Fragment),  │
+    │ and app/memory/graph.py `MemoryGraph.open(brain_store=…)` routes   │
+    │ through it. So there is no longer a second store to copy FROM —    │
+    │ reads/writes go through one unified graph. This module is kept as  │
+    │ a COMPAT SHIM:                                                     │
+    │   • `unify(graph, store)` still works (now redundant: it writes    │
+    │     the SAME canonical `graph:` fragments the adapter reads), and  │
+    │     is still imported by tools/brain_migrate.py + pinned by tests. │
+    │   • `unify_into_adapter(...)` is the modern entrypoint that folds  │
+    │     a legacy graph.sqlite into the unified brain.db via the        │
+    │     adapter (identical rows), for one-time migration off the old   │
+    │     standalone file.                                               │
+    │ Earlier note (still true): `python tools/brain_migrate.py` is the  │
+    │ one-time migration; a fresh run is a marker-gated no-op.           │
     │ Design: docs/audits/brain-unify-design-2026-05-28.md              │
     └─────────────────────────────────────────────────────────────────┘
 
@@ -283,6 +293,55 @@ def unify(graph: MemoryGraph, store: BrainStore, *,
         "fragments_after": fragments_after,
         "lock_retry_hits": lock_retry_hits,
         "edges_total": len(edges),
+    }
+
+
+def unify_into_adapter(
+    graph: MemoryGraph, store: BrainStore, *,
+    owner_user: str = "founder", scope: str | Scope = "project",
+) -> dict[str, Any]:
+    """Fold a legacy ``graph.sqlite`` MemoryGraph into the unified brain.db via
+    the ``MemoryGraphStore`` adapter — the ONE-SYSTEM way (BRV-01).
+
+    Unlike :func:`unify` (which hand-encodes fragments), this drives the SAME
+    adapter the live app now uses, so the migrated rows are byte-identical to
+    what the unified graph would have written natively. Edges become first-
+    class edge fragments (queryable), not just sidecars. Additive + idempotent
+    (every write upserts by the canonical id). Returns before/after counts.
+
+    This is the preferred migration entrypoint now that the band-aid role of
+    this module is obsolete; ``unify`` is retained only for back-compat.
+    """
+    from personal_brain.graph_adapter import MemoryGraphStore
+
+    scope_enum = _scope_from(scope)
+    nodes_before = store.count_graph_nodes()
+    edges_before = store.count_graph_edges()
+
+    unified = MemoryGraphStore(store, owner_user=owner_user, scope=scope_enum)
+    # Nodes first (edges need both endpoints present), then edges.
+    n_nodes = 0
+    for node in graph.all_nodes():
+        unified.add_node(node)
+        n_nodes += 1
+    n_edges = 0
+    for edge in graph.all_edges():
+        # Endpoints came across above; tolerate an orphan edge rather than
+        # abort the whole migration.
+        try:
+            unified.add_edge(edge)
+            n_edges += 1
+        except ValueError:
+            continue
+
+    return {
+        "nodes_imported": n_nodes,
+        "edges_imported": n_edges,
+        "graph_nodes_before": nodes_before,
+        "graph_nodes_after": store.count_graph_nodes(),
+        "graph_edges_before": edges_before,
+        "graph_edges_after": store.count_graph_edges(),
+        "via": "MemoryGraphStore adapter (ONE-SYSTEM unify)",
     }
 
 

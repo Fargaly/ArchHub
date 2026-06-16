@@ -122,6 +122,16 @@ def _isolate_brain_daemon(tmp_path, monkeypatch):
     # XDG_DATA_HOME first on POSIX; without this a CI box reads the real
     # ~/.local/share graph.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    # (2b) ONE-SYSTEM ADOPTION (BRV-01): MemoryGraph.open() now DEFAULTS to the
+    # unified brain.db. brain.db lives under %APPDATA% (Roaming), which is NOT
+    # pinned by the LOCALAPPDATA/XDG sandbox above — so a default open would
+    # read the developer's REAL brain.db (the exact non-determinism this fixture
+    # exists to kill). Force the explicit STANDALONE opt-out for the whole suite
+    # so every existing memory test keeps its isolated graph.sqlite semantics
+    # unchanged. The dedicated unified-store tests
+    # (tests/test_brain_two_store_unify.py) opt back IN per-test with their own
+    # sandboxed brain path.
+    monkeypatch.setenv("ARCHHUB_MEMORY_STANDALONE", "1")
     # (3) Belt-and-suspenders: a closed loopback endpoint. Port 1 never
     # listens, so any BrainClient that escapes the _call stub refuses
     # instantly rather than waiting out the timeout.

@@ -369,16 +369,38 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="max edges per node per relation (default 6)")
     parser.add_argument("--path", type=str, default=None,
                         help="graph sqlite path (default: default_graph_path())")
+    parser.add_argument(
+        "--standalone", action="store_true",
+        help="operate the legacy standalone graph.sqlite instead of the "
+             "unified brain.db (offline / debugging). Default: unified store.")
     args = parser.parse_args(argv)
 
-    path = Path(args.path) if args.path else default_graph_path()
-    print(f"[edges] opening graph: {path}")
-    graph = MemoryGraph.open(path)
-    # Daemon-friendly: retry up to 5s on a momentary writer lock.
-    try:
-        graph._conn.execute("PRAGMA busy_timeout=5000")
-    except Exception:
-        pass
+    # ONE-SYSTEM ADOPTION (BRV-01): by default this CLI now enriches the SAME
+    # unified brain.db the running app reads, so freshly-extracted edges are
+    # immediately live everywhere — not stranded in a separate staging
+    # graph.sqlite that needs a later copy. --standalone (or an explicit
+    # --path) keeps the old raw-sqlite behaviour for offline/debug runs.
+    if args.path:
+        path = Path(args.path)
+        print(f"[edges] opening graph (explicit path): {path}")
+        graph = MemoryGraph.open(path, standalone=True)
+    elif args.standalone:
+        path = default_graph_path()
+        print(f"[edges] opening standalone graph.sqlite: {path}")
+        graph = MemoryGraph.open(path, standalone=True)
+    else:
+        graph = MemoryGraph.open()  # unified brain.db (the default)
+        backing = getattr(getattr(graph, "store", None), "path", "unified")
+        print(f"[edges] opening UNIFIED brain store: {backing}")
+    # Daemon-friendly: retry up to 5s on a momentary writer lock. Only the
+    # standalone raw-sqlite handle exposes ._conn; the unified BrainStore
+    # already sets its own busy_timeout in open(), so skip the poke there.
+    conn = getattr(graph, "_conn", None)
+    if conn is not None:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass
 
     iso_before, total = _isolated_count(graph)
     pct_before = round(100.0 * iso_before / total, 1) if total else 0.0

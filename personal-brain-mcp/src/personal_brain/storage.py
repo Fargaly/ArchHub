@@ -412,8 +412,11 @@ class BrainStore:
                     embedding_blob,
                     success_count, fail_count, last_used_at, half_life_days,
                     extra_json,
-                    perceptual_hash, blob_path, blob_mime, blob_bytes
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    perceptual_hash, blob_path, blob_mime, blob_bytes,
+                    origin_kind, generating_model_id, training_rights_tier,
+                    format_shape_descriptor, content_hash_pre, content_hash_post,
+                    action_payload, language_payload, quarantine_flag
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     text=excluded.text,
                     subject=excluded.subject,
@@ -433,6 +436,15 @@ class BrainStore:
                     blob_mime=excluded.blob_mime,
                     blob_bytes=excluded.blob_bytes,
                     embedding_blob=excluded.embedding_blob,
+                    origin_kind=excluded.origin_kind,
+                    generating_model_id=excluded.generating_model_id,
+                    training_rights_tier=excluded.training_rights_tier,
+                    format_shape_descriptor=excluded.format_shape_descriptor,
+                    content_hash_pre=excluded.content_hash_pre,
+                    content_hash_post=excluded.content_hash_post,
+                    action_payload=excluded.action_payload,
+                    language_payload=excluded.language_payload,
+                    quarantine_flag=excluded.quarantine_flag,
                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 """,
                 (
@@ -451,6 +463,19 @@ class BrainStore:
                     fragment.blob_path,
                     fragment.blob_mime,
                     int(fragment.blob_bytes or 0),
+                    # AgDR-0054 per-trace fields — persisted so the export dam can
+                    # tier them. None-safe: NULL columns fall back to SQL defaults
+                    # only on a fresh row; here we always pass the model's value
+                    # (whose defaults already match the column defaults).
+                    fragment.origin_kind,
+                    fragment.generating_model_id,
+                    fragment.training_rights_tier,
+                    fragment.format_shape_descriptor,
+                    fragment.content_hash_pre,
+                    fragment.content_hash_post,
+                    fragment.action_payload,
+                    fragment.language_payload,
+                    int(bool(fragment.quarantine_flag)),
                 ),
             )
             return not existed
@@ -1706,6 +1731,21 @@ def _row_to_fragment(row: sqlite3.Row) -> Fragment:
         blob_mime=_safe_row_get(row, "blob_mime"),
         blob_bytes=_safe_row_get(row, "blob_bytes", default=0) or 0,
         embedding=_unpack_embedding(_safe_row_get(row, "embedding_blob")),
+        # AgDR-0054 per-trace fields (legacy-tolerant — pre-migration rows /
+        # column-less SELECTs fall back to the same defaults the model + SQL use).
+        origin_kind=_safe_row_get(row, "origin_kind", default="human_verified")
+        or "human_verified",
+        generating_model_id=_safe_row_get(row, "generating_model_id"),
+        training_rights_tier=_safe_row_get(
+            row, "training_rights_tier", default="firm_private_only"
+        )
+        or "firm_private_only",
+        format_shape_descriptor=_safe_row_get(row, "format_shape_descriptor"),
+        content_hash_pre=_safe_row_get(row, "content_hash_pre"),
+        content_hash_post=_safe_row_get(row, "content_hash_post"),
+        action_payload=_safe_row_get(row, "action_payload"),
+        language_payload=_safe_row_get(row, "language_payload"),
+        quarantine_flag=bool(_safe_row_get(row, "quarantine_flag", default=0)),
     )
 
 

@@ -172,6 +172,51 @@ class MemoryGraphStore:
         store = BrainStore.open(path)
         return cls(store, owner_user=owner_user, scope=scope, own_store=True)
 
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict,
+        path: "Optional[str]" = None,
+        *,
+        owner_user: str = "founder",
+        scope: Scope = Scope.PROJECT,
+    ) -> "MemoryGraphStore":
+        """Build a unified graph from a ``to_dict()`` snapshot — the drop-in
+        twin of ``app/memory/graph.py`` ``MemoryGraph.from_dict``.
+
+        This is what makes ``MemoryGraphStore`` a TRUE drop-in for the cross-
+        device receive path: ``app/memory/sync.py`` ``pull()`` calls
+        ``MemoryGraph.from_dict(snapshot, path=path)`` to materialise a remote
+        firm graph, and ``merge`` round-trips through ``to_dict``/``from_dict``.
+        Without this classmethod those paths would ``AttributeError`` the moment
+        the unified store is in play.
+
+        Default ``path`` is ``:memory:`` (mirrors MemoryGraph.from_dict — never
+        clobbers an on-disk store by accident). Nodes are loaded first so every
+        edge's endpoints exist before it is added (``add_edge`` enforces that,
+        exactly like the app graph); an edge whose endpoint is missing from the
+        snapshot is skipped rather than aborting the whole load."""
+        g = cls.open(
+            path if path is not None else ":memory:",
+            owner_user=owner_user, scope=scope,
+        )
+        with g.transaction():
+            for n in data.get("nodes") or []:
+                g.add_node(MemoryNode.from_dict(n) if hasattr(MemoryNode, "from_dict")
+                           else g._dict_to_node(n))
+            for e in data.get("edges") or []:
+                edge = (MemoryEdge.from_dict(e) if hasattr(MemoryEdge, "from_dict")
+                        else g._dict_to_edge(e))
+                try:
+                    g.add_edge(edge)
+                except ValueError:
+                    # Endpoint absent from the snapshot — skip the orphan edge
+                    # rather than abort the receive (matches the tolerant
+                    # migration path; the app graph would raise, but a remote
+                    # snapshot is untrusted input so we degrade gracefully).
+                    continue
+        return g
+
     @property
     def store(self) -> BrainStore:
         """The underlying brain store (the ONE backing store)."""
@@ -297,6 +342,34 @@ class MemoryGraphStore:
             "nodes": [n.to_dict() for n in self.all_nodes()],
             "edges": [e.to_dict() for e in self.all_edges()],
         }
+
+    # ── meta (drop-in parity with MemoryGraph.schema_version) ──
+
+    # The unified store reports the SAME node/edge snapshot schema version as
+    # app/memory/graph.py (the ``to_dict``/``from_dict`` wire shape is identical
+    # — that's what makes a snapshot interchangeable between the two surfaces).
+    # Kept as a constant mirroring graph._SCHEMA_VERSION so callers that gate on
+    # it (sync / export) see a compatible value whichever surface they hold.
+    GRAPH_SNAPSHOT_SCHEMA_VERSION = "1"
+
+    def schema_version(self) -> str:
+        """The snapshot schema version — drop-in twin of
+        ``MemoryGraph.schema_version``. Persisted in the brain store's
+        ``brain_meta`` (key ``graph_schema_version``) so it survives like the
+        app graph's ``meta`` row; falls back to the constant when unset."""
+        try:
+            stored = self._store.get_meta("graph_schema_version")
+        except Exception:
+            stored = None
+        if not stored:
+            try:
+                self._store.set_meta(
+                    "graph_schema_version", self.GRAPH_SNAPSHOT_SCHEMA_VERSION
+                )
+            except Exception:
+                pass
+            return self.GRAPH_SNAPSHOT_SCHEMA_VERSION
+        return stored
 
     # ── internal ──
 

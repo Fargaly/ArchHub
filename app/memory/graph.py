@@ -155,6 +155,37 @@ def default_graph_path() -> Path:
     return base_path / _APP_DIR / _MEMORY_SUBDIR / _DB_FILENAME
 
 
+# ── ONE-SYSTEM unify helpers (BRV-01) ────────────────────────────────
+
+
+# Env opt-out: set ARCHHUB_MEMORY_STANDALONE=1 (or true/yes/on) to force the
+# legacy standalone graph.sqlite instead of the unified brain.db. This is the
+# explicit escape hatch for tests / offline / the edge-extractor CLI. The test
+# harness (tests/conftest.py) sets it so the whole existing memory suite keeps
+# its standalone-graph semantics unchanged.
+_STANDALONE_ENV = "ARCHHUB_MEMORY_STANDALONE"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _standalone_opt_out_env() -> bool:
+    """True when the env opt-out is set to a truthy value."""
+    return str(os.environ.get(_STANDALONE_ENV, "")).strip().lower() in _TRUTHY
+
+
+def _ensure_brain_on_path() -> None:
+    """Best-effort: put the bundled ``personal-brain-mcp/src`` on ``sys.path``
+    so ``personal_brain`` is importable however the app was launched. Mirrors
+    the proven shim in ``app/memory_gate.py`` (the package ships beside
+    ArchHub). Idempotent + silent on failure."""
+    try:
+        # app/memory/graph.py → parents[2] == repo root.
+        bp = Path(__file__).resolve().parents[2] / "personal-brain-mcp" / "src"
+        if bp.exists() and str(bp) not in sys.path:
+            sys.path.insert(0, str(bp))
+    except Exception:
+        pass
+
+
 # ── schema ───────────────────────────────────────────────────────────
 
 
@@ -238,25 +269,69 @@ class MemoryGraph:
         path: Optional[Path | str] = None,
         *,
         brain_store: Any = None,
+        standalone: Optional[bool] = None,
     ) -> "MemoryGraph":
-        """Open (creating if missing) the graph at `path`. None →
-        default_graph_path(). Pass ':memory:' for an in-RAM graph.
+        """Open (creating if missing) the app knowledge graph.
 
-        ONE-SYSTEM unify (ONE-SYSTEM-PLAN-BEFORE-BUILD mandate, 2026-05-28):
-        pass ``brain_store=<BrainStore>`` to back this graph with the personal
-        brain's ``brain.db`` instead of a separate ``graph.sqlite``. The app's
-        knowledge graph and the daemon's brain then read/write ONE store — a
-        node added here is the same Fragment row the brain serves, so the
-        manual ``tools/brain_unify.py`` graph→brain copy is no longer needed.
-        The returned object presents the full ``MemoryGraph`` API
-        (``MemoryGraphStore`` from ``personal_brain.graph_adapter``), so every
-        caller (extractors / query / sync / bridge) is unchanged.
+        ONE-SYSTEM ADOPTION (ONE-SYSTEM-PLAN-BEFORE-BUILD mandate, 2026-05-28;
+        BRV-01 court re-fix). The RUNNING app now uses ONE store by DEFAULT:
+        a no-arg / default-path ``MemoryGraph.open()`` returns a
+        ``MemoryGraphStore`` (the drop-in adapter) backed by the personal
+        brain's canonical ``brain.db`` — the SAME file the daemon serves on
+        :8473. A node added here is the same ``graph:<id>`` Fragment the brain
+        reads; the manual ``tools/brain_unify.py`` graph→brain copy is retired.
+        On the FIRST unified open, any pre-existing standalone ``graph.sqlite``
+        is folded into ``brain.db`` once, with NO data loss (see
+        ``_migrate_legacy_graph_once`` — marker-gated, additive, idempotent).
 
-        Without ``brain_store`` the standalone ``graph.sqlite`` behaviour is
-        preserved exactly (back-compat for any path that hasn't been pointed at
-        the unified store yet)."""
+        Resolution order (first match wins):
+          1. ``brain_store=<BrainStore>`` given  → unify onto THAT store
+             (explicit; used by callers that already hold a handle + by tests).
+          2. ``standalone=True`` OR env ``ARCHHUB_MEMORY_STANDALONE`` truthy
+             → the legacy standalone ``graph.sqlite`` at ``path`` (the explicit
+             OPT-OUT for tests / offline / the edge-extractor CLI that needs the
+             raw sqlite connection).
+          3. ``path == ':memory:'`` or an EXPLICIT non-default path
+             → standalone (an ephemeral/CLI signal; in-RAM + custom-file callers
+             are addressing a specific sqlite file, not the shared brain).
+          4. otherwise (no path, or exactly ``default_graph_path()``)
+             → the UNIFIED brain store (the production default). If the brain
+             package can't be imported, degrade gracefully to standalone so the
+             app never hard-fails on a missing optional dependency.
+
+        Whichever branch runs, the returned object presents the full
+        ``MemoryGraph`` API, so every caller (extractors / query / sync /
+        bridge / tool_engine) is unchanged — only the backing store moves."""
+        # (1) explicit store wins.
         if brain_store is not None:
             return cls._open_unified(brain_store)  # type: ignore[return-value]
+
+        # (2) explicit opt-out → standalone graph.sqlite.
+        if standalone is None:
+            standalone = _standalone_opt_out_env()
+        if standalone:
+            return cls._open_standalone(path)
+
+        # (3) :memory: or an explicit custom path → standalone (addressing a
+        # specific sqlite file, not the shared brain). A bare default_graph_path()
+        # passed explicitly (the 3 real runtime callers + the bridge/query tests)
+        # is treated as "the default" and routes to the unified store in (4).
+        is_default_target = (
+            path is None or str(path) == str(default_graph_path())
+        )
+        if not is_default_target:
+            return cls._open_standalone(path)
+
+        # (4) production default → ONE unified store (brain.db). Degrade to
+        # standalone only if the brain package genuinely isn't importable.
+        unified = cls._open_default_unified()
+        if unified is not None:
+            return unified  # type: ignore[return-value]
+        return cls._open_standalone(path)
+
+    @classmethod
+    def _open_standalone(cls, path: Optional[Path | str]) -> "MemoryGraph":
+        """The legacy standalone ``graph.sqlite`` behaviour (unchanged)."""
         if path is None:
             path = default_graph_path()
         if str(path) != ":memory:":
@@ -275,6 +350,116 @@ class MemoryGraph:
         the adapter MUST be importable (the caller asked for unify)."""
         from personal_brain.graph_adapter import MemoryGraphStore
         return MemoryGraphStore(brain_store)
+
+    @classmethod
+    def _open_default_unified(cls) -> Any:
+        """Open the production unified store: a ``MemoryGraphStore`` over the
+        canonical ``brain.db`` at the daemon's path. Runs the one-time
+        legacy-graph migration first (no data loss). Returns None if the brain
+        package isn't importable, so the caller can fall back to standalone.
+
+        The adapter OWNS the store it opens (``own_store=True``) so the
+        caller's ``close()`` releases the brain.db handle — matching the
+        lifecycle of a standalone MemoryGraph."""
+        _ensure_brain_on_path()
+        try:
+            from personal_brain.storage import BrainStore, default_brain_path
+            from personal_brain.graph_adapter import MemoryGraphStore
+        except Exception:
+            return None
+        store = BrainStore.open(default_brain_path())
+        # One-time fold of any existing standalone graph.sqlite → brain.db.
+        # Marker-gated + additive + idempotent: the founder's existing memory is
+        # NEVER dropped; a fresh run after migration is a no-op.
+        try:
+            cls._migrate_legacy_graph_once(store)
+        except Exception:
+            # Migration must never block opening the store — a partial/failed
+            # fold leaves brain.db intact (additive writes) and graph.sqlite
+            # untouched on disk, so it can be retried, and the app still runs.
+            pass
+        return MemoryGraphStore(store, own_store=True)
+
+    # brain_meta key marking the one-time legacy-graph fold as done. Shared with
+    # tools/brain_migrate.py so the CLI migration and this auto-migration agree
+    # (whichever runs first marks it; the other becomes a no-op) — ONE marker,
+    # not a parallel one.
+    _LEGACY_MIGRATION_MARKER = "migrated_from_graph"
+
+    @classmethod
+    def _migrate_legacy_graph_once(cls, store: Any) -> dict:
+        """Fold a pre-existing standalone ``graph.sqlite`` into the unified
+        ``brain.db`` exactly once, with NO data loss.
+
+        - Skips entirely when the marker is already present (the CLI
+          ``tools/brain_migrate.py`` or a prior auto-run did it) OR when no
+          ``graph.sqlite`` exists on disk.
+        - Folds via the ``MemoryGraphStore`` adapter (nodes then edges), so the
+          migrated rows are byte-identical to a native unified write and edges
+          become first-class, queryable fragments (not just sidecars).
+        - Additive + idempotent: every write upserts by canonical id, so even
+          a forced re-run never duplicates and never deletes. The founder's
+          existing memory is preserved in full.
+        Returns a small result dict (also useful for tests/telemetry)."""
+        # Already migrated? (marker is the source of truth, shared with the CLI.)
+        try:
+            if store.get_meta(cls._LEGACY_MIGRATION_MARKER):
+                return {"ran": False, "reason": "already migrated (marker)"}
+        except Exception:
+            pass
+
+        legacy_path = default_graph_path()
+        if str(legacy_path) == ":memory:" or not Path(legacy_path).exists():
+            return {"ran": False, "reason": "no legacy graph.sqlite"}
+
+        # Open the legacy store in STANDALONE mode (never recurse into unify).
+        legacy = cls._open_standalone(legacy_path)
+        nodes_imported = 0
+        edges_imported = 0
+        try:
+            _ensure_brain_on_path()
+            from personal_brain.graph_adapter import MemoryGraphStore
+            unified = MemoryGraphStore(store)  # does NOT own `store`
+            # Nodes first so every edge's endpoints exist before it is added.
+            for node in legacy.all_nodes():
+                unified.add_node(node)
+                nodes_imported += 1
+            for edge in legacy.all_edges():
+                try:
+                    unified.add_edge(edge)
+                    edges_imported += 1
+                except ValueError:
+                    # Orphan edge (endpoint missing) — tolerate rather than
+                    # abort the migration; nothing is lost that wasn't already
+                    # danging in the legacy store.
+                    continue
+        finally:
+            legacy.close()
+
+        # Stamp the shared marker so this fold never repeats.
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        try:
+            store.set_meta(
+                cls._LEGACY_MIGRATION_MARKER,
+                _json.dumps(
+                    {
+                        "migrated_at": _dt.now(_tz.utc).isoformat(),
+                        "nodes_imported": nodes_imported,
+                        "edges_imported": edges_imported,
+                        "source": "app/memory/graph.MemoryGraph (auto)",
+                        "canonical": "brain.db",
+                    },
+                    sort_keys=True,
+                ),
+            )
+        except Exception:
+            pass
+        return {
+            "ran": True,
+            "nodes_imported": nodes_imported,
+            "edges_imported": edges_imported,
+        }
 
     def close(self) -> None:
         try:

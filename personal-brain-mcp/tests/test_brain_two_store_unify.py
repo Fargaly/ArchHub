@@ -181,10 +181,18 @@ def test_edges_round_trip_and_neighbors(graph, store):
     assert graph.neighbors("b", direction="in")[0].source == "a"
 
     # The edge is a real brain.db fragment too (first-class, queryable). Its id
-    # encodes the (source, target, relation) triple with an id-safe separator.
-    edge_frag = store.get_fragment("graphedge:a||b||informs")
+    # is now the OPAQUE sha256 of the length-prefixed triple (BRV-01 data-loss
+    # re-fix — the old literal "a||b||informs" id collided when a node id
+    # contained '|'); the triple is recovered from extra, never the id.
+    edge_id = store._edge_fragment_id("a", "b", "informs")
+    assert edge_id.startswith("graphedge:")
+    assert "||" not in edge_id  # no literal separator → no forge-able boundary
+    edge_frag = store.get_fragment(edge_id)
     assert edge_frag is not None
     assert edge_frag.predicate == "graph_edge"
+    assert edge_frag.extra.get("source") == "a"
+    assert edge_frag.extra.get("target") == "b"
+    assert edge_frag.extra.get("relation") == "informs"
 
     # Endpoint enforcement matches MemoryGraph.add_edge.
     with pytest.raises(ValueError):
@@ -257,3 +265,280 @@ def test_app_memory_graph_open_routes_to_brain_store(store):
     # And visible to a SECOND independent adapter over the same store.
     other = MemoryGraphStore(store)
     assert other.get_node("cap:unified").label == "Unified"
+
+
+# ── GATE (a): edge-id collision — the court refutation (DATA LOSS) ────────
+
+
+def test_edge_id_collision_two_distinct_edges_both_retrievable(graph, store):
+    """COURT REFUTATION RE-FIX (data loss). The old _edge_fragment_id joined
+    (source, target, relation) with a literal '||' and ASSERTED node ids never
+    contain '|'. That invariant is FALSE — extractor slugs interpolate
+    un-sanitised names (_doc_id("a||x") → "doc:a||x", _tool_id, _cap_id), so
+    two DISTINCT edges forged the SAME id and silently overwrote each other:
+
+        (a||x) -[r]-> (y)   and   (a) -[r]-> (x||y)
+
+    both mapped to graphedge:a||x||y → ONE row (regression vs the standalone
+    store's composite (source,target,relation) PRIMARY KEY).
+
+    RED on the pre-fix branch: count_edges()==1, neighbors('a||x') empty.
+    GREEN after: TWO rows, BOTH retrievable via neighbors()."""
+    # Nodes whose ids contain the old separator (a doc literally named a||x.md).
+    for nid in ("a||x", "y", "a", "x||y"):
+        graph.add_node(MemoryNode(id=nid, kind="capability", label=nid))
+
+    graph.add_edge(MemoryEdge(source="a||x", target="y", relation="r"))
+    graph.add_edge(MemoryEdge(source="a", target="x||y", relation="r"))
+
+    # Two DISTINCT edges → two rows (no collision/overwrite).
+    assert graph.count_edges() == 2, "edge-id collision: distinct edges overwrote"
+
+    # The distinct fragment ids prove the hash separates them.
+    id1 = store._edge_fragment_id("a||x", "y", "r")
+    id2 = store._edge_fragment_id("a", "x||y", "r")
+    assert id1 != id2
+    assert store.get_fragment(id1) is not None
+    assert store.get_fragment(id2) is not None
+
+    # BOTH edges are retrievable via neighbors() — neither was lost.
+    out_axy = graph.neighbors("a||x", direction="out")
+    out_a = graph.neighbors("a", direction="out")
+    assert [(e.source, e.target, e.relation) for e in out_axy] == [("a||x", "y", "r")]
+    assert [(e.source, e.target, e.relation) for e in out_a] == [("a", "x||y", "r")]
+
+    # Incoming side too — the targets see exactly their own edge.
+    assert [e.source for e in graph.neighbors("y", direction="in")] == ["a||x"]
+    assert [e.source for e in graph.neighbors("x||y", direction="in")] == ["a"]
+
+    # remove-by-triple still hits the right row (hash recomputed from triple).
+    assert graph.remove_edge("a||x", "y", "r") is True
+    assert graph.count_edges() == 1
+    assert graph.neighbors("a", direction="out")  # the OTHER edge survives
+
+
+def test_edge_id_no_separator_collision_fuzz(graph, store):
+    """Belt-and-braces: a spread of triples whose components carry the literal
+    separator (and other delimiters) all get DISTINCT ids — the hash is
+    injective over the length-prefixed triple, so no value can forge a
+    boundary."""
+    triples = [
+        ("a||b", "c", "r"),
+        ("a", "b||c", "r"),
+        ("a|", "|b", "r"),
+        ("a", "b", "||"),
+        ("a||b||c", "d", "r"),
+        ("", "a||b", "r"),
+        ("x", "y", "z"),
+    ]
+    ids = {store._edge_fragment_id(*t) for t in triples}
+    assert len(ids) == len(triples), "two distinct triples hashed to one id"
+
+
+# ── GATE (b): from_dict round-trip (drop-in completeness) ─────────────────
+
+
+def test_from_dict_round_trip_and_schema_version(store):
+    """MemoryGraphStore must be a TRUE drop-in for app MemoryGraph: it now
+    exposes from_dict + schema_version (app/memory/sync.py pull() uses
+    from_dict for cross-device receive). A to_dict snapshot round-trips
+    through from_dict byte-identically."""
+    src = MemoryGraphStore(store)
+    src.add_node(MemoryNode(id="cap:a", kind="capability", label="A",
+                            props={"host": "revit", "cost": 3}))
+    src.add_node(MemoryNode(id="dec:b", kind="decision", label="B"))
+    src.add_edge(MemoryEdge(source="cap:a", target="dec:b", relation="informs",
+                            confidence=Confidence.INFERRED, props={"w": 2}))
+    snap = src.to_dict()
+
+    # schema_version present + matches the app graph's snapshot schema ("1").
+    assert src.schema_version() == "1"
+
+    # from_dict rebuilds an equivalent graph in a FRESH in-memory brain store
+    # (default path is :memory:, never clobbering an on-disk store).
+    rebuilt = MemoryGraphStore.from_dict(snap)
+    try:
+        assert rebuilt.count_nodes() == 2
+        assert rebuilt.count_edges() == 1
+        n = rebuilt.get_node("cap:a")
+        assert n.kind == "capability" and n.props == {"host": "revit", "cost": 3}
+        e = rebuilt.all_edges()[0]
+        assert (e.source, e.target, e.relation) == ("cap:a", "dec:b", "informs")
+        assert e.confidence == Confidence.INFERRED and e.props == {"w": 2}
+        # Snapshot is stable across the round-trip (the wire shape is identical
+        # to MemoryGraph's — that's what makes a snapshot interchangeable).
+        assert rebuilt.to_dict() == snap
+    finally:
+        rebuilt.close()
+
+
+def test_from_dict_matches_app_memory_graph_signature():
+    """The adapter's from_dict accepts the SAME call the app sync path makes:
+    MemoryGraph.from_dict(snapshot, path=...). Proven by calling it positionally
+    exactly as app/memory/sync.py pull() does."""
+    snap = {
+        "nodes": [{"id": "n1", "kind": "capability", "label": "N1", "props": {}}],
+        "edges": [],
+    }
+    # positional (data, path) — the app sync call shape.
+    g = MemoryGraphStore.from_dict(snap, ":memory:")
+    try:
+        assert g.get_node("n1") is not None
+    finally:
+        g.close()
+
+
+# ── GATE (c): runtime ADOPTION + one-time migration (no data loss) ───────
+
+
+def test_app_memory_graph_default_open_uses_brain_store(tmp_path, monkeypatch):
+    """ADOPTION: app MemoryGraph.open() — with NO brain_store arg, the way the
+    real runtime callers (bridge.py, tool_engine.py) call it — DEFAULTS to the
+    unified brain.db, so the running app writes ONE store. Proven by: the
+    returned object is the adapter, and a node added through the default-open
+    graph is a brain.db fragment readable via a brain-surface adapter over the
+    SAME default path."""
+    _repo = Path(__file__).resolve().parents[2]
+    for _p in (_repo / "app", _repo / "personal-brain-mcp" / "src"):
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+
+    # Sandbox BOTH the brain.db (APPDATA/XDG) and graph.sqlite (LOCALAPPDATA/XDG)
+    # to tmp so we never touch the developer's real stores, and make sure the
+    # env opt-out is OFF for this test (the conftest in app/tests sets it; this
+    # is the brain-mcp suite so it isn't, but be explicit + future-proof).
+    monkeypatch.delenv("ARCHHUB_MEMORY_STANDALONE", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    from personal_brain.graph_adapter import MemoryGraphStore as Adapter
+    from personal_brain.storage import default_brain_path
+    import importlib
+    import memory.graph as appgraph
+    importlib.reload(appgraph)  # pick up the patched env in path resolvers
+
+    g = appgraph.MemoryGraph.open()  # NO brain_store, NO standalone — the default
+    try:
+        assert isinstance(g, Adapter), (
+            "default MemoryGraph.open() did not route to the unified store"
+        )
+        g.add_node(appgraph.MemoryNode(
+            id="cap:adopted", kind="capability", label="Adopted"))
+    finally:
+        g.close()
+
+    # The node landed in the canonical brain.db at the daemon's path — read it
+    # back via an independent adapter over that SAME file (one store, on disk).
+    brain_db = default_brain_path()
+    assert Path(brain_db).exists(), "unified open did not create brain.db"
+    verify = Adapter.open(str(brain_db))
+    try:
+        node = verify.get_node("cap:adopted")
+        assert node is not None and node.label == "Adopted"
+    finally:
+        verify.close()
+
+
+def test_default_open_migrates_existing_graph_sqlite_no_data_loss(
+    tmp_path, monkeypatch
+):
+    """MIGRATION (no data loss): a PRE-EXISTING standalone graph.sqlite — the
+    founder's existing memory — is folded into brain.db the first time the
+    unified path opens, with every node + edge preserved and none lost. The
+    fold is marker-gated + idempotent (a second open does not duplicate)."""
+    _repo = Path(__file__).resolve().parents[2]
+    for _p in (_repo / "app", _repo / "personal-brain-mcp" / "src"):
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+
+    monkeypatch.delenv("ARCHHUB_MEMORY_STANDALONE", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    import importlib
+    import memory.graph as appgraph
+    importlib.reload(appgraph)
+    from personal_brain.graph_adapter import MemoryGraphStore as Adapter
+    from personal_brain.storage import BrainStore, default_brain_path
+
+    # 1. Seed a LEGACY standalone graph.sqlite at the default graph path with
+    #    real nodes + edges (the founder's existing memory).
+    legacy_path = appgraph.default_graph_path()
+    Path(legacy_path).parent.mkdir(parents=True, exist_ok=True)
+    legacy = appgraph.MemoryGraph.open(str(legacy_path), standalone=True)
+    try:
+        legacy.add_node(appgraph.MemoryNode(id="cap:old1", kind="capability",
+                                            label="Old One", props={"k": 1}))
+        legacy.add_node(appgraph.MemoryNode(id="dec:old2", kind="decision",
+                                            label="Old Two"))
+        legacy.add_edge(appgraph.MemoryEdge(
+            source="cap:old1", target="dec:old2", relation="informs"))
+        assert legacy.count_nodes() == 2 and legacy.count_edges() == 1
+    finally:
+        legacy.close()
+
+    # Pre-condition: brain.db has none of these yet.
+    assert not Path(default_brain_path()).exists() or \
+        BrainStore.open(str(default_brain_path())).count_graph_nodes() == 0
+
+    # 2. Default-open the unified graph → triggers the one-time fold.
+    g = appgraph.MemoryGraph.open()
+    try:
+        assert isinstance(g, Adapter)
+        # Every legacy node + edge is now in the unified store — none lost.
+        assert g.get_node("cap:old1").props == {"k": 1}
+        assert g.get_node("dec:old2").label == "Old Two"
+        nbrs = g.neighbors("cap:old1", direction="out")
+        assert [(e.source, e.target, e.relation) for e in nbrs] == [
+            ("cap:old1", "dec:old2", "informs")
+        ]
+        assert g.count_nodes() == 2 and g.count_edges() == 1
+    finally:
+        g.close()
+
+    # 3. Marker stamped → a SECOND open is a no-op fold (no duplication).
+    store = BrainStore.open(str(default_brain_path()))
+    try:
+        assert store.get_meta("migrated_from_graph"), "migration marker not set"
+    finally:
+        store.close()
+
+    g2 = appgraph.MemoryGraph.open()
+    try:
+        assert g2.count_nodes() == 2 and g2.count_edges() == 1  # still 2/1
+    finally:
+        g2.close()
+
+
+def test_standalone_opt_out_keeps_graph_sqlite(tmp_path, monkeypatch):
+    """The explicit OPT-OUT (standalone=True / env) keeps the legacy
+    graph.sqlite path reachable for tests/offline/the CLI — it must NOT be the
+    unified adapter and must expose the raw sqlite internals the edge-extractor
+    CLI pokes (._conn)."""
+    _repo = Path(__file__).resolve().parents[2]
+    for _p in (_repo / "app", _repo / "personal-brain-mcp" / "src"):
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+    import importlib
+    import memory.graph as appgraph
+    importlib.reload(appgraph)
+    from personal_brain.graph_adapter import MemoryGraphStore as Adapter
+
+    # explicit flag
+    g = appgraph.MemoryGraph.open(":memory:", standalone=True)
+    try:
+        assert not isinstance(g, Adapter)
+        assert hasattr(g, "_conn")  # raw sqlite handle the CLI needs
+    finally:
+        g.close()
+
+    # env opt-out
+    monkeypatch.setenv("ARCHHUB_MEMORY_STANDALONE", "1")
+    importlib.reload(appgraph)
+    g2 = appgraph.MemoryGraph.open(":memory:")
+    try:
+        assert not isinstance(g2, Adapter)
+    finally:
+        g2.close()

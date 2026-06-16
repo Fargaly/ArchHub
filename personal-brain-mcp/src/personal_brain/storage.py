@@ -1417,14 +1417,50 @@ class BrainStore:
 
     # ── graph edges (first-class edge fragments) ──────────────────────────
 
-    # Edge id separator — a printable, id-safe sequence that cannot appear in a
-    # MemoryGraph node id (node ids use ':' / '.' / alnum, never '|'), so the
-    # (source, target, relation) triple round-trips out of the id unambiguously.
-    GRAPH_EDGE_ID_SEP = "||"
+    # Edge-id encoding (court defect, BRV-01 re-fix — data loss).
+    #
+    # The OLD scheme joined (source, target, relation) with a literal "||"
+    # separator and ASSERTED in a comment that node ids "never contain '|'".
+    # That invariant was FALSE: the extractor slug builders interpolate
+    # UN-sanitised names (app/memory/extractors: _tool_id → "tool:<name>",
+    # _cap_id → "lib:cap:<type>", _doc_id → "doc:<file-stem>"), so a doc
+    # literally named "a||x.md" — or any tool/type carrying a '|' — produces a
+    # node id containing the separator. Two DISTINCT edges then forged the SAME
+    # id and silently overwrote each other (the court repro:
+    # (a||x -> y) and (a -> x||y) BOTH mapped to graphedge:a||x||y), a
+    # regression vs the standalone store's composite (source,target,relation)
+    # PRIMARY KEY.
+    #
+    # FIX: the edge identity is now a SHA-256 over the LENGTH-PREFIXED triple.
+    # Length-prefixing each component ("<len>:<value>") makes the byte stream
+    # injective — no component value can ever forge a boundary, because the
+    # decoder (conceptually) reads exactly <len> bytes — so distinct triples
+    # map to distinct digests (collisions are cryptographically impossible, not
+    # merely "unlikely given an assumed-absent separator"). The id is
+    # OPAQUE: the (source,target,relation) triple is NEVER recovered FROM the id
+    # (it rides verbatim in the fragment's ``extra``; see write_graph_edge /
+    # _fragment_to_graph_edge), so id-shape no longer constrains node ids at all.
+    GRAPH_EDGE_ID_HASH_LEN = 40  # hex chars of the sha256 kept in the id
+
+    @staticmethod
+    def _edge_identity_payload(source: str, target: str, relation: str) -> bytes:
+        """Injective byte-encoding of the edge triple — length-prefixed
+        components so NO value can forge a component boundary (the ambiguity
+        the literal-separator scheme had). ``str(len)`` is itself unambiguous
+        because it is followed by a literal ':' and then EXACTLY that many
+        UTF-8 bytes."""
+        parts = []
+        for comp in (source, target, relation):
+            raw = str(comp).encode("utf-8")
+            parts.append(f"{len(raw)}:".encode("ascii") + raw)
+        return b"\x1f".join(parts)  # 0x1f unit-sep, belt-and-braces between fields
 
     def _edge_fragment_id(self, source: str, target: str, relation: str) -> str:
-        sep = self.GRAPH_EDGE_ID_SEP
-        return f"{self.GRAPH_EDGE_ID_PREFIX}{source}{sep}{target}{sep}{relation}"
+        import hashlib as _hashlib
+        digest = _hashlib.sha256(
+            self._edge_identity_payload(source, target, relation)
+        ).hexdigest()[: self.GRAPH_EDGE_ID_HASH_LEN]
+        return f"{self.GRAPH_EDGE_ID_PREFIX}{digest}"
 
     def write_graph_edge(
         self,
@@ -1440,15 +1476,44 @@ class BrainStore:
     ) -> bool:
         """Persist a graph edge as a dedicated Fragment (kind=TRACE,
         predicate='graph_edge'). The (source,target,relation) triple is the
-        natural key, encoded in the fragment id, so re-writing the same triple
-        upserts (matches MemoryGraph.add_edge semantics). Endpoint existence
-        is the caller's responsibility (the adapter enforces it, exactly like
-        MemoryGraph.add_edge)."""
+        natural key; its fragment id is the SHA-256 of the length-prefixed
+        triple (``_edge_fragment_id``), so re-writing the SAME triple upserts
+        (matches MemoryGraph.add_edge semantics) while DISTINCT triples can
+        never collide — even when a node id contains the old '||' separator.
+        The triple itself is stored verbatim in ``extra`` (the id is opaque and
+        is never parsed back), and ENFORCED below to be losslessly recoverable.
+        Endpoint existence is the caller's responsibility (the adapter enforces
+        it, exactly like MemoryGraph.add_edge)."""
         props = dict(props or {})
         try:
             props_blob = json.dumps(props, sort_keys=True, ensure_ascii=False)
         except (TypeError, ValueError):
             props_blob = "{}"
+        extra = {
+            "graph_edge": True,
+            "source": source,
+            "target": target,
+            "relation": relation,
+            "confidence": confidence,
+            "props": props,
+            "props_blob": props_blob,
+        }
+        # ENFORCED identity guard (replaces the old comment-asserted, UNENFORCED
+        # "node ids never contain '|'" invariant). Because the id is now an
+        # opaque hash, the triple is recovered ONLY from ``extra`` — so the real
+        # invariant that must hold is: the triple round-trips out of extra. Check
+        # the exact keys ``_fragment_to_graph_edge`` reads, so a future change
+        # that drops/mangles an extra field fails LOUD at write time, not
+        # silently at read. (Cheap: inspects the dict we just built — no
+        # throwaway Fragment constructed per write.)
+        if (
+            extra.get("source"), extra.get("target"), extra.get("relation")
+        ) != (source, target, relation):  # pragma: no cover - defensive
+            raise ValueError(
+                "edge identity not recoverable from extra — refusing to write a "
+                f"graph edge whose triple would be lost "
+                f"(({source!r},{target!r},{relation!r}))"
+            )
         frag = Fragment(
             id=self._edge_fragment_id(source, target, relation),
             kind=FragmentKind.TRACE,
@@ -1465,15 +1530,7 @@ class BrainStore:
                 contributing_user=owner_user,
                 created_at=datetime.now(timezone.utc),
             ),
-            extra={
-                "graph_edge": True,
-                "source": source,
-                "target": target,
-                "relation": relation,
-                "confidence": confidence,
-                "props": props,
-                "props_blob": props_blob,
-            },
+            extra=extra,
         )
         return self.write_fragment(frag)
 

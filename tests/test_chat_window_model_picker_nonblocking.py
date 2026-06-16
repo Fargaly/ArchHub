@@ -77,9 +77,17 @@ def _stub_probe_slow(monkeypatch, seconds=3.0, *, live=True):
     import llm_router
 
     def _slow():
+        _slow.calls += 1
         time.sleep(seconds)
         return {"status": "live" if live else "missing",
                 "models": ["qwen2.5-coder-7b"] if live else []}
+
+    # The stub counts how many times the LM Studio HTTP probe is entered.
+    # The boot-hang IS calling this probe synchronously on the Qt main thread —
+    # so the boot-safe gate is "probe entered ZERO times", a deterministic
+    # invariant, not a wall-clock race (cold keyring `list_keys()` I/O the cheap
+    # path legitimately does can cross a 100ms threshold without any probe).
+    _slow.calls = 0
 
     monkeypatch.setattr(llm_detector, "probe_lmstudio", _slow)
     monkeypatch.setattr(llm_router, "probe_lmstudio", _slow, raising=False)
@@ -97,7 +105,7 @@ def _stub_probe_slow(monkeypatch, seconds=3.0, *, live=True):
 def test_configured_providers_cheap_skips_lmstudio_http_probe(monkeypatch):
     """`configured_providers_cheap()` must return WITHOUT paying the LM
     Studio HTTP timeout — it is the boot-safe variant the GUI uses."""
-    _stub_probe_slow(monkeypatch, 3.0)
+    slow = _stub_probe_slow(monkeypatch, 3.0)
 
     from llm_router import LLMRouter
 
@@ -116,9 +124,23 @@ def test_configured_providers_cheap_skips_lmstudio_http_probe(monkeypatch):
     out = router.configured_providers_cheap()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
-        f"configured_providers_cheap blocked {elapsed*1000:.0f}ms — it must "
-        f"NOT call the LM Studio HTTP probe (that is the boot-hang)."
+    # THE gate — deterministic, not a wall-clock race. The boot-hang is the
+    # synchronous LM Studio HTTP probe; the boot-safe set must enter that probe
+    # ZERO times. (The cheap path legitimately does cold keyring `list_keys()`
+    # I/O that can exceed a 100ms threshold on a clean checkout without any
+    # network probe — asserting wall-clock time here false-failed ~3/10. The
+    # real invariant is the probe-call count.)
+    assert slow.calls == 0, (
+        f"configured_providers_cheap entered the LM Studio HTTP probe "
+        f"{slow.calls} time(s) — it must enter it ZERO times (the probe is the "
+        f"~1.5s boot-hang). It took {elapsed*1000:.0f}ms."
+    )
+    # Coarse backstop: even one probe entry would sleep 3s, so anything under
+    # the sleep window proves the slow path was not taken (immune to keyring
+    # jitter, unlike the old 100ms race).
+    assert elapsed < 2.0, (
+        f"configured_providers_cheap blocked {elapsed*1000:.0f}ms — far beyond "
+        f"the cheap key/env/CLI presence checks; something slow crept in."
     )
     assert isinstance(out, (list, set, tuple))
     # lmstudio is the network-probed provider — it must NOT appear in the

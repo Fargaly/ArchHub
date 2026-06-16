@@ -138,6 +138,50 @@ class Fragment(BaseModel):
     blob_path: Optional[str] = Field(default=None, max_length=512)
     blob_mime: Optional[str] = Field(default=None, max_length=64)
     blob_bytes: int = 0
+    # AgDR-0054 per-trace schema (founder-signed 2026-06-10). These ride on a
+    # trace/session Fragment so the export dam can compute training/export tiers,
+    # poisoning provenance, and unlearning (export-gating, since weights-level
+    # erasure is impossible). Defaults MATCH the storage column defaults exactly
+    # (storage.py:79-87) so an untagged Fragment is human_verified +
+    # firm_private_only — legacy data is never auto-trained into the collective.
+    # The storage write path persists these (write_fragment) and reads them back
+    # (_row_to_fragment); the dam selects on them (export_trainable_fragments).
+    origin_kind: str = Field(
+        default="human_verified",
+        description="human_verified | model_generated — keys the train/eval tier.",
+    )
+    generating_model_id: Optional[str] = Field(
+        default=None,
+        description="Model that produced the trace (e.g. claude-*); keys the ToS/legal tier.",
+    )
+    training_rights_tier: str = Field(
+        default="firm_private_only",
+        description="collective_ok | firm_private_only | quarantine_never_trains.",
+    )
+    format_shape_descriptor: Optional[str] = Field(
+        default=None,
+        description="prompt->tool->result fingerprint (mix + per-format poison cap).",
+    )
+    content_hash_pre: Optional[str] = Field(
+        default=None,
+        description="Pre-redaction integrity hash (Carlini split-view) + dedup key.",
+    )
+    content_hash_post: Optional[str] = Field(
+        default=None,
+        description="Post-redaction hash; train<->eval decontamination scan.",
+    )
+    action_payload: Optional[str] = Field(
+        default=None,
+        description="JSON: tool-calls + structured outcomes (Tier-0, ALWAYS trainable, ArchHub-owned).",
+    )
+    language_payload: Optional[str] = Field(
+        default=None,
+        description="JSON: prose (Tier-1 human / Tier-2 provider-prose, gated).",
+    )
+    quarantine_flag: bool = Field(
+        default=False,
+        description="True = never trains, never recalls (stored as 0/1).",
+    )
     success_count: int = 0
     fail_count: int = 0
     last_used_at: Optional[datetime] = None

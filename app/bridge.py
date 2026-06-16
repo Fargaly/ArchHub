@@ -6287,3 +6287,451 @@ class ArchHubBridge(QObject):
         except Exception:
             pass
         return _safe_json(empty)
+
+    # ─────────────────────── COMMAND DECK ────────────────────────────
+    # The founder's ONE comprehensive in-app view over the app + all its
+    # resources (incl. mail + money). `deck_state()` is ONE bridge slot that
+    # fans out to REAL sources and returns ONE JSON the panel renders.
+    #
+    # ANTI-LIE: every tile reads a REAL source — never a hardcoded number.
+    # An unreachable source renders an HONEST typed empty (available:false,
+    # zeroed counts), never fabricated data.
+    #
+    # NON-BLOCKING (APP-01 / AgDR-0036): the fan-out touches the brain daemon
+    # (blocking HTTP, frequently down → stalls the full timeout), every
+    # connector's `probe()` (COM / multi-port broker scans, 1-6 s each), and a
+    # git subprocess. Running ANY of that on the Qt main thread is the exact
+    # UI-freeze CLASS the guard bans. So the slot body does NOTHING but route
+    # through `_cached_async` — the cached snapshot returns INSTANTLY and the
+    # real fan-out (`_deck_collect`) runs on the background pool, emitting
+    # `hosts_changed` when fresh data lands so the panel re-pulls. Same idiom
+    # as `_runtime_probe` / `get_runtime_info`.
+
+    def _deck_git_probe(self) -> dict:
+        """REAL git facts for the Code-health tile: branch, uncommitted file
+        count, last commit (short hash + subject + ISO date). Reuses the
+        hardened `dev_source_sync._git` wrapper (timeout-gated, suppresses the
+        Win console flash + AV-DLL-init failure, marks git broken after one
+        stall so we never pay the timeout twice). The repo root is this file's
+        grandparent (…/app/bridge.py → repo root), which is a real checkout in
+        dev and the install tree in production. Honest degrade: git missing /
+        broken / not a checkout → available:false with typed empties."""
+        empty = {
+            "source": "git", "available": False, "branch": "",
+            "commit": "", "subject": "", "committed_at": "",
+            "uncommitted": 0, "note": "",
+        }
+        try:
+            from pathlib import Path as _Path
+            import dev_source_sync as _dss
+            root = _Path(__file__).resolve().parents[1]
+            if not _dss.is_git_checkout(root):
+                empty["note"] = "not a git checkout"
+                return empty
+            branch = _dss._git(root, "rev-parse", "--abbrev-ref", "HEAD")
+            if not branch:
+                # git broken / unavailable — honest empty (NOT a fake branch).
+                empty["note"] = "git unavailable"
+                return empty
+            # Last commit: short-hash | subject | ISO date, one cheap call.
+            line = _dss._git(
+                root, "log", "-1", "--format=%h\x1f%s\x1f%cI")
+            commit = subject = committed_at = ""
+            if line:
+                parts = line.split("\x1f")
+                commit = parts[0] if len(parts) > 0 else ""
+                subject = parts[1] if len(parts) > 1 else ""
+                committed_at = parts[2] if len(parts) > 2 else ""
+            # Uncommitted file count via porcelain (one line per change).
+            porcelain = _dss._git(root, "status", "--porcelain")
+            uncommitted = (len([ln for ln in porcelain.splitlines() if ln.strip()])
+                           if porcelain else 0)
+            return {
+                "source": "git", "available": True,
+                "branch": branch, "commit": commit, "subject": subject,
+                "committed_at": committed_at, "uncommitted": uncommitted,
+                "note": "",
+            }
+        except Exception as ex:
+            empty["note"] = f"{type(ex).__name__}: {ex}"
+            return empty
+
+    def _deck_connectors_probe(self) -> dict:
+        """REAL per-host honest status for the Connected-resources tile.
+        Walks `connectors.base.all_connectors()` and calls each `probe()`
+        (the SAME honest live/loaded_dead/missing/unauthorized contract the
+        per-pill `probe_connector` slot uses). No fabrication: a host that is
+        not reachable reports its real status. A probe that itself errors is
+        bucketed as 'missing' with the error note — never silently dropped."""
+        buckets = {"live": 0, "loaded_dead": 0, "missing": 0,
+                   "unauthorized": 0, "probing": 0}
+        hosts: list[dict] = []
+        try:
+            from connectors.base import all_connectors
+            for c in all_connectors():
+                host = getattr(c, "host", "") or ""
+                name = getattr(c, "display_name", "") or host.title()
+                try:
+                    pr = c.probe() or {}
+                    status = str(pr.get("status") or "missing").lower()
+                    note = str(pr.get("note") or "")
+                except Exception as ex:
+                    status = "missing"
+                    note = f"probe error: {type(ex).__name__}: {ex}"
+                if status not in buckets:
+                    # Any unexpected status string degrades to 'missing' so the
+                    # buckets always sum to the host count (honest aggregate).
+                    note = note or f"unknown status '{status}'"
+                    status = "missing"
+                buckets[status] += 1
+                hosts.append({
+                    "host": host, "name": name,
+                    "mechanism": getattr(c, "mechanism", "") or "",
+                    "status": status, "note": note,
+                })
+        except Exception:
+            pass
+        hosts.sort(key=lambda h: (
+            {"live": 0, "unauthorized": 1, "loaded_dead": 2,
+             "probing": 3, "missing": 4}.get(h["status"], 5), h["host"]))
+        return {"source": "connectors", "counts": buckets, "hosts": hosts,
+                "total": len(hosts)}
+
+    def _deck_brain_tiles(self) -> dict:
+        """REAL brain reads for the Brain-state + Missing-20% burndown tiles.
+
+        Brain state  <- brain.health (skills / facts / wiring counts + bound).
+        Burndown     <- the most-recently-touched requirement tree's
+                        brain.tree_sweep counts (green/red/open/needs_root) +
+                        the active-work ledger (brain.work_status counts +
+                        brain.work_get → who is on what).
+
+        All via `self._brain_tool` (BrainClient over MCP). The daemon is often
+        DOWN, so a short connect timeout fast-fails to an HONEST empty instead
+        of waiting the default. Never fabricates a count when the brain is
+        unreachable — available:false + zeroed typed empties (ANTI-LIE)."""
+        brain_empty = {
+            "source": "brain.health", "available": False,
+            "skills": None, "facts": None, "wiring": None,
+            "owner": "", "bound": False, "note": "",
+        }
+        bd_empty = {
+            "source": "brain.tree_sweep", "available": False,
+            "tree_id": "", "dry": False,
+            "counts": {"open": 0, "claimed": 0, "green": 0, "red": 0,
+                       "needs_root": 0},
+            "total_leaves": 0, "green_leaves": 0, "percent_done": 0,
+            "note": "",
+            "work": {"source": "brain.work_status", "available": False,
+                     "counts": {"open": 0, "claimed": 0, "done": 0,
+                                "blocked": 0},
+                     "total": 0, "actionable": 0, "active": [], "note": ""},
+        }
+        # ── Brain state (health) ──
+        brain = dict(brain_empty)
+        try:
+            h = self._brain_tool("brain.health", {}, timeout=1.5)
+            if isinstance(h, dict) and h.get("ok"):
+                owner = h.get("owner") or {}
+                brain.update({
+                    "available": True,
+                    "skills": h.get("skills"),
+                    "facts": h.get("facts"),
+                    "wiring": h.get("wiring_active"),
+                    "owner": (owner.get("owner_user")
+                              if isinstance(owner, dict) else "") or "",
+                    "bound": bool(owner.get("bound")) if isinstance(owner, dict)
+                             else False,
+                    "version": h.get("version", ""),
+                })
+            else:
+                brain["note"] = (h.get("error") if isinstance(h, dict)
+                                 else "brain unreachable") or "brain unreachable"
+        except Exception as ex:
+            brain["note"] = f"{type(ex).__name__}: {ex}"
+
+        # ── Burndown (requirement tree sweep) ──
+        bd = json.loads(json.dumps(bd_empty))  # deep copy of typed empty
+        try:
+            tl = self._brain_tool("brain.tree_list", {}, timeout=1.5)
+            tree_ids = (tl.get("tree_ids") or []) if isinstance(tl, dict) else []
+            if tree_ids:
+                # Most recently created/touched tree id is the active build;
+                # the ledger appends, so the last id is the freshest.
+                tree_id = tree_ids[-1]
+                sw = self._brain_tool("brain.tree_sweep",
+                                      {"tree_id": tree_id}, timeout=2.0)
+                if isinstance(sw, dict) and sw.get("ok"):
+                    counts = sw.get("counts") or {}
+                    total = int(sw.get("total_leaves") or 0)
+                    green = int(sw.get("green_leaves") or 0)
+                    bd.update({
+                        "available": True, "tree_id": tree_id,
+                        "dry": bool(sw.get("dry")),
+                        "counts": {
+                            "open": int(counts.get("open") or 0),
+                            "claimed": int(counts.get("claimed") or 0),
+                            "green": int(counts.get("green") or 0),
+                            "red": int(counts.get("red") or 0),
+                            "needs_root": int(counts.get("needs_root") or 0),
+                        },
+                        "total_leaves": total, "green_leaves": green,
+                        "percent_done": (round(100 * green / total)
+                                         if total else 0),
+                        "tree_count": len(tree_ids),
+                    })
+                else:
+                    bd["note"] = (sw.get("error") if isinstance(sw, dict)
+                                  else "sweep failed") or "sweep failed"
+            else:
+                bd["note"] = (tl.get("error") if isinstance(tl, dict)
+                              and not tl.get("ok") else "no requirement tree yet")
+        except Exception as ex:
+            bd["note"] = f"{type(ex).__name__}: {ex}"
+
+        # ── Active-work ledger (who is on what) — rides on the burndown tile ──
+        work = bd["work"]
+        try:
+            ws = self._brain_tool("brain.work_status", {}, timeout=1.5)
+            if isinstance(ws, dict) and ws.get("ok"):
+                wc = ws.get("counts") or {}
+                work.update({
+                    "available": True,
+                    "owner": ws.get("owner_user", ""),
+                    "dry": bool(ws.get("dry")),
+                    "exists": bool(ws.get("exists")),
+                    "counts": {
+                        "open": int(wc.get("open") or 0),
+                        "claimed": int(wc.get("claimed") or 0),
+                        "done": int(wc.get("done") or 0),
+                        "blocked": int(wc.get("blocked") or 0),
+                    },
+                    "total": int(ws.get("total") or 0),
+                    "actionable": int(ws.get("actionable") or 0),
+                })
+                # who is on what: pull the ledger + surface claimed leaves.
+                try:
+                    wg = self._brain_tool("brain.work_get", {}, timeout=1.5)
+                    ledger = (wg.get("ledger") or {}) if isinstance(wg, dict) else {}
+                    leaves = ledger.get("leaves") or ledger.get("items") or []
+                    active = []
+                    for lf in leaves:
+                        if not isinstance(lf, dict):
+                            continue
+                        st = str(lf.get("state") or "").lower()
+                        if st not in ("claimed", "open"):
+                            continue
+                        claim = lf.get("claim") or {}
+                        who = ""
+                        if isinstance(claim, dict):
+                            who = (claim.get("agent_id")
+                                   or claim.get("runtime")
+                                   or claim.get("claimed_by") or "")
+                        active.append({
+                            "id": lf.get("id", ""),
+                            "title": (lf.get("title") or lf.get("text")
+                                      or lf.get("predicate") or "")[:140],
+                            "state": st, "who": who,
+                        })
+                    # claimed first, cap to keep the tile readable
+                    active.sort(key=lambda a: 0 if a["state"] == "claimed" else 1)
+                    work["active"] = active[:8]
+                except Exception:
+                    pass
+            else:
+                work["note"] = (ws.get("error") if isinstance(ws, dict)
+                                else "work ledger unreachable") \
+                    or "work ledger unreachable"
+        except Exception as ex:
+            work["note"] = f"{type(ex).__name__}: {ex}"
+        bd["work"] = work
+
+        return {"brain": brain, "burndown": bd}
+
+    def _deck_inbox_tile(self) -> dict:
+        """Inbox / action-items tile <- the outlook connector if reachable,
+        else an HONEST empty. The outlook connector's probe() returns
+        inbox_total / inbox_unread in its detail when Outlook is dispatchable;
+        when it is not, available:false (never a fabricated unread count).
+        (Gmail in ArchHub is an external MCP, not an app connector — the
+        in-app honest source for mail is the outlook connector.)"""
+        empty = {"source": "outlook", "available": False, "unread": 0,
+                 "total": 0, "note": "Outlook not reachable"}
+        try:
+            from connectors.base import get as _get_connector
+            c = _get_connector("outlook")
+            if c is None:
+                empty["note"] = "no outlook connector"
+                return empty
+            pr = c.probe() or {}
+            status = str(pr.get("status") or "missing").lower()
+            detail = pr.get("detail") or {}
+            unread = detail.get("inbox_unread")
+            total = detail.get("inbox_total")
+            if status == "live" and unread is not None:
+                return {"source": "outlook", "available": True,
+                        "unread": int(unread or 0),
+                        "total": int(total or 0),
+                        "status": status, "note": ""}
+            empty["status"] = status
+            empty["note"] = str(pr.get("note") or "Outlook not reachable")
+            return empty
+        except Exception as ex:
+            empty["note"] = f"{type(ex).__name__}: {ex}"
+            return empty
+
+    def _deck_finances_tile(self) -> dict:
+        """Finances tile <- REAL money sources, never fabricated:
+          • cloud quota (cloud_usage.snapshot → plan / remaining of total).
+          • REAL provider token cost (router.get_token_usage → tokens + $cost
+            when a metered model contributed; cost_known gates the $).
+        Honest empty when neither source has data (signed-out + no metered
+        completion yet)."""
+        fin = {
+            "source": "cloud_usage+tokens", "available": False,
+            "plan": "", "remaining": None, "limit": None, "period_end": "",
+            "tokens": 0, "cost": 0.0, "cost_known": False, "model": "",
+            "note": "",
+        }
+        # Cloud quota (cached snapshot; None when stale / signed-out).
+        try:
+            import cloud_usage
+            snap = cloud_usage.snapshot()
+            if isinstance(snap, dict):
+                fin["plan"] = snap.get("plan", "") or ""
+                rem = snap.get("remaining_messages")
+                if rem is not None:
+                    fin["remaining"] = int(rem)
+                    fin["available"] = True
+                lim = snap.get("limit") or snap.get("total")
+                if lim is not None:
+                    fin["limit"] = int(lim)
+                fin["period_end"] = snap.get("period_end", "") or ""
+        except Exception:
+            pass
+        # REAL provider token cost this session.
+        try:
+            if self.router is not None and hasattr(self.router, "get_token_usage"):
+                tu = self.router.get_token_usage() or {}
+                fin["tokens"] = int(tu.get("tokens") or 0)
+                fin["cost"] = float(tu.get("cost") or 0.0)
+                fin["cost_known"] = bool(tu.get("cost_known"))
+                fin["model"] = tu.get("model", "") or ""
+                if fin["tokens"] > 0:
+                    fin["available"] = True
+        except Exception:
+            pass
+        if not fin["available"]:
+            fin["note"] = ("sign in for cloud quota · token cost shows after "
+                           "a metered completion")
+        return fin
+
+    def _deck_collect(self) -> dict:
+        """The Command-Deck fan-out. Runs ONLY on the `_cached_async`
+        background pool (never the Qt main thread) — it does blocking HTTP
+        (brain), COM / port scans (connectors), and a git subprocess. Returns
+        ONE dict with every tile; each tile reads a REAL source and degrades
+        to an HONEST typed empty. Each section is independently fail-soft so
+        one dead source never blanks the others."""
+        import time as _t
+        from datetime import datetime, timezone
+        out: dict = {"ready": True}
+        # Brain state + Missing-20% burndown + active-work ledger.
+        try:
+            out.update(self._deck_brain_tiles())
+        except Exception as ex:
+            out["brain"] = {"source": "brain.health", "available": False,
+                            "skills": None, "facts": None, "wiring": None,
+                            "note": f"{type(ex).__name__}: {ex}"}
+            out["burndown"] = {"source": "brain.tree_sweep", "available": False,
+                               "counts": {"open": 0, "claimed": 0, "green": 0,
+                                          "red": 0, "needs_root": 0},
+                               "total_leaves": 0, "green_leaves": 0,
+                               "percent_done": 0,
+                               "work": {"source": "brain.work_status",
+                                        "available": False,
+                                        "counts": {"open": 0, "claimed": 0,
+                                                   "done": 0, "blocked": 0},
+                                        "total": 0, "actionable": 0,
+                                        "active": []},
+                               "note": f"{type(ex).__name__}: {ex}"}
+        # Code health (git).
+        try:
+            out["code"] = self._deck_git_probe()
+        except Exception as ex:
+            out["code"] = {"source": "git", "available": False, "branch": "",
+                           "commit": "", "uncommitted": 0,
+                           "note": f"{type(ex).__name__}: {ex}"}
+        # Connected resources (per-host honest probe).
+        try:
+            out["connectors"] = self._deck_connectors_probe()
+        except Exception as ex:
+            out["connectors"] = {"source": "connectors",
+                                 "counts": {"live": 0, "loaded_dead": 0,
+                                            "missing": 0, "unauthorized": 0,
+                                            "probing": 0},
+                                 "hosts": [], "total": 0,
+                                 "note": f"{type(ex).__name__}: {ex}"}
+        # Inbox / action-items.
+        try:
+            out["inbox"] = self._deck_inbox_tile()
+        except Exception as ex:
+            out["inbox"] = {"source": "outlook", "available": False,
+                            "unread": 0, "total": 0,
+                            "note": f"{type(ex).__name__}: {ex}"}
+        # Finances.
+        try:
+            out["finances"] = self._deck_finances_tile()
+        except Exception as ex:
+            out["finances"] = {"source": "cloud_usage+tokens",
+                               "available": False, "tokens": 0, "cost": 0.0,
+                               "cost_known": False,
+                               "note": f"{type(ex).__name__}: {ex}"}
+        out["generated_at"] = datetime.now(timezone.utc).isoformat()
+        return out
+
+    @pyqtSlot(result=str)
+    def deck_state(self) -> str:
+        """COMMAND DECK — ONE JSON snapshot of the whole app + its resources
+        (Missing-20% burndown, brain state, code health, connected resources,
+        inbox, finances). Backs the in-app Command Deck panel.
+
+        NON-BLOCKING by construction: this slot does NOTHING but route the
+        real fan-out (`_deck_collect`) through `_cached_async`. The cached
+        snapshot returns INSTANTLY on the Qt main thread; the blocking reads
+        (brain HTTP / connector COM + port scans / git subprocess) run on the
+        background pool and `hosts_changed` re-pulls when fresh data lands. A
+        cold first call returns the typed-empty placeholder (ready:false) so
+        the panel renders its skeleton without ever freezing the UI."""
+        empty = {
+            "ready": False,
+            "burndown": {"source": "brain.tree_sweep", "available": False,
+                         "counts": {"open": 0, "claimed": 0, "green": 0,
+                                    "red": 0, "needs_root": 0},
+                         "total_leaves": 0, "green_leaves": 0,
+                         "percent_done": 0,
+                         "work": {"source": "brain.work_status",
+                                  "available": False,
+                                  "counts": {"open": 0, "claimed": 0,
+                                             "done": 0, "blocked": 0},
+                                  "total": 0, "actionable": 0, "active": []}},
+            "brain": {"source": "brain.health", "available": False,
+                      "skills": None, "facts": None, "wiring": None},
+            "code": {"source": "git", "available": False, "branch": "",
+                     "commit": "", "uncommitted": 0},
+            "connectors": {"source": "connectors",
+                           "counts": {"live": 0, "loaded_dead": 0,
+                                      "missing": 0, "unauthorized": 0,
+                                      "probing": 0},
+                           "hosts": [], "total": 0},
+            "inbox": {"source": "outlook", "available": False,
+                      "unread": 0, "total": 0},
+            "finances": {"source": "cloud_usage+tokens", "available": False,
+                         "tokens": 0, "cost": 0.0, "cost_known": False},
+        }
+        try:
+            return _safe_json(self._cached_async(
+                "deck_state", self._deck_collect, ttl=20.0, empty=empty))
+        except Exception as ex:
+            empty["error"] = f"{type(ex).__name__}: {ex}"
+            return _safe_json(empty)

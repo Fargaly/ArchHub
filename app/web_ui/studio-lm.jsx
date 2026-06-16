@@ -3563,6 +3563,7 @@ const StudioLM = () => {
       <CommandPalette _themeBump={paletteBump}/>
       <MemoryExplorerModal _themeBump={paletteBump}/>
       <BrainViewModal _themeBump={paletteBump}/>
+      <CommandDeckModal _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
       <UpdateNotifier/>
@@ -4316,6 +4317,20 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
           <path d="M3 21 V12 a9 9 0 0 1 18 0 V21" stroke={LM.accent} strokeWidth="2" strokeLinecap="round"/>
           <circle cx="12" cy="8.5" r="1.6" fill={LM.accent}/>
+        </svg>
+      </RailIcon>
+      {/* COMMAND DECK — the founder's one comprehensive view over the app +
+          all its resources (Missing-20% burndown · brain · code · connectors
+          · inbox · finances). Always live (Home AND session view) so it's
+          reachable in ONE click from the default view. Dispatches the open
+          event the always-mounted CommandDeckModal listens for. */}
+      <RailIcon title="Command Deck" label="deck"
+        onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-command-deck-open')); } catch (e) {} }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="1.8">
+          <rect x="3" y="3" width="8" height="5" rx="1"/>
+          <rect x="3" y="11" width="8" height="10" rx="1"/>
+          <rect x="14" y="3" width="7" height="10" rx="1"/>
+          <rect x="14" y="16" width="7" height="5" rx="1"/>
         </svg>
       </RailIcon>
       <div style={{ height:8 }}/>
@@ -14661,6 +14676,332 @@ const CommunitiesPanel = ({ open }) => {
 // DISABLED-with-reason ("sign in to enable") rather than a dead/lying
 // click — the live server (commit 0dce168, /v1/brain/sync) gets its UI
 // home here, honestly waiting on the sign-in/push slot.
+// ─── COMMAND DECK — the founder's ONE comprehensive in-app view ──────────
+// Opened by the rail "deck" icon (lm-command-deck-open), reachable in ONE
+// click from the default Home view. Backed by the SINGLE bridge slot
+// deck_state(), which fans out (off the Qt main thread, via _cached_async) to
+// REAL sources and returns one JSON. Each tile reads a REAL source; an
+// unreachable source renders an HONEST empty state (available:false) — never
+// fabricated data (ANTI-LIE). Real-token style: terracotta accent (LM.accent),
+// Instrument Serif headings (LM.serif), Inter body (LM.sans), NO emoji.
+const CommandDeckModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [open, setOpen] = React.useState(false);
+  const [deck, setDeck] = React.useState(null);   // deck_state() snapshot
+  const [loading, setLoading] = React.useState(false);
+  const pollRef = React.useRef(null);
+
+  // Pull deck_state. The slot returns the cached snapshot instantly (ready:
+  // false on a cold call while the off-thread fan-out fills the cache), then
+  // ready:true once real data lands — so we poll a few times after open until
+  // ready, then settle. Never throws: bridgeAsync resolves null on a missing
+  // bridge / timeout, which we render as the honest "deck unavailable" state.
+  const pull = React.useCallback(async () => {
+    const d = await bridgeAsync('deck_state');
+    if (d && typeof d === 'object') setDeck(d);
+    return d;
+  }, []);
+
+  React.useEffect(() => {
+    const onOpen = () => {
+      setOpen(true);
+      setLoading(true);
+      let n = 0;
+      const tick = async () => {
+        const d = await pull();
+        n += 1;
+        // Stop polling once the off-thread fan-out has landed, or after a
+        // bounded number of attempts (the connector probes can take several
+        // seconds; never poll forever).
+        if ((d && d.ready) || n >= 30) {
+          setLoading(false);
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        }
+      };
+      tick();
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(tick, 1000);
+    };
+    window.addEventListener('lm-command-deck-open', onOpen);
+    return () => {
+      window.removeEventListener('lm-command-deck-open', onOpen);
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [pull]);
+
+  // Esc closes + stops polling.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') closeDeck(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (!open) return null;
+  const closeDeck = () => {
+    setOpen(false);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+  const refresh = () => { setLoading(true); pull().then(d => { if (d && d.ready) setLoading(false); }); };
+
+  // ── shared sub-styles in the app's dark idiom (real tokens) ──
+  const card = {
+    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:12,
+    padding:'16px 18px', boxShadow:'0 1px 3px rgba(0,0,0,.25)',
+    display:'flex', flexDirection:'column', minHeight:0,
+  };
+  const tileHead = (title, src) => (
+    <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:8, marginBottom:12 }}>
+      <h3 style={{ fontFamily:LM.serif, margin:0, fontSize:18, fontWeight:500, color:LM.ink, letterSpacing:'-0.01em' }}>{title}</h3>
+      <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.08em', textTransform:'uppercase', color:LM.inkMuted }}>{src}</span>
+    </div>
+  );
+  // Honest empty banner — shown when a tile's source is unreachable. Never a
+  // fabricated number; states plainly that the source is offline + why.
+  const emptyState = (msg) => (
+    <div style={{
+      fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, lineHeight:1.55,
+      background:LM.bgSoft, border:`1px dashed ${LM.line}`, borderRadius:8,
+      padding:'12px 14px',
+    }} data-testid="deck-empty">{msg || 'Source not reachable right now.'}</div>
+  );
+  const stat = (label, value, col) => (
+    <div style={{ display:'flex', flexDirection:'column', gap:2, minWidth:54 }}>
+      <span style={{ fontFamily:LM.mono, fontSize:21, fontWeight:600, color:col || LM.ink, lineHeight:1 }}>{value}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.08em', textTransform:'uppercase', color:LM.inkMuted }}>{label}</span>
+    </div>
+  );
+
+  const d = deck || {};
+  const bd = d.burndown || {};
+  const work = bd.work || {};
+  const brain = d.brain || {};
+  const code = d.code || {};
+  const conn = d.connectors || {};
+  const inbox = d.inbox || {};
+  const fin = d.finances || {};
+  const cc = bd.counts || {};
+  const wc = work.counts || {};
+  const concounts = conn.counts || {};
+  const num = (v) => (v === null || v === undefined) ? '—' : String(v);
+  const STATUS_COL = { live:LM.ok, loaded_dead:LM.warn, missing:LM.inkMuted, unauthorized:LM.err, probing:LM.inkSoft };
+
+  return (
+    <div onClick={closeDeck} data-testid="command-deck-overlay" style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.72)', zIndex:82,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} data-testid="command-deck-modal" style={{
+        width:1120, maxWidth:'96%', height:'92%', maxHeight:'94%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:12,
+        display:'flex', flexDirection:'column', overflow:'hidden',
+        boxShadow:'0 24px 60px rgba(0,0,0,.65)',
+      }}>
+        {/* ── Header — terracotta bottom rule (real-token) ── */}
+        <div style={{
+          background:LM.bgDeep, color:LM.ink,
+          padding:'20px 28px 18px', borderBottom:`3px solid ${LM.accent}`,
+          display:'flex', alignItems:'flex-start', gap:16,
+        }}>
+          <div style={S_FLEX1}>
+            <h1 style={{ fontFamily:LM.serif, margin:'0 0 5px', fontSize:27,
+              fontWeight:500, letterSpacing:'-0.01em', color:LM.ink }}>
+              Command Deck
+            </h1>
+            <p style={{ margin:0, color:LM.inkSoft, fontSize:13.5, maxWidth:760, lineHeight:1.5 }}>
+              One view over the whole app and every resource it touches — the
+              Missing-20% burndown, the brain, your code, connected tools,
+              inbox, and money. Every tile reads a live source; anything
+              offline says so plainly.
+            </p>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flex:'none' }}>
+            <button onClick={refresh} data-testid="command-deck-refresh" title="Refresh" aria-label="Refresh the Command Deck" style={{
+              height:26, padding:'0 12px', border:`1px solid ${LM.line}`,
+              background:LM.bgPanel, color:LM.inkSoft, borderRadius:6,
+              cursor:'pointer', fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.06em', textTransform:'uppercase',
+            }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+            <button onClick={closeDeck} data-testid="command-deck-close" aria-label="Close the Command Deck" style={{
+              width:26, height:26, border:0, background:LM.bgPanel, color:LM.inkSoft,
+              borderRadius:5, cursor:'pointer', fontFamily:LM.mono, fontSize:13,
+            }}>✕</button>
+          </div>
+        </div>
+
+        {/* ── Scrollable tile grid ── */}
+        <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'20px 28px 34px' }}>
+          {!deck && (
+            <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, padding:'8px 2px' }}>
+              {loading ? 'Reading live sources…' : 'Deck unavailable — the bridge did not respond.'}
+            </div>
+          )}
+          {deck && (
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, alignItems:'start' }}>
+
+            {/* ── Missing-20% burndown (brain tree + active work) ── */}
+            <div style={{ ...card, gridColumn:'1 / -1' }} data-testid="deck-tile-burndown">
+              {tileHead('Missing-20% burndown', bd.source || 'brain.tree_sweep')}
+              {bd.available ? (
+                <div>
+                  {/* progress bar — green leaves over total */}
+                  <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:14 }}>
+                    <div style={{ flex:1, height:10, background:LM.bgSoft, borderRadius:6, overflow:'hidden', border:`1px solid ${LM.line}` }}>
+                      <div style={{ width:`${Math.max(0, Math.min(100, bd.percent_done || 0))}%`, height:'100%', background:LM.accent, borderRadius:6, transition:'width .3s' }}/>
+                    </div>
+                    <span style={{ fontFamily:LM.mono, fontSize:13, fontWeight:600, color:LM.accent }}>{num(bd.percent_done)}%</span>
+                  </div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:'10px 22px' }}>
+                    {stat('green', num(cc.green), LM.ok)}
+                    {stat('red', num(cc.red), LM.err)}
+                    {stat('open', num(cc.open), LM.inkSoft)}
+                    {stat('claimed', num(cc.claimed), LM.warn)}
+                    {stat('needs root', num(cc.needs_root), LM.accent)}
+                    {stat('leaves', num(bd.total_leaves), LM.ink)}
+                  </div>
+                  {bd.dry && <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:10.5, color:LM.ok }}>● full green sweep — this tree is done</div>}
+                  {/* active-work ledger: who is on what */}
+                  <div style={{ marginTop:16, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:14 }}>
+                    <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:8 }}>
+                      <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.1em', textTransform:'uppercase', color:LM.inkMuted }}>Active work · who is on what</span>
+                      <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{work.source || 'brain.work_status'}</span>
+                    </div>
+                    {work.available ? (
+                      <div>
+                        <div style={{ display:'flex', flexWrap:'wrap', gap:'8px 20px', marginBottom:(work.active && work.active.length) ? 12 : 0 }}>
+                          {stat('open', num(wc.open), LM.inkSoft)}
+                          {stat('claimed', num(wc.claimed), LM.warn)}
+                          {stat('done', num(wc.done), LM.ok)}
+                          {stat('blocked', num(wc.blocked), LM.err)}
+                        </div>
+                        {(work.active && work.active.length > 0) ? (
+                          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                            {work.active.map((a, i) => (
+                              <div key={a.id || i} style={{ display:'flex', alignItems:'center', gap:10, fontSize:12.5, color:LM.ink }}>
+                                <span style={{ width:7, height:7, borderRadius:'50%', background:a.state === 'claimed' ? LM.warn : LM.inkMuted, flex:'none' }}/>
+                                <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.title || a.id}</span>
+                                <span style={{ fontFamily:LM.mono, fontSize:10.5, color:a.who ? LM.accent : LM.inkMuted }}>{a.who || 'unclaimed'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted }}>No leaf currently claimed — the frontier is idle.</div>
+                        )}
+                      </div>
+                    ) : emptyState(work.note || 'Active-work ledger not reachable (brain offline).')}
+                  </div>
+                </div>
+              ) : emptyState(bd.note || 'No requirement tree yet, or the brain is offline. Start a ROMA build to populate the burndown.')}
+            </div>
+
+            {/* ── Brain state ── */}
+            <div style={card} data-testid="deck-tile-brain">
+              {tileHead('Brain', brain.source || 'brain.health')}
+              {brain.available ? (
+                <div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:'10px 22px' }}>
+                    {stat('skills', num(brain.skills), LM.ok)}
+                    {stat('facts', num(brain.facts), LM.blue)}
+                    {stat('wiring', num(brain.wiring), LM.accent)}
+                  </div>
+                  <div style={{ marginTop:12, fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft }}>
+                    <span style={{ color:LM.ok }}>●</span> reachable
+                    {brain.owner ? <span> · owner <b style={{ color:LM.ink }}>{brain.owner}</b></span> : null}
+                    {brain.bound ? <span style={{ color:LM.ok }}> · bound</span> : <span style={{ color:LM.inkMuted }}> · not bound</span>}
+                  </div>
+                </div>
+              ) : emptyState(brain.note || 'Brain daemon not reachable (port 8473). Start the brain to see skills + facts.')}
+            </div>
+
+            {/* ── Code health (git) ── */}
+            <div style={card} data-testid="deck-tile-code">
+              {tileHead('Code health', code.source || 'git')}
+              {code.available ? (
+                <div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+                    <span style={{ fontFamily:LM.mono, fontSize:12, padding:'3px 9px', borderRadius:14, background:LM.accentDim, color:LM.accent, letterSpacing:'0.04em' }}>{code.branch || 'detached'}</span>
+                    <span style={{ fontFamily:LM.mono, fontSize:12, color:code.uncommitted > 0 ? LM.warn : LM.ok }}>
+                      {code.uncommitted > 0 ? `${code.uncommitted} uncommitted` : 'clean tree'}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.5 }}>
+                    <span style={{ color:LM.ink }}>{code.commit}</span>{code.subject ? <span> · {code.subject}</span> : null}
+                  </div>
+                  {code.committed_at ? <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>{code.committed_at}</div> : null}
+                </div>
+              ) : emptyState(code.note || 'git not available in this install.')}
+            </div>
+
+            {/* ── Connected resources (per-host honest status) ── */}
+            <div style={{ ...card, gridColumn:'1 / -1' }} data-testid="deck-tile-connectors">
+              {tileHead('Connected resources', conn.source || 'connectors')}
+              {(conn.hosts && conn.hosts.length > 0) ? (
+                <div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:'8px 18px', marginBottom:14 }}>
+                    {stat('live', num(concounts.live), LM.ok)}
+                    {stat('loaded·dead', num(concounts.loaded_dead), LM.warn)}
+                    {stat('unauthorized', num(concounts.unauthorized), LM.err)}
+                    {stat('missing', num(concounts.missing), LM.inkMuted)}
+                    {stat('probing', num(concounts.probing), LM.inkSoft)}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))', gap:8 }}>
+                    {conn.hosts.map((h, i) => (
+                      <div key={h.host || i} title={h.note || ''} style={{
+                        display:'flex', alignItems:'center', gap:8, padding:'7px 10px',
+                        background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:7,
+                      }}>
+                        <span style={{ width:8, height:8, borderRadius:'50%', background:STATUS_COL[h.status] || LM.inkMuted, flex:'none' }}/>
+                        <span style={{ flex:1, fontSize:12, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.name || h.host}</span>
+                        <span style={{ fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.04em', textTransform:'uppercase', color:STATUS_COL[h.status] || LM.inkMuted }}>{h.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : emptyState(conn.note || 'No connectors registered yet.')}
+            </div>
+
+            {/* ── Inbox / action-items ── */}
+            <div style={card} data-testid="deck-tile-inbox">
+              {tileHead('Inbox', inbox.source || 'outlook')}
+              {inbox.available ? (
+                <div style={{ display:'flex', flexWrap:'wrap', gap:'10px 22px' }}>
+                  {stat('unread', num(inbox.unread), inbox.unread > 0 ? LM.accent : LM.ink)}
+                  {stat('total', num(inbox.total), LM.inkSoft)}
+                </div>
+              ) : emptyState(inbox.note || 'Outlook not reachable. Open Outlook to see unread mail here.')}
+            </div>
+
+            {/* ── Finances ── */}
+            <div style={card} data-testid="deck-tile-finances">
+              {tileHead('Finances', fin.source || 'cloud_usage+tokens')}
+              {fin.available ? (
+                <div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:'10px 22px' }}>
+                    {(fin.remaining !== null && fin.remaining !== undefined) ? stat('msgs left', num(fin.remaining), LM.ok) : null}
+                    {stat('tokens', num(fin.tokens), LM.blue)}
+                    {fin.cost_known ? stat('cost', '$' + (Number(fin.cost) || 0).toFixed(4), LM.accent) : null}
+                  </div>
+                  <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft }}>
+                    {fin.plan ? <span>plan <b style={{ color:LM.ink }}>{fin.plan}</b></span> : null}
+                    {fin.limit ? <span> · of {fin.limit}</span> : null}
+                    {!fin.cost_known && fin.tokens > 0 ? <span> · local/subscription model (no metered $)</span> : null}
+                  </div>
+                </div>
+              ) : emptyState(fin.note || 'Sign in for cloud quota; token cost appears after a metered completion.')}
+            </div>
+
+          </div>
+          )}
+          {deck && deck.generated_at && (
+            <div style={{ marginTop:18, textAlign:'right', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>
+              live as of {deck.generated_at}{deck.ready ? '' : ' · still reading sources…'}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+const CommandDeckModal = React.memo(CommandDeckModalInner);
+
 const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);
   const [stats, setStats] = React.useState(null);   // get_brain_stats

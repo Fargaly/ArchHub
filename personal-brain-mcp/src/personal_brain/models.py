@@ -54,6 +54,17 @@ class FragmentKind(str, Enum):
     # vision embedding (Fragment.embedding field; vision index in slice 2).
     GEOMETRY = "geometry"
     IMAGE = "image"
+    # BRV-09 thinking-system projector (founder, 2026-06-17): versioned
+    # governance fragments that the projector compiles into a CLAUDE.md
+    # projection (and, future, settings.json / pre-prompts). A MANDATE is a
+    # founder rule; a HOOK is an automation contract (UserPromptSubmit /
+    # PostToolUse / Stop wiring); a PRACTICE is a recommended convention.
+    # These are FOUNDER-SIGNED: a bump to a MANDATE without is_root_authority
+    # is refused (see projector.bump_mandate), mirroring requirement_tree's
+    # set_verdict self-certification guard.
+    MANDATE = "mandate"
+    HOOK = "hook"
+    PRACTICE = "practice"
 
 
 class WriteOpType(str, Enum):

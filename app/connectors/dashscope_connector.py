@@ -17,6 +17,8 @@ Configuration:
 
 Operations:
   dashscope.probe          — verify key + endpoint reachable
+  dashscope.balance        — live account balance via Alibaba BSS
+                             QueryAccountBalance (RAM AccessKey, op:// resolved)
   dashscope.complete       — text generation (Qwen3 series)
   dashscope.vision_describe — Qwen3-VL Plus on an image URL or base64
   dashscope.text2image     — Wan / Qwen-Image text-to-image; returns task_id
@@ -30,12 +32,16 @@ auth / quota failures emit ok=False; downstream sees upstream_error.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any, Optional
 
 from .base import Connector, ConnectorOp, OpResult, ParamSpec, register
@@ -48,6 +54,146 @@ def _base() -> str:
 
 def _key() -> str:
     return os.environ.get("DASHSCOPE_API_KEY", "")
+
+
+# ── secret resolution (op://) — reuse the ONE canonical resolver ─────
+#
+# AccessKey credentials for the billing call are op:// references, never
+# inlined. We resolve through personal_brain.secret_resolver (op CLI ->
+# Windows Credential Manager / keyring -> OP_<VAULT>_<ITEM>_<FIELD> env) —
+# the SAME resolver archhub_mcp_server uses for DASHSCOPE_API_KEY. A
+# non-op:// value (or a bare env var) passes through unchanged.
+
+def _resolve_secret(ref: str) -> Optional[str]:
+    """Resolve an op:// reference to its value via the repo's canonical
+    resolver, with a self-contained fallback if personal_brain isn't on the
+    path. Returns None when an op:// ref cannot be resolved by any backend.
+    Never logs or echoes the value."""
+    if not ref:
+        return None
+    try:
+        import sys
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.abspath(
+            os.path.join(here, os.pardir, os.pardir,
+                         "personal-brain-mcp", "src"))
+        if os.path.isdir(src) and src not in sys.path:
+            sys.path.append(src)
+        from personal_brain.secret_resolver import resolve_secret
+        return resolve_secret(ref)
+    except Exception:
+        pass
+    # Fallback equivalent of secret_resolver (keeps the connector usable
+    # standalone, e.g. in app/ without the brain checkout).
+    if not ref.startswith("op://"):
+        return ref
+    parts = ref[len("op://"):].split("/")
+    if len(parts) < 3 or not all(parts[:3]):
+        return None
+    vault, item, field = parts[0], parts[1], parts[2]
+    try:
+        import shutil
+        import subprocess
+        if shutil.which("op"):
+            p = subprocess.run(["op", "read", ref], capture_output=True,
+                               text=True, timeout=5.0)
+            if p.returncode == 0 and (p.stdout or "").strip():
+                return p.stdout.strip()
+    except Exception:
+        pass
+    try:
+        import keyring
+        v = keyring.get_password(f"{vault}/{item}", field)
+        if v and v.strip():
+            return v.strip()
+    except Exception:
+        pass
+
+    def _n(s: str) -> str:
+        return s.upper().replace("/", "_").replace("-", "_")
+
+    env = os.environ.get(f"OP_{_n(vault)}_{_n(item)}_{_n(field)}")
+    return env or None
+
+
+# Canonical op:// references for the Alibaba RAM AccessKey pair used by the
+# billing (BSS OpenAPI) call. DASHSCOPE_AK_* env vars override for dev/CI.
+_AK_ID_REF = "op://archhub/aliyun/access_key_id"
+_AK_SECRET_REF = "op://archhub/aliyun/access_key_secret"
+
+
+def _access_key() -> tuple[Optional[str], Optional[str]]:
+    """Resolve the (AccessKey ID, AccessKey secret) pair the BSS billing
+    API requires. Order: explicit DASHSCOPE_AK_ID / DASHSCOPE_AK_SECRET env
+    (dev/CI escape hatch) -> op:// references via the canonical resolver."""
+    ak_id = (os.environ.get("DASHSCOPE_AK_ID")
+             or _resolve_secret(_AK_ID_REF))
+    ak_secret = (os.environ.get("DASHSCOPE_AK_SECRET")
+                 or _resolve_secret(_AK_SECRET_REF))
+    return ak_id, ak_secret
+
+
+# BSS (billing) endpoint. The international Model Studio key lives in the
+# ap-southeast-1 (Singapore) account, whose BSS region endpoint is
+# business.ap-southeast-1.aliyuncs.com; the China-site endpoint is
+# business.aliyuncs.com. DASHSCOPE_BILLING_BASE overrides (also lets the
+# test point at a stub). Selection follows DASHSCOPE_BASE: an -intl base
+# implies the international BSS host.
+def _billing_base() -> str:
+    override = os.environ.get("DASHSCOPE_BILLING_BASE")
+    if override:
+        return override.rstrip("/")
+    if "-intl" in _base() or "intl" in _base():
+        return "https://business.ap-southeast-1.aliyuncs.com"
+    return "https://business.aliyuncs.com"
+
+
+def _pe(s: str) -> str:
+    """RFC3986 percent-encoding per the Alibaba V3 signature spec (unreserved
+    set ``-_.~`` stays literal; everything else, including ``/``, is encoded)."""
+    return urllib.parse.quote(str(s), safe="-_.~")
+
+
+def _sign_v3(method: str, params: dict, headers: dict, ak_secret: str,
+             body: bytes = b"") -> tuple[str, str]:
+    """Compute the Alibaba Cloud **signature method V3** (``ACS3-HMAC-SHA256``)
+    for an RPC-style request and return ``(signature_hex, signed_headers)``.
+
+    V3 is the current documented scheme and signs with **HMAC-SHA256** — it
+    supersedes the legacy V1 ``HMAC-SHA1`` RPC signing. The AccessKey secret is
+    used only as the HMAC *key* (a MAC), never as an input to a bare digest;
+    the request is bound by SHA-256, not SHA-1.
+
+    Algorithm (https://www.alibabacloud.com/help/en/sdk/product-overview/
+    v3-request-structure-and-signature), pure + deterministic so it is
+    unit-testable without a network:
+
+      canonical_request = method ⏎ canonical_uri ⏎ canonical_query ⏎
+                          canonical_headers ⏎ signed_headers ⏎ sha256hex(body)
+      string_to_sign    = "ACS3-HMAC-SHA256" ⏎ sha256hex(canonical_request)
+      signature         = hex( HMAC-SHA256(ak_secret, string_to_sign) )
+    """
+    canonical_query = "&".join(
+        f"{_pe(k)}={_pe(v)}" for k, v in sorted(params.items()))
+    # Sign host + content-type + every x-acs-* header (lowercased, sorted).
+    sign_keys = sorted(
+        k.lower() for k in headers
+        if k.lower().startswith("x-acs-") or k.lower() in ("host", "content-type"))
+    lower = {k.lower(): v for k, v in headers.items()}
+    canonical_headers = "".join(
+        f"{k}:{str(lower[k]).strip()}\n" for k in sign_keys)
+    signed_headers = ";".join(sign_keys)
+    hashed_payload = hashlib.sha256(body).hexdigest()
+    canonical_request = "\n".join([
+        method, "/", canonical_query, canonical_headers,
+        signed_headers, hashed_payload])
+    string_to_sign = ("ACS3-HMAC-SHA256\n"
+                      + hashlib.sha256(
+                          canonical_request.encode("utf-8")).hexdigest())
+    signature = hmac.new(ak_secret.encode("utf-8"),
+                         string_to_sign.encode("utf-8"),
+                         hashlib.sha256).hexdigest()
+    return signature, signed_headers
 
 
 def _http(method: str, path: str, body: Optional[dict] = None,
@@ -106,6 +252,117 @@ def _probe() -> OpResult:
                      value={"base": _base(), "model": "qwen-turbo",
                             "resp": resp},
                      value_preview=f"dashscope live · {_base()}")
+
+
+def _balance() -> OpResult:
+    """Capture the real DashScope/Model-Studio account balance.
+
+    DashScope's own ``sk-`` API exposes NO billing/usage endpoint — spend
+    lives in Alibaba Cloud's BSS (Billing) OpenAPI ``QueryAccountBalance``
+    (RPC, version 2017-12-14), which authenticates with a RAM AccessKey
+    pair (ID + secret) and signature method V3 (ACS3-HMAC-SHA256) request
+    signing — a DIFFERENT credential than the model-call key, signed with
+    HMAC-SHA256 (V3), not the legacy SHA-1. This op makes that real signed call when the
+    AccessKey pair resolves (op:// -> resolver), and returns the live
+    ``AvailableAmount`` + ``Currency`` + credit figures.
+
+    Honest-status contract: when the AccessKey pair is NOT configured, this
+    returns ``ok=False`` naming the exact op:// references to set — it NEVER
+    fabricates a balance and NEVER raises. The model key alone cannot read
+    billing, so a present DASHSCOPE_API_KEY does not make this succeed."""
+    ak_id, ak_secret = _access_key()
+    if not ak_id or not ak_secret:
+        missing = []
+        if not ak_id:
+            missing.append(_AK_ID_REF)
+        if not ak_secret:
+            missing.append(_AK_SECRET_REF)
+        return OpResult(
+            ok=False, op_id="dashscope.balance",
+            error=("Alibaba AccessKey not configured — DashScope billing "
+                   "(BSS QueryAccountBalance) needs a RAM AccessKey pair, "
+                   "not the model sk- key. Set " + " and ".join(missing)
+                   + " (or DASHSCOPE_AK_ID / DASHSCOPE_AK_SECRET) and "
+                   "re-run. The balance is genuinely unreadable without it."),
+            value={"available": None, "currency": None,
+                   "billing_base": _billing_base(),
+                   "needs": missing, "configured": False},
+            value_preview="balance unavailable · AccessKey not set")
+
+    # Build a signature-method-V3 (ACS3-HMAC-SHA256) request and POST it.
+    # QueryAccountBalance takes no business params, so the canonical query is
+    # empty and the action/version travel as x-acs-* headers. The body is empty
+    # → its SHA-256 is the well-known empty hash.
+    base = _billing_base()
+    host = urllib.parse.urlsplit(base).netloc or base
+    now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    sign_headers: dict = {
+        "host": host,
+        "x-acs-action": "QueryAccountBalance",
+        "x-acs-version": "2017-12-14",
+        "x-acs-date": now,
+        "x-acs-content-sha256": empty_sha,
+        "x-acs-signature-nonce": uuid.uuid4().hex,
+    }
+    signature, signed_headers = _sign_v3("POST", {}, sign_headers, ak_secret)
+    authorization = (
+        f"ACS3-HMAC-SHA256 Credential={ak_id},"
+        f"SignedHeaders={signed_headers},Signature={signature}")
+    req_headers = dict(sign_headers)
+    req_headers["Authorization"] = authorization
+    req_headers["Accept"] = "application/json"
+    url = base + "/"
+    req = urllib.request.Request(
+        url, data=b"", method="POST", headers=req_headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            code, resp = r.status, json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            code, resp = e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:
+            code, resp = e.code, str(e)
+    except Exception as e:
+        return OpResult(ok=False, op_id="dashscope.balance",
+                        error=f"BSS billing endpoint unreachable: {e}",
+                        value={"available": None, "currency": None,
+                               "billing_base": base, "configured": True},
+                        value_preview="balance probe failed · unreachable")
+
+    if code >= 400 or not isinstance(resp, dict):
+        return OpResult(ok=False, op_id="dashscope.balance",
+                        error=f"HTTP {code}: {resp}",
+                        value={"available": None, "currency": None,
+                               "billing_base": base, "code": code,
+                               "configured": True},
+                        value_preview=f"balance probe failed · HTTP {code}")
+    # BSS wraps a Code/Success envelope; a non-Success body is an honest fail.
+    bss_code = resp.get("Code")
+    if resp.get("Success") is False or bss_code not in (None, "Success", "200"):
+        return OpResult(ok=False, op_id="dashscope.balance",
+                        error=(f"BSS QueryAccountBalance rejected: "
+                               f"{bss_code} {resp.get('Message')}"),
+                        value={"available": None, "currency": None,
+                               "billing_base": base, "code": bss_code,
+                               "configured": True},
+                        value_preview="balance probe failed · " + str(bss_code))
+    # Extract ONLY the specific scalar figures we report — never echo the whole
+    # signed-response object into `value` (it would taint downstream logs).
+    data = resp.get("Data") or {}
+    available = data.get("AvailableAmount")
+    currency = data.get("Currency")
+    request_id = resp.get("RequestId")
+    return OpResult(
+        ok=True, op_id="dashscope.balance",
+        value={"available": available, "currency": currency,
+               "available_cash": data.get("AvailableCashAmount"),
+               "credit": data.get("CreditAmount"),
+               "mybank_credit": data.get("MybankCreditAmount"),
+               "billing_base": base,
+               "request_id": request_id,
+               "configured": True},
+        value_preview=f"balance {available} {currency}".strip())
 
 
 def _complete(*, prompt: str, model: str = "qwen-plus",
@@ -346,6 +603,15 @@ class DashscopeConnector(Connector):
                          kind="read", label="Probe API",
                          description="Smoke-test with one cheap Qwen-Turbo turn.",
                          inputs=[], output_type="object", fn=_probe),
+            ConnectorOp(op_id="dashscope.balance", host="dashscope",
+                         kind="read", label="Account balance",
+                         description=("Live DashScope/Model-Studio account "
+                                       "balance via Alibaba BSS "
+                                       "QueryAccountBalance (needs a RAM "
+                                       "AccessKey pair, op:// resolved). "
+                                       "Reports honestly when unconfigured — "
+                                       "never fabricates a figure."),
+                         inputs=[], output_type="object", fn=_balance),
             ConnectorOp(op_id="dashscope.complete", host="dashscope",
                          kind="read", label="Text completion",
                          description=("Qwen3 text generation (qwen-turbo / "

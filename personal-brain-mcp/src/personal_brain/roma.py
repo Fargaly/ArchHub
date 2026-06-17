@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from . import requirement_tree as rt
 from .court_harness import ProbeRunner, convene_court
+from .server_verify import VerifyAttestation, server_side_verify, verify_attestation
 
 if TYPE_CHECKING:
     from .storage import BrainStore
@@ -139,6 +140,78 @@ def judge_leaf(
         ),
     )
     return {"court": verdict.to_dict(), "node": updated.model_dump(mode="json")}
+
+
+def server_verify_leaf(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    node_id: str,
+    judged_by: str = "roma-server-verifier",
+    context: Optional[dict[str, Any]] = None,
+    require_diligence: bool = False,
+    signing_key_ref: Optional[str] = None,
+) -> dict[str, Any]:
+    """SERVER-SIDE re-verify of one leaf — OFF the contributor's process.
+
+    Unlike `judge_leaf` (the in-process court the executor's own interpreter
+    runs), this re-executes the leaf's artifact gate in a FRESH subprocess and
+    returns a SIGNED `VerifyAttestation`. The verdict it records in the tree is
+    therefore one a forged contributor "green" cannot have produced (the
+    artifact was re-checked on the real disk, off the claimant's box, and the
+    attestation is HMAC-signed with a server-held key).
+
+    This is the BRV-05 mechanism: the ROMA court no longer has to trust a
+    verdict produced on the contributing machine. Returns
+    {attestation: <dict>, node: <ReqNode dict>, authentic: bool,
+     authentic_reason: str}.
+    """
+    tree = rt.get_tree(store, tree_id=tree_id)
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    node = tree.nodes.get(node_id)
+    if node is None:
+        raise KeyError(f"node '{node_id}' not found")
+
+    att = server_side_verify(
+        node_id=node_id,
+        gate_kind=node.gate_kind,
+        gate_spec=node.gate_spec,
+        claimed_by=node.claimed_by,
+        judged_by=judged_by,
+        context=context,
+        require_diligence=require_diligence,
+        signing_key_ref=signing_key_ref,
+    )
+
+    # The server's OWN attestation is re-checked before it is trusted to write
+    # a verdict: an unsigned/forged attestation is never allowed to green a leaf
+    # when a key is configured. (Belt-and-braces, same spirit as judge_leaf's
+    # double anti-self-cert.) `require_signed=False` so a no-key dev/test brain
+    # still records verdicts; a key-bearing server refuses unsigned downgrades.
+    authentic, authentic_reason = verify_attestation(
+        att, signing_key_ref=signing_key_ref, require_signed=False,
+    )
+    record_verdict = att.verdict
+    if att.green and not authentic:
+        # A green whose attestation does not verify is downgraded to red — the
+        # server never writes a green it cannot itself authenticate.
+        record_verdict = "red"
+
+    updated = rt.set_verdict(
+        store,
+        tree_id=tree_id,
+        node_id=node_id,
+        verdict=record_verdict,
+        judged_by=judged_by,
+        evidence_ref=att.evidence_ref,
+    )
+    return {
+        "attestation": att.to_dict(),
+        "node": updated.model_dump(mode="json"),
+        "authentic": authentic,
+        "authentic_reason": authentic_reason,
+    }
 
 
 def run_to_dry(
@@ -360,6 +433,41 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
             return {"ok": True, **judge_leaf(
                 store, tree_id=tree_id, node_id=node_id, judged_by=judged_by,
                 context=ctx, extra_probes=extra, require_diligence=require_diligence,
+            )}
+        except KeyError as ex:
+            return {"ok": False, "error": str(ex)}
+
+    @mcp.tool(
+        name="brain.roma_server_verify",
+        description=(
+            "ROMA — SERVER-SIDE re-verify a claimed leaf OFF the contributor's "
+            "process. Unlike brain.roma_judge (the in-process court that runs in "
+            "the claimant's interpreter), this RE-EXECUTES the leaf's artifact "
+            "gate (py_compile|pytest|file_exists) in a FRESH subprocess on the "
+            "real disk and returns a SIGNED attestation a forged 'green' cannot "
+            "reproduce. The recorded verdict is downgraded to red if its own "
+            "attestation does not authenticate. This is the bus-factor-one fix: "
+            "a contributor green is re-checked server-side and a forged one "
+            "rejected. cdp/manual gates are not re-executable off-process and "
+            "honestly return needs_root. Returns {attestation, node, authentic}."
+        ),
+    )
+    def roma_server_verify(
+        tree_id: str,
+        node_id: str,
+        judged_by: str = "roma-server-verifier",
+        evidence: Optional[dict[str, Any]] = None,
+        require_diligence: bool = False,
+        signing_key_ref: Optional[str] = None,
+    ) -> dict[str, Any]:
+        ctx: dict[str, Any] = {}
+        if evidence:
+            ctx["evidence"] = evidence
+        try:
+            return {"ok": True, **server_verify_leaf(
+                store, tree_id=tree_id, node_id=node_id, judged_by=judged_by,
+                context=ctx, require_diligence=require_diligence,
+                signing_key_ref=signing_key_ref,
             )}
         except KeyError as ex:
             return {"ok": False, "error": str(ex)}

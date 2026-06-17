@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from .embeddings import Embedder, get_embedder, triple_score
+from .meaning_space import MeaningGraph, blend_graph_score
 from .models import Fragment, FragmentKind, Scope, Skill
 from .storage import BrainStore
 
@@ -233,3 +234,180 @@ def retrieve_mixed(
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     return skills, facts, elapsed_ms
+
+
+# ─────────────────────── graph-augmented fact retrieval (BRV-08) ────────
+
+
+def retrieve_facts_graph(
+    store: BrainStore,
+    query: str,
+    *,
+    owner_user: str,
+    scope_filter: Optional[Iterable[Scope]] = None,
+    kinds: Optional[Iterable[FragmentKind]] = None,
+    k: int = 8,
+    embedder: Optional[Embedder] = None,
+    expand_factor: int = 4,
+    seed_n: int = 3,
+    w_hub: float = 0.4,
+    w_rank: float = 0.6,
+    w_geo: float = 0.5,
+    return_debug: bool = False,
+) -> list[Fragment] | tuple[list[Fragment], dict[str, dict[str, float]]]:
+    """MEANING_SPACE recall ranker — the `raw ⊕ graph` half of the dual-retrieval
+    bet (BRV-08, acceptance #8).
+
+    This is NOT FTS-then-cosine. It is FTS candidate-gen, then a re-rank that
+    BLENDS cosine relevance with three graph-centrality / proximity signals
+    derived from the MemoryGraph the fragment store already carries (RDF
+    subject/object triples + `extra.deps`/`related`/`references`/`artifacts`):
+
+        final = cosine + w_hub·hubness + w_rank·(n·graph_rank) + w_geo·geodesic
+
+    Pipeline:
+      1. FTS5 broad candidates (k·expand_factor), like `retrieve_facts`.
+      2. Pull the candidates' graph NEIGHBOURS from the store too, so a hub
+         fact that FTS missed (vocabulary mismatch) can still surface — the
+         graph signal is computed over candidates ∪ neighbours.
+      3. Cosine vs query for every fragment in that set.
+      4. Geodesic distance is measured from the `seed_n` strongest cosine
+         matches (the query "anchors" in meaning-space).
+      5. Blend → sort → top-k.
+
+    A fragment that sits one hop from a strong match, or is a structural hub,
+    can therefore outrank a fragment with a marginally higher raw cosine — which
+    is exactly the behaviour the FTS-only ranker cannot produce. When the graph
+    has no edges (disconnected fragments) every graph signal is its honest
+    neutral and this degrades to a cosine ranking — no fabrication.
+
+    Set `return_debug=True` to also get the per-fragment signal map (used by the
+    acceptance test + any future inspector UI).
+    """
+    if not query.strip():
+        return ([], {}) if return_debug else []
+    if kinds is None:
+        kinds = [FragmentKind.FACT, FragmentKind.SETUP, FragmentKind.SPATIAL]
+    kinds = list(kinds)
+
+    embedder = embedder or get_embedder()
+    candidates = store.search_fragments(
+        query, scope_filter=scope_filter, owner_user=owner_user,
+        kinds=kinds, k=max(k * expand_factor, k),
+    )
+    if not candidates:
+        return ([], {}) if return_debug else []
+
+    # (2) Expand with graph neighbours pulled from the store. The neighbour
+    # relation mirrors meaning_space edge wiring: fragments sharing a
+    # subject/object, plus the candidates' declared extra-refs. This lets a
+    # hub the FTS query missed enter the graph (and therefore the ranking).
+    pool: dict[str, Fragment] = {f.id: f for f in candidates}
+    _add_graph_neighbours(store, candidates, pool, scope_filter, owner_user, kinds)
+
+    pool_list = list(pool.values())
+
+    # (3) Cosine relevance for every fragment in the pool.
+    qvec = embedder.encode(query)
+    relevance: dict[str, float] = {}
+    for f in pool_list:
+        parts = [f.text]
+        if f.subject:
+            parts.append(f.subject)
+        if f.object:
+            parts.append(f.object)
+        ivec = embedder.encode(" ".join(parts))
+        relevance[f.id] = max(0.0, embedder.cosine(qvec, ivec))
+
+    # (4) Seeds = strongest cosine matches → geodesic anchors.
+    seeds = [
+        fid for fid, _ in sorted(
+            relevance.items(), key=lambda kv: kv[1], reverse=True
+        )[:max(1, seed_n)]
+    ]
+
+    graph = MeaningGraph(pool_list)
+    hub = graph.hubness()
+    rank = graph.graph_rank()
+    geo = graph.geodesic_proximity(seeds)
+    n = max(graph.n, 1)
+
+    # (5) Blend → sort → top-k.
+    scored: list[tuple[Fragment, float]] = []
+    debug: dict[str, dict[str, float]] = {}
+    for f in pool_list:
+        sig = {
+            "hubness": hub.get(f.id, 0.0),
+            "graph_rank": rank.get(f.id, 0.0),
+            "graph_rank_scaled": n * rank.get(f.id, 0.0),
+            "geodesic": geo.get(f.id, 0.0),
+        }
+        score = blend_graph_score(
+            relevance.get(f.id, 0.0), sig,
+            w_hub=w_hub, w_rank=w_rank, w_geo=w_geo,
+        )
+        scored.append((f, score))
+        if return_debug:
+            debug[f.id] = {
+                "cosine": relevance.get(f.id, 0.0),
+                "final": score,
+                **sig,
+            }
+
+    scored.sort(key=lambda kv: kv[1], reverse=True)
+    top = [f for f, _ in scored[:k]]
+    return (top, debug) if return_debug else top
+
+
+def _add_graph_neighbours(
+    store: BrainStore,
+    seeds: list[Fragment],
+    pool: dict[str, Fragment],
+    scope_filter: Optional[Iterable[Scope]],
+    owner_user: str,
+    kinds: list[FragmentKind],
+    *,
+    cap: int = 200,
+) -> None:
+    """Pull fragments adjacent to `seeds` in the MemoryGraph into `pool`.
+
+    Adjacency (same definition as `meaning_space`): a fragment sharing a
+    subject or object with a seed, OR named by a seed's
+    `extra.deps`/`related`/`references`/`artifacts`. Bounded by `cap` so a
+    pathological topic with thousands of co-subject facts can't blow the pool.
+    Uses the existing FTS `search_fragments` surface to fetch by subject/object
+    text — no new store method, no new table (ONE-SYSTEM).
+    """
+    if len(pool) >= cap:
+        return
+    tokens: set[str] = set()
+    for f in seeds:
+        for t in (f.subject, f.object):
+            t = (t or "").strip()
+            if t:
+                tokens.add(t)
+        extra = f.extra or {}
+        for key in ("deps", "related", "references", "artifacts"):
+            vals = extra.get(key)
+            if isinstance(vals, str):
+                vals = [vals]
+            if isinstance(vals, (list, tuple)):
+                for v in vals:
+                    v = str(v).strip()
+                    if v:
+                        tokens.add(v)
+    for tok in tokens:
+        if len(pool) >= cap:
+            break
+        try:
+            hits = store.search_fragments(
+                tok, scope_filter=scope_filter, owner_user=owner_user,
+                kinds=kinds, k=8,
+            )
+        except Exception:
+            continue
+        for h in hits:
+            if h.id not in pool:
+                pool[h.id] = h
+            if len(pool) >= cap:
+                break

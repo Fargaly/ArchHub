@@ -1,0 +1,56 @@
+# Root pytest configuration — the SINGLE place the app + cloud_backend
+# test contract lives. Before this file existed there was no root
+# pytest.ini / pyproject / setup.cfg / tox.ini, so the ignore-set,
+# testpaths, asyncio mode and marker policy were passed ad-hoc on every
+# CI command (test.yml ran `pytest tests/ -v --ignore=...`, daily-audit
+# repeated the same flags by hand, etc.). Three problems that caused:
+#   * the required gate and the blessed dev command could drift apart
+#     (REPO-MAP 2026-05-28 §8) — the exact class TCI-03 names;
+#   * a typo'd `@pytest.mark.<typo>` silently no-ops (no --strict-markers
+#     anywhere) so a test could mark itself e.g. `@pytest.mark.skipff`
+#     and never run, looking green;
+#   * any new contributor running bare `pytest` got a DIFFERENT set than
+#     CI.
+# Encoding the contract here means `pytest` with no flags, from the repo
+# root, runs exactly what CI runs.
+#
+# This is intentionally a pytest-only pyproject: the repo root is not a
+# packaged distribution (the app ships via PyInstaller, the brain has its
+# own packaged pyproject under personal-brain-mcp/). We add ONLY the
+# [tool.pytest.ini_options] table so we change test discovery without
+# implying a build-system / package layout for the root.
+[tool.pytest.ini_options]
+# testpaths — the two suites the cross-platform gate runs. A bare
+# `pytest` (no path args) now collects exactly these, so the dev command
+# and the CI command can't drift.
+testpaths = ["tests", "cloud_backend/tests"]
+
+# addopts — the blessed contract, applied on EVERY invocation:
+#   --strict-markers : an unregistered marker is an ERROR, not a silent
+#                      no-op. Only the two built-in marks the suites use
+#                      (parametrize, skipif) are registered by pytest
+#                      itself, so no [markers] table is needed; a typo'd
+#                      custom mark now fails collection instead of
+#                      quietly skipping the test.
+#   --strict-config  : a typo in THIS config section is an error too.
+#   --ignore=...     : the two live-Qt/WebEngine harnesses that need a
+#                      real window + GPU and cannot run headless. This is
+#                      the SAME ignore-set as the blessed local command in
+#                      CLAUDE.md ("pytest tests/ -q
+#                      --ignore=tests/test_bridge_qt.py
+#                      --ignore=tests/test_ui_smoke.py") and daily-audit.yml.
+#                      Kept here so the contract holds in one place; the
+#                      workflows now call bare `pytest` and inherit it.
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--ignore=tests/test_bridge_qt.py",
+    "--ignore=tests/test_ui_smoke.py",
+]
+
+# asyncio_mode — pytest-asyncio is installed in CI; "auto" means any
+# `async def test_*` is awaited without a per-test @pytest.mark.asyncio.
+# No async tests exist today, so this is forward-looking and harmless,
+# but it pins the behaviour so the first async test added doesn't get
+# silently collected-but-not-run (a skip-shaped false green).
+asyncio_mode = "auto"

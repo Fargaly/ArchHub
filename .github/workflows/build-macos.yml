@@ -73,6 +73,19 @@ jobs:
             --collect-all PyQt6 \
             app/main.py
 
+      # Post-build smoke (TCI-12). A .app can build yet crash on first launch (a
+      # missing hidden import / uncollected Qt plugin). Run the binary inside the
+      # bundle in `--smoke` mode: it imports the whole app + constructs a
+      # QApplication offscreen, then exits 0 before the event loop. A non-zero
+      # exit / traceback fails the build here rather than shipping a broken .dmg.
+      - name: Smoke-test the built bundle
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ARCHHUB_NO_SELF_HEAL: '1'
+        run: |
+          ./dist/ArchHub.app/Contents/MacOS/ArchHub --smoke
+          echo "build smoke passed (clean exit)"
+
       # hdiutil ships with macOS — no extra deps. The DMG layout is
       # minimal (just the .app); a styled DMG with background image can
       # come later via create-dmg.

@@ -73,6 +73,28 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow pyinstaller
 
+      # ── Post-build launch smoke (TCI-12) ──────────────────────────
+      # The Windows release ships the Python SOURCE inside the Inno Setup
+      # installer (no PyInstaller exe). A source bundle can still "crash on
+      # first import/launch" — a missing dep, a bad import, a module-load
+      # exception — and the installer would happily ship it. Install the app's
+      # runtime deps and run `app/main.py --smoke`: it imports the whole app +
+      # constructs a QApplication offscreen, then exits 0 before the event loop.
+      # A non-zero exit / traceback fails the release here, before the asset is
+      # published. ARCHHUB_NO_SELF_HEAL keeps the smoke from touching the
+      # runner's process/network state (matches the brain/app test gates).
+      - name: Smoke-test the app launches (import + QApplication)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ARCHHUB_NO_SELF_HEAL: '1'
+          ARCHHUB_SMOKE: '1'
+        run: |
+          python -m pip install -r app/requirements.txt
+          python app/main.py --smoke
+          if ($LASTEXITCODE -ne 0) { throw "app launch smoke failed (exit $LASTEXITCODE)" }
+          Write-Host "build smoke passed (clean exit)"
+
       # ── Build MCP connector DLLs in the cloud ─────────────────────
       # CI builds Revit/AutoCAD MCP binaries against NuGet-supplied
       # API references — no Autodesk install on the runner. Output

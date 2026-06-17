@@ -9,10 +9,33 @@ readme = "README.md"
 dependencies = [
     "pydantic>=2.0",
     "anyio>=4.0",
+    # `mcp` is a HARD runtime dep, not optional: mcp_core builds its JSON-RPC
+    # tool/response envelopes from `mcp.types` (byte-parity with FastMCP) and
+    # server.build_server can't construct a server without it. It was missing
+    # here (implicitly satisfied on dev boxes), so a clean `pip install .` of
+    # the brain shipped a non-functional server + every build_server-backed
+    # test errored. Declared now so CI + a fresh install get it.
+    "mcp>=1.27.2,<2",
 ]
 
 [project.optional-dependencies]
+# Legacy embed extra (kept, not trimmed): an earlier design considered fastembed
+# + faiss for vector search. The SHIPPED multimodal path (embedding.py) instead
+# uses sentence-transformers' CLIP model — see the `multimodal` extra below,
+# which is what `is_clip_available()` actually probes for.
 embed = ["fastembed>=0.3.0", "faiss-cpu>=1.7.4", "numpy>=1.24"]
+# multimodal — the REAL deps that light up embedding.py's CLIP path
+# (embed_text / embed_image → 512-dim vectors). `is_clip_available()` returns
+# True iff both import, so installing this extra makes test_embedding.py's
+# happy-path block RUN instead of skip (TCI-08).
+multimodal = ["sentence-transformers>=2.2.0", "pillow>=10.0"]
+# cloud — S3 dataset export (cloud_archive.upload_dataset). Installing this
+# makes test_cloud_archive.py's boto3-gated happy-path tests RUN (TCI-08).
+cloud = ["boto3>=1.34"]
+# federation — the FastAPI ActivityPub-style federation server
+# (federation_server.create_app). Installing this makes the federation tests in
+# test_slices_9_through_16.py RUN instead of pytest.skip (TCI-08).
+federation = ["fastapi>=0.110", "httpx>=0.27"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
 
 [project.scripts]
@@ -26,3 +49,22 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/personal_brain"]
+
+# Self-contained pytest contract for the brain suite. Without this table
+# pytest still picked this file as the rootdir anchor when invoked from
+# inside personal-brain-mcp, but carried NO marker policy or asyncio mode
+# — so brain CI had to pass flags ad-hoc (the TCI-03 class). Pinning them
+# here means `cd personal-brain-mcp && PYTHONPATH=src pytest` is the whole
+# contract: the same set CI runs, with strict markers, and WITHOUT
+# inheriting the app-level --ignore set (those test files don't exist
+# under the brain tree).
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+]
+# Only built-in marks are used (parametrize, skipif); --strict-markers is
+# safe with no [markers] table. asyncio "auto" matches the root config so
+# the first async brain test added is awaited, not silently skipped.
+asyncio_mode = "auto"

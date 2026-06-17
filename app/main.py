@@ -578,6 +578,24 @@ def main() -> int:
     except Exception:
         pass
 
+    # ── Build smoke (TCI-12) ──────────────────────────────────────────────
+    # `--smoke` (or ARCHHUB_SMOKE=1) is the post-build import/launch check the
+    # build workflows run against the freshly-built bundle. By the time we get
+    # here the WHOLE app module has imported (the eager QtWebEngine import, the
+    # GPU-disable shim, design_tokens, Sentry init) AND a QApplication has been
+    # constructed + styled — that is exactly the surface where "the bundle
+    # builds but crashes on first import/launch" manifests. So we exit 0 RIGHT
+    # HERE, cleanly, BEFORE the single-instance lock / dev-source sync / window
+    # construction / event loop — none of which a release-asset smoke should
+    # trigger (they'd quit a running instance, touch the user profile, or hang
+    # on app.exec()). A non-zero exit / traceback fails the build; a clean exit
+    # proves the asset is launchable. Production launches set neither and run
+    # exactly as before.
+    if ("--smoke" in sys.argv[1:]
+            or (os.environ.get("ARCHHUB_SMOKE") or "").strip().lower() in ("1", "true")):
+        print("[archhub] build smoke OK: modules imported, QApplication constructed")
+        return 0
+
     # Single-instance lock + summon. If another ArchHub is already
     # running, send 'SHOW' to it and exit 0 — fixes the 'click icon
     # does nothing' bug where the existing window stayed hidden.

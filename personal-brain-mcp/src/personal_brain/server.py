@@ -1575,8 +1575,12 @@ def build_server(
             "HuggingFace-style training dataset. Writes JSONL primary + "
             "optional parquet (if pyarrow installed) + manifest.json. "
             "Defaults to USER scope only — never escalates without "
-            "explicit scope_filter. Used to seed collective model "
-            "training (Brain #33 north star)."
+            "explicit scope_filter. The AgDR-0054 legal/training-rights dam "
+            "runs at export: quarantined (right-to-be-forgotten / poisoned) "
+            "rows are ALWAYS dropped, and training_target='collective' also "
+            "drops firm_private_only rows (pass it when seeding the cross-firm "
+            "collective pool; default 'firm_private' is the legal floor). Used "
+            "to seed collective model training (Brain #33 north star)."
         ),
     )
     def brain_dataset_export(
@@ -1587,6 +1591,8 @@ def build_server(
         since: Optional[str] = None,
         limit: int = 10_000,
         owner_user: Optional[str] = None,
+        respect_training_rights: bool = True,
+        training_target: str = "firm_private",
     ) -> dict[str, Any]:
         from pathlib import Path as _P
         from . import dataset_export as _de
@@ -1612,6 +1618,8 @@ def build_server(
                 since=since,
                 limit=int(limit),
                 owner_user=owner_user or resolve_default_owner(),
+                respect_training_rights=respect_training_rights,
+                training_target=training_target,
             )
             return manifest
         except Exception as ex:

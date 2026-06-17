@@ -36,7 +36,31 @@ cloud = ["boto3>=1.34"]
 # (federation_server.create_app). Installing this makes the federation tests in
 # test_slices_9_through_16.py RUN instead of pytest.skip (TCI-08).
 federation = ["fastapi>=0.110", "httpx>=0.27"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+# dev — the test toolchain for the brain suite. It carries two REAL test deps
+# the suite hard-requires (no mocks, no skip-gates), because the cross-platform
+# matrix wires this suite in via a bare `pytest` after `pip install -e .[dev]`
+# and a missing one is a hard FAIL there, not a tolerated skip:
+#
+#   * numpy — tests/test_train_brain_model.py exercises the real training
+#     harness (ArchHub/tools/train_brain_model.py), which imports numpy at
+#     module top level to build the embedding matrix + centroid maths. The
+#     harness is loaded at COLLECTION time (module-level
+#     `tbm = _load_tool_module()`), so a missing numpy is a collection error
+#     (exit 2) that crashes the WHOLE brain step before any test runs.
+#
+#   * loro — tests/test_sync.py's three CRDT round-trip tests
+#     (test_loro_transport_real_roundtrip / _handles_empty_pull /
+#     _cross_device_merge) instantiate the real LoroTransport, which raises
+#     RuntimeError when `loro` is absent (sync.py:117). These tests have NO
+#     importorskip, so without loro they FAIL (not skip). loro ships cp313
+#     wheels for manylinux-x86_64 / macos-arm64 / win-amd64 — every matrix
+#     runner — so it installs cleanly and the real CRDT tests RUN.
+#
+# Both were latent: before this suite was wired into CI (this PR) nothing ran
+# them, and the brain-extras job only dodged numpy because the multimodal extra
+# pulls it transitively via sentence-transformers. Declaring them here makes
+# the real tests real wherever the suite runs, instead of green-by-not-running.
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "numpy>=1.24", "loro>=1.10.3"]
 
 [project.scripts]
 personal-brain = "personal_brain.server:main"
@@ -65,6 +89,10 @@ addopts = [
     "--strict-config",
 ]
 # Only built-in marks are used (parametrize, skipif); --strict-markers is
-# safe with no [markers] table. asyncio "auto" matches the root config so
-# the first async brain test added is awaited, not silently skipped.
+# safe with no [markers] table. asyncio "auto" lives HERE (not in the repo-
+# root pyproject) because pytest-asyncio is always installed for the brain
+# suite (it's in this package's [dev] extra) — so the option is always
+# registered and never trips --strict-config. The root suites are sync and
+# their config stays plugin-agnostic. "auto" means the first async brain test
+# added is awaited, not silently collected-but-skipped (a false green).
 asyncio_mode = "auto"

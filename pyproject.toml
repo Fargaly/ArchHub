@@ -48,9 +48,17 @@ addopts = [
     "--ignore=tests/test_ui_smoke.py",
 ]
 
-# asyncio_mode — pytest-asyncio is installed in CI; "auto" means any
-# `async def test_*` is awaited without a per-test @pytest.mark.asyncio.
-# No async tests exist today, so this is forward-looking and harmless,
-# but it pins the behaviour so the first async test added doesn't get
-# silently collected-but-not-run (a skip-shaped false green).
-asyncio_mode = "auto"
+# NOTE — no pytest-asyncio option (e.g. asyncio_mode) here ON PURPOSE.
+# This root config is loaded by EVERY repo-root `pytest` invocation,
+# including jobs that install bare pytest WITHOUT pytest-asyncio (the
+# doc-reconcile gate runs `pip install pytest` then
+# `pytest tests/test_doc_reconcile.py`). With --strict-config in effect,
+# a plugin-owned key like `asyncio_mode` that the plugin isn't installed
+# to register is "Unknown config option: asyncio_mode" → pytest aborts
+# collection (exit 4, "no tests ran") and the gate goes red for an
+# unrelated reason. The async-await policy is a BRAIN concern: it lives
+# in personal-brain-mcp/pyproject.toml, where pytest-asyncio is always
+# present (it's in that package's [dev] extra) and where any async tests
+# would actually live. The root suites (tests/, cloud_backend/tests/) are
+# sync, so the root config stays plugin-agnostic — any root-pytest job can
+# run it with just bare pytest.

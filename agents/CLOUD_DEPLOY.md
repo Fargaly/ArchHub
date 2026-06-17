@@ -51,6 +51,55 @@ Override region or app name:
 .\agents\deploy.ps1 -AppName my-agents -Region ord -ApiKey sk-ant-...
 ```
 
+## CI deploy (the default — no laptop required)
+
+`agents/deploy.ps1` is the manual escape hatch. The day-to-day path is
+**automated**: every push to `main` that touches `agents/**` runs
+[`.github/workflows/agents_deploy.yml`](../.github/workflows/agents_deploy.yml),
+which:
+
+1. **Smokes the build** — boots the *real* agents app in CI via
+   [`scripts/agents_smoke.py`](../scripts/agents_smoke.py) and runs the actual
+   `reality_smoke` `agents.healthz` + `agents.status` checks against it. A
+   broken container never reaches Fly. (No Fly, no token needed for this gate —
+   it's a self-contained boot of `agents.dashboard_endpoint.build_app`.)
+2. **Deploys to Fly** — `flyctl deploy --config agents/fly.toml` via the
+   `superfly/flyctl-actions/setup-flyctl` action, gated on the **`FLY_API_TOKEN`**
+   repo secret. When the secret is absent the step logs a warning and skips
+   (forks / pre-token state don't hard-fail).
+3. **Verifies live** — re-runs `scripts/agents_smoke.py --url
+   https://archhub-agents.fly.dev` against the freshly deployed machine so the
+   reality probe is green **immediately post-deploy**, not only on the next
+   hourly [`reality.yml`](../.github/workflows/reality.yml) cron.
+
+### One-time setup of the deploy secret
+
+The only manual step is minting a scoped deploy token (do this once):
+
+```bash
+fly tokens create deploy -a archhub-agents | gh secret set FLY_API_TOKEN -R Fargaly/ArchHub
+```
+
+After that, agents deploys ride main automatically. Trigger an ad-hoc deploy or
+re-probe from the Actions tab via **workflow_dispatch** on *Agents deploy*.
+
+### Smoke it locally too
+
+The same smoke runs anywhere — handy before pushing, or to debug a Fly box:
+
+```bash
+# Boot the real app locally and check its health surface:
+python scripts/agents_smoke.py --json
+# Probe a live deploy directly:
+python scripts/agents_smoke.py --url https://archhub-agents.fly.dev
+```
+
+Exit 0 means the agents container's `/healthz` + `/status` are healthy.
+
+> Note: `agents_dispatch.yml` is a *different* workflow — it drains the task
+> **queue** inside GitHub Actions. It does not deploy or touch the Fly machine;
+> `agents_deploy.yml` owns the container's lifecycle.
+
 ## Verify the daemon is running
 
 ```bash

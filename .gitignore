@@ -122,3 +122,20 @@ scripts/stripe_login_pty.py
 # Per-launch random token written to the repo run dir when the in-app debug
 # bridge is enabled (ARCHHUB_DEBUG_BRIDGE=1). A secret — never committed.
 .debug_bridge_token
+
+# ==== Loose scratch / session / capture junk (STR-07) ====
+# This repo root doubles as the founder's source-of-truth working dir — the
+# place every loose artefact lands: agent/session transcripts, ad-hoc
+# screenshots, founder message dumps, zipped exports. None of it is source.
+# Patterns are bare (not just **/-globbed) so a file dropped AT the root is
+# caught too — the original miss that let scratch get tracked. NOTE: git does
+# NOT strip trailing inline comments, so every pattern stays on its own line.
+# session transcripts (also matched by the **/-glob above; bare form catches
+# a transcript written at the repo root)
+*.archhub-session.json
+# ad-hoc screenshots / captures named with a leading underscore
+_*.png
+# founder message scratch dump
+founder_msgs.txt
+# zipped exports / bundles — regenerable, never source
+*.zip

@@ -373,3 +373,99 @@ def test__llm_key_isolation_is_effective():
         for k, v in saved.items():
             if v is not None:
                 os.environ[k] = v
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# QUATERNARY guard: never let a test read the DEVELOPER's real, signed-in
+# personal-cloud config (the signed-in-host engine-start failure)
+# ════════════════════════════════════════════════════════════════════════════
+# Same philosophy as the secrets / LLM-key isolations above: a test must not
+# depend on — or be polluted by — real machine state.
+#
+# ROOT CAUSE of test_engine_on.py::test_start_workers_brings_engine_alive failing
+# on a signed-in developer box (it asserts the personal-cloud worker comes up
+# `signed_in is False` "deterministically on any host"): the worker resolves its
+# config through `personal_cloud_sync` → `cloud_config.load_cloud_config()` with
+# NO path, which falls back to `cloud_config.default_cloud_config_path()` —
+# `%APPDATA%/ArchHub/brain/cloud.json` on Windows, `~/.local/share/archhub/
+# brain/cloud.json` on POSIX. The test already clears ARCHHUB_CLOUD_TOKEN /
+# ARCHHUB_CLOUD_URL (the env path) but NOT this on-disk path. On a machine where
+# the founder ran `cloud_login` (archhub.io is live), that file holds a real
+# bearer token, so `is_signed_in()` is True and the assert fails — a FALSE RED
+# that only shows on a signed-in host (clean CI runners have no file, so it
+# "passes there"). That host-dependence is exactly what blocks wiring the brain
+# suite as a TRUSTWORTHY required gate (TCI-01): a contributor on their own
+# signed-in box would see the gate go red for no real defect.
+#
+# The fix severs the on-disk config path for EVERY brain test, structurally, at
+# the single chokepoint every loader/saver/clearer uses:
+#   • Repoint `cloud_config.default_cloud_config_path` at a per-test tmp path
+#     that does not exist → `_read_config_file` returns {} → signed-out. All four
+#     call sites in cloud_config.py read `path or default_cloud_config_path()`,
+#     so this one patch covers load/save/clear without touching production code.
+#   • Also clear the two env vars (belt-and-braces; mirrors the in-test cleanup
+#     test_engine_on already does, applied to ALL tests so none can leak them).
+# OVERRIDABLE by design (autouse runs first; pytest monkeypatch is LIFO): a test
+# that wants a real file passes an explicit `path=` to load_cloud_config, and
+# the cloud-login/config tests that drive their own tmp file via `path=` are
+# unaffected (they never hit the default-path branch). No test is weakened — the
+# developer's real cloud.json is simply unreachable via the default path.
+_FAKE_CLOUD_JSON_NAMES = ("ARCHHUB_CLOUD_TOKEN", "ARCHHUB_CLOUD_URL")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_personal_cloud_config(monkeypatch, tmp_path_factory):
+    """Around EVERY brain test: make the developer's real, signed-in
+    `cloud.json` UNREACHABLE via the default path so any worker/CLI that resolves
+    cloud config with no explicit path comes up signed-out (inert) on any host —
+    the structural fix for the signed-in-host engine-start false-red."""
+    try:
+        from personal_brain import cloud_config as _cc
+    except Exception:
+        # cloud_config not importable in this env → nothing to isolate.
+        yield
+        return
+
+    # Per-test tmp dir that is real but contains no cloud.json → loader sees {}.
+    fake_dir = tmp_path_factory.mktemp("brain_cloud_iso")
+    fake_path = fake_dir / "cloud.json"
+    monkeypatch.setattr(
+        _cc, "default_cloud_config_path", lambda: fake_path, raising=True
+    )
+    for name in _FAKE_CLOUD_JSON_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+    yield
+
+
+def test__personal_cloud_config_isolation_is_effective():
+    """Tripwire (collected as a normal test): with the autouse isolation in
+    place and no cloud env set, a no-path `load_cloud_config()` MUST resolve
+    signed-out. If this fails, the default-path severing regressed and the
+    signed-in-host engine-start false-red is back — fix the fixture, never
+    delete this guard."""
+    import os
+
+    saved = {k: os.environ.pop(k, None) for k in _FAKE_CLOUD_JSON_NAMES}
+    try:
+        from personal_brain.cloud_config import (
+            default_cloud_config_path,
+            load_cloud_config,
+        )
+
+        # The default path must point at the isolated tmp (not the real
+        # %APPDATA%/~/.local cloud.json) and must not exist.
+        assert not default_cloud_config_path().exists(), (
+            "default cloud.json path resolves to an existing file under test "
+            "isolation — the _isolate_personal_cloud_config severing regressed; "
+            "test_engine_on can go red on a signed-in host again"
+        )
+        cfg = load_cloud_config()
+        assert cfg.is_signed_in is False, (
+            "load_cloud_config() resolved signed-in with no explicit path under "
+            "test isolation — the developer's real cloud.json is leaking in"
+        )
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v

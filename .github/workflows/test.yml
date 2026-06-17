@@ -44,6 +44,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # FULL history (not the default shallow fetch-depth:1). The brain
+          # suite's tests/test_backfill_skills.py::test_synth_from_git_helper_
+          # shapes_traces mines REAL conventional commits from `git log` of
+          # this checkout (it asserts >=1 feat/fix/docs/... commit exists). A
+          # depth-1 clone exposes only the PR's synthetic merge commit (subject
+          # "Merge … into …", non-conventional) → the helper returns [] and the
+          # test fails. Fetching full history lets that real test run against
+          # real history exactly as it does locally (no skip, no weakening).
+          # Only THIS matrix job needs it — brain-extras/agents/doc-reconcile
+          # don't run that test.
+          fetch-depth: 0
 
       # PyQt6 on Linux needs xcb + EGL system libs even for headless
       # tests — Qt resolves a platform plugin during QApplication init.
@@ -94,37 +106,129 @@ jobs:
       #     out of process when ARCHHUB_CDP_AUTOLAUNCH=1. CDP works on this
       #     QtWebEngine build once main.py appends --remote-allow-origins (the
       #     old "CDP handshake stalls" claim was a misdiagnosis).
+      # The --ignore set is no longer passed here: it lives in the root
+      # pyproject.toml [tool.pytest.ini_options] addopts (TCI-03), so a bare
+      # `pytest tests/` inherits the blessed contract and can't drift from the
+      # local dev command / daily-audit. --strict-markers (also in addopts)
+      # makes a typo'd mark an error, not a silent skip.
       - name: Run app test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: >-
-          pytest tests/ -v
-          --ignore=tests/test_bridge_qt.py
-          --ignore=tests/test_ui_smoke.py
+        run: pytest tests/ -v
 
       - name: Run cloud backend test suite
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest cloud_backend/tests/ -v
 
-  # ───────────────────────────────────────────────────────────────────────
-  # Canonical CDP proof under a REAL display (TCI-09).
-  #
-  # The matrix job above runs test_ui_cdp_smoke.py under QT_QPA_PLATFORM=
-  # offscreen with no display + no auto-launch, so it ALWAYS self-skips — the
-  # canonical "click the running app" proof was a permanent no-op on CI
-  # ("enforced only on the founder's machine"). This job gives it the live,
-  # display-backed environment it needs:
-  #   * xvfb (a virtual X server) so a QtWebEngine window can actually exist;
-  #   * Mesa software GL (LIBGL_ALWAYS_SOFTWARE=1 + the swrast/llvmpipe driver)
-  #     so the GPU process initialises with no real GPU;
-  #   * ARCHHUB_CDP_AUTOLAUNCH=1 so the gate launches app/main.py itself out of
-  #     process with remote-debugging on (which trips main.py's
-  #     --remote-allow-origins append so the DevTools ws upgrade lands 101).
-  # `-rs` prints the skip reasons. The gate is still self-skipping by design if
-  # this runner cannot bring a WebEngine window up at all (then it is a clean
-  # no-op, not a red) — but on a healthy runner it EXECUTES the real clicks, so
-  # the proof is no longer founder-machine-only.
+      # ─── personal-brain-mcp suite (TCI-01) ────────────────────────────
+      # The 600+ brain tests (acl-redaction, personal-cloud-sync redaction,
+      # secret-resolver, owner-binding, roma, …) were GREEN locally but ran
+      # in NO CI workflow — a whole production package (the BRAIN-FIRST moat)
+      # shipped ungated. Now part of the required cross-platform matrix.
+      # `.[dev]` pulls pydantic + anyio + mcp (now a declared dep) + pytest
+      # + pytest-asyncio. PYTHONPATH=src maps the `personal_brain` package; the
+      # brain's own pyproject [tool.pytest.ini_options] carries its
+      # --strict-markers contract, so this is a bare `pytest` from the package.
+      # The clip/boto3/fastapi-gated tests SKIP cleanly here (no extras) — the
+      # brain-extras job below installs those so they RUN (TCI-08).
+      - name: Install brain package + dev deps
+        run: python -m pip install -e "personal-brain-mcp/.[dev]"
+      - name: Run personal-brain-mcp test suite
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: pytest -v
+
+  # ─── Brain optional-dep happy paths (TCI-08) ──────────────────────────────
+  # 10 brain tests were skip-gated on optional deps that NO CI installed:
+  # CLIP (multimodal embedding), boto3 (S3 dataset export), Pillow (pHash
+  # dedupe), FastAPI (federation server). The happy paths therefore NEVER ran
+  # anywhere. This job installs those extras and asserts the gated happy-path
+  # tests RUN (0 skips among them) — so a regression in embed_text /
+  # upload_dataset / phash_image / federation_server fails CI instead of
+  # hiding behind a green "skipped". (The inverse-guard tests, which assert the
+  # graceful no-dep behaviour, are deselected here — they intentionally skip
+  # when the dep IS present — as is the real-subprocess daemon test, whose skip
+  # is a bind flake unrelated to these deps.)
+  brain-extras:
+    name: brain optional-dep happy paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install brain + multimodal/cloud/federation extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "personal-brain-mcp/.[dev,multimodal,cloud,federation]"
+      - name: Pre-flight — the optional deps actually import
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          from personal_brain.embedding import is_clip_available
+          ok = is_clip_available()
+          import boto3            # noqa: F401  (S3 export)
+          import fastapi          # noqa: F401  (federation)
+          assert ok, "is_clip_available() is False — sentence-transformers/Pillow not importable"
+          print("extras present: CLIP=%s boto3=ok fastapi=ok" % ok)
+          PY
+      # Run ONLY the dep-gated happy-path tests, with -rs so any skip is
+      # visible, then fail the job if even one of them skipped. With the extras
+      # installed there must be ZERO skips here — that is the TCI-08 gate.
+      - name: Run gated happy paths and assert 0 skips
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: |
+          set -o pipefail
+          pytest -rs -p no:cacheprovider \
+            tests/test_embedding.py \
+            tests/test_phash.py \
+            tests/test_cloud_archive.py \
+            tests/test_slices_9_through_16.py \
+            -k "not (returns_none_when_clip_missing or handles_pil_missing_gracefully or returns_error_when_boto3_missing or with_real_subprocess_daemon)" \
+            | tee pytest-extras.txt
+          if grep -q "SKIPPED" pytest-extras.txt; then
+            echo "::error::a dep-gated brain happy-path test SKIPPED despite extras being installed — TCI-08 regression"
+            grep "SKIPPED" pytest-extras.txt
+            exit 1
+          fi
+          echo "TCI-08 gate green: all dep-gated happy-path tests ran (0 skips)."
+
+  # ─── agents/ package suite (TCI-02) ───────────────────────────────────────
+  # agents/ is a deployed package (archhub-agents on Fly) but had NO test dir —
+  # scheduler.py / dispatcher.py / ceo_routine.py / queue.py ran in production
+  # with zero coverage. This job runs the new agents/tests/ suite. The package
+  # imports only stdlib + intra-package modules, so no third-party install is
+  # needed to exercise the queue / dispatch / scheduling / CEO-loop logic.
+  agents:
+    name: agents package tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-asyncio
+      - name: Run agents test suite
+        run: pytest agents/tests/ -v
+
   cdp-smoke:
     name: CDP smoke (xvfb + software GL)
     runs-on: ubuntu-latest

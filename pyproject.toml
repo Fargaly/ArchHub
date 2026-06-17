@@ -1,0 +1,64 @@
+# Root pytest configuration — the SINGLE place the app + cloud_backend
+# test contract lives. Before this file existed there was no root
+# pytest.ini / pyproject / setup.cfg / tox.ini, so the ignore-set,
+# testpaths, asyncio mode and marker policy were passed ad-hoc on every
+# CI command (test.yml ran `pytest tests/ -v --ignore=...`, daily-audit
+# repeated the same flags by hand, etc.). Three problems that caused:
+#   * the required gate and the blessed dev command could drift apart
+#     (REPO-MAP 2026-05-28 §8) — the exact class TCI-03 names;
+#   * a typo'd `@pytest.mark.<typo>` silently no-ops (no --strict-markers
+#     anywhere) so a test could mark itself e.g. `@pytest.mark.skipff`
+#     and never run, looking green;
+#   * any new contributor running bare `pytest` got a DIFFERENT set than
+#     CI.
+# Encoding the contract here means `pytest` with no flags, from the repo
+# root, runs exactly what CI runs.
+#
+# This is intentionally a pytest-only pyproject: the repo root is not a
+# packaged distribution (the app ships via PyInstaller, the brain has its
+# own packaged pyproject under personal-brain-mcp/). We add ONLY the
+# [tool.pytest.ini_options] table so we change test discovery without
+# implying a build-system / package layout for the root.
+[tool.pytest.ini_options]
+# testpaths — the two suites the cross-platform gate runs. A bare
+# `pytest` (no path args) now collects exactly these, so the dev command
+# and the CI command can't drift.
+testpaths = ["tests", "cloud_backend/tests"]
+
+# addopts — the blessed contract, applied on EVERY invocation:
+#   --strict-markers : an unregistered marker is an ERROR, not a silent
+#                      no-op. Only the two built-in marks the suites use
+#                      (parametrize, skipif) are registered by pytest
+#                      itself, so no [markers] table is needed; a typo'd
+#                      custom mark now fails collection instead of
+#                      quietly skipping the test.
+#   --strict-config  : a typo in THIS config section is an error too.
+#   --ignore=...     : the two live-Qt/WebEngine harnesses that need a
+#                      real window + GPU and cannot run headless. This is
+#                      the SAME ignore-set as the blessed local command in
+#                      CLAUDE.md ("pytest tests/ -q
+#                      --ignore=tests/test_bridge_qt.py
+#                      --ignore=tests/test_ui_smoke.py") and daily-audit.yml.
+#                      Kept here so the contract holds in one place; the
+#                      workflows now call bare `pytest` and inherit it.
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--ignore=tests/test_bridge_qt.py",
+    "--ignore=tests/test_ui_smoke.py",
+]
+
+# NOTE — no pytest-asyncio option (e.g. asyncio_mode) here ON PURPOSE.
+# This root config is loaded by EVERY repo-root `pytest` invocation,
+# including jobs that install bare pytest WITHOUT pytest-asyncio (the
+# doc-reconcile gate runs `pip install pytest` then
+# `pytest tests/test_doc_reconcile.py`). With --strict-config in effect,
+# a plugin-owned key like `asyncio_mode` that the plugin isn't installed
+# to register is "Unknown config option: asyncio_mode" → pytest aborts
+# collection (exit 4, "no tests ran") and the gate goes red for an
+# unrelated reason. The async-await policy is a BRAIN concern: it lives
+# in personal-brain-mcp/pyproject.toml, where pytest-asyncio is always
+# present (it's in that package's [dev] extra) and where any async tests
+# would actually live. The root suites (tests/, cloud_backend/tests/) are
+# sync, so the root config stays plugin-agnostic — any root-pytest job can
+# run it with just bare pytest.

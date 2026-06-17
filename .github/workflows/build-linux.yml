@@ -77,6 +77,20 @@ jobs:
             --collect-all PyQt6 \
             app/main.py
 
+      # Post-build smoke (TCI-12). A bundle can build successfully yet crash on
+      # first import/launch (a missing hidden import, a Qt plugin not collected,
+      # a bad data-file path) and still ship as a release asset. Run the freshly
+      # built binary in `--smoke` mode: it imports the whole app + constructs a
+      # QApplication offscreen, then exits 0 BEFORE the event loop. A non-zero
+      # exit or traceback fails the build here instead of in a user's hands.
+      - name: Smoke-test the built bundle
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ARCHHUB_NO_SELF_HEAL: '1'
+        run: |
+          xvfb-run -a dist/ArchHub/ArchHub --smoke
+          echo "build smoke passed (clean exit)"
+
       # Stage the PyInstaller --onedir bundle into an AppDir, then let
       # appimagetool fold it into a single .AppImage. AppRun + the
       # .desktop entry live in packaging/linux/ as committed files, so

@@ -372,7 +372,8 @@ class TestOpSets:
         ops = {o.op_id for o in speckle_connector.SpeckleConnector().ops()}
         assert ops == {
             "speckle.list_projects", "speckle.list_models",
-            "speckle.list_versions", "speckle.receive", "speckle.send",
+            "speckle.list_versions", "speckle.receive",
+            "speckle.create_object", "speckle.send",
         }
 
     def test_notion_op_set(self):
@@ -403,7 +404,8 @@ class TestOpSets:
     def test_destructive_ops_flagged(self):
         """Write operations must carry destructive=True; reads must not."""
         expected_destructive = {
-            "speckle.send", "notion.create_page", "notion.update_page",
+            "speckle.create_object", "speckle.send",
+            "notion.create_page", "notion.update_page",
             "notion.append_blocks", "dropbox.upload",
             "dropbox.create_shared_link", "teams.post_message",
         }
@@ -610,24 +612,29 @@ class TestSpeckleOps:
         assert r.value[0]["author"] == "Aaliyah Khan"
 
     def test_receive_by_object_id(self):
+        # dereference=False isolates the root-resolution path this test
+        # covers; the child-walk path has its own coverage in
+        # tests/test_speckle_object_tree.py (CON-05).
         with patch.object(speckle_connector, "_load_token",
                           return_value="tok"), \
              patch(UO, return_value=_mock_urlopen(SPECKLE_OBJECT)):
             r = self._run("speckle.receive", project_id="p_tower",
-                          object_id="obj_deadbeef")
+                          object_id="obj_deadbeef", dereference=False)
         assert r.ok is True
         assert r.value["id"] == "obj_deadbeef"
         assert r.value["total_children_count"] == 128
 
     def test_receive_by_version_id_resolves_object(self):
         """version_id => first resolve referencedObject, then fetch it.
-        Two sequential HTTP calls — both mocked."""
+        Two sequential HTTP calls — both mocked. dereference=False keeps
+        this focused on version->object resolution (child-walk is covered
+        in tests/test_speckle_object_tree.py)."""
         with patch.object(speckle_connector, "_load_token",
                           return_value="tok"), \
              patch(UO, side_effect=_seq_urlopen(SPECKLE_VERSION_REF,
                                                 SPECKLE_OBJECT)):
             r = self._run("speckle.receive", project_id="p_tower",
-                          version_id="v_001")
+                          version_id="v_001", dereference=False)
         assert r.ok is True
         assert r.value["id"] == "obj_deadbeef"
 

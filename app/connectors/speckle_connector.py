@@ -27,17 +27,23 @@ Operations
   READ    speckle.list_projects   — streams the user can see
           speckle.list_models     — branches of a stream
           speckle.list_versions   — commits on a branch
-          speckle.receive         — objects of a version
-  ACTION  speckle.send            — push objects to a branch (destructive)
+          speckle.receive         — full object tree of a version
+                                    (root + dereferenced children)
+  ACTION  speckle.create_object   — serialize + upload an object tree
+          speckle.send            — push objects to a branch: upload the
+                                    tree (or reference a hash) + commit
+                                    a version (destructive)
 
 Every operation returns an `OpResult`; nothing raises to the caller.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import time
 import urllib.error
 import urllib.request
+import uuid
 from typing import Any, Optional
 
 from connectors.base import (
@@ -81,6 +87,22 @@ def _token_hint() -> str:
     return ("Speckle token not set. Open Settings -> Sign-ins -> Speckle "
             "and paste a Personal Access Token from your server profile "
             "(Developer Settings).")
+
+
+def _as_bool(v: Any, *, default: bool = False) -> bool:
+    """Coerce a param (may arrive as a JS string) to a bool."""
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in ("true", "1", "yes", "on"):
+        return True
+    if s in ("false", "0", "no", "off", ""):
+        return False
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +214,207 @@ def _classify_graphql_errors(errors: list) -> str:
                 f"be expired or lack scope — re-paste it in Settings -> "
                 f"Sign-ins -> Speckle.")
     return f"Speckle GraphQL error: {joined}"
+
+
+# ---------------------------------------------------------------------------
+# Object API (the raw REST endpoints, separate from /graphql).
+#
+# Speckle stores an object *tree* content-addressed: every Base object gets a
+# deterministic hash (its `id`), detached children are stored as their own
+# rows, and the root carries a `__closure` table {childId: depth}. The
+# GraphQL surface above lists/commits versions; uploading and downloading the
+# actual object bytes goes through these endpoints:
+#
+#   POST <server>/objects/<projectId>          — upload a batch of objects
+#                                                 (multipart, gzipped JSON
+#                                                 array). Returns the ids.
+#   GET  <server>/objects/<projectId>/<id>/single
+#                                              — one serialized object (root)
+#   POST <server>/api/getobjects/<projectId>   — bulk-fetch children by id;
+#                                                 newline-delimited
+#                                                 `hash\tjson` lines.
+#
+# These mirror specklepy's own ServerTransport. We compute every hash with
+# specklepy's OWN serializer (BaseObjectSerializer) so an object ArchHub
+# creates is byte-identical to one any other Speckle client would create —
+# we never reimplement the hash.
+# ---------------------------------------------------------------------------
+class _SpeckleObjectsUnavailable(RuntimeError):
+    """specklepy isn't importable — object send/receive can't serialize."""
+
+
+def _serialize_object_tree(root: Any) -> tuple[str, dict[str, str]]:
+    """Serialize a Speckle `Base` tree to its canonical wire form.
+
+    Returns ``(root_id, objects)`` where ``root_id`` is specklepy's OWN
+    content hash of the root and ``objects`` maps every object id (root +
+    each detached descendant) to its serialized JSON string — exactly the
+    set a Speckle server must receive to reconstruct the tree.
+
+    The hash is computed by specklepy's ``BaseObjectSerializer`` driven by a
+    ``MemoryTransport`` write transport; we do not reimplement it. Raises
+    ``_SpeckleObjectsUnavailable`` if specklepy is absent.
+    """
+    try:
+        from specklepy.objects.base import Base  # type: ignore
+        from specklepy.serialization.base_object_serializer import (  # type: ignore
+            BaseObjectSerializer,
+        )
+        from specklepy.transports.memory import MemoryTransport  # type: ignore
+    except Exception as ex:  # pragma: no cover - import guard
+        raise _SpeckleObjectsUnavailable(str(ex)) from ex
+
+    if not isinstance(root, Base):
+        raise TypeError(
+            "speckle.create_object needs a specklepy Base object (or a tree "
+            "of them); got " + type(root).__name__)
+
+    # A write transport is what makes the serializer DETACH children into the
+    # transport's object map (without one it inlines everything and uploads
+    # nothing reusable). MemoryTransport just collects them in-process.
+    mem = MemoryTransport()
+    serializer = BaseObjectSerializer(write_transports=[mem])
+    root_id, _root_json = serializer.write_json(root)
+    # mem.objects already holds the root + every detached child, each keyed by
+    # its own specklepy hash and valued by its serialized JSON string.
+    objects = dict(mem.objects)
+    objects.setdefault(root_id, _root_json)
+    return root_id, objects
+
+
+def _upload_objects(project_id: str, objects: dict[str, str], *,
+                    token: str,
+                    timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    """POST a batch of serialized objects to ``/objects/<projectId>``.
+
+    ``objects`` is {id: serialized_json}. We send them as one gzipped JSON
+    array in a multipart ``batch-1`` part — the shape Speckle's object
+    endpoint accepts (identical to specklepy's BatchSender). Returns one of:
+      {"_ok": True, "uploaded": int}
+      {"_err": "...", "http_status": int?}
+    """
+    if not objects:
+        return {"_ok": True, "uploaded": 0}
+    payload = "[" + ",".join(objects.values()) + "]"
+    gz = gzip.compress(payload.encode("utf-8"))
+
+    boundary = "----ArchHubSpeckle" + uuid.uuid4().hex
+    pre = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="batch-1"; '
+        f'filename="batch-1"\r\n'
+        f"Content-Type: application/gzip\r\n\r\n"
+    ).encode("utf-8")
+    post = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    body = pre + gz + post
+
+    url = _server_url().rstrip("/") + f"/objects/{project_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "text/plain",
+    }
+    req = urllib.request.Request(url, data=body, headers=headers,
+                                 method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except urllib.error.HTTPError as ex:
+        try:
+            detail = ex.read().decode("utf-8", errors="replace")
+        except Exception:
+            detail = ""
+        return {"_err": _classify_http(ex.code, detail),
+                "http_status": int(ex.code)}
+    except urllib.error.URLError as ex:
+        return {"_err": f"Network error reaching Speckle server "
+                        f"{_server_url()}: {ex.reason}"}
+    except Exception as ex:
+        return {"_err": f"{type(ex).__name__}: {ex}"}
+    return {"_ok": True, "uploaded": len(objects)}
+
+
+def _download_object(project_id: str, object_id: str, *,
+                     token: str,
+                     timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    """GET one serialized object via ``/objects/<projectId>/<id>/single``.
+
+    Returns {"_ok": True, "obj": dict} or {"_err": ...}.
+    """
+    url = (_server_url().rstrip("/")
+           + f"/objects/{project_id}/{object_id}/single")
+    headers = {"Authorization": f"Bearer {token}",
+               "Accept": "text/plain"}
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as ex:
+        try:
+            detail = ex.read().decode("utf-8", errors="replace")
+        except Exception:
+            detail = ""
+        return {"_err": _classify_http(ex.code, detail),
+                "http_status": int(ex.code)}
+    except urllib.error.URLError as ex:
+        return {"_err": f"Network error reaching Speckle server "
+                        f"{_server_url()}: {ex.reason}"}
+    except Exception as ex:
+        return {"_err": f"{type(ex).__name__}: {ex}"}
+    try:
+        return {"_ok": True, "obj": json.loads(raw) if raw else {}}
+    except Exception:
+        return {"_err": "Speckle returned a non-JSON object."}
+
+
+def _fetch_children_via_graphql(project_id: str, object_id: str, *,
+                                token: str, limit: int = 1000,
+                                depth: int = 50,
+                                timeout: int = DEFAULT_TIMEOUT_SECONDS
+                                ) -> dict:
+    """Walk a root object's detached descendants via GraphQL `children`.
+
+    Speckle's `object(id){ children(...) }` returns the resolved descendant
+    objects (those the `__closure` references), paginated by a `cursor`. We
+    page until the cursor is exhausted and return them as a flat dict
+    {id: data}. Returns {"_ok": True, "children": {...}, "fetched": int} or
+    {"_err": ...}.
+    """
+    query = """
+    query($pid:String!,$oid:String!,$limit:Int!,$depth:Int!,$cursor:String){
+      project(id:$pid){
+        object(id:$oid){
+          id totalChildrenCount
+          children(limit:$limit, depth:$depth, cursor:$cursor){
+            totalCount cursor
+            objects{ id data }
+          }
+        }
+      }
+    }
+    """
+    resolved: dict[str, Any] = {}
+    cursor: Optional[str] = None
+    # Bounded page loop — Speckle returns at most `limit` per page; the cursor
+    # advances until null. The cap (totalChildrenCount + slack) guarantees
+    # termination even if a server misbehaves.
+    for _ in range(10000):
+        r = _graphql(query, {"pid": project_id, "oid": object_id,
+                             "limit": limit, "depth": depth,
+                             "cursor": cursor}, token=token, timeout=timeout)
+        if "_err" in r:
+            return {"_err": r["_err"]}
+        project = (r.get("data") or {}).get("project") or {}
+        obj = project.get("object") or {}
+        coll = obj.get("children") or {}
+        for child in (coll.get("objects") or []):
+            cid = child.get("id")
+            if cid is not None and cid not in resolved:
+                resolved[cid] = child.get("data")
+        cursor = coll.get("cursor")
+        if not cursor:
+            break
+    return {"_ok": True, "children": resolved, "fetched": len(resolved)}
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +568,21 @@ def _op_list_versions(project_id: str = "", model_id: str = "",
 
 
 def _op_receive(project_id: str = "", object_id: str = "",
-                version_id: str = "", **_: Any) -> OpResult:
+                version_id: str = "", dereference: Any = True,
+                **_: Any) -> OpResult:
     """Receive the object tree of a version.
 
     Accepts either `object_id` (the referenced object hash) directly, or
     `version_id` — in which case we first resolve the version to its
-    referenced object. Returns the root Speckle Base object as a dict.
+    referenced object.
+
+    A real Speckle model is a *tree*: the root object holds detached
+    references to its descendants (its `__closure` lists them by id). When
+    `dereference` is true (the default) we walk those detached children via
+    GraphQL `children` so the caller gets the WHOLE tree — `value["children"]`
+    maps every descendant id to its resolved data, and `value["objects"]`
+    is the flat root+children map. With `dereference` false we return only
+    the root object (the old shallow behaviour) for a cheap peek.
     """
     if not project_id or not str(project_id).strip():
         return OpResult.fail("project_id is required.")
@@ -358,6 +590,8 @@ def _op_receive(project_id: str = "", object_id: str = "",
     token = _load_token()
     if not token:
         return OpResult.fail(_token_hint())
+
+    deref = _as_bool(dereference, default=True)
 
     oid = str(object_id or "").strip()
     if not oid:
@@ -399,40 +633,45 @@ def _op_receive(project_id: str = "", object_id: str = "",
     if not obj:
         return OpResult.fail(f"Speckle object '{oid}' not found in "
                              f"project '{pid}'.")
+    total_children = obj.get("totalChildrenCount") or 0
     out = {
         "id": obj.get("id"),
         "speckle_type": obj.get("speckleType"),
-        "total_children_count": obj.get("totalChildrenCount"),
+        "total_children_count": total_children,
         "data": obj.get("data"),
     }
-    children = obj.get("totalChildrenCount") or 0
+
+    # Dereference the detached descendants. A root with totalChildrenCount>0
+    # has children stored as their own rows; without this walk the caller
+    # only ever sees the root and the tree is truncated.
+    if deref and total_children > 0:
+        cr = _fetch_children_via_graphql(pid, oid, token=token)
+        if "_err" in cr:
+            return OpResult.fail(cr["_err"])
+        children = cr.get("children") or {}
+        out["children"] = children
+        out["children_count"] = len(children)
+        # Flat root+children map keyed by id — the full received tree.
+        objects = {out["id"]: out["data"]}
+        objects.update(children)
+        out["objects"] = objects
+        return OpResult(ok=True, value=out,
+                        value_preview=f"object {str(oid)[:8]} "
+                                      f"({len(children)}/{total_children} "
+                                      f"children resolved)")
+
     return OpResult(ok=True, value=out,
                     value_preview=f"object {str(oid)[:8]} "
-                                  f"({children} children)")
+                                  f"({total_children} children)")
 
 
-def _op_send(project_id: str = "", model_id: str = "",
-             object_id: str = "", message: str = "",
-             source_application: str = "ArchHub",
-             **_: Any) -> OpResult:
-    """Create a new version on a model branch pointing at an object.
+def _commit_version(pid: str, mid: str, oid: str, *, message: str,
+                    source_application: str, token: str) -> dict:
+    """Record a new version on a model branch pointing at an object hash.
 
-    DESTRUCTIVE — writes to the Speckle server. This does not upload an
-    object tree (object creation goes through the object API); it
-    references an already-created object hash and records a new commit.
-    The agent default policy for this op is "ask".
+    Returns {"_ok": True, "version": {...}} or {"_err": ...}. Shared by
+    `speckle.send` (after it uploads the tree) and the version mutation.
     """
-    if not project_id or not str(project_id).strip():
-        return OpResult.fail("project_id is required.")
-    if not model_id or not str(model_id).strip():
-        return OpResult.fail("model_id is required.")
-    if not object_id or not str(object_id).strip():
-        return OpResult.fail("object_id is required — the hash of a "
-                             "Speckle object already created on the "
-                             "server.")
-    token = _load_token()
-    if not token:
-        return OpResult.fail(_token_hint())
     mutation = """
     mutation($input:CreateVersionInput!){
       versionMutations{
@@ -442,30 +681,149 @@ def _op_send(project_id: str = "", model_id: str = "",
     """
     variables = {
         "input": {
-            "projectId": str(project_id).strip(),
-            "modelId": str(model_id).strip(),
-            "objectId": str(object_id).strip(),
-            "message": str(message or "").strip()
-            or "Pushed from ArchHub",
-            "sourceApplication": str(source_application or "ArchHub"),
+            "projectId": pid,
+            "modelId": mid,
+            "objectId": oid,
+            "message": message or "Pushed from ArchHub",
+            "sourceApplication": source_application or "ArchHub",
         }
     }
     r = _graphql(mutation, variables, token=token)
     if "_err" in r:
-        return OpResult.fail(r["_err"])
+        return {"_err": r["_err"]}
     vm = (r.get("data") or {}).get("versionMutations") or {}
     created = vm.get("create") or {}
     if not created.get("id"):
-        return OpResult.fail("Speckle accepted the request but returned "
-                             "no version id.")
-    out = {
+        return {"_err": "Speckle accepted the request but returned no "
+                        "version id."}
+    return {"_ok": True, "version": {
         "id": created.get("id"),
         "message": created.get("message"),
         "referenced_object": created.get("referencedObject"),
         "created_at": created.get("createdAt"),
+    }}
+
+
+def _op_create_object(project_id: str = "", objects: Any = None,
+                      **_: Any) -> OpResult:
+    """Serialize a Speckle object tree and UPLOAD it to the server.
+
+    DESTRUCTIVE — writes object bytes to the Speckle server (it does not
+    create a version; pair it with `speckle.send` or pass objects straight
+    to `speckle.send`). `objects` is a specklepy `Base` (the canvas root)
+    or a list of them. The id we return is specklepy's OWN content hash of
+    the root — the same hash any Speckle client computes — and is what
+    `speckle.send` commits.
+
+    This is the op CON-03 named: it lets the canvas push real geometry to a
+    cloud Speckle server instead of only re-committing an existing hash.
+    """
+    if not project_id or not str(project_id).strip():
+        return OpResult.fail("project_id is required.")
+    if objects is None:
+        return OpResult.fail("objects is required — a Speckle Base object "
+                             "(or list) to upload.")
+    pid = str(project_id).strip()
+    token = _load_token()
+    if not token:
+        return OpResult.fail(_token_hint())
+
+    # A list of roots is wrapped in a synthetic Base whose `@elements` holds
+    # them (the Speckle convention for a multi-object commit), so we always
+    # upload exactly one rooted tree.
+    root = objects
+    if isinstance(objects, (list, tuple)):
+        try:
+            from specklepy.objects.base import Base  # type: ignore
+        except Exception as ex:  # pragma: no cover - import guard
+            return OpResult.fail(
+                "Speckle object support unavailable (specklepy not "
+                f"importable): {ex}")
+        wrapper = Base()
+        wrapper["@elements"] = list(objects)
+        root = wrapper
+
+    try:
+        root_id, serialized = _serialize_object_tree(root)
+    except _SpeckleObjectsUnavailable as ex:
+        return OpResult.fail(
+            "Speckle object support unavailable (specklepy not "
+            f"importable): {ex}")
+    except TypeError as ex:
+        return OpResult.fail(str(ex))
+    except Exception as ex:
+        return OpResult.fail(f"Could not serialize objects: "
+                             f"{type(ex).__name__}: {ex}")
+
+    up = _upload_objects(pid, serialized, token=token)
+    if "_err" in up:
+        return OpResult.fail(up["_err"])
+    out = {
+        "id": root_id,
+        "object_id": root_id,
+        "uploaded": up.get("uploaded", len(serialized)),
+        "object_count": len(serialized),
     }
     return OpResult(ok=True, value=out,
-                    value_preview=f"version {str(created.get('id'))[:8]} "
+                    value_preview=f"uploaded {len(serialized)} object"
+                                  f"{'s' if len(serialized) != 1 else ''} "
+                                  f"-> {root_id[:8]}")
+
+
+def _op_send(project_id: str = "", model_id: str = "",
+             object_id: str = "", objects: Any = None, message: str = "",
+             source_application: str = "ArchHub",
+             **_: Any) -> OpResult:
+    """Push objects to a model branch — upload + commit a new version.
+
+    DESTRUCTIVE — writes to the Speckle server. Two ways to call it:
+
+      * `objects` — a specklepy `Base` (or list) of canvas geometry. We
+        serialize it with specklepy's OWN hash, UPLOAD the whole object tree
+        to `/objects/<projectId>`, then commit a version referencing the
+        resulting root hash. This is the path the canvas "Send objects" uses
+        to push real geometry (CON-03).
+      * `object_id` — the hash of an object ALREADY on the server; we skip
+        the upload and just commit a version referencing it (back-compat).
+
+    The agent default policy for this op is "ask".
+    """
+    if not project_id or not str(project_id).strip():
+        return OpResult.fail("project_id is required.")
+    if not model_id or not str(model_id).strip():
+        return OpResult.fail("model_id is required.")
+    pid = str(project_id).strip()
+    mid = str(model_id).strip()
+    token = _load_token()
+    if not token:
+        return OpResult.fail(_token_hint())
+
+    uploaded = 0
+    if objects is not None:
+        # Serialize + upload the tree, then commit the returned root hash.
+        created = _op_create_object(project_id=pid, objects=objects)
+        if not created.ok:
+            return created
+        oid = created.value["id"]
+        uploaded = created.value.get("object_count", 0)
+    else:
+        oid = str(object_id or "").strip()
+        if not oid:
+            return OpResult.fail(
+                "Provide either objects (a Speckle Base/list to upload) or "
+                "object_id (the hash of an object already on the server).")
+
+    cv = _commit_version(pid, mid, oid, message=str(message or "").strip(),
+                         source_application=str(source_application
+                                                or "ArchHub"),
+                         token=token)
+    if "_err" in cv:
+        return OpResult.fail(cv["_err"])
+    out = dict(cv["version"])
+    if objects is not None:
+        out["uploaded_objects"] = uploaded
+    return OpResult(ok=True, value=out,
+                    value_preview=f"version {str(out.get('id'))[:8]} "
                                   f"created")
 
 
@@ -577,8 +935,9 @@ class SpeckleConnector(Connector):
                 op_id="speckle.receive",
                 host="speckle", kind="read",
                 label="Receive objects",
-                description="Receive the object tree of a Speckle version "
-                            "(by version id or object hash).",
+                description="Receive the full object tree of a Speckle "
+                            "version (by version id or object hash) — the "
+                            "root and all detached children resolved.",
                 inputs=[
                     ParamSpec(id="project_id", label="Project ID",
                               type="text", required=True,
@@ -591,17 +950,42 @@ class SpeckleConnector(Connector):
                               type="text",
                               help="A Speckle object hash (alternative to "
                                    "version_id)."),
+                    ParamSpec(id="dereference", label="Resolve children",
+                              type="bool", default=True,
+                              help="Walk detached child refs and return the "
+                                   "whole tree (off = root object only)."),
                 ],
                 output_type="dict",
                 fn=_op_receive,
             ),
             ConnectorOp(
+                op_id="speckle.create_object",
+                host="speckle", kind="action",
+                label="Upload objects",
+                description="Serialize a Speckle object tree (canvas "
+                            "geometry) and upload it to the server. Returns "
+                            "the content hash to commit with Send.",
+                inputs=[
+                    ParamSpec(id="project_id", label="Project ID",
+                              type="text", required=True,
+                              options_source="speckle.list_projects",
+                              help="The stream / project id."),
+                    ParamSpec(id="objects", label="Objects", type="any",
+                              required=True,
+                              help="A specklepy Base object (or list) to "
+                                   "serialize + upload."),
+                ],
+                output_type="dict",
+                destructive=True,
+                fn=_op_create_object,
+            ),
+            ConnectorOp(
                 op_id="speckle.send",
                 host="speckle", kind="action",
                 label="Send objects",
-                description="Create a new version on a model branch "
-                            "referencing an object hash. Writes to the "
-                            "Speckle server.",
+                description="Push objects to a model branch: upload the "
+                            "object tree (or reference an existing hash) and "
+                            "commit a new version. Writes to the server.",
                 inputs=[
                     ParamSpec(id="project_id", label="Project ID",
                               type="text", required=True,
@@ -611,10 +995,14 @@ class SpeckleConnector(Connector):
                               type="text", required=True,
                               options_source="speckle.list_models",
                               help="The target model / branch id."),
+                    ParamSpec(id="objects", label="Objects", type="any",
+                              help="Canvas geometry to upload + commit (a "
+                                   "specklepy Base or list). Use this OR "
+                                   "object_id."),
                     ParamSpec(id="object_id", label="Object ID",
-                              type="text", required=True,
-                              help="The hash of a Speckle object already "
-                                   "created on the server."),
+                              type="text",
+                              help="The hash of a Speckle object already on "
+                                   "the server (alternative to objects)."),
                     ParamSpec(id="message", label="Commit message",
                               type="text", default="",
                               help="Optional version message."),

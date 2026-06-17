@@ -96,6 +96,75 @@ explanatory prose. Just the code, ready to save as `archhub_connector.py`.
 """
 
 
+CONNECTOR_CONTRACT_ACAD = """\
+You are generating an AutoCAD plug-in written in C# that implements ArchHub's
+standard connector contract for AutoCAD version {version}.
+
+Targets (match the .NET runtime AutoCAD loads):
+- AutoCAD 2024 and earlier: .NET Framework 4.8 (net48)
+- AutoCAD 2025 and later:   .NET 8 (net8.0-windows)
+
+Reference the managed AutoCAD .NET API assemblies (copy-local FALSE — they
+ship with AutoCAD): AcMgd.dll, AcDbMgd.dll, AcCoreMgd.dll, plus AcCui.dll
+where needed.
+
+The plug-in MUST:
+
+1. Implement `IExtensionApplication` (Initialize / Terminate).
+
+2. On Initialize, start a `System.Net.HttpListener` on
+   http://localhost:48885/ on a background thread. If 48885 is busy, walk
+   forward through 48886..48899 and bind the first free port (the ArchHub
+   broker scans this range). Print the bound port to the AutoCAD command
+   line via `Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage`.
+
+3. Marshal every call that touches the AutoCAD database or document onto
+   AutoCAD's main thread. HttpListener callbacks run on a worker thread, and
+   the AutoCAD .NET API is single-threaded-apartment — use
+   `Application.DocumentManager.ExecuteInCommandContextAsync` (2025+) or, for
+   net48, post the work through a registered `Application.Idle` handler /
+   `Document.SendStringToExecute` so the database is only touched in the
+   document context. Never call the database API directly from the listener
+   thread.
+
+4. Expose endpoints (all responses JSON, Content-Type application/json):
+
+   GET  /ping
+        -> 200 {"status": "ok", "service": "acad-mcp", "version": "<plugin ver>",
+                "acad": "<Application.Version>"}
+
+   GET  /info
+        -> 200 {"status": "ok", "document": "<active dwg name>",
+                "path": "<full path or empty>", "acad_version": "...",
+                "dwg_count": N}
+
+   POST /execute   body: {"code": "<C# snippet>"} OR
+                        {"command": "<AutoCAD command line string>"}
+        For a `command`: send it to the active document command line and
+        report it dispatched (AutoCAD runs it asynchronously).
+        For `code`: Roslyn-compile + run the snippet with `Document doc`,
+        `Database db`, and `Editor ed` in scope, inside a
+        `using (Transaction tr = db.TransactionManager.StartTransaction())`
+        block; if the snippet does not commit, auto-roll-back. Return any
+        JSON-safe object the snippet assigns to a `result` local.
+        -> 200 {"status": "ok", "result": <result>, "stdout": "..."}
+        on failure {"status": "error", "error": "<message/traceback>"}
+
+5. On Terminate, stop the HttpListener cleanly.
+
+Rules of generation:
+- Wrap every endpoint in try/catch so one bad request never kills the listener.
+- Use only the .NET BCL + the AutoCAD managed API. No third-party HTTP/JSON
+  frameworks beyond System.Text.Json (or a tiny hand-rolled JSON writer).
+- Print one startup line to the command line:
+  `[ArchHub] AutoCAD connector listening on http://localhost:<port>/`.
+
+Output the .csproj and the .cs files separately, each preceded by a header
+line of the form `### FILE: <relative path>` and followed by the file
+contents. Nothing else.
+"""
+
+
 CONNECTOR_CONTRACT_REVIT = """\
 You are generating a Revit external application written in C# that implements
 ArchHub's standard connector contract for Revit version {version}.
@@ -309,8 +378,125 @@ def generate_revit_addin(version: str, router,
                            model=response.model, cache_path=cache_path)
 
 
-# AutoCAD follows the same shape; left as a stub until the contract is finalized.
+def _validate_csharp_files(files: dict[str, str], host: str,
+                           must_contain: tuple[str, ...]) -> Optional[str]:
+    """Validate a multi-file C# connector output. Returns None when valid,
+    else a human error message. Checks the structural contract — a .cs + a
+    .csproj exist and the .cs names the required contract tokens — without
+    needing a compiler (that's `auto_build`'s job at install time)."""
+    if not files:
+        return f"Generated {host} plug-in did not include any files."
+    if not any(p.endswith(".cs") for p in files):
+        return f"Generated {host} plug-in is missing the .cs source."
+    if not any(p.endswith(".csproj") for p in files):
+        return f"Generated {host} plug-in is missing the .csproj."
+    cs_blob = "\n".join(src for p, src in files.items() if p.endswith(".cs"))
+    missing = [tok for tok in must_contain if tok not in cs_blob]
+    if missing:
+        return (f"Generated {host} plug-in is missing required contract "
+                f"element(s): {', '.join(missing)}")
+    return None
+
+
+@dataclass
+class UnavailableConnector:
+    """A typed, honest 'could not generate' result — the meta-connector's
+    answer when generation genuinely can't proceed (no LLM router, the model
+    returned nothing usable, validation failed). It is the AutoCAD/Revit
+    parallel of a connector's `missing`/`unauthorized` honest status: the
+    caller gets a structured value it can show, NOT an exception.
+
+    `ok` is always False; `host`/`version` echo the request; `reason` is a
+    machine code; `detail` is a plain-English explanation; `fallback` names
+    the static `payload/sources/` path callers can fall back to (offline)."""
+    host: str
+    version: str
+    reason: str            # "no_router" | "empty_generation" | "validation_failed"
+    detail: str
+    fallback: Optional[str] = None
+    ok: bool = False
+
+
 def generate_acad_plugin(version: str, router,
                          on_progress: Optional[Callable[[str, int, str], None]] = None,
-                         force_regenerate: bool = False) -> GeneratedSource:
-    raise NotImplementedError("AutoCAD meta-connector contract pending.")
+                         force_regenerate: bool = False):
+    """Generate (or load from cache) the AutoCAD connector plug-in for
+    `version`, mirroring `generate_revit_addin`. Same shape: one LLM call
+    pinned to the ArchHub AutoCAD connector contract, validated, cached by
+    content hash.
+
+    NEVER raises for an unavailable path — when generation genuinely can't
+    proceed (no router, empty model output, validation failure) it returns a
+    typed `UnavailableConnector` (the honest-degrade contract: "one master
+    connector per host" degrades, it does not throw `NotImplementedError`).
+    """
+    on_progress = on_progress or (lambda *_: None)
+    on_progress("Preparing", 5, f"AutoCAD {version}")
+
+    # NB: .replace (not .format) — the contract body contains literal JSON
+    # braces ({"status": "ok"} examples) that str.format would choke on.
+    contract = CONNECTOR_CONTRACT_ACAD.replace("{version}", str(version))
+    if not force_regenerate:
+        hit = _try_cache("acad", version, contract)
+        if hit is not None:
+            on_progress("Cache hit", 100, str(hit.cache_path))
+            return hit
+
+    if router is None:
+        # No LLM router wired — honest typed unavailable, never a raise.
+        on_progress("Unavailable", 100, "no LLM router")
+        return UnavailableConnector(
+            host="acad", version=version, reason="no_router",
+            detail="No LLM router is available to generate the AutoCAD "
+                   "connector. Wire a model in Settings, or use the static "
+                   "payload/sources/ fallback offline.",
+            fallback=str(_static_fallback_dir("acad")))
+
+    on_progress("Asking the model to write the plug-in", 20, "")
+    prompt = (
+        f"Generate the AutoCAD plug-in. Follow the contract exactly. "
+        f"Output ONLY the files using the `### FILE: <path>` header convention.\n\n"
+        f"{contract}"
+    )
+    chunks: list[str] = []
+    response = router.complete(
+        history=[{"role": "user", "content": prompt}],
+        model="auto",
+        on_chunk=lambda piece: chunks.append(piece),
+        on_tool_invocation=lambda _inv: None,
+    )
+    on_progress("Parsing generated files", 75, getattr(response, "model", ""))
+
+    files = _parse_multifile(getattr(response, "text", "") or "")
+    if not files:
+        on_progress("Unavailable", 100, "empty generation")
+        return UnavailableConnector(
+            host="acad", version=version, reason="empty_generation",
+            detail="The model returned no usable plug-in files. Retry, or "
+                   "use the static payload/sources/ fallback offline.",
+            fallback=str(_static_fallback_dir("acad")))
+
+    # Structural validation against the AutoCAD contract.
+    err = _validate_csharp_files(
+        files, "AutoCAD",
+        must_contain=("IExtensionApplication", "HttpListener", "48885"))
+    if err is not None:
+        on_progress("Unavailable", 100, "validation failed")
+        return UnavailableConnector(
+            host="acad", version=version, reason="validation_failed",
+            detail=err, fallback=str(_static_fallback_dir("acad")))
+
+    cache_path = _save_cache("acad", version, contract, files,
+                             getattr(response, "model", "unknown"))
+    on_progress("Done", 100, str(cache_path))
+    return GeneratedSource(host="acad", version=version, files=files,
+                           model=getattr(response, "model", "unknown"),
+                           cache_path=cache_path)
+
+
+def _static_fallback_dir(host: str) -> Path:
+    """The checked-in static source dir a caller can build offline when
+    LLM generation is unavailable. Path is reported even if it doesn't yet
+    exist — it names WHERE the offline fallback lives."""
+    return (Path(__file__).resolve().parent.parent
+            / "payload" / "sources" / host)

@@ -33,14 +33,21 @@ Filters
 
 Privacy
 -------
-This is the PRE-PRIVACY-LAYER export. The Q10 privacy slice (separate)
-adds:
-  - `payload_pii` split kept at USER-scope only
-  - `redacted=true` requirement for COLLECTIVE-scope export
-  - differential privacy noise on aggregates
-Until Q10 lands, callers MUST be conscious of which scope they're
-exporting from. The default `scope_filter=[USER]` minimises accidental
-escalation.
+The privacy/legal layer is WIRED at export (no longer "pre-privacy"):
+  - **Collective-scope routing (Q10).** Any COMMUNITY/GLOBAL scope routes
+    through `privacy.privatize_for_collective` → differentially-private
+    AGGREGATES only; raw rows never reach the collective pool (see
+    `_export_collective_dp`).
+  - **Training-rights dam (AgDR-0054 · BRV-04).** Raw-row exports are gated by
+    `BrainStore.export_trainable_fragments`: quarantined
+    (right-to-be-forgotten / poisoned) rows are ALWAYS excluded, and
+    `training_target='collective'` additionally excludes `firm_private_only`
+    rows. Export-gating is the only reliable unlearning, so the gate runs here.
+  - The default `scope_filter=[USER]` still minimises accidental scope
+    escalation; `respect_training_rights=True` is the default rights floor.
+Still pending (genuinely separate slices, not silently skipped here): a
+`payload_pii` USER-only split and per-row PII redaction before the
+`content_hash_post` decontamination scan.
 """
 from __future__ import annotations
 
@@ -138,6 +145,36 @@ def _scope_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
+# AgDR-0054 — the export-time legal/rights dam, wired INTO the exporter the
+# founder named (closes BRV-04: the dam lived in storage.py but `export_fragments`
+# never consulted it, so a quarantined / out-of-tier fragment landed verbatim in a
+# training export). `BrainStore.export_trainable_fragments` is the single authority
+# on which fragment ids are legally trainable for a given target:
+#   - quarantine_flag = 1            -> NEVER exported (any target)
+#   - target='collective'            -> only training_rights_tier='collective_ok'
+#   - target='firm_private'          -> 'collective_ok' or 'firm_private_only'
+# Export-gating is the ONLY reliable unlearning (weights-level erasure is
+# impossible), so this gate runs HERE, at the export, not at recall.
+_VALID_TRAINING_TARGETS = ("collective", "firm_private")
+
+
+def _trainable_id_set(store: Store, training_target: str) -> set[str]:
+    """Ask the legal/rights dam which fragment ids may leave for `training_target`.
+
+    Returns the set of ids the dam clears. Raw rows whose id is NOT in this set
+    (quarantined or out-of-tier) are excluded from the export. Raises
+    ``ValueError`` for an unknown target (mirrors the dam's own contract) so a
+    typo can never silently widen the export.
+    """
+    if training_target not in _VALID_TRAINING_TARGETS:
+        raise ValueError(
+            f"unknown training_target {training_target!r}; "
+            f"expected one of {_VALID_TRAINING_TARGETS}"
+        )
+    cleared = store.export_trainable_fragments(target=training_target)
+    return {row["id"] for row in cleared}
+
+
 def _export_collective_dp(
     store: Store,
     out_dir: Path,
@@ -219,6 +256,8 @@ def export_fragments(
     limit: int = 10_000,
     owner_user: Optional[str] = None,
     epsilon: float = _DEFAULT_COLLECTIVE_EPSILON,
+    respect_training_rights: bool = True,
+    training_target: str = "firm_private",
 ) -> dict[str, Any]:
     """Export fragments matching the filter to <out_dir>/<dataset_name>/.
 
@@ -234,6 +273,30 @@ def export_fragments(
     guarantee: raw user fragments never reach the collective scope — only DP
     aggregates do. ``epsilon`` tunes the noise (smaller = stronger privacy).
     Non-collective exports (USER / PROJECT / FIRM) are unchanged.
+
+    **Legal/training-rights dam (AgDR-0054 · BRV-04).** Raw-row exports are
+    gated by ``BrainStore.export_trainable_fragments`` — the single authority on
+    which fragments may legally leave for training. With
+    ``respect_training_rights=True`` (default), any fragment that is
+    ``quarantine_flag=1`` (poisoned / right-to-be-forgotten) or out-of-tier for
+    ``training_target`` is EXCLUDED from the written dataset. This is the
+    export-time enforcement of the rights tiers; recall-time gating cannot
+    substitute because export-gating is the only reliable unlearning (weights
+    can't be surgically erased).
+
+    ``training_target`` matches the dam's own contract:
+      - ``'firm_private'`` (default) — the minimal legal floor: clears
+        ``collective_ok`` + ``firm_private_only`` and drops ONLY quarantined /
+        ``quarantine_never_trains`` rows. This is the floor EVERY raw export must
+        respect — right-to-be-forgotten / poisoned data never leaves, whatever
+        the destination.
+      - ``'collective'`` — the stricter pool gate: clears only ``collective_ok``,
+        so ``firm_private_only`` rows are also excluded. Pass this when the
+        dataset feeds the cross-firm collective training pool.
+
+    Set ``respect_training_rights=False`` ONLY for a same-scope operational dump
+    that never feeds training; the manifest records which gate ran so the choice
+    is auditable.
     """
     if scope_filter is None:
         # Privacy default — USER-scope only.
@@ -261,6 +324,26 @@ def export_fragments(
         since=since,
         limit=limit,
     )
+
+    # AgDR-0054 legal/rights dam (BRV-04): exclude quarantined / out-of-tier
+    # fragments from the raw export by intersecting with the ids the dam clears.
+    # `training_rights_excluded` is the count dropped here — surfaced in the
+    # manifest so the gate is auditable and a regression (dam dead-wired again)
+    # is visible. Validating `training_target` up-front means a typo raises
+    # rather than silently widening the export.
+    if respect_training_rights:
+        if training_target not in _VALID_TRAINING_TARGETS:
+            raise ValueError(
+                f"unknown training_target {training_target!r}; "
+                f"expected one of {_VALID_TRAINING_TARGETS}"
+            )
+        cleared_ids = _trainable_id_set(store, training_target)
+        before = len(frags)
+        frags = [f for f in frags if f.id in cleared_ids]
+        training_rights_excluded = before - len(frags)
+    else:
+        training_rights_excluded = 0
+
     rows = [_fragment_to_row(f) for f in frags]
 
     target = Path(out_dir) / dataset_name
@@ -284,6 +367,14 @@ def export_fragments(
             "since":  since,
             "limit":  limit,
             "owner_user": owner_user,
+        },
+        # AgDR-0054 legal/rights dam audit (BRV-04): names which gate ran + how
+        # many rows it dropped, so the dam is provably wired (not dead) and any
+        # regression is visible in the dataset's own manifest.
+        "training_rights": {
+            "enforced": respect_training_rights,
+            "target": training_target if respect_training_rights else None,
+            "excluded_count": training_rights_excluded,
         },
         "files": {
             "jsonl":   {"path": str(jsonl_path),   "bytes": jsonl_bytes},

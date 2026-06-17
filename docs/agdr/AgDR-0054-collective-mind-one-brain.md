@@ -1,11 +1,20 @@
 ---
 id: AgDR-0054
 timestamp: 2026-06-10
-status: executed — founder-signed 2026-06-10 ("EXECUTE")
+status: approved-direction · build-pending — founder-signed direction 2026-06-10 ("EXECUTE"); NO slice built (all PLAN-LOCKED)
 category: architecture
 supersedes: none
 builds-on: [AgDR-0012, AgDR-0021, AgDR-0038, AgDR-0042, AgDR-0044, AgDR-0045]
 ---
+
+> **STATUS — read this first.** `executed` was a misnomer here: the founder
+> signed off the *direction* ("EXECUTE" = build this), but **no slice has been
+> built** — every S0–S6 slice in `docs/ROADMAP.md` is `[ ] PLAN-LOCKED · NO
+> BUILD`. The honest status is **approved-direction · build-pending**:
+> direction locked, build awaiting the founder's "go". (The word `executed`
+> elsewhere in the ledger means *built + live*; reusing it for "approved
+> direction" let an unbuilt record read as shipped — the DOC-07 overclaim,
+> now gated by `tools/doc_reconcile.py` R4.)
 
 # AgDR-0054 — The Collective Mind: one brain, dam-gated river, training flywheel
 

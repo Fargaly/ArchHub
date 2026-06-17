@@ -670,7 +670,8 @@ class ArchHubBridge(QObject):
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None,
-                  auto_extract_memory: bool = True):
+                  auto_extract_memory: bool = True,
+                  defer_boot: bool = True):
         super().__init__(parent)
         self.router = router
         self.manager = manager
@@ -683,6 +684,21 @@ class ArchHubBridge(QObject):
         # with True so memory_query / memory_stats slots have data
         # without manual extractor invocation.
         self._auto_extract_memory = bool(auto_extract_memory)
+        # Boot-thread gate. True (default) spawns the `archhub-deferred-boot`
+        # daemon thread that scans disk (custom_nodes.load_all), mirrors the
+        # persisted library registry into the process (library.load_from_disk),
+        # imports connectors, and seeds the memory graph. That thread MUTATES
+        # the process-global library._REGISTRY ASYNCHRONOUSLY. A test that
+        # constructs a bridge and then synchronously inspects/resets the
+        # library is racing that mutation — exactly the heisenbug that made
+        # test_library_end_to_end::test_cold_restart flake red on Linux CI
+        # (the boot thread re-hydrated 16 disk entries between the test's
+        # reset_registry() and its `assert registry_size() == 0`). Tests that
+        # don't exercise the boot thread itself pass defer_boot=False so bridge
+        # construction has NO background side effect on shared registries.
+        # Production always boots with True so the palette populates a beat
+        # after first paint instead of blocking it.
+        self._defer_boot = bool(defer_boot)
         self._active_session_id: Optional[str] = None
         # AgDR-0036 Phase 1 — custom-node + connector registration are
         # the two heavy boot steps (custom_nodes.load_all scans disk;
@@ -765,8 +781,9 @@ class ArchHubBridge(QObject):
                     g.close()
             except Exception:
                 pass
-        _threading.Thread(target=_deferred_boot, daemon=True,
-                           name="archhub-deferred-boot").start()
+        if self._defer_boot:
+            _threading.Thread(target=_deferred_boot, daemon=True,
+                               name="archhub-deferred-boot").start()
         # ── Founder demand 2026-05-15: TRIGGER nodes go live. The
         # graph-trigger scheduler walks every session blob, finds in-graph
         # trigger nodes (cat='trigger'), and dispatches `trigger_fired`

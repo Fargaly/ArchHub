@@ -30,20 +30,41 @@ import library_persistence as _lp  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolated_library(tmp_path, monkeypatch):
-    """Redirect LOCALAPPDATA so library_persistence writes go to tmp.
+    """Redirect the persistence root so library_persistence writes go to tmp.
     Reset the in-process library before + after every test.
+
+    BOTH LOCALAPPDATA *and* XDG_DATA_HOME must be redirected:
+    library_persistence.default_registry_path() reads LOCALAPPDATA on Windows
+    but XDG_DATA_HOME (fallback ~/.local/share) on POSIX. Patching only
+    LOCALAPPDATA left the POSIX runners (Linux/macOS CI) writing this file's
+    seeded+created node-types to the REAL shared ~/.local/share registry.json,
+    which then leaked into later test files: ArchHubBridge's deferred-boot
+    thread does library.load_from_disk() whenever that file exists, so
+    test_library_end_to_end::test_cold_restart saw 16 leaked entries
+    re-hydrated under it (`assert 16 == 0`). Redirect both env vars AND delete
+    the registry file on teardown so nothing escapes this test's tmp dir.
     """
     appdata = tmp_path / "appdata"
     appdata.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+    monkeypatch.setenv("XDG_DATA_HOME", str(appdata))
     _lib.reset_registry()
     yield
     _lib.reset_registry()
+    # Belt-and-braces: drop any registry file this test persisted so it can
+    # never leak onto a shared path for a later test file.
+    try:
+        _lp.delete_registry_file()
+    except Exception:
+        pass
 
 
 @pytest.fixture
 def bridge_inst():
-    b = _bridge_module.ArchHubBridge()
+    # defer_boot=False: this file drives the library slots synchronously and
+    # must NOT race the archhub-deferred-boot daemon thread mutating the
+    # shared library._REGISTRY out from under the assertions.
+    b = _bridge_module.ArchHubBridge(defer_boot=False)
     # Force the bootstrap flag off so each test exercises seed-on-first-call.
     if hasattr(b, "_lib_booted"):
         delattr(b, "_lib_booted")

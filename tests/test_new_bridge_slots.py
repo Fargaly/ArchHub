@@ -433,25 +433,77 @@ def test_get_saved_skills_lists_only_loadable_skills():
         assert isinstance(loaded.get("nodes"), list)
 
 
-def test_shipped_canvas_skills_are_loadable():
-    """Any starter skill in app/skills/*.archhub-skill.json must parse +
-    load via load_skill. Built-in starter skills are NOT shipped in
-    source yet — app/skills/*.archhub-skill.json is .gitignore'd as user
-    runtime data and no clean starter templates exist (tracked in
-    docs/ROADMAP.md). The test skips when none are present and otherwise
-    guards the loader contract."""
+def test_shipped_canvas_skills_are_loadable(tmp_path, monkeypatch):
+    """The SHIPPED-store half of the loader contract: a canvas skill that
+    lives in `_shipped_skills_dir()` (the read-only `app/skills/` seed store)
+    must parse + load via `load_skill`, and be tagged `shipped` by the
+    resolver so `delete_saved_skill` tombstones rather than unlinks it.
+
+    TCI-10 root cause: this test used to glob the LIVE
+    `_shipped_skills_dir()` and `pytest.skip("no built-in starter skills
+    shipped yet (tracked in ROADMAP)")` whenever the glob was empty. That
+    store is `*.archhub-skill.json`, which `.gitignore`s as user runtime data
+    — so on EVERY clean checkout the glob is empty and the test ALWAYS
+    skipped. A test that can only ever skip cannot guard anything: if the
+    shipped-seed loader path (`_scan_canvas_skills` reading
+    `_shipped_skills_dir()`) regressed, this test would keep green-skipping
+    and mask it. "tracked in ROADMAP" is a founder-deferral marker dressed up
+    as a test reason.
+
+    The honest fix exercises the real shipped-store CODE PATH deterministically
+    instead of depending on gitignored on-disk files: redirect BOTH skill dirs
+    to tmp dirs, plant a real `.archhub-skill.json` seed in the shipped one,
+    and assert the loader loads it AND marks it shipped. No skip is reachable —
+    the contract is always checked."""
     import json
+    # Redirect both stores so the test is hermetic and never touches the real
+    # %LOCALAPPDATA% skills dir. Patch on the bridge module — `_scan_canvas_skills`
+    # calls these module-level helpers by name at scan time.
+    shipped_dir = tmp_path / "shipped_skills"
+    user_dir = tmp_path / "user_skills"
+    shipped_dir.mkdir()
+    user_dir.mkdir()
+    monkeypatch.setattr(_bridge_module, "_shipped_skills_dir",
+                        lambda: shipped_dir)
+    monkeypatch.setattr(_bridge_module, "_user_skills_dir",
+                        lambda: user_dir)
+
+    # Plant a real shipped canvas-skill seed (the exact envelope shape
+    # _scan_canvas_skills reads: slug + name + graph{nodes,wires} + meta).
+    seed = {
+        "slug": "starter-extract-mass",
+        "name": "Starter — Extract Mass",
+        "graph": {"nodes": [{"id": "s1", "cat": "host"}], "wires": []},
+        "meta": {"mode": "private", "description": "shipped seed",
+                 "category": "production"},
+    }
+    (shipped_dir / "starter-extract-mass.archhub-skill.json").write_text(
+        json.dumps(seed, indent=2), encoding="utf-8")
+
     b = _bridge_module.ArchHubBridge()
-    shipped = _bridge_module._shipped_skills_dir()
-    files = list(shipped.glob("*.archhub-skill.json"))
-    if not files:
-        pytest.skip("no built-in starter skills shipped yet (tracked in ROADMAP)")
-    for f in files:
-        env = json.loads(f.read_text(encoding="utf-8"))
-        slug = env.get("slug") or f.stem.replace(".archhub-skill", "")
-        loaded = json.loads(b.load_skill(slug))
-        assert "error" not in loaded, (loaded, slug)
-        assert isinstance(loaded.get("nodes"), list)
+
+    # The resolver sees it and tags it shipped (provenance the delete path needs).
+    scanned = {s["slug"]: s for s in _bridge_module._scan_canvas_skills()}
+    assert "starter-extract-mass" in scanned, (
+        "shipped seed not surfaced by _scan_canvas_skills — the shipped-store "
+        "scan branch is broken")
+    assert scanned["starter-extract-mass"]["shipped"] is True, (
+        "seed in _shipped_skills_dir() must be tagged shipped=True so "
+        "delete_saved_skill tombstones (not unlinks) a read-only seed")
+
+    # And load_skill loads its real graph back — never an error, never fabricated.
+    loaded = json.loads(b.load_skill("starter-extract-mass"))
+    assert "error" not in loaded, loaded
+    assert isinstance(loaded.get("nodes"), list)
+    assert loaded["nodes"] and loaded["nodes"][0]["id"] == "s1"
+    assert loaded.get("wires") == []
+    assert loaded.get("slug") == "starter-extract-mass"
+
+    # get_saved_skills (the panel feed) lists it too — list + loader agree.
+    listed = {e["id"] for e in json.loads(b.get_saved_skills())}
+    assert "starter-extract-mass" in listed, (
+        "shipped seed loadable but not listed by get_saved_skills — the "
+        "list/loader drift this whole module guards against")
 
 
 def test_get_node_grammar_returns_the_canonical_grammar():

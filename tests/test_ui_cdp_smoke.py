@@ -95,6 +95,39 @@ _APP_MAIN = Path(__file__).resolve().parent.parent / "app" / "main.py"
 # How long to wait for the launched app's inspector to come up.
 _LAUNCH_TIMEOUT = float(os.environ.get("ARCHHUB_CDP_LAUNCH_TIMEOUT", "45"))
 
+# ───────────────────────────────────────────────────────────────────────────
+# HONEST-SKIP TAXONOMY (TCI-09 — a skip must never mask a shipped feature)
+# ───────────────────────────────────────────────────────────────────────────
+# Every `pytest.skip(...)` in THIS file is allowed to fire for EXACTLY one
+# reason: the live, display-backed environment a real CDP click needs is not
+# present this run (no display/GPU, the app isn't up, the DevTools endpoint is
+# degraded, the websocket client lib is missing, or a precondition the click
+# operates on is genuinely empty — e.g. a fresh canvas with no nodes). NONE of
+# them may fire because a shipped feature regressed: a regression must FAIL the
+# assertion, never duck into a green skip. The honesty guard
+# (tests/test_cdp_gate_enforced.py) reads this list and asserts every skip
+# reason in this module contains one of these environment-class tokens AND none
+# carries a deferral marker ("not landed", "shipped yet", "tracked in ROADMAP",
+# "TODO", "FIXME", "for now"). The marker `# cdp-honest-skip` on each skip line
+# is the audited opt-in; adding a new skip without a taxonomy token trips the
+# guard. This makes "the canonical proof skips cleanly" a CHECKED property, not
+# a thing a future edit can quietly turn into a feature-masking no-op.
+HONEST_SKIP_TOKENS = (
+    "not installed",          # client lib (websocket-client) absent
+    "not found",              # app/main.py missing — cannot auto-launch
+    "exited early",           # auto-launched app died before inspector (no display/GPU)
+    "did not expose",         # no CDP inspector within the launch budget (headless)
+    "not reachable",          # no inspector at CDP_URL (no app / no display)
+    "No page target",         # inspector up but no page ws URL
+    "did not complete",       # ws upgrade too slow this run
+    "not answering",          # CDP commands not answering — endpoint degraded
+    "budget",                 # session-wide wall-clock budget exhausted (degraded)
+    "not the ArchHub studio", # connected page isn't the app (no LM_GRAPH)
+    "no nodes",               # genuinely-empty precondition (fresh canvas)
+    "could not spawn",        # library palette did not render in this build (env gap)
+    "no editable value",      # rail field absent in this build (env gap)
+)
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # Connection / skip plumbing

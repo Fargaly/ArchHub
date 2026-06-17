@@ -6,7 +6,7 @@ ROADMAP never drifts from what is actually merged. This is the merge-time
 gate that makes "documentation up to date" a CHECK, not a hope — the same
 shape as the brain/commit/reality gates already in `tools/`.
 
-It fails a PR when ANY of three drift classes is present:
+It fails a PR when ANY of four drift classes is present:
 
   R1  STALE-CHECKED   — a `docs/ROADMAP.md` "- [x]" item is marked DONE but
                         carries NO proof receipt (no PR `#NNN`, no commit SHA,
@@ -25,6 +25,20 @@ It fails a PR when ANY of three drift classes is present:
                         SHIPPED_RECEIPTS ledger below, derived from the merged
                         git history) is still sitting as "- [ ]" (open) — or is
                         absent from the roadmap entirely. The doc lags the code.
+
+  R4  STATUS-OVERCLAIM — an AgDR whose frontmatter `status:` reads as BUILT
+                        (`executed`/`shipped`/`done`/`implemented`) while EVERY
+                        one of its roadmap slices is still `- [ ]` (open) and it
+                        has at least one slice. `executed` then means two
+                        different things in the ledger — "founder-approved
+                        direction" on the record vs "built+live" everywhere else
+                        — so a reader can't tell approved-but-unbuilt from
+                        shipped. The fix: such a record must use a distinct,
+                        honest status (e.g. `approved-direction · build-pending`),
+                        OR carry ≥1 flipped `- [x]` slice with a proof receipt.
+                        This is the exact AgDR-0054 case the founder flagged:
+                        `status: executed` with 100% PLAN-LOCKED / NO-BUILD
+                        slices. (DOC-07.)
 
 DESIGN — ONE SYSTEM, no parallel store
 --------------------------------------
@@ -214,6 +228,57 @@ def parse_roadmap(text: str) -> list[RoadmapItem]:
 # AgDR frontmatter id scan (R2).
 # ──────────────────────────────────────────────────────────────────────────
 _FRONT_ID = re.compile(r"^id:\s*(\S+)", re.MULTILINE)
+_FRONT_STATUS = re.compile(r"^status:\s*(.+)$", re.MULTILINE)
+# Status leading-keywords that assert the work is BUILT (not merely approved
+# in direction). Mirrors tools/build_map._classify_status's "built" bucket —
+# kept in lock-step so the gate and the map agree on what "built" reads as.
+_BUILT_STATUS_PREFIXES = ("executed", "shipped", "done", "implemented")
+
+
+def status_reads_as_built(raw_status: str) -> bool:
+    """True iff an AgDR frontmatter status asserts the decision is BUILT.
+
+    `executed — founder-signed` → built. `approved-direction · build-pending`,
+    `proposed`, `plan-locked`, `rework`, `superseded …` → NOT built. The test
+    is the leading keyword (statuses are free-form prose), and `superseded`
+    short-circuits to not-built even though it may contain other words."""
+    low = raw_status.strip().lower()
+    if low.startswith("superseded") or "superseded by" in low:
+        return False
+    return low.startswith(_BUILT_STATUS_PREFIXES)
+
+
+@dataclass(frozen=True)
+class AgdrStatus:
+    agdr_id: str
+    filename: str
+    raw_status: str
+    reads_as_built: bool
+
+
+def scan_agdr_statuses(agdr_dir: Optional[Path] = None) -> list[AgdrStatus]:
+    """Read (id, filename, status) from every AgDR file's frontmatter."""
+    if agdr_dir is None:
+        agdr_dir = AGDR_DIR
+    out: list[AgdrStatus] = []
+    if not agdr_dir.exists():
+        return out
+    for path in sorted(agdr_dir.glob("AgDR-*.md")):
+        try:
+            head = path.read_text(encoding="utf-8")[:2500]
+        except Exception:
+            continue
+        mid = _FRONT_ID.search(head)
+        agdr_id = mid.group(1).strip() if mid else path.stem.split("-")[0]
+        mst = _FRONT_STATUS.search(head)
+        raw_status = mst.group(1).strip() if mst else "unknown"
+        out.append(AgdrStatus(
+            agdr_id=agdr_id,
+            filename=path.name,
+            raw_status=raw_status,
+            reads_as_built=status_reads_as_built(raw_status),
+        ))
+    return out
 
 
 def scan_agdr_ids(agdr_dir: Optional[Path] = None) -> dict[str, list[str]]:
@@ -363,6 +428,82 @@ def check_shipped_open(items: list[RoadmapItem], *, roadmap_name: str,
     return out
 
 
+_AGDR_ID_IN_LINE = re.compile(r"AgDR-(\d{4})")
+# A slice that DECLARES it has not been built: PLAN-LOCKED / NO BUILD /
+# needs the founder's "go". The presence of such a slice under a built-status
+# AgDR is a direct contradiction (built ≠ not-built-by-declaration). This is
+# the precise signal that separates the AgDR-0054 overclaim from a genuinely
+# shipped AgDR that merely has open *follow-up* lines referencing its id.
+_BUILD_BLOCKED_MARKER = re.compile(
+    r"PLAN-LOCKED|NO\s*BUILD|needs\s+(?:the\s+)?(?:founder\s+)?[\"“']?go[\"”']?",
+    re.IGNORECASE,
+)
+
+
+def slice_is_build_blocked(text: str) -> bool:
+    """True iff a roadmap slice declares itself not-yet-built (plan-locked /
+    no-build / awaiting the founder's go)."""
+    return bool(_BUILD_BLOCKED_MARKER.search(text))
+
+
+def check_status_overclaim(
+    items: list[RoadmapItem],
+    statuses: list[AgdrStatus],
+    *,
+    roadmap_name: str,
+) -> list[Violation]:
+    """R4 — an AgDR marked BUILT whose plan says it is NOT built.
+
+    For each AgDR whose status reads as built, gather every roadmap slice that
+    names its id (`AgDR-NNNN`). It is a STATUS-OVERCLAIM when BOTH hold:
+
+      * ≥1 of those slices is explicitly build-blocked (PLAN-LOCKED / NO BUILD
+        / needs the founder's "go"), AND
+      * ZERO of those slices is checked (`- [x]`).
+
+    A built decision cannot have a NO-BUILD slice — so `executed` on the record
+    is overclaiming "approved direction" as "built+live". Requiring an explicit
+    build-blocked slice (not merely "all slices open") is deliberate: a shipped
+    AgDR often has open *follow-up* lines that name its id, and those must NOT
+    trip the gate. The contradiction we catch is direct and unambiguous.
+    """
+    out: list[Violation] = []
+    # Map AgDR number -> its roadmap slices.
+    slices_by_num: dict[str, list[RoadmapItem]] = {}
+    for it in items:
+        for m in _AGDR_ID_IN_LINE.finditer(it.text):
+            slices_by_num.setdefault(m.group(1), []).append(it)
+
+    for st in statuses:
+        if not st.reads_as_built:
+            continue
+        m = re.search(r"(\d{4})", st.agdr_id)
+        if not m:
+            continue
+        num = m.group(1)
+        slices = slices_by_num.get(num, [])
+        if not slices:
+            continue  # no plan slices → nothing to contradict
+        if any(s.checked for s in slices):
+            continue  # at least one slice flipped → the build started
+        blocked = [s for s in slices if slice_is_build_blocked(s.text)]
+        if not blocked:
+            continue  # open follow-ups only, not a no-build plan → not R4
+        out.append(Violation(
+            rule="R4",
+            where=st.filename,
+            message=(
+                f"AgDR {st.agdr_id} status reads as BUILT ({st.raw_status!r}) "
+                f"but {len(blocked)} of its {len(slices)} roadmap slices are "
+                f"PLAN-LOCKED / NO-BUILD and 0 are checked — 'executed' here "
+                f"means approved-direction, not built+live. Use a distinct "
+                f"status (e.g. 'approved-direction · build-pending') or flip "
+                f"≥1 slice to '- [x]' with a proof receipt."
+            ),
+        ))
+    return out
+
+
 def find_violations(
     *,
     roadmap_path: Optional[Path] = None,
@@ -370,12 +511,13 @@ def find_violations(
     receipts: Iterable[ShippedReceipt] = SHIPPED_RECEIPTS,
     check_shipped: bool = True,
 ) -> ReconcileResult:
-    """Run all three drift checks against the real (or supplied) files."""
+    """Run all four drift checks against the real (or supplied) files."""
     roadmap_path = roadmap_path or ROADMAP_PATH
     roadmap_name = roadmap_path.name
 
     result = ReconcileResult()
 
+    items: list[RoadmapItem] = []
     if roadmap_path.exists():
         items = parse_roadmap(roadmap_path.read_text(encoding="utf-8"))
         result.violations += check_stale_checked(items, roadmap_name=roadmap_name)
@@ -389,6 +531,9 @@ def find_violations(
         ))
 
     result.violations += check_agdr_collisions(scan_agdr_ids(agdr_dir))
+    # R4 needs both the roadmap slices and the AgDR statuses.
+    result.violations += check_status_overclaim(
+        items, scan_agdr_statuses(agdr_dir), roadmap_name=roadmap_name)
     return result
 
 
@@ -401,7 +546,8 @@ def _format_report(result: ReconcileResult) -> str:
     lines = [f"doc-reconcile: {len(result.violations)} DRIFT VIOLATION(S)\n"]
     for rule, name in (("R1", "stale-checked (no receipt)"),
                        ("R2", "AgDR id collision"),
-                       ("R3", "shipped-but-open / undocumented")):
+                       ("R3", "shipped-but-open / undocumented"),
+                       ("R4", "status overclaim (built status, all-open plan)")):
         vs = result.by_rule(rule)
         if vs:
             lines.append(f"── {rule} · {name} ({len(vs)}) ──")
@@ -435,7 +581,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"VIOLATIONS={len(result.violations)} "
           f"R1={len(result.by_rule('R1'))} "
           f"R2={len(result.by_rule('R2'))} "
-          f"R3={len(result.by_rule('R3'))}")
+          f"R3={len(result.by_rule('R3'))} "
+          f"R4={len(result.by_rule('R4'))}")
     return 1
 
 

@@ -16,6 +16,10 @@
 > history (the old root `ROADMAP.md`) is folded into "Shipped" below.
 > The four design/architecture memos are NOT roadmaps — they are listed
 > under "Design references" and kept for rationale only.
+>
+> **New here? Read `docs/ARCHITECTURE.md` first** — the canonical "what is
+> built and how it fits together" system map (the single entry point for a
+> contributor or auditing agent). Derived build-state ledger: `docs/BUILT_MAP.md`.
 
 ## AgDR ledger — reconciliation (2026-05-26)
 
@@ -280,7 +284,10 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [ ] #P0 Missing-20% map — the 119-item / 20-P0 gap audit across 11 areas (incl. emails + finances) is the live completion backlog driving the brain + Claude + Codex + local fleet; the 6-phase reversible plan AWAITS the founder's GO on Phase 0+1. (ops)
 
 > **AgDR ledger note (2026-06-15):** `AgDR-0054` is the founder-signed Collective
-> Mind (`docs/agdr/AgDR-0054-collective-mind-one-brain.md`, `status: executed`).
+> Mind (`docs/agdr/AgDR-0054-collective-mind-one-brain.md`,
+> `status: approved-direction · build-pending` — direction locked, NO slice built;
+> corrected 2026-06-17 from the overclaimed `executed`, which read an unbuilt record
+> as shipped — the DOC-07 overclaim now gated by `doc_reconcile.py` R4).
 > A SECOND, untracked file `docs/agdr/AgDR-0054-revit-transactionless-exec.md`
 > (Gemini/antigravity, Revit transactionless `/exec`) reuses the SAME id — an
 > AgDR-0054 COLLISION the `doc_reconcile.py` R2 check flags. It must be renumbered

@@ -48,11 +48,22 @@ def _isolated(tmp_path, monkeypatch):
     _lib.reset_registry()
     yield
     _lib.reset_registry()
+    # Drop any registry file this test persisted so it never leaks onto a
+    # shared path for a later test file (defence in depth — the redirect
+    # above already keeps writes inside tmp).
+    try:
+        import library_persistence as _lp  # noqa: WPS433
+        _lp.delete_registry_file()
+    except Exception:
+        pass
 
 
 @pytest.fixture
 def bridge_inst():
-    b = _bridge_module.ArchHubBridge()
+    # defer_boot=False: the cross-surface assertions here drive the library
+    # synchronously and must not race the archhub-deferred-boot daemon thread
+    # mutating the shared library._REGISTRY (the cold-restart heisenbug).
+    b = _bridge_module.ArchHubBridge(defer_boot=False)
     if hasattr(b, "_lib_booted"):
         delattr(b, "_lib_booted")
     return b
@@ -244,7 +255,13 @@ def test_cold_restart_loads_persisted_nodes(bridge_inst, engine):
     # bootstrap on the new bridge.
     _lib.reset_registry()
     assert _lib.registry_size() == 0
-    new_bridge = _bridge_module.ArchHubBridge()
+    # defer_boot=False: this test verifies the SYNCHRONOUS lazy
+    # _library_bootstrap (triggered by the first library_inspect below), not
+    # the async deferred-boot thread. Leaving the thread on let it call
+    # library.load_from_disk() concurrently and re-hydrate the registry
+    # between this reset and the assert above — the Linux-only `assert 16 == 0`
+    # flake. Suppressing it makes the cold-restart path deterministic.
+    new_bridge = _bridge_module.ArchHubBridge(defer_boot=False)
     if hasattr(new_bridge, "_lib_booted"):
         delattr(new_bridge, "_lib_booted")
 

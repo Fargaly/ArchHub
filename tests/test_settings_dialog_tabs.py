@@ -14,7 +14,9 @@ here without coordination break the UX promise. These tests pin:
   * `BrainTab.DAEMON_URL` matches the BRAIN-FIRST MANDATE port
     (8473/mcp).
   * `AccessibilityTab` imports clean + is a QWidget subclass.
-  * Bonus: if agent 3's `SecretsTab` has landed, it imports.
+  * `SecretsTab` imports clean + is a QWidget subclass (it SHIPPED —
+    it is `TABS[2]`, the canonical Secrets tab — so its import is a
+    hard assert, never a conditional skip).
 
 Tests deliberately avoid Qt app boot where possible — only the
 `SettingsDialog` instantiation needs a `QApplication`, so the QWidget
@@ -171,20 +173,41 @@ def test_all_tab_classes_are_qwidgets():
         )
 
 
-# ── Bonus: agent 3's SecretsTab (importorskip pattern) ────────────────
-def test_secretstab_imports_if_present():
-    """If agent 3's SecretsTab has landed, it must import + be a
-    QWidget subclass. If it has not landed yet, the test SKIPS so
-    waves don't collide."""
+# ── SecretsTab — SHIPPED, so import is a hard assert (no skip) ─────────
+def test_secretstab_imports():
+    """SecretsTab is importable + is a QWidget subclass.
+
+    TCI-10 root cause: this test used to be `test_secretstab_imports_if_present`
+    and `pytest.skip("SecretsTab not landed yet (agent 3's work)")` whenever
+    `settings_dialog` had no `SecretsTab` attribute. That skip was a
+    SELF-NEUTRALIZING TRAP — SecretsTab has shipped (it is the canonical
+    `TABS[2]` "Secrets" tab, asserted by `test_tabs_list_order`), so the only
+    way the skip could ever fire again is if a regression DELETED or broke the
+    import — and the skip would then make that regression PASS silently instead
+    of failing. A skip whose only trigger is "the shipped feature regressed"
+    masks exactly what the test exists to catch. Now it is an unconditional
+    assert: SecretsTab must always import + be a QWidget."""
     pytest.importorskip("PyQt6.QtWidgets")
     from PyQt6.QtWidgets import QWidget
     import importlib
     mod = importlib.import_module("settings_dialog")
-    if not hasattr(mod, "SecretsTab"):
-        pytest.skip("SecretsTab not landed yet (agent 3's work)")
+    assert hasattr(mod, "SecretsTab"), (
+        "settings_dialog.SecretsTab is missing — it SHIPPED as TABS[2] "
+        "(the 'Secrets' tab); a missing import is a regression, not a "
+        "not-yet-landed wave."
+    )
     SecretsTab = getattr(mod, "SecretsTab")
     assert isinstance(SecretsTab, type)
-    assert issubclass(SecretsTab, QWidget)
+    assert issubclass(SecretsTab, QWidget), (
+        "SecretsTab must be a QWidget subclass so SettingsDialog can host "
+        "it inside a QScrollArea like every other tab."
+    )
+    # It is wired into the canonical contract, not an orphan class.
+    from settings_dialog import SettingsDialog
+    assert ("Secrets", SecretsTab) in SettingsDialog.TABS, (
+        "SecretsTab exists but is not the ('Secrets', SecretsTab) entry in "
+        "TABS — the shipped tab and the class must be the same object."
+    )
 
 
 # ── Update controls (2026-06-11): opt-in auto-update + check button ───

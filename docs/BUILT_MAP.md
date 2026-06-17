@@ -6,12 +6,12 @@
 > (`personal_brain.requirement_tree`). The `docs/ROADMAP.md` remains the single roadmap;
 > this file is a read-only projection of build state for fast scanning.
 
-_Generated 2026-06-16 from 54 AgDR record(s)._
+_Generated 2026-06-17 from 55 AgDR record(s)._
 
 ## AgDR ledger — by build state
 
-- **Built (executed):** 50
-- **Planned (proposed / plan-locked / executing):** 0
+- **Built (executed):** 49
+- **Planned (proposed / plan-locked / executing):** 2
 - **Superseded:** 3
 - **Unclassified status:** 1
 
@@ -68,7 +68,13 @@ _Generated 2026-06-16 from 54 AgDR record(s)._
 | AgDR-0051 | executed | ScriptCompiler — guarantee BCL forwarder facades on a cold first /exec (CS0012 root) |
 | AgDR-0052 | executed | AcadMCP listener resilience — port-range scan + retry + session-file heartbeat (mirror of the Revit broker) |
 | AgDR-0053 | executed | cs-guard pathspec hardening — make the broker .cs guard match direct children of payload/sources/, not just subdirectori |
-| AgDR-0054 | executed | AgDR-0054 — The Collective Mind: one brain, dam-gated river, training flywheel |
+
+### Planned / in-flight
+
+| AgDR | Status | Title |
+|---|---|---|
+| AgDR-0054 | approved-direction · build-pending | AgDR-0054 — The Collective Mind: one brain, dam-gated river, training flywheel |
+| AgDR-0055 | proposed | Revit transactionless script execution support — allow read-only UI operations (like view activation) outside database t |
 
 ### Superseded
 
@@ -86,7 +92,7 @@ _Generated 2026-06-16 from 54 AgDR record(s)._
 
 ## Verified-complete units — requirement-tree GREEN leaves
 
-_Source: 1 requirement tree(s) in the brain store._
+_Source: no requirement trees recorded yet._
 
 _No GREEN leaves available in this environment (the brain store holds the live ROMA trees; a fresh clone / CI without a brain DB has none). Run on the founder's machine with the brain daemon up to populate this section._
 

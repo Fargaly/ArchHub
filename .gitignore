@@ -71,6 +71,9 @@ payload/sources/*/obj/
 payload/revit/
 payload/autocad/
 payload/max/
+# LLM-generated connector sources (meta_connector cache, content-hashed) —
+# regenerated on demand, never committed.
+payload/_generated/
 
 # ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
 **/skill_usage.json

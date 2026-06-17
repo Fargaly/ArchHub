@@ -74,6 +74,11 @@ def _classify_status(raw: str) -> str:
         return "superseded"
     if low.startswith(("executed", "shipped", "done", "implemented")):
         return "built"
+    # `approved-direction · build-pending` is direction-locked but NOT built —
+    # it must read as planned, never built (the DOC-07 distinction). It is
+    # listed before the bare "approved" prefix so the compound is unambiguous.
+    if low.startswith(("approved-direction", "build-pending")):
+        return "planned"
     if low.startswith(("proposed", "plan-locked", "planned", "executing",
                        "approved", "draft", "rework")):
         return "planned"

@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
 """doc_freshness.py — Track C CI script (Content Ecosystem section 4).
 
-Walks every `docs/*.md` (top-level only) and:
+Walks the docs corpus — top-level `docs/*.md` PLUS the decision/record
+subtrees that carry their own machine-checkable `## Artifacts` paths
+(`docs/agdr/`, `docs/adr/`, `docs/status/`, `docs/research/`) — and:
 
   1. Writes `docs/_meta/index.json` — TOC with
-     {slug, title, word_count, mtime, deps: [...]} per doc.
+     {slug, title, path, word_count, mtime, deps: [...], missing_deps: [...]}
+     per doc.
   2. Writes `docs/_meta/freshness.json` — per-doc
-     {slug, stale: bool, reason, last_check_iso}.
+     {slug, path, stale: bool, reason, last_check_iso}.
 
 `stale` is True when at least one of the doc's Artifacts (per AgDR
-template `## Artifacts` section, also generalised to top-level docs
-that mention `app/...py` paths) has been touched in git after the
-doc's own mtime. Honest mode (per ANTI-LIE): if `git` isn't on PATH
-or this isn't a git checkout, every doc reports `stale=False` with
-`reason="git unavailable — no commit timeline"`.
+template `## Artifacts` section, also generalised to docs that mention
+`app/...py` paths) has been touched in git after the doc's own mtime.
+The 54 AgDRs each carry an `## Artifacts` section — they are exactly
+the highest-value freshness targets, so they are indexed and checked,
+not skipped (DOC-11). Honest mode (per ANTI-LIE): if `git` isn't on
+PATH or this isn't a git checkout, every doc reports `stale=False`
+with `reason="git unavailable — no commit timeline"`.
+
+`deps` lists ONLY dependencies that resolve to something real: a
+`docs/*.md` dep is emitted only when that file exists on disk; any
+referenced-but-missing doc is surfaced (not silently dropped) in the
+separate `missing_deps` field (DOC-12). A generated TOC must not carry
+dangling graph edges — the same rule the brain-graph twin already
+applies (`app/memory/extractors/docs.py` only lands doc→doc edges to
+docs that exist).
 
 Usage:
     python tools/doc_freshness.py            # writes both files
@@ -43,6 +56,42 @@ from typing import Any
 def _repo_root() -> Path:
     """tools/doc_freshness.py → repo root is parent of `tools/`."""
     return Path(__file__).resolve().parents[1]
+
+
+# Subtrees under `docs/` that carry their own decision/record markdown
+# (each with a machine-checkable `## Artifacts` section or a dated body).
+# These are indexed + freshness-checked IN ADDITION to top-level
+# `docs/*.md`. Deliberately NOT a blind recursive walk: `docs/prototypes`,
+# `docs/mockups`, `docs/archive`, `docs/_templates` hold HTML/fossils that
+# are not freshness-bearing decision records, so they stay out of the TOC.
+# DOC-11: the 54 AgDRs + 3 ADRs + status/ + research/ used to be invisible
+# to the engine even though AgDRs carry the very `## Artifacts` paths it was
+# built to consume.
+INDEXED_SUBDIRS: tuple[str, ...] = ("agdr", "adr", "status", "research")
+
+
+def _iter_doc_files(docs_dir: Path) -> list[Path]:
+    """Every markdown file the index covers, in deterministic order:
+    top-level `docs/*.md` first, then each INDEXED_SUBDIRS tree
+    (sorted). `docs/_meta` is never included (it's our own output)."""
+    files: list[Path] = []
+    files.extend(sorted(p for p in docs_dir.glob("*.md") if p.is_file()))
+    for sub in INDEXED_SUBDIRS:
+        subdir = docs_dir / sub
+        if subdir.is_dir():
+            files.extend(sorted(p for p in subdir.glob("*.md") if p.is_file()))
+    return files
+
+
+def _slug_for(p: Path, docs_dir: Path) -> str:
+    """Unique slug for a doc. Top-level docs keep the bare stem (back-compat
+    with the brain twin + existing freshness.json). Subtree docs are
+    namespaced by their relative dir (`agdr/AgDR-0001-…`) so two files with
+    the same stem in different trees never collide."""
+    rel = p.relative_to(docs_dir)
+    if rel.parent == Path("."):
+        return p.stem
+    return f"{rel.parent.as_posix()}/{p.stem}"
 
 
 # ── markdown parsing (no PyYAML / no markdown deps) ───────────────────
@@ -86,24 +135,51 @@ def _artifacts_paths(text: str) -> list[str]:
     return sorted(paths)
 
 
-def _doc_deps(text: str) -> list[str]:
-    """Dependencies that the doc declares. Used both for the TOC's
-    `deps` field and for inter-doc graph hints downstream.
+def _doc_md_refs(text: str) -> set[str]:
+    """Every top-level `docs/X.md` reference in the body (subdir refs
+    like `docs/agdr/…` are excluded — those are tracked as AgDR/ADR ids).
 
-    A 'dep' is either:
-      - an artefact path (e.g. `app/bridge.py`)
-      - another top-level doc (`docs/X.md` minus subdir refs)
-      - an AgDR id (`AgDR-0042`)
-    """
-    deps: set[str] = set(_artifacts_paths(text))
+    Returned RAW (un-resolved) so the caller can split them into deps
+    that exist vs `missing_deps` that don't (DOC-12)."""
+    out: set[str] = set()
     for m in _DOC_REF_RE.finditer(text):
         body = m.group(1)
         if "/" in body:
             continue
-        deps.add(f"docs/{body}.md")
+        out.add(f"docs/{body}.md")
+    return out
+
+
+def _non_doc_deps(text: str) -> set[str]:
+    """Dependencies that are not `docs/*.md` files — artefact code paths
+    (e.g. `app/bridge.py`) and AgDR ids (`AgDR-0042`). These are not
+    on-disk *docs*, so they are never subject to the doc-existence
+    filter; they always belong in `deps`."""
+    deps: set[str] = set(_artifacts_paths(text))
     for m in _AGDR_REF_RE.finditer(text):
         deps.add(f"AgDR-{m.group(1)}")
-    return sorted(deps)
+    return deps
+
+
+def _resolve_doc_deps(
+    text: str, repo_root: Path
+) -> tuple[list[str], list[str]]:
+    """Split the doc's declared dependencies into:
+
+      deps         — artefact paths + AgDR ids + `docs/*.md` that EXIST,
+      missing_deps — `docs/*.md` references whose file is absent on disk.
+
+    A generated TOC must not assert a dependency edge to a file that
+    isn't there (DOC-12) — but the broken reference is recorded, not
+    hidden, so the citing doc can be corrected."""
+    deps: set[str] = _non_doc_deps(text)
+    missing: set[str] = set()
+    for ref in _doc_md_refs(text):
+        if (repo_root / ref).is_file():
+            deps.add(ref)
+        else:
+            missing.add(ref)
+    return sorted(deps), sorted(missing)
 
 
 # ── git helpers ───────────────────────────────────────────────────────
@@ -147,8 +223,8 @@ def _git_log_since(repo_root: Path, since_ts: int, path: str) -> list[str]:
 def build_index_and_freshness(
     repo_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (index_entries, freshness_entries) for every top-level
-    docs/*.md. Pure function — no side effects."""
+    """Return (index_entries, freshness_entries) for the docs corpus
+    (top-level + INDEXED_SUBDIRS). Pure function — no side effects."""
     if repo_root is None:
         repo_root = _repo_root()
     docs_dir = repo_root / "docs"
@@ -158,10 +234,9 @@ def build_index_and_freshness(
     index: list[dict[str, Any]] = []
     freshness: list[dict[str, Any]] = []
 
-    for p in sorted(docs_dir.glob("*.md")):
-        if not p.is_file():
-            continue
-        slug = p.stem
+    for p in _iter_doc_files(docs_dir):
+        slug = _slug_for(p, docs_dir)
+        rel_path = "docs/" + p.relative_to(docs_dir).as_posix()
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -172,16 +247,17 @@ def build_index_and_freshness(
             mtime = 0
 
         title = _title_of(text, slug)
-        deps = _doc_deps(text)
+        deps, missing_deps = _resolve_doc_deps(text, repo_root)
         artefacts = _artifacts_paths(text)
 
         index.append({
             "slug": slug,
             "title": title,
-            "path": f"docs/{p.name}",
+            "path": rel_path,
             "word_count": _word_count(text),
             "mtime": mtime,
             "deps": deps,
+            "missing_deps": missing_deps,
         })
 
         stale = False
@@ -203,6 +279,7 @@ def build_index_and_freshness(
                 )
         freshness.append({
             "slug": slug,
+            "path": rel_path,
             "stale": stale,
             "reason": reason,
             "last_check_iso": now_iso,

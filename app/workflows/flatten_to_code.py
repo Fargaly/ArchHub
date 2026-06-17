@@ -62,15 +62,77 @@ _TEXT_TEMPLATES: dict[str, str] = {
     "length": "len(str({a}))",
 }
 
+# Text ops whose Python form needs a config value (separator / pattern /
+# replacement) baked in as a literal. These ARE flattenable — the value is a
+# config constant, not a second wired operand — but they can't use the simple
+# `{a}/{b}` template path because the literal is interpolated from config.
+# Handled specially in `_build_expr` (`_text_config_op`). Each entry maps the
+# op to the config keys it consumes (in `text.op`'s executor semantics).
+_TEXT_CONFIG_OPS: dict[str, tuple[str, ...]] = {
+    "replace": ("pattern", "replacement"),
+    "split":   ("separator",),
+}
+
+# Ops the engine supports but that CANNOT be expressed as a single sandbox-safe
+# (`safe_mode=True`) Python expression on the flattened code node — so flatten
+# returns a TYPED, structured "not-flattenable" reason instead of a bare error.
+# The flattened code node ships with safe_mode=True, whose sandbox blocks
+# `import` and exposes no `re` module, so the regex family + `match` can't run
+# there; `format` needs a wired `args` mapping + kwargs the single-output code
+# node has no port for. The reason carries a machine code + a plain-English
+# explanation the UI shows verbatim (no opaque toast).
+_TEXT_NOT_FLATTENABLE: dict[str, str] = {
+    "match":          "needs the `re` module, which the flattened code "
+                      "node's sandbox does not allow",
+    "format":         "needs a wired `args` mapping the single-output code "
+                      "node can't carry",
+    "regex_findall":  "needs the `re` module, which the flattened code "
+                      "node's sandbox does not allow",
+    "regex_match":    "needs the `re` module, which the flattened code "
+                      "node's sandbox does not allow",
+    "regex_replace":  "needs the `re` module, which the flattened code "
+                      "node's sandbox does not allow",
+    "regex_split":    "needs the `re` module, which the flattened code "
+                      "node's sandbox does not allow",
+}
+
 
 FLATTENABLE_TYPES = {
     "math.op", "text.op", "data.constant", "data.passthrough",
 }
 
+# Reason codes the public API attaches to a typed "not-flattenable" result so
+# the UI can branch on a machine value rather than parse a string.
+REASON_UNFLATTENABLE_TYPE = "unflattenable_type"
+REASON_UNSUPPORTED_OP = "unsupported_op"
+REASON_OP_NOT_EXPRESSIBLE = "op_not_expressible"
+REASON_CYCLE = "cycle"
+REASON_STRUCTURE = "structure"
+
 
 class _ChainError(Exception):
     """Raised when the chain can't be flattened — wrapped into the
-    public API as a typed dict error."""
+    public API as a typed dict error.
+
+    Carries a machine-readable `reason` code + optional structured fields
+    (`op`, `node`, `supported`, `node_type`) so the public API surfaces a
+    TYPED "not-flattenable" result the UI can explain — never an opaque
+    string. `flattenable` is False on every _ChainError by construction."""
+
+    def __init__(self, message: str, *, reason: str = REASON_STRUCTURE,
+                 **fields: Any):
+        super().__init__(message)
+        self.reason = reason
+        self.fields = fields
+
+    def as_result(self) -> dict:
+        out: dict = {
+            "error": str(self),
+            "reason": self.reason,
+            "flattenable": False,
+        }
+        out.update({k: v for k, v in self.fields.items() if v is not None})
+        return out
 
 
 # ── helpers — wire / node lookup ────────────────────────────────────
@@ -122,7 +184,10 @@ def _classify_flattenable(node: dict) -> str:
     if t not in FLATTENABLE_TYPES:
         raise _ChainError(
             f"node {node.get('id')!r} type {t!r} is not flattenable "
-            f"(flattenable: {sorted(FLATTENABLE_TYPES)})")
+            f"(flattenable: {sorted(FLATTENABLE_TYPES)})",
+            reason=REASON_UNFLATTENABLE_TYPE,
+            node=node.get("id"), node_type=t,
+            supported=sorted(FLATTENABLE_TYPES))
     return t
 
 
@@ -146,7 +211,8 @@ def _build_expr(node_id: str,
     if _stack is None:
         _stack = set()
     if node_id in _stack:
-        raise _ChainError(f"cycle detected at node {node_id!r}")
+        raise _ChainError(f"cycle detected at node {node_id!r}",
+                          reason=REASON_CYCLE, node=node_id)
     if node_id not in node_set:
         # Reached an EXTERNAL upstream — allocate a symbol.
         return _alloc_external(node_id, "", external_vars)
@@ -175,13 +241,6 @@ def _build_expr(node_id: str,
 
     # Math + text dispatch on op.
     op = (cfg.get("op") or "").strip()
-    template = _MATH_TEMPLATES.get(op) if t == "math.op" \
-        else _TEXT_TEMPLATES.get(op)
-    if not template:
-        raise _ChainError(
-            f"op {op!r} on node {node_id!r} not supported for flatten "
-            f"(supported math: {sorted(_MATH_TEMPLATES)}; "
-            f"text: {sorted(_TEXT_TEMPLATES)})")
 
     def _resolve(port: str) -> str:
         src = _find_upstream(node_id, port, wires)
@@ -194,10 +253,63 @@ def _build_expr(node_id: str,
                                 external_vars, _stack)
         return _alloc_external(src_id, src_port, external_vars)
 
+    # Text ops with a config-baked literal (replace / split) — flattenable,
+    # but the literal is interpolated from config, not a wired operand.
+    if t == "text.op" and op in _TEXT_CONFIG_OPS:
+        return _text_config_op(op, _resolve("a"), cfg)
+
+    # Engine ops that genuinely can't be a single sandbox-safe expression
+    # (regex family / match / format) → TYPED not-flattenable reason, never a
+    # bare error. coverage == op count is satisfied by classifying EVERY op:
+    # expressible → code; inexpressible → typed reason.
+    if t == "text.op" and op in _TEXT_NOT_FLATTENABLE:
+        raise _ChainError(
+            f"text op {op!r} on node {node_id!r} can't be flattened: "
+            f"{_TEXT_NOT_FLATTENABLE[op]}",
+            reason=REASON_OP_NOT_EXPRESSIBLE, op=op, node=node_id,
+            node_type=t, detail=_TEXT_NOT_FLATTENABLE[op])
+
+    template = _MATH_TEMPLATES.get(op) if t == "math.op" \
+        else _TEXT_TEMPLATES.get(op)
+    if not template:
+        # Op the engine doesn't define at all (typo / future op) → typed
+        # unsupported-op reason carrying the full supported set.
+        raise _ChainError(
+            f"op {op!r} on node {node_id!r} not supported for flatten "
+            f"(supported math: {sorted(_MATH_TEMPLATES)}; "
+            f"text: {sorted(_TEXT_TEMPLATES) + sorted(_TEXT_CONFIG_OPS)})",
+            reason=REASON_UNSUPPORTED_OP, op=op, node=node_id, node_type=t,
+            supported_math=sorted(_MATH_TEMPLATES),
+            supported_text=sorted(_TEXT_TEMPLATES) + sorted(_TEXT_CONFIG_OPS))
+
     a_expr = _resolve("a")
     needs_b = "{b}" in template
     b_expr = _resolve("b") if needs_b else ""
     return template.format(a=a_expr, b=b_expr)
+
+
+def _text_config_op(op: str, a_expr: str, cfg: dict) -> str:
+    """Build the Python expression for a text.op whose argument is a config
+    literal (replace / split). Mirrors `text.op`'s executor semantics so the
+    flattened code cooks to the SAME value as the original node:
+
+      replace → str(a).replace(<pattern>, <replacement>)
+      split   → str(a).split(<sep>)   (no-arg split on whitespace if sep falsy)
+    """
+    if op == "replace":
+        pat = _python_literal(cfg.get("pattern") or "")
+        rep = _python_literal(cfg.get("replacement") or "")
+        return f"str({a_expr}).replace({pat}, {rep})"
+    if op == "split":
+        sep = cfg.get("separator")
+        # text.op: `a.split(sep) if sep else a.split()` — empty/falsy sep
+        # splits on runs of whitespace.
+        if sep:
+            return f"str({a_expr}).split({_python_literal(sep)})"
+        return f"str({a_expr}).split()"
+    # Unreachable — guarded by the caller's membership check.
+    raise _ChainError(f"config op {op!r} has no expression form",
+                      reason=REASON_OP_NOT_EXPRESSIBLE, op=op)
 
 
 def _find_upstream(node_id: str, port: str, wires: list) -> tuple | None:
@@ -245,17 +357,20 @@ def chain_to_expression(graph: dict, node_ids: list) -> dict:
     node_set = set(node_ids)
 
     if not node_ids:
-        return {"error": "no nodes selected"}
+        return {"error": "no nodes selected", "reason": REASON_STRUCTURE,
+                "flattenable": False}
     for nid in node_ids:
         if nid not in nodes_by_id:
-            return {"error": f"selected node {nid!r} not in graph"}
+            return {"error": f"selected node {nid!r} not in graph",
+                    "reason": REASON_STRUCTURE, "flattenable": False,
+                    "node": nid}
 
     # Validate every node is flattenable up front (better error).
     try:
         for nid in node_ids:
             _classify_flattenable(nodes_by_id[nid])
     except _ChainError as ex:
-        return {"error": str(ex)}
+        return ex.as_result()
 
     # Find tail: a selected node with no outgoing wire to ANOTHER
     # selected node (its output goes to the outside world OR nowhere).
@@ -267,11 +382,14 @@ def chain_to_expression(graph: dict, node_ids: list) -> dict:
             tails.append(nid)
     if not tails:
         return {"error": "no chain tail — every selected node "
-                          "feeds another selected node (cycle?)"}
+                          "feeds another selected node (cycle?)",
+                "reason": REASON_CYCLE, "flattenable": False}
     if len(tails) > 1:
         return {"error": f"multiple chain tails ({len(tails)}); "
                           "flatten only handles single-output chains "
-                          "today"}
+                          "today",
+                "reason": REASON_STRUCTURE, "flattenable": False,
+                "tails": tails}
     tail_id = tails[0]
 
     external_vars: dict = {}
@@ -279,7 +397,7 @@ def chain_to_expression(graph: dict, node_ids: list) -> dict:
         expr = _build_expr(tail_id, node_set, nodes_by_id, wires,
                             external_vars)
     except _ChainError as ex:
-        return {"error": str(ex)}
+        return ex.as_result()
 
     # Order external inputs by allocation order (a, b, c, ...).
     inputs_in_order = sorted(external_vars.items(),
@@ -312,7 +430,9 @@ def flatten_chain(graph: dict, node_ids: list,
     """
     flat = chain_to_expression(graph, node_ids)
     if "error" in flat:
-        return {"error": flat["error"]}
+        # Propagate the FULL typed result (error + reason + structured
+        # fields), not just the string — the UI branches on `reason`.
+        return flat
 
     expr = flat["expression"]
     externals = flat["external_inputs"]
@@ -401,8 +521,68 @@ def flatten_chain(graph: dict, node_ids: list,
     }
 
 
+def op_coverage(engine_type: str) -> dict:
+    """Classify EVERY op the given engine type (`math.op` / `text.op`)
+    supports into one of three buckets, proving coverage == op count:
+
+      expressible    — ops flatten produces code for (template or config-op)
+      not_expressible — ops flatten classifies with a TYPED not-flattenable
+                        reason (genuinely can't be a sandbox-safe expression)
+      unknown        — ops flatten neither emits code for NOR has a typed
+                        reason for (this set MUST be empty — its emptiness is
+                        the coverage gate)
+
+    Sources the engine's authoritative op set from the registered NodeSpec's
+    `config_schema["op"]["enum"]`, so a new engine op that flatten forgets to
+    classify shows up in `unknown` and fails the gate.
+    """
+    engine_ops = _engine_ops(engine_type)
+    if engine_type == "math.op":
+        expressible = set(_MATH_TEMPLATES)
+        not_expressible: set[str] = set()
+    elif engine_type == "text.op":
+        expressible = set(_TEXT_TEMPLATES) | set(_TEXT_CONFIG_OPS)
+        not_expressible = set(_TEXT_NOT_FLATTENABLE)
+    else:
+        expressible = set()
+        not_expressible = set()
+    classified = expressible | not_expressible
+    unknown = engine_ops - classified
+    return {
+        "engine_type": engine_type,
+        "engine_ops": sorted(engine_ops),
+        "expressible": sorted(expressible & engine_ops),
+        "not_expressible": sorted(not_expressible & engine_ops),
+        "unknown": sorted(unknown),
+        "covered": not unknown,
+        "op_count": len(engine_ops),
+        "coverage_count": len(classified & engine_ops),
+    }
+
+
+def _engine_ops(engine_type: str) -> set[str]:
+    """The authoritative op set for an engine type, read from its registered
+    NodeSpec config_schema enum. Empty set if the type isn't registered."""
+    try:
+        from .registry import get as _reg_get
+        tup = _reg_get(engine_type)
+    except Exception:
+        tup = None
+    if not tup:
+        return set()
+    schema = getattr(tup[0], "config_schema", None) or {}
+    op_field = schema.get("op") or {}
+    return set(op_field.get("enum") or [])
+
+
 __all__ = [
     "chain_to_expression",
     "flatten_chain",
     "FLATTENABLE_TYPES",
+    "op_coverage",
+    "REASON_UNFLATTENABLE_TYPE",
+    "REASON_UNSUPPORTED_OP",
+    "REASON_OP_NOT_EXPRESSIBLE",
+    "REASON_CYCLE",
+    "REASON_STRUCTURE",
 ]

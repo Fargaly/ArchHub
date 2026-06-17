@@ -1,0 +1,140 @@
+name: Agents deploy
+
+# Deploys the `archhub-agents` 24/7 daemon to Fly.io on every push to main that
+# touches the agents container, then verifies the live deploy with the reality
+# probe. Before this workflow existed, the Fly app had NO automated deploy — it
+# was redeployed by hand via `agents/deploy.ps1`, so it drifted from main and
+# went down silently while the hourly reality cron (reality.yml) noticed only
+# after the fact. agents_dispatch.yml drains the QUEUE in Actions but never
+# touches the Fly container.
+#
+# Flow:
+#   1. smoke   — boot the REAL agents app locally (scripts/agents_smoke.py) and
+#                run the actual reality_smoke agents checks. A broken build is
+#                caught here and the deploy never fires.
+#   2. deploy  — flyctl deploy against agents/fly.toml (gated on FLY_API_TOKEN;
+#                skipped cleanly when the secret isn't configured so forks /
+#                pre-token state don't hard-fail).
+#   3. verify  — scripts/reality_smoke.py against the live archhub-agents.fly.dev
+#                so the reality probe is green POST-DEPLOY, not just hourly.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/**"
+      - "scripts/agents_smoke.py"
+      - "scripts/reality_smoke.py"
+      - ".github/workflows/agents_deploy.yml"
+  workflow_dispatch:
+    inputs:
+      agents_url:
+        description: "Override agents URL for the post-deploy probe"
+        required: false
+        default: "https://archhub-agents.fly.dev"
+
+# One deploy at a time — overlapping flyctl deploys race on the same machine.
+concurrency:
+  group: agents-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Pre-deploy smoke: prove the container's health surface boots ───────
+  smoke:
+    name: Smoke (boot real agents app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install agents deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r agents/requirements.txt
+
+      # Boots agents.dashboard_endpoint.build_app on a real uvicorn server and
+      # runs the actual reality_smoke agents.healthz + agents.status checks.
+      # Exit 0 only if the live local app answers healthy.
+      - name: Boot + smoke the agents app
+        run: python scripts/agents_smoke.py --json --timeout 30
+
+  # ── 2. Deploy to Fly (only after smoke is green) ──────────────────────────
+  deploy:
+    name: Deploy archhub-agents to Fly
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only deploy on a real push to main (not on manual dispatch that just wants
+    # to re-probe), and only when the deploy token exists.
+    if: github.event_name == 'push'
+    outputs:
+      deployed: ${{ steps.flydeploy.outputs.deployed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: flyctl deploy (gated on FLY_API_TOKEN)
+        id: flydeploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::warning::FLY_API_TOKEN not set — skipping live deploy. "\
+                 "Set it with: fly tokens create deploy -a archhub-agents | gh secret set FLY_API_TOKEN"
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          flyctl deploy --config agents/fly.toml --dockerfile agents/Dockerfile \
+            -a archhub-agents --remote-only
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+
+  # ── 3. Post-deploy: reality probe must be green against the LIVE app ──────
+  verify:
+    name: Reality probe (post-deploy)
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    # Run only when the deploy actually happened (token present + flyctl ran).
+    if: needs.deploy.outputs.deployed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Targeted reality probe of the LIVE agents app: agents_smoke.py --url
+      # runs the SAME reality_smoke agents.healthz + agents.status checks the
+      # hourly reality.yml cron runs, but ONLY those (no cloud/local/github
+      # checks that need a desktop) — so this is a true post-deploy green on the
+      # thing we just deployed, with a startup wait that rides out Fly cold-start.
+      - name: Probe live archhub-agents (reality checks)
+        run: |
+          AGENTS_URL="${{ github.event.inputs.agents_url || 'https://archhub-agents.fly.dev' }}"
+          python scripts/agents_smoke.py --url "$AGENTS_URL" --timeout 60
+
+      # Full reality_smoke too — non-blocking visibility into the wider system
+      # (cloud, releases, PRs) right after an agents deploy. continue-on-error
+      # so a desktop-only check (local.boot_log) on a headless runner never
+      # red-flags an otherwise-healthy agents deploy; the agents gate above is
+      # the blocking one.
+      - name: Reality smoke (full system, advisory)
+        continue-on-error: true
+        run: |
+          AGENTS_URL="${{ github.event.inputs.agents_url || 'https://archhub-agents.fly.dev' }}"
+          python scripts/reality_smoke.py --quiet --retry 3 --agents-url "$AGENTS_URL"

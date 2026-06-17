@@ -54,6 +54,17 @@ class FragmentKind(str, Enum):
     # vision embedding (Fragment.embedding field; vision index in slice 2).
     GEOMETRY = "geometry"
     IMAGE = "image"
+    # BRV-09 thinking-system projector (founder, 2026-06-17): versioned
+    # governance fragments that the projector compiles into a CLAUDE.md
+    # projection (and, future, settings.json / pre-prompts). A MANDATE is a
+    # founder rule; a HOOK is an automation contract (UserPromptSubmit /
+    # PostToolUse / Stop wiring); a PRACTICE is a recommended convention.
+    # These are FOUNDER-SIGNED: a bump to a MANDATE without is_root_authority
+    # is refused (see projector.bump_mandate), mirroring requirement_tree's
+    # set_verdict self-certification guard.
+    MANDATE = "mandate"
+    HOOK = "hook"
+    PRACTICE = "practice"
 
 
 class WriteOpType(str, Enum):
@@ -190,6 +201,65 @@ class Fragment(BaseModel):
         description="Ebbinghaus decay constant — grows on successful retrieval.",
     )
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+# ──────────────── Sibling-version reconcile model (BRV-12) ──────────────
+#
+# AgDR-0044 acceptance #5, decision B: concurrent edits to ONE fragment id do
+# NOT last-writer-wins. When a divergent write arrives (a different value whose
+# HLC is not a causal descendant of the stored head), BOTH values are retained
+# as SIBLING versions and a reconcile record is attached, so the conflict is
+# resolvable instead of silently dropping a user's edit.
+#
+# These ride inside `Fragment.extra` (keys `__siblings__` / `__reconcile__`) —
+# ONE-SYSTEM: no new table, no schema migration; they round-trip through the
+# existing `extra_json` column. The head row keeps the highest-HLC value so
+# every existing reader/search path is unchanged; the losing branch lives on as
+# a sibling for the reconcile UI/agent to merge.
+
+
+class FragmentVersion(BaseModel):
+    """One value-branch of a fragment, with the clock + origin that produced it.
+
+    `verdict` is the reconcile state of THIS branch: ``head`` (the value the
+    fragment row currently serves), ``sibling`` (a retained concurrent branch
+    awaiting reconcile), or ``merged``/``discarded`` once a reconcile resolves.
+    """
+
+    value: str = Field(description="The branch's fragment text/value.")
+    hlc: str = Field(description="Hybrid Logical Clock (16-char hex) of this write.")
+    source: str = Field(
+        default="",
+        description="Origin of the write — device id / sync peer / agent.",
+    )
+    verdict: str = Field(
+        default="sibling",
+        description="head | sibling | merged | discarded — this branch's state.",
+    )
+    parent_hlc: Optional[str] = Field(
+        default=None,
+        description="HLC this write descended from (None = no parent observed).",
+    )
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ReconcileRecord(BaseModel):
+    """Conflict marker attached to a fragment when divergent siblings exist.
+
+    ``state == 'pending'`` means at least two concurrent value-branches are
+    live and a human/agent must reconcile; ``resolved`` once a winner/merge is
+    chosen. Stored under ``Fragment.extra['__reconcile__']``.
+    """
+
+    state: str = Field(default="pending", description="pending | resolved.")
+    sibling_count: int = Field(
+        default=0, description="Number of retained concurrent branches."
+    )
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_hlc: Optional[str] = Field(
+        default=None, description="HLC of the branch chosen on resolution."
+    )
+    note: str = Field(default="", description="Optional reconcile note.")
 
 
 # ───────────────────────── Skill ───────────────────────────────────────

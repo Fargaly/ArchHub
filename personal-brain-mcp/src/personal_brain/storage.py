@@ -23,6 +23,7 @@ import json
 import os
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -42,6 +43,46 @@ from .models import (
     WriteOpType,
     WriteResponse,
 )
+
+
+# ──────────────── BRV-12 reconcile accessors + outcome ──────────────────
+#
+# Sibling lineage rides inside ``Fragment.extra`` (decision B, no new table).
+# These module-level helpers are the read API for it so callers don't reach
+# into ``extra`` dict keys directly.
+
+_SIBLINGS_KEY = "__siblings__"
+_RECONCILE_KEY = "__reconcile__"
+
+
+@dataclass
+class ReconcileOutcome:
+    """Result of :meth:`BrainStore.write_fragment_versioned`."""
+
+    fragment_id: str
+    conflict: bool = False        # True iff divergent siblings now coexist
+    sibling_count: int = 0        # distinct live value-branches
+    head_hlc: str = ""            # HLC the persisted head value carries
+    noop: bool = False            # True iff an idempotent replay (nothing changed)
+
+
+def fragment_siblings(fragment: Optional[Fragment]) -> list[dict]:
+    """Every retained value-branch of a fragment (head + concurrent siblings),
+    each a ``FragmentVersion`` dict. Empty for fragments never written through
+    the reconcile-aware path."""
+    if fragment is None:
+        return []
+    sibs = (fragment.extra or {}).get(_SIBLINGS_KEY)
+    return list(sibs) if isinstance(sibs, list) else []
+
+
+def fragment_reconcile_record(fragment: Optional[Fragment]) -> Optional[dict]:
+    """The pending/resolved ``ReconcileRecord`` dict for a fragment, or None if
+    it has no recorded conflict."""
+    if fragment is None:
+        return None
+    rec = (fragment.extra or {}).get(_RECONCILE_KEY)
+    return rec if isinstance(rec, dict) else None
 
 
 _SCHEMA = """
@@ -479,6 +520,139 @@ class BrainStore:
                 ),
             )
             return not existed
+
+    # ── BRV-12: reconcile-aware write (decision B — siblings, not LWW) ────
+
+    def write_fragment_versioned(
+        self,
+        fragment: Fragment,
+        *,
+        hlc: str,
+        source: str = "",
+        parent_hlc: Optional[str] = None,
+    ) -> "ReconcileOutcome":
+        """Write a fragment with concurrent-edit reconciliation.
+
+        Unlike :meth:`write_fragment` (a plain last-writer-wins upsert), this
+        path treats a DIVERGENT concurrent write — a different value whose HLC
+        is NOT a causal descendant of the stored head — as a CONFLICT: it
+        retains BOTH values as sibling ``FragmentVersion`` branches and attaches
+        a pending ``ReconcileRecord`` instead of silently overwriting (decision
+        B, AgDR-0044 acceptance #5). The head row keeps the highest-HLC value so
+        every existing reader/search path is unchanged.
+
+        Lineage (``__siblings__`` + ``__reconcile__`` + the head ``hlc``) rides
+        inside ``Fragment.extra`` — ONE-SYSTEM, no new table. The single SQL
+        upsert is reused by delegating the row write to ``write_fragment``.
+
+        Cases:
+          • new id                 → head version, no conflict.
+          • idempotent replay      → identical (hlc,value) already present → noop.
+          • linear successor       → ``parent_hlc`` == stored head hlc (or same
+                                     value) → advance head, no pending conflict.
+          • concurrent divergent   → different value, non-descendant hlc → BOTH
+                                     retained as siblings + pending reconcile.
+        """
+        from .models import FragmentVersion, ReconcileRecord
+
+        with self._lock:
+            existing = self.get_fragment(fragment.id)
+            incoming_value = fragment.text or ""
+
+            # ── first write — just a head, no lineage conflict ───────────
+            if existing is None:
+                head_ver = FragmentVersion(
+                    value=incoming_value, hlc=hlc, source=source,
+                    verdict="head", parent_hlc=parent_hlc,
+                )
+                fragment.extra = dict(fragment.extra or {})
+                fragment.extra["hlc"] = hlc
+                fragment.extra["__siblings__"] = [head_ver.model_dump(mode="json")]
+                self.write_fragment(fragment)
+                return ReconcileOutcome(
+                    fragment_id=fragment.id, conflict=False, sibling_count=1,
+                    head_hlc=hlc,
+                )
+
+            # ── reconstruct the existing lineage ─────────────────────────
+            prev_extra = dict(existing.extra or {})
+            head_hlc = str(prev_extra.get("hlc") or "")
+            versions: list[dict] = list(prev_extra.get("__siblings__") or [])
+            if not versions:
+                # Legacy row written via plain write_fragment — seed its
+                # current value as the head branch so nothing is lost.
+                versions = [FragmentVersion(
+                    value=existing.text or "", hlc=head_hlc or "",
+                    source="", verdict="head",
+                ).model_dump(mode="json")]
+
+            def _has(v_hlc: str, v_val: str) -> bool:
+                return any(
+                    (x.get("hlc") == v_hlc and (x.get("value") or "") == v_val)
+                    for x in versions
+                )
+
+            # ── idempotent replay — identical (hlc,value) already present ──
+            if _has(hlc, incoming_value):
+                return ReconcileOutcome(
+                    fragment_id=fragment.id, conflict=False,
+                    sibling_count=len(versions), head_hlc=head_hlc,
+                    noop=True,
+                )
+
+            same_value = incoming_value == (existing.text or "")
+            # Linear successor iff the writer declares the current head as its
+            # parent, OR it merely re-states the same value (no divergence).
+            is_linear = bool(parent_hlc and parent_hlc == head_hlc) or same_value
+
+            # Record the incoming branch.
+            incoming_ver = FragmentVersion(
+                value=incoming_value, hlc=hlc, source=source,
+                verdict="sibling", parent_hlc=parent_hlc,
+            ).model_dump(mode="json")
+            versions.append(incoming_ver)
+
+            # ── decide the head: highest HLC wins (deterministic) ────────
+            def _hlc_key(v: dict) -> str:
+                return str(v.get("hlc") or "")
+
+            winner = max(versions, key=_hlc_key)
+            winner_hlc = str(winner.get("hlc") or "")
+            for v in versions:
+                v["verdict"] = "head" if v is winner else "sibling"
+
+            # Distinct concurrent VALUE branches still live (dedup by value).
+            distinct_values = {
+                (v.get("value") or "") for v in versions
+                if v.get("verdict") != "discarded"
+            }
+            conflict = (not is_linear) and len(distinct_values) >= 2
+
+            new_extra = dict(fragment.extra or {})
+            # preserve any non-lineage keys the caller didn't carry over
+            for k, val in prev_extra.items():
+                if k not in ("hlc", "__siblings__", "__reconcile__"):
+                    new_extra.setdefault(k, val)
+            new_extra["hlc"] = winner_hlc
+            new_extra["__siblings__"] = versions
+            if conflict:
+                new_extra["__reconcile__"] = ReconcileRecord(
+                    state="pending", sibling_count=len(distinct_values),
+                ).model_dump(mode="json")
+            else:
+                # linear/idempotent path clears any stale pending marker
+                new_extra.pop("__reconcile__", None)
+
+            # The persisted row serves the WINNER's value (head), not
+            # necessarily the incoming write — so an older concurrent write
+            # never clobbers a newer head.
+            fragment.text = winner.get("value") or ""
+            fragment.extra = new_extra
+            self.write_fragment(fragment)
+            return ReconcileOutcome(
+                fragment_id=fragment.id, conflict=conflict,
+                sibling_count=len(distinct_values), head_hlc=winner_hlc,
+            )
 
     def search_fragments(
         self,

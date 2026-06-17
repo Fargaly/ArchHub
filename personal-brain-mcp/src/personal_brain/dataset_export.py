@@ -45,9 +45,17 @@ The privacy/legal layer is WIRED at export (no longer "pre-privacy"):
     rows. Export-gating is the only reliable unlearning, so the gate runs here.
   - The default `scope_filter=[USER]` still minimises accidental scope
     escalation; `respect_training_rights=True` is the default rights floor.
-Still pending (genuinely separate slices, not silently skipped here): a
-`payload_pii` USER-only split and per-row PII redaction before the
-`content_hash_post` decontamination scan.
+  - **Train<->eval decontamination (AgDR-0054 · BRV-14 · acceptance #12/#18).**
+    When the caller supplies an ``eval_holdout`` (the frozen held-out eval set),
+    the export runs ``decontamination.scan_decontamination`` over the export rows
+    vs the holdout — exact-hash + n-gram + canary detectors — and EXCLUDES any
+    contaminated training row from the written dataset (a verbatim/near-dup eval
+    leak never trains, which is exactly what inflates a later eval score). The
+    manifest records the scan result so the decontamination is provably wired
+    (not the old "pending" no-op). ``decontaminate=False`` keeps the legacy
+    unscanned behaviour for an operational dump that never feeds eval.
+Still pending (a genuinely separate slice, not silently skipped here): a
+`payload_pii` USER-only split and per-row PII redaction before export.
 """
 from __future__ import annotations
 
@@ -58,6 +66,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from . import privacy
+from .decontamination import scan_decontamination
 from .models import Fragment, FragmentKind, Scope
 from .storage import BrainStore as Store
 
@@ -258,6 +267,9 @@ def export_fragments(
     epsilon: float = _DEFAULT_COLLECTIVE_EPSILON,
     respect_training_rights: bool = True,
     training_target: str = "firm_private",
+    eval_holdout: Optional[Iterable[Any]] = None,
+    decontaminate: bool = True,
+    canaries: Optional[Iterable[str]] = None,
 ) -> dict[str, Any]:
     """Export fragments matching the filter to <out_dir>/<dataset_name>/.
 
@@ -346,6 +358,29 @@ def export_fragments(
 
     rows = [_fragment_to_row(f) for f in frags]
 
+    # AgDR-0054 train<->eval decontamination (BRV-14, acceptance #12/#18): when a
+    # held-out eval set is supplied, scan the export rows against it and DROP any
+    # contaminated training row (verbatim / n-gram / canary leak). A leaked eval
+    # row in the training set silently inflates every later eval score — this is
+    # the export-time enforcement that prevents the circular-eval risk. Eval rows
+    # may be Fragments or already-flattened dict rows; scan_decontamination reads
+    # the S/P/O/text of either. The manifest carries the report so the scan is
+    # provably wired (a regression to the old no-op is visible).
+    decontamination_report = None
+    decontaminated_excluded = 0
+    if decontaminate and eval_holdout is not None:
+        eval_rows = [
+            _fragment_to_row(e) if isinstance(e, Fragment) else e
+            for e in eval_holdout
+        ]
+        report = scan_decontamination(rows, eval_rows, canaries=canaries)
+        decontamination_report = report.to_dict()
+        if not report.clean:
+            contaminated = report.contaminated_train_ids
+            before = len(rows)
+            rows = [r for r in rows if r.get("id") not in contaminated]
+            decontaminated_excluded = before - len(rows)
+
     target = Path(out_dir) / dataset_name
     target.mkdir(parents=True, exist_ok=True)
 
@@ -375,6 +410,15 @@ def export_fragments(
             "enforced": respect_training_rights,
             "target": training_target if respect_training_rights else None,
             "excluded_count": training_rights_excluded,
+        },
+        # AgDR-0054 train<->eval decontamination audit (BRV-14): names whether the
+        # scan ran, whether the written set is clean, and how many contaminated
+        # rows it dropped — so the decontamination is provably wired (not the old
+        # "pending" no-op) and a leak is visible in the dataset's own manifest.
+        "decontamination": {
+            "enforced": bool(decontaminate and eval_holdout is not None),
+            "excluded_count": decontaminated_excluded,
+            "report": decontamination_report,
         },
         "files": {
             "jsonl":   {"path": str(jsonl_path),   "bytes": jsonl_bytes},

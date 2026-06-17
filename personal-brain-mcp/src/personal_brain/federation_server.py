@@ -40,7 +40,77 @@ from .federation import (
     evaluate_incoming_pattern,
     pattern_to_activity,
 )
+from .publish_worker import (
+    load_outbox_from_brain,
+    persist_activity_to_brain,
+)
 from .storage import BrainStore
+
+
+# ─────────────────────── reputation persistence (BRV-11) ───────────────
+#
+# The reputation registry used to be a process-local `dict` that vanished on
+# restart. Persist it through the SAME brain store the rest of the federation
+# tier already uses (ONE-SYSTEM) — `brain_meta`, the additive key/value store
+# that requirement_tree / active_work / publish_worker all ride. No new table.
+
+_META_REPUTATION_PREFIX = "federation.reputation."
+
+
+def _reputation_meta_key(contributor_hash: str) -> str:
+    return f"{_META_REPUTATION_PREFIX}{contributor_hash}"
+
+
+def save_reputation_to_brain(
+    store: BrainStore, rep: ContributorReputation,
+) -> None:
+    """Persist one contributor reputation so it survives a daemon restart.
+
+    Stored as a JSON doc under a per-contributor `brain_meta` key. The score is
+    a derived property (not stored) — only the counts + avg_quality_score that
+    feed it are persisted, so the reload reconstructs an identical object.
+    """
+    payload = {
+        "contributor_id": rep.contributor_id,
+        "accepted_count": rep.accepted_count,
+        "rejected_count": rep.rejected_count,
+        "quarantine_count": rep.quarantine_count,
+        "avg_quality_score": rep.avg_quality_score,
+    }
+    store.set_meta(_reputation_meta_key(rep.contributor_id), json.dumps(payload))
+
+
+def load_reputations_from_brain(
+    store: BrainStore,
+) -> dict[str, ContributorReputation]:
+    """Reload every persisted contributor reputation on daemon / app start."""
+    out: dict[str, ContributorReputation] = {}
+    try:
+        rows = store._conn.execute(
+            "SELECT key, value FROM brain_meta WHERE key LIKE ?",
+            (_META_REPUTATION_PREFIX + "%",),
+        ).fetchall()
+    except Exception:
+        return out
+    for row in rows:
+        try:
+            data = json.loads(row["value"]) if row["value"] else {}
+        except Exception:
+            continue
+        cid = data.get("contributor_id")
+        if not cid:
+            # Recover the id from the key suffix if the doc omitted it.
+            cid = str(row["key"])[len(_META_REPUTATION_PREFIX):]
+        if not cid:
+            continue
+        out[cid] = ContributorReputation(
+            contributor_id=cid,
+            accepted_count=int(data.get("accepted_count", 0)),
+            rejected_count=int(data.get("rejected_count", 0)),
+            quarantine_count=int(data.get("quarantine_count", 0)),
+            avg_quality_score=float(data.get("avg_quality_score", 0.5)),
+        )
+    return out
 
 
 # ─────────────────────── auth ──────────────────────────────────────────
@@ -89,11 +159,38 @@ def create_app(
         epsilon=epsilon,
     )
 
-    # Persistent outbox (in-memory for now; persist via store in V2)
+    # ── BRV-11: store-backed outbox + reputation registry ───────────────
+    # Both used to be process-local (an in-memory Outbox + a `dict`) that
+    # vanished on restart AND diverged from publish_worker's already-persisted
+    # outbox. Now BOTH are reloaded from — and written through — the SAME brain
+    # store (ONE-SYSTEM). The outbox reuses publish_worker's `fragments`-backed
+    # persistence; reputations ride `brain_meta`. A fresh app over the same
+    # store re-hydrates both.
     outbox = Outbox(actor_url=actor_url, base_url=base_url)
+    for _activity in load_outbox_from_brain(store):
+        outbox.activities.append(_activity)
 
-    # Reputation registry — keyed by contributor_firm_hash
-    reputations: dict[str, ContributorReputation] = {}
+    # Reputation registry — keyed by contributor_firm_hash, reloaded from disk.
+    reputations: dict[str, ContributorReputation] = (
+        load_reputations_from_brain(store)
+    )
+
+    def _publish_pattern(pattern: Pattern) -> ActivityRecord:
+        """Publish into the outbox AND durably persist the activity so it
+        survives a restart. The single write-path the routes share."""
+        activity = outbox.publish(pattern)
+        try:
+            persist_activity_to_brain(store, activity)
+        except Exception:
+            pass  # never let a persistence hiccup drop the in-memory publish
+        return activity
+
+    def _save_reputation(rep: ContributorReputation) -> None:
+        reputations[rep.contributor_id] = rep
+        try:
+            save_reputation_to_brain(store, rep)
+        except Exception:
+            pass
 
     @app.get("/healthz")
     async def healthz():
@@ -149,13 +246,27 @@ def create_app(
         max_skills = int(payload.get("max_skills", 100))
 
         skills = store.list_skills(limit=max_skills)
-        new_outbox = driver.derive_and_publish(skills, traces=[])
-        # Merge into our persistent outbox
-        for act in new_outbox.activities:
-            outbox.activities.append(act)
+        # Derive + DP-noise locally, then publish each through the shared
+        # write-path so every activity is durably persisted (BRV-11). Skip
+        # patterns already in the outbox (idempotent by pattern_id).
+        from .federation import (
+            derive_skill_usage_patterns,
+            noise_pattern_statistics,
+        )
+        existing_ids = {
+            a.object.get("pattern_id") for a in outbox.activities
+        }
+        published = 0
+        for pat in derive_skill_usage_patterns(skills, firm_id=firm_id):
+            noised = noise_pattern_statistics(pat, epsilon=epsilon)
+            if noised.pattern_id in existing_ids:
+                continue
+            _publish_pattern(noised)
+            existing_ids.add(noised.pattern_id)
+            published += 1
         return {
             "ok": True,
-            "published_count": len(new_outbox.activities),
+            "published_count": published,
             "outbox_total": len(outbox.activities),
         }
 
@@ -190,10 +301,15 @@ def create_app(
             )
             status = "imported"
         elif decision.quarantine:
+            rep.quarantine_count += 1
             status = "quarantined"
         else:
             rep.rejected_count += 1
             status = "rejected"
+
+        # BRV-11: durably persist the (mutated) reputation so the tally
+        # survives a restart.
+        _save_reputation(rep)
 
         return {
             "ok": True,
@@ -216,6 +332,32 @@ def create_app(
             "quarantine_count": rep.quarantine_count,
             "score": rep.score,
         }
+
+    # ── BRV-11: expose the store-backed state + write-paths on app.state ──
+    # The live outbox + reputation registry (so callers can inspect what was
+    # reloaded) and the durable write-paths the routes use. This is the
+    # in-process handle for the daemon/UI + the persistence regression tests —
+    # the SAME objects the HTTP routes mutate, so there is no second outbox.
+    app.state.federation_store = store
+    app.state.federation_outbox = outbox
+    app.state.federation_reputations = reputations
+    app.state.federation_publish_pattern = _publish_pattern
+    app.state.federation_save_reputation = _save_reputation
+
+    def _persist_demo_pattern(pattern_id: str) -> str:
+        """Publish a minimal pattern with a caller-chosen id through the durable
+        write-path. Used by the daemon's self-test + the persistence tests to
+        exercise the real outbox-persist path without deriving from skills."""
+        pat = Pattern(
+            pattern_id=pattern_id, kind="skill_usage",
+            summary=f"pattern {pattern_id}", contributor_firm=firm_id,
+        )
+        # pattern_to_activity recomputes the id from base_url + pattern_id, so
+        # the persisted activity's object.pattern_id == pattern_id.
+        act = _publish_pattern(pat)
+        return act.object.get("pattern_id", "")
+
+    app.state.federation_persist_demo_pattern = _persist_demo_pattern
 
     return app
 

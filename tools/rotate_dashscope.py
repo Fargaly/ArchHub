@@ -20,9 +20,21 @@ to re-run.
 USAGE (founder, after regenerating in the console):
     python tools/rotate_dashscope.py            # paste the new key at the prompt
     python tools/rotate_dashscope.py --verify   # just check what resolves now (no write)
+    python tools/rotate_dashscope.py --balance  # print the live account balance (no write)
 
 The op:// reference (op://archhub/dashscope/api_key) and all code stay unchanged;
 only the stored VALUE rotates.
+
+BALANCE (FIN-05): DashScope's sk- key reads NO billing data — spend lives in
+Alibaba's BSS OpenAPI (QueryAccountBalance), which needs a RAM AccessKey pair.
+``--balance`` calls the real ``dashscope.balance`` connector op: it prints the
+live AvailableAmount + Currency when the AccessKey resolves (op://archhub/aliyun/
+access_key_id + access_key_secret), or the precise reason it cannot — so the
+DashScope balance becomes a captured figure, never a guess. To store the
+AccessKey pair into the same Credential Manager the resolver reads:
+    python -c "import keyring;keyring.set_password('archhub/aliyun','access_key_id','<AK_ID>')"
+    python -c "import keyring;keyring.set_password('archhub/aliyun','access_key_secret','<AK_SECRET>')"
+(paste via a no-echo prompt in practice; never on the argv of a logged shell).
 """
 from __future__ import annotations
 
@@ -77,12 +89,47 @@ def _verify() -> int:
     return 1
 
 
+def _balance() -> int:
+    """Print the live DashScope/Model-Studio account balance via the REAL
+    connector op (Alibaba BSS QueryAccountBalance). Captures the figure the
+    sk- key cannot read; on missing AccessKey it prints the precise reason —
+    never a fabricated number. The value itself is shown (the founder needs
+    the receipt); secrets are never printed."""
+    # Make the connector importable (it lives under app/connectors).
+    app_dir = Path(__file__).resolve().parent.parent / "app"
+    if app_dir.is_dir() and str(app_dir) not in sys.path:
+        sys.path.insert(0, str(app_dir))
+    try:
+        from connectors.dashscope_connector import _balance as balance_op
+    except Exception as ex:
+        print(f"could not load the dashscope connector: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr)
+        return 2
+    res = balance_op()
+    if res.ok:
+        v = res.value or {}
+        print(f"DashScope account balance: {v.get('available')} "
+              f"{v.get('currency')}")
+        if v.get("credit") is not None:
+            print(f"  credit line: {v.get('credit')} {v.get('currency')}")
+        print(f"  (via Alibaba BSS QueryAccountBalance @ "
+              f"{v.get('billing_base')}, request {v.get('request_id')})")
+        return 0
+    print(f"balance unavailable: {res.error}")
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rotate the DashScope API key value.")
     ap.add_argument("--verify", action="store_true",
                     help="only show what currently resolves (no write)")
+    ap.add_argument("--balance", action="store_true",
+                    help="print the live account balance via the real "
+                         "dashscope.balance op (no write)")
     args = ap.parse_args()
 
+    if args.balance:
+        return _balance()
     if args.verify:
         return _verify()
 

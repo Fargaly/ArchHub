@@ -44,6 +44,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # FULL history (not the default shallow fetch-depth:1). The brain
+          # suite's tests/test_backfill_skills.py::test_synth_from_git_helper_
+          # shapes_traces mines REAL conventional commits from `git log` of
+          # this checkout (it asserts >=1 feat/fix/docs/... commit exists). A
+          # depth-1 clone exposes only the PR's synthetic merge commit (subject
+          # "Merge … into …", non-conventional) → the helper returns [] and the
+          # test fails. Fetching full history lets that real test run against
+          # real history exactly as it does locally (no skip, no weakening).
+          # Only THIS matrix job needs it — brain-extras/agents/doc-reconcile
+          # don't run that test.
+          fetch-depth: 0
 
       # PyQt6 on Linux needs xcb + EGL system libs even for headless
       # tests — Qt resolves a platform plugin during QApplication init.

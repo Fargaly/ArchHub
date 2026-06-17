@@ -1,18 +1,28 @@
 name: Doc reconcile
 
-# DOC-01/02 — documentation always up to date.
+# DOC-01/02 + DOC-07/11/12/13 — documentation always up to date.
 #
 # The merge-time gate that keeps docs/ROADMAP.md + the AgDR ledger honest:
 #   * R1 — a `- [x]` marked done with NO proof receipt → FAIL
 #   * R2 — two docs/agdr/*.md files declaring the same `id:` → FAIL
 #   * R3 — a shipped item (its PR receipt is in the merged ledger) left
 #          `- [ ]` open, or undocumented → FAIL
+#   * R4 — an AgDR marked BUILT (`executed`/…) whose roadmap slices are
+#          PLAN-LOCKED / NO-BUILD with 0 checked → FAIL (the AgDR-0054
+#          "executed-but-unbuilt" overclaim; DOC-07)
+#
+# It also keeps the docs/_meta freshness index honest (DOC-11/12/13):
+#   * doc_freshness --check regenerates docs/_meta/index.json + freshness.json
+#     over top-level docs + agdr/ + adr/ + status/ + research/, with NO dangling
+#     `docs/*.md` deps (broken refs surfaced in `missing_deps`), and fails if a
+#     doc's artefact has changed since the doc (stale).
+#   * the new gate tests pin DOC-07/11/12/13 RED→GREEN.
 #
 # Pure-stdlib, deterministic, no brain / network needed — so it runs the same
-# on a CI runner as it does locally. (tools/build_map.py is NOT run here: its
-# requirement-tree GREEN-leaf section reads the founder's live brain DB, which
-# CI has no copy of — running --check in CI would be machine-dependent. The
-# AgDR-status half of the map IS covered by the unit tests below.)
+# on a CI runner as it does locally. (tools/build_map.py --check is NOT run
+# here: its requirement-tree GREEN-leaf section reads the founder's live brain
+# DB, which CI has no copy of — running --check in CI would be machine-
+# dependent. The AgDR-status half of the map IS covered by the unit tests.)
 
 on:
   push:
@@ -43,14 +53,24 @@ jobs:
           python-version: '3.13'
 
       # The gate itself — stdlib only, no pip install. Fails the job (exit 1)
-      # on any drift, printing the human report to the log.
+      # on any drift (R1–R4), printing the human report to the log.
       - name: Run doc-reconcile gate
         run: python tools/doc_reconcile.py
 
-      # The gate's own test suite — proves R1/R2/R3 catch drift (RED) and the
-      # reconciled real files pass (GREEN), plus the build-map derivation.
+      # Freshness index smoke — regenerates docs/_meta and fails on a stale doc.
+      - name: Run doc-freshness gate
+        run: python tools/doc_freshness.py --check
+
+      # The gates' own test suites — prove R1–R4 catch drift (RED) and the
+      # reconciled real files pass (GREEN), the freshness index covers AgDR/ADR
+      # with no dangling deps, and the architecture map is wired (DOC-07/11/12/13).
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
 
-      - name: Run doc-reconcile gate tests
-        run: python -m pytest tests/test_doc_reconcile.py -v
+      - name: Run doc gate tests
+        run: >
+          python -m pytest -v
+          tests/test_doc_reconcile.py
+          tests/test_doc_status_overclaim.py
+          tests/test_doc_freshness_coverage.py
+          tests/test_architecture_map.py

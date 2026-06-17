@@ -321,18 +321,28 @@ def test_build_map_render_is_deterministic():
 
 def test_build_map_real_repo_generates_and_lists_collective_mind():
     """The generator runs on the real repo and shows AgDR-0054 collective-mind
-    as a BUILT record (the founder-signed `executed` status), proving the map
-    reflects the tracked ledger — not the untracked revit reuse."""
+    as a PLANNED record, NOT built.
+
+    CONSCIOUSLY REWRITTEN (DOC-07): this test previously asserted
+    `status_class == "built"` — it encoded the very overclaim the founder
+    flagged (frontmatter `executed` while every roadmap slice is PLAN-LOCKED /
+    NO BUILD). The honest status is now `approved-direction · build-pending`,
+    so the map must list it under planned/in-flight. The map reflecting the
+    tracked ledger (collective-mind file present, not the untracked revit reuse)
+    still holds.
+    """
     recs = bm.scan_agdrs()  # real docs/agdr
     by_id = {}
     for r in recs:
         by_id.setdefault(r.agdr_id, []).append(r)
     assert "AgDR-0054" in by_id
-    # The tracked AgDR-0054 is the collective-mind one, status executed.
     cm = [r for r in by_id["AgDR-0054"]
           if "collective-mind" in r.filename]
     assert cm, "tracked AgDR-0054 collective-mind file must be present"
-    assert cm[0].status_class == "built"
+    # Direction-approved but unbuilt → planned, never built.
+    assert cm[0].status_class == "planned", (
+        f"AgDR-0054 must read as planned (build-pending), got "
+        f"{cm[0].status_class!r} from status {cm[0].status!r}")
     # rendering the full map does not raise
     text = bm.generate(today="2026-06-15")
     assert "What is built" in text

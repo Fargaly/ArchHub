@@ -108,12 +108,16 @@ def _balance() -> int:
     res = balance_op()
     if res.ok:
         v = res.value or {}
+        # Print ONLY the balance figures the founder needs. The endpoint host is
+        # locally derived (safe); response-trace fields (e.g. RequestId) are
+        # deliberately NOT echoed — they carry no founder value and keep the
+        # signed-response object out of stdout. Secrets are never printed.
         print(f"DashScope account balance: {v.get('available')} "
               f"{v.get('currency')}")
         if v.get("credit") is not None:
             print(f"  credit line: {v.get('credit')} {v.get('currency')}")
         print(f"  (via Alibaba BSS QueryAccountBalance @ "
-              f"{v.get('billing_base')}, request {v.get('request_id')})")
+              f"{v.get('billing_base')})")
         return 0
     print(f"balance unavailable: {res.error}")
     return 1

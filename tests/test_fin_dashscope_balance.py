@@ -5,19 +5,20 @@ key but NO way to see what it costs — there was no `dashscope.balance` op, and
 DashScope's own `sk-` API has no billing endpoint. Spend was invisible.
 
 The fix: `dashscope.balance` performs the REAL Alibaba BSS OpenAPI
-`QueryAccountBalance` call (RPC, version 2017-12-14, HMAC-SHA1 signed with a RAM
-AccessKey pair resolved through the canonical op:// resolver) and returns the
-live AvailableAmount + Currency. When the AccessKey pair is not configured it
-returns an honest `ok=False` naming the op:// refs to set — it NEVER fabricates
-a figure and NEVER raises.
+`QueryAccountBalance` call (RPC, version 2017-12-14, signature method **V3**
+``ACS3-HMAC-SHA256`` signed with a RAM AccessKey pair resolved through the
+canonical op:// resolver) and returns the live AvailableAmount + Currency. When
+the AccessKey pair is not configured it returns an honest `ok=False` naming the
+op:// refs to set — it NEVER fabricates a figure and NEVER raises.
 
 These tests pin three things that all go RED on origin/main (where `_balance`,
-`_rpc_sign`, and the `dashscope.balance` op do not exist → AttributeError):
+`_sign_v3`, and the `dashscope.balance` op do not exist → AttributeError):
 
   1. the op is REGISTERED on the connector (discoverable + callable);
-  2. the RPC signature matches Alibaba's published canonical example
+  2. the V3 signature matches Alibaba's published canonical example
      byte-for-byte (proves the signer is real, not a stub — a fake signer
-     would never authenticate the live call);
+     would never authenticate the live call). V3 signs with HMAC-SHA256,
+     superseding the legacy V1 HMAC-SHA1 RPC scheme;
   3. the honest-status contract: missing AccessKey → ok=False naming the refs
      and a None balance (no fabrication); a stubbed BSS 200 → the real figure
      is parsed out and returned.
@@ -52,27 +53,37 @@ def test_dashscope_balance_op_registered():
     assert op.fn is dash._balance
 
 
-# ── 2 · the signer is REAL (Alibaba canonical example) ───────────────
+# ── 2 · the signer is REAL (Alibaba V3 canonical example) ────────────
 
 
-def test_rpc_sign_matches_alibaba_canonical_example():
-    """Alibaba's documented RPC HMAC-SHA1 worked example (doc-detail/25492):
-    AccessKeySecret 'testsecret', GET, this exact param set → this exact
-    signature. A stub/placeholder signer cannot reproduce it; a real one does.
-    This is what makes the live billing call actually authenticate."""
+def test_sign_v3_matches_alibaba_canonical_example():
+    """Alibaba's documented signature-method-V3 (ACS3-HMAC-SHA256) worked
+    example reproduces byte-for-byte. Inputs + expected signature are from the
+    official spec (sdk/product-overview/v3-request-structure-and-signature):
+    AccessKeySecret 'YourAccessKeySecret', POST RunInstances, this exact header
+    + query set → this exact hex signature. A stub/placeholder signer cannot
+    reproduce it; a real one does. This is what authenticates the live billing
+    call — and it is HMAC-SHA256 (V3), not the legacy SHA-1."""
     params = {
-        "AccessKeyId": "testid",
-        "Action": "DescribeDedicatedHosts",
-        "Format": "JSON",
-        "RegionId": "cn-beijing",
-        "SignatureMethod": "HMAC-SHA1",
-        "SignatureNonce": "edb2b34af0af9a6d14deaf7c1a5315eb",
-        "SignatureVersion": "1.0",
-        "Timestamp": "2023-03-13T08:34:30Z",
-        "Version": "2014-05-26",
+        "ImageId": "win2019_1809_x64_dtc_zh-cn_40G_alibase_20230811.vhd",
+        "RegionId": "cn-shanghai",
     }
-    sig = dash._rpc_sign(params, "testsecret", "GET")
-    assert sig == "9NaGiOspFP5UPcwX8Iwt2YJXXuk="
+    headers = {
+        "host": "ecs.cn-shanghai.aliyuncs.com",
+        "x-acs-action": "RunInstances",
+        "x-acs-content-sha256":
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "x-acs-date": "2023-10-26T10:22:32Z",
+        "x-acs-signature-nonce": "3156853299f313e23d1673dc12e1703d",
+        "x-acs-version": "2014-05-26",
+    }
+    sig, signed_headers = dash._sign_v3("POST", params, headers,
+                                        "YourAccessKeySecret")
+    assert sig == (
+        "06563a9e1b43f5dfe96b81484da74bceab24a1d853912eee15083a6f0f3283c0")
+    assert signed_headers == (
+        "host;x-acs-action;x-acs-content-sha256;x-acs-date;"
+        "x-acs-signature-nonce;x-acs-version")
 
 
 # ── 3 · honest-status contract ───────────────────────────────────────
@@ -128,7 +139,9 @@ def test_balance_parses_real_figure_from_signed_bss_call(monkeypatch):
     def _fake_urlopen(req, timeout=0):
         # Capture the real signed request the op built.
         captured["url"] = req.full_url
-        captured["data"] = req.data.decode("utf-8")
+        captured["data"] = (req.data or b"").decode("utf-8")
+        # Header keys are normalised to .capitalize() by urllib's Request.
+        captured["headers"] = {k.lower(): v for k, v in req.header_items()}
         return _Resp({
             "Code": "Success",
             "Success": True,
@@ -150,10 +163,18 @@ def test_balance_parses_real_figure_from_signed_bss_call(monkeypatch):
     assert res.value["currency"] == "USD"
     assert res.value["request_id"] == "REQ-123"
     assert "42.50" in res.value_preview and "USD" in res.value_preview
-    # The request the op actually built was the signed BSS QueryAccountBalance.
-    assert "Action=QueryAccountBalance" in captured["data"]
-    assert "Signature=" in captured["data"]
-    assert "SignatureMethod=HMAC-SHA1" in captured["data"]
+    # The request the op actually built was a signature-method-V3 (SHA256)
+    # BSS QueryAccountBalance: action/version in x-acs-* headers, an
+    # ACS3-HMAC-SHA256 Authorization header, and no fabricated body.
+    hdrs = captured["headers"]
+    assert hdrs.get("x-acs-action") == "QueryAccountBalance"
+    assert hdrs.get("x-acs-version") == "2017-12-14"
+    auth = hdrs.get("authorization", "")
+    assert auth.startswith("ACS3-HMAC-SHA256 ")
+    assert "Credential=testid" in auth
+    assert "Signature=" in auth
+    # The raw signed response is NOT leaked back into the op's value.
+    assert "raw" not in res.value
 
 
 def test_balance_bss_rejection_is_honest_fail(monkeypatch):

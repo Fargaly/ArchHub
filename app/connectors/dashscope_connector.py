@@ -148,23 +148,52 @@ def _billing_base() -> str:
     return "https://business.aliyuncs.com"
 
 
-def _rpc_sign(params: dict, ak_secret: str, method: str = "POST") -> str:
-    """Compute the Alibaba Cloud RPC-style signature (HMAC-SHA1) over the
-    request parameters. This is the documented BSS/RPC scheme: percent-encode
-    + sort params, build the string-to-sign, HMAC-SHA1 with `<secret>&`, then
-    base64. Pure + deterministic so it is unit-testable without a network."""
-    def _pe(s: str) -> str:
-        # RFC3986 percent-encoding per the Alibaba signature spec.
-        return (urllib.parse.quote(str(s), safe="~")
-                .replace("+", "%20").replace("*", "%2A").replace("%7E", "~"))
+def _pe(s: str) -> str:
+    """RFC3986 percent-encoding per the Alibaba V3 signature spec (unreserved
+    set ``-_.~`` stays literal; everything else, including ``/``, is encoded)."""
+    return urllib.parse.quote(str(s), safe="-_.~")
 
-    items = sorted((k, v) for k, v in params.items())
-    canon = "&".join(f"{_pe(k)}={_pe(v)}" for k, v in items)
-    string_to_sign = f"{method}&{_pe('/')}&{_pe(canon)}"
-    digest = hmac.new((ak_secret + "&").encode("utf-8"),
-                      string_to_sign.encode("utf-8"),
-                      hashlib.sha1).digest()
-    return base64.b64encode(digest).decode("ascii")
+
+def _sign_v3(method: str, params: dict, headers: dict, ak_secret: str,
+             body: bytes = b"") -> tuple[str, str]:
+    """Compute the Alibaba Cloud **signature method V3** (``ACS3-HMAC-SHA256``)
+    for an RPC-style request and return ``(signature_hex, signed_headers)``.
+
+    V3 is the current documented scheme and signs with **HMAC-SHA256** — it
+    supersedes the legacy V1 ``HMAC-SHA1`` RPC signing. The AccessKey secret is
+    used only as the HMAC *key* (a MAC), never as an input to a bare digest;
+    the request is bound by SHA-256, not SHA-1.
+
+    Algorithm (https://www.alibabacloud.com/help/en/sdk/product-overview/
+    v3-request-structure-and-signature), pure + deterministic so it is
+    unit-testable without a network:
+
+      canonical_request = method ⏎ canonical_uri ⏎ canonical_query ⏎
+                          canonical_headers ⏎ signed_headers ⏎ sha256hex(body)
+      string_to_sign    = "ACS3-HMAC-SHA256" ⏎ sha256hex(canonical_request)
+      signature         = hex( HMAC-SHA256(ak_secret, string_to_sign) )
+    """
+    canonical_query = "&".join(
+        f"{_pe(k)}={_pe(v)}" for k, v in sorted(params.items()))
+    # Sign host + content-type + every x-acs-* header (lowercased, sorted).
+    sign_keys = sorted(
+        k.lower() for k in headers
+        if k.lower().startswith("x-acs-") or k.lower() in ("host", "content-type"))
+    lower = {k.lower(): v for k, v in headers.items()}
+    canonical_headers = "".join(
+        f"{k}:{str(lower[k]).strip()}\n" for k in sign_keys)
+    signed_headers = ";".join(sign_keys)
+    hashed_payload = hashlib.sha256(body).hexdigest()
+    canonical_request = "\n".join([
+        method, "/", canonical_query, canonical_headers,
+        signed_headers, hashed_payload])
+    string_to_sign = ("ACS3-HMAC-SHA256\n"
+                      + hashlib.sha256(
+                          canonical_request.encode("utf-8")).hexdigest())
+    signature = hmac.new(ak_secret.encode("utf-8"),
+                         string_to_sign.encode("utf-8"),
+                         hashlib.sha256).hexdigest()
+    return signature, signed_headers
 
 
 def _http(method: str, path: str, body: Optional[dict] = None,
@@ -231,8 +260,9 @@ def _balance() -> OpResult:
     DashScope's own ``sk-`` API exposes NO billing/usage endpoint — spend
     lives in Alibaba Cloud's BSS (Billing) OpenAPI ``QueryAccountBalance``
     (RPC, version 2017-12-14), which authenticates with a RAM AccessKey
-    pair (ID + secret) and HMAC-SHA1 request signing — a DIFFERENT credential
-    than the model-call key. This op makes that real signed call when the
+    pair (ID + secret) and signature method V3 (ACS3-HMAC-SHA256) request
+    signing — a DIFFERENT credential than the model-call key, signed with
+    HMAC-SHA256 (V3), not the legacy SHA-1. This op makes that real signed call when the
     AccessKey pair resolves (op:// -> resolver), and returns the live
     ``AvailableAmount`` + ``Currency`` + credit figures.
 
@@ -259,28 +289,35 @@ def _balance() -> OpResult:
                    "needs": missing, "configured": False},
             value_preview="balance unavailable · AccessKey not set")
 
-    # Build the canonical RPC request, sign it, POST it.
+    # Build a signature-method-V3 (ACS3-HMAC-SHA256) request and POST it.
+    # QueryAccountBalance takes no business params, so the canonical query is
+    # empty and the action/version travel as x-acs-* headers. The body is empty
+    # → its SHA-256 is the well-known empty hash.
+    base = _billing_base()
+    host = urllib.parse.urlsplit(base).netloc or base
     now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    params: dict = {
-        "Action": "QueryAccountBalance",
-        "Version": "2017-12-14",
-        "Format": "JSON",
-        "AccessKeyId": ak_id,
-        "SignatureMethod": "HMAC-SHA1",
-        "SignatureVersion": "1.0",
-        "SignatureNonce": uuid.uuid4().hex,
-        "Timestamp": now,
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    sign_headers: dict = {
+        "host": host,
+        "x-acs-action": "QueryAccountBalance",
+        "x-acs-version": "2017-12-14",
+        "x-acs-date": now,
+        "x-acs-content-sha256": empty_sha,
+        "x-acs-signature-nonce": uuid.uuid4().hex,
     }
-    params["Signature"] = _rpc_sign(params, ak_secret, "POST")
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    url = _billing_base() + "/"
+    signature, signed_headers = _sign_v3("POST", {}, sign_headers, ak_secret)
+    authorization = (
+        f"ACS3-HMAC-SHA256 Credential={ak_id},"
+        f"SignedHeaders={signed_headers},Signature={signature}")
+    req_headers = dict(sign_headers)
+    req_headers["Authorization"] = authorization
+    req_headers["Accept"] = "application/json"
+    url = base + "/"
     req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded"})
+        url, data=b"", method="POST", headers=req_headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            raw = r.read()
-            code, resp = r.status, json.loads(raw.decode("utf-8"))
+            code, resp = r.status, json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
             code, resp = e.code, json.loads(e.read().decode("utf-8"))
@@ -290,40 +327,41 @@ def _balance() -> OpResult:
         return OpResult(ok=False, op_id="dashscope.balance",
                         error=f"BSS billing endpoint unreachable: {e}",
                         value={"available": None, "currency": None,
-                               "billing_base": _billing_base(),
-                               "configured": True},
+                               "billing_base": base, "configured": True},
                         value_preview="balance probe failed · unreachable")
 
     if code >= 400 or not isinstance(resp, dict):
         return OpResult(ok=False, op_id="dashscope.balance",
                         error=f"HTTP {code}: {resp}",
                         value={"available": None, "currency": None,
-                               "billing_base": _billing_base(),
-                               "raw": resp, "configured": True},
+                               "billing_base": base, "code": code,
+                               "configured": True},
                         value_preview=f"balance probe failed · HTTP {code}")
     # BSS wraps a Code/Success envelope; a non-Success body is an honest fail.
-    if resp.get("Success") is False or (resp.get("Code")
-                                        not in (None, "Success", "200")):
+    bss_code = resp.get("Code")
+    if resp.get("Success") is False or bss_code not in (None, "Success", "200"):
         return OpResult(ok=False, op_id="dashscope.balance",
                         error=(f"BSS QueryAccountBalance rejected: "
-                               f"{resp.get('Code')} {resp.get('Message')}"),
+                               f"{bss_code} {resp.get('Message')}"),
                         value={"available": None, "currency": None,
-                               "billing_base": _billing_base(),
-                               "raw": resp, "configured": True},
-                        value_preview="balance probe failed · "
-                                      + str(resp.get("Code")))
+                               "billing_base": base, "code": bss_code,
+                               "configured": True},
+                        value_preview="balance probe failed · " + str(bss_code))
+    # Extract ONLY the specific scalar figures we report — never echo the whole
+    # signed-response object into `value` (it would taint downstream logs).
     data = resp.get("Data") or {}
     available = data.get("AvailableAmount")
     currency = data.get("Currency")
+    request_id = resp.get("RequestId")
     return OpResult(
         ok=True, op_id="dashscope.balance",
         value={"available": available, "currency": currency,
                "available_cash": data.get("AvailableCashAmount"),
                "credit": data.get("CreditAmount"),
                "mybank_credit": data.get("MybankCreditAmount"),
-               "billing_base": _billing_base(),
-               "request_id": resp.get("RequestId"),
-               "configured": True, "raw": resp},
+               "billing_base": base,
+               "request_id": request_id,
+               "configured": True},
         value_preview=f"balance {available} {currency}".strip())
 
 

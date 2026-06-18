@@ -1358,19 +1358,26 @@ class ArchHubBridge(QObject):
     def load_session(self, session_id: str) -> str:
         try:
             from pathlib import Path
-            from session_io import SESSIONS_DIR, load_session
+            from session_io import SESSIONS_DIR, load_session_with_messages
             # session_id can be a name or a path; try both.
             p = Path(session_id)
             if not p.exists():
                 p = SESSIONS_DIR / f"{session_id}.archhub-session.json"
             if not p.exists():
                 return _safe_json({"error": "session not found"})
-            session, name = load_session(p)
+            session, name, messages = load_session_with_messages(p)
             self._active_session_id = session.id
+            # SESSIONS-GRAPH lane: return the graph in the LM_GRAPH shape the
+            # JSX canvas renders (kind/cat/ins/outs), decomposed per-turn so a
+            # chat opens as a modular node graph — NOT one flat conversation
+            # node. Same translator the get_session_graph slot uses, so both
+            # entry points agree. See graph_to_lmgraph.decompose_session_to_graph.
+            from workflows.graph_to_lmgraph import decompose_session_to_graph
+            graph = decompose_session_to_graph(session, messages, name=session_id)
             return _safe_json({
                 "id":    session.id,
                 "name":  name,
-                "graph": session.graph or {},
+                "graph": graph,
             })
         except Exception as ex:
             return _safe_json({"error": str(ex)})
@@ -2080,12 +2087,25 @@ class ArchHubBridge(QObject):
     @pyqtSlot(str, result=str)
     def get_session_graph(self, session_id: str) -> str:
         """Return the graph (nodes+wires) for an open session in the
-        shape studio-lm.jsx's LM_GRAPH expects.
+        shape studio-lm.jsx's LM_GRAPH expects (n.kind / n.cat / n.ins /
+        n.outs — NOT the workflows.graph type/inputs/outputs shape).
 
-        The session id is the slug under SESSIONS_DIR. When the session
-        has a stored graph (ADR-003 Phase 2 dual-write), we ship that.
-        Otherwise we wrap the message log as a single conversation
-        node so the canvas always has something to render."""
+        SESSIONS-GRAPH lane fix (founder: "every chat opens as ONE flat
+        node"). Two root causes are killed here:
+          1. WRAP-AS-ONE: the message log used to be wrapped into a single
+             `conversation.chat` node, so the per-turn structure (user → AI
+             → tools → output) was invisible. We now run the EXISTING
+             per-turn decomposer (`workflows.chat_to_workflow`, via
+             `graph_to_lmgraph.decompose_session_to_graph`) so a chat
+             becomes a logical, modular graph — one node per turn + a tool
+             node per tool call.
+          2. SHAPE MISMATCH: even a stored graph was emitted in the
+             workflows.graph shape, which the JSX renderer (dispatching on
+             `kind`/`cat`, drawing sockets from `ins`/`outs`) collapses to a
+             flat card. The translator maps it to the LM_GRAPH shape so the
+             FIRST render is a real node graph.
+        Decompose handles all three states (real multi-node graph / chat
+        messages / empty) and always returns the LM_GRAPH shape."""
         try:
             from pathlib import Path
             from session_io import SESSIONS_DIR, load_session_with_messages
@@ -2095,11 +2115,8 @@ class ArchHubBridge(QObject):
             if not p.exists():
                 return _safe_json({"nodes": [], "wires": []})
             session, _name, messages = load_session_with_messages(p)
-            if session.graph and session.graph.get("nodes"):
-                return _safe_json(session.graph)
-            # No graph yet — wrap messages.
-            from session_graph_migrator import wrap_legacy_as_graph
-            g = wrap_legacy_as_graph(session, messages, name=session_id)
+            from workflows.graph_to_lmgraph import decompose_session_to_graph
+            g = decompose_session_to_graph(session, messages, name=session_id)
             return _safe_json(g)
         except Exception as ex:
             return _safe_json({"nodes": [], "wires": [],

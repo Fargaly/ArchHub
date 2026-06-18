@@ -57,6 +57,44 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
     return any(n in s for n in needles)
 
 
+def _claude_cli_is_auth(ex: Exception) -> bool:
+    """True when a claude_cli failure is an AUTHENTICATION problem, not a
+    generic crash. The Claude Code CLI surfaces a logged-out / expired
+    subscription as a worded message — 'not authenticated', 'please log
+    in', 'invalid api key', 'oauth token has expired', 'session expired',
+    'forbidden' — and sometimes a bare HTTP 401/403, both wrapped in the
+    `claude CLI error: …` RuntimeError the client raises. `_looks_like_auth_or_quota`
+    already matches the bare 401/403 + 'unauthorized'; this adds the CLI's
+    natural-language auth phrasings so an expired token re-routes onward
+    (Codex / metered API / Ollama) instead of being treated as a fatal
+    turn error. Founder bug 'router not working': a 401'd claude_cli must
+    fall through, not blow up the whole reply."""
+    s = (str(ex) or "").lower()
+    needles = (
+        "401",
+        "403",
+        "unauthorized",
+        "not authenticated",
+        "unauthenticated",
+        "authentication",
+        "please log in",
+        "please login",
+        "log in to",
+        "logged out",
+        "not logged in",
+        "sign in",
+        "oauth",
+        "token has expired",
+        "token expired",
+        "session expired",
+        "credentials",
+        "forbidden",
+        "invalid api key",
+        "invalid_api_key",
+    )
+    return any(n in s for n in needles)
+
+
 def _looks_like_transient_network(ex: Exception) -> bool:
     """True for short-lived network blips that a single retry fixes.
     Examples we've seen in production Sentry:
@@ -588,8 +626,16 @@ class LLMRouter:
             label = "quota exceeded"
         elif "rate" in short and "limit" in short:
             label = "rate limited"
-        elif "401" in short or "auth" in short or "invalid" in short and "key" in short:
-            label = "invalid key"
+        elif ("401" in short or "403" in short or "auth" in short
+              or "unauthorized" in short or "forbidden" in short
+              or "log in" in short or "login" in short
+              or "sign in" in short or "logged out" in short
+              or "token" in short and "expir" in short
+              or ("invalid" in short and "key" in short)):
+            # Auth-class block (expired key / signed-out claude_cli / 401)
+            # — distinct from a generic "blocked" so the picker tooltip +
+            # fallback toast tell the user to re-auth, not just "blocked".
+            label = "signed out / invalid key"
         else:
             label = "blocked"
         self._block_reasons[provider] = label
@@ -1143,6 +1189,7 @@ class LLMRouter:
         on_tool_invocation: Optional[Callable[[ToolInvocation], None]] = None,
         on_reasoning: Optional[Callable[[str], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
+        on_attempt_reset: Optional[Callable[[str], None]] = None,
         session_pin: Optional[str] = None,
         system_override: Optional[str] = None,
         extra_tools: Optional[list[dict]] = None,
@@ -1206,11 +1253,25 @@ class LLMRouter:
         ctx.tool_engine.tool_schemas_for, corrupting any concurrent chat /
         workflow turn that shared the same ToolEngine. The filter is now a
         per-call local copy — no shared state is touched. None ⇒ full
-        surface (the chat default, unchanged)."""
+        surface (the chat default, unchanged).
+
+        on_attempt_reset — OPTIONAL callback fired with the failed
+        provider's name the instant the auto-fallback chain abandons an
+        attempt and is about to stream a DIFFERENT provider (auth/quota
+        block, refusal re-route, or fabricated-tool re-route). It is the
+        ROUTER OUTPUT HYGIENE hook: the caller buffers each attempt's
+        on_chunk text and, on this signal, DROPS the half-streamed text
+        of the loser so the user only ever sees the WINNING provider's
+        message — never a failed provider's truncated half-reply
+        concatenated in front of the real answer (founder bug: 'router
+        not working' — it routed fine but LEAKED). Fires once per
+        abandoned attempt; never fires for the attempt that ultimately
+        returns. None ⇒ no-op (back-compat)."""
         on_chunk = on_chunk or (lambda _: None)
         on_tool_invocation = on_tool_invocation or (lambda _: None)
         on_reasoning = on_reasoning or (lambda _: None)
         on_status = on_status or (lambda _: None)
+        on_attempt_reset = on_attempt_reset or (lambda _: None)
         # Merge the two accepted spellings into one list. Either may be
         # None (the common case — no client-side tools). Order: explicit
         # extra_tools first, then the alias, de-duped by tool name so a
@@ -1325,6 +1386,12 @@ class LLMRouter:
                             f"{provider}: refused to use tools — "
                             f"switching provider…"
                         )
+                        # OUTPUT HYGIENE: this provider may have streamed
+                        # a partial refusal ('I cannot read your emails')
+                        # before we caught it — tell the caller to drop it
+                        # so the winner's reply isn't prefixed by it.
+                        try: on_attempt_reset(provider)
+                        except Exception: pass
                         self.block_provider(
                             provider, reason="refused tool use"
                         )
@@ -1347,6 +1414,10 @@ class LLMRouter:
                             f"{provider}: fabricated a tool call — "
                             f"switching provider…"
                         )
+                        # OUTPUT HYGIENE: the fabricated prose was streamed
+                        # to the bubble — drop it before the winner streams.
+                        try: on_attempt_reset(provider)
+                        except Exception: pass
                         last_error = RuntimeError(
                             f"{provider} fabricated tool-call markup"
                         )
@@ -1372,9 +1443,29 @@ class LLMRouter:
                 # failure: block briefly + re-route down the chain
                 # (claude_cli → codex_cli → metered APIs → ollama) rather
                 # than hard-raising and killing the whole turn.
-                if not (_looks_like_auth_or_quota(ex)
-                        or provider in ("claude_cli", "codex_cli")):
+                #
+                # claude_cli HTTP 401: the subscription token expired /
+                # the CLI is signed out. The CLI client surfaces this as a
+                # RuntimeError whose text carries the 401 — and a stream
+                # can 401 PART-WAY through (some text already pushed). It is
+                # an AUTH failure, NOT a generic hard error: route onward to
+                # the next provider exactly like an Anthropic-API 401, never
+                # raise it as the turn's fatal error. (_looks_like_auth_or_quota
+                # already matches '401'/'unauthorized'; _claude_cli_is_auth
+                # also catches the CLI's worded 'not authenticated' / 'log in'
+                # phrasings that omit the bare code.)
+                is_auth = (_looks_like_auth_or_quota(ex)
+                           or (provider == "claude_cli"
+                               and _claude_cli_is_auth(ex)))
+                if not (is_auth or provider in ("claude_cli", "codex_cli")):
                     raise
+                # OUTPUT HYGIENE: a stream that died mid-flight (e.g. a 401
+                # after the first tokens) already pushed a partial reply to
+                # the bubble. Signal the caller to DROP it before the next
+                # provider streams the real answer — the founder must never
+                # see the loser's half-message in front of the winner's.
+                try: on_attempt_reset(provider)
+                except Exception: pass
                 self.block_provider(provider, reason=str(ex)[:200])
                 # Tell the chat layer so it can show a fallback toast —
                 # "Switched anthropic → google: out of credit" beats a

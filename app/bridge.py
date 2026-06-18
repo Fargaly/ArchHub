@@ -558,6 +558,14 @@ class ArchHubBridge(QObject):
 
     # Signals visible to JS via QWebChannel auto-emit.
     chat_chunk      = pyqtSignal(str, str)       # (session_id, text)
+    # ROUTER OUTPUT HYGIENE — fired when the auto-fallback chain abandons a
+    # provider that had already streamed partial text, so a live consumer
+    # can clear its optimistic paint before the WINNING provider streams.
+    # The bridge ALSO buffers per-attempt (see send_chat_history._runner)
+    # so the bubble is correct even with no consumer of this signal; this
+    # is the belt-and-braces live-clear hook. (session_id, dropped_provider,
+    # dropped_chars)
+    chat_chunk_retract = pyqtSignal(str, str, int)
     chat_reasoning  = pyqtSignal(str, str)       # (session_id, reasoning_step)
     chat_done       = pyqtSignal(str)            # (session_id)
     chat_error      = pyqtSignal(str, str)       # (session_id, error)
@@ -1761,12 +1769,58 @@ class ArchHubBridge(QObject):
                 _reasoning_steps: list = []
                 _tool_calls: list = []
                 _text_parts: list = []
+                # ── ROUTER OUTPUT HYGIENE (founder bug: 'router not
+                # working' — it ROUTED fine but LEAKED) ───────────────────
+                # The auto-fallback chain may try provider A, stream a few
+                # tokens, then hit an auth/quota/refusal/fabrication wall
+                # and re-route to provider B. The OLD code emitted every
+                # on_chunk straight to the bubble the instant it arrived, so
+                # provider A's half-message stayed glued in front of
+                # provider B's real answer — the founder saw a garbled,
+                # double-voiced reply.
+                #
+                # FIX: buffer each ATTEMPT's chunks; commit (emit to the
+                # bubble) only once that attempt SUCCEEDS — i.e. when
+                # router.complete() returns. The router fires
+                # `on_attempt_reset` the instant it abandons an attempt; we
+                # drop that attempt's buffer (it was never shown) and fire
+                # `chat_chunk_retract` so any live consumer can clear too.
+                # Net result: the bubble only ever receives the WINNING
+                # provider's text, never a loser's truncated half-reply.
+                _attempt_buf: list = []      # current attempt — not yet shown
+                def _flush_attempt() -> None:
+                    """Commit the current (winning) attempt's buffered text
+                    to the bubble + the durable plan, then clear the buffer."""
+                    if not _attempt_buf:
+                        return
+                    piece = "".join(_attempt_buf)
+                    _attempt_buf.clear()
+                    if not piece:
+                        return
+                    emitted_chunks[0] += 1
+                    _text_parts.append(piece)
+                    try: self.chat_chunk.emit(session_id, piece)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 def _on_chunk(piece: str) -> None:
+                    # Buffer ONLY — do not emit yet. The text is committed by
+                    # _flush_attempt the moment the attempt that produced it
+                    # is confirmed the winner (router.complete returns).
                     if piece:
-                        emitted_chunks[0] += 1
-                        _text_parts.append(piece)
-                        try: self.chat_chunk.emit(session_id, piece)
-                        except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                        _attempt_buf.append(piece)
+                def _on_attempt_reset(provider: str) -> None:
+                    # The router gave up on `provider` mid-turn and is about
+                    # to stream a different one. Throw away the loser's
+                    # half-streamed buffer (it was never committed to the
+                    # bubble) and tell any live consumer to clear its
+                    # optimistic paint too. dropped = char count discarded.
+                    dropped = len("".join(_attempt_buf))
+                    _attempt_buf.clear()
+                    if dropped:
+                        try:
+                            self.chat_chunk_retract.emit(
+                                session_id, provider or "", dropped)
+                        except Exception:
+                            pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 def _on_reasoning(step: str) -> None:
                     # Forward each provider reasoning frame to JSX so the
                     # Conversation node renders a real trace instead of
@@ -1796,7 +1850,15 @@ class ArchHubBridge(QObject):
                     on_chunk=_on_chunk,
                     on_reasoning=_on_reasoning,
                     on_tool_invocation=_on_tool,
+                    on_attempt_reset=_on_attempt_reset,
                 )
+                # complete() returned ⇒ the LAST attempt is the WINNER. Its
+                # streamed text is still sitting in _attempt_buf (every
+                # earlier, abandoned attempt was already dropped by
+                # _on_attempt_reset). Commit it to the bubble now — this is
+                # the ONLY point the founder sees streamed text, and it is
+                # guaranteed to be one provider's, never a leaked mix.
+                _flush_attempt()
                 # Only emit response.text as a final chunk if NOTHING was
                 # streamed. Otherwise we'd duplicate the entire message.
                 if response is not None and emitted_chunks[0] == 0:
@@ -2965,7 +3027,20 @@ class ArchHubBridge(QObject):
         the query envelope: the cached result returns instantly, the
         SQLite query runs on the background pool, and `memory_changed`
         fires when fresh data lands so the search consumer re-pulls the
-        (now-cached) hits. No SQLite ever touches the main thread."""
+        (now-cached) hits. No SQLite ever touches the main thread.
+
+        BRAIN RECALL UNIFY (founder bug: 'brain not working' — in-app
+        recall searched the STAGING graph.sqlite, not the live brain
+        daemon that actually holds the founder's memory). Per the
+        ONE-SYSTEM mandate (and matching `memory_stats`, which already
+        reads its canonical counts from the daemon) `_work()` now queries
+        the LIVE brain daemon first — `brain.browse` with the question as
+        the search query on http://127.0.0.1:8473 — and maps the daemon's
+        retrieval-ranked cards into this slot's `{id,kind,label,score,why}`
+        envelope. When the daemon is COLD / unreachable it degrades
+        gracefully to the local graph.sqlite ranker (never an error), so a
+        fresh machine with no daemon still searches its staging graph and
+        the empty case stays `{status:'ok', results:[], count:0}`."""
         try:
             import json as _json
             args = _json.loads(args_json or "{}")
@@ -2988,6 +3063,17 @@ class ArchHubBridge(QObject):
                                 "error": "memory_query needs `question`"})
 
         def _work():
+            # BRAIN RECALL UNIFY — query the live brain daemon first; fall
+            # back to the local graph.sqlite ranker only when the daemon is
+            # cold/unreachable. Both run ONLY here, on the background pool.
+            try:
+                hit = self._memory_query_brain(args)
+                if hit is not None:
+                    return hit
+            except Exception:
+                # Any unexpected daemon-path failure falls through to the
+                # local graph — recall must degrade, never error out.
+                pass
             try:
                 return self.tools.invoke("memory_query", args)
             except Exception as ex:
@@ -3002,6 +3088,79 @@ class ArchHubBridge(QObject):
             key, _work, ttl=5.0,
             empty={"status": "ok", "results": [], "count": 0},
             signal_name="memory_changed"))
+
+    def _memory_query_brain(self, args: dict):
+        """Run the recall query against the LIVE brain daemon (brain.browse)
+        and map its cards into the memory_query envelope, or return None to
+        signal 'daemon cold/unreachable — caller should fall back to the
+        local graph'. NEVER raises across the bridge.
+
+        Returns:
+          • dict {status:'ok', results:[{id,kind,label,score,why}], count,
+                  source:'brain'} — daemon answered (possibly with zero
+                  hits — a real empty recall, NOT a fallback trigger).
+          • None — daemon down / tool missing / malformed reply ⇒ the
+                  caller degrades to graph.sqlite.
+
+        MUST run on the background pool (it does a blocking HTTP round-trip
+        to the frequently-down daemon) — `memory_query._work` already does.
+        """
+        question = str(args.get("question", "") or "").strip()
+        if not question:
+            return None
+        # Optional filters the JSX search consumers may pass.
+        kinds = args.get("kinds") or []
+        kinds_set = {str(k).lower() for k in kinds if k} if kinds else set()
+        try:
+            limit = int(args.get("limit") or 0)
+        except Exception:
+            limit = 0
+        try:
+            min_score = float(args.get("min_score") or 0.0)
+        except Exception:
+            min_score = 0.0
+
+        # Fast-fail (3 s) so a dead daemon can't pin a worker thread — same
+        # budget as _compute_brain_browse / brain_search.
+        res = self._brain_tool("brain.browse", {"query": question},
+                               timeout=3.0)
+        if not (isinstance(res, dict) and res.get("ok")):
+            return None  # daemon cold / tool missing → caller falls back.
+
+        cards = res.get("search")
+        if not isinstance(cards, list):
+            # 'search' is present only when a query was supplied; its
+            # absence on an ok reply means the daemon build predates
+            # query-aware browse → fall back to the local ranker.
+            return None
+
+        results: list[dict] = []
+        for c in cards:
+            if not isinstance(c, dict):
+                continue
+            kind = str(c.get("kind", "") or "")
+            if kinds_set and kind.lower() not in kinds_set:
+                continue
+            try:
+                score = float(c.get("salience") or 0.0)
+            except Exception:
+                score = 0.0
+            if min_score and score < min_score:
+                continue
+            results.append({
+                "id":    c.get("id", ""),
+                "kind":  kind,
+                # The daemon's plain one-liner is the founder-facing label
+                # (FOUNDER-SPEAK — never the raw SPO triple).
+                "label": c.get("headline") or c.get("label") or "",
+                "score": round(score, 4),
+                "why":   c.get("why", "") or "",
+            })
+
+        if limit and limit > 0:
+            results = results[:limit]
+        return {"status": "ok", "results": results,
+                "count": len(results), "source": "brain"}
 
     @pyqtSlot(result=str)
     def get_brain_stats(self) -> str:

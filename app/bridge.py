@@ -169,6 +169,117 @@ def _do_clear_model_cache() -> dict:
         return {"error": str(ex)}
 
 
+def _share_dir() -> "Path":
+    """Writable share/export store — %LOCALAPPDATA%/ArchHub/shared/.
+
+    Where `share_export` drops the portable artifact (a self-contained
+    skill / session JSON) the user can hand to a teammate. Distinct from
+    the live skills/sessions stores so a "share copy" never collides with
+    the working file."""
+    import os as _os
+    from pathlib import Path
+    d = (Path(_os.environ.get("LOCALAPPDATA", str(Path.home())))
+         / "ArchHub" / "shared")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _do_share_export(kind: str, item_id: str) -> dict:
+    """Produce a REAL portable artifact for one shareable item and return
+    its on-disk path + the JSON content (so the UI can copy a link OR a
+    JSON blob, both pointing at the same real bytes).
+
+    Two kinds, both reusing the EXISTING stores (ONE-SYSTEM — no new store):
+      • skill   — resolve via `_scan_canvas_skills()` (the SAME resolver
+        get_saved_skills / load_skill use) and re-serialise the canvas-skill
+        envelope. The artifact IS a spawnable skill file.
+      • session — resolve the saved-session file by stem and copy its real
+        JSON. The artifact IS a loadable session.
+
+    Pure + synchronous + never raises (mirrors `_do_export_all`). An
+    unknown kind or a missing item returns an honest `{error}` — NEVER a
+    fabricated artifact (ANTI-LIE)."""
+    try:
+        import json as _json
+        import re as _re
+        from datetime import datetime, timezone
+
+        k = (kind or "").strip().lower()
+        iid = (item_id or "").strip()
+        if not iid:
+            return {"error": "item id is required"}
+
+        def _slugify(s: str) -> str:
+            return _re.sub(r"[^a-z0-9]+", "-",
+                           str(s or "").lower()).strip("-") or "item"
+
+        if k == "skill":
+            match = next(
+                (s for s in _scan_canvas_skills()
+                 if s.get("slug") == iid or s.get("name") == iid),
+                None,
+            )
+            if match is None:
+                return {"error": f"skill not found: {iid}"}
+            graph = match.get("graph") or {}
+            meta = match.get("meta") if isinstance(match.get("meta"), dict) else {}
+            envelope = {
+                "kind": "archhub.skill",
+                "name": match.get("name") or iid,
+                "slug": match.get("slug") or _slugify(iid),
+                "meta": {
+                    "mode":        str(meta.get("mode", "private")),
+                    "description": str(meta.get("description") or ""),
+                    "category":    str(meta.get("category") or ""),
+                },
+                "graph": {
+                    "nodes": list(graph.get("nodes") or []),
+                    "wires": list(graph.get("wires") or []),
+                },
+            }
+            slug = envelope["slug"]
+            out_path = _share_dir() / f"{slug}.archhub-skill.json"
+            text = _json.dumps(envelope, indent=2, ensure_ascii=False)
+            out_path.write_text(text, encoding="utf-8")
+            return {"ok": True, "kind": "skill", "id": slug,
+                    "name": envelope["name"], "path": str(out_path),
+                    "json": text,
+                    "node_count": len(envelope["graph"]["nodes"])}
+
+        if k == "session":
+            from session_io import SESSIONS_DIR, SESSION_EXT
+            stem = iid
+            src = SESSIONS_DIR / f"{stem}{SESSION_EXT}"
+            if not src.exists():
+                # Fall back to a glob (the id is the file stem, but be lenient).
+                cand = None
+                if SESSIONS_DIR.exists():
+                    for f in SESSIONS_DIR.glob(f"*{SESSION_EXT}"):
+                        if f.stem.replace(".archhub-session", "") == stem:
+                            cand = f
+                            break
+                if cand is None:
+                    return {"error": f"session not found: {iid}"}
+                src = cand
+            try:
+                data = _json.loads(src.read_text(encoding="utf-8"))
+            except Exception as ex:
+                return {"error": f"could not read session: {ex}"}
+            name = (data.get("name") or data.get("_name")
+                    or src.stem.replace(".archhub-session", ""))
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            out_path = _share_dir() / f"{_slugify(name)}-{ts}{SESSION_EXT}"
+            text = _json.dumps(data, indent=2, ensure_ascii=False)
+            out_path.write_text(text, encoding="utf-8")
+            return {"ok": True, "kind": "session", "id": stem,
+                    "name": str(name), "path": str(out_path), "json": text}
+
+        return {"error": f"unknown share kind: {kind!r} "
+                         f"(expected 'skill' or 'session')"}
+    except Exception as ex:
+        return {"error": str(ex)}
+
+
 # ---------------------------------------------------------------------------
 # Host session/document picker implementation (used by the bridge slots
 # `list_host_sessions` and `list_host_documents`).
@@ -6674,6 +6785,50 @@ class ArchHubBridge(QObject):
             try:
                 payload = _do_export_all()
             except Exception as ex:  # _do_* is fail-safe, but belt-and-braces
+                payload = {"error": f"{type(ex).__name__}: {ex}"}
+            payload["request_id"] = rid
+            try:
+                self.settings_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": rid,
+                               "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": rid})
+
+    @pyqtSlot(str, str, result=str)
+    @pyqtSlot(str, str, str, result=str)
+    def share_export(self, kind: str, item_id: str,
+                     request_id: str = "") -> str:
+        """Export ONE shareable item (a skill or a session) as a real,
+        portable artifact on disk and hand back its path + JSON content.
+
+        This is the single bridge slot behind the Share panel's per-row
+        actions — "Copy share link" (copies the artifact path), "Export
+        JSON" (copies the artifact's JSON), and "Publish" (a skill
+        re-saved Shared). It REUSES the existing stores (ONE-SYSTEM —
+        `_scan_canvas_skills` for skills, the saved-session files for
+        sessions), so a shared artifact is always a real, re-loadable file,
+        never a fabricated row (ANTI-LIE).
+
+        Off the Qt main thread when called WITH a request_id (file read +
+        write can stall the UI on a cold disk): returns {async,request_id}
+        instantly and delivers the {ok,path,json,…} payload over
+        `settings_op_done(result_json)` — the SAME dual-path idiom as
+        `export_all`. Called WITHOUT a request_id (a direct/unit-test
+        call) it runs synchronously and returns the full envelope."""
+        rid = (request_id or "").strip()
+        if not rid:
+            # Direct/synchronous path (tests / scripts, never the Qt UI).
+            return _safe_json(_do_share_export(kind, item_id))
+
+        def _runner():
+            try:
+                payload = _do_share_export(kind, item_id)
+            except Exception as ex:  # _do_* is fail-safe; belt-and-braces
                 payload = {"error": f"{type(ex).__name__}: {ex}"}
             payload["request_id"] = rid
             try:

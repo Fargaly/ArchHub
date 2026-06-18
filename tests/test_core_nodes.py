@@ -26,6 +26,7 @@ sys.path.insert(0, str(APP_ROOT))
 # Importing workflows.nodes triggers registration; do it once for the
 # whole module.
 from workflows import nodes as _nodes_pkg     # noqa: F401
+from workflows.nodes import core as _core
 from workflows.graph import Port, PortType
 from workflows import registry as _registry
 from workflows import typesystem
@@ -167,7 +168,12 @@ class TestHostNodeRegistration:
             assert "state" in output_names
             assert "after" in output_names
 
-    def test_host_executor_returns_typed_envelope(self):
+    def test_host_executor_returns_typed_envelope(self, monkeypatch):
+        monkeypatch.setattr(_core, "_pick_session_by_version",
+                            lambda family, version_filter: None)
+        monkeypatch.setattr(_core, "_broker_host_info",
+                            lambda family: {"alive": False,
+                                            "reason": "unavailable"})
         spec, executor = _registry.get("host.revit")
         out = executor({"_family": "revit", "version": "2025"},
                         {"action": "open"}, None)

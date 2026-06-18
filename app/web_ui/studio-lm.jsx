@@ -6929,6 +6929,7 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
         setPan({ x: rect.width / 2 - cx * zoom, y: rect.height / 2 - cy * zoom });
       }
       setSelectedIds(new Set([nid]));
+      window.__archhub_focus_id = nid;
       setFocusId(nid);
     };
     window.addEventListener('lm-focus-node', onFocusNode);

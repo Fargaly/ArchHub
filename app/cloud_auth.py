@@ -55,6 +55,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 _AUTH_PATH = "/signin"
 _WAIT_TIMEOUT_S = 300   # 5 min user has to finish the browser flow
+_AUTH_RETURN_STATE = "archhub"
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,12 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         code = (qs.get("code") or [""])[0]
         state = (qs.get("state") or [""])[0]
 
-        if state != getattr(self.server, "expected_state", ""):
+        accepted_states = getattr(self.server, "accepted_states", None)
+        if accepted_states is None:
+            expected = getattr(self.server, "expected_state", "")
+            accepted_states = {s for s in (expected, _AUTH_RETURN_STATE) if s}
+
+        if state not in accepted_states:
             self._html(400,
                 "<h1>Sign-in failed</h1>"
                 "<p>Security state mismatch. Please retry from the app.</p>"
@@ -187,6 +193,7 @@ class _BaseSignInWorker(QObject):
             self.failed.emit(f"Couldn't open local callback port: {e}")
             return
         httpd.expected_state = state
+        httpd.accepted_states = {state, _AUTH_RETURN_STATE}
         httpd.received_code = None
         httpd.timeout = 1.0
 
@@ -415,8 +422,8 @@ class GoogleSignInWorker(_BaseSignInWorker):
         qp = urlencode({
             "code_challenge": challenge,
             "redirect": redirect,
-            # state is echoed back through the Google redirect so the loopback
-            # handler's CSRF check (expected_state) passes; client tags the UA.
+            # Older/live /auth/return sends state=archhub, while a future
+            # backend may echo this generated state. The callback accepts both.
             "state": state,
             "client": "desktop",
         })

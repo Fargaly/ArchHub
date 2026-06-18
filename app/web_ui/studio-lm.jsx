@@ -4001,13 +4001,13 @@ const AINodeModal = ({ onClose, addNodeFromLibrary }) => {
               ))}
             </div>
             <div style={{ display:'flex', gap:8, marginTop:16, justifyContent:'flex-end', alignItems:'center' }}>
-              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginRight:'auto' }}>⌘↵ to generate</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginRight:'auto' }}>⌘↵ to draft</span>
               <button onClick={onClose} style={smallBtn()}>Cancel</button>
               <button onClick={generate} disabled={!desc.trim()} style={{
                 ...smallBtn(true),
                 opacity: desc.trim() ? 1 : 0.45,
                 cursor: desc.trim() ? 'pointer' : 'default',
-              }}>Generate node</button>
+              }}>Draft node</button>
             </div>
           </>
         )}
@@ -10178,7 +10178,7 @@ const BrokenWireDialog = ({ info, onClose }) => {
           padding:'14px 18px', borderBottom:`1px solid ${LM.line}`,
           display:'flex', alignItems:'center', gap:8, background:LM.bgSoft,
         }}>
-          <span style={{ color:LM.warn, fontSize:18 }}>⚠</span>
+          <span style={{ color:LM.warn, fontSize:18 }}>●</span>
           <span style={{ fontFamily:LM.serif, fontSize:16, color:LM.ink, flex:1 }}>
             Deleting <code style={{ color:LM.accent2, background:'transparent',
               padding:0, fontFamily:LM.mono, fontSize:13 }}>
@@ -12835,7 +12835,7 @@ const TransformBody = ({ n }) => (
       padding:'4px 8px', background:LM.warn+'14', borderRadius:3,
       display:'flex', alignItems:'center', gap:6,
     }}>
-      <span>⚠</span><span>mutates model · requires approval</span>
+      <span>●</span><span>mutates model · requires approval</span>
     </div>
   </div>
 );
@@ -12966,7 +12966,7 @@ const AnnotateBody = ({ n }) => (
 // Audit 2026-05-28: preview + save were decorative (no handlers). Now real:
 // preview reveals the node's ACTUAL last cooked output; save writes that
 // real value to disk via the save_node_output bridge slot and toasts the path.
-// `nodeOutputValue(n)` is the single source of "what did this node produce" —
+// `nodeOutputValue(n)` is the single source of "what this node returned" —
 // the runner stashes cooked results on `n.cooked` (value/preview), connector
 // ops on `n.op_result`, and display fields on `n.params`.
 const nodeOutputValue = (n) => {
@@ -14519,7 +14519,7 @@ const ConnectorRail = ({ node, bumpGraph }) => {
       )}
       {node.destructive && (
         <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.warn,
-          letterSpacing:'0.04em' }}>⚠ mutates the host — runs only on explicit click</div>
+          letterSpacing:'0.04em' }}>● mutates the host — runs only on explicit click</div>
       )}
       {!host && (
         <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:12,
@@ -15804,7 +15804,7 @@ const CommunitiesPanel = ({ open }) => {
         setInvite({ url: r.url, ttl_hours: r.ttl_hours || 168 });
       } else {
         setInvite({ error: (r && r.error) ? r.error
-                          : 'Could not generate an invite (brain daemon?).' });
+                          : 'Could not create an invite (brain daemon?).' });
       }
     } catch (e) { setInvite({ error: String(e) }); }
     finally { setGenBusy(false); }
@@ -16018,9 +16018,9 @@ const CommunitiesPanel = ({ open }) => {
                 onClick={genInvite} disabled={!isOwner || genBusy}
                 style={{ ...btnPrimary(genBusy), opacity: (!isOwner ? .5 : (genBusy ? .7 : 1)),
                          cursor: (!isOwner || genBusy) ? 'default' : 'pointer' }}
-                title={isOwner ? 'Generate a 7-day invite link'
-                               : 'Only the owner can generate invites'}>
-                {genBusy ? 'Generating…' : 'Generate invite'}
+                title={isOwner ? 'Create a 7-day invite link'
+                               : 'Only the owner can create invites'}>
+                {genBusy ? 'Creating…' : 'Create invite'}
               </button>
             </div>
             {!isOwner && (
@@ -16910,7 +16910,7 @@ const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
   const [open, setOpen] = React.useState(false);
   const [stats, setStats] = React.useState(null);   // get_brain_stats
   const [mem, setMem] = React.useState(null);        // memory_stats
-  // Brain #32 — "Generate training dataset" state. dsScope = which privacy
+  // Brain #32 — "Draft training dataset" state. dsScope = which privacy
   // scope to export (default USER, the user's own data — safe). dsBusy gates
   // the button while a worker runs. dsResult holds the manifest (or error)
   // the brain_dataset_done signal delivers back.
@@ -17352,7 +17352,7 @@ const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
           }}>
             <div style={{ flex:1, minWidth:240 }}>
               <div style={{ fontFamily:LM.serif, fontSize:16, fontWeight:500, color:LM.ink, marginBottom:3 }}>
-                Generate a training dataset
+                Draft a training dataset
               </div>
               <div style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5 }}>
                 Export what the brain knows as a HuggingFace-style dataset
@@ -17420,7 +17420,7 @@ const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
                 display:'flex', alignItems:'center', gap:7,
               }}>
               <span style={{ fontSize:14 }}>⛁</span>
-              {dsBusy ? 'Generating…' : 'Generate training dataset'}
+              {dsBusy ? 'Drafting…' : 'Draft training dataset'}
             </button>
           </div>
 
@@ -18291,7 +18291,7 @@ const AiPlanHistoryModalInner = ({ _themeBump }) => {   // _themeBump: theme-rep
                 <div style={{ background:LM.err+'14', border:`1px solid ${LM.err}66`,
                   borderRadius:5, padding:'8px 12px', marginBottom:12,
                   color:LM.err, fontFamily:LM.mono, fontSize:11 }}>
-                  ⚠ {selected.error}
+                  ● {selected.error}
                 </div>
               )}
               {/* REASONING — the founder's "see everything in nodes:
@@ -18468,7 +18468,7 @@ const CommandPaletteInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
         run:() => { try { refreshSessions(); } catch (e) {} } },
       { kind:'action', label:'⌥ Toggle perf HUD', id:'toggle-perf-hud',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-toggle-perf-hud')); } catch (e) {} } },
-      { kind:'action', label:'📜 Open plan history', id:'open-plan-history',
+      { kind:'action', label:'▤ Open plan history', id:'open-plan-history',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open', { detail:{} })); } catch (e) {} } },
     );
     // Nodes from grammar
@@ -19253,7 +19253,7 @@ const ChatText = ({ text, size }) => {
         lineHeight:1.5,
       }}>
         <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.err,
-          letterSpacing:'0.1em', marginBottom:3 }}>⚠ FABRICATED TOOL CALL — IGNORED</div>
+          letterSpacing:'0.1em', marginBottom:3 }}>● FABRICATED TOOL CALL — IGNORED</div>
         The AI tried to fake a tool call and invent a result. It cannot
         touch a host from chat. To do this for real, add the matching
         connector-op node from the library and run it.

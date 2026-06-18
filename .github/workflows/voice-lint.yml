@@ -7,21 +7,18 @@ name: Voice lint
 # — the drafted glyph set (⌬ ◇ ↗ ⚡ ◐ ↻ …) is the language and is NEVER flagged
 # as emoji.
 #
-# ADVISORY-FIRST (deliberate). The repo's live copy already carries pre-existing
-# §11 findings, so failing the build on them today would block every PR for
-# reasons unrelated to the change at hand. This job therefore:
-#   * RUNS the lint over the real UI copy and writes every finding into the run's
-#     job summary (visible on the PR's Checks tab) — the voice bar becomes
-#     observable, no one has to remember to run it locally;
-#   * does NOT fail the build on lint findings (the lint step is `--advisory`,
-#     always exit 0);
+# STRICT GATE. The repo's live UI copy is now §11-clean (voice findings driven to
+# zero), so this job fails the build on ANY voice finding — the bar is a hard
+# gate, not advisory. This job:
+#   * RUNS the lint over the real UI copy with `--strict`; any emoji / "!" / hype
+#     finding fails the build, and every finding is still written into the run's
+#     job summary (visible on the PR's Checks tab);
 #   * DOES run the lint's own test suite as a real gate — if tools/voice_lint.py
 #     regresses (stops catching a planted violation, or starts false-flagging
-#     iconography), THAT fails the build. The detector must stay correct even
-#     while its findings are advisory.
+#     iconography), THAT fails the build too.
 #
-# Flip the "report" step to `--strict` (and drop `|| true` safety) once the copy
-# is clean, to turn the voice bar into a hard gate.
+# A justified exception goes in tools/voice_lint_allow.txt (keep it short) —
+# never by weakening the gate back to advisory.
 
 on:
   push:
@@ -52,7 +49,7 @@ permissions:
 
 jobs:
   voice-lint:
-    name: Voice / microcopy (advisory)
+    name: Voice / microcopy (strict)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -72,8 +69,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest
 
-      # ─── 1. Lint the real copy — ADVISORY (never fails the build) ──────────
-      - name: Run voice lint (advisory report)
+      # ─── 1. Lint the real copy — STRICT (fails the build on any finding) ───
+      - name: Run voice lint (strict gate)
         id: lint
         env:
           PYTHONUTF8: '1'
@@ -81,10 +78,14 @@ jobs:
         run: |
           echo '## Voice / microcopy lint — studio-language §11' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Advisory: findings are reported but do not fail the build yet.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Strict gate: any finding fails the build.' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
-          # --advisory => always exit 0. Capture findings for the summary.
-          python tools/voice_lint.py --all --advisory app/web_ui | tee voice_lint_report.txt
+          # --strict => exit 1 on any finding. Capture the code through the tee
+          # (PIPESTATUS), still write the summary, then fail the step on findings.
+          set +e
+          python tools/voice_lint.py --all --strict app/web_ui | tee voice_lint_report.txt
+          rc=${PIPESTATUS[0]}
+          set -e
           count=$(grep -cE ': (emoji|exclamation|banned-word):' voice_lint_report.txt || true)
           echo "finding_count=${count}" >> "$GITHUB_OUTPUT"
           {
@@ -95,6 +96,7 @@ jobs:
             echo "**${count} finding(s).** Rules: no emoji · no \"!\" in UI copy · no hype words."
             echo "Iconography (§08 glyphs ⌬ ◇ ↗ ⚡ ◐ ↻ …) is the language and is not flagged."
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: Upload lint report
         uses: actions/upload-artifact@v4

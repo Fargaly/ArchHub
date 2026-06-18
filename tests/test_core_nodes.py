@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -169,8 +170,10 @@ class TestHostNodeRegistration:
 
     def test_host_executor_returns_typed_envelope(self):
         spec, executor = _registry.get("host.revit")
-        out = executor({"_family": "revit", "version": "2025"},
-                        {"action": "open"}, None)
+        with patch("revit_broker.list_sessions", return_value=[]), \
+             patch("revit_broker.pick_session", return_value=None):
+            out = executor({"_family": "revit", "version": "2025"},
+                            {"action": "open"}, None)
         assert out["status"] == "ok"
         assert out["family"] == "revit"
         assert out["version"] == "2025"

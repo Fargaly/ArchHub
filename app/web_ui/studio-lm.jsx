@@ -2838,6 +2838,41 @@ const StudioLM = () => {
       // decoupling as the token path: the rail repaints, the canvas does not.
       STREAM_STORE.bump();
     };
+    // ROUTER VISIBILITY (founder 2026-06-18 "the UI doesn't SHOW it"): the
+    // bridge now forwards the router's on_status frames (a provider fell back /
+    // is retrying) AND a final "answered by <model>" once the turn lands. Both
+    // were discarded before, so the live routing + the real answerer were
+    // invisible. We stamp them onto the streaming assistant message's
+    // `route[]` array so the bubble renders a subtle inline meta line (mono,
+    // small, terracotta) — the same in-place-mutate + STREAM_STORE.bump idiom
+    // the reasoning path uses (rail repaints, canvas stays flat).
+    const onChatStatus = (sid, text) => {
+      const msg = (text || '').trim();
+      if (!msg) return;
+      const conv = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai' && (n.messages || []).some(m => m.streaming))
+                || (LM_GRAPH.nodes || []).find(n => n.cat === 'ai');
+      if (!conv) return;
+      const msgs = conv.messages || [];
+      let lastIx = msgs.findIndex(m => m.streaming);
+      if (lastIx < 0) {
+        // No streaming bubble yet — find the most recent assistant message so
+        // the "answered by" line (which arrives at turn end) still has a home.
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (!msgs[i].me) { lastIx = i; break; }
+        }
+      }
+      if (lastIx < 0) {
+        msgs.push({ me:false, text:'', streaming:true, route:[msg],
+                     time:new Date().toISOString().slice(11,16) });
+      } else {
+        const cur = msgs[lastIx];
+        const r = Array.isArray(cur.route) ? cur.route.slice() : [];
+        // De-dupe consecutive identical notes (e.g. a repeated "answered by").
+        if (r[r.length - 1] !== msg) r.push(msg);
+        msgs[lastIx] = { ...cur, route: r };
+      }
+      STREAM_STORE.bump();
+    };
     const wires = [];
     const wire = (name, fn) => {
       try { if (b[name] && typeof b[name].connect === 'function') { b[name].connect(fn); wires.push(() => { try { b[name].disconnect(fn); } catch (e) {} }); } } catch (e) {}
@@ -3114,6 +3149,7 @@ const StudioLM = () => {
     };
     wire('chat_chunk',     onChunk);
     wire('chat_reasoning', onReasoning);
+    wire('chat_status',    onChatStatus);   // router fallback/retry + "answered by"
     wire('chat_done',      onDone);
     wire('chat_error',     onError);
     wire('trigger_fired',  onTrigger);
@@ -3723,6 +3759,7 @@ const StudioLM = () => {
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
         @keyframes lmHintFade { 0% { opacity: 0; transform: translate(-50%, 8px) } 8% { opacity: 1; transform: translate(-50%, 0) } 80% { opacity: 1; transform: translate(-50%, 0) } 100% { opacity: 0; transform: translate(-50%, -4px) } }
         @keyframes lmBrainShimmer { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
+        @keyframes lmSpin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
       `}</style>
     </div>
   );
@@ -5986,6 +6023,9 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
           {sessions.length} · CLICK TO OPEN
         </span>
         <div style={S_FLEX1}/>
+        {/* SESSIONS SYNC VISIBLE (founder 2026-06-18): pull/push sessions across
+            devices + a last-synced badge — wraps cloud_sync_sessions/status. */}
+        <SyncSessionsButton/>
         {['all','mine','workflows'].map(k => (
           <button key={k} onClick={() => setFilter(k)} style={chipBtn(filter === k)}>{k}</button>
         ))}
@@ -6630,12 +6670,16 @@ const AccountChip = ({ compact }) => {
   const [signedIn, setSignedIn] = React.useState(null);  // null = probing
   const [email, setEmail] = React.useState('');
   const [cloudUrl, setCloudUrl] = React.useState('');
+  const [plan, setPlan] = React.useState('');            // ACCOUNT ENRICH
+  const [remaining, setRemaining] = React.useState(null);// ACCOUNT ENRICH
   const [menuOpen, setMenuOpen] = React.useState(false);
   const rootRef = React.useRef(null);
 
-  // Cheap synchronous probe on mount — {signed_in, cloud_url}. No network, so
-  // safe under bridgeAsync's 1.5s ceiling. Re-probed when a sign-in/out signal
-  // lands (below) so the chip never shows stale state.
+  // Cheap synchronous probe on mount — {signed_in, cloud_url, plan, remaining}.
+  // No network on the Qt thread (plan/remaining ride in from the CACHED
+  // cloud_usage snapshot; a cold meter is fetched off-thread and re-pulled via
+  // cloud_usage_changed). Re-probed when a sign-in/out/usage signal lands so
+  // the chip never shows stale state.
   React.useEffect(() => {
     let alive = true;
     const probe = () => {
@@ -6643,14 +6687,22 @@ const AccountChip = ({ compact }) => {
         if (!alive || !r) return;
         if (typeof r.signed_in === 'boolean') setSignedIn(r.signed_in);
         if (r.cloud_url) setCloudUrl(r.cloud_url);
-        // Signed out → drop any stale email so we never show an address for a
+        // ACCOUNT ENRICH (founder 2026-06-18): real plan + remaining from the
+        // cloud usage meter — NEVER fabricated (empty/null until they land).
+        if (r.signed_in) {
+          if (typeof r.plan === 'string') setPlan(r.plan);
+          if (r.remaining === null || typeof r.remaining === 'number') setRemaining(r.remaining);
+        }
+        // Signed out → drop any stale email/plan so we never show details for a
         // signed-out account.
-        if (r.signed_in === false) setEmail('');
+        if (r.signed_in === false) { setEmail(''); setPlan(''); setRemaining(null); }
       }).catch(() => { if (alive) setSignedIn(false); });
     };
     probe();
     // The cloud_signin_done payload carries the real email/plan; cloud_signout
-    // _done flips back to signed-out. SAME signals BrainBackupRow consumes.
+    // _done flips back to signed-out. cloud_usage_changed fires when the meter
+    // refreshes (cold-snapshot fetch lands) → re-probe so plan/remaining paint.
+    // SAME signals BrainBackupRow consumes.
     const b = window.archhub;
     const onSignin = (resultJson) => {
       let res = null;
@@ -6658,16 +6710,21 @@ const AccountChip = ({ compact }) => {
       if (res && res.ok && res.signed_in) {
         setSignedIn(true);
         if (res.email) setEmail(res.email);
-        probe();   // refresh cloud_url too
+        if (typeof res.plan === 'string') setPlan(res.plan);
+        if (res.remaining_messages === null || typeof res.remaining_messages === 'number') setRemaining(res.remaining_messages);
+        probe();   // refresh cloud_url + meter too
       }
     };
-    const onSignout = () => { setSignedIn(false); setEmail(''); setMenuOpen(false); };
+    const onSignout = () => { setSignedIn(false); setEmail(''); setPlan(''); setRemaining(null); setMenuOpen(false); };
+    const onUsage = () => { if (alive) probe(); };
     try { if (b && b.cloud_signin_done && b.cloud_signin_done.connect) b.cloud_signin_done.connect(onSignin); } catch (e) {}
     try { if (b && b.cloud_signout_done && b.cloud_signout_done.connect) b.cloud_signout_done.connect(onSignout); } catch (e) {}
+    try { if (b && b.cloud_usage_changed && b.cloud_usage_changed.connect) b.cloud_usage_changed.connect(onUsage); } catch (e) {}
     return () => {
       alive = false;
       try { if (b && b.cloud_signin_done && b.cloud_signin_done.disconnect) b.cloud_signin_done.disconnect(onSignin); } catch (e) {}
       try { if (b && b.cloud_signout_done && b.cloud_signout_done.disconnect) b.cloud_signout_done.disconnect(onSignout); } catch (e) {}
+      try { if (b && b.cloud_usage_changed && b.cloud_usage_changed.disconnect) b.cloud_usage_changed.disconnect(onUsage); } catch (e) {}
     };
   }, []);
 
@@ -6745,14 +6802,35 @@ const AccountChip = ({ compact }) => {
     );
   }
 
-  // ── signed-in: email + ▾ menu.
-  const label = email || 'Signed in';
+  // ── signed-in: plan + remaining (or email) + ▾ menu.
+  // ACCOUNT ENRICH (founder 2026-06-18): the chip now surfaces the REAL plan +
+  // remaining-message count from the cloud usage meter — 'cloud · {plan} ·
+  // {remaining} left'. Falls back to the email, then 'Signed in', so it's never
+  // blank and never shows a fabricated number (plan/remaining only appear once
+  // the meter lands). The full email stays in the ▾ menu header.
+  const planTxt = (plan || '').trim();
+  const hasRemaining = typeof remaining === 'number';
+  let label;
+  if (planTxt || hasRemaining) {
+    const parts = ['cloud'];
+    if (planTxt) parts.push(planTxt);
+    if (hasRemaining) parts.push(`${remaining} left`);
+    label = parts.join(' · ');
+  } else {
+    label = email || 'Signed in';
+  }
+  const chipTitle = [
+    email ? `Signed in as ${email}` : 'Signed in to ArchHub Cloud',
+    planTxt ? `Plan: ${planTxt}` : '',
+    hasRemaining ? `${remaining} messages left this period` : '',
+  ].filter(Boolean).join(' · ');
   return (
     <div ref={rootRef} data-no-pan style={{ position:'relative' }}>
       <button onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o); }}
-        title={email ? `Signed in as ${email}` : 'Signed in to ArchHub Cloud'}
+        title={chipTitle}
         aria-label={email ? `Account: ${email}` : 'Account menu'}
         data-testid="account-chip" data-account-state="signed-in"
+        data-account-plan={planTxt || ''}
         aria-haspopup="menu" aria-expanded={menuOpen}
         style={{
           display:'flex', alignItems:'center', gap:6,
@@ -6803,6 +6881,104 @@ const AccountMenuItem = ({ onClick, children, danger }) => {
         fontFamily:'inherit', fontSize:'inherit', transition:'background .1s',
       }}>
       {children}
+    </button>
+  );
+};
+
+// ──────────────────────── SYNC SESSIONS (Home header) ────────────────────────
+// SESSIONS SYNC VISIBLE (founder 2026-06-18 "the UI doesn't SHOW it"): cross-
+// device session sync is real (cloud_sync), but there was NO in-app control to
+// run it or see when it last ran. This button + last-synced badge make it
+// visible: cloud_sync_status() feeds the "synced <when>" badge; clicking calls
+// cloud_sync_sessions() (off-thread) and the definitive result lands on
+// sessions_synced; a successful pull also fires sessions_changed (app-boot
+// re-hydrates the list). When the sync backend isn't present yet (the
+// SESSIONS-IMPL lane builds cloud_sync.sync_sessions), the slot returns
+// available:false and the button shows a disabled "sync pending" — an honest
+// state, never a dead click.
+const _syncWhen = (iso) => {
+  if (!iso) return '';
+  try {
+    const t = new Date(iso).getTime();
+    if (!t || isNaN(t)) return '';
+    const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s/60)}m ago`;
+    if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+    return `${Math.floor(s/86400)}d ago`;
+  } catch (e) { return ''; }
+};
+const SyncSessionsButton = () => {
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState(null);   // {available, last_pull, ...}
+  React.useEffect(() => {
+    let alive = true;
+    const pull = () => {
+      bridgeAsync('cloud_sync_status').then(r => {
+        if (alive && r) setStatus(r);
+      }).catch(() => {});
+    };
+    pull();
+    const b = window.archhub;
+    const onSynced = (resultJson) => {
+      if (!alive) return;
+      setBusy(false);
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      const msg = res && res.ok ? 'sessions synced'
+                : res && res.available === false ? 'session sync not available yet'
+                : `sync failed: ${(res && (res.error || res.message)) || 'unknown'}`;
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg, kind: res && res.ok ? 'info' : 'warn' } })); } catch (e) {}
+      pull();   // refresh the badge timestamp
+    };
+    const onChanged = () => pull();
+    try { if (b && b.sessions_synced && b.sessions_synced.connect) b.sessions_synced.connect(onSynced); } catch (e) {}
+    try { if (b && b.sessions_changed && b.sessions_changed.connect) b.sessions_changed.connect(onChanged); } catch (e) {}
+    return () => {
+      alive = false;
+      try { if (b && b.sessions_synced && b.sessions_synced.disconnect) b.sessions_synced.disconnect(onSynced); } catch (e) {}
+      try { if (b && b.sessions_changed && b.sessions_changed.disconnect) b.sessions_changed.disconnect(onChanged); } catch (e) {}
+    };
+  }, []);
+  const available = !status || status.available !== false;   // optimistic until known
+  const lastWhen = status ? (_syncWhen(status.last_push) || _syncWhen(status.last_pull)) : '';
+  const click = (e) => {
+    e.stopPropagation();
+    if (busy || !available) return;
+    setBusy(true);
+    bridgeAsync('cloud_sync_sessions').then(r => {
+      // The definitive result rides on sessions_synced; if the slot itself
+      // reported a sync failure to start, un-stick the button.
+      if (r && r.ok === false && !r.async) setBusy(false);
+    }).catch(() => setBusy(false));
+  };
+  const title = !available ? 'Session sync is not available yet'
+    : busy ? 'Syncing sessions…'
+    : lastWhen ? `Sync sessions across your devices · last synced ${lastWhen}`
+    : 'Sync sessions across your devices';
+  return (
+    <button onClick={click} disabled={busy || !available}
+      data-testid="sync-sessions-btn"
+      data-sync-available={available ? '1' : '0'}
+      title={title}
+      style={{
+        display:'flex', alignItems:'center', gap:6,
+        padding:'4px 10px', borderRadius:6,
+        background: LM.bg, border:`1px solid ${LM.line}`,
+        color: available ? LM.inkSoft : LM.inkMuted,
+        cursor: (busy || !available) ? 'default' : 'pointer',
+        fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.04em', whiteSpace:'nowrap',
+        opacity: (busy || !available) ? 0.7 : 1,
+        transition:'background .12s, border-color .12s, color .12s',
+      }}
+      onMouseEnter={e => { if (!busy && available) { e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.color = LM.ink; } }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.color = available ? LM.inkSoft : LM.inkMuted; }}>
+      <span style={{ display:'inline-block',
+        animation: busy ? 'lmSpin 0.9s linear infinite' : 'none' }}>⟳</span>
+      <span>{!available ? 'sync pending'
+        : busy ? 'syncing…'
+        : lastWhen ? `synced ${lastWhen}` : 'sync sessions'}</span>
     </button>
   );
 };
@@ -6884,44 +7060,55 @@ const BrainChip = ({ compact }) => {
     try { window.dispatchEvent(new CustomEvent('lm-brain-view-open', { detail:{} })); } catch (e2) {}
   };
   // Derive display state.
-  const hasTurn = stats && stats.ts;
+  // COLD-START REAL COUNTS (founder 2026-06-18 "the UI doesn't SHOW it"): the
+  // bridge get_brain_stats now FALLS BACK to the cached brain.health snapshot
+  // before the first Composer turn and returns {ts, skills_n, facts_n,
+  // available:true, cold:true}. So a cold-but-reachable daemon now arrives with
+  // a ts + real counts → we render '⌬ brain · 64s · 668f · ready' instead of a
+  // dead 'idle'. `cold` distinguishes that from a post-turn hit (which carries
+  // retrieval_ms); 'idle' now only ever shows for a snapshot with NO counts.
+  const cold = !!(stats && stats.cold);
+  const hasTurn = !!(stats && stats.ts && !cold);   // a real gate hit (post-turn)
   const available = stats && stats.available !== false;
   const breakerOpen = stats && stats.client_status && stats.client_status.breaker
     && stats.client_status.breaker.state === 'open';
-  // COLD-START: before the first real snapshot lands AND before the warm-up
-  // window closes, we are "connecting" so long as the daemon socket is up
-  // (brainOk !== false). brainOk === null (still probing) also counts as
-  // connecting — we have no evidence of down yet, so never flash offline.
-  const connecting = !hasTurn && !warmed && brainOk !== false;
-  // OFFLINE is now gated on the warm-up: a breaker that's actually open is
-  // offline immediately (a real fault signal); otherwise we only call it
-  // offline once warmed (re-pulled) AND the daemon socket is confirmed down,
-  // OR the stats snapshot itself reports unavailable after a turn.
-  const offline = breakerOpen
-    || (hasTurn && !available)
-    || (warmed && !hasTurn && brainOk === false);
   const skillsN = (stats && stats.skills_n) || 0;
   const factsN = (stats && stats.facts_n) || 0;
   const ms = (stats && stats.retrieval_ms) || 0;
   const hit = skillsN + factsN > 0;
+  // COLD+available with real counts = READY (the daemon is live + loaded). This
+  // is the common fresh-open state now — not "connecting", not "idle".
+  const coldReady = cold && available && hit;
+  // We only show the "connecting…" shimmer when we have NO counts yet AND the
+  // warm-up window is still open AND the socket isn't confirmed down.
+  const haveCounts = !!(stats && (hasTurn || coldReady));
+  const connecting = !haveCounts && !warmed && brainOk !== false;
+  // OFFLINE: a breaker that's actually open is offline immediately (a real
+  // fault); else offline once warmed (re-pulled) AND the socket is confirmed
+  // down, OR the stats snapshot itself reports unavailable.
+  const offline = breakerOpen
+    || (stats && stats.ts && !available)
+    || (warmed && !haveCounts && brainOk === false);
   const col = offline ? LM.err
             : connecting ? LM.inkSoft
-            : !hasTurn ? LM.inkMuted
+            : !haveCounts ? LM.inkMuted
             : hit ? LM.accent
             : LM.inkSoft;
   const label = offline ? '⌬ brain · offline'
               : connecting ? '⌬ connecting to brain…'
-              : !hasTurn ? '⌬ brain · idle'
+              : coldReady ? `⌬ brain · ${skillsN}s · ${factsN}f · ready`
+              : !haveCounts ? '⌬ brain · idle'
               : `⌬ brain · ${skillsN}s · ${factsN}f · ${Math.round(ms)}ms`;
   const tipBody = connecting ? 'Connecting to your personal-brain daemon…'
-            : !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
+            : coldReady ? `Personal-brain live: ${skillsN} skills + ${factsN} facts loaded. Send a Composer turn to engage Layer 5 retrieval.`
+            : !haveCounts ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
             : offline ? 'Brain daemon offline. Circuit breaker open or socket refused.'
             : `Last hit: ${skillsN} skills + ${factsN} facts injected in ${Math.round(ms)}ms. Last user message: "${(stats.user_message_preview || '').slice(0,60)}"`;
   const tip = `${tipBody}  ·  Click: open your brain map.`;
   return (
     <button onClick={click} title={tip}
       data-testid="brain-chip"
-      data-brain-state={offline ? 'offline' : connecting ? 'connecting' : hasTurn ? 'hit' : 'idle'}
+      data-brain-state={offline ? 'offline' : connecting ? 'connecting' : hasTurn ? 'hit' : coldReady ? 'ready' : 'idle'}
       style={{
         display:'flex', alignItems:'center', gap:6,
         padding: compact ? '4px 9px' : '6px 12px',
@@ -7033,11 +7220,68 @@ const HomeGraphHealthChip = () => {
 
 const ModelStrip = ({ model, setPickerOpen, compact }) => {
   const [hover, setHover] = React.useState(false);
+  // ROUTER STATE (founder 2026-06-18 "the UI doesn't SHOW it"): the right-side
+  // indicator was a hardcoded green "● {latency}ms" dot — a fabricated number
+  // (no real latency is measured) painting "all good" even when every provider
+  // is blocked. Replace it with REAL state from two already-wired slots:
+  //   • get_provider_stats → {configured, blocked} counts.
+  //   • get_token_usage    → {model} the router last actually used.
+  // When the selection is Auto we show "router" + the resolved model; a
+  // blocked-provider count greys the dot + annotates the badge so a missing
+  // key / quota wall is visible, not hidden behind a green light.
+  const [routed, setRouted] = React.useState('');
+  const [stats, setStats] = React.useState(null);   // {configured, blocked}
+  React.useEffect(() => {
+    let alive = true;
+    const pull = () => {
+      try {
+        if (typeof document !== 'undefined'
+            && document.visibilityState === 'hidden') return;
+      } catch (e) {}
+      bridgeAsync('get_token_usage').then(r => {
+        if (alive && r && r.model && typeof r.model === 'string') setRouted(r.model);
+      }).catch(() => {});
+      bridgeAsync('get_provider_stats').then(r => {
+        if (alive && r && typeof r.configured === 'number') setStats(r);
+      }).catch(() => {});
+    };
+    pull();
+    const onBump = () => pull();
+    window.addEventListener('lm-usage-bump', onBump);
+    const t = setInterval(pull, 5000);
+    return () => { alive = false; clearInterval(t);
+      window.removeEventListener('lm-usage-bump', onBump); };
+  }, []);
+  const isAuto = !model || model.id === 'auto' || (model.name || '').toLowerCase().startsWith('auto');
+  const routedLeaf = routed ? (routed.split('/').pop() || routed) : '';
+  const blocked = stats ? (stats.blocked || 0) : 0;
+  const configured = stats ? (stats.configured || 0) : 0;
+  // Dot colour: warn (amber) when providers are blocked OR none configured;
+  // else neutral until a real completion lands, then accent (a real route).
+  const dotCol = (blocked > 0 || (stats && configured === 0)) ? LM.warn
+               : routedLeaf ? LM.accent : LM.inkMuted;
+  // Badge text: honest about what's happening, no fake latency.
+  //   Auto, routed   → "router → <model>"
+  //   Auto, no turn  → "router"
+  //   pinned model   → "● ready" (or the routed leaf if it differs)
+  //   any blocked    → append " · N blocked"
+  const stateText = isAuto
+    ? (routedLeaf ? `router → ${routedLeaf}` : 'router')
+    : (routedLeaf && routedLeaf !== (model && model.name) ? routedLeaf : 'ready');
+  const badge = blocked > 0 ? `${stateText} · ${blocked} blocked` : stateText;
+  const badgeTip = (stats === null)
+    ? 'Resolving provider status…'
+    : `${configured} provider${configured === 1 ? '' : 's'} configured` +
+      (blocked > 0 ? `, ${blocked} blocked (missing key / quota / auth)` : '') +
+      (isAuto ? ` · Auto routes per task${routedLeaf ? ` — last: ${routedLeaf}` : ''}` : '');
   return (
   <button
     onClick={(e) => { e.stopPropagation(); setPickerOpen(true); }}
     onMouseEnter={() => setHover(true)}
     onMouseLeave={() => setHover(false)}
+    data-testid="model-strip"
+    data-router-blocked={blocked > 0 ? '1' : '0'}
+    data-router-auto={isAuto ? '1' : '0'}
     style={{
     display:'flex', alignItems:'center', gap: compact ? 8 : 12,
     padding: compact ? '4px 10px 4px 6px' : '8px 14px 8px 8px',
@@ -7057,7 +7301,7 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
         {model.vendor} · ctx {model.ctx} · {model.tag}
       </div>
     </div>
-    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.ok, letterSpacing:'0.08em' }}>● {model.latency}ms</span>
+    <span title={badgeTip} style={{ fontFamily:LM.mono, fontSize:9, color:dotCol, letterSpacing:'0.06em', whiteSpace:'nowrap' }}>● {badge}</span>
     <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:2 }}>▾</span>
   </button>
   );
@@ -12102,6 +12346,22 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                     </div>
                   )}
                 </>
+              )}
+              {/* ROUTER VISIBILITY (founder 2026-06-18): the router's live
+                  fallback/retry notes + the final "answered by <model>" land on
+                  m.route via the chat_status signal. Render them as a subtle
+                  inline meta line under the bubble (mono, small, terracotta) so
+                  the founder SEES which model actually answered + any fallback —
+                  only when the provider actually emitted a note (never faked). */}
+              {isAssistant && Array.isArray(m.route) && m.route.length > 0 && (
+                <div data-testid="route-meta" style={{
+                  marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.accent,
+                  letterSpacing:'0.04em', lineHeight:1.5, opacity:0.92,
+                }}>
+                  {m.route.map((r, ri) => (
+                    <div key={ri}>⇉ {r}</div>
+                  ))}
+                </div>
               )}
             </div>
           </div>

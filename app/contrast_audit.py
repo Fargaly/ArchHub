@@ -81,32 +81,21 @@ _LM_HEX_LINE_RE = re.compile(
     r"(\b[a-zA-Z][a-zA-Z0-9_]*)\s*:\s*['\"]#([0-9a-fA-F]{6})['\"]")
 
 
-def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
-    """Pull the canonical dark-theme palette out of studio-lm.jsx.
-    Returns dict of `name → '#rrggbb'`. Ignores typography / token
-    nested objects (only top-level hex strings are surfaced).
-
-    Source of truth shifted 2026-05-25 — the LM colour tokens are now
-    getters reading `_currentTheme`, with the actual palette literals
-    living in `THEMES.forge`. The audit always runs against `forge`
-    (the default canonical dark theme); blueprint + vellum can be
-    audited via the same machinery once palette is parameterised."""
-    if jsx_path is None:
-        # Locate `app/web_ui/studio-lm.jsx` relative to this file.
-        jsx_path = Path(__file__).resolve().parent / "web_ui" / "studio-lm.jsx"
-    src = Path(jsx_path).read_text(encoding="utf-8")
-    # First try THEMES.forge — the new home for the canonical palette.
-    forge_marker = "forge: {"
-    start = src.find(forge_marker)
-    if start < 0:
-        # Back-compat: pre-2026-05-25 source had hex literals inline in
-        # `const LM = {`.
-        start = src.find("const LM = {")
+def _extract_hex_block(src: str, marker: str, max_leading: int) -> dict:
+    """Parse `key:'#hex'` pairs out of the brace-block that opens at the
+    first `{` at or after `marker`. Only keys whose line is indented
+    `<= max_leading` spaces are surfaced (rejects deeper nested objects
+    like `sp:{}` / `fs:{ d0:{} }` / `brand:{}`). Returns {} if the
+    marker / its matching close brace isn't found."""
+    start = src.find(marker)
     if start < 0:
         return {}
-    # Find matching close brace by counting depth.
+    brace_start = src.find("{", start)
+    if brace_start < 0:
+        return {}
+    # Find the matching close brace by counting depth from the opener.
     depth = 0
-    i = start
+    i = brace_start
     end = -1
     while i < len(src):
         c = src[i]
@@ -120,17 +109,12 @@ def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
         i += 1
     if end < 0:
         return {}
-    block = src[start:end + 1]
+    block = src[brace_start:end + 1]
     out: dict[str, str] = {}
-    # THEMES.forge entries are indented 4 spaces (one nesting deeper
-    # than the original top-level LM block which was 2 spaces). Accept
-    # both depths; reject anything deeper (e.g. brand:{} sub-objects).
-    is_forge_block = block.lstrip().startswith("forge")
-    max_leading = 4 if is_forge_block else 2
     for match in _LM_HEX_LINE_RE.finditer(block):
         name = match.group(1)
         hex_val = "#" + match.group(2).lower()
-        if name in ("LM", "forge"):
+        if name in ("LM", "forge", "AH"):
             continue
         line_start = block.rfind("\n", 0, match.start()) + 1
         leading = 0
@@ -140,6 +124,45 @@ def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
             continue
         out[name] = hex_val
     return out
+
+
+def extract_lm_palette(jsx_path: str | Path | None = None) -> dict:
+    """Pull the canonical dark-theme palette out of the design-system SoT.
+    Returns dict of `name → '#rrggbb'`. Ignores typography / scale
+    nested objects (only top-level hex strings are surfaced).
+
+    Source of truth shifted TWICE:
+      • 2026-05-25 — LM colour literals moved from `const LM = {` into
+        `THEMES.forge` inside studio-lm.jsx (getters read `_currentTheme`).
+      • 2026-06-18 — the literals moved AGAIN into `app/web_ui/tokens.jsx`
+        as `window.AH = { … }`, the single source of truth loaded by
+        index.html before the bundle. `THEMES.forge` now DERIVES 1:1 from
+        window.AH (`_forgeFromAH`) and carries no hex literals — so the
+        audit must read tokens.jsx to see the real palette.
+
+    Resolution order (so the audit always finds the live tokens):
+      1. `tokens.jsx` → `window.AH` (current SoT)
+      2. `studio-lm.jsx` → `THEMES.forge` (2026-05-25 → 2026-06-18)
+      3. `studio-lm.jsx` → `const LM = {` (pre-2026-05-25)
+    An explicit `jsx_path` forces the studio-lm.jsx path (forge / LM)."""
+    web_ui = Path(__file__).resolve().parent / "web_ui"
+    if jsx_path is None:
+        # 1. Current SoT — tokens.jsx window.AH (2-space top-level keys).
+        tokens = web_ui / "tokens.jsx"
+        if tokens.exists():
+            pal = _extract_hex_block(
+                tokens.read_text(encoding="utf-8"), "window.AH", 2)
+            if pal:
+                return pal
+        jsx_path = web_ui / "studio-lm.jsx"
+    src = Path(jsx_path).read_text(encoding="utf-8")
+    # 2. THEMES.forge (4-space nested) — present even when derived, but
+    #    only yields hexes on pre-2026-06-18 source.
+    pal = _extract_hex_block(src, "forge: {", 4)
+    if pal:
+        return pal
+    # 3. Back-compat: pre-2026-05-25 inline `const LM = {` (2-space).
+    return _extract_hex_block(src, "const LM = {", 2)
 
 
 # ── Built-in audit suite — the pairs that matter most ───────────────

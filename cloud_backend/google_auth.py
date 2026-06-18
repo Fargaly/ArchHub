@@ -113,10 +113,14 @@ _HTTP_TIMEOUT_SECONDS = 20.0
 # refetch once on a kid-miss (a rotation). On a fetch FAILURE we set a short
 # cooldown so a certs outage doesn't add a failed round-trip to every sign-in
 # (we go straight to the tokeninfo fallback during the cooldown).
-_JWKS_CACHE: dict = {"keys": {}, "exp": 0, "retry_after": 0}
+_JWKS_CACHE: dict = {"keys": {}, "exp": 0, "retry_after": 0, "last_refetch": 0}
 _JWKS_DEFAULT_TTL_SECONDS = 3600   # used when the response omits max-age
 _JWKS_MIN_TTL_SECONDS = 300        # floor so a tiny max-age can't thrash us
 _JWKS_FAILURE_COOLDOWN_SECONDS = 30
+# A kid-miss forces a refetch (key rotation); rate-limit it so a flood of
+# attacker-chosen bogus kids can't make us hit Google's certs endpoint once
+# per request — the very rate-limit/latency pressure local verify removes.
+_JWKS_MIN_REFETCH_INTERVAL_SECONDS = 60
 
 
 class GoogleLoginUnconfigured(RuntimeError):
@@ -409,18 +413,29 @@ def _ensure_certs_loaded(*, now: Optional[int] = None) -> None:
     _JWKS_CACHE["retry_after"] = 0
 
 
-def _key_for_kid(kid: str):
-    """Return the cached RSAPublicKey for `kid`, forcing ONE refetch if the
-    kid is absent (a key rotation). Returns None when the kid is genuinely
-    unknown even after a fresh fetch (→ caller REJECTS the token). May raise
-    _JWKSUnavailable if that refetch itself fails."""
+def _key_for_kid(kid: str, *, now: Optional[int] = None):
+    """Return the cached RSAPublicKey for `kid`, forcing a refetch if the kid
+    is absent (a key rotation). Returns None when the kid is genuinely unknown
+    (→ caller REJECTS the token). May raise _JWKSUnavailable if that refetch
+    itself fails.
+
+    The kid-miss refetch is RATE-LIMITED (_JWKS_MIN_REFETCH_INTERVAL_SECONDS):
+    a flood of attacker-chosen bogus kids must NOT turn each request into an
+    outbound certs fetch — that would re-introduce the very rate-limit/latency
+    pressure local verification exists to remove. Within the interval an
+    unknown kid is simply unknown (→ reject); a genuine rotation is still
+    picked up on the next allowed refetch (and always within the cache TTL)."""
+    now = int(now if now is not None else time.time())
     keys = _JWKS_CACHE["keys"]
     if kid in keys:
         return keys[kid]
-    fresh, exp = _fetch_google_certs()   # rotation → one forced refetch
+    if now - _JWKS_CACHE.get("last_refetch", 0) < _JWKS_MIN_REFETCH_INTERVAL_SECONDS:
+        return None   # refetched recently → treat an unknown kid as unknown
+    fresh, exp = _fetch_google_certs()   # rotation → one rate-limited refetch
     _JWKS_CACHE["keys"] = fresh
     _JWKS_CACHE["exp"] = exp
     _JWKS_CACHE["retry_after"] = 0
+    _JWKS_CACHE["last_refetch"] = now
     return fresh.get(kid)
 
 
@@ -467,7 +482,7 @@ def _verify_signature_local(id_token: str, *, now: Optional[int] = None) -> dict
     if not isinstance(kid, str) or not kid:
         raise GoogleAuthError("id_token missing kid", status=401,
                               code="id_token_invalid")
-    pub = _key_for_kid(kid)   # _JWKSUnavailable here → caller's fallback
+    pub = _key_for_kid(kid, now=now)   # _JWKSUnavailable here → caller's fallback
     if pub is None:
         raise GoogleAuthError("id_token signed by an unknown key",
                               status=401, code="id_token_invalid")

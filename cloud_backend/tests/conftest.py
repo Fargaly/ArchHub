@@ -40,7 +40,7 @@ def _isolate_db(tmp_path, monkeypatch):
     # isolated. setattr (not clear()) so monkeypatch auto-restores after.
     import google_auth
     monkeypatch.setattr(google_auth, "_JWKS_CACHE",
-                        {"keys": {}, "exp": 0, "retry_after": 0})
+                        {"keys": {}, "exp": 0, "retry_after": 0, "last_refetch": 0})
     # ALWAYS run init_schema for the freshly-pathed DB.
     import db
     db.init_schema()

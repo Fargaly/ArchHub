@@ -338,6 +338,28 @@ def test_key_rotation_forces_one_refetch(google_cfg, monkeypatch):
     assert calls["tokeninfo"] == 0
 
 
+def test_unknown_kid_flood_does_not_hammer_certs(google_cfg, monkeypatch):
+    """Anti-DoS: a flood of attacker-chosen bogus kids must NOT trigger an
+    outbound certs fetch per request. The kid-miss refetch is rate-limited, so
+    two bogus-kid sign-ins hit Google's certs endpoint at most once total after
+    the cache is warm — not once per request. Each is still REJECTED (an
+    unknown kid never falls back to tokeninfo)."""
+    import google_auth
+    priv = _gen_key()
+    calls = _install_google(monkeypatch, certs_payload=_jwks_for(priv, "k1"),
+                            tokeninfo_payload=_claims())
+    t1 = _sign_rs256(priv, "bogus-kid-1", _claims())
+    t2 = _sign_rs256(priv, "bogus-kid-2", _claims())
+    for tok in (t1, t2):
+        with pytest.raises(google_auth.GoogleAuthError) as ei:
+            google_auth.verify_id_token(tok)
+        assert ei.value.code == "id_token_invalid"
+    # First call: ensure-load (1) + one kid-miss refetch (1) = 2. Second call:
+    # warm cache → no ensure fetch, and the refetch is rate-limited → 0 more.
+    assert calls["certs"] == 2, "bogus-kid flood hit certs more than once warm"
+    assert calls["tokeninfo"] == 0
+
+
 # ===========================================================================
 # Availability — graceful tokeninfo fallback ONLY when keys are unreachable
 # ===========================================================================

@@ -694,6 +694,25 @@ const bridgeAsync = (slot, ...args) => new Promise((resolve) => {
   }
 });
 
+// SELF-HEAL-INSPECTOR — post a REAL in-browser graph heal to the Python
+// heal ledger (app/self_heal_log.py via bridge.record_heal) so JS-side
+// recoveries land in the SAME timeline as host/connector reconnects. The
+// only heals Python can't observe on its own are the graph re-routes that
+// happen entirely in the canvas: _resnapTypeMismatch moving a wire off a
+// type-mismatched port, and remapWiresForNode re-pointing a wire after a
+// node's ports change. Fire-and-forget; never blocks the heal itself, and
+// never invents an event — callers post ONLY after a real re-route. Also
+// nudges the inspector to re-pull via the self_heal_changed signal path
+// (the slot emits it) and a local DOM event for same-tab immediacy.
+const recordHeal = (kind, target, detail) => {
+  try {
+    const payload = JSON.stringify({ kind, target, detail });
+    Promise.resolve(bridgeAsync('record_heal', payload))
+      .then(() => { try { window.dispatchEvent(new CustomEvent('lm-self-heal')); } catch (e) {} })
+      .catch(() => {});
+  } catch (e) {}
+};
+
 // ─── In-app update notifier (founder 2026-06-09) ──────────────────────────
 // Claude-desktop-style "Update available — Relaunch" banner + a post-update
 // confirmation toast, so a dev-sync update is VISIBLE (the user KNOWS it
@@ -1753,17 +1772,18 @@ const remapWiresForNode = (node, oldIns, oldOuts) => {
   const ins = Array.isArray(node.ins) ? node.ins : [];
   const kept = [];
   let dropped = 0;
+  let remapped = 0;   // wires SAVED by re-pointing to a valid port — a real heal
   ws.forEach(w => {
     if (!w || !w.from || !w.to) { kept.push(w); return; }
     let drop = false;
     // Source side — wire leaves this node via w.from[1].
     if (w.from[0] === node.id && !outs.some(p => p.id === w.from[1])) {
-      if (outs.length) w.from[1] = outs[0].id; else drop = true;
+      if (outs.length) { w.from[1] = outs[0].id; remapped++; } else drop = true;
     }
     // Target side — wire enters this node via w.to[1].
     if (!drop && w.to[0] === node.id && !ins.some(p => p.id === w.to[1])) {
       const pref = _lmPreferInPort(ins);
-      if (pref) w.to[1] = pref.id; else drop = true;
+      if (pref) { w.to[1] = pref.id; remapped++; } else drop = true;
     }
     if (drop) dropped++; else kept.push(w);
   });
@@ -1775,6 +1795,12 @@ const remapWiresForNode = (node, oldIns, oldOuts) => {
         kind: 'info',
       } }));
     } catch (e) {}
+  }
+  // SELF-HEAL-INSPECTOR: a wire RE-POINTED to a valid port (rather than
+  // dropped) is a genuine heal — the connection survived a port change.
+  if (remapped) {
+    recordHeal('wire_remap', node.id || 'node',
+      remapped + ' wire' + (remapped > 1 ? 's' : '') + ' re-pointed after a port change');
   }
 };
 
@@ -1814,6 +1840,9 @@ const _resnapTypeMismatch = (nodes, wires) => {
       msg: moved + ' wire' + (moved > 1 ? 's' : '') + ' re-routed to a compatible input (type mismatch)',
       kind: 'info',
     } })); } catch (e) {}
+    // SELF-HEAL-INSPECTOR: a REAL type-mismatch heal just fired — record it.
+    recordHeal('type_heal', 'graph',
+      moved + ' wire' + (moved > 1 ? 's' : '') + ' re-routed off a type-mismatched port');
   }
 };
 
@@ -3722,6 +3751,7 @@ const StudioLM = () => {
       <StudioSkillJson _themeBump={paletteBump}/>
       <CommandDeckModal _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
+      <SelfHealInspector _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
       <UpdateNotifier/>
       {createNodeOpen && <CreateNodeModal spec={typeof createNodeOpen === 'object' ? createNodeOpen : null} onClose={() => setCreateNodeOpen(false)}/>}
@@ -7185,14 +7215,14 @@ const HomeGraphHealthChip = () => {
       : `◆ graph · healthy`;
   return (
     <button data-testid="home-graph-health-chip"
-      title={`Graph health · ${counts.err} errors · ${counts.warn} warnings · open footer pill for details`}
+      title={`Graph health · ${counts.err} errors · ${counts.warn} warnings · open the Self-Heal Inspector`}
       onClick={(e) => {
         e.stopPropagation();
-        // Surface the existing footer HealthStripItem popover. There's
-        // no direct toggle event; the footer pill is on every view so
-        // the user clicks the footer to expand. We flash a hint here.
-        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
-          { detail:{ msg:'Graph health · footer pill bottom-right', kind:'info' } })); } catch (e2) {}
+        // SELF-HEAL-INSPECTOR: this chip now opens the heal-event timeline
+        // (was a dead toast-hint pointing at the footer pill). The inspector
+        // shows the REAL recoveries the self-healing connectors performed —
+        // the deeper "what healed" view behind this health summary.
+        try { window.dispatchEvent(new CustomEvent('lm-self-heal-inspector-open')); } catch (e2) {}
       }}
       style={{
         display:'flex', alignItems:'center', gap:6,
@@ -10183,6 +10213,291 @@ const BrokenWireDialog = ({ info, onClose }) => {
   );
 };
 
+// ─── SELF-HEAL INSPECTOR ─────────────────────────────────────────
+// ArchHub's differentiator — self-healing connectors — made VISIBLE as a
+// live timeline. Reads the REAL heal ledger (app/self_heal_log.py) via
+// bridge.self_heal_recent / self_heal_stats; never synthesises rows. Opens
+// from the existing graph-health chip (Home) or badge (canvas) via the
+// `lm-self-heal-inspector-open` window event, and re-pulls on the
+// `self_heal_changed` bridge signal + the local `lm-self-heal` event so the
+// timeline updates the instant a recovery fires.
+//
+// Shows: a stat header (total heals · last heal when · by-kind counts) and a
+// reverse-chronological timeline of real events (kind icon · target · detail
+// · relative time). Empty state is the honest "No self-heals yet — connectors
+// are healthy", never fake activity. Matches the design's calm timeline
+// aesthetic + canonical tokens (var(--accent) terracotta, mono timestamps).
+const SELF_HEAL_KINDS = {
+  reconnect:  { icon: '⟲', label: 'Reconnect',   col: () => LM.ok },
+  netload:    { icon: '↻', label: 'Re-load',     col: () => LM.cyan },
+  type_heal:  { icon: '⤳', label: 'Type re-route', col: () => LM.accent },
+  wire_remap: { icon: '⇄', label: 'Wire re-map', col: () => LM.purple },
+  other:      { icon: '✓', label: 'Recovery',    col: () => LM.inkSoft },
+};
+const _selfHealKind = (k) => SELF_HEAL_KINDS[k] || SELF_HEAL_KINDS.other;
+// Compact relative time off a unix-seconds ts. "just now" / "3m ago" / etc.
+const _selfHealRel = (ts) => {
+  const t = Number(ts);
+  if (!t || !isFinite(t)) return '';
+  const secs = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (secs < 5) return 'just now';
+  if (secs < 60) return secs + 's ago';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+};
+const _selfHealClock = (ts) => {
+  const t = Number(ts);
+  if (!t || !isFinite(t)) return '--:--:--';
+  try { return new Date(t * 1000).toTimeString().slice(0, 8); } catch (e) { return '--:--:--'; }
+};
+
+const SelfHealInspectorInner = ({ _themeBump }) => {
+  const [open, setOpen] = React.useState(false);
+  const [events, setEvents] = React.useState([]);
+  const [stats, setStats] = React.useState(null);
+  const [loaded, setLoaded] = React.useState(false);  // first pull completed
+  // relative-time tick so "3m ago" stays fresh while the panel is open
+  const [, setTick] = React.useState(0);
+
+  const pull = React.useCallback(async () => {
+    try {
+      const [evs, st] = await Promise.all([
+        bridgeAsync('self_heal_recent', '100'),
+        bridgeAsync('self_heal_stats'),
+      ]);
+      setEvents(Array.isArray(evs) ? evs : []);
+      setStats(st && typeof st === 'object' && !st.error ? st : null);
+    } catch (e) {
+      setEvents([]); setStats(null);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  // Open on the chip/badge event; pull fresh each open.
+  React.useEffect(() => {
+    const onOpen = () => { setOpen(true); pull(); };
+    window.addEventListener('lm-self-heal-inspector-open', onOpen);
+    return () => window.removeEventListener('lm-self-heal-inspector-open', onOpen);
+  }, [pull]);
+
+  // Live refresh: the bridge emits self_heal_changed when a heal lands; the
+  // same-tab JS heals also fire lm-self-heal. Only poll while OPEN.
+  React.useEffect(() => {
+    if (!open) return;
+    const onHeal = () => pull();
+    window.addEventListener('lm-self-heal', onHeal);
+    try { if (window.archhub && window.archhub.self_heal_changed && window.archhub.self_heal_changed.connect) window.archhub.self_heal_changed.connect(onHeal); } catch (e) {}
+    const t = setInterval(pull, 5000);
+    const rt = setInterval(() => setTick(x => x + 1), 1000);
+    return () => {
+      window.removeEventListener('lm-self-heal', onHeal);
+      try { if (window.archhub && window.archhub.self_heal_changed && window.archhub.self_heal_changed.disconnect) window.archhub.self_heal_changed.disconnect(onHeal); } catch (e) {}
+      clearInterval(t); clearInterval(rt);
+    };
+  }, [open, pull]);
+
+  // Esc closes.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (!open) return null;
+
+  const total = stats ? (stats.total || 0) : 0;
+  const byKind = (stats && stats.by_kind) || {};
+  const lastTs = stats ? stats.last_heal_ts : null;
+  // Only show by-kind chips for kinds that actually have a count > 0.
+  const kindChips = Object.keys(SELF_HEAL_KINDS)
+    .filter(k => (byKind[k] || 0) > 0)
+    .map(k => ({ k, n: byKind[k], meta: _selfHealKind(k) }));
+  const isEmpty = loaded && events.length === 0;
+
+  return (
+    <div data-testid="self-heal-inspector"
+      onClick={() => setOpen(false)}
+      style={{
+        position:'fixed', inset:0, zIndex:1200,
+        background:'rgba(8,8,11,0.62)', backdropFilter:'blur(2px)',
+        display:'flex', alignItems:'flex-start', justifyContent:'center',
+        padding:'7vh 16px 16px',
+      }}>
+      <div onClick={(e) => e.stopPropagation()}
+        className="scroll"
+        style={{
+          width:'min(560px, 96vw)', maxHeight:'82vh', overflow:'auto',
+          background:LM.bgPanel, border:`1px solid ${LM.line}`,
+          borderRadius:14, boxShadow:'0 24px 64px rgba(0,0,0,0.5)',
+          display:'flex', flexDirection:'column',
+        }}>
+
+        {/* Masthead */}
+        <div style={{
+          padding:'16px 18px 14px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'flex-start', gap:12,
+        }}>
+          <div style={{ flex:1 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+              <span style={{ color:LM.accent, fontSize:13 }}>✦</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.16em',
+                color:LM.inkMuted }}>SELF-HEALING CONNECTOR</span>
+            </div>
+            <div style={{ fontFamily:LM.serif, fontSize:23, letterSpacing:'-0.02em',
+              lineHeight:1.1, color:LM.ink }}>
+              Self-Heal Inspector
+            </div>
+          </div>
+          <button onClick={() => setOpen(false)} aria-label="close self-heal inspector"
+            style={{ background:'transparent', border:0, color:LM.inkMuted,
+              fontSize:20, cursor:'pointer', padding:'0 2px', lineHeight:1 }}>×</button>
+        </div>
+
+        {/* Stat header — REAL counts from the ledger */}
+        <div data-testid="self-heal-stats" style={{
+          display:'flex', alignItems:'center', gap:18, flexWrap:'wrap',
+          padding:'16px 18px', borderBottom:`1px solid ${LM.line}`, background:LM.bgSoft,
+        }}>
+          <div>
+            <div style={{ fontFamily:LM.serif, fontSize:34, lineHeight:1,
+              letterSpacing:'-0.03em', color:LM.accent }}>{total}</div>
+            <div style={{ fontSize:11.5, color:LM.ink, marginTop:4 }}>self-heals</div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+              letterSpacing:'0.08em', marginTop:2 }}>THIS SESSION</div>
+          </div>
+          <div style={{ width:1, alignSelf:'stretch', background:LM.line }}/>
+          <div>
+            <div style={{ fontFamily:LM.serif, fontSize:20, lineHeight:1.1,
+              color: lastTs ? LM.ink : LM.inkMuted }}>
+              {lastTs ? _selfHealRel(lastTs) : '—'}
+            </div>
+            <div style={{ fontSize:11.5, color:LM.ink, marginTop:4 }}>last heal</div>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+              letterSpacing:'0.08em', marginTop:2 }}>
+              {lastTs ? _selfHealClock(lastTs) : 'NONE YET'}
+            </div>
+          </div>
+          {kindChips.length > 0 && (
+            <>
+              <div style={{ width:1, alignSelf:'stretch', background:LM.line }}/>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, alignContent:'center' }}>
+                {kindChips.map(({ k, n, meta }) => (
+                  <span key={k} style={{
+                    display:'inline-flex', alignItems:'center', gap:5,
+                    fontFamily:LM.mono, fontSize:10, color:meta.col(),
+                    background:meta.col() + '14', border:`1px solid ${meta.col()}33`,
+                    borderRadius:5, padding:'3px 8px', letterSpacing:'0.03em',
+                  }}>
+                    <span>{meta.icon}</span>{meta.label}<b style={{ color:LM.ink }}>{n}</b>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Timeline — reverse-chronological REAL events */}
+        <div style={{ padding:'8px 0' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8,
+            padding:'8px 18px 6px' }}>
+            <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.14em',
+              color:LM.inkMuted, flex:1 }}>RECOVERY TIMELINE</span>
+            {events.length > 0 && (
+              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>
+                newest first
+              </span>
+            )}
+          </div>
+
+          {isEmpty ? (
+            <div data-testid="self-heal-empty" style={{
+              display:'flex', flexDirection:'column', alignItems:'center',
+              justifyContent:'center', gap:8, padding:'42px 24px 48px',
+              textAlign:'center',
+            }}>
+              <div style={{ fontSize:24, color:LM.ok }}>✓</div>
+              <div style={{ fontFamily:LM.serif, fontSize:18, color:LM.ink }}>
+                No self-heals yet
+              </div>
+              <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted,
+                letterSpacing:'0.03em', maxWidth:340, lineHeight:1.5 }}>
+                connectors are healthy — when a host drops, a connector reloads,
+                or a wire re-routes off a bad port, the recovery lands here.
+              </div>
+            </div>
+          ) : !loaded ? (
+            <div style={{ padding:'34px 24px', textAlign:'center',
+              fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>loading…</div>
+          ) : (
+            <div data-testid="self-heal-timeline" style={{ padding:'2px 12px 8px' }}>
+              {events.map((ev, i) => {
+                const meta = _selfHealKind(ev.kind);
+                const col = meta.col();
+                return (
+                  <div key={ev.id != null ? ev.id : i}
+                    data-testid="self-heal-event"
+                    style={{
+                      display:'grid', gridTemplateColumns:'auto 1fr auto', gap:12,
+                      alignItems:'flex-start', padding:'11px 8px',
+                      borderBottom: i < events.length - 1 ? `1px solid ${LM.lineSoft}` : 0,
+                    }}>
+                    {/* kind icon dot */}
+                    <span style={{
+                      width:26, height:26, borderRadius:'50%', flexShrink:0,
+                      display:'grid', placeItems:'center', marginTop:1,
+                      background:col + '18', border:`1px solid ${col}44`,
+                      color:col, fontSize:13,
+                    }}>{meta.icon}</span>
+                    {/* target + detail */}
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ display:'flex', alignItems:'baseline', gap:8, flexWrap:'wrap' }}>
+                        <span style={{ fontSize:13.5, color:LM.ink, fontWeight:500 }}>
+                          {ev.target || meta.label}
+                        </span>
+                        <span style={{ fontFamily:LM.mono, fontSize:9,
+                          letterSpacing:'0.06em', textTransform:'uppercase',
+                          color:col, background:col + '14',
+                          border:`1px solid ${col}33`, borderRadius:4,
+                          padding:'1px 6px' }}>{meta.label}</span>
+                      </div>
+                      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft,
+                        marginTop:3, lineHeight:1.45, wordBreak:'break-word' }}>
+                        {ev.detail || 'recovered'}
+                      </div>
+                    </div>
+                    {/* relative time + clock */}
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.ink }}>
+                        {_selfHealRel(ev.ts)}
+                      </div>
+                      <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
+                        marginTop:2 }}>{_selfHealClock(ev.ts)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer line — the point of it, calm */}
+        <div style={{ padding:'12px 18px', borderTop:`1px solid ${LM.line}`,
+          fontFamily:LM.serif, fontStyle:'italic', fontSize:14, color:LM.inkSoft }}>
+          {total > 0
+            ? 'You didn’t restart anything. That’s the point.'
+            : 'Your connectors recover themselves — silently.'}
+        </div>
+      </div>
+    </div>
+  );
+};
+const SelfHealInspector = React.memo(SelfHealInspectorInner);
+
 // ─── AgDR-0041 D2·A — GraphHealthBadge ───────────────────────────
 // Live validator surface for the canvas. Debounces `graph_validate`
 // 200 ms after every graph edit (driven by graphBump). Renders a
@@ -10302,6 +10617,13 @@ const GraphHealthBadge = ({ graphBump, setFocusId }) => {
             <span style={{ fontFamily:LM.mono, fontSize:11, color: counts.warn > 0 ? LM.warn : LM.inkMuted }}>
               · {counts.warn} warn
             </span>
+            {/* SELF-HEAL-INSPECTOR entry — opens the heal-event timeline. */}
+            <button data-testid="graph-health-self-heal"
+              onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-self-heal-inspector-open')); } catch (e) {} }}
+              title="Self-Heal Inspector — recovery timeline"
+              style={{ background:'transparent', border:`1px solid ${LM.line}`,
+                color:LM.accent, fontFamily:LM.mono, fontSize:9, letterSpacing:'0.06em',
+                borderRadius:4, padding:'2px 6px', cursor:'pointer', lineHeight:1 }}>✦ heals</button>
             <button onClick={() => setOpen(false)} aria-label="close health panel"
               style={{ background:'transparent', border:0, color:LM.inkMuted,
                 fontSize:16, cursor:'pointer', padding:'0 4px', lineHeight:1 }}>×</button>
@@ -19234,6 +19556,13 @@ const HealthStripItem = () => {
                 color: counts.err > 0 ? LM.err : LM.inkMuted }}>{counts.err} err</span>
               <span style={{ fontFamily:LM.mono, fontSize:10.5,
                 color: counts.warn > 0 ? LM.warn : LM.inkMuted }}>{counts.warn} warn</span>
+              {/* SELF-HEAL-INSPECTOR entry — opens the heal-event timeline. */}
+              <button data-testid="health-strip-self-heal"
+                onClick={(e) => { e.stopPropagation(); setOpen(false); try { window.dispatchEvent(new CustomEvent('lm-self-heal-inspector-open')); } catch (e2) {} }}
+                title="Self-Heal Inspector — recovery timeline"
+                style={{ background:'transparent', border:`1px solid ${LM.line}`,
+                  color:LM.accent, fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.06em',
+                  borderRadius:4, padding:'2px 6px', cursor:'pointer', lineHeight:1 }}>✦ heals</button>
               <button onClick={() => setOpen(false)} style={{
                 background:'transparent', border:0, color:LM.inkMuted,
                 fontSize:14, cursor:'pointer', padding:0, lineHeight:1 }}>×</button>

@@ -3563,6 +3563,7 @@ const StudioLM = () => {
       <CommandPalette _themeBump={paletteBump}/>
       <MemoryExplorerModal _themeBump={paletteBump}/>
       <BrainViewModal _themeBump={paletteBump}/>
+      <StudioSkillJson _themeBump={paletteBump}/>
       <CommandDeckModal _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
@@ -4629,6 +4630,10 @@ const SkillsPanel = () => {
     try { window.dispatchEvent(new CustomEvent('lm-share-canvas')); } catch (e) {}
   };
   const spawn = (s) => { try { window.dispatchEvent(new CustomEvent('lm-spawn-skill', { detail: s })); } catch (e) {} };
+  // Open the Skill JSON split-view (StudioSkillJson) for a row — sources the
+  // REAL record via load_skill (the same store), shows what-it-does / stages /
+  // exposed params + the syntax-coloured skill.json the user owns.
+  const viewJson = (s) => { try { window.dispatchEvent(new CustomEvent('lm-skill-json-open', { detail: s })); } catch (e) {} };
   return (
     <div data-panel="skills" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:8 }}>
@@ -4669,6 +4674,17 @@ const SkillsPanel = () => {
               <div style={{ display:'flex', alignItems:'center', gap:7 }}>
                 <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
                 <span style={{ flex:1, fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name || s.id}</span>
+                <button
+                  data-testid="skill-row-view-json"
+                  title="View skill.json — what it does, stages, exposed params"
+                  aria-label="View skill JSON"
+                  onClick={(e) => { e.stopPropagation(); viewJson(s); }}
+                  style={{
+                    border:0, background:'transparent', color:LM.inkMuted, cursor:'pointer',
+                    fontFamily:LM.mono, fontSize:11, lineHeight:'14px', padding:'0 2px', flexShrink:0,
+                  }}
+                  onMouseEnter={ev => ev.currentTarget.style.color = LM.accent}
+                  onMouseLeave={ev => ev.currentTarget.style.color = LM.inkMuted}>{'{ }'}</button>
                 <span title={isShared ? 'Shared — edits propagate' : 'Private — inline expand on spawn'}
                   style={{
                     fontFamily:LM.mono, fontSize:9, fontWeight:600,
@@ -12460,6 +12476,26 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
   const fileInputRef = React.useRef(null);
   const recogRef = React.useRef(null);
 
+  // Composer prefill — the real receiver for "Open in chat" (SkillJson
+  // split-view → lm-composer-seed). Drops a seed prompt into the input and
+  // focuses it so the user can edit/send; the composer is the surface that
+  // runs the skill. Wired here so the event is never a dead dispatch
+  // (MAKE-IT-REAL / NO-OPEN-THREADS).
+  React.useEffect(() => {
+    const onSeed = (ev) => {
+      const t = ev && ev.detail && ev.detail.text;
+      if (!t) return;
+      setText(String(t));
+      setShowHelp(false);
+      try {
+        const el = inputRef.current;
+        if (el) { el.focus(); const n = String(t).length; try { el.setSelectionRange(n, n); } catch (e2) {} }
+      } catch (e) {}
+    };
+    window.addEventListener('lm-composer-seed', onSeed);
+    return () => window.removeEventListener('lm-composer-seed', onSeed);
+  }, []);
+
   const dispatchAction = (action, raw, opts) => {
     try {
       window.dispatchEvent(new CustomEvent('lm-composer-action', {
@@ -16031,6 +16067,379 @@ const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
 // BrainBrowser/BrainBackupRow children); `_themeBump` (= root paletteBump)
 // re-renders it on theme swap so an open modal repaints.
 const BrainViewModal = React.memo(BrainViewModalInner);
+
+// ─── Skill JSON split-view (StudioSkillJson) ────────────────────────
+// CONSOLIDATION 2026-06-18 (lane SKILL-JSON): ports the design's "Skill
+// JSON" split-view (studio-suite.jsx → StudioSkillJson + the Studio
+// artboards in "ArchHub Redesign.html") into the app. It was the one
+// design surface the app had NO equivalent of (grep skill_json /
+// split-view = 0). Honors the LOCKED principle "skills are plain JSON
+// files you own" (PROTOTYPE-IS-CONTRACT — copy + layout mirror the
+// signed prototype 1:1, rendered in the app's dark LM chrome).
+//
+// MAKE-IT-REAL: every field is sourced from the REAL saved-skill record,
+// never the prototype's hard-coded sample. Opening dispatches
+// `lm-skill-json-open` with {id|slug|name}; on open we resolve the skill
+// through the SAME async slot the SkillsPanel + spawn path use —
+// `load_skill` (→ _scan_canvas_skills, the single store resolver) — and
+// derive:
+//   • the skill.json text  = the actual envelope (kind/name/slug/meta/
+//     graph) re-serialised with JSON.stringify (the real record, not a
+//     fabricated shape),
+//   • STAGES               = the real graph nodes (kind/cat/title),
+//   • EXPOSED PARAMETERS    = the real per-node params[].k + config keys,
+//   • WHAT IT DOES          = the real meta.description.
+// Honest empty/error states when the store has no such skill or the
+// bridge is down (ANTI-LIE — never invent rows when the source is empty).
+
+// Very light JSON syntax colour — reused from the design's colorJson
+// helper (studio-suite.jsx). Keys render in cyan, string values in the
+// bright accent, everything else in soft ink.
+const colorJson = (line) => {
+  const parts = String(line).split(/("(?:[^"\\]|\\.)*")/g);
+  return parts.map((p, i) => {
+    if (p.length >= 2 && p[0] === '"' && p[p.length - 1] === '"') {
+      const isKey = line.indexOf(p + ':') >= 0 || line.indexOf(p + ' :') >= 0;
+      return <span key={i} style={{ color: isKey ? LM.cyan : LM.accentHi }}>{p}</span>;
+    }
+    return <span key={i} style={{ color: LM.inkSoft }}>{p}</span>;
+  });
+};
+
+// Map a node kind/cat to a readable stage label + a host/category tag,
+// mirroring the prototype's "Rhino · mass extract / RHINO" stage rows.
+const _skillStageLabel = (n) => {
+  const kind = String((n && n.kind) || '').toLowerCase();
+  const cat = String((n && n.cat) || '').toLowerCase();
+  // Prefer the node's own title; otherwise build one from kind.
+  const title = (n && (n.title || n.label))
+    || kind.replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    || 'stage';
+  // Tag: a connector node carries its host; otherwise the cat/kind family.
+  let tag = '';
+  if (kind === 'connector' || cat === 'connector') {
+    tag = (n && (n.host || (n.config && n.config.host))) || 'connector';
+  } else if (kind === 'ai_chat' || cat === 'ai') {
+    tag = 'ai';
+  } else {
+    tag = cat || (kind.split(/[._]/)[0]) || 'node';
+  }
+  return { title: String(title), tag: String(tag).toUpperCase() };
+};
+
+// Collect the exposed-parameter names for a node from BOTH shapes the
+// graph uses: the grammar `params:[{k,v}]` rows AND the connector/ai
+// `config:{key:value}` object (e.g. {host, op}). De-duped, order-stable.
+const _skillNodeParams = (n) => {
+  const out = [];
+  const seen = new Set();
+  const add = (k) => {
+    const key = String(k || '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+  (Array.isArray(n && n.params) ? n.params : []).forEach(p => add(p && p.k));
+  const cfg = (n && n.config && typeof n.config === 'object') ? n.config : {};
+  Object.keys(cfg).forEach(add);
+  return out;
+};
+
+const StudioSkillJsonInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [open, setOpen] = React.useState(false);
+  const [rec, setRec] = React.useState(null);     // real envelope from load_skill
+  const [err, setErr] = React.useState(null);     // honest error/empty state
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    const onOpen = async (ev) => {
+      const d = (ev && ev.detail) || {};
+      const id = d.id || d.slug || d.name;
+      setOpen(true);
+      setRec(null);
+      setErr(null);
+      setCopied(false);
+      if (!id) { setErr('No skill selected.'); return; }
+      try {
+        // The SAME real slot the panel's spawn path uses — single store
+        // resolver (_scan_canvas_skills), so the view can never drift from
+        // what the user actually owns on disk.
+        const blob = await bridgeAsync('load_skill', id);
+        if (!blob || blob.error) {
+          setErr((blob && blob.error) || 'Skill could not be loaded.');
+          return;
+        }
+        setRec(blob);
+      } catch (e) {
+        setErr(String((e && e.message) || e));
+      }
+    };
+    window.addEventListener('lm-skill-json-open', onOpen);
+    return () => window.removeEventListener('lm-skill-json-open', onOpen);
+  }, []);
+
+  // Esc closes.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (!open) return null;
+  const close = () => setOpen(false);
+
+  // ── Derive every panel from the REAL record ──
+  const nodes = (rec && Array.isArray(rec.nodes)) ? rec.nodes : [];
+  const wires = (rec && Array.isArray(rec.wires)) ? rec.wires : [];
+  const meta = (rec && rec.meta) || {};
+  const name = (rec && (rec.name || rec.slug)) || '';
+  const slug = (rec && rec.slug) || '';
+  const mode = String(meta.mode || 'private').toLowerCase();
+  const description = String(meta.description || '');
+  const category = String(meta.category || '');
+  // version/author/license are optional envelope extras — surfaced when the
+  // real record carries them, never invented (ANTI-LIE).
+  const version = (rec && (rec.version || meta.version)) || '';
+  const author = (rec && (rec.author || meta.author)) || '';
+  const license = (rec && (rec.license || meta.license)) || '';
+
+  const stages = nodes.map(_skillStageLabel);
+  // Exposed parameters across all stages, de-duped + order-stable.
+  const exposed = (() => {
+    const out = []; const seen = new Set();
+    nodes.forEach(n => _skillNodeParams(n).forEach(k => {
+      if (!seen.has(k)) { seen.add(k); out.push(k); }
+    }));
+    return out;
+  })();
+
+  // The actual skill.json — the REAL record re-serialised. Reconstruct the
+  // on-disk envelope shape (save_as_skill writes exactly this) so the pane
+  // shows the file the user owns, pretty-printed for the line-numbered view.
+  const envelope = rec ? {
+    kind: 'archhub.skill',
+    name: name,
+    slug: slug,
+    meta: { mode: mode, description: description, category: category },
+    graph: { nodes: nodes, wires: wires },
+  } : {};
+  const jsonText = rec ? JSON.stringify(envelope, null, 2) : '';
+  const jsonLines = jsonText ? jsonText.split('\n') : [];
+  const byteLen = (() => {
+    try { return new TextEncoder().encode(jsonText).length; }
+    catch (e) { return jsonText.length; }
+  })();
+
+  const copyJson = () => {
+    if (!jsonText) return;
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1600); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(jsonText).then(done, done);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = jsonText; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+    } catch (e) { done(); }
+  };
+  // Fork — place the skill on the canvas as an editable copy (the real
+  // spawn path: lm-spawn-skill → onSpawnSkill → load_skill → splice).
+  // "Skills are plain JSON you own" — forking == spawning your own copy.
+  const fork = () => {
+    if (!rec) return;
+    try {
+      window.dispatchEvent(new CustomEvent('lm-spawn-skill',
+        { detail: { id: slug, slug: slug, name: name } }));
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail: { msg: '↗ forked ' + (name || slug) + ' onto canvas', kind: 'info' } }));
+    } catch (e) {}
+    close();
+  };
+  // Open in chat — drop the skill's name into the composer as a seed, the
+  // same surface the composer reads (lm-composer-action with a prompt).
+  const openInChat = () => {
+    if (!rec) return;
+    try {
+      window.dispatchEvent(new CustomEvent('lm-composer-seed',
+        { detail: { text: 'Run my "' + (name || slug) + '" skill', skill_id: slug } }));
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail: { msg: 'Opened "' + (name || slug) + '" in chat', kind: 'info' } }));
+    } catch (e) {}
+    close();
+  };
+
+  const btnSecondary = {
+    display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px',
+    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.radius.sm,
+    color:LM.ink, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer', whiteSpace:'nowrap',
+  };
+  const btnPrimary = {
+    display:'inline-flex', alignItems:'center', gap:6, padding:'7px 14px',
+    background:LM.accent, border:0, borderRadius:LM.radius.sm,
+    color:'#fff', fontFamily:LM.sans, fontSize:12.5, cursor:'pointer', whiteSpace:'nowrap',
+  };
+  const slabel = (txt) => (
+    <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+      letterSpacing:'0.14em', marginBottom:8 }}>{txt}</div>
+  );
+
+  return (
+    <div onClick={close} data-testid="skill-json-overlay" style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.72)', zIndex:80,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} data-testid="skill-json-modal" style={{
+        width:1080, maxWidth:'96%', height:'90%', maxHeight:'94%',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.radius.lg,
+        display:'flex', flexDirection:'column', overflow:'hidden',
+        boxShadow:'0 24px 60px rgba(0,0,0,.65)',
+      }}>
+        {/* ── Header (prototype: SKILL · OPEN + title + actions) ── */}
+        <div style={{
+          padding:'24px 28px 20px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'flex-end', gap:16,
+        }}>
+          <div style={S_FLEX1}>
+            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted,
+              letterSpacing:'0.16em' }}>
+              SKILL · {mode === 'shared' ? 'SHARED' : 'OPEN'}
+            </div>
+            <h1 data-testid="skill-json-name" style={{ fontFamily:LM.serif, fontSize:40,
+              letterSpacing:'-0.02em', margin:'4px 0 4px', fontWeight:400, color:LM.ink }}>
+              {name || (err ? 'Skill' : 'Loading…')}
+            </h1>
+            <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted }}>
+              {[
+                version && ('v' + version),
+                (mode === 'shared' ? 'shared' : 'private'),
+                category,
+                license,
+                rec ? (nodes.length + ' stage' + (nodes.length === 1 ? '' : 's')) : '',
+              ].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={copyJson} data-testid="skill-json-copy"
+              disabled={!rec} style={{ ...btnSecondary, opacity: rec ? 1 : 0.5 }}>
+              {copied ? '✓ Copied' : '⧉ Copy JSON'}
+            </button>
+            <button onClick={fork} data-testid="skill-json-fork"
+              disabled={!rec} style={{ ...btnSecondary, opacity: rec ? 1 : 0.5 }}>↗ Fork</button>
+            <button onClick={openInChat} data-testid="skill-json-open-chat"
+              disabled={!rec} style={{ ...btnPrimary, opacity: rec ? 1 : 0.5 }}>Open in chat ▸</button>
+            <button onClick={close} data-testid="skill-json-close" aria-label="Close" style={{
+              width:30, height:30, border:0, background:LM.bgPanel, color:LM.inkSoft,
+              borderRadius:LM.radius.sm, cursor:'pointer', fontFamily:LM.mono, fontSize:13, flex:'none',
+            }}>✕</button>
+          </div>
+        </div>
+
+        {err ? (
+          <div data-testid="skill-json-error" style={{ flex:1, display:'grid', placeItems:'center',
+            fontFamily:LM.serif, fontStyle:'italic', fontSize:15, color:LM.inkMuted, padding:40,
+            textAlign:'center' }}>
+            {err}
+          </div>
+        ) : !rec ? (
+          <div style={{ flex:1, display:'grid', placeItems:'center',
+            fontFamily:LM.mono, fontSize:12, color:LM.inkMuted }}>
+            Loading skill…
+          </div>
+        ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', flex:1, minHeight:0 }}>
+          {/* ── LEFT: description / stages / params / you-own-this ── */}
+          <div className="ah-scroll" data-testid="skill-json-left" style={{
+            padding:'22px 26px', borderRight:`1px solid ${LM.line}`, overflow:'auto', minHeight:0 }}>
+            {slabel('WHAT IT DOES')}
+            <div style={{ fontFamily:LM.serif, fontSize:17, lineHeight:1.55, color:LM.ink,
+              letterSpacing:'-0.005em' }}>
+              {description || <span style={{ color:LM.inkMuted, fontStyle:'italic' }}>
+                No description saved for this skill yet.
+              </span>}
+            </div>
+
+            <div style={{ height:20 }}/>
+            {slabel('STAGES')}
+            <div data-testid="skill-json-stages" style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {stages.length === 0 && (
+                <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkDim }}>no stages</span>
+              )}
+              {stages.map((s, i) => (
+                <div key={i} style={{ display:'flex', gap:8, alignItems:'center', padding:'6px 0',
+                  borderBottom:`1px dashed ${LM.lineSoft}` }}>
+                  <span style={{ width:18, height:18, borderRadius:'50%',
+                    border:`1.5px solid ${LM.ok}`, color:LM.ok, fontFamily:LM.mono, fontSize:9,
+                    display:'grid', placeItems:'center', flexShrink:0 }}>{i + 1}</span>
+                  <span style={{ flex:1, fontSize:13.5, color:LM.ink, overflow:'hidden',
+                    textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.title}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+                    letterSpacing:'0.04em' }}>{s.tag}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ height:20 }}/>
+            {slabel('EXPOSED PARAMETERS')}
+            <div data-testid="skill-json-params" style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {exposed.length === 0 && (
+                <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkDim }}>
+                  none exposed
+                </span>
+              )}
+              {exposed.map(p => (
+                <span key={p} style={{ fontFamily:LM.mono, fontSize:11, padding:'2px 7px',
+                  borderRadius:LM.radius.xs, background:LM.bgPanel, color:LM.accent,
+                  border:`1px solid ${LM.lineSoft}` }}>{p}</span>
+              ))}
+            </div>
+
+            <div style={{ height:20 }}/>
+            <div data-testid="skill-json-own" style={{ background:LM.bgPanel,
+              border:`1px solid ${LM.line}`, borderRadius:LM.radius.lg, padding:14 }}>
+              <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+                letterSpacing:'0.14em' }}>YOU OWN THIS</div>
+              <div style={{ fontFamily:LM.serif, fontSize:15, color:LM.inkSoft, marginTop:6,
+                fontStyle:'italic', lineHeight:1.5 }}>
+                Skills are plain JSON files you own. Edit them, version them, share
+                them, take them with you. ArchHub is the runner — never the registry.
+              </div>
+            </div>
+          </div>
+
+          {/* ── RIGHT: syntax-coloured skill.json with line numbers ── */}
+          <div className="ah-scroll" data-testid="skill-json-source" style={{
+            padding:'18px 22px', overflow:'auto', background:LM.bgDeep, minHeight:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+              {slabel('SOURCE · skill.json')}
+              <div style={S_FLEX1}/>
+              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>
+                {byteLen} bytes · {jsonLines.length} lines
+              </span>
+            </div>
+            <pre style={{ margin:0, fontFamily:LM.mono, fontSize:12.5, lineHeight:1.65,
+              color:LM.ink, whiteSpace:'pre-wrap' }}>
+              {jsonLines.map((line, i) => (
+                <div key={i} style={{ display:'flex', gap:14 }}>
+                  <span style={{ color:LM.inkMuted, opacity:0.5, width:24, textAlign:'right',
+                    userSelect:'none', flexShrink:0 }}>{i + 1}</span>
+                  <span style={S_FLEX1}>{colorJson(line)}</span>
+                </div>
+              ))}
+            </pre>
+          </div>
+        </div>
+        )}
+      </div>
+    </div>
+  );
+};
+// LAG-ROOT FIX idiom (2026-06-01): always-mounted, early-returns null when
+// closed; memo'd so unrelated root re-renders skip it, `_themeBump` repaints
+// an open modal on theme swap.
+const StudioSkillJson = React.memo(StudioSkillJsonInner);
 
 // "Back up my brain" — the UI home for the live cloud-sync server
 // (commit 0dce168, /v1/brain/sync). The client push is now wired:

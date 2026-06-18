@@ -1,15 +1,35 @@
 """Cloud sync — GitHub-backed Skills + Sessions storage.
 
-Skills used to live only on the user's machine. The chat showed them, the
-matcher found them, the user could share them by emailing JSON. That's
-acceptable for one architect on one box; it falls apart the moment they
-own two devices or want a teammate to see what they built.
+Skills and node-graph Sessions used to live only on the user's machine.
+The chat showed them, the matcher found them, the user could share them
+by emailing JSON. That's acceptable for one architect on one box; it
+falls apart the moment they own two devices or want a teammate to see
+what they built.
 
 This module makes a private GitHub repo the source of truth for the
-user's Skills (and, later, Sessions). The local filesystem becomes a
-cache. Save → write the JSON, commit, push. Launch → pull. Edit on
-device A → it appears on device B without OneDrive symlinks or
-copy-paste.
+user's Skills AND Sessions. The local filesystem becomes a cache.
+Save → write the JSON, commit, push. Launch → pull. Edit on device A →
+it appears on device B without OneDrive symlinks or copy-paste.
+
+Skills and Sessions live in different places, so they sync differently:
+
+  - Skills are authored directly INTO the cache (skills_dir()) by
+    app/skills/library.py, which then pushes — the cache IS the working
+    surface. push()/pull() carry them as-is.
+  - Sessions are authored into a SEPARATE live store
+    (app/session_io.py SESSIONS_DIR = %LOCALAPPDATA%/ArchHub/sessions/)
+    by the chat + canvas surfaces, which know nothing about the cache.
+    sync_sessions() therefore MIRRORS that live store into the cache's
+    sessions/ subfolder before a push, and back out of it after a pull,
+    so the cross-device copy stays a byte-for-byte clone the local
+    surfaces never have to be aware of.
+
+Large-session gate: some session files are tens of MB because they
+inline base64 image _attachments. Those would bloat the gh-backed repo
+(and slow every clone/pull), so the session mirror SKIPS any file over
+SESSION_SIZE_CAP_BYTES and reports the skip (file name + size) — never a
+silent truncation. The user keeps the heavy session locally; only the
+sync of that one file is declined, with a visible reason.
 
 Implementation choices:
 
@@ -32,10 +52,13 @@ The module exposes a small API the rest of ArchHub uses:
     cloud_sync.is_signed_in()      -> bool      (gh auth status ok)
     cloud_sync.is_initialised()    -> bool      (cache repo cloned)
     cloud_sync.cache_dir()         -> Path      (local clone path)
+    cloud_sync.skills_dir()        -> Path      (cache skills/ subfolder)
+    cloud_sync.sessions_dir()      -> Path      (cache sessions/ subfolder)
     cloud_sync.repo_slug()         -> str       (owner/name)
     cloud_sync.bootstrap()         -> SyncResult (clone or create + clone)
     cloud_sync.pull()              -> SyncResult
     cloud_sync.push(commit_msg)    -> SyncResult
+    cloud_sync.sync_sessions()     -> SyncResult (mirror + push + pull sessions)
     cloud_sync.status()            -> SyncStatus (lightweight diagnostic)
 
 Errors never raise; all results carry a success flag and message string
@@ -43,12 +66,16 @@ the UI can render.
 """
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger("archhub.cloud_sync")
 
 
 # Cache lives next to the existing %LOCALAPPDATA%/ArchHub/ tree.
@@ -57,9 +84,22 @@ _CACHE_DIR = _CACHE_ROOT / "data_repo"
 
 # Fixed remote name so multiple devices land on the same place.
 _DEFAULT_REPO_NAME = "ArchHub-data"
-# Subfolder inside the repo where skill JSONs go. Workflows/sessions can
-# live alongside in their own subfolders later.
+# Subfolders inside the repo. Skills are authored straight into theirs;
+# sessions are mirrored into theirs from the live SESSIONS_DIR.
 _SKILLS_SUBDIR = "skills"
+_SESSIONS_SUBDIR = "sessions"
+
+# The on-disk extension session_io writes (kept in sync with
+# session_io.SESSION_EXT). Only files matching this are mirrored — a
+# *.archhub-session.json glob, the same the THREADS rail scans.
+_SESSION_GLOB = "*.archhub-session.json"
+
+# Large-blob gate. Session files balloon past tens of MB when the user
+# inlines base64 image _attachments; pushing those into the gh-backed
+# repo bloats every clone. 5 MB is comfortably above a real graph
+# session (nodes + wires + chat text is KBs) yet well under an
+# attachment-heavy one. Skipped files are reported, never truncated.
+SESSION_SIZE_CAP_BYTES = 5 * 1024 * 1024
 
 _GIT_TIMEOUT_SECONDS = 60
 _GH_TIMEOUT_SECONDS = 60
@@ -77,6 +117,8 @@ class SyncStatus:
     behind: int = 0
     ahead: int = 0
     dirty: bool = False
+    skills: int = 0               # count of synced skill files in cache
+    sessions: int = 0            # count of synced session files in cache
     error: str = ""
 
 
@@ -128,6 +170,14 @@ def cache_dir() -> Path:
 
 def skills_dir() -> Path:
     return _CACHE_DIR / _SKILLS_SUBDIR
+
+
+def sessions_dir() -> Path:
+    """Cache subfolder where node-graph session JSONs are mirrored for
+    cross-device sync. Mirrors skills_dir() — lives inside the same
+    cloned cache repo, alongside skills/. The live working copy is
+    session_io.SESSIONS_DIR; sync_sessions() keeps the two in step."""
+    return _CACHE_DIR / _SESSIONS_SUBDIR
 
 
 def is_available() -> bool:
@@ -267,14 +317,20 @@ def bootstrap() -> SyncResult:
         return SyncResult(False, "Could not clone the cloud repo.",
                           err or out)
 
-    # Ensure subfolder + .gitkeep so first push isn't empty.
+    # Ensure both subfolders + .gitkeep so the first push isn't empty
+    # and device B's clone already has the directories.
     skills_dir().mkdir(parents=True, exist_ok=True)
-    keep = skills_dir() / ".gitkeep"
-    if not keep.exists():
-        keep.write_text("", encoding="utf-8")
+    sessions_dir().mkdir(parents=True, exist_ok=True)
+    made_keep = False
+    for sub in (skills_dir(), sessions_dir()):
+        keep = sub / ".gitkeep"
+        if not keep.exists():
+            keep.write_text("", encoding="utf-8")
+            made_keep = True
+    if made_keep:
         _git("add", "-A")
         _git("-c", "user.email=archhub@local", "-c", "user.name=ArchHub",
-             "commit", "-m", "Initial Skills sync")
+             "commit", "-m", "Initial Skills + Sessions sync")
         _git("push", "origin", "HEAD")
 
     return SyncResult(True, f"Cloud sync ready ({slug}).")
@@ -319,6 +375,163 @@ def push(commit_msg: str) -> SyncResult:
     return SyncResult(True, "Synced to cloud.", out)
 
 
+# ---------------------------------------------------------------------------
+# Sessions sync. Sessions live in a SEPARATE live store (session_io.
+# SESSIONS_DIR) the chat + canvas surfaces write to, unaware of the
+# cloud cache. We bridge the two by mirroring: live -> cache before a
+# push, cache -> live after a pull. The size cap is applied on the way
+# INTO the cache so attachment-heavy blobs never enter the repo.
+# ---------------------------------------------------------------------------
+def _live_sessions_dir() -> Path:
+    """The on-disk working store the app actually saves sessions to.
+    Read from session_io so a test (or a future relocation) that
+    monkeypatches SESSIONS_DIR is honoured — we never freeze a second
+    copy of the path."""
+    try:
+        import session_io
+        return Path(session_io.SESSIONS_DIR)
+    except Exception:
+        # session_io computes the same path off LOCALAPPDATA; fall back
+        # to that so sync still works if the import is unavailable.
+        return _CACHE_ROOT / "sessions"
+
+
+def _mirror_sessions_into_cache() -> tuple[int, list[str]]:
+    """Copy every live session file into the cache sessions/ subfolder,
+    skipping any file over the size cap. Returns (copied_count,
+    skipped_report_lines). A skipped file is NOT copied and NOT
+    truncated — the live original stays put; only its sync is declined.
+
+    Files deleted locally are also removed from the cache so a delete on
+    device A propagates (the mirror is authoritative for the live set)."""
+    live = _live_sessions_dir()
+    cache = sessions_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    skipped: list[str] = []
+    if not live.exists():
+        return copied, skipped
+
+    live_names: set[str] = set()
+    for src in sorted(live.glob(_SESSION_GLOB)):
+        live_names.add(src.name)
+        try:
+            size = src.stat().st_size
+        except OSError:
+            continue
+        if size > SESSION_SIZE_CAP_BYTES:
+            mb = size / (1024 * 1024)
+            cap_mb = SESSION_SIZE_CAP_BYTES / (1024 * 1024)
+            line = (f"{src.name} ({mb:.1f} MB) skipped — over the "
+                    f"{cap_mb:.0f} MB sync cap (likely inline attachments)")
+            skipped.append(line)
+            _log.warning("cloud_sync: %s", line)
+            # If a previously-synced copy exists in the cache, leave it;
+            # don't push a NEW oversize blob. Nothing else to do.
+            continue
+        dst = cache / src.name
+        try:
+            # Only copy when content actually differs — keeps git from
+            # churning identical files into no-op commits.
+            if (not dst.exists()
+                    or dst.stat().st_size != size
+                    or src.read_bytes() != dst.read_bytes()):
+                shutil.copy2(src, dst)
+            copied += 1
+        except OSError as ex:
+            _log.warning("cloud_sync: could not mirror %s: %s",
+                         src.name, ex)
+
+    # Propagate local deletions: a cache file with no live counterpart
+    # (and not an oversize one we deliberately left) is removed so the
+    # next push reflects the delete. .gitkeep is preserved.
+    skipped_names = {ln.split(" ", 1)[0] for ln in skipped}
+    for cached in cache.glob(_SESSION_GLOB):
+        if cached.name not in live_names and cached.name not in skipped_names:
+            try:
+                cached.unlink()
+            except OSError:
+                pass
+    return copied, skipped
+
+
+def _mirror_sessions_out_of_cache() -> int:
+    """Copy every session file from the cache back into the live store
+    (the device-B side of a pull). Returns the count written. New files
+    from another device land in SESSIONS_DIR where the THREADS rail and
+    session_io.load_session find them. Existing-but-different files are
+    refreshed; local-only files are left untouched (a local save not yet
+    pushed must not be clobbered by an older cache)."""
+    live = _live_sessions_dir()
+    cache = sessions_dir()
+    if not cache.exists():
+        return 0
+    live.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for src in cache.glob(_SESSION_GLOB):
+        dst = live / src.name
+        try:
+            if (not dst.exists()
+                    or dst.stat().st_size != src.stat().st_size
+                    or dst.read_bytes() != src.read_bytes()):
+                shutil.copy2(src, dst)
+            written += 1
+        except OSError as ex:
+            _log.warning("cloud_sync: could not restore %s: %s",
+                         src.name, ex)
+    return written
+
+
+def sync_sessions() -> SyncResult:
+    """Two-way sync of node-graph sessions — the entrypoint the bridge
+    slot / Home 'Sync now' affordance calls.
+
+    Order of operations:
+      1. pull()                     — get the latest cache from GitHub
+      2. cache -> live mirror        — surface other devices' sessions
+      3. live -> cache mirror (+cap) — stage this device's sessions
+      4. push()                     — publish them
+
+    Step 3's cap silently declines (with a logged + reported reason)
+    any session file over SESSION_SIZE_CAP_BYTES so the repo never
+    bloats. The returned SyncResult.detail carries the skip report so
+    the UI can show 'N skipped' without the user digging through logs.
+    """
+    if not is_initialised():
+        boot = bootstrap()
+        if not boot.success:
+            return boot
+
+    # 1. Pull first so we merge before mirroring our own changes up.
+    pull_res = pull()
+    if not pull_res.success:
+        return SyncResult(False, "Sessions sync failed on pull.",
+                          pull_res.detail or pull_res.message)
+
+    # 2. Bring down anything new from other devices.
+    restored = _mirror_sessions_out_of_cache()
+
+    # 3. Stage this device's live sessions into the cache (cap applied).
+    copied, skipped = _mirror_sessions_into_cache()
+
+    # 4. Commit + push the staged session changes.
+    msg = f"Sync sessions ({copied} session{'s' if copied != 1 else ''})"
+    push_res = push(msg)
+    if not push_res.success:
+        return SyncResult(False, "Sessions sync failed on push.",
+                          push_res.detail or push_res.message)
+
+    detail_parts = [
+        f"{copied} session(s) synced up",
+        f"{restored} restored from cloud",
+    ]
+    if skipped:
+        detail_parts.append(
+            f"{len(skipped)} skipped (too large): " + "; ".join(skipped))
+    detail = " · ".join(detail_parts)
+    return SyncResult(True, "Sessions synced.", detail)
+
+
 def status() -> SyncStatus:
     s = SyncStatus(
         available=is_available(),
@@ -330,6 +543,17 @@ def status() -> SyncStatus:
     )
     if not s.initialised:
         return s
+    # Synced artifact counts — what the user has in the cloud cache right
+    # now. Cheap glob, no network. Lets the Home/Settings card render
+    # "N skills · M sessions synced".
+    try:
+        s.skills = len(list(skills_dir().glob("*.archhub-skill.json")))
+    except Exception:
+        pass
+    try:
+        s.sessions = len(list(sessions_dir().glob(_SESSION_GLOB)))
+    except Exception:
+        pass
     rc, out, err = _git("status", "--porcelain")
     if rc == 0:
         s.dirty = bool(out.strip())

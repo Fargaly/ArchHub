@@ -47,6 +47,35 @@ ALLOWED = {
     REPO_ROOT / "scripts" / "check_session_saves.py",
 }
 
+# Directory names that are not part of THIS working tree's source and
+# must be skipped wholesale during the walk.
+#   • Build / dependency noise (venv, __pycache__, …).
+#   • Nested git worktrees: .claude/ holds agent worktrees parked on
+#     OTHER, often older commits; .git is git's own store.
+_SKIP_DIR_NAMES = {
+    "__pycache__", "site-packages", "venv", ".venv",
+    "build", "dist", ".claude", ".git",
+}
+# Sibling-worktree directory PREFIXES. The dispatcher parks parallel-lane
+# worktrees next to the repo (and, when the guard runs from a worktree,
+# inside a shared parent) under names like `_cx`, `_codex`, `_ag`,
+# `_rel*`, `_fix*`, `_con*`, `_cc*`, `_fin*`. Those are different
+# revisions of this repo — scanning their (often pre-fix) test files made
+# the guardrail + its meta-test false-fail (2026-06-18). A worktree dir
+# name always begins with one of these, so a prefix match catches every
+# numbered variant (`_fix1`, `_cx_sessions`, …) without listing each.
+_WORKTREE_PREFIXES = (
+    "_cx", "_codex", "_ag", "_rel", "_fix", "_con", "_cc", "_fin",
+)
+
+
+def _is_skipped_part(name: str) -> bool:
+    """True if a single path component marks a tree we must not scan —
+    build noise, a nested checkout, or a sibling-lane worktree."""
+    if name in _SKIP_DIR_NAMES:
+        return True
+    return any(name.startswith(p) for p in _WORKTREE_PREFIXES)
+
 
 class SaveSessionVisitor(ast.NodeVisitor):
     def __init__(self, path: Path):
@@ -80,21 +109,34 @@ def scan_file(path: Path) -> list[tuple[int, str]]:
     return v.unsafe
 
 
+def _walk_repo_py() -> list[Path]:
+    """Every *.py in THIS working tree, with build noise, nested
+    checkouts, and sibling-lane worktrees pruned out (see
+    _is_skipped_part). The single source of the file set so the scan and
+    the 'scanned N files' count can never drift.
+
+    Only path components BELOW REPO_ROOT are tested — REPO_ROOT's own
+    ancestors (which may themselves sit under a `_fin/…` worktree-staging
+    parent) must never trip the prefix match, or the guard would skip its
+    entire own tree."""
+    out: list[Path] = []
+    for py in REPO_ROOT.rglob("*.py"):
+        try:
+            rel_parts = py.relative_to(REPO_ROOT).parts
+        except ValueError:
+            rel_parts = py.parts
+        if any(_is_skipped_part(part) for part in rel_parts):
+            continue
+        out.append(py)
+    return out
+
+
 def main() -> int:
     bad: list[tuple[Path, int, str]] = []
-    for py in REPO_ROOT.rglob("*.py"):
-        # Skip third-party / venv / __pycache__ noise — and NESTED CHECKOUTS:
-        # .claude/ holds agent worktrees (git worktrees parked on OTHER, often
-        # older commits, e.g. .claude/worktrees/<task>/). Their files are a
-        # different revision of this repo, not this tree's code — scanning
-        # them makes the guard fail on history (a pre-fix copy of a test
-        # tripped both the pre-commit hook and the suite's static-guard test,
-        # 2026-06-10). Same reasoning as .git: not part of THIS working tree.
-        parts = set(py.parts)
-        if parts & {"__pycache__", "site-packages", "venv",
-                    ".venv", "build", "dist", ".claude", ".git"}:
-            continue
-        if py.resolve() in {p.resolve() for p in ALLOWED}:
+    scanned = _walk_repo_py()
+    allowed_resolved = {p.resolve() for p in ALLOWED}
+    for py in scanned:
+        if py.resolve() in allowed_resolved:
             continue
         unsafe = scan_file(py)
         for lineno, src in unsafe:
@@ -102,7 +144,7 @@ def main() -> int:
 
     if not bad:
         print(f"OK — every save_session() call passes messages=. "
-              f"Scanned {sum(1 for _ in REPO_ROOT.rglob('*.py'))} files.")
+              f"Scanned {len(scanned)} files.")
         return 0
 
     print("UNSAFE save_session() calls found:\n")

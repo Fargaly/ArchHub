@@ -6400,7 +6400,7 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
 
       {/* Brand lockup — the architect's-hand wordmark (ARCH·HUB), left of the
           session tabs. Clicking it goes Home, same as the grid button. */}
-      <button onClick={onHome} title="ArchHub — all sessions" style={{
+      <button onClick={onHome} title="ArchHub — all sessions" aria-label="ArchHub home — all sessions" style={{
         border:0, background:'transparent', cursor:'pointer', padding:'0 4px',
         display:'flex', alignItems:'center', flexShrink:0,
       }}>

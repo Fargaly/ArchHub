@@ -3,31 +3,400 @@ import Base from '../layouts/Base.astro';
 // Connector + operation counts come from the committed build-info.json,
 // derived from the REAL app/connectors/ source by scripts/build-info.js
 // (npm run refresh-content). No hand-typed, drift-prone numbers.
+//
+// PROTOTYPE-IS-CONTRACT: this page mirrors the signed reference
+// _handoff/archhub/project/ArchHub Website.html 1:1 — hero, three pillars,
+// the self-healing-connectors block (the app's strongest differentiator),
+// the auditable-graph split, the skills-are-JSON split, and security.
 import buildInfo from '../data/build-info.json';
 const connectors = buildInfo.connectors ?? 0;
 const operations = buildInfo.operations ?? 0;
 ---
-<Base title="ArchHub — AI workspace for AEC" description="The graph-first AI workspace for architects, engineers, and contractors. One canvas, every tool you already use, wired together.">
-  <h1>ArchHub</h1>
-  <p>
-    <strong>Graph-first AI workspace for AEC professionals.</strong>
-    Wire your hosts, conversations, filters, and connector operations on a
-    single canvas. Your work happens locally; your knowledge stays yours.
-  </p>
+<Base title="Drafted, not generated" description="The graph-first AI workspace for architects, engineers, and contractors. One canvas wires every tool you already use — Revit, Rhino, Speckle, Excel. Local-first. MIT.">
 
-  <h2>The three pillars</h2>
-  <ul>
-    <li><strong>Canvas</strong> — every action is a node, every node is replayable.</li>
-    <li><strong>Composer</strong> — chat with the project; AI edits the graph, you approve.</li>
-    <li><strong>Brain</strong> — persistent memory + skills that grow with your firm.</li>
-  </ul>
+  <!-- ════════ HERO ════════ -->
+  <section class="hero" id="top">
+    <div class="wrap hgrid">
+      <div>
+        <div class="eyebrow">● Graph-first AI workspace · for AEC</div>
+        <h1 class="title serif">Drafted,<br/><span class="ital">not generated.</span></h1>
+        <p class="lede">One canvas wires every tool you already use — Revit, Rhino, Speckle, Excel. The AI edits the graph; you approve the line. Your work stays local. Your knowledge stays yours.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary lg" href="/pricing">Download for Windows ↓</a>
+          <a class="btn lg" href="/features">Watch the 90-second plot →</a>
+        </div>
+        <div class="fineprint">MIT · bring your own key · no credit card · macOS / Linux from source</div>
+      </div>
 
-  <h2>What's inside</h2>
-  <p>
-    {connectors} connectors, {operations} operations. Revit · AutoCAD · Speckle ·
-    Excel · Blender · Rhino · 3ds Max · Procore · Outlook · Notion — wired into
-    one canvas. Every wire is auditable, every skill is reusable across projects.
-  </p>
+      <!-- node canvas preview -->
+      <div class="canvas-card">
+        <div class="canvas-head">
+          <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
+          <span class="path">canvas · Tower-A_central.rvt · /studio</span>
+        </div>
+        <div class="canvas-body">
+          <svg style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;">
+            <path d="M196 92 C 240 92, 250 150, 296 150" stroke="#5fb3b3" stroke-width="1.5" fill="none" opacity="0.85"/>
+            <path d="M196 116 C 250 116, 250 250, 76 250 C 30 250, 30 250, 30 250" stroke="#a98cd6" stroke-width="1.5" fill="none" opacity="0.7"/>
+            <path d="M478 150 C 510 150, 500 250, 540 250" stroke="#d97757" stroke-width="1.5" fill="none" opacity="0.85"/>
+          </svg>
+          <div class="node" style="left:14px; top:54px;">
+            <div class="nh"><i class="dot" style="background:#5fb3b3;"></i><span class="cat" style="color:#5fb3b3;">HOST · REVIT</span><span class="st" style="color:#7ec18e;">LIVE</span></div>
+            <div class="nb">
+              <div class="nt">Revit 2025</div>
+              <div class="ns">Tower-A_central.rvt · L03</div>
+              <div class="port"><span>active view</span><i style="background:#5fb3b3;"></i></div>
+              <div class="port"><span>selection · 23 walls</span><i style="background:#5fb3b3;"></i></div>
+            </div>
+          </div>
+          <div class="node" style="left:296px; top:108px;">
+            <div class="nh"><i class="dot" style="background:#a98cd6;"></i><span class="cat" style="color:#a98cd6;">AI · COMPOSER</span><span class="st" style="color:#d97757;">RUNNING</span></div>
+            <div class="nb">
+              <div class="nt">Schedule wall types</div>
+              <div class="ns">Claude Sonnet · 412ms</div>
+              <div class="port"><span>intent</span><i style="background:#a98cd6;"></i></div>
+            </div>
+          </div>
+          <div class="node" style="left:14px; top:248px;">
+            <div class="nh"><i class="dot" style="background:#d97757;"></i><span class="cat" style="color:#d97757;">ANNOTATE</span><span class="st" style="color:#7ec18e;">DONE</span></div>
+            <div class="nb">
+              <div class="nt">Auto-dimension</div>
+              <div class="ns">37 dims · 2 stages</div>
+            </div>
+          </div>
+          <div class="node" style="left:486px; top:248px;">
+            <div class="nh"><i class="dot" style="background:#7ec18e;"></i><span class="cat" style="color:#7ec18e;">OUTPUT</span><span class="st" style="color:#7ec18e;">DONE</span></div>
+            <div class="nb">
+              <div class="nt">Plot sheet set</div>
+              <div class="ns">A.101 → A.112 · PDF</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-  <p><a href="/features">Explore features →</a> <a href="/pricing">See pricing →</a> <a href="/brain">See the brain graph →</a></p>
+  <!-- ════════ TRUST ════════ -->
+  <div class="trust">
+    <div class="wrap trow">
+      <span class="lab">DRIVES</span>
+      <span class="host">Revit</span>
+      <span class="host">AutoCAD</span>
+      <span class="host">Speckle</span>
+      <span class="host">Rhino</span>
+      <span class="host">Blender</span>
+      <span class="host">3ds&nbsp;Max</span>
+      <span class="host">Excel</span>
+      <span class="host">Procore</span>
+      <span class="host">Outlook</span>
+      <span class="host">Notion</span>
+      <span class="count"><b>{connectors}</b> connectors · <b>{operations}</b> operations</span>
+    </div>
+  </div>
+
+  <!-- ════════ THREE PILLARS ════════ -->
+  <section class="sec wrap" id="canvas">
+    <div class="eyebrow" style="margin-bottom:10px;">The three pillars</div>
+    <h2 class="serif" style="font-size:var(--fs-d2); line-height:1; margin:0 0 8px;">Canvas. Composer. <span class="ital">Brain.</span></h2>
+    <p class="lede" style="margin:0 0 20px; max-width:560px;">The whole product is three ideas — and not one of them is a chat box.</p>
+    <div class="pillars">
+      <div class="pillar">
+        <div class="pn">01 · THE SURFACE</div>
+        <div class="glyph">◈</div>
+        <h3>Canvas</h3>
+        <p>Every action is a node; every node is replayable. Drag a parameter and the chain downstream re-runs. Nothing happens that you can't see, trace, or undo.</p>
+      </div>
+      <div class="pillar">
+        <div class="pn">02 · THE HAND</div>
+        <div class="glyph">✎</div>
+        <h3>Composer</h3>
+        <p>Talk to the project. The AI proposes edits to the graph; you approve the line before it's drawn. Set out, don't ask out — review is the default, not an afterthought.</p>
+      </div>
+      <div class="pillar">
+        <div class="pn">03 · THE MEMORY</div>
+        <div class="glyph">❖</div>
+        <h3>Brain</h3>
+        <p>Persistent memory and reusable skills that grow with your firm. Save any thread as a Skill — JSON you own, versioned in your own repo. No marketplace lock-in.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">SELF-HEALING CONNECTORS</span><span class="rule"></span><span class="tick"></span></div></div>
+
+  <!-- ════════ SELF-HEAL ════════ -->
+  <section class="sec wrap" id="heal">
+    <div class="heal">
+      <div class="heal-grid">
+        <div class="heal-left">
+          <div class="eyebrow">Self-healing connectors</div>
+          <h2 class="serif heal-h">Your CAD <span class="ital">tells us</span> when it breaks. We listen.</h2>
+          <p class="heal-lede">No restarts. No "please relaunch Revit." The connector watches the host, reconnects on its own, and tells you what it did.</p>
+          <div class="heal-stats">
+            <div><div class="k">0</div><div class="v">manual restarts</div><div class="vs">LAST 7 DAYS</div></div>
+            <div><div class="k">47</div><div class="v">recovered sessions</div><div class="vs">LAST 7 DAYS</div></div>
+            <div><div class="k">340<span style="font-size:22px;">ms</span></div><div class="v">median recovery</div><div class="vs">P50 · ALL HOSTS</div></div>
+          </div>
+        </div>
+        <div class="heal-right">
+          <div class="heal-rhead">
+            <span class="eyebrow" style="color:var(--warn);">Recovery in progress · Revit 2025</span>
+            <span class="mono" style="font-size:10px; color:var(--ink-muted);">session #2841</span>
+          </div>
+          <div class="diff">
+            <div class="box">
+              <div class="bl" style="color:var(--err);">BEFORE · 14:23:08</div>
+              <div class="dl"><span class="dk">handshake</span><span class="dv ko">timeout</span></div>
+              <div class="dl"><span class="dk">rpc port</span><span class="dv ko">:48884 closed</span></div>
+              <div class="dl"><span class="dk">session</span><span class="dv ko">orphaned</span></div>
+            </div>
+            <span class="arrow">→</span>
+            <div class="box">
+              <div class="bl" style="color:var(--ok);">AFTER · 14:23:11</div>
+              <div class="dl"><span class="dk">handshake</span><span class="dv okv">ok · 38ms</span></div>
+              <div class="dl"><span class="dk">rpc port</span><span class="dv okv">:48884 open</span></div>
+              <div class="dl"><span class="dk">session</span><span class="dv okv">restored</span></div>
+            </div>
+          </div>
+          <div class="log">
+            <div class="logline"><span class="lt">14:23:08</span><span class="lw" style="color:var(--warn);">WATCH</span><span class="lm"><span style="color:var(--warn);">▲ </span>RPC failed to ack heartbeat (3 retries)</span></div>
+            <div class="logline"><span class="lt">14:23:09</span><span class="lw" style="color:var(--ink-soft);">DIAG</span><span class="lm">cause likely: GC pause in worksharing</span></div>
+            <div class="logline"><span class="lt">14:23:09</span><span class="lw" style="color:var(--cyan);">ACTION</span><span class="lm"><span style="color:var(--cyan);">→ </span>re-issuing handshake · 800ms grace</span></div>
+            <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ok);">OK</span><span class="lm"><span style="color:var(--ok);">✓ </span>handshake acknowledged · 38ms</span></div>
+            <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ok);">RESTORE</span><span class="lm"><span style="color:var(--ok);">✓ </span>session rebound · 23 walls preserved</span></div>
+            <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ink-soft);">USER</span><span class="lm">no notification shown · recovery silent</span></div>
+          </div>
+          <div class="heal-foot"><span class="serif ital" style="font-size:16px; color:var(--ink-soft);">You didn't notice. That's the point.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">EVERY STEP IS A NODE</span><span class="rule"></span><span class="tick"></span></div></div>
+
+  <!-- ════════ GRAPH SPLIT ════════ -->
+  <section class="sec wrap" id="graph">
+    <div class="split">
+      <div>
+        <div class="eyebrow">The canvas</div>
+        <h2 class="serif split-h">A graph you can <span class="ital">audit</span>, not a transcript you have to trust.</h2>
+        <ul class="feat-list">
+          <li><span class="fi">◇</span><span class="ft"><b>Replayable by construction</b><span>Re-run any node from any upstream state. The same inputs always draw the same line.</span></span></li>
+          <li><span class="fi">⌭</span><span class="ft"><b>Parametric, not one-shot</b><span>Every chat turn becomes a parameter. Nudge a slider; the chain re-runs from that node down.</span></span></li>
+          <li><span class="fi">⌗</span><span class="ft"><b>Auditable wires</b><span>Every connection is typed and logged. Hover any wire to see exactly what passed through it.</span></span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="canvas-card">
+          <div class="canvas-head">
+            <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
+            <span class="path">sketch.png → /Tower-A/issue-04/ · 8.4s end-to-end</span>
+          </div>
+          <div class="canvas-body sm">
+            <svg style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;">
+              <path d="M150 70 C 185 70, 185 70, 220 70" stroke="#5fb3b3" stroke-width="1.5" fill="none"/>
+              <path d="M150 160 C 185 160, 185 160, 220 160" stroke="#a98cd6" stroke-width="1.5" fill="none"/>
+              <path d="M356 115 C 400 115, 400 160, 220 230 M150 230 L 356 230" stroke="#d97757" stroke-width="1.5" fill="none" opacity="0.7"/>
+            </svg>
+            <div class="node sm" style="left:14px; top:42px;"><div class="nh"><i class="dot" style="background:#5fb3b3;"></i><span class="cat" style="color:#5fb3b3;">READ</span></div><div class="nb"><div class="nt">sketch.png</div><div class="ns">2400×1800</div></div></div>
+            <div class="node sm" style="left:222px; top:42px;"><div class="nh"><i class="dot" style="background:#a98cd6;"></i><span class="cat" style="color:#a98cd6;">AI</span></div><div class="nb"><div class="nt">Extract floors</div><div class="ns">4 detected</div></div></div>
+            <div class="node sm" style="left:14px; top:132px;"><div class="nh"><i class="dot" style="background:#e5b25a;"></i><span class="cat" style="color:#e5b25a;">TRANSFORM</span></div><div class="nb"><div class="nt">Build walls</div><div class="ns">47 placed</div></div></div>
+            <div class="node sm" style="left:222px; top:132px;"><div class="nh"><i class="dot" style="background:#d97757;"></i><span class="cat" style="color:#d97757;">COMPOSE</span></div><div class="nb"><div class="nt">Door sched.</div><div class="ns">23 doors</div></div></div>
+            <div class="node sm" style="left:14px; top:212px;"><div class="nh"><i class="dot" style="background:#7ec18e;"></i><span class="cat" style="color:#7ec18e;">OUTPUT</span></div><div class="nb"><div class="nt">Dropbox</div><div class="ns">24 MB · ✓</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">THE BRAIN · SKILLS YOU OWN</span><span class="rule"></span><span class="tick"></span></div></div>
+
+  <!-- ════════ BRAIN / SKILLS ════════ -->
+  <section class="sec wrap" id="brain">
+    <div class="split">
+      <div>
+        <pre class="skill"><span class="pun">&#123;</span>
+  <span class="key">"name"</span><span class="pun">:</span> <span class="str">"Sketch to production"</span><span class="pun">,</span>
+  <span class="key">"version"</span><span class="pun">:</span> <span class="str">"1.4.2"</span><span class="pun">,</span>
+  <span class="key">"owns"</span><span class="pun">:</span> <span class="str">"studio@your-firm"</span><span class="pun">,</span>
+  <span class="key">"steps"</span><span class="pun">:</span> <span class="pun">[</span><span class="str">"read"</span><span class="pun">,</span> <span class="str">"extract"</span><span class="pun">,</span> <span class="str">"build"</span><span class="pun">,</span>
+    <span class="str">"dimension"</span><span class="pun">,</span> <span class="str">"schedule"</span><span class="pun">,</span> <span class="str">"plot"</span><span class="pun">]</span><span class="pun">,</span>
+  <span class="key">"synced"</span><span class="pun">:</span> <span class="str">"github.com/your-firm/skills"</span>
+<span class="pun">&#125;</span></pre>
+        <div class="hatch"></div>
+        <div class="mono note">PLAIN JSON · NO PROPRIETARY FORMAT · VERSIONED IN YOUR REPO</div>
+      </div>
+      <div>
+        <div class="eyebrow">The brain</div>
+        <h2 class="serif split-h">Memory that grows with the <span class="ital">firm</span>, not the vendor.</h2>
+        <ul class="feat-list">
+          <li><span class="fi">❖</span><span class="ft"><b>Skills are JSON you own</b><span>Save any thread as a Skill. Copy-paste shareable, diff-able, synced through your own private GitHub.</span></span></li>
+          <li><span class="fi">⌥</span><span class="ft"><b>Persistent across projects</b><span>The Brain remembers your standards — sheet naming, dim styles, detail libraries — and reuses them on the next tower.</span></span></li>
+          <li><span class="fi">↗</span><span class="ft"><b>No marketplace lock-in</b><span>Nothing lives behind our login. Delete ArchHub tomorrow and your skills are still plain files on disk.</span></span></li>
+        </ul>
+        <p style="margin-top:6px;"><a class="ilink" href="/features">Browse the live skill library →</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ SECURITY ════════ -->
+  <section class="sec-dark">
+    <div class="wrap sec secpad" id="security-teaser">
+      <div class="eyebrow" style="margin-bottom:14px;">Local-first by default</div>
+      <h2 class="serif" style="font-size:var(--fs-d2); line-height:1; margin:0;">Your work happens here. <span class="ital">Your knowledge stays yours.</span></h2>
+      <div class="sec-cards">
+        <div class="scard">
+          <div class="si">⌂</div>
+          <h4>Runs on your machine</h4>
+          <p>The canvas, the graph, and your files never leave your desktop unless you wire an output that says so. No silent uploads.</p>
+        </div>
+        <div class="scard">
+          <div class="si">⚿</div>
+          <h4>Bring your own key</h4>
+          <p>Point ArchHub at your own model provider — or a local Ollama. We never see your prompts, your drawings, or your bill.</p>
+        </div>
+        <div class="scard">
+          <div class="si">&#123; &#125;</div>
+          <h4>Open by license</h4>
+          <p>MIT desktop client. Auditable connectors. If you can't read what a node does, it doesn't belong on your canvas.</p>
+        </div>
+      </div>
+      <p style="margin-top:28px;"><a class="ilink" href="/security">Read the full security model →</a></p>
+    </div>
+  </section>
+
+  <!-- ════════ CLOSING ════════ -->
+  <section class="closing">
+    <div class="wrap">
+      <div class="eyebrow" style="margin-bottom:20px;">Plotted on Friday, not promised</div>
+      <h2 class="serif">Sit down at the<br/><span class="ital">drafting table.</span></h2>
+      <p>Open the canvas. Wire your first host. Read every sentence aloud to a senior architect — if they nod, you're home.</p>
+      <div class="cta-row" style="justify-content:center;">
+        <a class="btn btn-primary lg" href="/pricing">Download for Windows ↓</a>
+        <a class="btn lg" href="/features">Read the docs →</a>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    /* page-scoped layout on top of the global tokens from Base.astro */
+    .sec { padding: var(--sp-7xl) 0; }
+
+    /* hero */
+    .hero { position: relative; padding: var(--sp-7xl) 0 var(--sp-6xl); border-bottom: 1px solid var(--line-soft);
+      background-image: radial-gradient(var(--line-soft) 1px, transparent 1px); background-size: 22px 22px; }
+    .hgrid { display: grid; grid-template-columns: 1.15fr 0.95fr; gap: var(--sp-5xl); align-items: center; }
+    h1.title { font-size: var(--fs-d0); line-height: 0.9; letter-spacing: -0.04em; margin: 18px 0 0; }
+    .lede { font-family: var(--serif); font-size: var(--fs-h2); font-style: italic; color: var(--ink-soft); letter-spacing: -0.01em; line-height: 1.38; margin-top: var(--sp-xl); max-width: 520px; }
+    .cta-row { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+    .btn.lg { padding: 11px 20px; font-size: 14.5px; }
+    .fineprint { font-family: var(--mono); font-size: 11px; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 18px; }
+
+    /* node canvas preview */
+    .canvas-card { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,.55); }
+    .canvas-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--bg-soft); }
+    .canvas-head .cdot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-dim); }
+    .canvas-head .path { flex: 1; text-align: center; font-family: var(--mono); font-size: 10px; color: var(--ink-muted); }
+    .canvas-body { position: relative; height: 380px; background: var(--bg-deep);
+      background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px; }
+    .canvas-body.sm { height: 300px; }
+    .node { position: absolute; width: 182px; background: var(--bg-panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .node.sm { width: 130px; }
+    .node .nh { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg-soft); }
+    .node .nh .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .node .nh .cat { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.16em; }
+    .node .nh .st { margin-left: auto; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; }
+    .node .nb { padding: 8px 10px; }
+    .node .nb .nt { font-size: 12px; font-weight: 500; color: var(--ink); }
+    .node .nb .ns { font-family: var(--mono); font-size: 9px; color: var(--ink-muted); margin-top: 1px; }
+    .node .port { display: flex; align-items: center; gap: 6px; margin-top: 7px; justify-content: flex-end; }
+    .node .port span { font-family: var(--mono); font-size: 9.5px; color: var(--ink-soft); }
+    .node .port i { width: 7px; height: 7px; border-radius: 50%; }
+
+    /* trust strip */
+    .trust { border-bottom: 1px solid var(--line-soft); padding: 26px 0; }
+    .trow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .trust .lab { font-family: var(--mono); font-size: 11px; color: var(--ink-muted); letter-spacing: 0.16em; }
+    .trust .host { font-family: var(--serif); font-size: 19px; color: var(--ink-soft); letter-spacing: 0.01em; }
+    .trust .count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-muted); }
+    .trust .count b { color: var(--accent); font-weight: 600; }
+
+    /* pillars */
+    .pillars { display: grid; grid-template-columns: repeat(3,1fr); gap: 0; border-top: 1px solid var(--line); }
+    .pillar { padding: 28px 28px 32px; border-right: 1px solid var(--line); position: relative; }
+    .pillar:last-child { border-right: 0; }
+    .pillar .pn { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.16em; }
+    .pillar .glyph { font-family: var(--serif); font-size: 46px; color: var(--accent); line-height: 1; margin: 18px 0 14px; }
+    .pillar h3 { font-family: var(--serif); font-size: 30px; letter-spacing: -0.02em; margin: 0 0 10px; font-weight: 400; }
+    .pillar p { font-size: 14.5px; color: var(--ink-soft); line-height: 1.6; margin: 0; }
+
+    /* self-heal */
+    .heal { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .heal-grid { display: grid; grid-template-columns: 1.02fr 1fr; }
+    .heal-left { padding: 40px; border-right: 1px solid var(--line); }
+    .heal-h { font-size: 58px; line-height: 1; letter-spacing: -0.035em; margin: 14px 0 14px; font-weight: 400; }
+    .heal-lede { font-family: var(--serif); font-style: italic; font-size: 20px; color: var(--ink-soft); line-height: 1.4; margin: 0; max-width: 460px; }
+    .heal-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .heal-stats .k { font-family: var(--serif); font-size: 42px; color: var(--accent); letter-spacing: -0.03em; line-height: 1; }
+    .heal-stats .v { font-size: 13px; color: var(--ink); margin-top: 5px; }
+    .heal-stats .vs { font-family: var(--mono); font-size: 9.5px; color: var(--ink-muted); letter-spacing: 0.08em; margin-top: 2px; }
+    .heal-right { padding: 28px; background: var(--bg-deep); }
+    .heal-rhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .diff { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; margin-bottom: 18px; }
+    .diff .box { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 7px; padding: 13px 15px; }
+    .diff .bl { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; margin-bottom: 7px; }
+    .diff .dl { display: flex; justify-content: space-between; margin-top: 6px; }
+    .diff .dl .dk { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+    .diff .dl .dv { font-family: var(--mono); font-size: 11px; }
+    .diff .dl .dv.ko { color: var(--err); text-decoration: line-through; }
+    .diff .dl .dv.okv { color: var(--ok); }
+    .arrow { font-family: var(--serif); font-style: italic; font-size: 30px; color: var(--accent); }
+    .log { background: #0b0b0e; border: 1px solid var(--line-soft); border-radius: 7px; padding: 10px 15px; }
+    .logline { display: grid; grid-template-columns: 62px 64px 1fr; gap: 9px; align-items: baseline; padding: 5px 0; border-bottom: 1px dashed var(--line-soft); }
+    .logline:last-child { border-bottom: 0; }
+    .logline .lt { font-family: var(--mono); font-size: 10px; color: var(--ink-muted); }
+    .logline .lw { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; }
+    .logline .lm { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); line-height: 1.4; }
+    .heal-foot { text-align: right; margin-top: 12px; }
+
+    /* feature split */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4xl); align-items: center; }
+    .split-h { font-size: 52px; line-height: 1.02; letter-spacing: -0.03em; margin: 14px 0 0; }
+    .feat-list { list-style: none; padding: 0; margin: var(--sp-xl) 0 0; }
+    .feat-list li { display: flex; gap: 14px; padding: var(--sp-lg) 0; border-top: 1px solid var(--line); }
+    .feat-list li .fi { font-family: var(--serif); font-size: 22px; color: var(--accent); font-style: italic; min-width: 30px; }
+    .feat-list li .ft b { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink); display: block; margin-bottom: 3px; }
+    .feat-list li .ft span { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+    .ilink { color: var(--accent); font-size: 14px; font-weight: 500; }
+    .ilink:hover { color: var(--accent-hi); }
+
+    /* skill / brain card */
+    .skill { background: var(--bg-deep); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; color: var(--ink-soft); margin: 0; white-space: pre-wrap; overflow-x: auto; }
+    .skill .key { color: var(--cyan); } .skill .str { color: var(--ok); } .skill .pun { color: var(--ink-muted); }
+    .hatch { height: 54px; border: 1px solid var(--line); border-radius: 6px; background-image: repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 8px); margin-top: 18px; }
+    .note { font-size: 10px; color: var(--ink-muted); letter-spacing: 0.1em; margin-top: 8px; }
+
+    /* security */
+    .sec-dark { background: var(--bg-deep); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .secpad { padding: 88px 0; }
+    .sec-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-top: 36px; }
+    .scard { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px; }
+    .scard .si { font-family: var(--serif); font-size: 34px; color: var(--accent); line-height: 1; }
+    .scard h4 { font-family: var(--serif); font-size: 23px; letter-spacing: -0.018em; font-weight: 400; margin: 14px 0 8px; }
+    .scard p { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; margin: 0; }
+
+    /* closing */
+    .closing { padding: 120px 0; text-align: center; border-top: 1px solid var(--line-soft);
+      background-image: radial-gradient(var(--line-soft) 1px, transparent 1px); background-size: 22px 22px; }
+    .closing h2 { font-size: var(--fs-d1); line-height: 0.95; letter-spacing: -0.04em; margin: 0 0 10px; font-weight: 400; }
+    .closing p { font-family: var(--serif); font-style: italic; font-size: 22px; color: var(--ink-soft); margin: 0 auto 32px; max-width: 560px; }
+
+    @media (max-width: 980px) {
+      .hgrid, .heal-grid, .split { grid-template-columns: 1fr; }
+      .heal-left { border-right: 0; border-bottom: 1px solid var(--line); }
+      h1.title { font-size: 72px; }
+      .pillars, .sec-cards { grid-template-columns: 1fr; }
+      .pillar { border-right: 0; border-bottom: 1px solid var(--line); }
+      .closing h2 { font-size: 54px; }
+    }
+  </style>
 </Base>

@@ -1,12 +1,23 @@
 ---
-// Shared layout — every page imports this. The freshness footer is stamped at
-// BUILD TIME from the committed src/data/build-info.json (git sha + date),
-// not by a brittle post-build HTML rewrite. Regenerate build-info.json with
-// `npm run refresh-content` (or `npm run build-info`).
+// Shared layout — every page imports this. Carries the canonical ArchHub
+// design language: terracotta accent #d97757, the bg/ink/line ramps,
+// Instrument Serif (display) + Inter (body) + JetBrains Mono (data) +
+// Architects Daughter (wordmark). These :root values MIRROR tokens.jsx
+// (window.AH), the project source of truth — see the design handoff README:
+// CSS can't import the JS tokens, so this is the one hand-synced copy. To
+// change a value, change tokens.jsx, then mirror it here.
+//
+// The freshness footer is stamped at BUILD TIME from the committed
+// src/data/build-info.json (git sha + date) — regenerate with
+// `npm run refresh-content`.
 import buildInfo from '../data/build-info.json';
 const { title, description } = Astro.props;
 const sha = buildInfo.git_sha ?? 'unknown';
 const builtDate = (buildInfo.git_date ?? '').slice(0, 10) || 'unknown';
+const connectors = buildInfo.connectors ?? 0;
+const operations = buildInfo.operations ?? 0;
+const path = Astro.url.pathname;
+const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
 ---
 <!doctype html>
 <html lang="en">
@@ -14,49 +25,166 @@ const builtDate = (buildInfo.git_date ?? '').slice(0, 10) || 'unknown';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — ArchHub</title>
-    <meta name="description" content={description ?? "ArchHub — AI workspace for AEC professionals."} />
+    <meta name="description" content={description ?? "The graph-first AI workspace for architects, engineers, and contractors. One canvas, every tool you already use, wired together. Local-first. MIT."} />
     <link rel="icon" href="/favicon.svg" />
-    <style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&display=swap" rel="stylesheet" />
+    <!-- is:global — Base defines the SHARED design language (canonical tokens +
+         utility classes like .serif/.ital/.eyebrow/.btn/.wrap/.dim + nav +
+         footer) consumed by every page. Without is:global, Astro scopes these
+         to Base's own cid and the page elements that use them (e.g. the hero's
+         .serif .ital headline) fall back to Inter/normal — a visual regression
+         off the signed prototype. Page-specific styles stay scoped per page. -->
+    <style is:global>
       :root {
-        --bg: #0b0d10;
-        --fg: #e7e9ec;
-        --muted: #9aa4ad;
-        --accent: #5ec8ff;
-        --max-w: 880px;
+        /* Canonical values mirror tokens.jsx (window.AH) — the source of truth. */
+        --bg: #0e0e11; --bg-panel: #15151a; --bg-soft: #1c1c23; --bg-deep: #0a0a0d; --bg-ink: #18181e;
+        --ink: #ece8e0; --ink-soft: #9b938a; --ink-muted: #5e574f; --ink-dim: #3a3530;
+        --line: #26262e; --line-soft: #1e1e24; --line-hair: #1a1a20;
+        --accent: #d97757; --accent-soft: #3a2018; --accent-hi: #e8896a;
+        --ok: #7ec18e; --warn: #e5b25a; --err: #e6705f; --cyan: #5fb3b3; --purple: #a98cd6; --blue: #7898d6;
+        --serif: 'Instrument Serif', Georgia, serif;
+        --sans: 'Inter', system-ui, sans-serif;
+        --mono: 'JetBrains Mono', ui-monospace, monospace;
+        --arch: 'Architects Daughter', 'Comic Sans MS', cursive;
+        --page: 1240px;
+        /* spacing scale · mirrors BB.sp (4px base) */
+        --sp-xs: 4px; --sp-sm: 8px; --sp-md: 12px; --sp-lg: 16px; --sp-xl: 24px;
+        --sp-2xl: 32px; --sp-3xl: 40px; --sp-4xl: 48px; --sp-5xl: 56px; --sp-6xl: 72px; --sp-7xl: 96px;
+        /* radius scale · mirrors BB.rad */
+        --r-xs: 3px; --r-sm: 5px; --r-md: 6px; --r-lg: 8px; --r-xl: 10px; --r-pill: 999px;
+        /* type scale · mirrors BB.fs (size) */
+        --fs-d0: 104px; --fs-d1: 88px; --fs-d2: 56px; --fs-h1: 40px; --fs-h2: 24px; --fs-h3: 21px;
+        --fs-body-lg: 16px; --fs-body: 14px; --fs-body-sm: 13px; --fs-mono: 12px; --fs-mono-sm: 11px; --fs-cap: 9px;
       }
-      * { box-sizing: border-box; }
+      *, *::before, *::after { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
-        margin: 0; background: var(--bg); color: var(--fg);
-        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans);
+        -webkit-font-smoothing: antialiased; line-height: 1.5; overflow-x: hidden;
       }
-      header, footer { max-width: var(--max-w); margin: 0 auto; padding: 24px 20px; }
-      main { max-width: var(--max-w); margin: 0 auto; padding: 20px; }
-      nav a { color: var(--muted); margin-right: 18px; text-decoration: none; }
-      nav a:hover, nav a.active { color: var(--accent); }
-      h1 { font-size: 2.2rem; line-height: 1.15; margin: 0 0 12px; }
-      h2 { font-size: 1.4rem; margin: 28px 0 10px; }
-      a { color: var(--accent); }
-      .freshness { color: var(--muted); font-size: 0.85rem; opacity: 0.75; }
-      .freshness code { background: #1a1d22; padding: 2px 6px; border-radius: 4px; }
+      a { color: inherit; text-decoration: none; }
+      ::selection { background: var(--accent-soft); color: var(--accent-hi); }
+
+      .wrap { max-width: var(--page); margin: 0 auto; padding: 0 var(--sp-3xl); }
+      .mono { font-family: var(--mono); }
+      .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
+      .serif { font-family: var(--serif); font-weight: 400; letter-spacing: -0.025em; }
+      .ital { font-style: italic; color: var(--accent); }
+      .brand .word .ital { font-style: normal; }
+
+      /* dimension-line divider */
+      .dim { display: flex; align-items: center; gap: 0; width: 100%; color: var(--ink-dim); }
+      .dim .tick { width: 1px; height: 9px; background: var(--line); }
+      .dim .rule { flex: 1; height: 1px; background: var(--line); }
+      .dim .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-muted); padding: 0 12px; white-space: nowrap; }
+
+      /* sticky blurred nav */
+      header.nav { position: sticky; top: 0; z-index: 50; background: rgba(14,14,17,0.82); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line-soft); }
+      .nav .row { display: flex; align-items: center; gap: 28px; height: 64px; }
+      .brand { display: flex; align-items: center; gap: 9px; }
+      .brand .word { font-family: var(--arch); font-size: 20px; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1; color: var(--ink); }
+      .nav-links { display: flex; gap: 22px; flex: 1; }
+      .nav-links a { font-size: 13.5px; color: var(--ink-soft); transition: color .15s; }
+      .nav-links a:hover, .nav-links a.active { color: var(--ink); }
+      .ver { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.06em; }
+      .btn { font-family: var(--sans); font-size: 13.5px; font-weight: 500; padding: 8px 16px; border-radius: 6px; cursor: pointer; border: 1px solid var(--line); background: transparent; color: var(--ink); transition: .15s; display: inline-flex; align-items: center; gap: 6px; }
+      .btn:hover { border-color: var(--ink-muted); }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #160d08; font-weight: 600; }
+      .btn-primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
+
+      main { display: block; }
+
+      /* footer */
+      footer.site { padding: 56px 0 64px; border-top: 1px solid var(--line-soft); }
+      .foot { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 32px; }
+      .foot .tag { font-family: var(--serif); font-style: italic; font-size: 17px; color: var(--ink-soft); max-width: 320px; line-height: 1.4; margin-top: 14px; }
+      .foot .col h5 { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-muted); margin: 0 0 12px; font-weight: 400; }
+      .foot .col a { display: block; font-size: 13.5px; color: var(--ink-soft); padding: 4px 0; transition: color .15s; }
+      .foot .col a:hover { color: var(--ink); }
+      .foot-base { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 44px; padding-top: 24px; border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.06em; }
+      .foot-base code { color: var(--ink-soft); }
+
+      @media (max-width: 980px) {
+        .foot { grid-template-columns: 1fr 1fr; }
+        .nav-links { display: none; }
+      }
     </style>
+    <slot name="head" />
   </head>
   <body>
-    <header>
-      <nav>
-        <a href="/">Home</a>
-        <a href="/features">Features</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/community">Community</a>
-        <a href="/security">Security</a>
-        <a href="/changelog">Changelog</a>
-        <a href="/brain">Brain</a>
-      </nav>
+    <!-- NAV -->
+    <header class="nav">
+      <div class="wrap row">
+        <a class="brand" href="/" aria-label="ArchHub home">
+          <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/>
+            <circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/>
+            <circle cx="32" cy="22" r="1.8" fill="#d97757"/>
+            <path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span class="word">Arch<span class="ital">Hub</span></span>
+        </a>
+        <nav class="nav-links">
+          <a href="/features" class={isActive('/features') ? 'active' : undefined}>Features</a>
+          <a href="/brain" class={isActive('/brain') ? 'active' : undefined}>Brain</a>
+          <a href="/security" class={isActive('/security') ? 'active' : undefined}>Security</a>
+          <a href="/pricing" class={isActive('/pricing') ? 'active' : undefined}>Pricing</a>
+          <a href="/community" class={isActive('/community') ? 'active' : undefined}>Community</a>
+          <a href="/changelog" class={isActive('/changelog') ? 'active' : undefined}>Changelog</a>
+        </nav>
+        <span class="ver">{connectors} connectors · MIT</span>
+        <a class="btn btn-primary" href="/pricing">Download</a>
+      </div>
     </header>
+
     <main>
       <slot />
     </main>
-    <footer>
-      <p class="freshness">built from commit <code>{sha}</code> on <code>{builtDate}</code></p>
+
+    <!-- FOOTER -->
+    <footer class="site">
+      <div class="wrap">
+        <div class="foot">
+          <div>
+            <a class="brand" href="/" aria-label="ArchHub home">
+              <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/>
+                <circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/>
+                <circle cx="32" cy="22" r="1.8" fill="#d97757"/>
+                <path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span class="word">Arch<span class="ital">Hub</span></span>
+            </a>
+            <div class="tag">A drafting table for AI. Built in the open. MIT, forever.</div>
+          </div>
+          <div class="col">
+            <h5>PRODUCT</h5>
+            <a href="/features">Features</a>
+            <a href="/brain">Brain</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/changelog">Changelog</a>
+          </div>
+          <div class="col">
+            <h5>COMPANY</h5>
+            <a href="/community">Community</a>
+            <a href="/security">Security</a>
+            <a href="https://github.com/Fargaly/ArchHub" rel="noopener">GitHub</a>
+          </div>
+          <div class="col">
+            <h5>OPEN</h5>
+            <a href="https://github.com/Fargaly/ArchHub" rel="noopener">Source · MIT</a>
+            <a href="/community">Discord</a>
+            <a href="/changelog">Roadmap</a>
+          </div>
+        </div>
+        <div class="foot-base">
+          <span>© 2026 ARCHHUB · MIT LICENSE · {connectors} connectors · {operations} operations</span>
+          <span>BUILT FROM COMMIT <code>{sha}</code> · {builtDate}</span>
+          <span>DRAFTED, NOT GENERATED ★</span>
+        </div>
+      </div>
     </footer>
   </body>
 </html>

@@ -83,18 +83,24 @@ class TestVersionBumped:
         path = Path(__file__).resolve().parent.parent / "VERSION"
         assert path.exists()
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.4.1 — a11y zoom-compensation patch:
-        # the accessibility font scale (CSS zoom) painted the app
-        # zoom-x past the window, clipping the right edge (filter
-        # chips, + new canvas) and bottom edge (status bar, SETTINGS
-        # icon). #104 compensates the #root mount (100vw/zoom,
-        # 100vh/zoom). Previous stable v1.4.0 — first release since v1.3.3
-        # (2026-05-13); ships 75 merged PRs that had piled up unreleased.
-        # Headline: #102 production update channel (the in-app banner now
-        # checks signed GitHub Releases, ending the dev-source-sync
-        # self-update churn — forward-only, no data-loss); #93 chat→host
-        # persistent MCP; #92 update banner; #95/#97 quiet updates;
-        # #96 accessibility apply; #98 discovery palette; #99 param→socket
-        # promote; #101 NVIDIA models; #100 connector build fixes; #90 +
-        # stem-cell visual surface; plus ~40 dependency/security bumps.
-        assert v == "1.4.1"
+        # Track the latest stable. v1.5.0 — finalization release: delivers
+        # everything merged since v1.4.2 to installed users via the signed-
+        # release updater. Headline fixes:
+        #   * GPU never-blank (#155): per-machine software-render marker +
+        #     boot self-probe + renderProcessTerminated/loadFinished recovery
+        #     — the app self-heals to software render on a GPU context loss
+        #     instead of freezing blank.
+        #   * Canvas speed (#156): viewport culling of nodes + wires —
+        #     software-render drag/pan goes from ~6fps to smooth on 400+
+        #     node graphs.
+        #   * In-app visibility (#156): account chip (signed-in identity),
+        #     brain "connecting…" shimmer (no more false-empty), router
+        #     model status.
+        #   * Sessions as logical node graphs (#154): workflows.graph →
+        #     LM_GRAPH shape adapter + per-turn decomposition.
+        #   * Plus the 32-commit backlog (brain/federation, CI/test infra,
+        #     Speckle, FIN, APP-01/05/08/09/10) that never reached a release.
+        # Previous stable v1.4.1 — a11y zoom-compensation patch (#104):
+        # compensated the #root mount (100vw/zoom, 100vh/zoom) so the
+        # accessibility font scale no longer clipped the right/bottom edges.
+        assert v == "1.5.0"

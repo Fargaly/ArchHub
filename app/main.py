@@ -32,6 +32,114 @@ from pathlib import Path
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy")
 
 
+# ── GPU-RESILIENCE: the app is NEVER blank on ANY machine ─────────────────────
+# Root cause being fixed here (founder: "the app wedges on GPU under real load"):
+# the flag line above FORCES hardware GPU acceleration on every machine, and the
+# ONLY software fallback used to be the ARCHHUB_VERIFY_NO_GPU *debug* toggle — a
+# verification affordance, never a production self-heal. So on a machine whose
+# GPU/driver wedges or composites to a software renderer, the canvas went blank
+# with no recovery. The real mechanism is a PER-MACHINE PERSISTED MARKER: once we
+# observe (boot self-probe) or experience (renderer-process crash, see
+# web_shell.py) that GPU is broken on THIS machine, we drop a marker file and
+# every subsequent launch starts in software-render mode (--disable-gpu) — a slow
+# canvas beats a blank one. GPU stays the DEFAULT for machines that work; only a
+# machine that proved it's broken gets pinned to software.
+
+_SOFTWARE_RENDER_MARKER_NAME = "use_software_render"
+
+
+def _archhub_appdata_dir() -> Path:
+    """Per-machine ArchHub config dir (``%LOCALAPPDATA%/ArchHub``), the same
+    location secrets_store + logging_config use. Resolved lazily (NOT at import)
+    so a test that monkeypatches ``LOCALAPPDATA`` is honoured, and so the marker
+    path tracks the env exactly like the rest of the app's on-disk state."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return Path(base) / "ArchHub"
+
+
+def software_render_marker_path() -> Path:
+    """Absolute path of the per-machine ``use_software_render`` marker file."""
+    return _archhub_appdata_dir() / _SOFTWARE_RENDER_MARKER_NAME
+
+
+def software_render_enabled() -> bool:
+    """True when THIS machine is pinned to software rendering — either the
+    persisted marker file exists, or the operator forced it for this launch via
+    ``ARCHHUB_FORCE_SOFTWARE_RENDER`` (1/true). The debug-only
+    ``ARCHHUB_VERIFY_NO_GPU`` is intentionally NOT consulted here — it stays a
+    verification toggle so production telemetry of "is this machine pinned?" is
+    not muddied by a verifier run."""
+    if (os.environ.get("ARCHHUB_FORCE_SOFTWARE_RENDER") or "").strip().lower() in ("1", "true"):
+        return True
+    try:
+        return software_render_marker_path().exists()
+    except Exception:
+        return False
+
+
+def persist_software_render_marker(reason: str = "") -> bool:
+    """Drop the per-machine software-render marker so EVERY future launch starts
+    with ``--disable-gpu``. Idempotent + best-effort: creates the ArchHub dir if
+    needed, writes a short human-readable reason+timestamp for diagnosability,
+    and never raises (a failed marker write must not break a launch or a crash
+    handler). Returns True iff the marker is present on disk afterwards."""
+    try:
+        import datetime as _dt
+        path = software_render_marker_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stamp = _dt.datetime.now().isoformat(timespec="seconds")
+        except Exception:
+            stamp = ""
+        path.write_text(
+            f"software-render pinned on {stamp}\nreason: {reason or 'unspecified'}\n",
+            encoding="utf-8",
+        )
+        return path.exists()
+    except Exception:
+        try:
+            return software_render_marker_path().exists()
+        except Exception:
+            return False
+
+
+def _apply_disable_gpu_flag() -> None:
+    """APPEND ``--disable-gpu`` to QTWEBENGINE_CHROMIUM_FLAGS, idempotently and
+    additively (every existing flag kept, never a duplicate ``--disable-gpu``).
+    This is the ONE place the flag is added; both the persisted-marker path and
+    the verification toggle below funnel through it. MUST run before QtWebEngine
+    initialises — Chromium reads QTWEBENGINE_CHROMIUM_FLAGS once at startup."""
+    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--disable-gpu" not in existing:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            f"{existing} --disable-gpu".strip() if existing else "--disable-gpu"
+        )
+
+
+def _apply_software_render_marker() -> None:
+    """REAL production mechanism (replaces the ARCHHUB_VERIFY_NO_GPU band-aid as
+    the actual self-heal): when THIS machine is pinned to software rendering
+    (persisted marker present, or ARCHHUB_FORCE_SOFTWARE_RENDER set), append
+    ``--disable-gpu`` so the launch composites on the CPU and the canvas renders
+    instead of going blank. A machine that has never failed has no marker, so GPU
+    stays the default and the production flag string is byte-for-byte unchanged.
+    MUST run before QtWebEngine initialises (same constraint as the flags above).
+    """
+    if not software_render_enabled():
+        return  # GPU machine -> add nothing, hardware flags intact.
+    _apply_disable_gpu_flag()
+    try:
+        import logging as _logging
+        _logging.getLogger("archhub.boot").info(
+            "[gpu-resilience] software-render marker active -> --disable-gpu "
+            f"applied (marker: {software_render_marker_path()})")
+    except Exception:
+        pass
+
+
+_apply_software_render_marker()
+
+
 def _maybe_disable_gpu_for_verification() -> None:
     """Verification-only, opt-in GPU disable — production is NEVER affected.
 
@@ -73,11 +181,7 @@ def _maybe_disable_gpu_for_verification() -> None:
     """
     if (os.environ.get("ARCHHUB_VERIFY_NO_GPU") or "").strip().lower() not in ("1", "true"):
         return  # production / normal launch -> add nothing, GPU flags intact.
-    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    if "--disable-gpu" not in existing:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            f"{existing} --disable-gpu".strip() if existing else "--disable-gpu"
-        )
+    _apply_disable_gpu_flag()
 
 
 _maybe_disable_gpu_for_verification()
@@ -506,6 +610,121 @@ def _startup_self_test() -> None:
         pass
 
 
+def _gpu_self_probe(app) -> None:
+    """Boot-time GPU self-probe — the detection half of GPU-RESILIENCE.
+
+    Constructs a THROWAWAY off-screen QWebEngineView, loads a tiny data: page
+    that reads the live ``WEBGL_debug_renderer_info`` UNMASKED_RENDERER, and
+    pumps the event loop with a hard deadline. Decision:
+
+      • renderer reports a SOFTWARE compositor (SwiftShader / "software" /
+        llvmpipe / Microsoft Basic Render) while GPU was requested, OR
+      • the probe WEDGES (no callback before the deadline — the exact failure
+        the founder hits: GPU init hangs the renderer),
+
+    -> persist the per-machine ``use_software_render`` marker so the NEXT launch
+    starts with --disable-gpu, and log the outcome to boot.log. Chromium reads
+    its flags once at process start, so this process stays on whatever it booted
+    with; the marker flips the *next* launch (the in-session recovery for a hard
+    renderer CRASH lives in web_shell.py's renderProcessTerminated handler).
+
+    Skips entirely when already pinned to software (marker present / forced) —
+    nothing to detect — and is a complete no-op + never raises on any error: a
+    diagnostic probe must never block or break the boot. Opt-out:
+    ``ARCHHUB_SKIP_GPU_PROBE=1``."""
+    try:
+        if (os.environ.get("ARCHHUB_SKIP_GPU_PROBE") or "").strip().lower() in ("1", "true"):
+            return
+        if software_render_enabled():
+            return  # already software -> GPU not in play, no probe needed.
+        if not _WEBENGINE_OK or app is None:
+            return
+
+        from PyQt6.QtCore import QCoreApplication, QEventLoop, QDeadlineTimer
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+        result: dict[str, object] = {"renderer": None, "done": False}
+
+        def _cb(value):
+            try:
+                result["renderer"] = value
+            finally:
+                result["done"] = True
+
+        view = QWebEngineView()
+        try:
+            # Tiny page: resolve the unmasked GPU renderer string, or "" on any
+            # failure to get a WebGL context (itself a strong software signal).
+            html = (
+                "<!doctype html><html><body><script>"
+                "(function(){try{"
+                "var c=document.createElement('canvas');"
+                "var gl=c.getContext('webgl')||c.getContext('experimental-webgl');"
+                "if(!gl){document.title='NO_WEBGL';return;}"
+                "var e=gl.getExtension('WEBGL_debug_renderer_info');"
+                "var r=e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):"
+                "gl.getParameter(gl.RENDERER);"
+                "document.title=String(r||'');"
+                "}catch(err){document.title='PROBE_ERR';}})();"
+                "</script></body></html>"
+            )
+            page = view.page()
+            page.loadFinished.connect(
+                lambda ok: page.runJavaScript("document.title", _cb))
+            view.setHtml(html)
+
+            # Pump events with a hard deadline. WaitForMoreEvents blocks each
+            # pump up to 100ms for an event (no busy-spin); deadline bounds the
+            # whole probe so a wedged GPU init can't hang the boot.
+            _flags = (QEventLoop.ProcessEventsFlag.AllEvents
+                      | QEventLoop.ProcessEventsFlag.WaitForMoreEvents)
+            dl = QDeadlineTimer(4000)
+            while not result["done"] and not dl.hasExpired():
+                QCoreApplication.processEvents(_flags, 100)
+
+            renderer = result["renderer"]
+            wedged = not result["done"]
+            text = str(renderer or "").strip()
+            low = text.lower()
+            software_signals = (
+                "swiftshader", "software", "llvmpipe",
+                "microsoft basic render", "basic render driver", "no_webgl",
+            )
+            is_software = (text in ("", "PROBE_ERR")
+                           or any(sig in low for sig in software_signals))
+
+            if wedged or is_software:
+                why = ("probe wedged (no WebGL renderer before deadline)"
+                       if wedged else
+                       f"renderer reports software: {text!r}")
+                persist_software_render_marker(reason=f"boot gpu self-probe: {why}")
+                try:
+                    import logging as _logging
+                    _logging.getLogger("archhub.boot").warning(
+                        "[gpu-resilience] GPU self-probe FAILED (%s) -> pinned "
+                        "this machine to software render; next launch uses "
+                        "--disable-gpu", why)
+                except Exception:
+                    pass
+            else:
+                try:
+                    import logging as _logging
+                    _logging.getLogger("archhub.boot").info(
+                        "[gpu-resilience] GPU self-probe OK -> hardware renderer "
+                        "%r; staying on GPU", text)
+                except Exception:
+                    pass
+        finally:
+            try:
+                view.setParent(None)
+                view.deleteLater()
+            except Exception:
+                pass
+    except Exception:
+        # A diagnostic probe must never block or break the boot.
+        pass
+
+
 def main() -> int:
     # Sentry init must happen BEFORE QApplication so import-time crashes
     # in Qt code get captured. No-op if user opted out / no DSN.
@@ -595,6 +814,12 @@ def main() -> int:
             or (os.environ.get("ARCHHUB_SMOKE") or "").strip().lower() in ("1", "true")):
         print("[archhub] build smoke OK: modules imported, QApplication constructed")
         return 0
+
+    # GPU-RESILIENCE boot self-probe: detect a wedged / software-only GPU on
+    # THIS machine and pin it to software render for the NEXT launch (marker +
+    # boot.log). Runs once per real launch, before the window is built; skipped
+    # for --smoke (returned above) and when already pinned. Never blocks/raises.
+    _gpu_self_probe(app)
 
     # Single-instance lock + summon. If another ArchHub is already
     # running, send 'SHOW' to it and exit 0 — fixes the 'click icon

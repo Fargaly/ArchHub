@@ -146,6 +146,34 @@ class WebShell(QMainWindow):
         html_path = Path(__file__).resolve().parent / "web_ui" / "index.html"
         if not html_path.exists():
             raise RuntimeError(f"web_ui/index.html missing at {html_path}")
+        self._html_path = html_path
+
+        # ── GPU-RESILIENCE: the surface is NEVER left blank ───────────────────
+        # Root cause this closes: the line below USED to be a bare setUrl with no
+        # recovery, and there was NO renderProcessTerminated / loadFinished(False)
+        # handler anywhere. So when the GPU renderer crashed (the founder's
+        # machine wedges on GPU under real load) or the page failed to load, the
+        # QWebEngineView went WHITE and stayed white — a dead app. Now:
+        #   • renderProcessTerminated(Abnormal/Crashed/Killed) -> reload ONCE; a
+        #     SECOND crash within ~8s -> persist the per-machine software-render
+        #     marker and relaunch the surface with --disable-gpu (a slow canvas
+        #     beats a blank one), instead of crash-looping on the bad GPU.
+        #   • loadFinished(False) -> reload ONCE (transient load failure).
+        # Counters are reset on a healthy load so normal Ctrl-R reloads and
+        # later unrelated failures each get a fresh single retry.
+        self._render_crash_count = 0
+        self._first_crash_ts = 0.0
+        self._load_fail_reloaded = False
+        self._gpu_recovery_done = False
+        try:
+            _page = self.view.page()
+            _page.renderProcessTerminated.connect(self._on_render_process_terminated)
+            _page.loadFinished.connect(self._on_load_finished)
+        except Exception:
+            # Wiring the resilience handlers must never break construction; a
+            # build where the signals are unavailable still shows the surface.
+            pass
+
         self.view.setUrl(QUrl.fromLocalFile(str(html_path)))
 
         wrap = QWidget()
@@ -186,6 +214,153 @@ class WebShell(QMainWindow):
             )
         except Exception:
             self._debug_bridge = None
+
+    # ────────────────────────────────────────────────────────────
+    # GPU-RESILIENCE: never-blank recovery handlers
+    # ────────────────────────────────────────────────────────────
+    def _on_load_finished(self, ok: bool) -> None:
+        """``QWebEnginePage.loadFinished(bool)``. On a HEALTHY load, reset the
+        recovery counters so future failures each get a fresh single retry. On a
+        FAILED load (``ok == False``), reload exactly ONCE — a transient
+        local-file/load hiccup shouldn't leave the surface blank, but we must not
+        spin in a reload loop if the page genuinely can't load."""
+        try:
+            if ok:
+                self._render_crash_count = 0
+                self._first_crash_ts = 0.0
+                self._load_fail_reloaded = False
+                return
+            if self._load_fail_reloaded:
+                return  # already gave it one retry; don't loop.
+            self._load_fail_reloaded = True
+            try:
+                import logging as _logging
+                _logging.getLogger("archhub.boot").warning(
+                    "[gpu-resilience] loadFinished(False) -> reloading surface once")
+            except Exception:
+                pass
+            self.view.reload()
+        except Exception:
+            pass
+
+    def _on_render_process_terminated(self, status, exit_code: int = 0) -> None:
+        """``QWebEnginePage.renderProcessTerminated(status, exitCode)``.
+
+        A NORMAL termination (clean shutdown) is ignored. An ABNORMAL / CRASHED /
+        KILLED termination is the blank-canvas symptom: the renderer (and the GPU
+        compositor it drives) died. Recovery:
+          1st crash  -> reload the page ONCE (record the time).
+          2nd crash within ~8s -> the GPU is genuinely bad on this machine, not a
+            fluke: persist the per-machine software-render marker and relaunch the
+            app with --disable-gpu so the user gets a working (software) surface
+            instead of a crash loop. Beyond that, do nothing (avoid thrash).
+        Never raises — a recovery handler that throws would defeat its purpose."""
+        try:
+            import time as _time
+            from PyQt6.QtWebEngineCore import QWebEnginePage
+
+            normal = getattr(QWebEnginePage.RenderProcessTerminationStatus,
+                             "NormalTerminationStatus", None)
+            if normal is not None and status == normal:
+                return  # clean exit (e.g. our own teardown) — not a crash.
+
+            now = _time.monotonic()
+            self._render_crash_count += 1
+            try:
+                import logging as _logging
+                _logging.getLogger("archhub.boot").warning(
+                    "[gpu-resilience] renderProcessTerminated status=%r exit=%r "
+                    "(crash #%d)", status, exit_code, self._render_crash_count)
+            except Exception:
+                pass
+
+            if self._render_crash_count == 1:
+                self._first_crash_ts = now
+                self.view.reload()
+                return
+
+            # Second (or later) crash. If it came fast on the heels of the first,
+            # the GPU path is the culprit — pin software + relaunch on software.
+            within_window = (now - self._first_crash_ts) <= 8.0
+            if within_window and not self._gpu_recovery_done:
+                self._gpu_recovery_done = True
+                self._engage_software_render_recovery()
+            else:
+                # Slow repeat or already recovered: one more reload, no thrash.
+                self.view.reload()
+        except Exception:
+            pass
+
+    def _engage_software_render_recovery(self) -> None:
+        """Persist the per-machine software-render marker, then relaunch the app
+        with ``--disable-gpu`` appended so the user lands on a working software
+        surface immediately (Chromium reads its GPU flags only once per process,
+        so an in-process flag flip cannot fix a wedged GPU — a relaunch is the
+        honest mechanism). Marker-first so that even if the relaunch is blocked,
+        the NEXT manual launch is already software. Best-effort + never raises."""
+        # 1) Persist the marker (the real, durable mechanism).
+        try:
+            import main as _main
+            _main.persist_software_render_marker(
+                reason="web_shell: render process crashed twice -> software render")
+        except Exception:
+            # Fall back to writing the marker directly if main isn't importable.
+            try:
+                import os as _os
+                from pathlib import Path as _Path
+                base = _os.environ.get("LOCALAPPDATA") or _os.path.expanduser("~")
+                p = _Path(base) / "ArchHub" / "use_software_render"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("software-render pinned (web_shell crash fallback)\n",
+                             encoding="utf-8")
+            except Exception:
+                pass
+
+        try:
+            import logging as _logging
+            _logging.getLogger("archhub.boot").error(
+                "[gpu-resilience] renderer crashed twice within 8s -> pinned "
+                "software render + relaunching with --disable-gpu")
+        except Exception:
+            pass
+
+        # 2) Relaunch this app with --disable-gpu so the user gets a working
+        #    surface now, not after a manual restart. Append the flag to the
+        #    child's QTWEBENGINE_CHROMIUM_FLAGS (idempotent), then quit ourselves.
+        try:
+            import os as _os
+            import sys as _sys
+            import subprocess as _subprocess
+            env = dict(_os.environ)
+            existing = env.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+            if "--disable-gpu" not in existing:
+                env["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                    f"{existing} --disable-gpu".strip() if existing else "--disable-gpu")
+            # Belt-and-braces: also force the marker path for the child so its
+            # boot applies software render even before it reads the file.
+            env["ARCHHUB_FORCE_SOFTWARE_RENDER"] = "1"
+            creationflags = 0
+            if _sys.platform == "win32":
+                creationflags = (getattr(_subprocess, "DETACHED_PROCESS", 0)
+                                 | getattr(_subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            argv = list(_sys.argv)
+            # Strip a stale single-instance/no-sync wrapper arg duplication is
+            # unnecessary here; reuse the same argv the user launched with.
+            _subprocess.Popen([_sys.executable, *argv], env=env,
+                              creationflags=creationflags, close_fds=True)
+        except Exception:
+            pass
+
+        # 3) Quit this (crashing) instance so the fresh software instance owns
+        #    the single-instance lock. Best-effort; if quit fails the relaunched
+        #    child still summons.
+        try:
+            from PyQt6.QtWidgets import QApplication
+            _app = QApplication.instance()
+            if _app is not None:
+                _app.quit()
+        except Exception:
+            pass
 
     # ────────────────────────────────────────────────────────────
     # Tray + summon contract (matches StudioShell + WorkspaceShell)

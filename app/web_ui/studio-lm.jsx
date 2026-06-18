@@ -3595,6 +3595,7 @@ const StudioLM = () => {
         @keyframes lmSlideIn { from { transform: translateX(8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
         @keyframes lmHintFade { 0% { opacity: 0; transform: translate(-50%, 8px) } 8% { opacity: 1; transform: translate(-50%, 0) } 80% { opacity: 1; transform: translate(-50%, 0) } 100% { opacity: 0; transform: translate(-50%, -4px) } }
+        @keyframes lmBrainShimmer { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
       `}</style>
     </div>
   );
@@ -6265,7 +6266,9 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
       </div>
 
       <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
+      <RouterStatus model={model} compact/>
       <BrainChip compact/>
+      <AccountChip compact/>
       <HoverBtn onClick={onFork}>fork</HoverBtn>
       <HoverBtn onClick={onSaveAsSkill} title="Package this canvas into the node library as a reusable node">save as skill</HoverBtn>
       <HoverBtn primary onClick={onSave} title="Save this session">save</HoverBtn>
@@ -6377,8 +6380,290 @@ const HoverBtn = ({ primary, onClick, children, style, title }) => {
 //   - available, 0 / 0    → muted "⌬ brain · 0 skills · 0 facts"
 //   - available, N skills → accent "⌬ brain · N · M · Δms"
 //   - breaker open / unavailable → err "⌬ brain · offline"
+// ──────────────────────── ROUTER STATUS (top nav) ────────────────────────
+// IN-APP VISIBILITY (founder 2026-06-18): the model ROUTER is real — when the
+// model strip says "Auto (router picks)" the backend router actually chooses a
+// provider/model per turn (router.complete), and it reports the model it USED
+// back through each completion's provider usage block → the bridge
+// get_token_usage() slot ({model, completions, ...}). But that resolved model
+// was invisible in the header: the strip showed "Auto", never WHICH model auto
+// resolved to. This small indicator surfaces the active/auto-routed model so
+// the founder can SEE what's actually answering.
+//
+// Source is REAL (never a guess): get_token_usage().model is the model the
+// router's accumulator recorded from the last real completion's provider-
+// reported usage. It refreshes on `lm-usage-bump` (the same event the streaming
+// path + ServerStrip already fire when usage changes). Until a completion lands
+// it falls back to the explicitly-selected model name (model.name) — and when
+// the selection is a concrete model (not Auto) it just mirrors that. So the
+// chip always shows the truth: the routed model once known, else the picked one.
+const RouterStatus = ({ model, compact }) => {
+  const [routed, setRouted] = React.useState('');   // provider-reported model id
+  React.useEffect(() => {
+    let alive = true;
+    const pull = () => {
+      try {
+        if (typeof document !== 'undefined'
+            && document.visibilityState === 'hidden') return;
+      } catch (e) {}
+      bridgeAsync('get_token_usage').then(r => {
+        if (!alive || !r) return;
+        // Only adopt a non-empty provider model; empty means no completion yet
+        // (honest: we keep the selected-model fallback rather than blanking).
+        if (r.model && typeof r.model === 'string') setRouted(r.model);
+      }).catch(() => {});
+    };
+    pull();
+    const onBump = () => pull();
+    window.addEventListener('lm-usage-bump', onBump);
+    const t = setInterval(pull, 5000);
+    return () => { alive = false; clearInterval(t);
+      window.removeEventListener('lm-usage-bump', onBump); };
+  }, []);
+  const isAuto = !model || model.id === 'auto';
+  // Display: the routed model when known; else the selected model's name; else
+  // a neutral "auto". Keep it short — strip a provider prefix like
+  // "anthropic/claude-..." down to the model leaf for the header.
+  const routedLeaf = routed ? (routed.split('/').pop() || routed) : '';
+  const shown = routedLeaf || (model && model.name) || 'auto';
+  const col = isAuto ? LM.accent : LM.inkSoft;
+  // The arrow conveys "auto-routed to" when in Auto mode; a dot otherwise.
+  return (
+    <div data-testid="router-status" data-router-auto={isAuto ? '1' : '0'}
+      title={isAuto
+        ? `Router: Auto → ${routedLeaf || 'picking…'} (active model the router chose)`
+        : `Model: ${shown}`}
+      style={{
+        display:'flex', alignItems:'center', gap:5,
+        padding: compact ? '4px 9px' : '6px 11px',
+        background: LM.bg, border:`1px solid ${LM.line}`, borderRadius:6,
+        color: col, fontFamily:LM.mono, fontSize: compact ? 9.5 : 10,
+        letterSpacing:'0.04em', whiteSpace:'nowrap', maxWidth: compact ? 150 : 200,
+      }}>
+      <span style={{ color:LM.inkMuted, flexShrink:0 }}>{isAuto ? '⇉' : '◈'}</span>
+      <span style={{ overflow:'hidden', textOverflow:'ellipsis' }}>{shown}</span>
+    </div>
+  );
+};
+
+// ──────────────────────── ACCOUNT CHIP (top nav) ────────────────────────
+// IN-APP VISIBILITY (founder 2026-06-18): the cloud sign-in backend is REAL
+// (cloud_status / cloud_client.me / cloud_sign_in / cloud_sign_out, all wired
+// in bridge.py + proven by the onboarding flow) but was only surfaced deep in
+// Settings → Account — so a signed-in founder had no persistent reminder they
+// were signed in, and a signed-out one had no top-level CTA. This chip makes
+// the working backend VISIBLE in the top nav on every session view:
+//   • signed-out → a single "Sign in" button that drives the REAL PKCE browser
+//     flow (bridge.cloud_sign_in — the same one Settings uses), falling back to
+//     Settings → Account if the slot is unwired (older build).
+//   • signed-in  → the founder's email + a ▾ menu: Account (opens Settings →
+//     Account), Open cloud dashboard (cloud_status().cloud_url), Sign out
+//     (bridge.cloud_sign_out — real server-side revoke + local clear).
+//
+// State is the SAME real wiring BrainBackupRow already proved: cloud_status()
+// is a cheap synchronous probe (no network) for {signed_in, cloud_url}; the
+// email rides in on the cloud_signin_done signal (payload {email, plan, ...})
+// the SignInWorker emits, and cloud_signout_done flips it back — so the chip
+// updates live with NO reload. NEVER fabricates an email: shows just "Signed
+// in" until the real address arrives.
+const AccountChip = ({ compact }) => {
+  const [signedIn, setSignedIn] = React.useState(null);  // null = probing
+  const [email, setEmail] = React.useState('');
+  const [cloudUrl, setCloudUrl] = React.useState('');
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const rootRef = React.useRef(null);
+
+  // Cheap synchronous probe on mount — {signed_in, cloud_url}. No network, so
+  // safe under bridgeAsync's 1.5s ceiling. Re-probed when a sign-in/out signal
+  // lands (below) so the chip never shows stale state.
+  React.useEffect(() => {
+    let alive = true;
+    const probe = () => {
+      bridgeAsync('cloud_status').then(r => {
+        if (!alive || !r) return;
+        if (typeof r.signed_in === 'boolean') setSignedIn(r.signed_in);
+        if (r.cloud_url) setCloudUrl(r.cloud_url);
+        // Signed out → drop any stale email so we never show an address for a
+        // signed-out account.
+        if (r.signed_in === false) setEmail('');
+      }).catch(() => { if (alive) setSignedIn(false); });
+    };
+    probe();
+    // The cloud_signin_done payload carries the real email/plan; cloud_signout
+    // _done flips back to signed-out. SAME signals BrainBackupRow consumes.
+    const b = window.archhub;
+    const onSignin = (resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      if (res && res.ok && res.signed_in) {
+        setSignedIn(true);
+        if (res.email) setEmail(res.email);
+        probe();   // refresh cloud_url too
+      }
+    };
+    const onSignout = () => { setSignedIn(false); setEmail(''); setMenuOpen(false); };
+    try { if (b && b.cloud_signin_done && b.cloud_signin_done.connect) b.cloud_signin_done.connect(onSignin); } catch (e) {}
+    try { if (b && b.cloud_signout_done && b.cloud_signout_done.connect) b.cloud_signout_done.connect(onSignout); } catch (e) {}
+    return () => {
+      alive = false;
+      try { if (b && b.cloud_signin_done && b.cloud_signin_done.disconnect) b.cloud_signin_done.disconnect(onSignin); } catch (e) {}
+      try { if (b && b.cloud_signout_done && b.cloud_signout_done.disconnect) b.cloud_signout_done.disconnect(onSignout); } catch (e) {}
+    };
+  }, []);
+
+  // Close the menu on an outside click (standard popover behaviour).
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [menuOpen]);
+
+  // Drive the REAL browser sign-in (bridge.cloud_sign_in — PKCE, opens the
+  // user's browser off the Qt thread, emits cloud_signin_done on completion).
+  // Older build without the slot → fall back to Settings → Account, which hosts
+  // the same real Sign-in button. Mirrors BrainBackupRow's exact guard.
+  const doSignIn = async () => {
+    try {
+      const r = await bridgeAsync('cloud_sign_in');
+      if (!r || (r.ok === false && !r.async && !r.opened_browser)) {
+        window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+          { detail:{ section:'account' } }));
+      }
+    } catch (e) {
+      try { window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+        { detail:{ section:'account' } })); } catch (e2) {}
+    }
+  };
+  // Sign out — real server-side revoke + local clear (bridge.cloud_sign_out);
+  // cloud_signout_done flips the chip back to signed-out via the listener.
+  const doSignOut = async () => {
+    setMenuOpen(false);
+    try { await bridgeAsync('cloud_sign_out'); } catch (e) {}
+  };
+  const openAccount = () => {
+    setMenuOpen(false);
+    try { window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+      { detail:{ section:'account' } })); } catch (e) {}
+  };
+  // Open the cloud dashboard in the user's browser. cloud_status().cloud_url is
+  // the real base; window.open routes through QtWebEngine to the default
+  // browser. If that's blocked, the Account section (which hosts the dashboard
+  // link) is the honest fallback — never a dead click.
+  const openDashboard = () => {
+    setMenuOpen(false);
+    const url = cloudUrl || '';
+    let opened = false;
+    if (url) { try { opened = !!window.open(url, '_blank'); } catch (e) { opened = false; } }
+    if (!opened) {
+      try { window.dispatchEvent(new CustomEvent('lm-action-open-settings',
+        { detail:{ section:'account' } })); } catch (e2) {}
+    }
+  };
+
+  // ── signed-out (and the probing state, to avoid a flash of the wrong CTA:
+  //    while signedIn === null we show a neutral, disabled-looking "Sign in").
+  if (!signedIn) {
+    return (
+      <button onClick={doSignIn} title="Sign in to ArchHub Cloud" aria-label="Sign in to ArchHub Cloud"
+        data-testid="account-chip" data-account-state="signed-out"
+        style={{
+          display:'flex', alignItems:'center', gap:6,
+          padding: compact ? '4px 10px' : '6px 12px',
+          background: LM.bg, border:`1px solid ${LM.line}`, borderRadius:6,
+          color: LM.inkSoft, cursor:'pointer',
+          fontFamily:LM.mono, fontSize: compact ? 10 : 10.5, letterSpacing:'0.04em',
+          whiteSpace:'nowrap', transition:'background .12s, border-color .12s, color .12s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.color = LM.ink; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.color = LM.inkSoft; }}>
+        <span style={{ width:6, height:6, borderRadius:'50%', background:LM.inkMuted }}/>
+        Sign in
+      </button>
+    );
+  }
+
+  // ── signed-in: email + ▾ menu.
+  const label = email || 'Signed in';
+  return (
+    <div ref={rootRef} data-no-pan style={{ position:'relative' }}>
+      <button onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o); }}
+        title={email ? `Signed in as ${email}` : 'Signed in to ArchHub Cloud'}
+        aria-label={email ? `Account: ${email}` : 'Account menu'}
+        data-testid="account-chip" data-account-state="signed-in"
+        aria-haspopup="menu" aria-expanded={menuOpen}
+        style={{
+          display:'flex', alignItems:'center', gap:6,
+          padding: compact ? '4px 9px' : '6px 12px',
+          background: LM.accentDim, border:`1px solid ${LM.accent}66`, borderRadius:6,
+          color: LM.ink, cursor:'pointer', maxWidth: compact ? 180 : 240,
+          fontFamily:LM.mono, fontSize: compact ? 10 : 10.5, letterSpacing:'0.04em',
+          whiteSpace:'nowrap', transition:'background .12s, border-color .12s',
+        }}>
+        <span style={{ width:6, height:6, borderRadius:'50%', background:LM.ok,
+          boxShadow:`0 0 0 2px ${LM.ok}22`, flexShrink:0 }}/>
+        <span style={{ overflow:'hidden', textOverflow:'ellipsis' }}>{label}</span>
+        <span style={{ color:LM.inkSoft, fontSize:9, flexShrink:0 }}>▾</span>
+      </button>
+      {menuOpen && (
+        <div role="menu" data-testid="account-menu" style={{
+          position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:50,
+          minWidth:190, background:LM.bgPanel, border:`1px solid ${LM.line}`,
+          borderRadius:8, boxShadow:'0 8px 24px rgba(0,0,0,0.4)', padding:4,
+          fontFamily:LM.sans, fontSize:12.5, color:LM.ink,
+        }}>
+          {email && (
+            <div style={{ padding:'6px 10px 8px', borderBottom:`1px solid ${LM.lineSoft}`,
+              marginBottom:4, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted,
+              whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+              {email}
+            </div>
+          )}
+          <AccountMenuItem onClick={openAccount}>Account</AccountMenuItem>
+          <AccountMenuItem onClick={openDashboard}>Open cloud dashboard</AccountMenuItem>
+          <AccountMenuItem onClick={doSignOut} danger>Sign out</AccountMenuItem>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AccountMenuItem = ({ onClick, children, danger }) => {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button role="menuitem" onClick={(e) => { e.stopPropagation(); onClick && onClick(); }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        display:'block', width:'100%', textAlign:'left',
+        padding:'7px 10px', border:0, borderRadius:5,
+        background: hover ? (danger ? LM.err+'1a' : LM.bgSoft) : 'transparent',
+        color: danger ? LM.err : LM.ink, cursor:'pointer',
+        fontFamily:'inherit', fontSize:'inherit', transition:'background .1s',
+      }}>
+      {children}
+    </button>
+  );
+};
+
 const BrainChip = ({ compact }) => {
   const [stats, setStats] = React.useState(null);
+  // COLD-START FIX (founder 2026-06-18): the brain backend is real but its
+  // first get_brain_stats snapshot is the CACHED-EMPTY one (no `ts`) — the
+  // daemon import + first retrieval can take a beat. Showing "offline" (or even
+  // a dead "idle") during that warm-up window mislabels a perfectly reachable
+  // brain as down. So we track two extra signals:
+  //   • brainOk — the bridge get_runtime_info().brain_ok (a 0.25 s socket
+  //     connect to the daemon, available ~instantly) — tells us the daemon is
+  //     LISTENING even before the first stats snapshot lands.
+  //   • warmed — flips true after the first real re-pull (a short warm-up
+  //     window), so "offline" is only ever shown once we've actually re-pulled
+  //     and STILL found it unreachable — never on the cold cached-empty.
+  // While !hasTurn && !warmed && brainOk → render a "connecting to brain…"
+  // shimmer, NOT an error.
+  const [brainOk, setBrainOk] = React.useState(null);   // null = unprobed
+  const [warmed, setWarmed] = React.useState(false);
   React.useEffect(() => {
     let cancelled = false;
     // Direct slot call with a 4s timeout (brain pkg import + first call
@@ -6411,9 +6696,25 @@ const BrainChip = ({ compact }) => {
         } catch (e) {}
       } catch (e) {}
     };
+    // The instant reachability probe — brain_ok is computed off-thread but the
+    // cheap env fields (and the cached probe) return right away, so this
+    // resolves the cold-start question fast. Keyed separately so the chip can
+    // show "connecting…" the moment we know the daemon is up.
+    const pullRuntime = () => {
+      bridgeAsync('get_runtime_info').then(r => {
+        if (cancelled || !r) return;
+        if (typeof r.brain_ok === 'boolean') setBrainOk(r.brain_ok);
+      }).catch(() => {});
+    };
     pull();
+    pullRuntime();
     const t = setInterval(pull, 4000);
-    return () => { cancelled = true; clearInterval(t); };
+    const tr = setInterval(pullRuntime, 4000);
+    // Warm-up window: after this, a still-empty + brain_ok:false means a
+    // genuinely unreachable daemon → "offline" is now honest. Re-pull runtime
+    // once at the edge so the warmed verdict rests on a fresh probe, not stale.
+    const warm = setTimeout(() => { if (!cancelled) { pullRuntime(); setWarmed(true); } }, 2500);
+    return () => { cancelled = true; clearInterval(t); clearInterval(tr); clearTimeout(warm); };
   }, []);
   const click = (e) => {
     e.stopPropagation();
@@ -6427,25 +6728,40 @@ const BrainChip = ({ compact }) => {
   const available = stats && stats.available !== false;
   const breakerOpen = stats && stats.client_status && stats.client_status.breaker
     && stats.client_status.breaker.state === 'open';
-  const offline = breakerOpen || (hasTurn && !available);
+  // COLD-START: before the first real snapshot lands AND before the warm-up
+  // window closes, we are "connecting" so long as the daemon socket is up
+  // (brainOk !== false). brainOk === null (still probing) also counts as
+  // connecting — we have no evidence of down yet, so never flash offline.
+  const connecting = !hasTurn && !warmed && brainOk !== false;
+  // OFFLINE is now gated on the warm-up: a breaker that's actually open is
+  // offline immediately (a real fault signal); otherwise we only call it
+  // offline once warmed (re-pulled) AND the daemon socket is confirmed down,
+  // OR the stats snapshot itself reports unavailable after a turn.
+  const offline = breakerOpen
+    || (hasTurn && !available)
+    || (warmed && !hasTurn && brainOk === false);
   const skillsN = (stats && stats.skills_n) || 0;
   const factsN = (stats && stats.facts_n) || 0;
   const ms = (stats && stats.retrieval_ms) || 0;
   const hit = skillsN + factsN > 0;
   const col = offline ? LM.err
+            : connecting ? LM.inkSoft
             : !hasTurn ? LM.inkMuted
             : hit ? LM.accent
             : LM.inkSoft;
   const label = offline ? '⌬ brain · offline'
+              : connecting ? '⌬ connecting to brain…'
               : !hasTurn ? '⌬ brain · idle'
               : `⌬ brain · ${skillsN}s · ${factsN}f · ${Math.round(ms)}ms`;
-  const tipBody = !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
+  const tipBody = connecting ? 'Connecting to your personal-brain daemon…'
+            : !hasTurn ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
             : offline ? 'Brain daemon offline. Circuit breaker open or socket refused.'
             : `Last hit: ${skillsN} skills + ${factsN} facts injected in ${Math.round(ms)}ms. Last user message: "${(stats.user_message_preview || '').slice(0,60)}"`;
   const tip = `${tipBody}  ·  Click: open your brain map.`;
   return (
     <button onClick={click} title={tip}
       data-testid="brain-chip"
+      data-brain-state={offline ? 'offline' : connecting ? 'connecting' : hasTurn ? 'hit' : 'idle'}
       style={{
         display:'flex', alignItems:'center', gap:6,
         padding: compact ? '4px 9px' : '6px 12px',
@@ -6455,6 +6771,9 @@ const BrainChip = ({ compact }) => {
         color: col,
         fontFamily:LM.mono, fontSize: compact ? 10 : 10.5, letterSpacing:'0.04em',
         whiteSpace:'nowrap',
+        // The shimmer: a soft opacity pulse while connecting so the cold-start
+        // reads as "working on it", not a dead/error state.
+        animation: connecting ? 'lmBrainShimmer 1.1s ease-in-out infinite' : 'none',
         transition: 'background .12s, border-color .12s, color .12s',
       }}>
       {label}
@@ -6598,7 +6917,90 @@ const SNAP_R = 28;
 // 19px, which let the hover preview light two sockets at once on 5+-port nodes.
 const SOCKET_STEP = SNAP_R + SOCKET_R + 3;   // = 36px
 
+// Viewport-cull margin in WORLD px — one node-width of slack beyond every
+// viewport edge so an off-screen node a small pan would reveal is already
+// mounted (no pop-in). See worldViewport/cullToViewport below.
+const CULL_MARGIN = 280;
+
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
+
+// ─────────────────────── VIEWPORT CULLING (PERF) ───────────────────────
+// Founder 2026-06-18 "fix the canvas lag root": on the software renderer
+// (no GPU → Chromium paints every layer on the CPU) a graph with 400+ nodes
+// drops to ~6fps with multi-second freezes during pan/drag/zoom, because the
+// per-frame work in NodeCanvas is O(N) over ALL nodes + ALL wires regardless
+// of what's actually on screen — every NodeRenderer is reconciled (its memo
+// comparator still runs N times), every wire <path> is diffed, even for the
+// thousands of px of canvas scrolled far out of view. The imperative-pan
+// (mechanism 3) already keeps the gesture from re-rendering, but the FIRST
+// render after a commit — and every graphBump while a big graph sits parked —
+// still pays the full O(N). Idle is 60fps because nothing renders; the cost
+// is purely this all-nodes pass.
+//
+// THE FIX (this helper): only render the nodes/wires whose bbox INTERSECTS
+// the visible viewport (+ a margin so a node half-off-screen, or one the
+// user is about to pan toward, is already mounted — no pop-in). The viewport
+// is computed in WORLD space from pan/zoom/wrapRect once per render (a pure
+// arithmetic transform of the cached rect — no getBoundingClientRect in the
+// map). With culling, a 400-node graph renders only the ~10-30 nodes on
+// screen, so the per-frame pass is O(visible), not O(N) → the software
+// renderer stays smooth (>=45fps) during drag/pan.
+//
+// Pure + module-scoped so it is unit-testable in isolation (tests/
+// test_canvas_ux_fin.py executes it in Node against the REAL function text,
+// proving it culls — ROMA "gate on the real artifact", not a re-implementation).
+
+// Compute the visible viewport in WORLD coordinates from the screen-space
+// pan/zoom + the wrapper's pixel size. `pan` is the px offset of the world
+// origin inside the viewport; `zoom` is world→screen scale. Inverting:
+//   worldX = (screenX - pan.x) / zoom
+// so the top-left visible world point is (-pan.x/zoom, -pan.y/zoom) and the
+// visible world width is viewportPxW / zoom. Returns null when we don't yet
+// know the viewport size (first paint before the rect resolves) → callers
+// treat null as "cull nothing" (render all), so nothing is ever hidden by a
+// missing measurement.
+const worldViewport = (pan, zoom, viewportPxW, viewportPxH) => {
+  if (!pan || !zoom || !(zoom > 0)) return null;
+  if (!(viewportPxW > 0) || !(viewportPxH > 0)) return null;
+  return {
+    x0: -pan.x / zoom,
+    y0: -pan.y / zoom,
+    x1: (-pan.x + viewportPxW) / zoom,
+    y1: (-pan.y + viewportPxH) / zoom,
+  };
+};
+
+// AABB-vs-AABB intersection in world space, with `margin` (world px) grown on
+// every side of the viewport. A node/wire is kept iff its bounding box
+// overlaps the grown viewport. `vp === null` → keep everything (no viewport
+// known yet). The margin is what kills pop-in: nodes just past the edge stay
+// mounted so a pan/drag reveals them already painted.
+const bboxInViewport = (bx0, by0, bx1, by1, vp, margin) => {
+  if (!vp) return true;
+  const m = margin || 0;
+  // Reject only when the boxes are strictly disjoint on either axis.
+  if (bx1 < vp.x0 - m) return false;
+  if (bx0 > vp.x1 + m) return false;
+  if (by1 < vp.y0 - m) return false;
+  if (by0 > vp.y1 + m) return false;
+  return true;
+};
+
+// Cull a list of bbox-bearing items to those intersecting the viewport.
+// `getBox(item) -> {x0,y0,x1,y1}`. Returns a NEW array preserving order.
+// When `vp` is null (viewport unknown) the original list is returned
+// unchanged. This is the single chokepoint both the node map and the wire
+// map funnel through, so the perf invariant is enforced in one tested place.
+const cullToViewport = (items, getBox, vp, margin) => {
+  if (!vp || !items || items.length === 0) return items || [];
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const b = getBox(items[i]);
+    if (!b) { out.push(items[i]); continue; }   // unknown box → never hide
+    if (bboxInViewport(b.x0, b.y0, b.x1, b.y1, vp, margin)) out.push(items[i]);
+  }
+  return out;
+};
 
 // SLICE C3 (AgDR-0006): recursive expansion of a group's member set
 // across the `childGroupIds` tree. Cycle-safe via visited-set + 16-
@@ -7968,6 +8370,85 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
     };
   }).filter(Boolean), [nodeById, focusId, graphBump]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─── VIEWPORT CULLING (PERF, founder 2026-06-18) ──────────────────────
+  // The visible world rectangle, derived from the COMMITTED pan/zoom + the
+  // cached wrapper rect (no getBoundingClientRect here — getWrapRect reads the
+  // ResizeObserver-maintained cache). Recomputed once per render; the
+  // imperative gesture path does NOT re-render, so during a live pan/drag the
+  // mounted set is frozen — but the margin (one full node-width, see below)
+  // keeps a ring of off-screen nodes mounted so the gesture never reveals a
+  // blank node that has to pop in. On gesture END (the single commit) pan/zoom
+  // change → this recomputes → the new on-screen set mounts. graphBump (a node
+  // moved/added) also recomputes it. Result: the per-render node/wire pass is
+  // O(visible) instead of O(N) — the software-render fps fix for 400+ nodes.
+  //
+  // CULL_MARGIN is in WORLD px: a generous ring beyond the viewport edge so a
+  // node straddling the edge (and the next one over, which a small pan brings
+  // in) is already painted. One node-width (~240) + a node-height (~120) of
+  // slack on each axis is plenty without re-inflating the rendered count.
+  const _cullRect = getWrapRect();
+  const _viewport = React.useMemo(
+    () => worldViewport(pan, zoom,
+      (_cullRect && _cullRect.width) || 0,
+      (_cullRect && _cullRect.height) || 0),
+    // _cullRect identity changes on resize (ResizeObserver replaces it); pan/
+    // zoom cover scroll. width/height pulled inside via the ref read above.
+    [pan, zoom, _cullRect],
+  );
+  // Node bbox in world space. Nodes carry w/h (defaults mirror the renderer:
+  // 220×110). Positions live on nodeById (already merged with live drag pos).
+  const _nodeBox = (n) => {
+    const x = n.x || 0, y = n.y || 0;
+    return { x0: x, y0: y, x1: x + (n.w || 220), y1: y + (n.h || 110) };
+  };
+  // Wires carry pre-resolved endpoint coords (x1,y1)-(x2,y2) in world space;
+  // the bbox is their min/max corner. A wire is kept if ANY part of its span
+  // could cross the viewport (the margin covers the bezier bulge).
+  const _wireBox = (w) => ({
+    x0: Math.min(w.x1, w.x2), y0: Math.min(w.y1, w.y2),
+    x1: Math.max(w.x1, w.x2), y1: Math.max(w.y1, w.y2),
+  });
+  // The culled sets the render maps below iterate. When _viewport is null
+  // (first paint before the rect resolves, or a degenerate zoom) these return
+  // the full lists unchanged — nothing is ever hidden by a missing measure.
+  const visibleNodesSrc = React.useMemo(() => {
+    const culled = cullToViewport(allNodes || [], n => {
+      const p = positions[n.id]; const nn = p ? { ...n, x: p.x, y: p.y } : n;
+      return _nodeBox(nn);
+    }, _viewport, CULL_MARGIN);
+    // CORRECTNESS over cull: the focused node + any selected nodes must ALWAYS
+    // be mounted even if dragged/panned off-screen — the rail inspects the
+    // focused node, keyboard ops + multi-drag act on the selection, and
+    // unmounting a node mid-drag would drop its DOM handle. Re-add any that the
+    // viewport test dropped (cheap: selection is small; no-op when _viewport is
+    // null since `culled` is already the full list).
+    if (_viewport && (focusId || selectedIds.size)) {
+      const present = new Set(culled.map(n => n.id));
+      for (const n of (allNodes || [])) {
+        if (present.has(n.id)) continue;
+        if (n.id === focusId || selectedIds.has(n.id)) culled.push(n);
+      }
+    }
+    return culled;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allNodes, positions, _viewport, graphBump, focusId, selectedIds]);
+  const visibleWires = React.useMemo(
+    () => cullToViewport(wires, _wireBox, _viewport, CULL_MARGIN),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [wires, _viewport],
+  );
+  // Expose the live cull stats for the CDP perf proof + the unit seam. The
+  // verifier asserts rendered << total when a big graph is panned to a corner.
+  if (typeof window !== 'undefined') {
+    window.__archhub_cull = {
+      total: (allNodes || []).length,
+      rendered: visibleNodesSrc.length,
+      wiresTotal: wires.length,
+      wiresRendered: visibleWires.length,
+      viewport: _viewport,
+    };
+  }
+
   const toggleExpanded = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
   const onResetView = () => { setPan({ x:14, y:12 }); setZoom(0.66); setCtxMenu(null); };
 
@@ -8118,7 +8599,11 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
               <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
           </defs>
-          {wires.map(w => {
+          {/* PERF: render only wires whose span crosses the viewport (+margin).
+              `visibleWires` is the viewport-culled subset of the `wires` memo —
+              on a 400-node graph parked in a corner this is a handful instead
+              of hundreds of <path> elements diffed per frame. */}
+          {visibleWires.map(w => {
             // AgDR-0047 §D D5 perf (2026-05-26): d/color/shape/shapeW/
             // shapeDash now pre-computed in the wires useMemo above.
             // Only the selection-dependent + opacity bits stay here.
@@ -8385,7 +8870,13 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
             </div>
           );
         })}
-        {(allNodes || []).map(n => {
+        {/* PERF: render only nodes whose bbox crosses the viewport (+margin).
+            `visibleNodesSrc` is the viewport-culled subset of `allNodes` — the
+            O(N) per-frame node pass (each NodeRenderer's memo-comparator runs
+            per mounted node) becomes O(visible), which is what holds the
+            software renderer at >=45fps with 400+ nodes. Collapsed-group
+            members are still skipped (their collapsed node renders above). */}
+        {visibleNodesSrc.map(n => {
           // SLICE C2: skip members of collapsed groups — the collapsed-
           // group node renders in their place above.
           if (hiddenMemberIds.has(n.id)) return null;

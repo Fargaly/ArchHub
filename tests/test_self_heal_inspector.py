@@ -194,6 +194,27 @@ def test_bridge_has_self_heal_changed_signal(bridge_inst):
     sig.emit()  # must not raise
 
 
+def test_self_heal_tap_never_starts_connector_health_daemon(bridge_inst):
+    """LEAK GUARD: the self-heal tap attaches to an ALREADY-running
+    connector_health daemon; it must NEVER call instance() (which lazily
+    .start()s a poll thread that survives teardown and trips conftest's
+    _stop_leaked_background_threads gate — the macOS/ubuntu CI failure on the
+    first cut of this lane). With no daemon running, wiring the tap is a clean
+    no-op that starts nothing."""
+    import threading
+    import connector_health as _ch
+    _ch.shutdown()  # drop any singleton/thread an earlier test started
+    assert getattr(_ch, "_INSTANCE", None) is None
+    bridge_inst._self_heal_wired = False
+    bridge_inst._wire_self_heal_taps()
+    assert getattr(_ch, "_INSTANCE", None) is None, (
+        "self-heal tap started the connector_health daemon via instance() — "
+        "leaks a ConnectorHealth poll thread past teardown")
+    assert not [t for t in threading.enumerate()
+                if t.name == "ConnectorHealth" and t.is_alive()], (
+        "a ConnectorHealth poll thread leaked from wiring the self-heal tap")
+
+
 # ════════════════════════════════════════════════════════════════════
 # PART 3 — the JSX inspector: stat header + timeline + honest empty state
 # ════════════════════════════════════════════════════════════════════

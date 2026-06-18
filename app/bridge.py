@@ -1079,9 +1079,17 @@ class ArchHubBridge(QObject):
             return
         if getattr(self, "_self_heal_wired", False):
             return
-        try:
-            inst = _ch.instance()
-        except Exception:
+        # Attach to the ALREADY-RUNNING daemon only — never call _ch.instance()
+        # here: instance() LAZILY .start()s the poll thread. In production
+        # main.py starts the connector_health daemon early (main.py:967, well
+        # before this deferred-boot tap fires), so the singleton exists by now.
+        # In unit tests nothing starts it, and instance() would spin up a
+        # ConnectorHealth poll thread that leaks past teardown and trips
+        # conftest's _stop_leaked_background_threads gate. Peek the module
+        # singleton instead; if the daemon is not running there are no heals to
+        # record anyway, and the tap re-attaches on the next boot once it is.
+        inst = getattr(_ch, "_INSTANCE", None)
+        if inst is None:
             return
         prior = getattr(inst, "on_state_change", None)
 

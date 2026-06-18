@@ -284,9 +284,13 @@ def test_inspector_mounted_at_root_and_reachable():
     assert "<SelfHealInspector" in _JSX_CODE
     # The open event the entry points fire.
     assert "lm-self-heal-inspector-open" in _JSX_CODE
-    # Home chip opens it (was a dead toast hint before).
+    # Home chip opens the graph-health detail popover (lm-graph-health-open);
+    # that popover hosts the self-heal entry button (graph-health-self-heal,
+    # asserted below) — continuous path: chip -> graph-health popover ->
+    # Self-Heal Inspector. (FIX1 repointed the chip from a direct self-heal
+    # open to the graph-health detail, which is where the self-heal entry lives.)
     chip = _jsx_window("home-graph-health-chip", 1400)
-    assert "lm-self-heal-inspector-open" in chip
+    assert "lm-graph-health-open" in chip
     # Both graph-health panels expose a self-heal entry button.
     assert 'data-testid="graph-health-self-heal"' in _JSX_CODE
     assert 'data-testid="health-strip-self-heal"' in _JSX_CODE

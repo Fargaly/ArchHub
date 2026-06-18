@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Protocol
 
+from host_aliases import canonical_host
 from manager import APP_DIR, ConnectorEntry
 
 
@@ -410,4 +411,4 @@ _REGISTRY: dict[str, ConnectorSpec] = {
 
 
 def resolve(family: str) -> ConnectorSpec | None:
-    return _REGISTRY.get(family)
+    return _REGISTRY.get(canonical_host(family))

@@ -33,6 +33,14 @@ def _isolate_db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "REPLICAS_ROOT", str(replicas_root))
     import brain_replica
     monkeypatch.setattr(brain_replica, "DEFAULT_REPLICAS_ROOT", replicas_root)
+    # Google id_token local-JWKS verification keeps a module-level signing-key
+    # cache (google_auth._JWKS_CACHE). Reset it per test so a cached key — or a
+    # post-failure cooldown — from one test never leaks into the next; this
+    # keeps the tokeninfo-fallback tests and the local-verify tests mutually
+    # isolated. setattr (not clear()) so monkeypatch auto-restores after.
+    import google_auth
+    monkeypatch.setattr(google_auth, "_JWKS_CACHE",
+                        {"keys": {}, "exp": 0, "retry_after": 0, "last_refetch": 0})
     # ALWAYS run init_schema for the freshly-pathed DB.
     import db
     db.init_schema()

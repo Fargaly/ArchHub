@@ -35,11 +35,14 @@ Security contract:
     https://accounts.google.com}, aud == GOOGLE_OAUTH_CLIENT_ID, exp in
     the future, AND email_verified is true. Any failure → caller raises
     400/401; no token is ever issued for an unverified / wrong-aud token.
-  * Verification goes through Google's tokeninfo endpoint (which checks
-    the JWT signature against Google's keys server-side). The code is
-    structured so a local JWKS verify (https://www.googleapis.com/oauth2/
-    v3/certs) can drop in behind the same verify_id_token() function
-    without touching callers.
+  * The id_token signature is verified LOCALLY against Google's published
+    RSA public keys (the JWKS at GOOGLE_CERTS_URL), with the algorithm
+    PINNED to RS256, and the keys cached so the common path makes NO
+    per-sign-in network call. If those keys cannot be fetched the verifier
+    degrades to Google's tokeninfo endpoint (which checks the signature
+    server-side) — a present-but-invalid token is REJECTED locally, never
+    bounced to the fallback. Both paths run the SAME _assert_claims trust
+    gate (iss/aud/exp/email_verified), so the rules live in one place.
   * The OAuth client SECRET stays server-side: it is only ever sent to
     Google's token endpoint, never to the desktop client, never put in
     the authorization URL or the state.
@@ -64,6 +67,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 import urllib.parse
@@ -78,9 +82,11 @@ import db
 # Google OpenID Connect endpoints (well-known; stable).
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-# tokeninfo verifies the id_token's signature against Google's keys
-# server-side and returns the decoded claims. Swapping to a local JWKS
-# verify against GOOGLE_CERTS_URL is a drop-in behind verify_id_token().
+# Primary verification is LOCAL: the id_token's RS256 signature is checked
+# against Google's published RSA public keys (the JWKS at GOOGLE_CERTS_URL),
+# cached so the hot path makes no per-sign-in network call. tokeninfo remains
+# a graceful fallback used ONLY when those keys cannot be fetched — it
+# verifies the signature server-side and returns the decoded claims.
 GOOGLE_TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo"
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
@@ -100,6 +106,21 @@ _STATE_TTL_SECONDS = 600  # 10 minutes
 # Outbound HTTP timeout to Google. Mirrors polar.py's 30s ceiling; kept
 # well under any client wait so a slow Google never hangs a request.
 _HTTP_TIMEOUT_SECONDS = 20.0
+
+# Google rotates its id_token signing keys; the JWKS response carries a
+# Cache-Control max-age (hours). We cache the parsed {kid: RSAPublicKey} until
+# that deadline so the steady state makes NO network call per sign-in, and
+# refetch once on a kid-miss (a rotation). On a fetch FAILURE we set a short
+# cooldown so a certs outage doesn't add a failed round-trip to every sign-in
+# (we go straight to the tokeninfo fallback during the cooldown).
+_JWKS_CACHE: dict = {"keys": {}, "exp": 0, "retry_after": 0, "last_refetch": 0}
+_JWKS_DEFAULT_TTL_SECONDS = 3600   # used when the response omits max-age
+_JWKS_MIN_TTL_SECONDS = 300        # floor so a tiny max-age can't thrash us
+_JWKS_FAILURE_COOLDOWN_SECONDS = 30
+# A kid-miss forces a refetch (key rotation); rate-limit it so a flood of
+# attacker-chosen bogus kids can't make us hit Google's certs endpoint once
+# per request — the very rate-limit/latency pressure local verify removes.
+_JWKS_MIN_REFETCH_INTERVAL_SECONDS = 60
 
 
 class GoogleLoginUnconfigured(RuntimeError):
@@ -236,9 +257,8 @@ def build_authorization_url(*, code_challenge: str = "",
         # refresh token (we only need the one-shot id_token).
         "access_type": "online",
         "prompt": "select_account",
-        # We verify the id_token's signature server-side via tokeninfo,
-        # but include a nonce binding for defence-in-depth + future local
-        # JWKS verify. Reuse the state's entropy is unnecessary; mint one.
+        # Fold in any scopes the user already granted this client on a prior
+        # consent, so a re-auth doesn't re-prompt for the same access.
         "include_granted_scopes": "true",
     }
     return GOOGLE_AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
@@ -290,21 +310,213 @@ def verify_id_token(id_token: str) -> dict:
     """Verify a Google id_token and return its trusted claims.
 
     Verification (ALL must hold or GoogleAuthError 401):
-      * signature — checked by Google's tokeninfo endpoint server-side
-        (the endpoint only returns claims for a validly-signed token).
+      * signature — verified LOCALLY against Google's published RSA public
+        keys (the JWKS at GOOGLE_CERTS_URL), with the algorithm PINNED to
+        RS256 so an `alg:none` or an HS256 key-confusion token is refused.
+        The keys are cached, so the steady state makes NO network call here.
       * iss ∈ {accounts.google.com, https://accounts.google.com}
       * aud == GOOGLE_OAUTH_CLIENT_ID  (the token was minted FOR us)
       * exp in the future
       * email present AND email_verified is true
 
-    Structured so a local JWKS verify (decode header→kid, fetch
-    GOOGLE_CERTS_URL, verify RS256, then run the SAME claim asserts
-    below) can replace the tokeninfo call without changing callers or
-    the returned shape.
+    The signature step degrades to Google's tokeninfo endpoint ONLY when the
+    signing keys cannot be fetched (network/parse failure) — a token that is
+    present but fails the local signature/structure checks is REJECTED, never
+    bounced to the fallback. Either signature path then funnels the decoded
+    claims through the SAME _assert_claims gate, so the trust rules live in
+    exactly one place regardless of how the signature was checked.
     """
     if not id_token:
         raise GoogleAuthError("empty id_token", status=401,
                               code="id_token_invalid")
+    try:
+        claims = _verify_signature_local(id_token)
+    except _JWKSUnavailable:
+        # Google's signing keys are unreachable — fall back to tokeninfo so
+        # sign-in availability is never worse than the original implementation.
+        claims = _verify_signature_tokeninfo(id_token)
+    return _assert_claims(claims)
+
+
+# ---------------------------------------------------------------------------
+# Local JWKS signature verification (primary) + tokeninfo fallback
+# ---------------------------------------------------------------------------
+class _JWKSUnavailable(RuntimeError):
+    """Internal signal: Google's id_token signing keys could not be OBTAINED
+    (network / parse failure / cooldown). Distinct from GoogleAuthError — it
+    means 'fall back to tokeninfo', NEVER 'reject this token'. A token that is
+    present but malformed / wrong-alg / bad-signature raises GoogleAuthError
+    (a reject) and is never routed to the fallback."""
+
+
+def _fetch_google_certs() -> tuple[dict, int]:
+    """Fetch + parse Google's JWKS into {kid: RSAPublicKey} and compute a
+    cache-expiry epoch from the response Cache-Control max-age.
+
+    Raises _JWKSUnavailable on any network / HTTP / parse failure (so the
+    caller degrades to tokeninfo rather than rejecting a token)."""
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
+    try:
+        resp = httpx.get(
+            GOOGLE_CERTS_URL, headers={"Accept": "application/json"},
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as ex:
+        raise _JWKSUnavailable(f"certs unreachable: {ex}")
+    if resp.status_code != 200:
+        raise _JWKSUnavailable(f"certs HTTP {resp.status_code}")
+    try:
+        doc = resp.json()
+        jwks = doc["keys"]
+    except Exception as ex:
+        raise _JWKSUnavailable(f"certs not parseable: {ex}")
+    keys: dict = {}
+    for jwk in jwks:
+        try:
+            # Only RSA signing keys; skip anything else (e.g. a future EC key
+            # we don't pin for). use="sig" or absent is a signing key.
+            if jwk.get("kty") != "RSA" or jwk.get("use") not in (None, "sig"):
+                continue
+            kid = jwk["kid"]
+            n = int.from_bytes(_b64url_decode(jwk["n"]), "big")
+            e = int.from_bytes(_b64url_decode(jwk["e"]), "big")
+            keys[kid] = RSAPublicNumbers(e, n).public_key()
+        except Exception:
+            # Skip a single malformed key, keep the rest.
+            continue
+    if not keys:
+        raise _JWKSUnavailable("no usable RSA signing keys in certs")
+    ttl = _JWKS_DEFAULT_TTL_SECONDS
+    m = re.search(r"max-age=(\d+)", resp.headers.get("Cache-Control", ""))
+    if m:
+        ttl = max(_JWKS_MIN_TTL_SECONDS, int(m.group(1)))
+    return keys, int(time.time()) + ttl
+
+
+def _ensure_certs_loaded(*, now: Optional[int] = None) -> None:
+    """Ensure _JWKS_CACHE holds fresh Google keys. No-op when the cache is
+    warm. Honours a short post-failure cooldown so a certs outage doesn't add
+    a failed round-trip to every sign-in. Raises _JWKSUnavailable when keys
+    cannot be (re)loaded."""
+    now = int(now if now is not None else time.time())
+    if _JWKS_CACHE["keys"] and now < _JWKS_CACHE["exp"]:
+        return
+    if now < _JWKS_CACHE["retry_after"]:
+        raise _JWKSUnavailable("certs in post-failure cooldown")
+    try:
+        keys, exp = _fetch_google_certs()
+    except _JWKSUnavailable:
+        _JWKS_CACHE["retry_after"] = now + _JWKS_FAILURE_COOLDOWN_SECONDS
+        raise
+    _JWKS_CACHE["keys"] = keys
+    _JWKS_CACHE["exp"] = exp
+    _JWKS_CACHE["retry_after"] = 0
+
+
+def _key_for_kid(kid: str, *, now: Optional[int] = None):
+    """Return the cached RSAPublicKey for `kid`, forcing a refetch if the kid
+    is absent (a key rotation). Returns None when the kid is genuinely unknown
+    (→ caller REJECTS the token). May raise _JWKSUnavailable if that refetch
+    itself fails.
+
+    The kid-miss refetch is RATE-LIMITED (_JWKS_MIN_REFETCH_INTERVAL_SECONDS):
+    a flood of attacker-chosen bogus kids must NOT turn each request into an
+    outbound certs fetch — that would re-introduce the very rate-limit/latency
+    pressure local verification exists to remove. Within the interval an
+    unknown kid is simply unknown (→ reject); a genuine rotation is still
+    picked up on the next allowed refetch (and always within the cache TTL)."""
+    now = int(now if now is not None else time.time())
+    keys = _JWKS_CACHE["keys"]
+    if kid in keys:
+        return keys[kid]
+    if now - _JWKS_CACHE.get("last_refetch", 0) < _JWKS_MIN_REFETCH_INTERVAL_SECONDS:
+        return None   # refetched recently → treat an unknown kid as unknown
+    fresh, exp = _fetch_google_certs()   # rotation → one rate-limited refetch
+    _JWKS_CACHE["keys"] = fresh
+    _JWKS_CACHE["exp"] = exp
+    _JWKS_CACHE["retry_after"] = 0
+    _JWKS_CACHE["last_refetch"] = now
+    return fresh.get(kid)
+
+
+def _verify_signature_local(id_token: str, *, now: Optional[int] = None) -> dict:
+    """Verify the id_token's RS256 signature against Google's JWKS LOCALLY and
+    return the decoded (but not yet trust-checked) claims. The caller runs
+    _assert_claims on the result.
+
+    Rejects (GoogleAuthError 401) a token that is not a JWT, whose alg isn't
+    RS256 (so `none` / HS256-confusion are refused), whose kid is unknown, or
+    whose signature does not verify. Raises _JWKSUnavailable ONLY when the
+    signing keys can't be obtained (→ tokeninfo fallback)."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.exceptions import InvalidSignature
+
+    # Obtain Google's keys BEFORE inspecting the token, so a pure
+    # keys-unavailable condition degrades to tokeninfo rather than being
+    # masked by a structural rejection of the token.
+    _ensure_certs_loaded(now=now)
+
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        raise GoogleAuthError("id_token is not a JWT", status=401,
+                              code="id_token_invalid")
+    header_b64, payload_b64, sig_b64 = parts
+    try:
+        header = json.loads(_b64url_decode(header_b64).decode("utf-8"))
+    except Exception:
+        raise GoogleAuthError("id_token header not decodable", status=401,
+                              code="id_token_invalid")
+    if not isinstance(header, dict):
+        raise GoogleAuthError("id_token header not an object", status=401,
+                              code="id_token_invalid")
+    # PIN the algorithm. Google signs id_tokens with RS256. Pinning REJECTS an
+    # `alg:none` (unsigned) token and the HS256 key-confusion attack (an
+    # attacker HMAC-ing with the RSA public key as the shared secret) — both
+    # classic JWT bypasses — instead of trusting the token's self-declared alg.
+    if header.get("alg") != "RS256":
+        raise GoogleAuthError(
+            f"unsupported id_token alg: {header.get('alg')!r}",
+            status=401, code="id_token_invalid")
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise GoogleAuthError("id_token missing kid", status=401,
+                              code="id_token_invalid")
+    pub = _key_for_kid(kid, now=now)   # _JWKSUnavailable here → caller's fallback
+    if pub is None:
+        raise GoogleAuthError("id_token signed by an unknown key",
+                              status=401, code="id_token_invalid")
+    try:
+        signature = _b64url_decode(sig_b64)
+    except Exception:
+        raise GoogleAuthError("id_token signature not decodable", status=401,
+                              code="id_token_invalid")
+    # Verify over the EXACT received signing input bytes (header.payload), not
+    # a re-encoding — re-serialising the JSON could change the bytes.
+    signing_input = (header_b64 + "." + payload_b64).encode("ascii")
+    try:
+        pub.verify(signature, signing_input, padding.PKCS1v15(),
+                   hashes.SHA256())
+    except InvalidSignature:
+        raise GoogleAuthError("id_token signature does not verify",
+                              status=401, code="id_token_invalid")
+    # Signature is Google's — NOW decode the claims (trust-gated downstream).
+    try:
+        claims = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        raise GoogleAuthError("id_token payload not decodable", status=401,
+                              code="id_token_invalid")
+    if not isinstance(claims, dict):
+        raise GoogleAuthError("id_token payload not an object", status=401,
+                              code="id_token_invalid")
+    return claims
+
+
+def _verify_signature_tokeninfo(id_token: str) -> dict:
+    """Fallback signature check via Google's tokeninfo endpoint, used ONLY when
+    the local JWKS keys are unreachable. Returns the decoded claims (the caller
+    runs _assert_claims). Keeps sign-in availability no worse than the original
+    tokeninfo-only implementation."""
     try:
         resp = httpx.get(
             GOOGLE_TOKENINFO_ENDPOINT, params={"id_token": id_token},
@@ -320,11 +532,10 @@ def verify_id_token(id_token: str) -> dict:
             f"id_token rejected by tokeninfo ({resp.status_code})",
             status=401, code="id_token_invalid")
     try:
-        claims = resp.json()
+        return resp.json()
     except Exception:
         raise GoogleAuthError("tokeninfo response not JSON",
                               status=401, code="id_token_invalid")
-    return _assert_claims(claims)
 
 
 def _assert_claims(claims: dict, *, now: Optional[int] = None) -> dict:
@@ -351,8 +562,12 @@ def _assert_claims(claims: dict, *, now: Optional[int] = None) -> dict:
     # that equals our client id. A non-string aud coerces to "" → clean 401.
     _aud = claims.get("aud")
     aud = _aud.strip() if isinstance(_aud, str) else ""
+    # Compare on bytes: hmac.compare_digest over two str raises TypeError if
+    # either holds a non-ASCII char; encoding first keeps the constant-time
+    # compare and fails CLEANLY (401) on any odd input instead of a 500.
     if not config.GOOGLE_OAUTH_CLIENT_ID or not hmac.compare_digest(
-            aud, config.GOOGLE_OAUTH_CLIENT_ID):
+            aud.encode("utf-8"),
+            config.GOOGLE_OAUTH_CLIENT_ID.encode("utf-8")):
         raise GoogleAuthError("audience mismatch", status=401,
                               code="bad_audience")
     # exp — must be in the future. tokeninfo only returns live tokens,

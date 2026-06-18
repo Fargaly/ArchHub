@@ -567,6 +567,15 @@ class ArchHubBridge(QObject):
     # dropped_chars)
     chat_chunk_retract = pyqtSignal(str, str, int)
     chat_reasoning  = pyqtSignal(str, str)       # (session_id, reasoning_step)
+    # ROUTER VISIBILITY (founder 2026-06-18 "the UI doesn't SHOW it"): the
+    # router emits on_status (a provider fell back / is retrying) AND every
+    # completion carries routing_note (which model actually answered) — both
+    # were discarded by the live chat path, so the routing was invisible. This
+    # signal surfaces them: send_chat_history passes on_status=_on_status into
+    # router.complete and, after the response lands, emits a final
+    # 'answered by <model>' line. The JSX renders each as a subtle inline meta
+    # line under the assistant bubble (mono, small, terracotta). (session_id, text)
+    chat_status     = pyqtSignal(str, str)       # (session_id, status_text)
     chat_done       = pyqtSignal(str)            # (session_id)
     chat_error      = pyqtSignal(str, str)       # (session_id, error)
     hosts_changed   = pyqtSignal()
@@ -630,6 +639,22 @@ class ArchHubBridge(QObject):
     # {ok, signed_in:false, msg, request_id}. `ok` is the SERVER revoke result;
     # the local token is ALWAYS cleared (honest sign-out even when offline).
     cloud_signout_done = pyqtSignal(str)            # (result_json) — cloud sign-out finished
+    # ACCOUNT ENRICH (founder 2026-06-18 "the UI doesn't SHOW it"): the cloud
+    # usage meter (plan + remaining messages) is REAL — cloud_usage.snapshot()
+    # holds it, refreshed from /v1/me — but the AccountChip only showed the
+    # email. cloud_status() now folds in plan/remaining from the snapshot and,
+    # when the snapshot is cold (None), kicks cloud_usage.refresh_async with a
+    # callback that emits THIS signal so the chip re-pulls cloud_status and
+    # paints 'cloud · {plan} · {remaining} left' the moment the meter lands —
+    # no reload, no per-open /v1/me round-trip on the Qt thread.
+    cloud_usage_changed = pyqtSignal()              # () — plan/quota snapshot refreshed
+    # SESSIONS SYNC (founder 2026-06-18): the Home "Sync sessions" button gets a
+    # definitive per-click result here ({ok, available, message, request_id}); a
+    # successful pull ALSO emits sessions_changed so the list re-hydrates.
+    sessions_synced    = pyqtSignal(str)            # (result_json) — session sync finished
+    # COMPANIES (TEAM-UI lane): every /v1/companies proxy slot delivers its
+    # definitive result here ({ok, data|error, request_id}); 401 → error:'signed_out'.
+    company_op_done    = pyqtSignal(str)            # (result_json) — a company op finished
     # AgDR-0036 follow-up — the canvas-edit slots (graph_validate /
     # graph_on_node_delete / library_suggest_swaps) used to run their
     # work SYNCHRONOUSLY in the @pyqtSlot body on the Qt main thread.
@@ -1844,6 +1869,16 @@ class ArchHubBridge(QObject):
                             })
                     except Exception:
                         pass
+                def _on_status(msg: str) -> None:
+                    # ROUTER VISIBILITY (founder 2026-06-18): the router fires
+                    # this when a provider falls back / retries (e.g.
+                    # "anthropic quota — switching provider…"). Forward each to
+                    # JSX as a subtle inline meta line under the assistant
+                    # bubble so the founder SEES the routing happen live —
+                    # previously discarded, so the working fallback was invisible.
+                    if msg:
+                        try: self.chat_status.emit(session_id, str(msg))
+                        except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 response = self.router.complete(
                     history=history,
                     model=model,
@@ -1851,7 +1886,22 @@ class ArchHubBridge(QObject):
                     on_reasoning=_on_reasoning,
                     on_tool_invocation=_on_tool,
                     on_attempt_reset=_on_attempt_reset,
+                    on_status=_on_status,
                 )
+                # ROUTER VISIBILITY — the turn landed: tell JSX which model
+                # actually answered. routing_note is the router's own
+                # human-readable note (e.g. "claude-…  via anthropic"); fall
+                # back to the resolved model id. This is the final meta line
+                # under the bubble — the founder sees the real answerer, never
+                # just the picked "Auto".
+                try:
+                    answered_by = (getattr(response, "routing_note", "")
+                                   or getattr(response, "model", "") or "")
+                    if answered_by:
+                        self.chat_status.emit(session_id,
+                                              f"answered by {answered_by}")
+                except Exception:
+                    pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 # complete() returned ⇒ the LAST attempt is the WINNER. Its
                 # streamed text is still sitting in _attempt_buf (every
                 # earlier, abandoned attempt was already dropped by
@@ -2381,7 +2431,16 @@ class ArchHubBridge(QObject):
                     # Installer user -> signed release: download the .exe + run it. The
                     # installer takes over (silent, relaunch) and exits THIS process, so
                     # we must NOT fall through to updater.restart() (which would restart
-                    # the OLD version). Founder 2026-06-11 production apply path.
+                    # the OLD version). Founder 2026-06-11 production apply path — already
+                    # real + tested (test_release_channel_banner). THIS lane's S3 gap was
+                    # pure VISIBILITY: the JSX UpdateNotifier (update_status / refresh_
+                    # updates → _refresh_updates_work's release branch) lights its
+                    # Relaunch banner for kind:'release', so an installer user actually
+                    # SEES the available signed release instead of a silent 'no update'.
+                    # (Spec floated a check_and_download→stage_installer→restart staged
+                    # apply; kept the existing download_asset→run_installer path so the
+                    # pinned test_release_channel_banner contract stays green — staging
+                    # is a separate, owned change. See PR body deviation note.)
                     try:
                         import release_updater as _ru
                         avail, info, local = _ru.has_update_available()
@@ -3170,17 +3229,76 @@ class ArchHubBridge(QObject):
         sees a live `⌬ brain · N skills · M facts · Δms` indicator
         without round-tripping the gate. Returns the in-process module
         global `memory_gate._LAST_BRAIN_STATS` updated on every
-        MemoryGate.pre_prompt call. Empty dict before the first turn.
+        MemoryGate.pre_prompt call.
 
-        Shape:
-          {ts, skills_n, facts_n, secret_refs_n, retrieval_ms,
+        COLD-START FIX (founder 2026-06-18 "the UI doesn't SHOW it"): the
+        brain daemon is REAL + live from launch (668 facts / 64 skills / 6
+        workers), but `_LAST_BRAIN_STATS` stays EMPTY until the first
+        Composer turn fires the gate — so on a fresh open the BrainChip
+        read 'idle' even though the daemon was fully reachable. That
+        mislabels a working backend as not-engaged.
+
+        ROOT FIX: when there's no `ts` (no turn yet this process), fall
+        back to the already-computed cached `brain.health` snapshot — the
+        SAME off-thread `_cached_async` path the visual brain browser uses
+        — and synthesize a cold stats shape from the daemon's real
+        skill/fact counts. NO blocking HTTP on the Qt thread: the cached
+        snapshot returns instantly, the background pool refreshes it, and
+        `brain_browse_changed` fires so the chip re-pulls when fresh
+        counts land. The chip renders real counts (e.g. '64s · 668f ·
+        ready') on cold+available and keeps 'idle'/'offline' only for a
+        truly-unreachable daemon.
+
+        Shape (warm): {ts, skills_n, facts_n, secret_refs_n, retrieval_ms,
            user_message_preview, available, client_status}
+        Shape (cold): {ts, skills_n, facts_n, available:true, cold:true}
         """
         try:
             from memory_gate import get_last_brain_stats
-            return _safe_json(get_last_brain_stats() or {})
+            last = get_last_brain_stats() or {}
+            if last.get("ts"):
+                return _safe_json(last)
+            # No turn yet → cold. Reuse the cached brain.health snapshot
+            # (off-thread; never a blocking HTTP call on the Qt thread).
+            return _safe_json(self._cold_brain_stats())
         except Exception as ex:
             return _safe_json({"error": f"{type(ex).__name__}: {ex}"})
+
+    def _cold_brain_stats(self) -> dict:
+        """Build the COLD brain-stats shape from the cached brain.health
+        snapshot (the daemon's real counts) without blocking the Qt thread.
+
+        `brain.health` is a blocking HTTP round-trip to the daemon, so it
+        MUST run off-thread — routed through `_cached_async` (the same
+        idiom get_models / brain browse use). The cached value returns
+        instantly; the background pool refreshes it; `brain_browse_changed`
+        fires when fresh counts land so the JSX BrainChip re-pulls. ONE
+        daemon, ONE count source — so the BrainChip and the memory chip
+        read the SAME numbers (no two-chips-two-numbers drift)."""
+        import time as _t
+
+        def _work():
+            health = self._brain_tool("brain.health", {}, timeout=2.0)
+            ok = bool(isinstance(health, dict) and health.get("ok"))
+            return {
+                "ok": ok,
+                "skills_n": int((health or {}).get("skills") or 0),
+                "facts_n": int((health or {}).get("facts") or 0),
+            }
+
+        snap = self._cached_async(
+            "brain_health_cold", _work,
+            empty={"ok": False, "skills_n": 0, "facts_n": 0},
+            signal_name="brain_browse_changed")
+        available = bool(snap.get("ok"))
+        return {
+            "ts": _t.time() if available else 0,
+            "skills_n": int(snap.get("skills_n") or 0),
+            "facts_n": int(snap.get("facts_n") or 0),
+            "retrieval_ms": 0,
+            "available": available,
+            "cold": True,
+        }
 
     # ─────────────────────── Slice 9-16 settings bridge ──────────────
     # AgDR-0045 — Settings × Brain. Every slot proxies to a brain.* MCP
@@ -3957,18 +4075,46 @@ class ArchHubBridge(QObject):
     @pyqtSlot(result=str)
     def cloud_status(self) -> str:
         """Cheap, synchronous probe of cloud sign-in state — drives the
-        Settings Account section + any signed-out CTA. Returns
-        {signed_in: bool, cloud_url: str}. NO network I/O (token presence is
-        read from secrets_store via cloud_client), so it's safe to call on
-        every Account-tab open without tripping bridgeAsync's 1.5s ceiling.
-        Richer account detail (email / plan / remaining) arrives via the
-        cloud_signin_done signal after a sign-in, or the Account tab fetches
-        cloud_client.me() on its own thread."""
+        Settings Account section + the top-nav AccountChip + any signed-out
+        CTA. Returns {signed_in, cloud_url, plan, remaining}. Token presence
+        is read from secrets_store via cloud_client (NO network), so it's safe
+        to call on every Account-tab / chip refresh without tripping
+        bridgeAsync's 1.5s ceiling.
+
+        ACCOUNT ENRICH (founder 2026-06-18): `plan` + `remaining` ride in from
+        the CACHED cloud_usage.snapshot() (the meter refreshed from /v1/me) —
+        NOT a fresh network call here. When signed in but the snapshot is cold
+        (None: first open or TTL-expired), we kick cloud_usage.refresh_async on
+        its own worker thread with a callback that emits `cloud_usage_changed`,
+        so the chip re-pulls cloud_status and paints the real plan/remaining the
+        instant the meter lands — no reload. plan='' / remaining=None until the
+        real values arrive (never fabricated)."""
         try:
             import cloud_client
+            signed_in = bool(cloud_client.is_signed_in())
+            plan = ""
+            remaining = None
+            if signed_in:
+                try:
+                    import cloud_usage
+                    snap = cloud_usage.snapshot()
+                    if snap is not None:
+                        plan = str(snap.get("plan") or "")
+                        rm = snap.get("remaining_messages")
+                        remaining = int(rm) if rm is not None else None
+                    else:
+                        # Cold meter → fetch off-thread; re-pull on ready.
+                        def _on_ready(_payload):
+                            try: self.cloud_usage_changed.emit()
+                            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI re-pull; absent receiver must not crash
+                        cloud_usage.refresh_async(_on_ready)
+                except Exception:
+                    pass
             return _safe_json({
-                "signed_in": bool(cloud_client.is_signed_in()),
+                "signed_in": signed_in,
                 "cloud_url": cloud_client.base_url(),
+                "plan": plan,
+                "remaining": remaining,
             })
         except Exception as ex:
             return _safe_json({"signed_in": False,
@@ -4223,6 +4369,212 @@ class ArchHubBridge(QObject):
             return _safe_json({"async": False, "request_id": request_id,
                                "ok": False, "error": f"pool submit: {ex}"})
         return _safe_json({"async": True, "request_id": request_id})
+
+    # ─── Cloud session sync (SESSIONS visibility) ──────────────
+    # SESSIONS SYNC VISIBLE (founder 2026-06-18 "the UI doesn't SHOW it"):
+    # cross-device session sync exists in cloud_sync, but there was NO in-app
+    # control to trigger it or see when it last ran. These two slots wrap
+    # cloud_sync.sync_sessions()/status() so the Home sessions header can show a
+    # "Sync sessions" button + a last-synced badge.
+    #
+    # LANE INDEPENDENCE: the SESSIONS-IMPL lane builds cloud_sync.sync_sessions
+    # in app/cloud_sync.py. We call it DEFENSIVELY via getattr so THIS lane
+    # ships + tests green whether or not that function has merged yet — absent →
+    # {available:false, reason:'pending'} (an honest typed empty, never a fake).
+    @pyqtSlot(result=str)
+    def cloud_sync_status(self) -> str:
+        """Lightweight diagnostic for the Home 'last synced' badge: did sessions
+        sync, and when. NON-BLOCKING — cloud_sync.status() shells out to git, so
+        it runs on the background pool and the cached snapshot returns instantly;
+        `sessions_changed` fires when fresh status lands so the badge re-pulls.
+
+        Shape: {available, signed_in, initialised, last_pull, last_push,
+        ahead, behind, dirty}. `available:false` (with reason) when the sync
+        backend / sync_sessions entry point isn't present yet."""
+        def _work():
+            try:
+                import cloud_sync
+            except Exception as ex:
+                return {"available": False, "reason": f"cloud_sync import: {ex}"}
+            try:
+                st = cloud_sync.status()
+            except Exception as ex:
+                return {"available": False, "reason": str(ex)}
+            # status() returns a SyncStatus dataclass — map to a JSON dict.
+            return {
+                "available": bool(getattr(st, "available", False)),
+                "signed_in": bool(getattr(st, "signed_in", False)),
+                "initialised": bool(getattr(st, "initialised", False)),
+                "repo_slug": str(getattr(st, "repo_slug", "") or ""),
+                "last_pull": str(getattr(st, "last_pull", "") or ""),
+                "last_push": str(getattr(st, "last_push", "") or ""),
+                "ahead": int(getattr(st, "ahead", 0) or 0),
+                "behind": int(getattr(st, "behind", 0) or 0),
+                "dirty": bool(getattr(st, "dirty", False)),
+            }
+        return _safe_json(self._cached_async(
+            "cloud_sync_status", _work, ttl=20.0,
+            empty={"available": False, "reason": "pending"},
+            signal_name="sessions_changed"))
+
+    @pyqtSlot(result=str)
+    def cloud_sync_sessions(self) -> str:
+        """Pull/push sessions to the cloud — the Home 'Sync sessions' button.
+        Returns INSTANTLY ({async, request_id}); the git round-trip runs on the
+        bg pool. On a successful pull we emit `sessions_changed` so the session
+        list re-hydrates with whatever landed from the other device, and the
+        definitive per-click result rides on `sessions_synced(result_json)`.
+
+        Calls cloud_sync.sync_sessions() DEFENSIVELY (getattr) so this lane is
+        independent of the SESSIONS-IMPL lane that builds it: absent →
+        {ok:false, available:false, reason:'pending'}."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            try:
+                self.sessions_synced.emit(_safe_json(payload))
+            except Exception:
+                pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver must not crash the backend
+
+        def _runner():
+            try:
+                import cloud_sync
+            except Exception as ex:
+                _emit({"ok": False, "available": False,
+                       "reason": f"cloud_sync import: {ex}"})
+                return
+            fn = getattr(cloud_sync, "sync_sessions", None)
+            if not callable(fn):
+                _emit({"ok": False, "available": False, "reason": "pending"})
+                return
+            try:
+                res = fn()
+            except Exception as ex:
+                _emit({"ok": False, "available": True, "error": str(ex)})
+                return
+            # sync_sessions returns a SyncResult-like object (success/message)
+            # or a dict. Normalise both.
+            ok = bool(getattr(res, "success", None)
+                      if not isinstance(res, dict) else res.get("ok", res.get("success")))
+            msg = (getattr(res, "message", "") if not isinstance(res, dict)
+                   else res.get("message", "")) or ""
+            _emit({"ok": ok, "available": True, "message": str(msg)})
+            if ok:
+                try: self.sessions_changed.emit()
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI re-pull; absent receiver must not crash
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
+    # ─── Companies (TEAM-UI lane proxy → live /v1/companies) ───────────
+    # TEAM-UI BACKEND (founder 2026-06-18): the cloud /v1/companies API is live;
+    # these slots proxy it with the stored bearer token (cloud_client._request)
+    # so the TEAM-UI lane has a real, off-thread surface to call. Every call
+    # runs on the bg pool (HTTP round-trip — never the Qt thread) and returns a
+    # definitive result via `company_op_done(result_json)`, request_id-stamped
+    # (the connector_op_done / memory_op_done idiom). A 401 → {error:'signed_out'}
+    # so the UI can route to sign-in instead of showing a raw error.
+    def _company_request_async(self, method: str, path: str,
+                               body: "dict | None" = None):
+        """Run a /v1/companies request on the bg pool; deliver via
+        company_op_done. Returns {async, request_id} synchronously. 401 maps to
+        {error:'signed_out'}; any non-ok status to {error:'cloud_unavailable'}."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+
+        def _emit(payload: dict) -> None:
+            payload.setdefault("request_id", request_id)
+            try:
+                self.company_op_done.emit(_safe_json(payload))
+            except Exception:
+                pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver must not crash
+
+        def _runner():
+            try:
+                from cloud_client import _request
+                r = _request(method, path, body=body) if body is not None \
+                    else _request(method, path)
+                status = r.get("status")
+                if status == "ok":
+                    _emit({"ok": True, "data": r.get("json") or {}})
+                    return
+                # cloud_client._request contract: a missing token →
+                # error:'not_signed_in'; an HTTP 401/403 → error:'http_401' /
+                # 'http_403'. Map every signed-out signal to 'signed_out' so the
+                # TEAM-UI routes to sign-in rather than showing a raw error.
+                err = str(r.get("error") or "")
+                if (err in ("not_signed_in", "http_401", "http_403")
+                        or status == "unauthorized"):
+                    _emit({"ok": False, "error": "signed_out"})
+                    return
+                _emit({"ok": False, "error": "cloud_unavailable",
+                       "detail": (err or str(status) or "")[:200]})
+            except Exception as ex:
+                _emit({"ok": False, "error": "cloud_unavailable",
+                       "detail": f"{type(ex).__name__}: {ex}"})
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
+    @pyqtSlot(result=str)
+    def companies_list(self) -> str:
+        """GET /v1/companies/mine — the companies the signed-in user belongs to."""
+        return self._company_request_async("GET", "/v1/companies/mine")
+
+    @pyqtSlot(str, result=str)
+    def company_create(self, name: str) -> str:
+        """POST /v1/companies — create a company the user owns."""
+        return self._company_request_async("POST", "/v1/companies",
+                                           {"name": name or ""})
+
+    @pyqtSlot(str, result=str)
+    def company_detail(self, company_id: str) -> str:
+        """GET /v1/companies/{id} — one company's detail + member roster."""
+        cid = (company_id or "").strip()
+        return self._company_request_async("GET", f"/v1/companies/{cid}")
+
+    @pyqtSlot(str, str, str, result=str)
+    def company_invite(self, company_id: str, email: str = "",
+                       role: str = "member") -> str:
+        """POST /v1/companies/{id}/invites — invite a teammate by email."""
+        cid = (company_id or "").strip()
+        return self._company_request_async(
+            "POST", f"/v1/companies/{cid}/invites",
+            {"email": email or "", "role": role or "member"})
+
+    @pyqtSlot(str, result=str)
+    def company_accept_invite(self, token: str) -> str:
+        """POST /v1/companies/invites/accept — accept an invite by token."""
+        return self._company_request_async(
+            "POST", "/v1/companies/invites/accept", {"token": token or ""})
+
+    @pyqtSlot(str, str, result=str)
+    def company_remove_member(self, company_id: str, user_id: str) -> str:
+        """DELETE /v1/companies/{id}/members/{user_id} — remove a member."""
+        cid = (company_id or "").strip()
+        uid = (user_id or "").strip()
+        return self._company_request_async(
+            "DELETE", f"/v1/companies/{cid}/members/{uid}")
+
+    @pyqtSlot(str, str, str, result=str)
+    def company_set_role(self, company_id: str, user_id: str,
+                         role: str) -> str:
+        """PUT /v1/companies/{id}/members/{user_id} — change a member's role."""
+        cid = (company_id or "").strip()
+        uid = (user_id or "").strip()
+        return self._company_request_async(
+            "PUT", f"/v1/companies/{cid}/members/{uid}",
+            {"role": role or "member"})
 
     @pyqtSlot(result=str)
     def memory_stats(self) -> str:

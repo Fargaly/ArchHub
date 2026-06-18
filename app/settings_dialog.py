@@ -2543,6 +2543,448 @@ class AccountTab(QWidget):
         self._parent_dlg.notify_changed()
 
 
+# ── Tab: Team (workspace / firm membership + roles) ──────────────────────
+# Roles, highest authority first. Mirrors the server-side model
+# (owner > admin > member). Only owner/admin may manage members — the same
+# gate the cloud enforces, surfaced in the UI so the founder never sees a
+# control that the server would reject.
+TEAM_ROLES = ("owner", "admin", "member")
+_TEAM_MANAGE_ROLES = ("owner", "admin")
+
+
+def _team_can_manage(role: str) -> bool:
+    """True when a member with this role may invite / remove / change
+    roles — i.e. owner or admin. Pure function so the test (and the
+    server contract) can both point at one definition."""
+    return (role or "").strip().lower() in _TEAM_MANAGE_ROLES
+
+
+class TeamTab(QWidget):
+    """Team / workspace membership — the REAL in-app surface for the
+    cloud's roles model (owner > admin > member, seats per plan,
+    email-gated invites).
+
+    Before this tab existed, the cloud had a full server-side team model
+    live, but the desktop had ZERO team UI — there was no way to see your
+    firms, create one, invite a teammate, accept an invite, or manage
+    members from inside ArchHub. This tab closes that gap.
+
+    It mirrors AccountTab's structure and talks to the bridge company
+    slots (added by the JS-WIRE lane):
+
+      • companies_list()                       → my firms + my role each
+      • company_create(name)                   → make a firm
+      • company_invite(company_id, email, role) → invite a teammate
+      • company_accept_invite(token)           → join via a pasted token
+      • company_remove_member(company_id, email)
+      • company_set_role(company_id, email, role)
+
+    The remove / role-change controls are GATED to owner/admin only,
+    matching the server (see _team_can_manage) — a member sees the roster
+    read-only. Network-shaped calls land via _bridge_call (json-decoded,
+    timeout-bounded by the slot) so a slow / unreachable cloud never
+    blocks the Qt main thread.
+    """
+
+    def __init__(self, parent_dialog: "SettingsDialog"):
+        super().__init__()
+        self._parent_dlg = parent_dialog
+        self.setObjectName("settingsPage")
+
+        # Cache of the last companies payload + which one is selected, so
+        # the members list + invite form always act on the right firm.
+        self._companies: list[dict] = []
+        self._selected_id: str = ""
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        _add_title(
+            outer, "Team",
+            "See the firms you belong to, start a new one, invite "
+            "teammates by email, and manage who can do what. Owners and "
+            "admins can invite and remove people; members have view "
+            "access. Roles are enforced by ArchHub Cloud.",
+            scope="FIRM",
+        )
+
+        # ── My firms (each row: name + my role badge) ─────────────────
+        firms_grp = QGroupBox("Your firms")
+        fg = QVBoxLayout(firms_grp); fg.setSpacing(8)
+        fg.setContentsMargins(12, 18, 12, 12)
+
+        # Picker — which firm the members list + invite form act on.
+        pick_row = QHBoxLayout(); pick_row.setSpacing(8)
+        pick_row.addWidget(QLabel("Firm"))
+        self._firm_picker = QComboBox()
+        self._firm_picker.setObjectName("teamFirmPicker")
+        self._firm_picker.currentIndexChanged.connect(self._on_pick_firm)
+        pick_row.addWidget(self._firm_picker, 1)
+        fg.addLayout(pick_row)
+
+        # The selected firm's name + my role badge, plain-English.
+        badge_row = QHBoxLayout(); badge_row.setSpacing(8)
+        self._firm_name_lbl = QLabel("")
+        self._firm_name_lbl.setObjectName("teamFirmName")
+        self._firm_name_lbl.setStyleSheet("font-weight:600;")
+        badge_row.addWidget(self._firm_name_lbl)
+        self._role_badge = QLabel("")
+        self._role_badge.setObjectName("teamRoleBadge")
+        self._role_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge_row.addWidget(self._role_badge)
+        badge_row.addStretch(1)
+        fg.addLayout(badge_row)
+
+        # Empty / status line — honest when you belong to no firms yet.
+        self._firms_status = QLabel("")
+        self._firms_status.setObjectName("muted")
+        self._firms_status.setWordWrap(True)
+        fg.addWidget(self._firms_status)
+        outer.addWidget(firms_grp)
+
+        # ── Start a new firm ──────────────────────────────────────────
+        create_grp = QGroupBox("Start a new firm")
+        cg = QVBoxLayout(create_grp); cg.setSpacing(8)
+        cg.setContentsMargins(12, 18, 12, 12)
+        cg.addWidget(QLabel(
+            "Create a workspace for your company. You become its owner."))
+        create_row = QHBoxLayout(); create_row.setSpacing(8)
+        self._new_firm_name = QLineEdit()
+        self._new_firm_name.setObjectName("teamNewFirmName")
+        self._new_firm_name.setPlaceholderText("Firm or company name")
+        create_row.addWidget(self._new_firm_name, 1)
+        self._create_btn = QPushButton("Create firm")
+        self._create_btn.setObjectName("primary")
+        self._create_btn.clicked.connect(self._on_create_company)
+        create_row.addWidget(self._create_btn)
+        cg.addLayout(create_row)
+        outer.addWidget(create_grp)
+
+        # ── Invite a teammate (email + role) ──────────────────────────
+        self._invite_grp = QGroupBox("Invite a teammate")
+        ig = QVBoxLayout(self._invite_grp); ig.setSpacing(8)
+        ig.setContentsMargins(12, 18, 12, 12)
+        ig.addWidget(QLabel(
+            "Send an invite by email. Pick what they can do once they "
+            "join."))
+        invite_row = QHBoxLayout(); invite_row.setSpacing(8)
+        self._invite_email = QLineEdit()
+        self._invite_email.setObjectName("teamInviteEmail")
+        self._invite_email.setPlaceholderText("teammate@firm.com")
+        invite_row.addWidget(self._invite_email, 1)
+        self._invite_role = QComboBox()
+        self._invite_role.setObjectName("teamInviteRole")
+        # Human-readable role names → the role value the server expects.
+        for human, value in (
+            ("Owner — full control", "owner"),
+            ("Admin — manage people", "admin"),
+            ("Member — view + use", "member"),
+        ):
+            self._invite_role.addItem(human, value)
+        # Default to the safest role.
+        self._invite_role.setCurrentIndex(2)
+        invite_row.addWidget(self._invite_role)
+        self._invite_btn = QPushButton("Send invite")
+        self._invite_btn.clicked.connect(self._on_invite)
+        invite_row.addWidget(self._invite_btn)
+        ig.addLayout(invite_row)
+        outer.addWidget(self._invite_grp)
+
+        # ── Members (each row: email + role; manage if owner/admin) ───
+        members_grp = QGroupBox("People in this firm")
+        mg = QVBoxLayout(members_grp); mg.setSpacing(8)
+        mg.setContentsMargins(12, 18, 12, 12)
+        self._members_box = QVBoxLayout(); self._members_box.setSpacing(6)
+        mg.addLayout(self._members_box)
+        self._members_status = QLabel("")
+        self._members_status.setObjectName("muted")
+        self._members_status.setWordWrap(True)
+        mg.addWidget(self._members_status)
+        outer.addWidget(members_grp)
+
+        # ── Accept an invite (paste token) ────────────────────────────
+        accept_grp = QGroupBox("Have an invite?")
+        ag = QVBoxLayout(accept_grp); ag.setSpacing(8)
+        ag.setContentsMargins(12, 18, 12, 12)
+        ag.addWidget(QLabel(
+            "Paste the invite code a teammate sent you to join their "
+            "firm."))
+        accept_row = QHBoxLayout(); accept_row.setSpacing(8)
+        self._accept_token = QLineEdit()
+        self._accept_token.setObjectName("teamAcceptToken")
+        self._accept_token.setPlaceholderText("Paste invite code")
+        accept_row.addWidget(self._accept_token, 1)
+        self._accept_btn = QPushButton("Join firm")
+        self._accept_btn.clicked.connect(self._on_accept_invite)
+        accept_row.addWidget(self._accept_btn)
+        ag.addLayout(accept_row)
+        outer.addWidget(accept_grp)
+
+        outer.addStretch(1)
+
+        # First paint from the bridge.
+        self._refresh()
+
+    # ── Bridge plumbing (mirrors AccountTab._bridge) ──────────────────
+    def _bridge(self):
+        return (getattr(self._parent_dlg, "bridge", None)
+                or getattr(self._parent_dlg, "_bridge", None))
+
+    # ── Selection / lookup helpers ────────────────────────────────────
+    def _selected_company(self) -> dict:
+        """The currently-picked firm dict, or {} if none."""
+        for c in self._companies:
+            if str(c.get("id") or c.get("company_id") or "") == self._selected_id:
+                return c
+        return self._companies[0] if self._companies else {}
+
+    def _my_role(self, company: dict) -> str:
+        """My role inside the given firm (lower-cased)."""
+        return str((company or {}).get("my_role")
+                   or (company or {}).get("role") or "").strip().lower()
+
+    @staticmethod
+    def _members_of(company: dict) -> list[dict]:
+        return list((company or {}).get("members") or [])
+
+    # ── Refresh / render ──────────────────────────────────────────────
+    def _refresh(self) -> None:
+        """Pull my firms from the bridge and render. Synchronous + cheap:
+        the slot is json + timeout-bounded, never a blocking network call
+        on the UI thread (the bridge runs the network off-thread)."""
+        companies = _bridge_call(self._parent_dlg, "companies_list", default=None)
+        if not isinstance(companies, list):
+            companies = []
+        self._render_companies(companies)
+
+    def _render_companies(self, companies: list) -> None:
+        """Bind the firms payload: fill the picker, then render the
+        selected firm's badge + members. The TEST drives this directly
+        with a fake payload — it is the data-binding seam."""
+        self._companies = [c for c in (companies or []) if isinstance(c, dict)]
+
+        # Repopulate the picker without thrashing the selection handler.
+        self._firm_picker.blockSignals(True)
+        self._firm_picker.clear()
+        for c in self._companies:
+            cid = str(c.get("id") or c.get("company_id") or "")
+            name = str(c.get("name") or "(unnamed firm)")
+            self._firm_picker.addItem(name, cid)
+        self._firm_picker.blockSignals(False)
+
+        if not self._companies:
+            # Honest empty state — not a fake row.
+            self._selected_id = ""
+            self._firm_picker.setVisible(False)
+            self._firm_name_lbl.setText("")
+            self._role_badge.setText("")
+            self._role_badge.setVisible(False)
+            self._firms_status.setText(
+                "You are not part of any firm yet. Start one below, or "
+                "paste an invite code to join your team.")
+            self._invite_grp.setVisible(False)
+            self._render_members({})
+            return
+
+        self._firm_picker.setVisible(len(self._companies) > 1)
+        self._firms_status.setText("")
+        # Keep the prior selection if still present, else pick the first.
+        ids = [str(c.get("id") or c.get("company_id") or "")
+               for c in self._companies]
+        if self._selected_id not in ids:
+            self._selected_id = ids[0]
+        self._firm_picker.setCurrentIndex(ids.index(self._selected_id))
+        self._render_selected()
+
+    def _render_selected(self) -> None:
+        """Render the selected firm's name + my-role badge, the invite
+        form gate, and the members roster."""
+        company = self._selected_company()
+        self._selected_id = str(company.get("id")
+                                or company.get("company_id") or "")
+        name = str(company.get("name") or "(unnamed firm)")
+        role = self._my_role(company)
+
+        self._firm_name_lbl.setText(name)
+        # Role badge — plain word, coloured by authority.
+        self._role_badge.setVisible(bool(role))
+        self._role_badge.setText(role.capitalize() if role else "")
+        colour = (TOKENS["good"] if role == "owner"
+                  else TOKENS["accent"] if role == "admin"
+                  else TOKENS["muted"])
+        self._role_badge.setStyleSheet(
+            f"QLabel#teamRoleBadge {{ background:{TOKENS['bg']};"
+            f" color:{colour}; border:1px solid {colour};"
+            f" border-radius:8px; padding:1px 8px; font-size:11px;"
+            f" font-weight:600; }}")
+
+        # Only owner/admin may invite — mirror the server gate.
+        self._invite_grp.setVisible(_team_can_manage(role))
+        self._render_members(company)
+
+    def _render_members(self, company: dict) -> None:
+        """Bind the members list: one row per teammate (email + role).
+        Owner/admin get a role-change combo + a Remove button per row;
+        a plain member sees the roster read-only. The TEST drives this
+        directly — it is the second data-binding seam."""
+        # Clear any prior rows.
+        while self._members_box.count():
+            item = self._members_box.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+
+        members = self._members_of(company)
+        my_role = self._my_role(company)
+        can_manage = _team_can_manage(my_role)
+
+        if not members:
+            self._members_status.setText(
+                "No teammates yet."
+                if company else
+                "Pick a firm to see who is on the team.")
+            return
+        self._members_status.setText(
+            "You can change roles and remove people."
+            if can_manage else
+            "You have view access to this team.")
+
+        cid = str(company.get("id") or company.get("company_id") or "")
+        for m in members:
+            if not isinstance(m, dict):
+                continue
+            email = str(m.get("email") or m.get("user") or "")
+            role = str(m.get("role") or "member").strip().lower()
+            row = QFrame()
+            row.setObjectName("teamMemberRow")
+            row.setStyleSheet(
+                f"QFrame#teamMemberRow {{ background:{TOKENS['card']};"
+                f" border:1px solid {TOKENS['border']};"
+                f" border-radius:6px; }}")
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(12, 8, 12, 8); rl.setSpacing(10)
+            email_lbl = QLabel(email)
+            email_lbl.setObjectName("teamMemberEmail")
+            email_lbl.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
+            rl.addWidget(email_lbl, 1)
+
+            if can_manage:
+                role_combo = QComboBox()
+                role_combo.setObjectName("teamMemberRole")
+                for r in TEAM_ROLES:
+                    role_combo.addItem(r.capitalize(), r)
+                idx = TEAM_ROLES.index(role) if role in TEAM_ROLES else 2
+                role_combo.setCurrentIndex(idx)
+                role_combo.activated.connect(
+                    lambda _i, cb=role_combo, em=email, c=cid:
+                    self._on_change_role(c, em, cb.currentData()))
+                rl.addWidget(role_combo)
+                remove_btn = QPushButton("Remove")
+                remove_btn.setObjectName("danger")
+                remove_btn.clicked.connect(
+                    lambda _checked=False, em=email, c=cid:
+                    self._on_remove_member(c, em))
+                rl.addWidget(remove_btn)
+            else:
+                # Read-only role label for plain members.
+                role_lbl = QLabel(role.capitalize())
+                role_lbl.setObjectName("muted")
+                rl.addWidget(role_lbl)
+
+            self._members_box.addWidget(row)
+
+    # ── Actions (each wired to the matching bridge company slot) ──────
+    def _on_pick_firm(self, _idx: int) -> None:
+        cid = self._firm_picker.currentData()
+        if cid is not None:
+            self._selected_id = str(cid)
+            self._render_selected()
+
+    def _on_create_company(self) -> None:
+        name = self._new_firm_name.text().strip()
+        if not name:
+            QMessageBox.information(
+                self, "Start a new firm",
+                "Type a name for your firm first.")
+            return
+        res = _bridge_call(self._parent_dlg, "company_create", name,
+                           default=None)
+        self._after_write(res, ok_msg=f"Created firm “{name}”.",
+                          clear=(self._new_firm_name,))
+
+    def _on_invite(self) -> None:
+        company = self._selected_company()
+        cid = str(company.get("id") or company.get("company_id") or "")
+        email = self._invite_email.text().strip()
+        role = self._invite_role.currentData() or "member"
+        if not cid:
+            QMessageBox.information(
+                self, "Invite a teammate",
+                "Create or pick a firm before inviting people.")
+            return
+        if "@" not in email:
+            QMessageBox.information(
+                self, "Invite a teammate",
+                "Enter the teammate's email address.")
+            return
+        res = _bridge_call(self._parent_dlg, "company_invite", cid, email,
+                           role, default=None)
+        self._after_write(res, ok_msg=f"Invited {email} as {role}.",
+                          clear=(self._invite_email,))
+
+    def _on_accept_invite(self) -> None:
+        token = self._accept_token.text().strip()
+        if not token:
+            QMessageBox.information(
+                self, "Join a firm",
+                "Paste the invite code you were sent.")
+            return
+        res = _bridge_call(self._parent_dlg, "company_accept_invite", token,
+                           default=None)
+        self._after_write(res, ok_msg="Joined the firm.",
+                          clear=(self._accept_token,))
+
+    def _on_remove_member(self, company_id: str, email: str) -> None:
+        if QMessageBox.question(
+            self, "Remove teammate?",
+            f"Remove {email} from this firm? They lose access "
+            f"immediately.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        res = _bridge_call(self._parent_dlg, "company_remove_member",
+                           company_id, email, default=None)
+        self._after_write(res, ok_msg=f"Removed {email}.")
+
+    def _on_change_role(self, company_id: str, email: str, role: str) -> None:
+        res = _bridge_call(self._parent_dlg, "company_set_role",
+                           company_id, str(email), str(role), default=None)
+        self._after_write(res, ok_msg=f"{email} is now {role}.")
+
+    # ── Shared write-result handling ──────────────────────────────────
+    def _after_write(self, res, ok_msg: str, clear=()) -> None:
+        """Interpret a bridge write result, surface it plainly, clear
+        any inputs on success, and re-pull the roster so the UI reflects
+        the new server state."""
+        res = res if isinstance(res, dict) else {}
+        ok = bool(res.get("ok", True)) and not res.get("error")
+        if ok:
+            for w in clear:
+                try:
+                    w.clear()
+                except Exception:
+                    pass
+            self._refresh()
+            try:
+                self._parent_dlg.notify_changed()
+            except Exception:
+                pass
+        else:
+            err = res.get("error") or res.get("msg") or "That didn't work."
+            QMessageBox.warning(self, "Team", str(err))
+
+
 # ── Tab: Brain (AgDR-0044 · personal-brain-mcp) ──────────────────────────
 class BrainTab(QWidget):
     """Native Qt brain settings — daemon status · firm identity · invite
@@ -3836,6 +4278,7 @@ class SettingsDialog(QDialog):
         ]),
         ("Account & Brain", "◈", [  # ◈
             ("Account",       AccountTab),
+            ("Team",          TeamTab),
             ("Brain",         BrainTab),
             ("Memory",        MemoryTab),
         ]),

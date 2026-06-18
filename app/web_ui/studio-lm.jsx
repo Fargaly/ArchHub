@@ -4753,18 +4753,9 @@ const ChatsPanel = ({ openId, onOpen }) => {
         </div>
       )}
 
-      {/* User */}
-      <div style={{
-        margin:8, padding:'7px 10px', borderRadius:6,
-        background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        display:'flex', alignItems:'center', gap:9,
-      }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
-        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-        </div>
-      </div>
+      {/* User — FIX 2: real account identity (cloud_status + live providers),
+          replacing the old hardcoded name + plan literals. */}
+      <AccountIdentity/>
     </div>
   );
 };
@@ -5668,17 +5659,9 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
           top · proper fit". Moved to the Conversation/Inspector
           right-rail header below. */}
 
-      <div style={{
-        margin:8, padding:'7px 10px', borderRadius:6,
-        background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        display:'flex', alignItems:'center', gap:9,
-      }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
-        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-        </div>
-      </div>
+      {/* User — FIX 2: real account identity (same component the ChatsPanel
+          footer uses), replacing the old hardcoded name + plan literals. */}
+      <AccountIdentity/>
     </div>
   );
 };
@@ -6716,6 +6699,173 @@ const RouterStatus = ({ model, compact }) => {
   );
 };
 
+// ──────────────────────── PROVIDER TAG (single source) ──────────────────
+// ONE-SYSTEM: the CLOUD / BYO / LOCAL mapping over a provider id lived ONLY
+// inside ModelPicker._hydrate (`tagFor`/`groupLabel`). FIX 2 (founder: the
+// account chips fake "BYO · CLOUD") needs the SAME mapping for AccountIdentity,
+// so it is lifted to module scope here and ModelPicker now references it — one
+// table, it can't drift between the two surfaces.
+const PROVIDER_TAG = {
+  anthropic:'CLOUD', openai:'CLOUD', google:'CLOUD',
+  archhub_cloud:'CLOUD',
+  openrouter:'BYO',
+  ollama:'LOCAL', lmstudio:'LOCAL', local:'LOCAL',
+};
+const PROVIDER_GROUP_LABEL = {
+  anthropic:'CLOUD · Anthropic',
+  openai:'CLOUD · OpenAI',
+  google:'CLOUD · Google',
+  openrouter:'BYO · OpenRouter',
+  ollama:'LOCAL · Ollama',
+  lmstudio:'LOCAL · LM Studio',
+  archhub_cloud:'CLOUD · ArchHub',
+};
+const providerTag = (p) => PROVIDER_TAG[String(p || '').toLowerCase()] || 'BYO';
+const providerGroupLabel = (p) => PROVIDER_GROUP_LABEL[String(p || '').toLowerCase()]
+  || ('PROVIDER · ' + String(p || '').toUpperCase());
+// Reduce a set of live, CONFIGURED providers to the distinct access tags the
+// user actually has, ordered CLOUD → BYO → LOCAL. Empty when nothing is
+// configured (honest — we never invent "BYO · CLOUD" out of thin air).
+const accessTagsFor = (providerIds) => {
+  const seen = [];
+  (providerIds || []).forEach((p) => {
+    const tag = providerTag(p);
+    if (tag && seen.indexOf(tag) === -1) seen.push(tag);
+  });
+  return ['CLOUD', 'BYO', 'LOCAL'].filter(t => seen.indexOf(t) !== -1);
+};
+
+// ──────────────────────── ACCOUNT IDENTITY (panel footers) ───────────────
+// FIX 2 (founder, 2026-06-18 — "fake account chips"): the ChatsPanel footer and
+// the Nodes-panel footer BOTH hardcoded avatar 'F' + name 'Fargaly' + the mono
+// tag 'BYO · CLOUD' — pure literals painted as if they were a live account +
+// plan. They could drift from reality (and from each other) and they LIED when
+// signed out. This ONE component replaces both: it reads the SAME real wiring
+// AccountChip uses —
+//   • cloud_status() → {signed_in, email, plan}      (account + plan)
+//   • get_models()   → live provider ids → accessTagsFor (the real CLOUD/BYO/
+//     LOCAL tag set, via the shared providerTag() table)
+// and re-probes on the same cloud_signin_done / cloud_signout_done signals so it
+// updates live. Signed-out → honest "Sign in" (drives the real PKCE flow, same
+// as AccountChip), never a fabricated name/plan. Rendered in BOTH footers so
+// they can never drift apart again.
+const AccountIdentity = () => {
+  const [signedIn, setSignedIn] = React.useState(null);  // null = probing
+  const [email, setEmail] = React.useState('');
+  const [plan, setPlan] = React.useState('');
+  const [tags, setTags] = React.useState([]);            // ['CLOUD','BYO',...]
+
+  // Live provider tags from the real model list (configured providers only).
+  React.useEffect(() => {
+    let alive = true;
+    bridgeAsync('get_models').then((real) => {
+      if (!alive || !Array.isArray(real)) return;
+      const ids = real
+        .filter(m => m && m.configured && (m.provider || m.id))
+        .map(m => m.provider || String(m.id || '').split(':')[0]);
+      setTags(accessTagsFor(ids));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Account + plan from cloud_status — the SAME slot AccountChip reads.
+  React.useEffect(() => {
+    let alive = true;
+    const probe = () => {
+      bridgeAsync('cloud_status').then((r) => {
+        if (!alive || !r) return;
+        if (typeof r.signed_in === 'boolean') setSignedIn(r.signed_in);
+        if (r.signed_in) {
+          if (typeof r.plan === 'string') setPlan(r.plan);
+        } else { setEmail(''); setPlan(''); }
+      }).catch(() => { if (alive) setSignedIn(false); });
+    };
+    probe();
+    const b = window.archhub;
+    const onSignin = (resultJson) => {
+      let res = null;
+      try { res = JSON.parse(resultJson || '{}'); } catch (e) { res = null; }
+      if (res && res.ok && res.signed_in) {
+        setSignedIn(true);
+        if (res.email) setEmail(res.email);
+        if (typeof res.plan === 'string') setPlan(res.plan);
+        probe();
+      }
+    };
+    const onSignout = () => { setSignedIn(false); setEmail(''); setPlan(''); };
+    try { if (b && b.cloud_signin_done && b.cloud_signin_done.connect) b.cloud_signin_done.connect(onSignin); } catch (e) {}
+    try { if (b && b.cloud_signout_done && b.cloud_signout_done.connect) b.cloud_signout_done.connect(onSignout); } catch (e) {}
+    return () => {
+      alive = false;
+      try { if (b && b.cloud_signin_done && b.cloud_signin_done.disconnect) b.cloud_signin_done.disconnect(onSignin); } catch (e) {}
+      try { if (b && b.cloud_signout_done && b.cloud_signout_done.disconnect) b.cloud_signout_done.disconnect(onSignout); } catch (e) {}
+    };
+  }, []);
+
+  // Drive the REAL browser sign-in (same path AccountChip + Settings use).
+  const doSignIn = async () => {
+    try {
+      const r = await bridgeAsync('cloud_sign_in');
+      if (!r || (r.ok === false && !r.async && !r.opened_browser)) {
+        window.dispatchEvent(new CustomEvent('lm-action-open-settings', { detail:{ section:'account' } }));
+      }
+    } catch (e) {
+      try { window.dispatchEvent(new CustomEvent('lm-action-open-settings', { detail:{ section:'account' } })); } catch (e2) {}
+    }
+  };
+
+  // ── Signed-out (and the probing state): an honest "Sign in", never a name.
+  if (!signedIn) {
+    return (
+      <button onClick={doSignIn} data-testid="account-identity" data-account-state="signed-out"
+        title="Sign in to ArchHub Cloud" aria-label="Sign in to ArchHub Cloud"
+        style={{
+          margin:8, padding:'7px 10px', borderRadius:6,
+          background:LM.bgSoft, border:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:9, width:'calc(100% - 16px)',
+          cursor:'pointer', textAlign:'left', color:LM.inkSoft,
+          transition:'border-color .12s, color .12s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.color = LM.ink; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.color = LM.inkSoft; }}>
+        <div style={{ width:22, height:22, borderRadius:'50%', background:LM.bgPanel,
+          border:`1px solid ${LM.line}`, display:'grid', placeItems:'center', fontSize:12, color:LM.inkMuted }}>↪</div>
+        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
+          <div style={{ fontSize:12, fontWeight:500, color:'inherit' }}>Sign in</div>
+          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>ArchHub Cloud</div>
+        </div>
+      </button>
+    );
+  }
+
+  // ── Signed-in: real email + real plan/access tags. The avatar initial is
+  //    derived from the real email (never a hardcoded 'F'); the tag line is the
+  //    real plan + the access tags the user actually has configured.
+  const who = (email || 'Account').trim();
+  const initial = (who[0] || '?').toUpperCase();
+  const planTxt = (plan || '').trim();
+  const tagParts = [];
+  if (planTxt) tagParts.push(planTxt.toUpperCase());
+  (tags || []).forEach(t => { if (tagParts.indexOf(t) === -1) tagParts.push(t); });
+  const tagLine = tagParts.length ? tagParts.join(' · ') : 'SIGNED IN';
+  return (
+    <div data-testid="account-identity" data-account-state="signed-in"
+      data-account-plan={planTxt || ''}
+      title={email ? `Signed in as ${email}` : 'Signed in to ArchHub Cloud'}
+      style={{
+        margin:8, padding:'7px 10px', borderRadius:6,
+        background:LM.bgSoft, border:`1px solid ${LM.line}`,
+        display:'flex', alignItems:'center', gap:9,
+      }}>
+      <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>{initial}</div>
+      <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
+        <div style={{ fontSize:12, fontWeight:500, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{who}</div>
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{tagLine}</div>
+      </div>
+    </div>
+  );
+};
+
 // ──────────────────────── ACCOUNT CHIP (top nav) ────────────────────────
 // IN-APP VISIBILITY (founder 2026-06-18): the cloud sign-in backend is REAL
 // (cloud_status / cloud_client.me / cloud_sign_in / cloud_sign_out, all wired
@@ -7207,6 +7357,12 @@ const BrainChip = ({ compact }) => {
 // dispatch so the existing popover renders.
 const HomeGraphHealthChip = () => {
   const [counts, setCounts] = React.useState({ err:0, warn:0, total:0 });
+  // FIX 1 (founder, 2026-06-18): on Home with NO session open the canvas graph
+  // (LM_GRAPH) is empty — a confident green "healthy" about a graph that isn't
+  // on screen is a lie. Track whether there's actually a graph to report on and
+  // show an honest neutral "no canvas open" instead of green.
+  const [hasGraph, setHasGraph] = React.useState(
+    () => !!(LM_GRAPH && Array.isArray(LM_GRAPH.nodes) && LM_GRAPH.nodes.length > 0));
   // AgDR-0047 §D D8 perf (2026-05-26): hash + skip mirror of
   // GraphHealthBadge — Home chip polls on the same `lm-graph-bump`
   // event so it shouldn't re-validate unchanged graph state either.
@@ -7220,7 +7376,12 @@ const HomeGraphHealthChip = () => {
     // payload is unchanged — hence force.
     const pull = async (force) => {
       try {
-        const payload = JSON.stringify(LM_GRAPH || { nodes:[], wires:[] });
+        const g = LM_GRAPH || { nodes:[], wires:[] };
+        const nodeCount = Array.isArray(g.nodes) ? g.nodes.length : 0;
+        if (!cancelled) setHasGraph(nodeCount > 0);
+        // No canvas open → nothing to validate; don't paint a fake green.
+        if (nodeCount === 0) { setCounts({ err:0, warn:0, total:0 }); return; }
+        const payload = JSON.stringify(g);
         if (!force && payload === lastHashRef.current) return;
         lastHashRef.current = payload;
         const res = await bridgeAsync('graph_validate', payload);
@@ -7244,6 +7405,27 @@ const HomeGraphHealthChip = () => {
       window.removeEventListener('lm-graph-bump', onBump);
       window.removeEventListener('lm-graph-validated', onValidated); };
   }, []);
+  // ── Honest empty state: no canvas open → neutral, NOT green "healthy".
+  if (!hasGraph) {
+    return (
+      <button data-testid="home-graph-health-chip" data-graph-state="empty"
+        title="No canvas open — open or create a session to see its graph health"
+        onClick={(e) => {
+          e.stopPropagation();
+          // Still useful: open the (empty) health detail so the founder sees
+          // WHY it's neutral, rather than a dead click.
+          try { window.dispatchEvent(new CustomEvent('lm-graph-health-open',
+            { detail:{ err:0, warn:0, total:0, empty:true } })); } catch (e2) {}
+        }}
+        style={{
+          display:'flex', alignItems:'center', gap:6, padding:'6px 12px',
+          background: LM.bg, border:`1px solid ${LM.line}`, borderRadius:6,
+          cursor:'pointer', color: LM.inkMuted,
+          fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em', whiteSpace:'nowrap',
+          transition:'background .12s, border-color .12s, color .12s',
+        }}>◇ graph · no canvas open</button>
+    );
+  }
   const col = counts.err > 0 ? LM.err
             : counts.warn > 0 ? LM.warn
             : LM.ok;
@@ -7254,15 +7436,18 @@ const HomeGraphHealthChip = () => {
       ? `◆ graph · ${counts.warn} warn`
       : `◆ graph · healthy`;
   return (
-    <button data-testid="home-graph-health-chip"
-      title={`Graph health · ${counts.err} errors · ${counts.warn} warnings · open the Self-Heal Inspector`}
+    <button data-testid="home-graph-health-chip" data-graph-state="active"
+      title={`Graph health · ${counts.err} errors · ${counts.warn} warnings · click to open the issue list`}
       onClick={(e) => {
         e.stopPropagation();
-        // SELF-HEAL-INSPECTOR: this chip now opens the heal-event timeline
-        // (was a dead toast-hint pointing at the footer pill). The inspector
-        // shows the REAL recoveries the self-healing connectors performed —
-        // the deeper "what healed" view behind this health summary.
-        try { window.dispatchEvent(new CustomEvent('lm-self-heal-inspector-open')); } catch (e2) {}
+        // FIX 1 (founder, 2026-06-18): this chip used to fire a DIFFERENT
+        // surface (the self-heal inspector) — a dead-end for "graph health".
+        // It now opens the REAL graph-health detail (the issue list the footer
+        // HealthStripItem already renders) by dispatching lm-graph-health-open,
+        // carrying the counts so the popover can paint immediately. The footer
+        // pill listens for this event and opens its popover anchored bottom-right.
+        try { window.dispatchEvent(new CustomEvent('lm-graph-health-open',
+          { detail:{ err: counts.err, warn: counts.warn, total: counts.total } })); } catch (e2) {}
       }}
       style={{
         display:'flex', alignItems:'center', gap:6,
@@ -9615,10 +9800,24 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
           flashToast('Positions reset');
         }}
         onClearAll={() => {
+          // FIX 3 (founder, 2026-06-18): this used to set wires=[] then iterate
+          // ONLY `userNodes` — but real nodes live in LM_GRAPH.nodes (see
+          // addNodeFromLibrary, which pushes there), so LM_GRAPH.nodes was left
+          // populated while the toast claimed "Cleared". A lie. "Clear all
+          // nodes" now truly clears EVERYTHING — every node, every wire, every
+          // group — mirroring the keyboard-delete path that filters LM_GRAPH
+          // directly, then persists the now-empty graph so the toast is true.
+          const had = (Array.isArray(LM_GRAPH.nodes) ? LM_GRAPH.nodes.length : 0)
+                    + ((userNodes || []).length);
+          LM_GRAPH.nodes = [];
           LM_GRAPH.wires = [];
-          // Don't blow up the demo nodes; only user-added are deletable.
+          LM_GRAPH.groups = [];
+          // Drop the parallel userNodes React state too (rendered alongside
+          // LM_GRAPH.nodes via allNodes) so nothing lingers on the canvas.
           (userNodes || []).forEach(n => removeUserNode && removeUserNode(n.id));
-          saveCurrentGraph(); bumpGraph && bumpGraph(); flashToast('Cleared');
+          setFocusId && setFocusId(null);
+          saveCurrentGraph(); bumpGraph && bumpGraph();
+          flashToast(had > 0 ? `Cleared ${had} node${had === 1 ? '' : 's'}` : 'Canvas already empty');
         }}/>}
       {nodeMenu && (
         <NodeMenu x={nodeMenu.x} y={nodeMenu.y} nodeId={nodeMenu.id}
@@ -19691,20 +19890,11 @@ const ModelPicker = ({ setModel, onClose, model }) => {
       openrouter:'#3a6acc', ollama:'#1a8a4a', lmstudio:'#6a72ff',
       archhub_cloud:'#cc785c',
     })[String(p || '').toLowerCase()] || '#888888';
-    const groupLabel = (p) => ({
-      anthropic:'CLOUD · Anthropic',
-      openai:'CLOUD · OpenAI',
-      google:'CLOUD · Google',
-      openrouter:'BYO · OpenRouter',
-      ollama:'LOCAL · Ollama',
-      lmstudio:'LOCAL · LM Studio',
-      archhub_cloud:'CLOUD · ArchHub',
-    })[String(p || '').toLowerCase()] || ('PROVIDER · ' + (p || '').toUpperCase());
-    const tagFor = (p) => ({
-      anthropic:'CLOUD', openai:'CLOUD', google:'CLOUD',
-      openrouter:'BYO', ollama:'LOCAL', lmstudio:'LOCAL',
-      archhub_cloud:'CLOUD',
-    })[String(p || '').toLowerCase()] || 'BYO';
+    // FIX 2 (ONE-SYSTEM): the provider→label / provider→tag maps are the shared
+    // module-level providerGroupLabel() / providerTag() now (AccountIdentity uses
+    // the same table) — no second copy here that could drift.
+    const groupLabel = providerGroupLabel;
+    const tagFor = providerTag;
     const byProvider = {};
     real.forEach((m) => {
       const p = m.provider || (String(m.id || '').split(':')[0]) || 'unknown';
@@ -20107,9 +20297,18 @@ const HealthStripItem = () => {
     const onBump = () => setBump(b => b + 1);
     window.addEventListener('lm-graph-bump', onBump);
     window.addEventListener('lm-graph-validated', onBump);
+    // FIX 1 (founder, 2026-06-18): the top-bar graph-health chip
+    // (HomeGraphHealthChip) used to fire a dead-end pointing at THIS pill. It
+    // now dispatches lm-graph-health-open and this strip item is the real
+    // detail surface — open the popover (and refresh) when the event lands so
+    // ONE click on the chip opens the issue list. The chip carries counts in
+    // detail for an instant paint, but the effect below re-validates anyway.
+    const onHealthOpen = () => { setOpen(true); setBump(b => b + 1); };
+    window.addEventListener('lm-graph-health-open', onHealthOpen);
     return () => {
       window.removeEventListener('lm-graph-bump', onBump);
       window.removeEventListener('lm-graph-validated', onBump);
+      window.removeEventListener('lm-graph-health-open', onHealthOpen);
     };
   }, []);
   React.useEffect(() => {

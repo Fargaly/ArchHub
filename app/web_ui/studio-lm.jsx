@@ -6040,6 +6040,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
         <BrainChip/>
+        <AccountChip compact/>
         <HomeGraphHealthChip/>
         {/* IA-FIX (ia-critique-ai-stemcells-2026-06-03): the home plan-history
             chip was removed. Plans belong to a SESSION, not the home page —

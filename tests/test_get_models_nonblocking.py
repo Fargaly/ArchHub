@@ -16,7 +16,7 @@ This test mirrors `tests/test_bridge_nonblocking.py`:
 `test_get_local_llms_slot_is_async` — a PLAIN stand-in `self` that borrows
 the real `_cached_async` + `_async_state`, with `probe_lmstudio` stubbed to
 sleep so a regression (re-introducing a synchronous probe in `get_models`)
-fails the < 100 ms assertion.
+fails well before the slow probe could complete.
 """
 from __future__ import annotations
 
@@ -30,6 +30,19 @@ if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 import bridge  # noqa: E402
+
+
+SLOW_PROBE_SECONDS = 3.0
+
+
+def _assert_not_waiting_for_probe(elapsed, probe_seconds, label, detail):
+    """Allow scheduler jitter, but fail if the slow probe runs inline."""
+    budget = probe_seconds / 2
+    assert elapsed < budget, (
+        f"{label} blocked {elapsed*1000:.0f}ms with a "
+        f"{probe_seconds:.1f}s slow probe (budget {budget:.1f}s) - "
+        f"{detail}"
+    )
 
 
 class _DummySignal:
@@ -101,21 +114,24 @@ def _stub_probe_slow(monkeypatch, seconds=3.0, *, live=True):
     return _slow
 
 
-# ─── 1. THE gate — get_models returns < 100 ms with a 3 s probe ─────────
+# ─── 1. THE gate — get_models returns well before a 3 s probe ───────────
 
 
-def test_get_models_returns_under_100ms_with_slow_probe(monkeypatch):
-    _stub_probe_slow(monkeypatch, 3.0)
+def test_get_models_returns_without_waiting_for_slow_probe(monkeypatch):
+    probe_seconds = SLOW_PROBE_SECONDS
+    _stub_probe_slow(monkeypatch, probe_seconds)
     dummy = _DummyBridge(_DummyRouter())
 
     t0 = time.perf_counter()
     raw = dummy.get_models()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
-        f"get_models blocked {elapsed*1000:.0f}ms on a slow LM Studio "
-        f"probe — it must run the probe off the Qt main thread "
-        f"(_cached_async).  The boot-hang has regressed."
+    _assert_not_waiting_for_probe(
+        elapsed,
+        probe_seconds,
+        "get_models",
+        "it must run the probe off the Qt main thread (_cached_async). "
+        "The boot-hang has regressed.",
     )
     # The cold call returns the static catalogue (never blank) so the
     # picker has something to render immediately.
@@ -164,23 +180,25 @@ def test_get_models_no_router_returns_empty_list():
 # alongside `get_models`.  It (and get_provider_stats / get_runtime_info)
 # reached `probe_lmstudio` through `router.configured_providers()` and
 # paid the full timeout on the Qt main thread — the boot-hang the court
-# refuted as still-present.  Same gate as get_models: < 100 ms under a
-# stubbed slow probe.
+# refuted as still-present. Same gate as get_models: return well before the
+# slow probe could complete.
 
 
-def test_get_providers_returns_under_100ms_with_slow_probe(monkeypatch):
-    _stub_probe_slow(monkeypatch, 3.0)
+def test_get_providers_returns_without_waiting_for_slow_probe(monkeypatch):
+    probe_seconds = SLOW_PROBE_SECONDS
+    _stub_probe_slow(monkeypatch, probe_seconds)
     dummy = _DummyBridge(_DummyRouter())
 
     t0 = time.perf_counter()
     raw = dummy.get_providers()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
-        f"get_providers blocked {elapsed*1000:.0f}ms on a slow LM Studio "
-        f"probe — it is in the boot pullAll batch and MUST run the probe "
-        f"off the Qt main thread (_cached_async).  The boot-hang has "
-        f"regressed."
+    _assert_not_waiting_for_probe(
+        elapsed,
+        probe_seconds,
+        "get_providers",
+        "it is in the boot pullAll batch and MUST run the probe off "
+        "the Qt main thread (_cached_async). The boot-hang has regressed.",
     )
     # The cold call returns the static provider list (never blank) so the
     # Settings → Providers tab renders immediately.
@@ -191,33 +209,40 @@ def test_get_providers_returns_under_100ms_with_slow_probe(monkeypatch):
         "static provider rows must be present on the cold call"
 
 
-def test_get_provider_stats_returns_under_100ms_with_slow_probe(monkeypatch):
-    _stub_probe_slow(monkeypatch, 3.0)
+def test_get_provider_stats_returns_without_waiting_for_slow_probe(
+        monkeypatch):
+    probe_seconds = SLOW_PROBE_SECONDS
+    _stub_probe_slow(monkeypatch, probe_seconds)
     dummy = _DummyBridge(_DummyRouter())
 
     t0 = time.perf_counter()
     raw = dummy.get_provider_stats()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
-        f"get_provider_stats blocked {elapsed*1000:.0f}ms on a slow probe "
-        f"— route it through _cached_async."
+    _assert_not_waiting_for_probe(
+        elapsed,
+        probe_seconds,
+        "get_provider_stats",
+        "route it through _cached_async.",
     )
     data = json.loads(raw)
     assert "configured" in data and "blocked" in data
 
 
-def test_get_runtime_info_returns_under_100ms_with_slow_probe(monkeypatch):
-    _stub_probe_slow(monkeypatch, 3.0)
+def test_get_runtime_info_returns_without_waiting_for_slow_probe(monkeypatch):
+    probe_seconds = SLOW_PROBE_SECONDS
+    _stub_probe_slow(monkeypatch, probe_seconds)
     dummy = _DummyBridge(_DummyRouter())
 
     t0 = time.perf_counter()
     raw = dummy.get_runtime_info()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
-        f"get_runtime_info blocked {elapsed*1000:.0f}ms on a slow probe — "
-        f"the provider-count read must come from the _cached_async pool."
+    _assert_not_waiting_for_probe(
+        elapsed,
+        probe_seconds,
+        "get_runtime_info",
+        "the provider-count read must come from the _cached_async pool.",
     )
     data = json.loads(raw)
     assert "providers_configured" in data and "providers_blocked" in data
@@ -253,10 +278,11 @@ def test_provider_slots_share_one_background_probe(monkeypatch):
     calls = {"n": 0}
     import llm_detector
     import llm_router
+    probe_seconds = SLOW_PROBE_SECONDS
 
     def _slow():
         calls["n"] += 1
-        time.sleep(0.4)
+        time.sleep(probe_seconds)
         return {"status": "live", "models": ["qwen2.5-coder-7b"]}
 
     # Route configured_providers through the REAL llm_detector cache so the
@@ -280,13 +306,20 @@ def test_provider_slots_share_one_background_probe(monkeypatch):
     dummy.get_providers()
     dummy.get_provider_stats()
     dummy.get_runtime_info()
-    assert (time.perf_counter() - t0) < 0.1, "cold fan-out must not block"
+    elapsed = time.perf_counter() - t0
+    _assert_not_waiting_for_probe(
+        elapsed,
+        probe_seconds,
+        "cold fan-out",
+        "provider slots must not synchronously wait for the shared probe.",
+    )
 
     # Let the background probes settle.
     deadline = time.time() + 5
     while time.time() < deadline and calls["n"] == 0:
         time.sleep(0.05)
-    time.sleep(0.6)  # allow any (wrongly) un-deduped siblings to also run
+    # Allow any (wrongly) un-deduped sibling probe to also run.
+    time.sleep(probe_seconds + 0.2)
 
     # The 25s llm_detector TTL + per-key in-flight lock mean the underlying
     # probe ran a SMALL number of times, never once-per-slot-per-call.

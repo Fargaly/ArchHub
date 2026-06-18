@@ -700,6 +700,12 @@ class ArchHubBridge(QObject):
     # signal with the real result + request_id when the write lands (the
     # JSX correlates by request_id, like connector_op_done / settings_op_done).
     memory_op_done   = pyqtSignal(str)              # (result_json) — memory-fact write finished
+    # SELF-HEAL-INSPECTOR — a REAL self-heal event was just recorded in
+    # app/self_heal_log.py (a host reconnected, a connector re-loaded, a
+    # wire re-routed off a bad port). The JSX Self-Heal Inspector listens
+    # for this to re-pull self_heal_recent / self_heal_stats so the live
+    # timeline updates the instant a recovery fires, without polling.
+    self_heal_changed = pyqtSignal()                # () — a new heal landed in the ledger
 
     def __init__(self, *, router=None, manager=None, tools=None,
                   chat_widget=None, parent=None,
@@ -770,6 +776,19 @@ class ArchHubBridge(QObject):
             try:
                 from connectors.base import load_all_connectors
                 load_all_connectors()
+            except Exception:
+                pass
+            # SELF-HEAL-INSPECTOR tap — the connector_health daemon already
+            # fires on_state_change(family, "live"|"down") on every real
+            # listener transition (prev != ok), and its AutoCAD NETLOAD
+            # self-heal flips a loaded_dead add-in back to live. Wire that
+            # callback to the heal ledger so a host coming BACK records a
+            # REAL reconnect event (down -> live), never a synthetic one.
+            # We chain (not clobber) any pre-existing callback so this tap
+            # is additive. Lives here because the daemon singleton is alive
+            # by boot and this is the bridge's own wiring point.
+            try:
+                self._wire_self_heal_taps()
             except Exception:
                 pass
             try:
@@ -985,11 +1004,192 @@ class ArchHubBridge(QObject):
         ArchHub UI (no typing, no drag, no right-click, no repaint) for
         3.7 s every call.  Now: return the cached value instantly +
         refresh on a background thread + emit `hosts_changed` when the
-        fresh data lands."""
+        fresh data lands.
+
+        SELF-HEAL-INSPECTOR tap: this background refresh is the one place
+        every host's fresh status lands. When a host that was previously
+        non-live (loaded_dead / missing / unavailable) reports `live`, a
+        host RECONNECTED — a REAL heal moment — so we record it in the
+        heal ledger. Diff is per-bridge (`_last_host_status`); the first
+        pass only seeds the baseline (a host that was live before we ever
+        looked is NOT a heal), so we never fabricate a recovery."""
         def _work():
             from host_detector import detect_all_hosts
-            return detect_all_hosts()
+            fresh = detect_all_hosts()
+            try:
+                self._note_host_heals(fresh)
+            except Exception:
+                pass
+            return fresh
         return _safe_json(self._cached_async("hosts", _work, empty={}))
+
+    def _note_host_heals(self, fresh: dict) -> None:
+        """Diff the fresh host-status snapshot against the previous one and
+        record a reconnect heal for any host that went non-live -> live.
+
+        ONLY records a real transition: the first snapshot seeds the
+        baseline (so a host already live before we looked is never counted
+        as a heal), and a host that stays live records nothing. This is the
+        host_detector reconnect/recovery tap, kept inside the bridge so it
+        touches only owned files."""
+        if not isinstance(fresh, dict):
+            return
+        import self_heal_log as _shl
+        prev = getattr(self, "_last_host_status", None)
+        new_map: dict[str, str] = {}
+        healed = False
+        for host_id, info in fresh.items():
+            status = ""
+            if isinstance(info, dict):
+                status = str(info.get("status", "")).lower()
+            new_map[host_id] = status
+            if prev is None:
+                continue  # baseline pass — seed only, never a heal
+            was = prev.get(host_id, "")
+            # non-live -> live is the recovery. "live" is the only healthy
+            # status; everything else (loaded_dead/missing/unavailable/"")
+            # is non-live.
+            if status == "live" and was and was != "live":
+                note = ""
+                if isinstance(info, dict):
+                    note = str(info.get("note", ""))
+                _shl.record_heal(
+                    _shl.KIND_RECONNECT, host_id,
+                    note or f"{host_id} reconnected ({was} -> live)")
+                healed = True
+        self._last_host_status = new_map
+        if healed:
+            try:
+                self.self_heal_changed.emit()
+            except Exception:
+                pass
+
+    def _wire_self_heal_taps(self) -> None:
+        """Chain a heal-recording callback onto the connector_health
+        daemon's on_state_change hook. Called once from the deferred-boot
+        thread. The daemon fires on_state_change(family, "live"|"down")
+        only on a real listener transition (prev != ok) and also after its
+        AutoCAD NETLOAD self-heal flips a loaded_dead add-in back to live —
+        both are genuine recoveries. We chain (never clobber) any existing
+        callback so this tap is purely additive, and we only record the
+        down -> live direction (a drop is not a heal)."""
+        try:
+            import connector_health as _ch
+        except Exception:
+            return
+        if getattr(self, "_self_heal_wired", False):
+            return
+        # Attach to the ALREADY-RUNNING daemon only — never call _ch.instance()
+        # here: instance() LAZILY .start()s the poll thread. In production
+        # main.py starts the connector_health daemon early (main.py:967, well
+        # before this deferred-boot tap fires), so the singleton exists by now.
+        # In unit tests nothing starts it, and instance() would spin up a
+        # ConnectorHealth poll thread that leaks past teardown and trips
+        # conftest's _stop_leaked_background_threads gate. Peek the module
+        # singleton instead; if the daemon is not running there are no heals to
+        # record anyway, and the tap re-attaches on the next boot once it is.
+        inst = getattr(_ch, "_INSTANCE", None)
+        if inst is None:
+            return
+        prior = getattr(inst, "on_state_change", None)
+
+        def _on_state(family: str, state: str) -> None:
+            # Preserve any callback that was already registered.
+            if callable(prior):
+                try:
+                    prior(family, state)
+                except Exception:
+                    pass
+            try:
+                if str(state).lower() == "live":
+                    import self_heal_log as _shl
+                    # AutoCAD is the host whose loaded_dead add-in the daemon
+                    # actively re-NETLOADs; label that as a netload heal, the
+                    # rest as a plain reconnect.
+                    kind = (_shl.KIND_NETLOAD
+                            if str(family).lower() == "autocad"
+                            else _shl.KIND_RECONNECT)
+                    _shl.record_heal(
+                        kind, str(family),
+                        f"{family} listener recovered (live)")
+                    try:
+                        self.self_heal_changed.emit()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        try:
+            inst.on_state_change = _on_state
+            self._self_heal_wired = True
+        except Exception:
+            pass
+
+    # ─── Self-Heal Inspector — the heal-event timeline ─────────────
+    # ArchHub's differentiator (self-healing connectors) made VISIBLE.
+    # These slots read app/self_heal_log.py — the process-wide ledger of
+    # REAL heal events recorded at the moment a recovery fires (a host
+    # reconnects, a connector re-loads, a wire re-routes off a bad port).
+    # The JSX SelfHealInspector (opened from the graph-health chip/badge)
+    # renders a stat header + reverse-chron timeline from this data.
+    # ANTI-LIE: an empty ledger -> the honest "no self-heals yet" state;
+    # these slots NEVER synthesise rows.
+    @pyqtSlot(result=str)
+    @pyqtSlot(str, result=str)
+    def self_heal_recent(self, n: str = "50") -> str:
+        """Up to `n` most-recent heal events, NEWEST FIRST, as a JSON list.
+        Each: {id, kind, target, detail, ts}. Empty list when nothing has
+        healed this session (the honest empty state)."""
+        try:
+            count = int(n)
+        except (TypeError, ValueError):
+            count = 50
+        try:
+            import self_heal_log as _shl
+            return _safe_json(_shl.recent(count))
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(result=str)
+    def self_heal_stats(self) -> str:
+        """Summary of the heal ledger for the inspector's stat header:
+        {total, by_kind:{...}, last_heal_ts, last_kind, last_target, max}.
+        All-zero / None when nothing has healed yet."""
+        try:
+            import self_heal_log as _shl
+            return _safe_json(_shl.stats())
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
+    def record_heal(self, kindJson: str) -> str:
+        """Record one REAL heal reported by the JSX side (the only heals
+        the Python side can't see on its own are the in-browser graph
+        heals: _resnapTypeMismatch re-routing a type-mismatched wire, and
+        remapWiresForNode re-pointing a wire after a node's ports changed).
+        The JS posts {kind, target, detail} here so those land in the SAME
+        ledger as the host/connector reconnects.
+
+        Returns the stored event {id, kind, target, detail, ts} or
+        {error}. The caller must only post heals that ACTUALLY happened —
+        this slot is a sink for real recoveries, not a way to fake them."""
+        try:
+            import self_heal_log as _shl
+            payload = json.loads(kindJson) if kindJson else {}
+            if not isinstance(payload, dict):
+                return _safe_json({"error": "record_heal expects a JSON object"})
+            ev = _shl.record_heal(
+                payload.get("kind", _shl.KIND_OTHER),
+                payload.get("target", ""),
+                payload.get("detail", ""),
+                payload.get("ts"))
+            try:
+                self.self_heal_changed.emit()
+            except Exception:
+                pass
+            return _safe_json(ev)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
 
     # ─── AgDR-0036 — the non-blocking-slot MECHANISM ───────────────
     # Every @pyqtSlot that does I/O (HTTP, COM, subprocess, fs walk,

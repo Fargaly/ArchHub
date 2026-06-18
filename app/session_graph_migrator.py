@@ -99,6 +99,46 @@ def wrap_legacy_as_graph(session, messages: Optional[list] = None,
     }
 
 
+def decompose_legacy_as_graph(session, messages: Optional[list] = None,
+                              *, name: str = "") -> dict:
+    """Build a MODULAR, multi-node Workflow-dict from a legacy chat.
+
+    SESSIONS-GRAPH lane — root cause #1 fix. `wrap_legacy_as_graph` (above)
+    is the on-DISK storage form: it keeps the whole chat in ONE
+    `conversation.chat` node so the legacy chat surface can round-trip the
+    message list (`extract_messages_from_graph`). That is correct for storage
+    but WRONG for the canvas, which must render a logical node graph — one
+    node per turn, a tool node per tool call — not a single flat blob.
+
+    This function produces that decomposed graph by delegating to the EXISTING
+    per-turn decomposer (`workflows.chat_to_workflow`) — no parallel decomposer
+    is minted (ONE-SYSTEM mandate). Returns a `Workflow.to_dict()`-shaped dict
+    (still the workflows.graph shape: id/type/label/config/inputs/outputs); the
+    canvas-facing `graph_to_lmgraph.translate_graph_to_lmgraph` maps that to the
+    JSX LM_GRAPH shape (kind/cat/ins/outs).
+
+    Empty history → the single-node wrap (a chat with nothing to decompose
+    still needs a node to render). The session id is reused as the workflow id
+    so a later canvas save round-trips back to the same on-disk slot.
+    """
+    msg_list = list(messages or [])
+    if not msg_list:
+        return wrap_legacy_as_graph(session, msg_list, name=name)
+    try:
+        from workflows.chat_to_workflow import chat_to_workflow
+    except Exception:  # pragma: no cover - import-path guard for packaging
+        from app.workflows.chat_to_workflow import chat_to_workflow  # type: ignore
+    sid = getattr(session, "id", None)
+    wf = chat_to_workflow(msg_list, name=name or sid or "session")
+    d = wf.to_dict()
+    if sid:
+        d["id"] = sid
+    d.setdefault("metadata", {})
+    d["metadata"]["migrated_from"] = "legacy_session_decomposed"
+    d["metadata"]["migrated_at"] = _utc()
+    return d
+
+
 def extract_messages_from_graph(graph_dict: Optional[dict]) -> list[dict]:
     """Inverse of wrap_legacy_as_graph: pull messages back out of the
     first conversation.chat node we find. Empty list when no chat node.

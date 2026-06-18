@@ -609,11 +609,20 @@ class GeneralTab(QWidget):
         )
         theme_ptr.setObjectName("muted"); theme_ptr.setWordWrap(True)
         af.addRow("Theme", theme_ptr)
-        self._lang = QComboBox()
-        for code, label in (("en", "English"), ("es", "Español"), ("fr", "Français"),
-                            ("de", "Deutsch"), ("ja", "日本語"), ("zh", "中文")):
-            self._lang.addItem(label, code)
-        af.addRow("Language", self._lang)
+        # MAKE-IT-REAL: the old multi-language QComboBox (English/Español/
+        # Français/Deutsch/日本語/中文) was a LIE — there is NO i18n layer in
+        # ArchHub. The "language" setting it wrote was read back ONLY by this
+        # dialog's own _load(); nothing in studio-lm.jsx / bridge.py / any
+        # surface ever translated a single string from it. A selector that
+        # cannot change the UI is a fake selector. Until real localization
+        # exists, the only honest control is English, disabled, with a note —
+        # removing a never-asked fake is honest (a fake selector is the lie).
+        lang_lbl = QLabel(
+            "English  ·  more languages coming once ArchHub ships localization."
+        )
+        lang_lbl.setObjectName("muted"); lang_lbl.setWordWrap(True)
+        lang_lbl.setEnabled(False)
+        af.addRow("Language", lang_lbl)
         outer.addWidget(appe)
 
         modg = QGroupBox("Default model")
@@ -659,25 +668,29 @@ class GeneralTab(QWidget):
         self._load()
 
     def _load(self) -> None:
-        # Profile from %LOCALAPPDATA%/ArchHub/profile.json.
-        try:
-            p = _profile_path()
-            if p.is_file():
-                data = json.loads(p.read_text(encoding="utf-8") or "{}") or {}
-                self._name.setText(data.get("name", "") or "")
-                self._email.setText(data.get("email", "") or "")
-                self._firm.setText(data.get("firm", "") or "")
-        except Exception:
-            pass
+        # Profile — prefer the REAL bridge slot (bridge.get_profile reads the
+        # same profile.json and is the slot the first-run prompt + any future
+        # cloud sync go through), then fall back to reading the file directly
+        # so the tab still loads headless / with no bridge.
+        data = _bridge_call(self._parent_dlg, "get_profile", default=None)
+        if not isinstance(data, dict) or data.get("error"):
+            data = {}
+            try:
+                p = _profile_path()
+                if p.is_file():
+                    loaded = json.loads(p.read_text(encoding="utf-8") or "{}")
+                    if isinstance(loaded, dict):
+                        data = loaded
+            except Exception:
+                data = {}
+        self._name.setText(data.get("name", "") or "")
+        self._email.setText(data.get("email", "") or "")
+        self._firm.setText(data.get("firm", "") or "")
 
         # Theme now lives in the System section (SystemTab) — one unified
         # Forge/Blueprint/Vellum control. GeneralTab no longer owns it.
 
-        # Language — just a saved setting; not yet wired to i18n.
-        lang = (load_setting("language") or "en") or "en"
-        idx = self._lang.findData(lang)
-        if idx >= 0:
-            self._lang.setCurrentIndex(idx)
+        # Language: removed (no i18n exists — see __init__). Nothing to load.
 
         # Models via bridge.get_models. Fall back to a tiny set if no
         # bridge is reachable (offline / test harness).
@@ -731,22 +744,30 @@ class GeneralTab(QWidget):
                 pass
 
     def _save(self) -> None:
-        # Profile JSON.
-        try:
-            p = _profile_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({
-                "name":  self._name.text().strip(),
-                "email": self._email.text().strip(),
-                "firm":  self._firm.text().strip(),
-            }, indent=2), encoding="utf-8")
-        except Exception as ex:
-            QMessageBox.warning(self, "Profile", f"Save failed: {ex}")
+        # Profile — persist through the REAL bridge slot (bridge.save_profile
+        # merges + writes profile.json and is the same store get_profile /
+        # the first-run prompt use). Fall back to a direct file write when no
+        # bridge is reachable, so the profile still persists headless.
+        payload = {
+            "name":  self._name.text().strip(),
+            "email": self._email.text().strip(),
+            "firm":  self._firm.text().strip(),
+        }
+        saved = _bridge_call(self._parent_dlg, "save_profile",
+                             json.dumps(payload), default=None)
+        if not (isinstance(saved, dict) and saved.get("ok")):
+            try:
+                p = _profile_path()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            except Exception as ex:
+                QMessageBox.warning(self, "Profile", f"Save failed: {ex}")
 
         # Theme is saved from the System section now (SystemTab._save).
 
-        # Language + default model — local settings.
-        save_setting("language", self._lang.currentData() or "en")
+        # Language: removed — no i18n to persist (see __init__).
+        # Default model — a real setting: studio_shell reads `default_model`
+        # for the model strip + chat falls back to it (studio_shell.py).
         save_setting("default_model", self._model.currentData() or "auto")
 
         QMessageBox.information(self, "General", "Saved.")
@@ -809,14 +830,23 @@ class ProvidersTab(QWidget):
         kc.addWidget(keys_btn)
         outer.addWidget(keys_card)
 
-        # Trailing toggle: show local Ollama models in the picker.
+        # Trailing toggle: show local Ollama / LM Studio models in the picker.
+        # MAKE-IT-REAL: this used to read/write `show_local_models`, a setting
+        # NOTHING consumes any more — the model picker (chat_window._populate*)
+        # was changed to read the INVERTED `hide_local_models` flag (default
+        # False = local models show) after users kept asking "where's my
+        # qwen/llama?". So the old checkbox was a dead write. It is now bound
+        # to the REAL `hide_local_models` flag with inverted semantics:
+        # checked here (show) == hide_local_models False. Persisted on toggle
+        # and re-read by the picker on its next repaint (DEFINITION-OF-SHIPPED:
+        # the control takes effect + the user sees the local models appear).
         self._show_local = QCheckBox(
-            "Show local Ollama models in the picker  "
+            "Show local Ollama / LM Studio models in the picker  "
             "(advanced — local inference is slower than cloud)"
         )
-        self._show_local.setChecked(bool(load_setting("show_local_models")))
+        self._show_local.setChecked(not bool(load_setting("hide_local_models")))
         self._show_local.toggled.connect(
-            lambda v: save_setting("show_local_models", bool(v))
+            lambda v: self._on_toggle_local(bool(v))
         )
         outer.addWidget(self._show_local)
 
@@ -842,6 +872,18 @@ class ProvidersTab(QWidget):
             f"{configured} provider(s) configured" +
             (f"  ·  {blocked} blocked" if blocked else "")
         )
+
+    def _on_toggle_local(self, show: bool) -> None:
+        """Persist the REAL `hide_local_models` flag the model picker honours
+        (inverted: 'show' checked == hide False) and nudge the running app to
+        repopulate its picker so the change is visible without a relaunch."""
+        save_setting("hide_local_models", not bool(show))
+        # Best-effort live refresh: clear router client cache + ask the parent
+        # to rebuild the model picker (the same nudge a provider sign-in fires).
+        try:
+            self._parent_dlg.notify_changed()
+        except Exception:
+            pass
 
     def notify_changed(self) -> None:
         self.refresh()
@@ -3156,7 +3198,16 @@ class BrainTab(QWidget):
         av.addWidget(self._agent_list)
 
         ag_btn_row = QHBoxLayout(); ag_btn_row.setSpacing(6)
-        self._chatgpt_setup_btn = QPushButton("Set up ChatGPT desktop…")
+        # MAKE-IT-REAL: the old "Set up ChatGPT desktop…" button only ever
+        # popped an info box describing the (genuinely-absent) ChatGPT OAuth
+        # flow — a button that does nothing. The REAL action this card needs
+        # is wiring the detected agents into the brain. This button now runs
+        # personal_brain.installer.install_all() (writes the real hook configs
+        # for Claude Code / Cursor / Codex / Gemini), then rescans the list so
+        # the founder SEES rows flip to "wired". ChatGPT-desktop OAuth stays an
+        # honest true-boundary note inside the report (it needs a public HTTPS
+        # endpoint — outside this pass), never a fake button.
+        self._chatgpt_setup_btn = QPushButton("Wire agents to brain…")
         self._chatgpt_setup_btn.clicked.connect(self._on_chatgpt_setup)
         rescan_btn = QPushButton("Rescan agents")
         rescan_btn.clicked.connect(self._render_agents)
@@ -3370,6 +3421,9 @@ class BrainTab(QWidget):
         seats = self._mcp_call("brain.firm_seats", {})
         self._render_firm(seats)
 
+        # 3. communities — live list from brain.community_list.
+        self._render_communities()
+
     def _render_firm(self, seats_resp: dict) -> None:
         self._seats_list.clear()
         if not seats_resp.get("ok") or not seats_resp.get("firm_id"):
@@ -3469,16 +3523,60 @@ class BrainTab(QWidget):
             QMessageBox.warning(self, "URL required",
                                  "Paste a peer firm outbox URL first.")
             return
-        # Brain MCP doesn't yet expose community subscribe as a tool —
-        # the community module is daemon-internal. Show a clear note
-        # for now; Slice C wires this through.
-        QMessageBox.information(
-            self, "Subscribe (deferred)",
-            f"Community subscribe to {url[:60]}… is wired in the "
-            f"community module but not yet exposed as an MCP tool. "
-            f"Tracked in the runtime queue; reachable via "
-            f"`personal_brain.community.subscribe()` from the CLI.",
-        )
+        # MAKE-IT-REAL: the daemon DOES expose community subscribe as an MCP
+        # tool now (personal_brain/server.py brain.community_subscribe — it
+        # records a Subscription + the CommunityPoller pulls <url>/outbox).
+        # The old "not yet exposed as an MCP tool" note was stale; call the
+        # real tool, then repaint the live community list from the daemon.
+        r = self._mcp_call("brain.community_subscribe", {"actor_url": url})
+        if r.get("ok"):
+            sub = r.get("subscription") or {}
+            self._sub_url.clear()
+            self._render_communities()
+            QMessageBox.information(
+                self, "Subscribed",
+                "Now following "
+                f"{sub.get('display_name') or sub.get('actor_url') or url}.\n\n"
+                "The community poller will pull its outbox, run reputation + "
+                "redaction gates, and import accepted patterns at "
+                "community scope.",
+            )
+        else:
+            QMessageBox.critical(
+                self, "Subscribe failed",
+                r.get("error", "unknown error — is the brain daemon running?"),
+            )
+
+    def _render_communities(self) -> None:
+        """Repaint the communities list from the REAL daemon tool
+        (brain.community_list). Honest empty / offline states — never faked."""
+        self._comm_list.clear()
+        r = self._mcp_call("brain.community_list", {})
+        if not (isinstance(r, dict) and r.get("ok")):
+            item = QListWidgetItem(
+                "  (brain offline — can't list community subscriptions)"
+            )
+            item.setForeground(_qbrush(TOKENS["muted"]))
+            self._comm_list.addItem(item)
+            return
+        subs = r.get("subscriptions") or []
+        if not subs:
+            item = QListWidgetItem(
+                "  No community subscriptions yet — paste a peer outbox URL "
+                "above to follow one."
+            )
+            item.setForeground(_qbrush(TOKENS["muted"]))
+            self._comm_list.addItem(item)
+            return
+        for s in subs:
+            if not isinstance(s, dict):
+                continue
+            name = s.get("display_name") or s.get("actor_url") or "?"
+            accepted = s.get("last_accepted")
+            tail = f"   ✓{accepted} imported" if isinstance(accepted, int) else ""
+            item = QListWidgetItem(f"  {name}{tail}")
+            item.setToolTip(str(s.get("actor_url") or ""))
+            self._comm_list.addItem(item)
 
     # ── connected agents ─────────────────────────────────────────────
 
@@ -3506,18 +3604,74 @@ class BrainTab(QWidget):
             self._agent_list.addItem(item)
 
     def _on_chatgpt_setup(self) -> None:
-        """OAuth flow is deferred — show what's needed so the founder
-        sees the gap honestly instead of clicking a button that lies."""
-        QMessageBox.information(
-            self, "ChatGPT desktop · setup deferred",
-            "ChatGPT desktop requires:\n"
-            "  • A public HTTPS endpoint pointing at the brain daemon\n"
-            "  • OAuth 2.1 + PKCE registration with OpenAI\n"
-            "  • Brain federation server running\n\n"
-            "Tracked in the brain roadmap; OAuth path not yet wired. "
-            "Other 5 agents (Claude Code, Cursor, Codex, Gemini, ArchHub "
-            "Composer) connect directly with no OAuth.",
+        """REAL action: wire every detected agent into the brain via
+        personal_brain.installer.install_all() (writes the actual hook
+        configs for Claude Code / Cursor / Codex / Gemini), then rescan so
+        the rows flip to 'wired'. ChatGPT desktop stays an honest boundary —
+        it needs a public HTTPS endpoint + OAuth, outside this pass."""
+        try:
+            from personal_brain import installer as _installer
+        except Exception:
+            # Fall back to importing from the in-repo package path.
+            try:
+                import importlib.util as _ilu
+                pb = (Path(__file__).resolve().parent.parent
+                      / "personal-brain-mcp" / "src" / "personal_brain"
+                      / "installer.py")
+                spec = _ilu.spec_from_file_location("personal_brain.installer", pb)
+                _installer = _ilu.module_from_spec(spec)  # type: ignore[arg-type]
+                spec.loader.exec_module(_installer)        # type: ignore[union-attr]
+            except Exception as ex:
+                QMessageBox.warning(
+                    self, "Wire agents",
+                    "Couldn't load the brain installer module "
+                    f"(personal_brain.installer): {ex}",
+                )
+                return
+        try:
+            detected = _installer.detect_clients()
+        except Exception as ex:
+            QMessageBox.warning(self, "Wire agents",
+                                 f"Couldn't detect agents: {ex}")
+            return
+        if not detected:
+            QMessageBox.information(
+                self, "Wire agents",
+                "No MCP-capable agents detected on this device "
+                "(Claude Code / Cursor / Codex / Gemini). Install one, then "
+                "rescan.\n\nChatGPT desktop needs a public HTTPS endpoint + "
+                "OAuth 2.1 — that path is outside this setup.",
+            )
+            self._render_agents()
+            return
+        try:
+            results = _installer.install_all()
+        except Exception as ex:
+            QMessageBox.warning(self, "Wire agents",
+                                 f"Install failed: {ex}")
+            return
+        wired, failed = [], []
+        for r in results or []:
+            if not isinstance(r, dict):
+                continue
+            client = r.get("client") or "?"
+            if r.get("error"):
+                failed.append(f"{client}: {r['error']}")
+            else:
+                wired.append(client)
+        # Repaint the rows so the founder SEES the new 'wired' badges.
+        self._render_agents()
+        lines = []
+        if wired:
+            lines.append("Wired into the brain:\n  • " + "\n  • ".join(wired))
+        if failed:
+            lines.append("Couldn't wire:\n  • " + "\n  • ".join(failed))
+        lines.append(
+            "\nChatGPT desktop is not wired here — it needs a public HTTPS "
+            "endpoint + OAuth 2.1, which is outside this setup."
         )
+        QMessageBox.information(self, "Wire agents to brain",
+                                 "\n\n".join(lines))
 
     # ── tuning persistence ───────────────────────────────────────────
 
@@ -3615,19 +3769,26 @@ class AccessibilityTab(QWidget):
     USER scope in the brain so they sync cross-device via the federation
     transport (per AgDR-0044 + Track E of the Content Ecosystem plan).
 
-    Honest scope (ANTI-LIE):
+    Honest scope (ANTI-LIE) — VERIFIED 2026-06-18, all four controls REAL:
         - Controls render + persist LOCALLY (secrets_store, keys
           ``a11y_*``) as the reliable source of truth, and ALSO sync to
           the brain best-effort when the daemon exposes
           ``brain.a11y_prefs`` (the save no longer fails if it doesn't).
-        - reduce-motion is APPLIED: the React UI reads bridge
-          ``get_a11y_prefs`` on mount and toggles the ``lm-reduce-motion``
-          class (disables canvas animations app-wide, beyond the OS
-          ``prefers-reduced-motion`` query).
-        - font-size, contrast, and screen-reader-optimised PERSIST but are
-          not applied yet (px→scale refactor / high-contrast palette /
-          component aria-live work) — deferred pending a design decision,
-          NOT faked.
+        - ALL FOUR prefs are APPLIED LIVE through one idempotent apply point
+          (``window.__archhubApplyA11y`` in studio-lm.jsx), fed by
+          ``bridge.get_a11y_prefs`` on mount + a boot-time localStorage cache:
+            • reduce_motion → ``html.lm-reduce-motion`` (kills animations)
+            • font_size     → Chromium-native root ``zoom`` (real reflow;
+              small .9 / large 1.1 / xlarge 1.25, with vw/vh compensation)
+            • contrast      → ``html.lm-high-contrast`` + a per-theme token
+              overlay repainted via the theme-changed event
+            • screen_reader → ``html.lm-sr-optimized`` (forced focus
+              outlines) + a polite ``#lm-sr-live`` aria-live region that
+              narrates canvas toasts
+          (An earlier 2026-06-03 docstring claimed font/contrast/SR were
+          "persist-only, not applied yet" — that was STALE: the deferred
+          design decision landed and the JSX applies them for real. Comment
+          corrected so it stops lying about working controls.)
         - The audit doc + full WCAG sweep is multi-session work; this
           tab is the entry point, not the conclusion.
     """
@@ -4114,7 +4275,13 @@ class SecretsTab(QWidget):
             self._parent_dlg.notify_changed()
 
     def _on_test(self, slug: str, label: str, kind: str) -> None:
-        # Anthropic gets a real probe; the others are honest stubs.
+        # MAKE-IT-REAL: every provider now gets a REAL connectivity probe — a
+        # tiny authenticated request to that provider's cheapest auth-check
+        # endpoint (the same shape as the pre-existing Anthropic probe). The
+        # old code returned an honest "stub probe" box for all but Anthropic;
+        # a Test button that can't actually test is a fake control. There is a
+        # real probe per slug below; op:// refs stay an honest note (the value
+        # is only resolvable at tool-call time by the 1Password CLI).
         _, value = self._resolver_source(slug, "")
         if not value:
             QMessageBox.warning(self, f"Test {label}",
@@ -4128,46 +4295,142 @@ class SecretsTab(QWidget):
                 "ArchHub will pick the value up on the next request.",
             )
             return
-        if slug == "anthropic":
-            ok, msg = self._probe_anthropic(value)
-            if ok:
-                QMessageBox.information(self, f"Test {label}",
-                                         f"Anthropic live · {msg}")
-            else:
-                QMessageBox.warning(self, f"Test {label}",
-                                     f"Probe failed: {msg}")
+        probe = self._PROBES.get(slug)
+        if probe is None:
+            # Should not happen — every KEY_ROWS slug has a probe — but stay
+            # honest rather than claim success if a new slug lands un-probed.
+            QMessageBox.warning(
+                self, f"Test {label}",
+                f"No connectivity probe is wired for '{slug}'.",
+            )
             return
-        QMessageBox.information(
-            self, f"Test {label}",
-            f"Stub probe — {label} value is resolved ({self._mask_value(value)}). "
-            "A live ping for this provider isn't wired yet (only Anthropic "
-            "has a real test today)."
-        )
+        ok, msg = probe(self, value)
+        if ok:
+            QMessageBox.information(self, f"Test {label}",
+                                     f"{label} live · {msg}")
+        else:
+            QMessageBox.warning(self, f"Test {label}",
+                                 f"Probe failed: {msg}")
+
+    # ── real per-provider connectivity probes ────────────────────────
+    # Each hits the provider's cheapest authenticated endpoint with a short
+    # timeout so a slow network never freezes the dialog. 2xx => the key is
+    # live; 401/403 => the key is bad (surfaced honestly).
 
     @staticmethod
-    def _probe_anthropic(api_key: str) -> tuple[bool, str]:
-        """Tiny GET against the Anthropic /v1/models list. 5s timeout
-        so a slow network doesn't freeze the dialog."""
+    def _http_probe(url: str, headers: dict, *, ok_label: str = "",
+                    timeout: float = 6.0) -> tuple[bool, str]:
         import urllib.error
         import urllib.request
         try:
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/models",
-                method="GET",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Accept": "application/json",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=5.0) as r:
+            req = urllib.request.Request(url, method="GET", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 if 200 <= r.status < 300:
-                    return True, f"HTTP {r.status}"
+                    return True, ok_label or f"HTTP {r.status}"
                 return False, f"HTTP {r.status}"
         except urllib.error.HTTPError as ex:
-            return False, f"HTTP {ex.code} — {ex.reason}"
+            reason = "bad/blocked key" if ex.code in (401, 403) else ex.reason
+            return False, f"HTTP {ex.code} — {reason}"
         except (urllib.error.URLError, TimeoutError, OSError) as ex:
-            return False, str(ex)[:120]
+            return False, str(ex)[:140]
+
+    def _probe_anthropic(self, api_key: str) -> tuple[bool, str]:
+        return self._http_probe(
+            "https://api.anthropic.com/v1/models",
+            {"x-api-key": api_key, "anthropic-version": "2023-06-01",
+             "Accept": "application/json"},
+            ok_label="models reachable",
+        )
+
+    def _probe_openai(self, api_key: str) -> tuple[bool, str]:
+        return self._http_probe(
+            "https://api.openai.com/v1/models",
+            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            ok_label="models reachable",
+        )
+
+    def _probe_openrouter(self, api_key: str) -> tuple[bool, str]:
+        return self._http_probe(
+            "https://openrouter.ai/api/v1/key",
+            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            ok_label="key valid",
+        )
+
+    def _probe_google(self, api_key: str) -> tuple[bool, str]:
+        # Gemini API: the key is a query param, not a bearer header.
+        return self._http_probe(
+            "https://generativelanguage.googleapis.com/v1beta/models"
+            f"?key={api_key}",
+            {"Accept": "application/json"},
+            ok_label="models reachable",
+        )
+
+    def _probe_github(self, token: str) -> tuple[bool, str]:
+        ok, msg = self._http_probe(
+            "https://api.github.com/user",
+            {"Authorization": f"Bearer {token}",
+             "Accept": "application/vnd.github+json",
+             "User-Agent": "ArchHub-Settings"},
+            ok_label="authenticated",
+        )
+        return ok, msg
+
+    def _probe_notion(self, token: str) -> tuple[bool, str]:
+        return self._http_probe(
+            "https://api.notion.com/v1/users/me",
+            {"Authorization": f"Bearer {token}",
+             "Notion-Version": "2022-06-28", "Accept": "application/json"},
+            ok_label="integration authenticated",
+        )
+
+    def _probe_speckle(self, token: str) -> tuple[bool, str]:
+        """POST the cheap activeUser GraphQL query to the configured Speckle
+        server (default app.speckle.systems). 2xx + a resolved user id =
+        live; anything else surfaces honestly."""
+        import json as _json
+        import urllib.error
+        import urllib.request
+        server = "https://app.speckle.systems"
+        try:
+            base = load_setting("speckle_server_url")
+            if base:
+                server = str(base).rstrip("/")
+        except Exception:
+            pass
+        body = _json.dumps(
+            {"query": "query{ activeUser{ id name email } }"}
+        ).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                f"{server}/graphql", data=body, method="POST",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json",
+                         "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=6.0) as r:
+                raw = r.read().decode("utf-8")
+            data = (_json.loads(raw) or {}).get("data") or {}
+            user = data.get("activeUser") or {}
+            if user.get("id"):
+                who = user.get("name") or user.get("email") or user["id"]
+                return True, f"signed in as {who}"
+            return False, "token did not resolve to a user"
+        except urllib.error.HTTPError as ex:
+            reason = "bad/blocked token" if ex.code in (401, 403) else ex.reason
+            return False, f"HTTP {ex.code} — {reason}"
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as ex:
+            return False, str(ex)[:140]
+
+    # slug → bound probe method (resolved at call time via the instance).
+    _PROBES = {
+        "anthropic":  lambda self, v: self._probe_anthropic(v),
+        "openai":     lambda self, v: self._probe_openai(v),
+        "openrouter": lambda self, v: self._probe_openrouter(v),
+        "google":     lambda self, v: self._probe_google(v),
+        "github":     lambda self, v: self._probe_github(v),
+        "notion":     lambda self, v: self._probe_notion(v),
+        "speckle":    lambda self, v: self._probe_speckle(v),
+    }
 
 
 class _SetSecretDialog(QDialog):

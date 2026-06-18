@@ -79,22 +79,58 @@ class TestPageBuild:
 
 
 class TestVersionBumped:
-    def test_version_file_is_one_zero(self):
+    # Floor = the last release whose exact value this test once pinned.
+    # VERSION may move forward past it, never back below it.
+    _MIN_STABLE = (1, 4, 1)
+
+    def test_version_file_is_one_zero(self, qapp):
+        """Release-discipline guard for the VERSION file.
+
+        ROOT-CAUSE NOTE (2026-06-18): this assertion used to be a frozen
+        literal — `assert v == "1.4.1"`. Every release that bumped VERSION
+        but forgot to also edit this line turned the WHOLE cross-platform
+        matrix red on an unrelated PR (it broke at 1.4.0→1.4.1, then again
+        at 1.4.1→1.5.0 when the v1.5.0 finalization release landed on main
+        without touching this test). A version pin that has to be hand-edited
+        in lock-step with every release is a recurring-breakage class, not a
+        guard. Per the ENGINEERING mandate we fix the MECHANISM: assert the
+        invariants the test actually cares about — VERSION is a well-formed
+        STABLE semver, it never regresses below the last pinned floor, and it
+        matches what the running app serves — so it tracks real releases
+        instead of rotting on each one. (Method name kept for back-compat.)
+        """
         path = Path(__file__).resolve().parent.parent / "VERSION"
-        assert path.exists()
+        assert path.exists(), "VERSION file is missing"
         v = path.read_text(encoding="utf-8").strip()
-        # Track the latest stable. v1.4.1 — a11y zoom-compensation patch:
-        # the accessibility font scale (CSS zoom) painted the app
-        # zoom-x past the window, clipping the right edge (filter
-        # chips, + new canvas) and bottom edge (status bar, SETTINGS
-        # icon). #104 compensates the #root mount (100vw/zoom,
-        # 100vh/zoom). Previous stable v1.4.0 — first release since v1.3.3
-        # (2026-05-13); ships 75 merged PRs that had piled up unreleased.
-        # Headline: #102 production update channel (the in-app banner now
-        # checks signed GitHub Releases, ending the dev-source-sync
-        # self-update churn — forward-only, no data-loss); #93 chat→host
-        # persistent MCP; #92 update banner; #95/#97 quiet updates;
-        # #96 accessibility apply; #98 discovery palette; #99 param→socket
-        # promote; #101 NVIDIA models; #100 connector build fixes; #90 +
-        # stem-cell visual surface; plus ~40 dependency/security bumps.
-        assert v == "1.4.1"
+        assert v, "VERSION file is empty"
+
+        # 1) Well-formed STABLE semver MAJOR.MINOR.PATCH — no pre-release /
+        #    alpha / build suffix. A stable release ships a clean triple
+        #    (the get_version fallback '1.4.0-alpha' must never be committed).
+        parts = v.split(".")
+        assert len(parts) == 3 and all(p.isdigit() for p in parts), (
+            f"VERSION must be a stable MAJOR.MINOR.PATCH semver, got {v!r}"
+        )
+        ver = tuple(int(p) for p in parts)
+
+        # 2) Forward-only: the released version never regresses below the
+        #    floor this test historically guarded.
+        assert ver >= self._MIN_STABLE, (
+            f"VERSION {v} regressed below the {'.'.join(map(str, self._MIN_STABLE))} floor"
+        )
+
+        # 3) Internal consistency: the value the running app reports
+        #    (ArchHubBridge.get_version → the same VERSION file) matches the
+        #    file on disk. This is the invariant that actually matters — it
+        #    catches VERSION drifting away from what users see in-app, which
+        #    a frozen literal never could. (qapp ensures a QApplication for
+        #    the QObject-derived bridge.)
+        from bridge import ArchHubBridge
+        # defer_boot/auto_extract_memory off → no disk-scan daemon thread,
+        # no memory side effects; we only need the version slot.
+        served = ArchHubBridge(
+            tools=None, auto_extract_memory=False, defer_boot=False
+        ).get_version()
+        assert served == v, (
+            f"app get_version() ({served!r}) disagrees with VERSION file ({v!r})"
+        )

@@ -30,6 +30,8 @@ import threading
 import time
 from typing import Optional
 
+from host_aliases import canonical_host
+
 # Cheap per-process cache so the 30s refresh doesn't re-probe inside the
 # same Qt tick. Same TTL + shape as llm_detector._CACHE.
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -499,6 +501,7 @@ def _probe_broker(family: str) -> dict:
                       (add-in not NETLOADed / crashed).
       missing       — host process not running at all.
     """
+    family = canonical_host(family)
     port = _BROKER_PORTS.get(family)
     if port is None:
         return {"status": "missing", "version": "",
@@ -616,7 +619,8 @@ def live_hosts() -> list[str]:
 
 
 def display_label(hid: str) -> str:
-    return HOST_DISPLAY.get(hid, hid.title())
+    canonical = canonical_host(hid)
+    return HOST_DISPLAY.get(canonical, canonical.title())
 
 
 if __name__ == "__main__":

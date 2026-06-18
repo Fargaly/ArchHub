@@ -27,6 +27,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from host_aliases import canonical_host, canonical_op_id
+
 
 # ── operation result ────────────────────────────────────────────────
 @dataclass
@@ -220,8 +222,9 @@ class Connector(ABC):
                 "error": self._ops_error}
 
     def op(self, op_id: str) -> Optional[ConnectorOp]:
+        wanted = canonical_op_id(op_id)
         for o in self.ops():
-            if o.op_id == op_id:
+            if o.op_id == op_id or canonical_op_id(o.op_id) == wanted:
                 return o
         return None
 
@@ -266,11 +269,12 @@ _CONNECTORS: dict[str, Connector] = {}
 def register(connector: Connector) -> None:
     """Register a connector instance under its host id."""
     if connector and connector.host:
+        connector.host = canonical_host(connector.host)
         _CONNECTORS[connector.host] = connector
 
 
 def get(host: str) -> Optional[Connector]:
-    return _CONNECTORS.get(host)
+    return _CONNECTORS.get(canonical_host(host))
 
 
 def all_connectors() -> list:
@@ -287,11 +291,12 @@ def all_ops() -> list:
 
 def run_op(op_id: str, **params) -> OpResult:
     """Resolve an op_id across all connectors and run it."""
-    host = op_id.split(".", 1)[0] if "." in op_id else ""
+    canonical_id = canonical_op_id(op_id)
+    host = canonical_id.split(".", 1)[0] if "." in canonical_id else ""
     c = get(host)
     if c is None:
         return OpResult.fail(f"no connector for host '{host}'", op_id)
-    o = c.op(op_id)
+    o = c.op(canonical_id)
     if o is None:
         return OpResult.fail(f"unknown op '{op_id}'", op_id)
     return o.run(**params)

@@ -23,6 +23,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from host_aliases import canonical_host, host_lookup_names
 from manager import ConnectorManager, ConnectorState
 from speckle_client import SpeckleClient
 
@@ -79,6 +80,7 @@ class ToolInvocation:
 # ---------------------------------------------------------------------------
 HOSTS = {
     "revit":   "http://localhost:48884",
+    "autocad": "http://localhost:48885",
     "acad":    "http://localhost:48885",
     "max":     "http://localhost:48886/max-mcp",
     "blender": "http://localhost:9876",
@@ -1673,11 +1675,8 @@ class ToolEngine:
             if e.state != ConnectorState.ACTIVE:
                 continue
             fam = e.family
-            # Map family → tool prefix used in TOOLS
-            if fam == "autocad":
-                active.add("acad")
-            else:
-                active.add(fam)
+            # Expose canonical ids and legacy aliases to the same host.
+            active.update(host_lookup_names(fam))
         # Outlook auto-activates when classic Outlook is reachable via
         # COM — but COM dispatch on the Qt main thread crashes Qt6Core
         # if called repeatedly (status bar ticks every few seconds).
@@ -1700,7 +1699,7 @@ class ToolEngine:
         # the real tool has no reason to fabricate.
         try:
             for fam in self._reachable_broker_families_cached():
-                active.add("acad" if fam == "autocad" else fam)
+                active.update(host_lookup_names(fam))
         except Exception:
             pass
         # Rhino auto-activates when the in-Rhino HTTP bridge answers on
@@ -2660,12 +2659,13 @@ class ToolEngine:
     # broker reports zero healthy sessions but the legacy single port
     # might still answer.
     def _broker_for(self, family: str):
+        family = canonical_host(family)
         try:
             if family == "revit":
                 import revit_broker; return revit_broker
             if family == "max":
                 import max_broker; return max_broker
-            if family == "acad":
+            if family == "autocad":
                 import acad_broker; return acad_broker
         except Exception:
             return None
@@ -2693,7 +2693,8 @@ class ToolEngine:
                                        method=method, timeout=timeout)
 
         # Fallback: direct legacy URL (Blender, or pre-broker hosts).
-        url = f"{HOSTS[family]}{path}"
+        url_base = HOSTS.get(family) or HOSTS[canonical_host(family)]
+        url = f"{url_base}{path}"
         headers = {"Accept": "application/json"}
         if data is not None:
             headers["Content-Type"] = "application/json"

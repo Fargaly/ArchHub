@@ -12,9 +12,9 @@
      The `media=print` trick lets the page render with fallback fonts
      (Georgia / system-ui / monospace) immediately, then swaps when
      the real font sheet arrives. `noscript` keeps it for non-JS. -->
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
       rel="stylesheet" media="print" onload="this.media='all'; this.onload=null;" />
-<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" /></noscript>
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" /></noscript>
 <style>
   html, body {
     margin:0; padding:0; height:100%; width:100%;
@@ -131,6 +131,14 @@
      babel.min.js is lazily <script>-injected by jsx-boot.js ONLY when a
      precompiled artifact is missing or its sha doesn't match the live
      .jsx (the in-browser fallback path). -->
+
+<!-- DESIGN-SYSTEM SoT — window.AH (single source of truth for every design
+     token), loaded EAGERLY as plain JS BEFORE the bundle so it exists when
+     studio-lm's IIFE runs.  THEMES.forge derives FROM window.AH (no hand-copied
+     hexes) and LM.fs / LM.arch read the canonical type scale + architect's-hand
+     face from here.  Pure assignment — no JSX — so it needs no Babel and adds
+     no cold-start cost.  Mirror of _handoff/archhub/project/tokens.jsx. -->
+<script src="tokens.jsx"></script>
 
 <!-- AgDR-0026 Phase 3 — JSX boot loader.  Fast path: load the precompiled
      *.compiled.js when its embedded source-sha matches the live .jsx

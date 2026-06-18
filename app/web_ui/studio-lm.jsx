@@ -17,16 +17,37 @@
 // re-evaluate on every render, so theme switch + forced re-render
 // repaints everything — zero inline-style touches needed across the
 // 881 surface refs.
+// ─── TOKENS ARE THE LITERAL SoT ───────────────────────────────────
+// `forge` is DERIVED from window.AH (app/web_ui/tokens.jsx, loaded eagerly by
+// index.html BEFORE this bundle). There are NO hand-copied forge hexes here any
+// more: change a token in tokens.jsx once and forge (and every LM.<color>
+// getter that reads it) updates. The 24 forge keys are exactly the long-key
+// surface/ink/line/accent/functional projection of window.AH.
+// `_AH` is a defensive fallback so the module never throws if the SoT script
+// somehow did not load first (standalone JSX parse in a test, an odd boot
+// order); the real running app always has window.AH from index.html.
+const _AH = (typeof window !== 'undefined' && window.AH) ? window.AH : {
+  bg:'#0e0e11', bgPanel:'#15151a', bgSoft:'#1c1c23', bgHover:'#22222a',
+  bgDeep:'#0a0a0d', bgCanvas:'#101015', bgInk:'#18181e',
+  ink:'#ece8e0', inkSoft:'#9b938a', inkMuted:'#5e574f', inkDim:'#3a3530',
+  line:'#26262e', lineSoft:'#1e1e24', lineHair:'#1a1a20',
+  accent:'#d97757', accentSoft:'#3a2018', accentDim:'#2a1812', accentHi:'#e8896a',
+  ok:'#7ec18e', warn:'#e5b25a', err:'#e6705f',
+  cyan:'#5fb3b3', purple:'#a98cd6', blue:'#7898d6',
+};
+// forge = the long-key surface projection of the SoT. Each value is read
+// FROM window.AH — no literal hex lives in this object.
+const _forgeFromAH = (A) => ({
+  bg:A.bg, bgPanel:A.bgPanel, bgSoft:A.bgSoft, bgHover:A.bgHover,
+  bgDeep:A.bgDeep, bgCanvas:A.bgCanvas, bgInk:A.bgInk,
+  ink:A.ink, inkSoft:A.inkSoft, inkMuted:A.inkMuted, inkDim:A.inkDim,
+  line:A.line, lineSoft:A.lineSoft, lineHair:A.lineHair,
+  accent:A.accent, accentSoft:A.accentSoft, accentDim:A.accentDim, accentHi:A.accentHi,
+  ok:A.ok, warn:A.warn, err:A.err,
+  cyan:A.cyan, purple:A.purple, blue:A.blue,
+});
 const THEMES = {
-  forge: {
-    bg:'#0e0e11', bgPanel:'#15151a', bgSoft:'#1c1c23', bgHover:'#22222a',
-    bgDeep:'#0a0a0d', bgCanvas:'#101015', bgInk:'#18181e',
-    ink:'#ece8e0', inkSoft:'#9b938a', inkMuted:'#5e574f', inkDim:'#3a3530',
-    line:'#26262e', lineSoft:'#1e1e24', lineHair:'#1a1a20',
-    accent:'#d97757', accentSoft:'#3a2018', accentDim:'#2a1812', accentHi:'#e8896a',
-    ok:'#7ec18e', warn:'#e5b25a', err:'#e6705f',
-    cyan:'#5fb3b3', purple:'#a98cd6', blue:'#7898d6',
-  },
+  forge: _forgeFromAH(_AH),
   blueprint: {
     bg:'#0a1622', bgPanel:'#10202e', bgSoft:'#152838', bgHover:'#1a3046',
     bgDeep:'#06101a', bgCanvas:'#0c1a26', bgInk:'#0e1a28',
@@ -249,9 +270,14 @@ const LM = {
   get paper()      { return _currentTheme.bgPanel; },
   get accent2()    { return _currentTheme.accentHi; },
   // ── Typography family tokens ──────────────────────────────────────
-  serif:"'Instrument Serif', Georgia, serif",
-  sans:"'Inter', system-ui, sans-serif",
-  mono:"'JetBrains Mono', ui-monospace, monospace",
+  // Derived from window.AH (the SoT) with the same literals as fallbacks, so
+  // the families track tokens.jsx. `arch` = Architects Daughter — the
+  // architect's-hand face used ONLY by the Wordmark (ARCH·HUB), per the Brand
+  // Book (bb-core BBWord). It is a TITLE face, never body text.
+  serif:_AH.serif || "'Instrument Serif', Georgia, serif",
+  sans:_AH.sans || "'Inter', system-ui, sans-serif",
+  mono:_AH.mono || "'JetBrains Mono', ui-monospace, monospace",
+  arch:_AH.arch || "'Architects Daughter', 'Comic Sans MS', cursive",
 
   // ─── AgDR-0015 Phase 1 — additive scale tokens (Phase 1) ────────────
   // Phase 1 ADDS tokens; existing inline magic numbers remain unchanged.
@@ -266,9 +292,49 @@ const LM = {
 
   // Type scale — 6 steps. 15+ existing font-size values (including
   // blurry half-pixel 8.5/9.5/10.5/11.5/12.5) round up to this scale.
+  // KEPT as-is — the LEGACY scale every existing inline style references.
   font: {
     xs: 10, sm: 11, base: 13, md: 15, lg: 18, xl: 22,
   },
+
+  // ── FULL 12-step type scale (SoT) ─────────────────────────────────
+  // The canonical Brand-Book scale, derived from window.AH.fs (tokens.jsx) and
+  // alongside the legacy `font` above (not a replacement — legacy call sites
+  // stay valid). 12 named steps d0..cap, each { sz, ln, fam, role }:
+  //   • sz   — px size
+  //   • ln   — line-height (unitless)
+  //   • fam  — which family token to use ('serif' | 'sans' | 'mono')
+  //   • role — where it's used (mirrors the Brand Book `use` field)
+  // A consumer resolves the family via LM[step.fam] (e.g. LM[LM.fs.h1.fam] →
+  // LM.serif). New surfaces (Wordmark lockups, section openers) read this; the
+  // 6-step `font` map still backs the thousands of existing inline sizes.
+  fs: (() => {
+    const A = (typeof window !== 'undefined' && window.AH && window.AH.fs) ? window.AH.fs : null;
+    const fallback = {
+      d0:  { sz:104, ln:0.90, fam:'serif', role:'Web marketing hero — archhub.app only' },
+      d1:  { sz:88,  ln:0.92, fam:'serif', role:'Cover · product hero' },
+      d2:  { sz:56,  ln:0.95, fam:'serif', role:'Section openers' },
+      h1:  { sz:40,  ln:1.05, fam:'serif', role:'Page heading' },
+      h2:  { sz:24,  ln:1.15, fam:'serif', role:'Italic lede · pull-quote' },
+      h3:  { sz:21,  ln:1.20, fam:'serif', role:'In-product section title' },
+      bodyLg: { sz:16, ln:1.55, fam:'sans', role:'Body large · composer' },
+      body:   { sz:14, ln:1.55, fam:'sans', role:'Body · rows · descriptions' },
+      bodySm: { sz:13, ln:1.50, fam:'sans', role:'Body small · dense lists' },
+      mono:   { sz:12, ln:1.50, fam:'mono', role:'Data · params · prices · tokens' },
+      monoSm: { sz:11, ln:1.55, fam:'mono', role:'Mono small · captions · timestamps' },
+      cap:    { sz:9,  ln:1.40, fam:'mono', role:'All-caps section labels · tags' },
+    };
+    if (!A) return fallback;
+    // Project the SoT `fs` (whose entries carry `use`) into our { sz, ln, fam,
+    // role } shape so consumers have a stable `role` key regardless of which
+    // field name the SoT used. Falls back per-step if the SoT lacks a key.
+    const out = {};
+    for (const k of Object.keys(fallback)) {
+      const s = A[k] || fallback[k];
+      out[k] = { sz:s.sz, ln:s.ln, fam:s.fam, role:s.role || s.use || fallback[k].role };
+    }
+    return out;
+  })(),
 
   // Border-radius scale — 6 steps including pill.
   radius: {
@@ -316,6 +382,34 @@ const LM = {
     indesign:   '#FF3366',
     anthropic:  '#cc785c',
   },
+};
+
+// ──────────────── WORDMARK ────────────────
+// The ArchHub name set as a TITLE in the architect's hand (Architects Daughter),
+// uppercase, tight tracking — ARCH in ink, HUB in the terracotta accent. This is
+// the canonical lockup from the Brand Book (bb-core BBWord) brought into the app;
+// it is used in the workspace header, the Home masthead, and the sign-in screen
+// so the product wears the same wordmark as the marketing surfaces. Colors come
+// from the LM getters (theme-reactive); the face is LM.arch (the SoT `arch`
+// token). `-0.025em` == −2.5% tracking, per the brand spec.
+const Wordmark = ({ size = 22, accent = true, color, style }) => {
+  const ink = color || LM.ink;
+  return (
+    <span style={{
+      fontFamily: LM.arch,
+      fontSize: size,
+      letterSpacing: '-0.025em',
+      textTransform: 'uppercase',
+      lineHeight: 1,
+      display: 'inline-flex',
+      whiteSpace: 'nowrap',
+      userSelect: 'none',
+      ...style,
+    }} aria-label="ArchHub" data-ah-wordmark>
+      <span style={{ color: ink }}>Arch</span>
+      <span style={{ color: accent ? LM.accent : ink }}>Hub</span>
+    </span>
+  );
 };
 
 // Stable no-op with a fixed module-level identity. Used where a component
@@ -472,6 +566,32 @@ const WIRE_STATE_META = {
   idle:           null,   // explicit idle = no overlay (plain type colour)
 };
 const wireStateMeta = (s) => (s ? (WIRE_STATE_META[s] || null) : null);
+
+// ─── WIRE VOCABULARY (DESIGN-SYSTEM) ──────────────────────────────────
+// The three canonical wire LOOKS, per the Brand Book wire language. This is the
+// design contract the renderer below honours (it is intentionally separate from
+// the runtime WIRE_STATE_META above, which maps cook states; this names the
+// *visual grammar* a user reads at a glance):
+//   • default      — a solid bezier in the wire's TYPE colour (the resting look)
+//   • pending /    — a DASHED, MUTED bezier: the wire exists but is not active
+//     disabled        (an unsatisfied input, a disabled branch, a not-yet-cooked
+//                      edge). Reads as "wired, but dormant".
+//   • live         — a DASHED, ACCENT, ANIMATED bezier: data is streaming THROUGH
+//                      this wire right now (a flowing cook edge / a node running).
+//                      The marching-ants accent dash is the "alive" signal.
+// `cls` is the CSS animation class (see the keyframes block); `live` carries the
+// animated accent ants, `pending` is static dashed-muted, `default` is undashed.
+const WIRE_VOCAB = {
+  default: { dash: null,  get col() { return null; },        animated: false, cls: null      },
+  pending: { dash: '4 6', get col() { return LM.inkMuted; }, animated: false, cls: null      },
+  live:    { dash: '6 8', get col() { return LM.accent;   }, animated: true,  cls: 'lmFlow' },
+};
+// Resolve a wire's vocabulary mode from its logical flags. A wire is `live` when
+// the runner says it is flowing (or an endpoint node is running); `pending` when
+// it is explicitly disabled / its source has no value yet; else `default`.
+const wireVocabMode = ({ animated, disabled, unsatisfied } = {}) =>
+  animated ? 'live' : ((disabled || unsatisfied) ? 'pending' : 'default');
+
 // edge_id → {state, preview}. edge_id matches the runner's canonical id
 // (runner.py:265 — `${srcNode}.${srcPort}-${dstNode}.${dstPort}`, or the
 // wire's own `id` when set). Module-scoped + window-exposed so the bridge
@@ -3593,6 +3713,12 @@ const StudioLM = () => {
         @keyframes lmPulse { 0%,100% { opacity:.4 } 50% { opacity:1 } }
         @keyframes lmCaret { 50% { opacity: 0 } }
         @keyframes lmDash  { to { stroke-dashoffset: -16 } }
+        /* WIRE VOCABULARY — the live-streaming "marching ants" accent flow.
+           Applied to the dashed-accent overlay path of a wire whose data is
+           streaming right now (WIRE_VOCAB.live). Distinct keyframe from lmDash
+           so the wire-flow speed/feel can evolve independently of node pulses. */
+        @keyframes lmFlow  { to { stroke-dashoffset: -28 } }
+        .lmFlow { animation: lmFlow 0.6s linear infinite; }
         @keyframes lmSlideIn { from { transform: translateX(8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
         @keyframes lmHintFade { 0% { opacity: 0; transform: translate(-50%, 8px) } 8% { opacity: 1; transform: translate(-50%, 0) } 80% { opacity: 1; transform: translate(-50%, 0) } 100% { opacity: 0; transform: translate(-50%, -4px) } }
@@ -3905,8 +4031,11 @@ const FirstRunProfile = ({ onClose }) => {
       <div style={{ width:440, maxWidth:'94%', background:LM.bgPanel,
         border:`1px solid ${LM.line}`, borderRadius:10, padding:'22px 24px',
         boxShadow:'0 30px 80px rgba(0,0,0,.6)' }}>
-        <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:24,
-          color:LM.accent, marginBottom:4 }}>Welcome to ArchHub</div>
+        {/* Sign-in / first-run lockup — the architect's-hand wordmark, then an
+            italic-serif welcome line beneath it. */}
+        <div style={{ marginBottom:6 }}><Wordmark size={34}/></div>
+        <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:22,
+          color:LM.accent, marginBottom:4 }}>Welcome</div>
         <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft,
           marginBottom:18, lineHeight:1.5 }}>
           A couple of details about your practice — tailors host suggestions
@@ -5836,6 +5965,11 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
       padding:'30px 44px 110px', display:'flex', flexDirection:'column', position:'relative',
     }}>
+      {/* Home masthead — the brand wordmark sets the tone of the landing view,
+          matching the marketing site + brand book lockup. */}
+      <div style={{ display:'flex', alignItems:'center', marginBottom:18 }}>
+        <Wordmark size={30}/>
+      </div>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
         <BrainChip/>
@@ -6263,6 +6397,16 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
+
+      {/* Brand lockup — the architect's-hand wordmark (ARCH·HUB), left of the
+          session tabs. Clicking it goes Home, same as the grid button. */}
+      <button onClick={onHome} title="ArchHub — all sessions" style={{
+        border:0, background:'transparent', cursor:'pointer', padding:'0 4px',
+        display:'flex', alignItems:'center', flexShrink:0,
+      }}>
+        <Wordmark size={17}/>
+      </button>
+      <div style={{ width:1, height:16, background:LM.line, flexShrink:0, margin:'0 2px' }}/>
 
       <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, overflow:'hidden' }}>
         {(openTabs || []).map(id => {
@@ -8373,12 +8517,30 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
     const animated = lm ? !!lm.animated
                         : ((fromNode && fromNode.state === 'running') ||
                            (toNode && toNode.state === 'running'));
+    // WIRE VOCABULARY (DESIGN-SYSTEM): classify this wire into the three-look
+    // grammar (default / pending / live). `live` == data streaming now
+    // (animated). `pending` == the wire is wired but dormant: an endpoint node
+    // is explicitly disabled, OR the upstream error state set it inert, OR the
+    // source has produced no value yet (unsatisfied). Everything else is the
+    // resting `default` solid bezier. The render reads `vocab*` off this.
+    const disabled = !!((fromNode && fromNode.disabled) || (toNode && toNode.disabled)
+                        || (live && live.state === 'upstream_error'));
+    const unsatisfied = !animated && !disabled
+                        && !!fromNode && (fromNode.cooked == null)
+                        && (live == null || live.state === 'stale');
+    const vocab = wireVocabMode({ animated, disabled, unsatisfied });
+    const vstyle = WIRE_VOCAB[vocab];
     return {
       i, x1: from.x, y1: from.y, x2: to.x, y2: to.y, raw: w,
       t: from.t,
       d, color: (lm && lm.col) || color, shape, shapeW,
       shapeDash: lm ? (lm.dash || null) : shapeDash,
       animated,
+      // Vocabulary look — resolved here so the per-frame render is a pure read.
+      vocab,                                   // 'default' | 'pending' | 'live'
+      vocabDash: vstyle.dash,                  // dashed-muted / dashed-accent / null
+      vocabCol: vstyle.col,                    // muted / accent / null(=type colour)
+      vocabCls: vstyle.cls,                    // 'lmFlow' for live, else null
       wireState: live ? live.state : null,
       wirePreview: live ? live.preview : '',
       stateOp: lm ? lm.op : null,
@@ -8596,8 +8758,20 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
       style={{
         gridColumn:'1', gridRow:'2', position:'relative', overflow:'hidden',
         background:LM.bgCanvas,
-        backgroundImage:`radial-gradient(${LM.lineHair} 1px, transparent 1px)`,
-        backgroundSize:`${20*zoom}px ${20*zoom}px`,
+        // TRACING GRID (DESIGN-SYSTEM) — a 24px architect's tracing-paper grid
+        // (faint lineSoft lines, vertical + horizontal) sits BEHIND the existing
+        // 20px keystone dot grid. CSS paints earlier layers on top, so the dots
+        // stay crisp above the tracing lines. Both ride the same pan + zoom so
+        // the whole substrate moves as one. The tracing grid reads as drafting
+        // paper; the dots remain the snap reference.
+        backgroundImage:
+          `radial-gradient(${LM.lineHair} 1px, transparent 1px),`
+          + `linear-gradient(${LM.lineSoft} 1px, transparent 1px),`
+          + `linear-gradient(90deg, ${LM.lineSoft} 1px, transparent 1px)`,
+        backgroundSize:
+          `${20*zoom}px ${20*zoom}px,`
+          + `${24*zoom}px ${24*zoom}px,`
+          + `${24*zoom}px ${24*zoom}px`,
         backgroundPosition:`${pan.x}px ${pan.y}px`,
         cursor: dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab',
         userSelect: dragRef.current ? 'none' : 'auto',
@@ -8632,8 +8806,14 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
             const op = isSel ? 1
                      : (w.stateOp != null ? w.stateOp
                         : (w.focused ? 1 : 0.5));
+            // WIRE VOCABULARY (DESIGN-SYSTEM): the base bezier honours the
+            // resolved look. `pending` → dashed + muted colour (dormant);
+            // `default` → solid type colour. `vocabDash` falls back to the
+            // existing data-shape dash (tree/any) so that grammar is preserved.
+            const baseStroke = (w.vocab === 'pending' && w.vocabCol) ? w.vocabCol : color;
+            const baseDash = w.vocabDash || shapeDash;
             return (
-              <g key={w.i} data-wire-i={w.i}
+              <g key={w.i} data-wire-i={w.i} data-wire-vocab={w.vocab}
                  data-wire-from={w.raw.from[0]} data-wire-to={w.raw.to[0]}>
                 {/* Invisible fat path so the wire is easy to click. */}
                 <path d={d} stroke="transparent" strokeWidth={16} fill="none"
@@ -8645,13 +8825,17 @@ const NodeCanvasInner = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], 
                     setSelectedWire(w.i);
                     setWireMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, idx: w.i, wire: w.raw });
                   }}/>
-                <path d={d} stroke={color} strokeWidth={strokeW} fill="none" opacity={op}
-                  strokeDasharray={shapeDash || undefined}
+                <path d={d} stroke={baseStroke} strokeWidth={strokeW} fill="none" opacity={op}
+                  strokeDasharray={baseDash || undefined}
                   filter={(w.focused || isSel) ? "url(#lm-wire-glow)" : undefined}
                   style={{ pointerEvents:'none' }}/>
+                {/* LIVE STREAMING overlay — dashed-accent marching ants
+                    (WIRE_VOCAB.live, the lmFlow class). Only painted while data
+                    is actually flowing through this wire. */}
                 {w.animated && (
-                  <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10"
-                    style={{ animation:'lmDash 0.9s linear infinite', pointerEvents:'none' }}/>
+                  <path d={d} stroke={w.vocabCol || LM.accent} strokeWidth={strokeW} fill="none"
+                    strokeDasharray={w.vocabDash || '6 8'} className={w.vocabCls || 'lmFlow'}
+                    style={{ pointerEvents:'none' }}/>
                 )}
               </g>
             );

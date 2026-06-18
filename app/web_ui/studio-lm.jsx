@@ -3485,6 +3485,20 @@ const StudioLM = () => {
         window.dispatchEvent(ev2);
       } catch (e) {}
     };
+    // PART 1 (rail drawers): the Search drawer's session/library hits fire
+    // these from ANY view (Home or in-session). openSession is the same real
+    // path the Home cards use; addNodeFromLibrary is the same real path the
+    // in-canvas library uses. Routed here (the single place state setters are
+    // reachable) so a from-Home click lands the user on a working canvas.
+    const onOpenSessionEvt = (ev) => {
+      const sid = ev && ev.detail && ev.detail.id;
+      if (sid) { try { openSession(sid); } catch (e) {} }
+    };
+    const onAddLibraryNode = (ev) => {
+      const item = ev && ev.detail;
+      if (!item) return;
+      try { addNodeFromLibrary(item); } catch (e) {}
+    };
     window.addEventListener('lm-new-session', onNewSession);
     window.addEventListener('lm-spawn-skill', onSpawnSkill);
     window.addEventListener('lm-share-canvas', onShareCanvas);
@@ -3497,6 +3511,8 @@ const StudioLM = () => {
     window.addEventListener('lm-action-open-session', onCmdOpenSession);
     window.addEventListener('lm-action-run-canvas', onCmdRunCanvas);
     window.addEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
+    window.addEventListener('lm-open-session', onOpenSessionEvt);
+    window.addEventListener('lm-add-library-node', onAddLibraryNode);
     window.addEventListener('lm-toggle-perf-hud', onTogglePerfHud);
     // AgDR-0024 S2 — HostNodeV2 floating-verb-bar event handlers.
     // Mutate node in place, persist, bump. Identical semantics to the
@@ -3657,6 +3673,8 @@ const StudioLM = () => {
       window.removeEventListener('lm-action-open-session', onCmdOpenSession);
       window.removeEventListener('lm-action-run-canvas', onCmdRunCanvas);
       window.removeEventListener('lm-action-add-grammar-node', onCmdAddGrammarNode);
+      window.removeEventListener('lm-open-session', onOpenSessionEvt);
+      window.removeEventListener('lm-add-library-node', onAddLibraryNode);
       window.removeEventListener('lm-toggle-perf-hud', onTogglePerfHud);
       window.removeEventListener('lm-param-promote', onParamPromote);
       window.removeEventListener('lm-node-toggle-bypass', onToggleBypass);
@@ -3750,6 +3768,10 @@ const StudioLM = () => {
       <BrainViewModal _themeBump={paletteBump}/>
       <StudioSkillJson _themeBump={paletteBump}/>
       <CommandDeckModal _themeBump={paletteBump}/>
+      {/* PART 1 (rail real-surfaces): always-mounted drawer host. The left
+          rail's NODES/SKILLS/SEARCH/SHARE items dispatch lm-rail-open so they
+          open the REAL panel from Home AND in-session (no more no-op). */}
+      <RailDrawerHost _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
       <SelfHealInspector _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
@@ -3786,6 +3808,7 @@ const StudioLM = () => {
         @keyframes lmFlow  { to { stroke-dashoffset: -28 } }
         .lmFlow { animation: lmFlow 0.6s linear infinite; }
         @keyframes lmSlideIn { from { transform: translateX(8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
+        @keyframes lmDrawerIn { from { transform: translateX(-16px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
         @keyframes lmHintFade { 0% { opacity: 0; transform: translate(-50%, 8px) } 8% { opacity: 1; transform: translate(-50%, 0) } 80% { opacity: 1; transform: translate(-50%, 0) } 100% { opacity: 0; transform: translate(-50%, -4px) } }
         @keyframes lmBrainShimmer { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
@@ -4511,7 +4534,7 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
       display:'flex', flexDirection:'column', alignItems:'stretch',
       padding:'12px 0 10px', gap:2,
     }}>
-      <RailIcon active onClick={onHome} title="Home" label="home">
+      <RailIcon active onClick={onHome} title="Home" label="home" testid="rail-home">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
           <path d="M3 21 V12 a9 9 0 0 1 18 0 V21" stroke={LM.accent} strokeWidth="2" strokeLinecap="round"/>
           <circle cx="12" cy="8.5" r="1.6" fill={LM.accent}/>
@@ -4522,7 +4545,7 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
           · inbox · finances). Always live (Home AND session view) so it's
           reachable in ONE click from the default view. Dispatches the open
           event the always-mounted CommandDeckModal listens for. */}
-      <RailIcon title="Command Deck" label="deck"
+      <RailIcon title="Command Deck" label="deck" testid="rail-deck"
         onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-command-deck-open')); } catch (e) {} }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="1.8">
           <rect x="3" y="3" width="8" height="5" rx="1"/>
@@ -4532,16 +4555,26 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
         </svg>
       </RailIcon>
       <div style={{ height:8 }}/>
-      {/* Audit 2026-06-02: in the Home view (no session) IconRail receives
-          setPanel={_NOOP}, so these panel items had no effect yet still showed
-          hover/active styling — a dead clickable. Honestly disable them when
-          setPanel is the no-op (Home); the session-view Sidebar passes a real
-          setPanel, where they stay fully functional. */}
+      {/* MAKE-IT-REAL 2026-06-18 (founder audit: "clicking NODES/SKILLS/SEARCH
+          on Home does nothing"). These items are NO LONGER dead on Home. Every
+          click opens the REAL panel as a left drawer via lm-rail-open (the
+          always-mounted RailDrawerHost) — reachable in ONE click from ANY
+          view. In-session it ALSO switches the sidebar `panel` so the rail and
+          the docked sidebar stay in sync (existing behaviour preserved). The
+          old `disabled-on-Home` branch (a dead clickable) is removed — the
+          surfaces are real from Home now. */}
       {items.map(it => {
-        const dead = setPanel === _NOOP;
+        const inSession = setPanel !== _NOOP;
         return (
-          <RailIcon key={it.id} active={!dead && panel === it.id} disabled={dead}
-            onClick={() => setPanel(it.id)} title={it.title} label={it.title.toLowerCase()}>
+          <RailIcon key={it.id} testid={'rail-' + it.id}
+            active={inSession && panel === it.id}
+            onClick={() => {
+              // Real surface from anywhere: open the drawer…
+              try { window.dispatchEvent(new CustomEvent('lm-rail-open', { detail:{ panel: it.id } })); } catch (e) {}
+              // …and in-session, mirror it in the docked sidebar.
+              if (inSession) { try { setPanel(it.id); } catch (e) {} }
+            }}
+            title={it.title} label={it.title.toLowerCase()}>
             {it.svg}
           </RailIcon>
         );
@@ -4549,8 +4582,14 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
       <div style={S_FLEX1}/>
       {/* Subtle divider before footer actions */}
       <div style={{ height:1, margin:'6px 10px 4px', background:LM.line }}/>
-      <RailIcon title="Share canvas as skill" label="share"
-        onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-share-canvas')); } catch (e) {} }}>
+      {/* SHARE — opens the REAL Share/Publish panel (SharePanel) as a drawer.
+          MAKE-IT-REAL 2026-06-18: the old handler silently called save_as_skill
+          with NO visible surface (a shell — "nothing for show only"). Now it
+          opens a populated panel listing the user's shareable skills + sessions
+          with real Copy-link / Export-JSON / Publish actions. The quick
+          "share current canvas as skill" lives inside that panel's + button. */}
+      <RailIcon title="Share &amp; publish" label="share" testid="rail-share-icon"
+        onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-rail-open', { detail:{ panel:'share' } })); } catch (e) {} }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
           <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/>
           <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>
@@ -4570,7 +4609,7 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
 // carry their own hover state, unaffected by this memo.
 const IconRail = React.memo(IconRailInner);
 
-const RailIcon = ({ active, onClick, title, label, children, disabled }) => {
+const RailIcon = ({ active, onClick, title, label, children, disabled, testid }) => {
   const [hover, setHover] = React.useState(false);
   // Track E (Accessibility, 2026-05-26): aria-label so screen readers
   // announce the rail destination instead of just the icon glyph.
@@ -4583,7 +4622,7 @@ const RailIcon = ({ active, onClick, title, label, children, disabled }) => {
   const ariaLabel = disabled ? `${baseLabel} — open a session to use this panel` : baseLabel;
   const hovering = hover && !disabled;
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} data-testid={testid}
       title={disabled ? `${title || baseLabel} — open a session to use this panel` : title}
       aria-label={ariaLabel} style={{
       width:'100%', minHeight:48, padding:'4px 0', border:0,
@@ -15026,6 +15065,224 @@ const BrainFacetLane = ({ lane }) => {
   );
 };
 
+// ─── BRAIN FOLDER / TREE EXPLORER ───────────────────────────────────
+// PART 2 (founder audit 2026-06-18: "the Brain view is cards-only with ZERO
+// folder/tree — the founder explicitly wants the brain browsable AS FOLDERS").
+// A real collapsible Finder-style tree alongside the cards, mirroring the
+// handoff design's 4-layer knowledge cascade (brain-app.jsx → Folder/Caret/
+// counts). It is sourced ENTIRELY from the SAME brain.browse payload the
+// cards use — NOTHING fabricated (ANTI-LIE):
+//   • scope folders  = view.totals keys (Capability / Decisions / Memory /
+//     How-to·Skills / archived) with their REAL counts,
+//   • project sub-folders = view.projects census (BBC4 / BH3D / P-674 / …)
+//     plus a "General" bucket for facts with no project,
+//   • leaves         = the real fact cards in the payload (top_of_mind +
+//     every facet lane's clusters[].top), grouped facet → project,
+//   • clicking a leaf opens that fact's detail (the SAME BrainCard the cards
+//     view renders) inline beneath the leaf.
+// The folder COUNT is the authoritative scope/project census; the leaves are
+// the cards brain.browse surfaced (it returns top cards per cluster, not every
+// row), so a folder honestly shows "N shown" when its surfaced leaves < count.
+// Expand/collapse + keyboard (Enter/Space toggles a focused folder; leaves are
+// real buttons). data-testid=brain-folder-tree + brain-folder (per node).
+
+// Pull EVERY fact card out of a brain.browse payload (top-of-mind + all lane
+// clusters), de-duped by id. These are the real leaves the tree can show.
+const _brainAllCards = (view) => {
+  const out = [];
+  const seen = new Set();
+  const add = (c) => {
+    if (!c || !c.id || seen.has(c.id)) return;
+    seen.add(c.id); out.push(c);
+  };
+  ((view && view.top_of_mind) || []).forEach(add);
+  ((view && view.facets) || []).forEach(lane =>
+    (lane.clusters || []).forEach(cl => (cl.top || []).forEach(add)));
+  ((view && view.archived) || []).forEach(add);
+  return out;
+};
+
+// Facet → display label + colour for a folder. Reuses BRAIN_FACET_META where
+// it maps; falls back to the raw key (so a totals key with no meta, e.g.
+// "How-to / Skills" or "archived", still renders honestly).
+const _brainFolderMeta = (facetKey) => {
+  const m = BRAIN_FACET_META[facetKey];
+  if (m) return { label: m.label, col: m.col(), glyph: m.glyph };
+  if (facetKey === 'archived') return { label: 'Faded / archived', col: LM.inkMuted, glyph: '⊘' };
+  if (facetKey === 'How-to / Skills') return { label: 'How-to / Skills', col: LM.cyan, glyph: '⚙' };
+  return { label: String(facetKey), col: LM.inkSoft, glyph: '▤' };
+};
+
+const BrainFolderTree = ({ view, proj }) => {
+  // Persisted open/closed per folder path so a re-pull (brain_browse_changed)
+  // doesn't collapse what the user opened.
+  const [openPaths, setOpenPaths] = React.useState(() => ({}));
+  const [openLeaf, setOpenLeaf] = React.useState(null);   // fact id whose detail is shown
+  const toggle = (path) => setOpenPaths(p => ({ ...p, [path]: !p[path] }));
+
+  if (!view) return null;
+  const totals = view.totals || {};
+  const projects = view.projects || {};
+  const cards = _brainAllCards(view);
+
+  // Scope folders = the real totals keys, minus the rollups. 'archived' is a
+  // real bucket and stays (the tree shows faded facts too — NEVER-TRIM made
+  // browsable). Order: the meaningful facets first, archived last.
+  const facetOrder = ['Decisions', 'Memory', 'Capability', 'How-to / Skills'];
+  const scopeKeys = Object.keys(totals).filter(k => k !== 'all');
+  scopeKeys.sort((a, b) => {
+    const ia = facetOrder.indexOf(a), ib = facetOrder.indexOf(b);
+    if (a === 'archived') return 1; if (b === 'archived') return -1;
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  // Group the real leaf cards: facet → project(code|'General') → [cards].
+  const byFacet = {};
+  cards.forEach(c => {
+    const f = (c.archived ? 'archived' : (c.facet || 'Memory'));
+    const p = c.project || 'General';
+    (byFacet[f] = byFacet[f] || {});
+    (byFacet[f][p] = byFacet[f][p] || []).push(c);
+  });
+
+  // Project sub-folder counts come from the authoritative census; 'General'
+  // (no project) shows its surfaced-leaf count only (the census doesn't track
+  // an explicit "no project" total).
+  const projCount = (code) => (code === 'General') ? null : (projects[code] || 0);
+
+  const rowBase = {
+    display:'flex', alignItems:'center', gap:8, width:'100%',
+    border:0, background:'transparent', cursor:'pointer', textAlign:'left',
+    padding:'5px 8px', borderRadius:6, fontFamily:LM.mono,
+  };
+  const caret = (isOpen) => (
+    <span style={{ width:10, flex:'none', color:LM.inkMuted, fontSize:10 }}>{isOpen ? '▾' : '▸'}</span>
+  );
+  const folderGlyph = (col) => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="1.8" style={{ flex:'none' }}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.2h6a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+    </svg>
+  );
+  const countPill = (n, col) => (n == null) ? null : (
+    <span style={{
+      fontFamily:LM.mono, fontSize:9.5, fontWeight:600, color: col || LM.inkMuted,
+      background:LM.bg, border:`1px solid ${(col || LM.inkMuted)}44`,
+      borderRadius:20, padding:'0 7px', flex:'none',
+    }}>{n}</span>
+  );
+
+  // Apply the active project chip filter to the tree (mirrors the cards view):
+  // when a project is selected, only that project sub-folder shows.
+  const projFilterOk = (code) => !proj || code === proj;
+
+  return (
+    <div data-testid="brain-folder-tree" style={{
+      border:`1px solid ${LM.line}`, borderRadius:10, background:LM.bg,
+      padding:'8px 6px', marginTop:6,
+    }}>
+      {scopeKeys.length === 0 && (
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted, padding:'8px 6px' }}>
+          nothing in memory yet
+        </div>
+      )}
+      {scopeKeys.map(fk => {
+        const meta = _brainFolderMeta(fk);
+        const total = totals[fk] || 0;
+        const fpath = 'f:' + fk;
+        const fOpen = !!openPaths[fpath];
+        const projMap = byFacet[fk] || {};
+        // Project sub-folders for this facet: the union of census projects
+        // (that actually have leaves here OR a positive census) + 'General'.
+        const subCodes = Object.keys(projMap);
+        // Keep a stable order: real project codes sorted, 'General' last.
+        subCodes.sort((a, b) => (a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)));
+        const shownSub = subCodes.filter(projFilterOk);
+        const surfaced = Object.values(projMap).reduce((n, arr) => n + arr.length, 0);
+        return (
+          <div key={fk} data-testid="brain-folder" data-folder-kind="scope" data-folder={fk}>
+            <div role="button" tabIndex={0}
+              onClick={() => toggle(fpath)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(fpath); } }}
+              style={{ ...rowBase, fontSize:12.5, color:LM.ink }}
+              onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              {caret(fOpen)}
+              {folderGlyph(meta.col)}
+              <span style={{ flex:1, color:LM.ink, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{meta.label}</span>
+              {countPill(total, meta.col)}
+            </div>
+            {fOpen && (
+              <div style={{ marginLeft:16, borderLeft:`1px solid ${LM.lineSoft}`, paddingLeft:6 }}>
+                {shownSub.length === 0 && (
+                  <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, padding:'4px 8px' }}>
+                    {surfaced === 0 ? 'no cards surfaced (open the cards view for the full census)' : 'no project matches the filter'}
+                  </div>
+                )}
+                {shownSub.map(code => {
+                  const leaves = projMap[code] || [];
+                  const ppath = fpath + '/p:' + code;
+                  const pOpen = !!openPaths[ppath];
+                  const census = projCount(code);
+                  return (
+                    <div key={code} data-testid="brain-folder" data-folder-kind="project" data-folder={code}>
+                      <div role="button" tabIndex={0}
+                        onClick={() => toggle(ppath)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(ppath); } }}
+                        style={{ ...rowBase, fontSize:12, color:LM.inkSoft }}
+                        onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        {caret(pOpen)}
+                        {folderGlyph(meta.col)}
+                        <span style={{ flex:1, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {code === 'General' ? 'General' : code}
+                        </span>
+                        {/* census count when known; else the surfaced-leaf count */}
+                        {countPill(census != null ? census : leaves.length, LM.inkMuted)}
+                      </div>
+                      {pOpen && (
+                        <div style={{ marginLeft:16, borderLeft:`1px solid ${LM.lineSoft}`, paddingLeft:6 }}>
+                          {leaves.length === 0 && (
+                            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, padding:'4px 8px' }}>no facts surfaced here</div>
+                          )}
+                          {leaves.map(c => {
+                            const isOpen = openLeaf === c.id;
+                            return (
+                              <div key={c.id} data-testid="brain-folder" data-folder-kind="leaf" data-fact-id={c.id}>
+                                <button
+                                  data-testid="brain-folder-leaf"
+                                  onClick={() => setOpenLeaf(v => v === c.id ? null : c.id)}
+                                  title={c.headline}
+                                  style={{ ...rowBase, fontSize:11.5, color: isOpen ? LM.accent : LM.inkSoft }}
+                                  onMouseEnter={e => { if (!isOpen) e.currentTarget.style.background = LM.bgHover; }}
+                                  onMouseLeave={e => { if (!isOpen) e.currentTarget.style.background = 'transparent'; }}>
+                                  <span style={{ width:10, flex:'none', color: brainFacetCol(c.facet) }}>›</span>
+                                  <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.headline}</span>
+                                  {c.used_count > 0 && (
+                                    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, flex:'none' }}>{c.used_count}×</span>
+                                  )}
+                                </button>
+                                {isOpen && (
+                                  <div data-testid="brain-folder-leaf-detail" style={{ margin:'4px 0 8px 14px' }}>
+                                    <BrainCard card={c} />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // The 4-view browser. Pulls brain.browse on open (off-thread, instant cached
 // snapshot; re-pulls on the brain_browse_changed signal). Search runs the
 // retrieval ranker via brain_search and shows results in facet colour.
@@ -15037,6 +15294,10 @@ const BrainBrowser = ({ open }) => {
   const [searching, setSearching] = React.useState(false);
   const [showArchived, setShowArchived] = React.useState(false);
   const [proj, setProj] = React.useState('');         // project filter ('' = All)
+  // PART 2 (founder: "browsable AS FOLDERS"): cards ↔ folders view toggle.
+  // Default 'cards' keeps the existing CEO-readable surface; 'folders' opens
+  // the collapsible scope→project→fact tree. Both read the SAME view payload.
+  const [viewMode, setViewMode] = React.useState('cards');
   const searchReq = React.useRef(null);
 
   // Pull the organized view when the modal opens. brain_browse is off-thread:
@@ -15184,6 +15445,27 @@ const BrainBrowser = ({ open }) => {
               }}>✕</button>
           )}
         </div>
+        {/* CARDS ↔ FOLDERS view toggle (PART 2). Cards = the salience-ranked
+            CEO surface; Folders = the scope→project→fact tree the founder
+            asked for. Both render the SAME real payload. */}
+        <div data-testid="brain-view-toggle" role="group" aria-label="Brain view mode" style={{
+          display:'flex', flex:'none', border:`1px solid ${LM.line}`, borderRadius:8, overflow:'hidden',
+        }}>
+          {[['cards', 'Cards'], ['folders', 'Folders']].map(([mode, lbl]) => {
+            const on = viewMode === mode;
+            return (
+              <button key={mode} data-testid={`brain-view-mode-${mode}`}
+                onClick={() => setViewMode(mode)}
+                aria-pressed={on}
+                style={{
+                  fontFamily:LM.sans, fontSize:11.5, fontWeight:600,
+                  padding:'7px 13px', border:0, cursor:'pointer',
+                  background: on ? LM.accent : LM.bg,
+                  color: on ? '#fff' : LM.inkSoft,
+                }}>{lbl}</button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Honest degraded / loading states */}
@@ -15268,8 +15550,19 @@ const BrainBrowser = ({ open }) => {
         </div>
       )}
 
-      {/* ── DEFAULT VIEWS (hidden while searching) ── */}
-      {!searching && !search && view && !degraded && (
+      {/* ── FOLDERS VIEW (PART 2) — the scope→project→fact tree, shown when the
+            founder picks "Folders". Reads the SAME payload as cards; respects
+            the active project chip filter. ── */}
+      {!searching && !search && view && !degraded && viewMode === 'folders' && (
+        <>
+          <div style={secTitle} data-testid="brain-folders-heading">Browse as folders</div>
+          <div style={secNote}>Every scope is a folder, every project a sub-folder, every fact a file. Click a fact to open it.</div>
+          <BrainFolderTree view={view} proj={proj} />
+        </>
+      )}
+
+      {/* ── DEFAULT (CARDS) VIEWS (hidden while searching OR in folders view) ── */}
+      {!searching && !search && view && !degraded && viewMode === 'cards' && (
         <>
           {/* 1 — TOP OF MIND */}
           <div style={secTitle} data-testid="brain-top-of-mind">Top of mind</div>
@@ -16295,6 +16588,323 @@ const CommandDeckModalInner = ({ _themeBump }) => {   // _themeBump: theme-repai
   );
 };
 const CommandDeckModal = React.memo(CommandDeckModalInner);
+
+// ─── SHARE / PUBLISH panel ──────────────────────────────────────────
+// PART 1b (MAKE-IT-REAL, founder audit 2026-06-18): the rail's "share"
+// icon used to silently call save_as_skill with NO visible surface — a
+// shell. SharePanel is the real Share/Publish surface it now opens. It
+// lists the user's REAL shareable items — saved skills (get_saved_skills)
+// + sessions (get_sessions) — each with real, wired actions:
+//   • Copy share link — share_export(kind,id) writes a portable artifact
+//     to %LOCALAPPDATA%/ArchHub/shared/ and we copy its real path.
+//   • Export JSON      — same slot; we copy the artifact's real JSON.
+//   • Publish          — (skills) promote_skill_to_shared flips the skill
+//     to Shared so future spawns reference it (edits propagate).
+// Every row is a real file the recipient can load; an HONEST empty state
+// shows only when the user genuinely has nothing to share (ANTI-LIE — no
+// fabricated rows). data-testid=rail-share for live verification.
+const SharePanel = () => {
+  const [skills, setSkills] = React.useState(() => window.__archhub_LM_SAVED_SKILLS || []);
+  const [sessions, setSessions] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [busy, setBusy] = React.useState('');         // 'kind:id:action' in flight
+  const [note, setNote] = React.useState(null);       // {id, msg, kind}
+
+  const refresh = React.useCallback(async () => {
+    const sk = await bridgeAsync('get_saved_skills');
+    if (Array.isArray(sk)) { window.__archhub_LM_SAVED_SKILLS = sk; setSkills(sk); }
+    const ss = await bridgeAsync('get_sessions');
+    if (Array.isArray(ss)) setSessions(ss);
+    setLoaded(true);
+  }, []);
+  React.useEffect(() => {
+    refresh();
+    const onRefresh = () => { refresh(); };
+    window.addEventListener('lm-skills-refresh', onRefresh);
+    window.addEventListener('lm-sessions-refresh', onRefresh);
+    return () => {
+      window.removeEventListener('lm-skills-refresh', onRefresh);
+      window.removeEventListener('lm-sessions-refresh', onRefresh);
+    };
+  }, [refresh]);
+
+  const flash = (rowKey, msg, kind) => {
+    setNote({ id: rowKey, msg, kind: kind || 'info' });
+    setTimeout(() => setNote(n => (n && n.id === rowKey ? null : n)), 2600);
+  };
+  const copyText = (txt) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt); return;
+      }
+    } catch (e) {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = txt; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    } catch (e) {}
+  };
+  // Real export: share_export(kind,id) → portable artifact on disk. `want`
+  // selects what to copy — the path (a share link to the file) or the JSON.
+  const doExport = async (kind, id, name, want) => {
+    const rowKey = kind + ':' + id;
+    setBusy(rowKey + ':' + want);
+    try {
+      // Off-thread slot: bridgeAsyncSignal correlates the settings_op_done
+      // payload by request_id (the SAME helper export_all uses). Falls back
+      // to the sync ack when no signal (preview/standalone).
+      const r = await bridgeAsyncSignal('share_export', 'settings_op_done', kind, id);
+      if (r && r.ok) {
+        if (want === 'json' && r.json) { copyText(r.json); flash(rowKey, 'JSON copied to clipboard', 'ok'); }
+        else if (r.path) { copyText(r.path); flash(rowKey, 'Share link copied · ' + r.path, 'ok'); }
+        else flash(rowKey, 'Exported', 'ok');
+      } else {
+        flash(rowKey, (r && r.error) || 'Export failed', 'err');
+      }
+    } catch (e) {
+      flash(rowKey, String((e && e.message) || e), 'err');
+    } finally { setBusy(''); }
+  };
+  const doPublish = async (id, name) => {
+    const rowKey = 'skill:' + id;
+    setBusy(rowKey + ':publish');
+    try {
+      const r = await bridgeAsync('promote_skill_to_shared', id);
+      if (r && r.ok) {
+        flash(rowKey, 'Published — now a Shared skill', 'ok');
+        try { window.dispatchEvent(new CustomEvent('lm-skills-refresh')); } catch (e) {}
+        refresh();
+      } else {
+        flash(rowKey, (r && r.error) || 'Publish failed', 'err');
+      }
+    } catch (e) {
+      flash(rowKey, String((e && e.message) || e), 'err');
+    } finally { setBusy(''); }
+  };
+
+  const actBtn = (label, on, on2) => (
+    <button onClick={on} disabled={!!busy} title={on2 || label} style={{
+      fontFamily:LM.mono, fontSize:9.5, fontWeight:600,
+      padding:'3px 9px', borderRadius:5, cursor: busy ? 'wait' : 'pointer',
+      border:`1px solid ${LM.line}`, background:LM.bg, color:LM.inkSoft,
+      whiteSpace:'nowrap',
+    }}
+    onMouseEnter={e => { if (!busy) { e.currentTarget.style.borderColor = LM.accent; e.currentTarget.style.color = LM.accent; } }}
+    onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.color = LM.inkSoft; }}>
+      {label}
+    </button>
+  );
+  const rowNote = (rowKey) => (note && note.id === rowKey)
+    ? <div data-testid="rail-share-note" style={{
+        fontFamily:LM.mono, fontSize:9.5, marginTop:4, wordBreak:'break-all',
+        color: note.kind === 'err' ? LM.err : (note.kind === 'ok' ? LM.ok : LM.inkMuted),
+      }}>{note.kind === 'err' ? '✕ ' : '✓ '}{note.msg}</div>
+    : null;
+
+  const nShare = (skills || []).length + (sessions || []).length;
+  return (
+    <div data-panel="share" data-testid="rail-share" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+      <div style={{ padding:'12px 12px 8px', display:'flex', alignItems:'center', gap:8 }}>
+        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Share &amp; publish</span>
+        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{nShare} SHAREABLE</span>
+        <div style={{ flex:1 }}/>
+        <button title="Share the current canvas as a new skill" aria-label="Share the current canvas as a new skill"
+          onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-share-canvas')); } catch (e) {} }}
+          style={panelIconBtn()}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div style={{ padding:'0 12px 8px', fontFamily:LM.sans, fontSize:11.5, color:LM.inkSoft, lineHeight:1.5 }}>
+        Hand a skill or a whole session to a teammate — each export writes a real, re-loadable file you can link or paste.
+      </div>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 8px 10px', minHeight:0 }}>
+        {/* ── SKILLS ── */}
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', padding:'8px 4px 4px' }}>SKILLS</div>
+        {(skills || []).map(s => {
+          const id = s.id || s.name;
+          const rowKey = 'skill:' + id;
+          const isShared = String(s.mode || 'private').toLowerCase() === 'shared';
+          return (
+            <div key={rowKey} data-testid="rail-share-skill-row" style={{
+              padding:'8px 9px', borderRadius:6, marginBottom:3,
+              border:`1px solid ${LM.line}`, background:LM.bgPanel,
+            }}>
+              <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
+                <span style={{ flex:1, fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name || id}</span>
+                <span title={isShared ? 'Already shared' : 'Private'} style={{
+                  fontFamily:LM.mono, fontSize:8.5, fontWeight:600,
+                  color:(isShared ? LM.accent : LM.inkMuted),
+                  border:`1px solid ${isShared ? LM.accent : LM.lineSoft}`,
+                  borderRadius:3, padding:'0 4px', lineHeight:'14px',
+                }}>{isShared ? 'SHARED' : 'PRIVATE'}</span>
+              </div>
+              <div style={{ display:'flex', gap:6, marginTop:6, flexWrap:'wrap' }}>
+                {actBtn('Copy link', () => doExport('skill', id, s.name, 'link'), 'Write a portable skill file + copy its path')}
+                {actBtn('Export JSON', () => doExport('skill', id, s.name, 'json'), 'Copy the skill as shareable JSON')}
+                {!isShared && actBtn('Publish', () => doPublish(id, s.name), 'Promote to a Shared skill (edits propagate)')}
+              </div>
+              {rowNote(rowKey)}
+            </div>
+          );
+        })}
+        {loaded && (skills || []).length === 0 && (
+          <div data-testid="rail-share-skills-empty" style={{ padding:'10px 8px', fontFamily:LM.serif, fontStyle:'italic', fontSize:12.5, color:LM.inkMuted }}>
+            No saved skills yet. Build a canvas, then “Share canvas as skill”.
+          </div>
+        )}
+
+        {/* ── SESSIONS ── */}
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', padding:'12px 4px 4px' }}>SESSIONS</div>
+        {(sessions || []).map(s => {
+          const id = s.id;
+          const rowKey = 'session:' + id;
+          return (
+            <div key={rowKey} data-testid="rail-share-session-row" style={{
+              padding:'8px 9px', borderRadius:6, marginBottom:3,
+              border:`1px solid ${LM.line}`, background:LM.bgPanel,
+            }}>
+              <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                <span style={{ color:LM.blue, fontFamily:LM.mono, fontSize:11 }}>▤</span>
+                <span style={{ flex:1, fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.title || id}</span>
+                {s.node_count != null && (
+                  <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{s.node_count} node{s.node_count === 1 ? '' : 's'}</span>
+                )}
+              </div>
+              <div style={{ display:'flex', gap:6, marginTop:6, flexWrap:'wrap' }}>
+                {actBtn('Copy link', () => doExport('session', id, s.title, 'link'), 'Write a portable session file + copy its path')}
+                {actBtn('Export JSON', () => doExport('session', id, s.title, 'json'), 'Copy the session as shareable JSON')}
+              </div>
+              {rowNote(rowKey)}
+            </div>
+          );
+        })}
+        {loaded && (sessions || []).length === 0 && (
+          <div data-testid="rail-share-sessions-empty" style={{ padding:'10px 8px', fontFamily:LM.serif, fontStyle:'italic', fontSize:12.5, color:LM.inkMuted }}>
+            No saved sessions yet.
+          </div>
+        )}
+        {!loaded && (
+          <div style={{ padding:'10px 8px', fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>loading your shareables…</div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── RAIL DRAWER HOST — opens the REAL side-panels as an overlay from the
+// left rail, from Home AND in-session (PART 1, founder audit 2026-06-18:
+// "clicking DECK/NODES/SKILLS/SEARCH/SHARE on Home does nothing"). The
+// rail items dispatch `lm-rail-open` with { panel:'nodes'|'skills'|'search'
+// |'share' }; this always-mounted host renders the matching REAL panel in a
+// left drawer. So the panels are reachable in ONE click regardless of view —
+// never a no-op. (DECK already opens CommandDeckModal; HOME pins home.)
+//
+// In-session the existing Sidebar `panel` switch still works (preserved);
+// this drawer ADDS the from-anywhere entry point the rail needs. Node /
+// skill placement from the drawer routes to a REAL working canvas — if no
+// session is open it starts one first (lm-new-session), so "place" is never
+// a dead click on Home (spec: "start/focus a working canvas — never a
+// no-op"). Esc / backdrop closes. data-testid=rail-nodes/-skills/-search.
+const RAIL_DRAWER_META = {
+  nodes:  { title:'Nodes',  testid:'rail-nodes'  },
+  skills: { title:'Skills', testid:'rail-skills' },
+  search: { title:'Search', testid:'rail-search' },
+  share:  { title:'Share',  testid:'rail-share-drawer' },
+};
+const RailDrawerHostInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [panel, setPanel] = React.useState(null);   // 'nodes'|'skills'|'search'|'share'|null
+  React.useEffect(() => {
+    const onOpen = (ev) => {
+      const p = ev && ev.detail && ev.detail.panel;
+      if (p && RAIL_DRAWER_META[p]) setPanel(p);
+    };
+    window.addEventListener('lm-rail-open', onOpen);
+    return () => window.removeEventListener('lm-rail-open', onOpen);
+  }, []);
+  React.useEffect(() => {
+    if (!panel) return;
+    const onKey = (e) => { if (e.key === 'Escape') setPanel(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [panel]);
+  if (!panel) return null;
+  const close = () => setPanel(null);
+  const meta = RAIL_DRAWER_META[panel];
+
+  // Ensure a real canvas exists before a place/spawn action, so opening a
+  // panel from Home and placing a node lands the user on a working canvas
+  // (never a no-op). Returns immediately when a session is already open.
+  const ensureCanvas = () => {
+    try {
+      if (!window.__archhub_session_id) {
+        window.dispatchEvent(new CustomEvent('lm-new-session'));
+      }
+    } catch (e) {}
+  };
+  // Real placement: ensure a canvas, then add the node via the SAME global
+  // path the in-canvas library uses (lm-action-add-grammar-node →
+  // addNodeFromLibrary). Closes the drawer so the user sees the canvas.
+  const addNodeFromDrawer = (libItem) => {
+    ensureCanvas();
+    setTimeout(() => {
+      try {
+        if (libItem && libItem._grammar) {
+          window.dispatchEvent(new CustomEvent('lm-action-add-grammar-node',
+            { detail: { kind: libItem._grammar.kind, grammar: libItem._grammar } }));
+        } else {
+          window.dispatchEvent(new CustomEvent('lm-add-library-node', { detail: libItem }));
+        }
+      } catch (e) {}
+      close();
+    }, window.__archhub_session_id ? 0 : 90);
+  };
+  const onOpenSession = (sid) => { try { window.dispatchEvent(new CustomEvent('lm-open-session', { detail:{ id: sid } })); } catch (e) {} close(); };
+  // The canvas `lm-focus-node` listener reads detail.node_id — match it. From
+  // Home (no canvas mounted) it focuses once a session opens; from search in
+  // a session it pans straight to the node.
+  const onFocusNode = (nid) => { try { window.dispatchEvent(new CustomEvent('lm-focus-node', { detail:{ node_id: nid } })); } catch (e) {} close(); };
+
+  let body = null;
+  if (panel === 'nodes')  body = <NodesPanelMemo addNodeFromLibrary={addNodeFromDrawer} _themeBump={_themeBump}/>;
+  else if (panel === 'skills') body = <SkillsPanel/>;
+  else if (panel === 'search') body = <SearchPanel onOpen={onOpenSession} setFocusId={onFocusNode} addNodeFromLibrary={addNodeFromDrawer}/>;
+  else if (panel === 'share')  body = <SharePanel/>;
+
+  return (
+    <div onClick={close} data-testid="rail-drawer-overlay" style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:78,
+      display:'flex',
+    }}>
+      <div onClick={e => e.stopPropagation()} data-testid={meta.testid}
+        data-rail-drawer={panel} style={{
+        width:340, maxWidth:'90%', height:'100%',
+        marginLeft:56,   // sit just right of the icon rail
+        background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
+        boxShadow:'8px 0 28px rgba(0,0,0,.45)',
+        display:'flex', flexDirection:'column', overflow:'hidden',
+        animation:`lmDrawerIn ${LM.motion.base}`,
+      }}>
+        <div style={{
+          display:'flex', alignItems:'center', gap:8, padding:'10px 12px',
+          borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
+        }}>
+          <span style={{ fontFamily:LM.serif, fontSize:15, fontWeight:500, color:LM.ink }}>{meta.title}</span>
+          <div style={{ flex:1 }}/>
+          <button onClick={close} data-testid="rail-drawer-close" title="Close (Esc)" aria-label="Close panel" style={{
+            width:24, height:24, border:0, background:LM.bg, color:LM.inkSoft,
+            borderRadius:5, cursor:'pointer', fontFamily:LM.mono, fontSize:12,
+          }}>✕</button>
+        </div>
+        <div style={{ flex:1, overflow:'hidden', minHeight:0, display:'flex', flexDirection:'column' }}>
+          {body}
+        </div>
+      </div>
+    </div>
+  );
+};
+const RailDrawerHost = React.memo(RailDrawerHostInner);
 
 const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
   const [open, setOpen] = React.useState(false);

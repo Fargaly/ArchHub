@@ -4715,17 +4715,7 @@ const ChatsPanel = ({ openId, onOpen }) => {
       )}
 
       {/* User */}
-      <div style={{
-        margin:8, padding:'7px 10px', borderRadius:6,
-        background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        display:'flex', alignItems:'center', gap:9,
-      }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
-        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-        </div>
-      </div>
+      <AccountChip/>
     </div>
   );
 };
@@ -5629,17 +5619,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
           top · proper fit". Moved to the Conversation/Inspector
           right-rail header below. */}
 
-      <div style={{
-        margin:8, padding:'7px 10px', borderRadius:6,
-        background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        display:'flex', alignItems:'center', gap:9,
-      }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
-        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-        </div>
-      </div>
+      <AccountChip/>
     </div>
   );
 };

@@ -428,6 +428,12 @@ def test_jsx_surfaces_present():
     assert 'data-testid="sync-sessions-btn"' in src, "Sync sessions button missing"
     assert "cloud_sync_sessions" in src, "Sync button does not call the slot"
     assert "<SyncSessionsButton/>" in src, "Sync button not mounted in Home header"
+    # S4b — AccountChip must ALSO be in the HOME header (the landing screen),
+    # not only WsHeader. The non-compact <BrainChip/> + <HomeGraphHealthChip/>
+    # pair is unique to the Home header, so this pins AccountChip between them.
+    import re as _re
+    assert _re.search(r"<BrainChip/>\s*<AccountChip compact/>\s*<HomeGraphHealthChip/>", src), \
+        "AccountChip not mounted in the Home header (was WsHeader-only -> invisible on landing)"
 
 
 def test_jsx_no_pictographic_emoji_in_new_copy():

@@ -1044,6 +1044,14 @@ def auth_return(code: str = "", redirect: str = "",
     drop a session token in localStorage so /dashboard, /upgrade,
     etc. can call authenticated endpoints."""
     if redirect:
+        # SECURITY (open-redirect / CodeQL "URL redirection from remote source"):
+        # only ever 302 to the desktop's OWN loopback URL — never an attacker-
+        # supplied external host. Reuses the SAME _is_loopback_redirect guard
+        # that /v1/auth/google/start already applies, so /auth/return cannot be
+        # turned into an open redirect that leaks the one-time code off-box.
+        if not _is_loopback_redirect(redirect):
+            raise HTTPException(status_code=400,
+                                detail={"error": "redirect_not_loopback"})
         sep = "&" if "?" in redirect else "?"
         # Forward the desktop loopback's expected CSRF token. The Google
         # flow passes the client's own `state` (recovered from the signed

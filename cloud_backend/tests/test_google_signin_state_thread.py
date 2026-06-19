@@ -266,3 +266,40 @@ class TestNoAppStateMagicLinkCompat:
         q = urllib.parse.parse_qs(
             urllib.parse.urlparse(r2.headers["location"]).query)
         assert "state" not in q, r2.headers["location"]
+
+
+# ===========================================================================
+# (d) /auth/return is NOT an open redirect (CodeQL "URL redirection from
+#     remote source", PR #185). It must 302 ONLY to a desktop loopback
+#     redirect; an attacker-supplied external host is rejected so the
+#     one-time code can never be 302'd off-box. RED before the guard (the
+#     external host got a 302), GREEN after.
+# ===========================================================================
+class TestAuthReturnLoopbackOnly:
+    def test_external_redirect_rejected(self, client):
+        r = client.get("/auth/return", params={
+            "code": "one-time", "redirect": "https://evil.example.com/steal",
+            "state": "abc",
+        })
+        assert r.status_code == 400, r.text
+        assert "loopback" in (r.text or "").lower()
+
+    def test_external_redirect_no_location_leak(self, client):
+        r = client.get("/auth/return", params={
+            "code": "one-time", "redirect": "http://evil.example.com",
+            "state": "abc",
+        })
+        assert r.status_code == 400
+        assert "evil.example.com" not in (r.headers.get("location") or "")
+
+    def test_loopback_redirect_still_forwards(self, client):
+        r = client.get("/auth/return", params={
+            "code": "one-time", "redirect": "http://127.0.0.1:53111/cb",
+            "state": "client-csrf",
+        })
+        assert r.status_code == 302, r.text
+        loc = r.headers["location"]
+        assert loc.startswith("http://127.0.0.1:53111/cb")
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)
+        assert q["code"] == ["one-time"]
+        assert q["state"] == ["client-csrf"]

@@ -105,7 +105,14 @@ def _windows_install(
     # Autostart the SUPERVISOR (KeepAlive loop), not the bare daemon, so a
     # daemon crash respawns immediately instead of waiting for the next logon.
     args = f'supervise --port {port}' + (f' --db "{db}"' if db else '')
-    full_cmd = f'"{sys.executable}" -m personal_brain.service {args}'
+    # Use the WINDOWLESS interpreter (pythonw.exe) for the logon autostart so no
+    # console window appears — python.exe always allocates a console; its
+    # pythonw.exe sibling does not. Both the schtasks /tr command and the .vbs
+    # fallback are built from full_cmd, so deriving it here fixes the whole
+    # autostart path. Falls back to sys.executable if pythonw.exe isn't present.
+    _pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    _launch_exe = _pyw if os.path.exists(_pyw) else sys.executable
+    full_cmd = f'"{_launch_exe}" -m personal_brain.service {args}'
 
     cmd = [
         "schtasks", "/create",

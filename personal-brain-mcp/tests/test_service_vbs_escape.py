@@ -61,3 +61,29 @@ def test_vbs_unquoted_command_unaffected(monkeypatch, tmp_path):
     full_cmd = "pythonw -m personal_brain.service supervise --port 8473"
     vbs = _emit_vbs(monkeypatch, tmp_path, full_cmd)
     assert f'oShell.Run "{full_cmd}", 0, False' in vbs
+
+
+def test_autostart_prefers_windowless_pythonw(monkeypatch, tmp_path):
+    """The logon autostart must launch the WINDOWLESS pythonw.exe (no console
+    window) — python.exe always allocates a console; pythonw.exe doesn't.
+    Derived next to sys.executable. RED before the fix (used sys.executable =
+    python.exe), GREEN after. Founder saw a console pop at logon 2026-06-19."""
+    import types
+
+    exe = tmp_path / "python.exe"
+    exe.write_text("")
+    (tmp_path / "pythonw.exe").write_text("")  # sibling windowless interpreter
+    monkeypatch.setattr(service.sys, "executable", str(exe))
+
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = list(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+    res = service._windows_install(port=8473)
+    assert res.get("ok") is True, res
+    cmd = captured["cmd"]
+    tr = cmd[cmd.index("/tr") + 1]
+    assert "pythonw.exe" in tr, f"autostart must launch pythonw.exe, got: {tr}"

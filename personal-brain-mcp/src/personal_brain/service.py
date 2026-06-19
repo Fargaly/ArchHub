@@ -161,10 +161,19 @@ def _windows_install_startup_folder(full_cmd: str) -> dict[str, Any]:
     try:
         folder = _startup_folder_path()
         folder.mkdir(parents=True, exist_ok=True)
+        # VBScript escapes a literal " by DOUBLING it (""). full_cmd already
+        # wraps the exe path in quotes (needed for schtasks /tr), so it must be
+        # escaped before being embedded in the VBScript string literal —
+        # otherwise the .vbs emits `oShell.Run ""C:\...python.exe" ...` which
+        # VBScript reads as an empty string followed by a bare path → compile
+        # error 800A0401 "Expected end of statement" in a logon popup, and the
+        # brain never autostarts. Doubling yields the valid
+        # `oShell.Run """C:\...python.exe"" ..."`.
+        vbs_cmd = full_cmd.replace('"', '""')
         vbs = (
             'Dim oShell\n'
             'Set oShell = WScript.CreateObject("WScript.Shell")\n'
-            f'oShell.Run "{full_cmd}", 0, False\n'
+            f'oShell.Run "{vbs_cmd}", 0, False\n'
         )
         path = _startup_vbs_path()
         path.write_text(vbs, encoding="utf-8")

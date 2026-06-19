@@ -172,7 +172,7 @@ begin
     '''' + ' ArchHub launcher — wscript.exe runs this with no console.' + #13#10 +
     '''' + ' pythonw.exe inherits the no-console state, so the GUI starts clean.' + #13#10 +
     'Option Explicit' + #13#10 +
-    'Dim sh, fso, here, py, args, i, cmd' + #13#10 +
+    'Dim sh, fso, here, py, args, i, cmd, baseDir, folder' + #13#10 +
     'Set sh  = CreateObject("WScript.Shell")' + #13#10 +
     'Set fso = CreateObject("Scripting.FileSystemObject")' + #13#10 +
     'here = fso.GetParentFolderName(WScript.ScriptFullName)' + #13#10 +
@@ -181,12 +181,22 @@ begin
     'For i = 0 To WScript.Arguments.Count - 1' + #13#10 +
     '    args = args & " """ & WScript.Arguments(i) & """"' + #13#10 +
     'Next' + #13#10 +
-    'py = "pythonw"' + #13#10 +
-    'On Error Resume Next' + #13#10 +
-    'sh.Run "cmd /c where pythonw >nul 2>&1", 0, True' + #13#10 +
-    'If Err.Number <> 0 Then py = "py -3w"' + #13#10 +
-    'On Error GoTo 0' + #13#10 +
-    'cmd = py & " """ & here & "\app\main.py""" & args' + #13#10 +
+    // Resolve a REAL pythonw.exe (with PyQt6) - NEVER the Windows Store
+    // PyManager shim (%LOCALAPPDATA%\Microsoft\WindowsApps\pythonw.exe), which
+    // ships without PyQt6 and renders a BLANK window. Prefer the pythoncore-*
+    // install under %LOCALAPPDATA%\Python\. (Founder hit the blank-app bug
+    // 2026-06-19: bare "pythonw" resolved to the Store shim.)
+    'py = ""' + #13#10 +
+    'baseDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Python"' + #13#10 +
+    'If fso.FolderExists(baseDir) Then' + #13#10 +
+    '    For Each folder In fso.GetFolder(baseDir).SubFolders' + #13#10 +
+    '        If LCase(Left(folder.Name, 10)) = "pythoncore" Then' + #13#10 +
+    '            If fso.FileExists(folder.Path & "\pythonw.exe") Then py = folder.Path & "\pythonw.exe"' + #13#10 +
+    '        End If' + #13#10 +
+    '    Next' + #13#10 +
+    'End If' + #13#10 +
+    'If py = "" Then py = "pythonw"' + #13#10 +
+    'cmd = """" & py & """ """ & here & "\app\main.py""" & args' + #13#10 +
     'sh.Run cmd, 0, False' + #13#10;
   SaveStringToFile(VbsPath, Contents, False);
 end;

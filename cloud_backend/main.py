@@ -274,7 +274,8 @@ def exchange(req: ExchangeReq) -> dict:
 # nothing else changes, so this is safe to deploy before the founder
 # supplies credentials.
 @app.get("/v1/auth/google/start")
-def google_start(code_challenge: str = "", redirect: str = "") -> dict:
+def google_start(code_challenge: str = "", redirect: str = "",
+                 state: str = "") -> dict:
     """Step 1: hand the desktop client the Google consent URL.
 
     The desktop generates a PKCE pair (same as the magic-link path) and
@@ -285,8 +286,12 @@ def google_start(code_challenge: str = "", redirect: str = "") -> dict:
     one-time code to that loopback so the desktop finishes the existing
     /v1/auth/exchange. 503 when Google login isn't configured.
 
-    ADDITIVE: `redirect` is OPTIONAL — omit it and the flow lands on the
-    plain browser /auth/return finisher exactly as before.
+    ADDITIVE: `redirect` is OPTIONAL -- omit it and the flow lands on the
+    plain browser /auth/return finisher exactly as before. `state` is the
+    desktop client's own CSRF token (its loopback set it as
+    expected_state); it is packed INTO the signed state and echoed back to
+    the loopback on the final redirect. Optional -- the browser/magic-link
+    path sends none and is unaffected.
 
     Open-redirect guard: a SUPPLIED redirect must be a loopback
     (127.0.0.1 / localhost / ::1) http(s) URL. Because the callback ends
@@ -301,6 +306,10 @@ def google_start(code_challenge: str = "", redirect: str = "") -> dict:
     try:
         url = google_auth.build_authorization_url(
             code_challenge=code_challenge, redirect=redirect,
+            # Thread the desktop client's CSRF `state` INTO the signed
+            # state so it survives the Google round-trip and is echoed back
+            # to the loopback (fixes "Security state mismatch"). Optional.
+            app_state=state,
         )
     except google_auth.GoogleLoginUnconfigured:
         raise HTTPException(status_code=503,
@@ -1024,7 +1033,8 @@ async function submitEmail(ev) {{
 
 
 @app.get("/auth/return")
-def auth_return(code: str = "", redirect: str = "") -> HTMLResponse:
+def auth_return(code: str = "", redirect: str = "",
+                state: str = "") -> HTMLResponse:
     """Lands here from the magic-link email. If a `redirect` was
     provided by the desktop client, forward to it with ?code=...
     so the desktop's loopback server catches it.
@@ -1035,8 +1045,15 @@ def auth_return(code: str = "", redirect: str = "") -> HTMLResponse:
     etc. can call authenticated endpoints."""
     if redirect:
         sep = "&" if "?" in redirect else "?"
+        # Forward the desktop loopback's expected CSRF token. The Google
+        # flow passes the client's own `state` (recovered from the signed
+        # state in exchange_callback) so the loopback's expected_state
+        # check passes. The magic-link path sends no `state`, so we keep
+        # the historical "archhub" default -- byte-for-byte unchanged.
+        fwd_state = state or "archhub"
         return RedirectResponse(
-            url=f"{redirect}{sep}code={code}&state=archhub",
+            url=f"{redirect}{sep}code={code}&state="
+                + urllib.parse.quote(fwd_state, safe=""),
             status_code=302,
         )
     safe_code = "".join(c for c in code if c.isalnum() or c in "-_.")

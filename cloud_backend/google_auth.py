@@ -169,19 +169,27 @@ def _b64url_decode(data: str) -> bytes:
 
 
 def encode_state(*, code_challenge: str, redirect: str,
+                 app_state: str = "",
                  now: Optional[int] = None) -> str:
     """Pack the PKCE challenge + desktop return target into a signed,
     opaque, URL-safe state string.
 
     Layout: base64url(json_payload) + "." + base64url(hmac_sha256). The
     payload carries the code_challenge, the desktop `redirect` (loopback
-    target), a random nonce (so two starts never collide / replay), and
-    an `exp` epoch. The HMAC over the payload bytes makes tampering or
-    forging detectable in verify (constant-time compared)."""
+    target), an optional `app_state` (key `as`) -- the DESKTOP CLIENT's
+    own CSRF token, which its loopback server set as `expected_state` and
+    must see echoed on the final redirect -- a random nonce (so two starts
+    never collide / replay), and an `exp` epoch. The HMAC over the payload
+    bytes makes tampering or forging detectable in verify (constant-time
+    compared), so the app_state riding INSIDE the payload is tamper-proof:
+    it is only ever trusted after decode_state's signature check passes.
+    `app_state` is OPTIONAL (defaults "") so the magic-link / no-client-
+    state path is unchanged -- a missing `as` simply decodes back to ""."""
     now = int(now if now is not None else time.time())
     payload = {
         "cc": code_challenge or "",
         "rd": redirect or "",
+        "as": app_state or "",
         "n": secrets.token_urlsafe(16),
         "exp": now + _STATE_TTL_SECONDS,
     }
@@ -197,8 +205,11 @@ def decode_state(state: str, *, now: Optional[int] = None) -> dict:
     """Verify + unpack a state produced by encode_state.
 
     Rejects (GoogleAuthError 400) a malformed, tampered (bad HMAC), or
-    expired state — the CSRF + replay gate. Returns the payload dict with
-    the carried code_challenge (`cc`) + redirect (`rd`)."""
+    expired state -- the CSRF + replay gate. Returns the FULL verified
+    payload dict: the carried code_challenge (`cc`), redirect (`rd`), and
+    the optional desktop client CSRF token `app_state` (key `as`). A state
+    minted without an app_state simply has no `as` key, so callers read it
+    as payload.get("as", "") (backward-compatible with older states)."""
     now = int(now if now is not None else time.time())
     if not state or "." not in state:
         raise GoogleAuthError("missing or malformed state",
@@ -233,19 +244,26 @@ def decode_state(state: str, *, now: Optional[int] = None) -> dict:
 # Authorization URL (step 1)
 # ---------------------------------------------------------------------------
 def build_authorization_url(*, code_challenge: str = "",
-                            redirect: str = "") -> str:
+                            redirect: str = "",
+                            app_state: str = "") -> str:
     """Build the Google consent URL the desktop opens (step 1).
 
     Carries the standard OAuth params (client_id, our fixed
     GOOGLE_OAUTH_REDIRECT, response_type=code, scope) plus the SIGNED
     state that smuggles the desktop's PKCE code_challenge + loopback
-    redirect across the round-trip. The client secret is NOT included —
-    only the public client id appears in this URL.
+    redirect -- and the optional `app_state` (the desktop client's own
+    CSRF token) -- across the round-trip. The client secret is NOT
+    included; only the public client id appears in this URL.
 
     Raises GoogleLoginUnconfigured when Google login is disabled."""
     if not config.google_login_enabled():
         raise GoogleLoginUnconfigured("google_login_unconfigured")
-    state = encode_state(code_challenge=code_challenge, redirect=redirect)
+    # Google's own `state` param stays the backend's SIGNED state. The
+    # desktop client's CSRF token rides INSIDE that signed payload as
+    # `app_state` (so it is tamper-proof and echoed back to the loopback
+    # unchanged) -- it is NOT a second cleartext param.
+    state = encode_state(code_challenge=code_challenge, redirect=redirect,
+                         app_state=app_state)
     params = {
         "client_id": config.GOOGLE_OAUTH_CLIENT_ID,
         "redirect_uri": config.GOOGLE_OAUTH_REDIRECT,
@@ -621,6 +639,12 @@ def exchange_callback(*, code: str, state: str) -> str:
     payload = decode_state(state)
     code_challenge = payload.get("cc") or ""
     desktop_redirect = payload.get("rd") or ""
+    # The desktop client's own CSRF token, recovered from the now-VERIFIED
+    # signed payload (decode_state already checked the HMAC + expiry). It is
+    # echoed back UNCHANGED on the final loopback redirect so the client's
+    # _CallbackHandler.expected_state check passes. Empty for the magic-link
+    # / no-client-state path (the `as` key is then absent).
+    app_state = payload.get("as") or ""
     # 2. Exchange Google's code for tokens (client secret used here only).
     tokens = _exchange_code_for_tokens(code)
     # 3. Verify the id_token (iss/aud/exp/email_verified + signature).
@@ -640,6 +664,12 @@ def exchange_callback(*, code: str, state: str) -> str:
     return_params = {"code": one_time_code}
     if desktop_redirect:
         return_params["redirect"] = desktop_redirect
+    # Echo the client's CSRF token so /auth/return forwards it to the
+    # loopback as `state=<app_state>` -- satisfying the desktop's
+    # expected_state check (the SECOND CSRF layer, client <-> loopback).
+    # Omitted when absent so the magic-link path is byte-for-byte unchanged.
+    if app_state:
+        return_params["state"] = app_state
     return (
         config.PUBLIC_URL.rstrip("/") + "/auth/return?"
         + urllib.parse.urlencode(return_params)

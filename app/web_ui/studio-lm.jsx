@@ -12277,13 +12277,31 @@ const WatchBody = ({ n }) => {
     }
     // fall through to json if value isn't an image URL/data URI.
   }
-  // — view / model — placeholder until a real 3D viewer ships
+  // — view / model — honest geometry inspector. Renders a REAL summary
+  // (detected type + vertex / face / item counts pulled from the actual
+  // value) above the geometry data. Replaces the old coming-soon teaser
+  // (a shell the founder flagged): no promise of a viewer that isn't there
+  // — a real, useful inspector for view / model node outputs.
   if (as === 'view' || as === 'model') {
+    const g = (v && typeof v === 'object' && !Array.isArray(v)) ? v : null;
+    const verts = g && (g.vertices || g.Vertices);
+    const faces = g && (g.faces || g.Faces);
+    const vcount = Array.isArray(verts)
+      ? (verts.length > 0 && verts.length % 3 === 0 ? verts.length / 3 : verts.length)
+      : null;
+    const summary = [
+      g && (g.speckle_type || g.type)
+        ? String(g.speckle_type || g.type).split('.').pop()
+        : (as === 'model' ? 'model' : 'view'),
+      vcount != null ? `${vcount} verts` : null,
+      Array.isArray(faces) ? `${faces.length} face idx` : null,
+      Array.isArray(v) ? `${v.length} items` : null,
+    ].filter(Boolean).join(' · ');
     return (
       <div style={{ marginTop:6 }}>
         <div style={{ fontFamily:LM.mono, fontSize:8.5,
-          color:LM.inkMuted, letterSpacing:'0.16em', marginBottom:4 }}>
-          3D VIEWER — COMING SOON
+          color:LM.inkSoft, letterSpacing:'0.16em', marginBottom:4 }}>
+          GEOMETRY{summary ? ` · ${summary}` : ''}
         </div>
         <pre style={{ margin:0, fontFamily:LM.mono, fontSize:9.5,
           color:LM.ink, background:LM.bg, border:`1px solid ${LM.lineSoft}`,
@@ -20170,6 +20188,29 @@ const ServerStrip = ({ session, model, setSettingsOpen, _themeBump }) => {
     bridgeAsync('get_runtime_info').then(r => { if (!cancelled && r) setRt(r); });
     return () => { cancelled = true; };
   }, []);
+  // REAL app version — single source of truth via get_version() (reads the
+  // VERSION file the release writes). Replaces the old hardcoded footer label
+  // that drifted from every actual release. Rendered as plain "v<semver>" —
+  // ArchHub is a shipped product, not a prototype.
+  const [ver, setVer] = React.useState('');
+  React.useEffect(() => {
+    let cancelled = false, tries = 0;
+    // ServerStrip is always-mounted and can mount before the QWebChannel bridge
+    // connects, AND during a heavy boot get_version can lose the race against
+    // bridgeAsync's internal 1500 ms timeout (the Python event loop is busy
+    // loading sessions / hosts / brain) → it resolves null even though the slot
+    // is fine once boot settles. So: gate on archhubReady, then RETRY on null
+    // until the version lands — the pill never sticks on the 'ArchHub' fallback.
+    const load = () => bridgeAsync('get_version').then(v => {
+      if (cancelled) return;
+      if (v) { setVer(String(v).trim()); return; }
+      if (tries++ < 10) setTimeout(load, 600);
+    });
+    if (window.archhubReady && typeof window.archhubReady.then === 'function') {
+      window.archhubReady.then(load);
+    } else { load(); }
+    return () => { cancelled = true; };
+  }, []);
   // REAL token usage — from the bridge `get_token_usage` slot, which the
   // router fills from each completion's provider-reported usage block
   // (Anthropic/OpenAI/OpenRouter usage{}, Ollama eval_count). This REPLACES
@@ -20258,7 +20299,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, _themeBump }) => {
       {/* GROUP — ACTIONS */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <GroupSep/>
-      <StripItem>v1.4 prototype</StripItem>
+      <StripItem>{ver ? `v${ver}` : 'ArchHub'}</StripItem>
     </div>
   );
 };

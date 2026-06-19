@@ -524,10 +524,10 @@ def _read_version() -> str:
     p = Path(__file__).resolve().parent.parent / "VERSION"
     if p.exists():
         try:
-            return p.read_text(encoding="utf-8").strip() or "1.5.0-alpha"
+            return p.read_text(encoding="utf-8").strip() or "0.0.0-dev"
         except Exception:
             pass
-    return "1.5.0-alpha"
+    return "0.0.0-dev"
 
 
 def _read_git_sha() -> str:

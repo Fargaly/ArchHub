@@ -18,7 +18,7 @@ Signals (Python → JS):
   memory_changed()               memory facts changed
 
 Slots (JS → Python):
-  get_version()             → "1.4.0-alpha"
+  get_version()             → "0.0.0-dev"
   get_hosts()               → [{id,name,state,version,...}]
   get_sessions()            → [{id,title,saved_at,...}]
   get_models()              → [{id,label,provider,configured,blocked}]
@@ -1096,9 +1096,9 @@ class ArchHubBridge(QObject):
         try:
             from pathlib import Path
             p = Path(__file__).resolve().parent.parent / "VERSION"
-            return p.read_text(encoding="utf-8").strip() if p.exists() else "1.4.0-alpha"
+            return p.read_text(encoding="utf-8").strip() if p.exists() else "0.0.0-dev"
         except Exception:
-            return "1.4.0-alpha"
+            return "0.0.0-dev"
 
     # ─── Hosts ──────────────────────────────────────────────────
     @pyqtSlot(result=str)

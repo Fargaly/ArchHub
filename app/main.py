@@ -62,19 +62,75 @@ def software_render_marker_path() -> Path:
     return _archhub_appdata_dir() / _SOFTWARE_RENDER_MARKER_NAME
 
 
+# Auto-recovery backoff for a software-render pin, indexed by consecutive
+# GPU-failure count (fails=1,2,3,4+). A SINGLE transient crash pins software
+# for only ~1h (GPU retried next session); repeated crashes back off so a truly
+# broken GPU is not retried constantly (no blank-flashing). Founder 2026-06-19
+# "returned to be slow again" root cause: 2 transient crashes pinned software
+# render PERMANENTLY (no expiry) -> the machine was stuck slow forever.
+_RECOVERY_BACKOFF_SEC = (3600, 6 * 3600, 24 * 3600, 7 * 24 * 3600)
+
+
+def _read_software_render_marker() -> "dict | None":
+    """Parse the marker into ``{ts: float, fails: int, reason: str}`` or None.
+    Tolerates the legacy plain-text marker (pre-recovery): treats it as one
+    failure dated by file mtime so old pins also auto-recover."""
+    import json as _json
+    import time as _time
+    try:
+        path = software_render_marker_path()
+        if not path.exists():
+            return None
+        raw = path.read_text(encoding="utf-8").strip()
+        try:
+            d = _json.loads(raw)
+            return {"ts": float(d.get("ts", 0) or 0),
+                    "fails": int(d.get("fails", 1) or 1),
+                    "reason": str(d.get("reason", ""))}
+        except Exception:
+            try:
+                ts = path.stat().st_mtime
+            except Exception:
+                ts = _time.time()
+            return {"ts": ts, "fails": 1, "reason": raw[:120]}
+    except Exception:
+        return None
+
+
+def _software_render_cooldown(fails: int) -> int:
+    """Backoff window (seconds) for a given consecutive-failure count."""
+    i = max(0, min(int(fails or 1), len(_RECOVERY_BACKOFF_SEC)) - 1)
+    return _RECOVERY_BACKOFF_SEC[i]
+
+
 def software_render_enabled() -> bool:
     """True when THIS machine is pinned to software rendering — either the
-    persisted marker file exists, or the operator forced it for this launch via
-    ``ARCHHUB_FORCE_SOFTWARE_RENDER`` (1/true). The debug-only
-    ``ARCHHUB_VERIFY_NO_GPU`` is intentionally NOT consulted here — it stays a
-    verification toggle so production telemetry of "is this machine pinned?" is
-    not muddied by a verifier run."""
+    operator forced it for this launch via ``ARCHHUB_FORCE_SOFTWARE_RENDER``
+    (1/true), or a persisted marker is present AND still within its backoff
+    window. The pin is NOT permanent: after the backoff (which grows with
+    consecutive failures) it EXPIRES, the marker is cleared, and GPU is retried —
+    so a transient crash never slows the machine forever. The debug-only
+    ``ARCHHUB_VERIFY_NO_GPU`` is intentionally NOT consulted here."""
     if (os.environ.get("ARCHHUB_FORCE_SOFTWARE_RENDER") or "").strip().lower() in ("1", "true"):
         return True
-    try:
-        return software_render_marker_path().exists()
-    except Exception:
+    m = _read_software_render_marker()
+    if not m:
         return False
+    try:
+        import time as _time
+        age = _time.time() - m["ts"]
+    except Exception:
+        return True  # can't compute age -> honour the pin (fail safe = no blank)
+    if age > _software_render_cooldown(m["fails"]):
+        # Pin expired -> retry GPU this launch. Clear the marker so the retry is
+        # clean; if GPU is still broken the crash handler re-pins (fails+1 ->
+        # longer backoff). Best-effort; a failed unlink just honours the pin.
+        try:
+            software_render_marker_path().unlink()
+        except Exception:
+            return True
+        return False
+    return True
 
 
 def persist_software_render_marker(reason: str = "") -> bool:
@@ -84,15 +140,15 @@ def persist_software_render_marker(reason: str = "") -> bool:
     and never raises (a failed marker write must not break a launch or a crash
     handler). Returns True iff the marker is present on disk afterwards."""
     try:
-        import datetime as _dt
+        import json as _json
+        import time as _time
+        prev = _read_software_render_marker()
+        fails = (prev["fails"] + 1) if prev else 1
         path = software_render_marker_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            stamp = _dt.datetime.now().isoformat(timespec="seconds")
-        except Exception:
-            stamp = ""
         path.write_text(
-            f"software-render pinned on {stamp}\nreason: {reason or 'unspecified'}\n",
+            _json.dumps({"ts": _time.time(), "fails": fails,
+                         "reason": reason or "unspecified"}),
             encoding="utf-8",
         )
         return path.exists()

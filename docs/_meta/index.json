@@ -4,7 +4,7 @@
     "title": "ArchHub Accessibility Audit — 2026-05-26",
     "path": "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
     "word_count": 1345,
-    "mtime": 1781816873,
+    "mtime": 1781833521,
     "deps": [
       "app/settings_dialog.py",
       "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
@@ -17,7 +17,7 @@
     "title": "Agents — autonomous roadmap loop",
     "path": "docs/AGENTS_AUTONOMOUS_LOOP.md",
     "word_count": 732,
-    "mtime": 1781816873,
+    "mtime": 1781833521,
     "deps": [
       "app/main.py",
       "docs/ROADMAP.md"
@@ -29,7 +29,7 @@
     "title": "ArchHub — Architecture / System Map",
     "path": "docs/ARCHITECTURE.md",
     "word_count": 1185,
-    "mtime": 1781816873,
+    "mtime": 1781833521,
     "deps": [
       "AgDR-0012",
       "AgDR-0021",
@@ -67,7 +67,7 @@
     "title": "Azure Trusted Signing — quickstart for ArchHub",
     "path": "docs/AZURE_SIGNING_QUICKSTART.md",
     "word_count": 781,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -76,7 +76,7 @@
     "title": "ArchHub Cloud — Backend Spec",
     "path": "docs/BACKEND_SPEC.md",
     "word_count": 2302,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/CLOUD_API.md",
       "docs/PERMISSIONS.md",
@@ -90,7 +90,7 @@
     "title": "Billing alternatives — Stripe vs Polar.sh",
     "path": "docs/BILLING_ALTERNATIVES.md",
     "word_count": 881,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -99,7 +99,7 @@
     "title": "The Personal Brain",
     "path": "docs/BRAIN.md",
     "word_count": 907,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/bridge.py",
       "docs/BACKEND_SPEC.md",
@@ -113,7 +113,7 @@
     "title": "What is built — generated map",
     "path": "docs/BUILT_MAP.md",
     "word_count": 1216,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -179,7 +179,7 @@
     "title": "CAIQ-Lite — ArchHub answers",
     "path": "docs/CAIQ_LITE.md",
     "word_count": 1375,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/TRUST_CENTER.md"
     ],
@@ -193,7 +193,7 @@
     "title": "ArchHub Visual Canvas — Architecture (shipped v1.4)",
     "path": "docs/CANVAS_PLAN.md",
     "word_count": 3362,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/bridge.py",
       "app/canvas/__init__.py",
@@ -221,7 +221,7 @@
     "title": "Civil 3D connector roadmap",
     "path": "docs/CIVIL_3D_ROADMAP.md",
     "word_count": 779,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/acad_broker.py",
       "docs/ROADMAP.md"
@@ -233,7 +233,7 @@
     "title": "Cloud API — the desktop ↔ cloud surface",
     "path": "docs/CLOUD_API.md",
     "word_count": 1154,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/bridge.py",
       "app/cloud_auth.py",
@@ -251,7 +251,7 @@
     "title": "ArchHub — Cloud Revival Plan",
     "path": "docs/CLOUD_REVIVAL_PLAN.md",
     "word_count": 2555,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/ROADMAP.md",
       "docs/SOC2_READINESS.md"
@@ -263,7 +263,7 @@
     "title": "Code Signing — ArchHub Windows Installer",
     "path": "docs/CODE_SIGNING.md",
     "word_count": 1910,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -272,7 +272,7 @@
     "title": "Connector Master Plan — All 18 Hosts Genuinely Working",
     "path": "docs/CONNECTOR_MASTER_PLAN_2026-05-15.md",
     "word_count": 6499,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/auto_build.py",
       "app/bridge.py",
@@ -313,7 +313,7 @@
     "title": "ArchHub Content Ecosystem · brain-anchored · 2026-05-26",
     "path": "docs/CONTENT-ECOSYSTEM-2026-05-26.md",
     "word_count": 1903,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0042",
       "AgDR-0044",
@@ -332,7 +332,7 @@
     "title": "ArchHub — cost ledger",
     "path": "docs/COSTS.md",
     "word_count": 1177,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/ROADMAP.md"
     ],
@@ -342,8 +342,8 @@
     "slug": "FAILURE_LOG",
     "title": "FAILURE_LOG",
     "path": "docs/FAILURE_LOG.md",
-    "word_count": 2434,
-    "mtime": 1781816873,
+    "word_count": 2748,
+    "mtime": 1781835487,
     "deps": [
       "AgDR-0012",
       "AgDR-0021",
@@ -365,7 +365,7 @@
     "title": "ArchHub Cloud — Go-Live Checklist",
     "path": "docs/GO_LIVE_CHECKLIST.md",
     "word_count": 1229,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -374,7 +374,7 @@
     "title": "ArchHub — Go-to-Market Strategy",
     "path": "docs/GTM_STRATEGY.md",
     "word_count": 1308,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/CODE_SIGNING.md",
       "docs/SOC2_READINESS.md"
@@ -386,7 +386,7 @@
     "title": "Running ArchHub on multiple devices",
     "path": "docs/MULTI_DEVICE.md",
     "word_count": 815,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -395,7 +395,7 @@
     "title": "ArchHub Node Grammar — typed-node catalogue",
     "path": "docs/NODE_GRAMMAR.md",
     "word_count": 2914,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0014",
       "app/bridge.py",
@@ -415,7 +415,7 @@
     "title": "Node Library v2 — Grasshopper / Dynamo / Speckle informed taxonomy",
     "path": "docs/NODE_LIBRARY_v2.md",
     "word_count": 1578,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/connectors/procore_runner.py",
       "app/host_detector.py",
@@ -428,7 +428,7 @@
     "title": "Team Roles and Permissions",
     "path": "docs/PERMISSIONS.md",
     "word_count": 899,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/BACKEND_SPEC.md",
       "docs/CLOUD_API.md",
@@ -441,7 +441,7 @@
     "title": "Pricing Status (Canonical)",
     "path": "docs/PRICING_STATUS.md",
     "word_count": 107,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -450,7 +450,7 @@
     "title": "Reality Smoke Test",
     "path": "docs/REALITY_SMOKE.md",
     "word_count": 1220,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -459,7 +459,7 @@
     "title": "ArchHub v1.6.2 — release notes",
     "path": "docs/RELEASE_NOTES_v1.6.2.md",
     "word_count": 310,
-    "mtime": 1781816938,
+    "mtime": 1781833522,
     "deps": [
       "docs/ROADMAP.md"
     ],
@@ -470,7 +470,7 @@
     "title": "ArchHub v1.6.0 — release notes",
     "path": "docs/RELEASE_NOTES_v1.6.md",
     "word_count": 353,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/BACKEND_SPEC.md",
       "docs/BRAIN.md",
@@ -486,7 +486,7 @@
     "title": "Reliability & Known Limits",
     "path": "docs/RELIABILITY.md",
     "word_count": 339,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -495,7 +495,7 @@
     "title": "ArchHub — Revenue Model",
     "path": "docs/REVENUE_MODEL.md",
     "word_count": 1288,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -504,7 +504,7 @@
     "title": "Revit Finishes Pipeline — Skills + Workflow",
     "path": "docs/REVIT_FINISHES_PIPELINE.md",
     "word_count": 1951,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -513,7 +513,7 @@
     "title": "ArchHub Roadmap — single source of truth",
     "path": "docs/ROADMAP.md",
     "word_count": 13465,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -592,7 +592,7 @@
     "title": "Run the ArchHub MCP server in Claude Code",
     "path": "docs/RUN-MCP.md",
     "word_count": 377,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0031",
       "app/archhub_mcp_server.py"
@@ -604,7 +604,7 @@
     "title": "Running ArchHub alongside other Revit add-ins",
     "path": "docs/RUN-REVIT.md",
     "word_count": 383,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0023"
     ],
@@ -615,7 +615,7 @@
     "title": "Skills (v1.4)",
     "path": "docs/SKILLS.md",
     "word_count": 1747,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/skills/library.py",
       "app/skills/matcher.py",
@@ -631,7 +631,7 @@
     "title": "ArchHub SOC 2 Type I readiness pack",
     "path": "docs/SOC2_READINESS.md",
     "word_count": 1422,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": [
       "docs/IRP.md",
@@ -645,7 +645,7 @@
     "title": "Status Reports",
     "path": "docs/STATUS_REPORTS.md",
     "word_count": 847,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -654,7 +654,7 @@
     "title": "ArchHub trademark filing — USPTO TEAS Plus submission pack",
     "path": "docs/TRADEMARK_FILING.md",
     "word_count": 1617,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -663,7 +663,7 @@
     "title": "ArchHub Trust Center — source content",
     "path": "docs/TRUST_CENTER.md",
     "word_count": 998,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/pii_redactor.py",
       "docs/CAIQ_LITE.md",
@@ -676,7 +676,7 @@
     "title": "ArchHub — guide-throughs (v1.6)",
     "path": "docs/TUTORIALS.md",
     "word_count": 971,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/ROADMAP.md"
     ],
@@ -687,7 +687,7 @@
     "title": "Your User Database — where your account actually lives",
     "path": "docs/USER_DATABASE.md",
     "word_count": 1066,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/BACKEND_SPEC.md",
       "docs/CLOUD_API.md",
@@ -701,7 +701,7 @@
     "title": "ArchHub — User Guide (v1.4)",
     "path": "docs/USER_GUIDE.md",
     "word_count": 2076,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "docs/NODE_LIBRARY_v2.md"
     ],
@@ -712,7 +712,7 @@
     "title": "Node-System Redesign — One Grammar, 16 Per-Host Connector Master Nodes, Hybrid Skill-as-Node, 4-Verb Disable, Dynamo-Style Groups",
     "path": "docs/agdr/AgDR-0001-node-system-redesign.md",
     "word_count": 1469,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "docs/NODE_GRAMMAR.md",
@@ -725,7 +725,7 @@
     "title": "Disable Verbs + Pin Data — State Model + Execution Semantics",
     "path": "docs/agdr/AgDR-0002-disable-verbs-and-pin.md",
     "word_count": 872,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -738,7 +738,7 @@
     "title": "Multi-Select, Rubber-Band, Upstream/Downstream Traversal, Alt+Drag Push-Neighbours",
     "path": "docs/agdr/AgDR-0003-multi-select-and-push-neighbours.md",
     "word_count": 724,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0003"
@@ -750,7 +750,7 @@
     "title": "Groups MVP — Data Model + Auto-BBox Render + Drag-With-Members + Style Palette",
     "path": "docs/agdr/AgDR-0004-groups-mvp.md",
     "word_count": 850,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0004",
@@ -764,7 +764,7 @@
     "title": "Group Collapse to Giant-Node — Boundary-Port Auto-Promotion · Visual Replacement · Engine-Side Wire Rewrite",
     "path": "docs/agdr/AgDR-0005-group-collapse-giant-node.md",
     "word_count": 1945,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0004",
       "AgDR-0005",
@@ -777,7 +777,7 @@
     "title": "Group Nesting — Recursive Bbox · Recursive Member-Set · Drag Cascades · Nesting Cycle Guard",
     "path": "docs/agdr/AgDR-0006-group-nesting.md",
     "word_count": 1784,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0004",
       "AgDR-0005",
@@ -791,7 +791,7 @@
     "title": "Typed Wires — Colour Palette, Fancy-Wire Shape, Reroute Primitive",
     "path": "docs/agdr/AgDR-0007-typed-wires-and-reroute.md",
     "word_count": 890,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0005",
@@ -806,7 +806,7 @@
     "title": "Annotation Bodies — Watch Renderers + Note Markdown",
     "path": "docs/agdr/AgDR-0008-annotation-bodies.md",
     "word_count": 1015,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0008",
@@ -819,7 +819,7 @@
     "title": "Add-Node Search Overlay — Double-Click + Tab + Wire-Promote + Prefix Grammar",
     "path": "docs/agdr/AgDR-0009-add-node-search.md",
     "word_count": 920,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0009"
@@ -831,7 +831,7 @@
     "title": "Skill-as-Node — Hybrid Save Dialog + Mode-Driven Spawn Semantics (MVP)",
     "path": "docs/agdr/AgDR-0010-skill-hybrid-mvp.md",
     "word_count": 856,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0010",
@@ -845,7 +845,7 @@
     "title": "Group Collapse to Giant-Node — Auto-Promoted Sockets",
     "path": "docs/agdr/AgDR-0011-group-collapse.md",
     "word_count": 833,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0004",
@@ -858,7 +858,7 @@
     "title": "Architecture lock — Direction X: Composer-as-IDE + Speckle Wires + AI Plan, governed by Library-First and User-Always-In-Control",
     "path": "docs/agdr/AgDR-0012-architecture-direction-x.md",
     "word_count": 3186,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -880,7 +880,7 @@
     "title": "Multi-LLM enforcement layer for the LIBRARY-FIRST + MODULARITY mandates",
     "path": "docs/agdr/AgDR-0013-multi-llm-library-first-enforcement.md",
     "word_count": 2656,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0013",
@@ -897,7 +897,7 @@
     "title": "Library design system — tokens, components, patterns, and the 4 open forks resolved by principle",
     "path": "docs/agdr/AgDR-0014-library-design-system.md",
     "word_count": 2837,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0013",
@@ -911,7 +911,7 @@
     "title": "Visual UI design system audit + scale-token + accessibility floor",
     "path": "docs/agdr/AgDR-0015-visual-ui-design-system.md",
     "word_count": 2309,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0014",
@@ -926,7 +926,7 @@
     "title": "Speckle: DiskTransport default · Server opt-in via SHARE nodes · ADAPTER category for cross-host native mapping · Router gate wired",
     "path": "docs/agdr/AgDR-0016-speckle-share-adapter-router-gate.md",
     "word_count": 2063,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0013",
@@ -946,7 +946,7 @@
     "title": "Revit ↔ Speckle Ops — `revit.send_to_speckle` + `revit.receive_from_speckle` · ADAPTER-Annotation → Native-Creation C# Generator",
     "path": "docs/agdr/AgDR-0017-revit-speckle-ops.md",
     "word_count": 1793,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0016",
@@ -964,7 +964,7 @@
     "title": "Adapter Coverage Batch 2 — Rhino → Revit Beam · CAD → Detail Line · Excel → Revit Parameters",
     "path": "docs/agdr/AgDR-0018-adapter-batch-2.md",
     "word_count": 1338,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0016",
       "AgDR-0017",
@@ -981,7 +981,7 @@
     "title": "Typed AI nodes — split `ai` master into AI Chat · AI Complete · AI Classify · AI Tools (matching Slice I pattern)",
     "path": "docs/agdr/AgDR-0019-typed-ai-nodes.md",
     "word_count": 1633,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0019",
@@ -994,7 +994,7 @@
     "title": "SLICE L — Node-to-Code · `code.expression` + `code.python` engine + `code` typed primitive (foundation)",
     "path": "docs/agdr/AgDR-0020-node-to-code.md",
     "word_count": 1685,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0007",
@@ -1011,7 +1011,7 @@
     "title": "M4 foundation — `ai.plan` canvas node · auditable + replayable Composer turn",
     "path": "docs/agdr/AgDR-0021-ai-plan-canvas-node.md",
     "word_count": 1651,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0013",
@@ -1029,7 +1029,7 @@
     "title": "ReactFlow scaffold — coexistence migration · feature-flagged toggle · LM-token-first styling · port-the-typed-grammar-first ordering",
     "path": "docs/agdr/AgDR-0022-reactflow-scaffold-migration.md",
     "word_count": 2099,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0015",
@@ -1043,7 +1043,7 @@
     "title": "RevitMCP Roslyn isolation — subprocess C# compilation · zero in-process Roslyn · no add-in version conflicts forever",
     "path": "docs/agdr/AgDR-0023-revitmcp-roslyn-isolation.md",
     "word_count": 1838,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0017",
       "AgDR-0023",
@@ -1059,7 +1059,7 @@
     "title": "Host node v2 — Direction A + ComfyUI hover-promote + ecosystem integration",
     "path": "docs/agdr/AgDR-0024-host-node-v2-direction-a-comfyui.md",
     "word_count": 741,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -1078,7 +1078,7 @@
     "title": "Subprocess csc isolation for EVERY .NET connector — Revit · AutoCAD · (and any future net-host that ships a `/exec` route)",
     "path": "docs/agdr/AgDR-0025-roslyn-isolation-all-connectors.md",
     "word_count": 910,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0017",
       "AgDR-0023",
@@ -1095,7 +1095,7 @@
     "title": "Studio-LM cold-start lag — vendor libs + flip to production React + pre-compile JSX",
     "path": "docs/agdr/AgDR-0026-studio-lm-cold-start-lag.md",
     "word_count": 916,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0024",
       "AgDR-0026"
@@ -1107,7 +1107,7 @@
     "title": "Connector hot-reload — thin shim + collectible AssemblyLoadContext, so every future connector DLL update lands without restarting Revit / AutoCAD",
     "path": "docs/agdr/AgDR-0027-connector-hot-reload.md",
     "word_count": 1151,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0002",
       "AgDR-0025",
@@ -1123,7 +1123,7 @@
     "title": "Library item actions — delete a custom node · delete a saved skill · bulk clear both",
     "path": "docs/agdr/AgDR-0028-library-item-actions.md",
     "word_count": 558,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0010",
       "AgDR-0013",
@@ -1138,7 +1138,7 @@
     "title": "Data-driven multi-csproj connector build · generic across every .NET host",
     "path": "docs/agdr/AgDR-0029-connector-build-pair-shim-and-core.md",
     "word_count": 1013,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0017",
       "AgDR-0027",
@@ -1152,7 +1152,7 @@
     "title": "ScriptCompiler csc probe · reject sub-C#7.3 compilers + wire SDK fallback · generic across every .NET host",
     "path": "docs/agdr/AgDR-0030-csc-probe-modern-roslyn-fallback.md",
     "word_count": 1199,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0025",
       "AgDR-0030",
@@ -1166,7 +1166,7 @@
     "title": "ArchHub MCP server — register the existing stdio shim with Claude Code",
     "path": "docs/agdr/AgDR-0031-archhub-mcp-server.md",
     "word_count": 918,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0017",
       "AgDR-0027",
@@ -1181,7 +1181,7 @@
     "title": "Composer stream-bump coalesce + delete-saved-skill store fix",
     "path": "docs/agdr/AgDR-0032-composer-stream-coalesce-and-delete-skill-fix.md",
     "word_count": 590,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0024",
       "AgDR-0028",
@@ -1195,7 +1195,7 @@
     "title": "Skill delete — tombstone shipped seeds instead of rejecting them",
     "path": "docs/agdr/AgDR-0033-skill-tombstone-delete.md",
     "word_count": 475,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0010",
       "AgDR-0028",
@@ -1210,7 +1210,7 @@
     "title": "Daily maintenance-audit bot — static bug-hunt + test sweep on a cron",
     "path": "docs/agdr/AgDR-0034-daily-maintenance-audit-bot.md",
     "word_count": 577,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0034",
       "docs/ROADMAP.md"
@@ -1222,7 +1222,7 @@
     "title": "Bridge slots must never block the Qt main thread",
     "path": "docs/agdr/AgDR-0035-bridge-slots-never-block-ui-thread.md",
     "word_count": 649,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0035",
       "app/bridge.py"
@@ -1234,7 +1234,7 @@
     "title": "Non-blocking-slot mechanism — kill the UI-freeze class at the root + guard it",
     "path": "docs/agdr/AgDR-0036-non-blocking-slot-mechanism.md",
     "word_count": 772,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0034",
       "AgDR-0035",
@@ -1250,7 +1250,7 @@
     "title": "ScriptCompiler net8 host viability — BCL refs, response file, ALC-aware load",
     "path": "docs/agdr/AgDR-0037-scriptcompiler-net8-host-viability.md",
     "word_count": 1435,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0025",
       "AgDR-0027",
@@ -1267,7 +1267,7 @@
     "title": "AgDR-0038 — Composer-driven Capability Nodes",
     "path": "docs/agdr/AgDR-0038-composer-capability-nodes.md",
     "word_count": 1602,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0013",
       "AgDR-0019",
@@ -1289,7 +1289,7 @@
     "title": "Default opening screen is Home; splash is the minimal mark",
     "path": "docs/agdr/AgDR-0039-default-screen-home-and-splash.md",
     "word_count": 619,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0038",
       "AgDR-0039"
@@ -1301,7 +1301,7 @@
     "title": "AgDR-0040 — Modular logic nodes: a node's logic IS a graph",
     "path": "docs/agdr/AgDR-0040-modular-logic-nodes.md",
     "word_count": 686,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0020",
@@ -1319,7 +1319,7 @@
     "title": "AgDR-0041 — Graph robustness: swap, freeze, delete, validate, bypass",
     "path": "docs/agdr/AgDR-0041-graph-robustness.md",
     "word_count": 972,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0040",
@@ -1336,7 +1336,7 @@
     "title": "AgDR-0042 — Shared-memory knowledge graph (graphify-style data model)",
     "path": "docs/agdr/AgDR-0042-shared-memory-knowledge-graph.md",
     "word_count": 1124,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0038",
@@ -1354,7 +1354,7 @@
     "title": "AgDR-0043 — Workshop · Deliver the surface · 7-hat council",
     "path": "docs/agdr/AgDR-0043-workshop-deliver-the-surface.md",
     "word_count": 1196,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0014",
@@ -1374,7 +1374,7 @@
     "title": "Personal Brain MCP — ambient agent substrate across all AI clients",
     "path": "docs/agdr/AgDR-0044-personal-brain-mcp.md",
     "word_count": 2407,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0013",
       "AgDR-0042",
@@ -1395,7 +1395,7 @@
     "title": "Settings × Brain — unified architecture",
     "path": "docs/agdr/AgDR-0045-settings-brain-unified.md",
     "word_count": 1883,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0044",
       "AgDR-0045",
@@ -1408,7 +1408,7 @@
     "title": "Brain Settings — rebuild per signed prototype · 1:1 · cache-busted · perf-budgeted",
     "path": "docs/agdr/AgDR-0046-brain-settings-rebuild-workshop.md",
     "word_count": 1991,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0044",
       "AgDR-0045",
@@ -1423,7 +1423,7 @@
     "title": "Workshop — Repo overhaul · docs · logs · architecture · clean · perf",
     "path": "docs/agdr/AgDR-0047-workshop-repo-overhaul.md",
     "word_count": 3254,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0026",
@@ -1451,7 +1451,7 @@
     "title": "Custom canvas IS the substrate — supersede the ReactFlow lock",
     "path": "docs/agdr/AgDR-0048-supersede-reactflow-lock.md",
     "word_count": 846,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -1475,7 +1475,7 @@
     "title": "agdr/AgDR-0049-track-g-telemetry-instrumentation",
     "path": "docs/agdr/AgDR-0049-track-g-telemetry-instrumentation.md",
     "word_count": 817,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0049",
       "app/bridge.py",
@@ -1489,7 +1489,7 @@
     "title": "not found, brain WAS reachable:",
     "path": "docs/agdr/AgDR-0050-no-brain-on-commit-floor.md",
     "word_count": 2972,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0044",
       "AgDR-0050"
@@ -1501,7 +1501,7 @@
     "title": "ScriptCompiler — guarantee BCL forwarder facades on a cold first /exec (CS0012 root)",
     "path": "docs/agdr/AgDR-0051-scriptcompiler-bcl-facade-cold-start-refs.md",
     "word_count": 1725,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0025",
       "AgDR-0027",
@@ -1517,7 +1517,7 @@
     "title": "AcadMCP listener resilience — port-range scan + retry + session-file heartbeat (mirror of the Revit broker)",
     "path": "docs/agdr/AgDR-0052-acad-listener-retry-session-file.md",
     "word_count": 1449,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0027",
       "AgDR-0029",
@@ -1533,7 +1533,7 @@
     "title": "agdr/AgDR-0053-cs-guard-pathspec-hardening",
     "path": "docs/agdr/AgDR-0053-cs-guard-pathspec-hardening.md",
     "word_count": 1341,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0050",
       "AgDR-0053"
@@ -1545,7 +1545,7 @@
     "title": "AgDR-0054 — The Collective Mind: one brain, dam-gated river, training flywheel",
     "path": "docs/agdr/AgDR-0054-collective-mind-one-brain.md",
     "word_count": 4824,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0002",
       "AgDR-0012",
@@ -1564,7 +1564,7 @@
     "title": "agdr/AgDR-0055-revit-transactionless-exec",
     "path": "docs/agdr/AgDR-0055-revit-transactionless-exec.md",
     "word_count": 413,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0055"
     ],
@@ -1575,7 +1575,7 @@
     "title": "ADR-001: ArchHub cloud backend hosting choice",
     "path": "docs/adr/ADR-001-cloud-hosting.md",
     "word_count": 1816,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -1584,7 +1584,7 @@
     "title": "ADR-002: ArchHub AI Memory Architecture",
     "path": "docs/adr/ADR-002-memory-architecture.md",
     "word_count": 2114,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -1593,7 +1593,7 @@
     "title": "ADR-003: Graph-First Architecture — sessions become DAGs, pages dissolve into nodes",
     "path": "docs/adr/ADR-003-graph-first-architecture.md",
     "word_count": 3183,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/workflows/graph.py",
       "app/workflows/nodes/core.py",
@@ -1606,7 +1606,7 @@
     "title": "OUTSTANDING STATUS · 2026-05-26",
     "path": "docs/status/2026-05-26.md",
     "word_count": 3792,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0012",
       "AgDR-0021",
@@ -1635,7 +1635,7 @@
     "title": "OUTSTANDING STATUS · 2026-05-28",
     "path": "docs/status/2026-05-28.md",
     "word_count": 581,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -1644,7 +1644,7 @@
     "title": "Deep research — memory systems · knowledge management · agentic evolution",
     "path": "docs/research/memory-km-agentic-evolution-2026-06-09.md",
     "word_count": 1384,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [],
     "missing_deps": []
   },
@@ -1653,7 +1653,7 @@
     "title": "Pi.dev → ArchHub — consolidation + collective-brain design",
     "path": "docs/research/pi-consolidation-and-collective-brain.md",
     "word_count": 980,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "app/agents/composer_agent.py",
       "app/llm_router.py",
@@ -1669,7 +1669,7 @@
     "title": "Brain · privacy-respecting knowledge sharing · research + prototype",
     "path": "docs/research/privacy-respecting-knowledge-sharing-2026-05-26.md",
     "word_count": 1513,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0044"
     ],
@@ -1680,7 +1680,7 @@
     "title": "Training endgame — ArchHub collective AEC models (research brief)",
     "path": "docs/research/training-endgame-2026-06-10.md",
     "word_count": 981,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0054"
     ],
@@ -1691,7 +1691,7 @@
     "title": "Training gaps addendum — poisoning · unlearning · legality (AgDR-0054)",
     "path": "docs/research/training-gaps-addendum-2026-06-10.md",
     "word_count": 1004,
-    "mtime": 1781816873,
+    "mtime": 1781833522,
     "deps": [
       "AgDR-0054"
     ],

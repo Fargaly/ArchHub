@@ -278,6 +278,23 @@ Per-version detail: `CHANGELOG.md` and git history.
 - [x] #P0 gate send_to_speckle — CON-02 (#127) — `*.send_to_speckle` re-classified `kind=action` (was a mislabeled `read`) so the AI write is approval-gated per USER-AGENCY; closes an un-gated host write. (eng)
 - [x] #P1 Skills + Search sidebar panels wired REAL (#126) — the `SkillsPanel` + `SearchPanel` JSX components are now reachable + functional (MAKE-IT-REAL), not decorative dead code. (eng)
 
+### v1.6.3 finalization (2026-06-19) — merged this wave, with receipts
+
+> Wave 1 merged as PR #184 (merge commit `55c15f8` on `origin/main`). Every
+> `- [x]` below is flipped ONLY because that merge proves it; the one open item
+> (#185) is honestly left unchecked because its PR is still in review. Plain-English
+> "what you'll see" write-up: `docs/RELEASE_NOTES_v1.6.3.md`. Stem-node model +
+> the promote gesture are walked through in `docs/TUTORIALS.md` ("Understanding
+> nodes & properties"); auto-update + GPU auto-recovery in "Keeping ArchHub fast
+> & updated".
+
+- [x] #P1 Performance auto-recovery — the app is fast again (#184) — the per-machine `use_software_render` marker is no longer permanent: it is JSON `{ts, fails}` and EXPIRES on a 1h → 6h → 24h → 7d backoff, then retries the GPU (`app/main.py` `software_render_enabled` / `persist_software_render_marker` / `_software_render_cooldown`). Two transient GPU crashes had pinned the machine to slow software-render forever; now a brief hiccup self-heals. Gate: `tests/test_gpu_resilience.py::TestSoftwareRenderAutoRecovery`. (eng)
+- [x] #P1 Footer shows the real version (#184) — `ServerStrip` reads live `get_version()` (the repo `VERSION` file → `v1.6.3`) with `archhubReady`-gating + retry, replacing the hardcoded "v1.4 prototype" (`app/web_ui/studio-lm.jsx` ServerStrip; `app/bridge.py` `get_version`). Gate: `tests/test_version_footer_real.py`. (eng)
+- [x] #P1 Honest geometry inspector (#184) — a node's view/model output now shows a real `GEOMETRY · <type> · N verts` summary (type + vertex / face / item counts parsed from the actual value) above the data, replacing the "3D VIEWER — COMING SOON" shell (`app/web_ui/studio-lm.jsx`, the `as === 'view' || as === 'model'` branch). (eng)
+- [x] #P1 De-duplicated masthead (#184) — one brain chip in the session header (was two); `RouterStatus` shows only the live model Auto resolved to, not a twin "Auto (router picks)" label (`app/web_ui/studio-lm.jsx`). (eng)
+- [x] #P1 Stem-node promote gesture documented + dead-plug-guarded — every connector/host-op tile (a node with `op_id`) shows a `⊙` dot beside each knob; tapping it exposes that value as a wired input socket and tapping again returns it to a knob. Scoped to connector tiles because their executor provably merges wired inputs by param key (`_connector_run_executor`) — on other cells a named socket would be a dead plug, which is banned (`app/web_ui/studio-lm.jsx` `ParamPromoteDot`). Documented in `docs/TUTORIALS.md`. (docs)
+- [ ] #P1 Google sign-in CSRF-state fix (#185) — backend threads the desktop client's CSRF `state` through the signed state (`encode_state(..., app_state=...)`) and echoes it back to the loopback as `state=<app_state>` (was a hardcoded `&state=archhub` → "Security state mismatch"); both CSRF layers (backend-signed state + the desktop's own `expected_state`) stay intact, and `/auth/return` stays loopback-only (`_is_loopback_redirect`, open-redirect closed). PR #185 is OPEN/in review — NOT yet on `main`; goes live with the next founder-gated cloud deploy. Gate: `cloud_backend/tests/test_google_signin_state_thread.py` + `test_google_signin_security_adversarial.py`. (eng)
+
 ### Cloud sign-in everywhere + the missing-20% map (2026-06-15) — recorded, not yet built
 
 - [ ] #P1 Cloud-everywhere sign-in — one ArchHub account signs in across desktop + web + cloud API (the 401 fix rides AgDR-0054 slice 4). Recorded here so the reconcile gate tracks it; build is part of the AgDR-0054 server-side-verify slice. (eng)

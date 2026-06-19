@@ -158,3 +158,88 @@ Open Settings → Team to manage your firm and teammates.
 When a new release is available, ArchHub shows an **update banner** with a
 one-click install that downloads the signed release and relaunches onto the new
 version. You can also check from Settings. No manual download, no reinstall.
+
+---
+
+## 10. Understanding nodes & properties
+
+Think of every node on the canvas as a **Lego brick**. Each brick has a job, a
+shape, and a few dials on its face. You build by snapping bricks together —
+nothing is hidden, everything is on the surface.
+
+- **Studs (ports) are how bricks connect.** The little sockets on a node's left
+  are inputs; the ones on its right are outputs. You wire an output stud to an
+  input stud, and real data flows along that wire. The shapes have to fit —
+  ArchHub won't let you snap two incompatible studs together (it shows a short
+  reason why instead).
+- **Dials (knobs) are the brick's settings.** Click any node and its panel opens
+  on the right. That panel lists the node's dials — a number, a switch, a
+  dropdown, a pick-a-document — everything that brick can be tuned with. Turn a
+  dial and the node re-runs with the new value.
+
+### Turning a dial into a wired input — the one gesture worth knowing
+
+Sometimes you don't want to *type* a value into a dial — you want another node
+to *feed* it. ArchHub lets you flip a dial into a real input socket:
+
+1. Click a node (a host or connector step — for example a Revit or Excel
+   operation) to open its panel.
+2. Each dial has a small **`⊙`** dot next to it. **Tap the `⊙`.**
+3. That dial turns into a **wired input socket** on the node. Now you can drag a
+   wire into it, and whatever flows down that wire sets the value — no typing.
+4. Changed your mind? Tap the `⊙` again and it goes back to a plain dial (its
+   wires drop off).
+
+That's the whole gesture: **click a node → open its panel → tap `⊙` → a socket
+appears.** It's how a fixed setting becomes a live, data-driven input.
+
+> A small honesty detail: the `⊙` only appears on connector / host steps. Those
+> are the nodes whose engine actually reads wired inputs, so a socket you make
+> there is guaranteed to be live. ArchHub deliberately doesn't offer it where the
+> socket would be a dead end.
+
+### The bigger picture (how the bricks stay consistent)
+
+- Every node is a **typed modular brick** with typed studs (ports) and dials
+  (knobs).
+- A node's dials all come from **one definition** — so the panel always matches
+  what the brick actually does.
+- Any dial can be **promoted into a wired input socket** with the `⊙` gesture
+  above.
+- You can **select several bricks and group them into one** — a tidy composite
+  you can reuse.
+- Composing, saving, and re-running are all backed by **one library**, so a brick
+  you make once is there next time.
+
+---
+
+## 11. Keeping ArchHub fast & updated
+
+Two things keep themselves healthy in the background — you don't have to manage
+either.
+
+### It stays up to date
+
+When a new signed release is out, ArchHub shows the **update banner** (section
+9). One click downloads it and relaunches onto the new version — no manual
+download, no reinstall. The footer at the bottom always shows the **real version
+you're running** (for example `v1.6.3`), so you can tell at a glance.
+
+### It stays fast (and recovers on its own)
+
+ArchHub has a safety net: if your graphics card would make the window come up
+**blank**, it automatically falls back to a slower software-drawn mode so you
+always get a working window.
+
+The catch used to be that once it switched to the slow mode, it never switched
+back — so a single one-off graphics glitch could leave the app crawling forever.
+That's fixed. Now the fallback **expires on its own** and the app retries full
+speed:
+
+- After a brief hiccup, it tries the fast path again on the **next launch**.
+- If it keeps failing, it waits a little longer each time before retrying — about
+  an hour, then six hours, then a day, then a week — so it isn't fighting a
+  genuinely broken setup, but a momentary blip never slows you down for good.
+
+You don't have to do anything: a passing glitch heals itself, and your machine
+goes back to full speed automatically.

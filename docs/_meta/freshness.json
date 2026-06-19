@@ -4,748 +4,755 @@
     "path": "docs/ACCESSIBILITY-AUDIT-2026-05-26.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "AGENTS_AUTONOMOUS_LOOP",
     "path": "docs/AGENTS_AUTONOMOUS_LOOP.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "ARCHITECTURE",
     "path": "docs/ARCHITECTURE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "AZURE_SIGNING_QUICKSTART",
     "path": "docs/AZURE_SIGNING_QUICKSTART.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "BACKEND_SPEC",
     "path": "docs/BACKEND_SPEC.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "BILLING_ALTERNATIVES",
     "path": "docs/BILLING_ALTERNATIVES.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "BRAIN",
     "path": "docs/BRAIN.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "BUILT_MAP",
     "path": "docs/BUILT_MAP.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CAIQ_LITE",
     "path": "docs/CAIQ_LITE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CANVAS_PLAN",
     "path": "docs/CANVAS_PLAN.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CIVIL_3D_ROADMAP",
     "path": "docs/CIVIL_3D_ROADMAP.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CLOUD_API",
     "path": "docs/CLOUD_API.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CLOUD_REVIVAL_PLAN",
     "path": "docs/CLOUD_REVIVAL_PLAN.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CODE_SIGNING",
     "path": "docs/CODE_SIGNING.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CONNECTOR_MASTER_PLAN_2026-05-15",
     "path": "docs/CONNECTOR_MASTER_PLAN_2026-05-15.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "CONTENT-ECOSYSTEM-2026-05-26",
     "path": "docs/CONTENT-ECOSYSTEM-2026-05-26.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "COSTS",
     "path": "docs/COSTS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "FAILURE_LOG",
     "path": "docs/FAILURE_LOG.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "GO_LIVE_CHECKLIST",
     "path": "docs/GO_LIVE_CHECKLIST.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "GTM_STRATEGY",
     "path": "docs/GTM_STRATEGY.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "MULTI_DEVICE",
     "path": "docs/MULTI_DEVICE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "NODE_GRAMMAR",
     "path": "docs/NODE_GRAMMAR.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "NODE_LIBRARY_v2",
     "path": "docs/NODE_LIBRARY_v2.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "PERMISSIONS",
     "path": "docs/PERMISSIONS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "PRICING_STATUS",
     "path": "docs/PRICING_STATUS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "REALITY_SMOKE",
     "path": "docs/REALITY_SMOKE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "RELEASE_NOTES_v1.6.2",
     "path": "docs/RELEASE_NOTES_v1.6.2.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
+  },
+  {
+    "slug": "RELEASE_NOTES_v1.6.3",
+    "path": "docs/RELEASE_NOTES_v1.6.3.md",
+    "stale": false,
+    "reason": "fresh",
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "RELEASE_NOTES_v1.6",
     "path": "docs/RELEASE_NOTES_v1.6.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "RELIABILITY",
     "path": "docs/RELIABILITY.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "REVENUE_MODEL",
     "path": "docs/REVENUE_MODEL.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "REVIT_FINISHES_PIPELINE",
     "path": "docs/REVIT_FINISHES_PIPELINE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "ROADMAP",
     "path": "docs/ROADMAP.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "RUN-MCP",
     "path": "docs/RUN-MCP.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "RUN-REVIT",
     "path": "docs/RUN-REVIT.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "SKILLS",
     "path": "docs/SKILLS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "SOC2_READINESS",
     "path": "docs/SOC2_READINESS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "STATUS_REPORTS",
     "path": "docs/STATUS_REPORTS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "TRADEMARK_FILING",
     "path": "docs/TRADEMARK_FILING.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "TRUST_CENTER",
     "path": "docs/TRUST_CENTER.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "TUTORIALS",
     "path": "docs/TUTORIALS.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "USER_DATABASE",
     "path": "docs/USER_DATABASE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "USER_GUIDE",
     "path": "docs/USER_GUIDE.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0001-node-system-redesign",
     "path": "docs/agdr/AgDR-0001-node-system-redesign.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0002-disable-verbs-and-pin",
     "path": "docs/agdr/AgDR-0002-disable-verbs-and-pin.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0003-multi-select-and-push-neighbours",
     "path": "docs/agdr/AgDR-0003-multi-select-and-push-neighbours.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0004-groups-mvp",
     "path": "docs/agdr/AgDR-0004-groups-mvp.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0005-group-collapse-giant-node",
     "path": "docs/agdr/AgDR-0005-group-collapse-giant-node.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0006-group-nesting",
     "path": "docs/agdr/AgDR-0006-group-nesting.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0007-typed-wires-and-reroute",
     "path": "docs/agdr/AgDR-0007-typed-wires-and-reroute.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0008-annotation-bodies",
     "path": "docs/agdr/AgDR-0008-annotation-bodies.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0009-add-node-search",
     "path": "docs/agdr/AgDR-0009-add-node-search.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0010-skill-hybrid-mvp",
     "path": "docs/agdr/AgDR-0010-skill-hybrid-mvp.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0011-group-collapse",
     "path": "docs/agdr/AgDR-0011-group-collapse.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0012-architecture-direction-x",
     "path": "docs/agdr/AgDR-0012-architecture-direction-x.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0013-multi-llm-library-first-enforcement",
     "path": "docs/agdr/AgDR-0013-multi-llm-library-first-enforcement.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0014-library-design-system",
     "path": "docs/agdr/AgDR-0014-library-design-system.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0015-visual-ui-design-system",
     "path": "docs/agdr/AgDR-0015-visual-ui-design-system.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0016-speckle-share-adapter-router-gate",
     "path": "docs/agdr/AgDR-0016-speckle-share-adapter-router-gate.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0017-revit-speckle-ops",
     "path": "docs/agdr/AgDR-0017-revit-speckle-ops.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0018-adapter-batch-2",
     "path": "docs/agdr/AgDR-0018-adapter-batch-2.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0019-typed-ai-nodes",
     "path": "docs/agdr/AgDR-0019-typed-ai-nodes.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0020-node-to-code",
     "path": "docs/agdr/AgDR-0020-node-to-code.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0021-ai-plan-canvas-node",
     "path": "docs/agdr/AgDR-0021-ai-plan-canvas-node.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0022-reactflow-scaffold-migration",
     "path": "docs/agdr/AgDR-0022-reactflow-scaffold-migration.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0023-revitmcp-roslyn-isolation",
     "path": "docs/agdr/AgDR-0023-revitmcp-roslyn-isolation.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0024-host-node-v2-direction-a-comfyui",
     "path": "docs/agdr/AgDR-0024-host-node-v2-direction-a-comfyui.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0025-roslyn-isolation-all-connectors",
     "path": "docs/agdr/AgDR-0025-roslyn-isolation-all-connectors.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0026-studio-lm-cold-start-lag",
     "path": "docs/agdr/AgDR-0026-studio-lm-cold-start-lag.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0027-connector-hot-reload",
     "path": "docs/agdr/AgDR-0027-connector-hot-reload.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0028-library-item-actions",
     "path": "docs/agdr/AgDR-0028-library-item-actions.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0029-connector-build-pair-shim-and-core",
     "path": "docs/agdr/AgDR-0029-connector-build-pair-shim-and-core.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0030-csc-probe-modern-roslyn-fallback",
     "path": "docs/agdr/AgDR-0030-csc-probe-modern-roslyn-fallback.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0031-archhub-mcp-server",
     "path": "docs/agdr/AgDR-0031-archhub-mcp-server.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0032-composer-stream-coalesce-and-delete-skill-fix",
     "path": "docs/agdr/AgDR-0032-composer-stream-coalesce-and-delete-skill-fix.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0033-skill-tombstone-delete",
     "path": "docs/agdr/AgDR-0033-skill-tombstone-delete.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0034-daily-maintenance-audit-bot",
     "path": "docs/agdr/AgDR-0034-daily-maintenance-audit-bot.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0035-bridge-slots-never-block-ui-thread",
     "path": "docs/agdr/AgDR-0035-bridge-slots-never-block-ui-thread.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0036-non-blocking-slot-mechanism",
     "path": "docs/agdr/AgDR-0036-non-blocking-slot-mechanism.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0037-scriptcompiler-net8-host-viability",
     "path": "docs/agdr/AgDR-0037-scriptcompiler-net8-host-viability.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0038-composer-capability-nodes",
     "path": "docs/agdr/AgDR-0038-composer-capability-nodes.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0039-default-screen-home-and-splash",
     "path": "docs/agdr/AgDR-0039-default-screen-home-and-splash.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0040-modular-logic-nodes",
     "path": "docs/agdr/AgDR-0040-modular-logic-nodes.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0041-graph-robustness",
     "path": "docs/agdr/AgDR-0041-graph-robustness.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0042-shared-memory-knowledge-graph",
     "path": "docs/agdr/AgDR-0042-shared-memory-knowledge-graph.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0043-workshop-deliver-the-surface",
     "path": "docs/agdr/AgDR-0043-workshop-deliver-the-surface.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0044-personal-brain-mcp",
     "path": "docs/agdr/AgDR-0044-personal-brain-mcp.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0045-settings-brain-unified",
     "path": "docs/agdr/AgDR-0045-settings-brain-unified.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0046-brain-settings-rebuild-workshop",
     "path": "docs/agdr/AgDR-0046-brain-settings-rebuild-workshop.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0047-workshop-repo-overhaul",
     "path": "docs/agdr/AgDR-0047-workshop-repo-overhaul.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0048-supersede-reactflow-lock",
     "path": "docs/agdr/AgDR-0048-supersede-reactflow-lock.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0049-track-g-telemetry-instrumentation",
     "path": "docs/agdr/AgDR-0049-track-g-telemetry-instrumentation.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0050-no-brain-on-commit-floor",
     "path": "docs/agdr/AgDR-0050-no-brain-on-commit-floor.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0051-scriptcompiler-bcl-facade-cold-start-refs",
     "path": "docs/agdr/AgDR-0051-scriptcompiler-bcl-facade-cold-start-refs.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0052-acad-listener-retry-session-file",
     "path": "docs/agdr/AgDR-0052-acad-listener-retry-session-file.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0053-cs-guard-pathspec-hardening",
     "path": "docs/agdr/AgDR-0053-cs-guard-pathspec-hardening.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0054-collective-mind-one-brain",
     "path": "docs/agdr/AgDR-0054-collective-mind-one-brain.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "agdr/AgDR-0055-revit-transactionless-exec",
     "path": "docs/agdr/AgDR-0055-revit-transactionless-exec.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "adr/ADR-001-cloud-hosting",
     "path": "docs/adr/ADR-001-cloud-hosting.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "adr/ADR-002-memory-architecture",
     "path": "docs/adr/ADR-002-memory-architecture.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "adr/ADR-003-graph-first-architecture",
     "path": "docs/adr/ADR-003-graph-first-architecture.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "status/2026-05-26",
     "path": "docs/status/2026-05-26.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "status/2026-05-28",
     "path": "docs/status/2026-05-28.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "research/memory-km-agentic-evolution-2026-06-09",
     "path": "docs/research/memory-km-agentic-evolution-2026-06-09.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "research/pi-consolidation-and-collective-brain",
     "path": "docs/research/pi-consolidation-and-collective-brain.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "research/privacy-respecting-knowledge-sharing-2026-05-26",
     "path": "docs/research/privacy-respecting-knowledge-sharing-2026-05-26.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "research/training-endgame-2026-06-10",
     "path": "docs/research/training-endgame-2026-06-10.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   },
   {
     "slug": "research/training-gaps-addendum-2026-06-10",
     "path": "docs/research/training-gaps-addendum-2026-06-10.md",
     "stale": false,
     "reason": "fresh",
-    "last_check_iso": "2026-06-19T02:18:19.414015+00:00"
+    "last_check_iso": "2026-06-19T06:16:38.614994+00:00"
   }
 ]

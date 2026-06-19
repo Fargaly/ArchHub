@@ -6678,7 +6678,14 @@ const RouterStatus = ({ model, compact }) => {
   // a neutral "auto". Keep it short — strip a provider prefix like
   // "anthropic/claude-..." down to the model leaf for the header.
   const routedLeaf = routed ? (routed.split('/').pop() || routed) : '';
-  const shown = routedLeaf || (model && model.name) || 'auto';
+  // Single-chip masthead (Stem Cells design): ModelStrip already shows the PICK
+  // ("Auto (router picks)" or the concrete model). RouterStatus exists ONLY to
+  // surface the LIVE model that Auto actually resolved to — which the picker
+  // can't show — so it renders NOTHING until Auto has resolved a real model.
+  // Kills the duplicate "Auto (router picks)" pill the founder flagged while
+  // keeping the unique live-decision value.
+  if (!isAuto || !routedLeaf) return null;
+  const shown = routedLeaf;
   const col = isAuto ? LM.accent : LM.inkSoft;
   // The arrow conveys "auto-routed to" when in Auto mode; a dot otherwise.
   return (
@@ -13773,12 +13780,10 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
                     animation: recording ? 'lmPulse 1s ease-in-out infinite' : 'none' }}>
           {recording ? '● rec' : '🎤'}
         </button>
-        {/* Pi-loop made visible (slice 1): the brain's recall shown right at
-            the composer where you act. Reuses the proven BrainChip
-            (get_brain_stats poll → '⌬ brain · Ns · Nf · Δms', click → brain
-            map). After each turn it reflects the skills+facts recalled for
-            that gesture — the loop you already run, now felt. */}
-        <BrainChip compact />
+        {/* Brain recall lives in the masthead BrainChip (single source).
+            Removed the duplicate composer chip per the Stem Cells design's
+            single-chip masthead — the founder flagged two brain chips on
+            screen. The masthead chip is always visible above. */}
         {/* USER-AGENCY MANDATE — Composer mode picker. Tooltip on each
             tells what the mode does. YOLO carries an err-tinted glow so
             it never feels neutral. */}

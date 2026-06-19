@@ -122,6 +122,72 @@ class TestSoftwareRenderMarker:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# (1b) AUTO-RECOVERY — a software-render pin is NOT permanent.
+# Founder 2026-06-19 "returned to be slow again": 2 TRANSIENT GPU crashes pinned
+# software render forever (the marker had no expiry) -> the machine was stuck
+# slow. The pin must expire after a backoff (growing with consecutive failures)
+# and retry GPU; a genuinely broken GPU re-pins on its next crash.
+# RED on the permanent-marker version: an aged marker still returns True.
+# ──────────────────────────────────────────────────────────────────────────
+class TestSoftwareRenderAutoRecovery:
+    def _fresh(self, monkeypatch):
+        monkeypatch.delenv("ARCHHUB_FORCE_SOFTWARE_RENDER", raising=False)
+        monkeypatch.delenv("ARCHHUB_VERIFY_NO_GPU", raising=False)
+
+    def test_fresh_marker_within_cooldown_pins(self, monkeypatch):
+        """A just-written marker is within its backoff window -> still pinned."""
+        import main
+        self._fresh(monkeypatch)
+        assert main.persist_software_render_marker(reason="transient") is True
+        assert main.software_render_enabled() is True
+
+    def test_expired_marker_retries_gpu_and_clears(self, monkeypatch):
+        """A marker older than its backoff -> enabled() False (retry GPU) AND the
+        marker is cleared so the retry is clean."""
+        import json
+        import time
+        import main
+        self._fresh(monkeypatch)
+        main.persist_software_render_marker(reason="transient")   # fails=1 -> 1h
+        p = main.software_render_marker_path()
+        d = json.loads(p.read_text(encoding="utf-8"))
+        d["ts"] = time.time() - (2 * 3600)                        # 2h ago > 1h
+        p.write_text(json.dumps(d), encoding="utf-8")
+        assert main.software_render_enabled() is False, "expired pin must retry GPU"
+        assert not p.exists(), "expired marker must be cleared for a clean GPU retry"
+
+    def test_consecutive_failures_increment_and_back_off(self, monkeypatch):
+        """Repeated crashes increment the fail count -> longer backoff (a truly
+        broken GPU isn't retried constantly / blank-flashing)."""
+        import json
+        import time
+        import main
+        self._fresh(monkeypatch)
+        main.persist_software_render_marker(reason="c1")
+        main.persist_software_render_marker(reason="c2")
+        main.persist_software_render_marker(reason="c3")
+        d = json.loads(main.software_render_marker_path().read_text(encoding="utf-8"))
+        assert d["fails"] == 3, "consecutive pins must increment the failure count"
+        d["ts"] = time.time() - (2 * 3600)                        # 2h < 24h (fails=3)
+        main.software_render_marker_path().write_text(json.dumps(d), encoding="utf-8")
+        assert main.software_render_enabled() is True, "high-fail pin holds through a short age"
+
+    def test_legacy_plaintext_marker_auto_recovers(self, monkeypatch):
+        """An old plain-text marker (pre-recovery) is treated as one failure dated
+        by mtime and also auto-recovers once its window elapses."""
+        import os as _os
+        import time
+        import main
+        self._fresh(monkeypatch)
+        p = main.software_render_marker_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("software-render pinned on 2026-06-19\nreason: legacy\n", encoding="utf-8")
+        old = time.time() - (2 * 3600)
+        _os.utime(p, (old, old))
+        assert main.software_render_enabled() is False, "old legacy marker must auto-recover"
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # WebShell crash-recovery handler LOGIC  (real handler methods, no render proc)
 #
 # These call the ACTUAL WebShell handler methods. The instance is built with

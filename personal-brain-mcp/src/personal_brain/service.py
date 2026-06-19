@@ -105,7 +105,14 @@ def _windows_install(
     # Autostart the SUPERVISOR (KeepAlive loop), not the bare daemon, so a
     # daemon crash respawns immediately instead of waiting for the next logon.
     args = f'supervise --port {port}' + (f' --db "{db}"' if db else '')
-    full_cmd = f'"{sys.executable}" -m personal_brain.service {args}'
+    # Use the WINDOWLESS interpreter (pythonw.exe) for the logon autostart so no
+    # console window appears — python.exe always allocates a console; its
+    # pythonw.exe sibling does not. Both the schtasks /tr command and the .vbs
+    # fallback are built from full_cmd, so deriving it here fixes the whole
+    # autostart path. Falls back to sys.executable if pythonw.exe isn't present.
+    _pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    _launch_exe = _pyw if os.path.exists(_pyw) else sys.executable
+    full_cmd = f'"{_launch_exe}" -m personal_brain.service {args}'
 
     cmd = [
         "schtasks", "/create",
@@ -161,10 +168,19 @@ def _windows_install_startup_folder(full_cmd: str) -> dict[str, Any]:
     try:
         folder = _startup_folder_path()
         folder.mkdir(parents=True, exist_ok=True)
+        # VBScript escapes a literal " by DOUBLING it (""). full_cmd already
+        # wraps the exe path in quotes (needed for schtasks /tr), so it must be
+        # escaped before being embedded in the VBScript string literal —
+        # otherwise the .vbs emits `oShell.Run ""C:\...python.exe" ...` which
+        # VBScript reads as an empty string followed by a bare path → compile
+        # error 800A0401 "Expected end of statement" in a logon popup, and the
+        # brain never autostarts. Doubling yields the valid
+        # `oShell.Run """C:\...python.exe"" ..."`.
+        vbs_cmd = full_cmd.replace('"', '""')
         vbs = (
             'Dim oShell\n'
             'Set oShell = WScript.CreateObject("WScript.Shell")\n'
-            f'oShell.Run "{full_cmd}", 0, False\n'
+            f'oShell.Run "{vbs_cmd}", 0, False\n'
         )
         path = _startup_vbs_path()
         path.write_text(vbs, encoding="utf-8")

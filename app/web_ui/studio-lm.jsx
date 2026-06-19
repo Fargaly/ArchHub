@@ -6146,14 +6146,23 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         )}
         <input ref={fileInputRef} type="file" multiple style={{ display:'none' }}
           onChange={async (e) => { await _addFiles(e.target.files); e.target.value = ''; }}/>
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-          <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-          <input value={title} onChange={e => setTitle(e.target.value)}
-            onPaste={_onPaste}
-            placeholder={dragOver ? 'drop files to attach…' : 'Start a new session… (Enter to create)'}
+        <div style={{ display:'flex', alignItems:'flex-end', gap:8 }}>
+          <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13, paddingBottom:2 }}>/</span>
+          <textarea value={title} onChange={e => setTitle(e.target.value)}
+            onPaste={_onPaste} rows={1}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (e.currentTarget.form) e.currentTarget.form.requestSubmit();
+              }
+            }}
+            onInput={e => { const t = e.currentTarget; t.style.height = 'auto';
+              t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }}
+            placeholder={dragOver ? 'drop files to attach…' : 'Start a new session…  (Enter to send · Shift+Enter = new line)'}
             style={{
               flex:1, border:0, background:'transparent', color:LM.ink, fontSize:14,
-              fontFamily:LM.sans, outline:'none',
+              fontFamily:LM.sans, outline:'none', resize:'none', overflowY:'auto',
+              minHeight:22, maxHeight:160, lineHeight:1.45, padding:0,
             }}/>
           <button type="button" title="Attach file or image" aria-label="Attach file or image"
             onClick={(e) => { e.stopPropagation(); fileInputRef.current && fileInputRef.current.click(); }}
@@ -12849,11 +12858,14 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:5,
         }}>
           <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>/</span>
-          <input value={reply} onChange={e => setReply(e.target.value)}
+          <textarea value={reply} onChange={e => setReply(e.target.value)} rows={1}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-            placeholder="Reply…"
+            onInput={e => { const t = e.currentTarget; t.style.height = 'auto';
+              t.style.height = Math.min(t.scrollHeight, 140) + 'px'; }}
+            placeholder="Reply…  (Shift+Enter = new line)"
             style={{ flex:1, border:0, background:'transparent', color:LM.ink,
-                      fontFamily:LM.sans, fontSize:12, outline:'none' }}/>
+                      fontFamily:LM.sans, fontSize:12, outline:'none', resize:'none',
+                      overflowY:'auto', minHeight:18, maxHeight:140, lineHeight:1.45 }}/>
           <button onClick={sendReply} disabled={!reply.trim()}
             style={{ padding:'3px 8px',
                       background: reply.trim() ? LM.accent : LM.bgSoft,

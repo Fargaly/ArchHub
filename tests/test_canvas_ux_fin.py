@@ -300,8 +300,13 @@ def test_router_status_reads_real_routed_model():
     assert ".model" in block, "RouterStatus must read the routed model field"
     assert "lm-usage-bump" in block, (
         "RouterStatus must refresh on lm-usage-bump (the real usage event)")
-    # Honest fallback to the selected model when no completion has landed yet.
-    assert "model.name" in block
+    # De-duplicated masthead (v1.6.4, founder caught two "Auto (router picks)"
+    # pills): RouterStatus now renders ONLY the live model Auto resolved to and
+    # nothing until it lands — ModelStrip already shows the pick, so RouterStatus
+    # no longer falls back to model.name (which duplicated it). Gate the dedup.
+    assert "!routedLeaf" in block and "return null" in block, (
+        "RouterStatus must render nothing until a live routed model exists "
+        "(no duplicate of ModelStrip's 'Auto (router picks)' pick)")
 
 
 # ════════════════════════ COMPILED BUNDLE PARITY ════════════════════════

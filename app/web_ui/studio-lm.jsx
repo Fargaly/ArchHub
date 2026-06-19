@@ -19059,7 +19059,7 @@ const NodeRail = ({ node, bumpGraph }) => {
           };
           return (
             <div>
-              <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
+              <div style={{ marginBottom:10 }}><div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:3 }}>PROPERTIES</div><div style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkSoft, lineHeight:1.45 }}>This node’s settings <span style={{ color:LM.inkMuted }}>— its definition.</span>{node && node.op_id ? (<> Tap <span style={{ color:LM.accent, fontWeight:600 }}>⊙</span> to turn a value into a wired input socket.</>) : null}</div></div>
               <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
                 {/* onChange(v) = mid-edit tick (debounced); onChange(v, true) =
                     commit/release edge (flush now) — same contract as flat params. */}
@@ -19081,7 +19081,7 @@ const NodeRail = ({ node, bumpGraph }) => {
         if ((node.params || []).length === 0) return null;
         return (
           <div>
-            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
+            <div style={{ marginBottom:10 }}><div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:3 }}>PROPERTIES</div><div style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkSoft, lineHeight:1.45 }}>This node’s settings <span style={{ color:LM.inkMuted }}>— its definition.</span>{node && node.op_id ? (<> Tap <span style={{ color:LM.accent, fontWeight:600 }}>⊙</span> to turn a value into a wired input socket.</>) : null}</div></div>
             <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
               {/* onChange(v) = mid-drag tick (debounced); onChange(v, true) =
                   commit/release edge (flush now). FullParam fires the commit

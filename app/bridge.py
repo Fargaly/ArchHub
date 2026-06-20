@@ -2077,6 +2077,44 @@ class ArchHubBridge(QObject):
             "no tool fits, say so plainly. Be concise."
         )})
 
+        # ── HARD PER-TURN BUDGET (founder 2026-06-20, "notion prompt hangs
+        # the chat turn — >78s, zero chunks, never finishes") ─────────────
+        # The runner below may block INSIDE router.complete() in a sync call
+        # (a stalled connector op, a provider socket that never returns). A
+        # QTimer / threading.Timer scheduled ON the blocked thread can never
+        # fire. So the guarantee lives on an INDEPENDENT watchdog thread that
+        # is NOT the worker: it wakes at the deadline and, if the turn has
+        # emitted ZERO chat_chunk, fires the tools-DISABLED plain-LLM
+        # fallback (or, if even that is unreachable, the honest backstop
+        # line) + chat_done. The user is GUARANTEED a real reply within the
+        # budget no matter which connector/provider stalls. The fast path is
+        # untouched: a normal reply marks the turn done and the watchdog
+        # exits without emitting anything.
+        import threading as _thr
+        _turn = {
+            "emitted": 0,        # chat_chunk count that reached the bubble
+            "done": False,       # terminal (chat_done) already fired?
+            "lock": _thr.Lock(),
+        }
+        # Wall-clock deadline. The connector op budget (run_op,
+        # DEFAULT_OP_TIMEOUT_SECONDS=20s) sits well under this, and the
+        # surface backstop guarantees a chat_done; 70s is the ceiling at
+        # which we stop waiting for a stalled provider and answer anyway.
+        # Overridable (instance attr) so tests can shrink the budget without
+        # waiting a real 70s; production never sets it.
+        TURN_BUDGET_SECONDS = float(
+            getattr(self, "_chat_turn_budget_s", 0) or 70.0)
+
+        def _claim_done() -> bool:
+            """Return True exactly once — the caller that wins the claim is
+            the one allowed to fire the terminal chat_done. Both the runner
+            and the watchdog race through here so chat_done fires once."""
+            with _turn["lock"]:
+                if _turn["done"]:
+                    return False
+                _turn["done"] = True
+                return True
+
         def _runner():
             try:
                 # Honor the user's selected model (set via set_model). If
@@ -2093,6 +2131,8 @@ class ArchHubBridge(QObject):
                 # response.text at the end. `streamed` flag on the response
                 # is not reliable — some providers call on_chunk but leave
                 # streamed=False. Use our own counter, not the flag.
+                # Backed by the shared _turn["emitted"] counter so the
+                # watchdog sees the same truth.
                 emitted_chunks = [0]
                 # AgDR-0021 — capture the turn so it persists as an
                 # auditable ai.plan canvas node (founder demand 2026-06-01:
@@ -2134,6 +2174,8 @@ class ArchHubBridge(QObject):
                     if not piece:
                         return
                     emitted_chunks[0] += 1
+                    with _turn["lock"]:
+                        _turn["emitted"] += 1
                     _text_parts.append(piece)
                     try: self.chat_chunk.emit(session_id, piece)
                     except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
@@ -2213,41 +2255,50 @@ class ArchHubBridge(QObject):
                                               f"answered by {answered_by}")
                 except Exception:
                     pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-                # complete() returned ⇒ the LAST attempt is the WINNER. Its
-                # streamed text is still sitting in _attempt_buf (every
-                # earlier, abandoned attempt was already dropped by
-                # _on_attempt_reset). Commit it to the bubble now — this is
-                # the ONLY point the founder sees streamed text, and it is
-                # guaranteed to be one provider's, never a leaked mix.
-                _flush_attempt()
-                # Only emit response.text as a final chunk if NOTHING was
-                # streamed. Otherwise we'd duplicate the entire message.
-                if response is not None and emitted_chunks[0] == 0:
-                    text_out = getattr(response, "text", "") or ""
-                    if text_out:
-                        try: self.chat_chunk.emit(session_id, text_out)
+                # WATCHDOG INTERLOCK: if the per-turn budget already expired
+                # and the watchdog fired the fallback reply + chat_done, this
+                # runner returned LATE (its blocked provider finally answered).
+                # Claim the terminal slot; if the watchdog won it, skip all
+                # user-facing emits (the user already has a reply — never emit
+                # a second one on top of it) but still persist the plan below.
+                _runner_owns_terminal = _claim_done()
+                if _runner_owns_terminal:
+                    # complete() returned ⇒ the LAST attempt is the WINNER.
+                    # Its streamed text is still sitting in _attempt_buf (every
+                    # earlier, abandoned attempt was already dropped by
+                    # _on_attempt_reset). Commit it to the bubble now — this is
+                    # the ONLY point the founder sees streamed text, and it is
+                    # guaranteed to be one provider's, never a leaked mix.
+                    _flush_attempt()
+                    # Only emit response.text as a final chunk if NOTHING was
+                    # streamed. Otherwise we'd duplicate the entire message.
+                    if response is not None and emitted_chunks[0] == 0:
+                        text_out = getattr(response, "text", "") or ""
+                        if text_out:
+                            try: self.chat_chunk.emit(session_id, text_out)
+                            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                    # NEVER-EMPTY GUARANTEE (founder 2026-06-20: 'I write and
+                    # get nothing'). If the turn produced NO streamed chunks AND
+                    # the response carried no text (every attempt retracted, or
+                    # a provider returned a blank final), the bubble would
+                    # render empty and chat_done would land on a silent turn.
+                    # The router's _plain_llm_fallback already covers the
+                    # retraction class; this is the LAST-LINE backstop at the
+                    # surface so a blank turn can NEVER reach the user. Emit one
+                    # honest line so there is always a real assistant reply.
+                    # routing_note (if any) explains why.
+                    if emitted_chunks[0] == 0:
+                        note = (getattr(response, "routing_note", "")
+                                if response is not None else "") or ""
+                        fallback_line = (
+                            "I couldn't get a reply from any provider for that "
+                            "message. " + note
+                        ).strip() if note else (
+                            "I couldn't produce a reply for that message just "
+                            "now — please try again, or rephrase it."
+                        )
+                        try: self.chat_chunk.emit(session_id, fallback_line)
                         except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-                # NEVER-EMPTY GUARANTEE (founder 2026-06-20: 'I write and get
-                # nothing'). If the turn produced NO streamed chunks AND the
-                # response carried no text (every attempt retracted, or a
-                # provider returned a blank final), the bubble would render
-                # empty and chat_done would land on a silent turn. The router's
-                # _plain_llm_fallback already covers the retraction class; this
-                # is the LAST-LINE backstop at the surface so a blank turn can
-                # NEVER reach the user. Emit one honest line so there is always
-                # a real assistant reply. routing_note (if any) explains why.
-                if emitted_chunks[0] == 0:
-                    note = (getattr(response, "routing_note", "")
-                            if response is not None else "") or ""
-                    fallback_line = (
-                        "I couldn't get a reply from any provider for that "
-                        "message. " + note
-                    ).strip() if note else (
-                        "I couldn't produce a reply for that message just "
-                        "now — please try again, or rephrase it."
-                    )
-                    try: self.chat_chunk.emit(session_id, fallback_line)
-                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 # AgDR-0021 — persist this Composer turn as an ai.plan
                 # record so it materialises as an inspectable, replayable
                 # canvas node (prompt + reasoning + tool-calls + result),
@@ -2286,17 +2337,82 @@ class ArchHubBridge(QObject):
                     )
                 except Exception:
                     pass
-                try: self.chat_done.emit(session_id)
-                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                # Only the terminal owner fires chat_done — if the watchdog
+                # already closed the turn, it emitted chat_done; a second one
+                # would re-arm the JSX 'turn ended' handler on a stale id.
+                if _runner_owns_terminal:
+                    try: self.chat_done.emit(session_id)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
             except Exception as ex:
                 # Always emit BOTH chat_error and chat_done so the JS UI
-                # doesn't hang waiting for a terminal signal.
-                try: self.chat_error.emit(session_id, f"{type(ex).__name__}: {ex}")
-                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
-                try: self.chat_done.emit(session_id)
-                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                # doesn't hang waiting for a terminal signal — unless the
+                # watchdog already closed the turn with a real reply, in
+                # which case surfacing a late error would be noise.
+                if _claim_done():
+                    try: self.chat_error.emit(session_id, f"{type(ex).__name__}: {ex}")
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                    try: self.chat_done.emit(session_id)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+
+        # ── The watchdog: an INDEPENDENT thread (not the worker) that
+        # guarantees a real reply within TURN_BUDGET_SECONDS even if the
+        # worker is blocked in a sync provider/connector call. It sleeps to
+        # the deadline, then — only if the turn is still open and emitted
+        # ZERO chunks — fires the tools-disabled plain-LLM fallback (or the
+        # honest backstop line) + chat_done. A normal fast reply marks the
+        # turn done first, so the watchdog finds done==True and exits silent.
+        def _watchdog():
+            import time as _t
+            deadline = _t.monotonic() + TURN_BUDGET_SECONDS
+            while _t.monotonic() < deadline:
+                with _turn["lock"]:
+                    if _turn["done"]:
+                        return            # turn finished normally — stand down
+                # Poll cheaply; never block the whole budget in one sleep so a
+                # fast reply lets us exit promptly.
+                _t.sleep(0.25)
+            # Deadline reached. If the turn already emitted real text or is
+            # already terminal, do nothing.
+            with _turn["lock"]:
+                if _turn["done"] or _turn["emitted"] > 0:
+                    return
+            if not _claim_done():
+                return                    # runner won the race at the wire
+            # The turn is blocked with nothing shown. Produce a guaranteed
+            # real reply WITHOUT going back through the (possibly blocked)
+            # tool path: the router's tools-disabled plain-LLM fallback.
+            reply = ""
+            try:
+                fb = self.router._plain_llm_fallback(
+                    history=history,
+                    on_chunk=(lambda _p: None),   # don't double-stream
+                    on_reasoning=(lambda _s: None),
+                    on_status=(lambda _s: None),
+                    on_attempt_reset=(lambda _p: None),
+                )
+                if fb is not None:
+                    reply = (getattr(fb, "text", "") or "").strip()
+            except Exception:
+                reply = ""
+            if not reply:
+                # Even the plain-LLM pass was unreachable — the honest
+                # bridge backstop so the user is NEVER left with nothing.
+                reply = (
+                    "That took too long to answer — a connected app or "
+                    "provider stopped responding, so I stopped waiting. "
+                    "Please try again, or rephrase without that integration."
+                )
+            try: self.chat_chunk.emit(session_id, reply)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            try: self.chat_status.emit(
+                session_id, "answered without the stalled integration "
+                            "(per-turn time budget reached)")
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            try: self.chat_done.emit(session_id)
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
 
         threading.Thread(target=_runner, daemon=True).start()
+        _thr.Thread(target=_watchdog, daemon=True).start()
 
     # ─── Composer attachments (images / files / voice) ─────────
     # Founder demand 2026-05-14: composer accepts images, voice clips,

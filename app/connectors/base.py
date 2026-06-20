@@ -289,8 +289,36 @@ def all_ops() -> list:
     return out
 
 
+# ── per-op hard wall-clock budget ───────────────────────────────────
+# ENGINEERING-MANDATE class fix (founder 2026-06-20, "notion prompt hangs
+# the chat turn"): a connector op that makes a blocking network/auth/COM
+# call with no bound (e.g. notion's urlopen(timeout=30) × MAX_PAGES=10 =
+# up to 300s, or a stalled broker/COM probe) BLOCKS the chat worker thread
+# that dispatched it. The router buffers the model's streamed text and only
+# flushes it when complete() RETURNS — so a blocked op means the user sees
+# ZERO chat_chunk for the whole stall. The fix is at the SHARED chokepoint
+# every connector op flows through: run_op. We run the op on a daemon
+# worker and enforce a hard wall-clock deadline; on overrun we return an
+# honest `unreachable` OpResult instead of blocking unbounded. This bounds
+# the WHOLE connector CLASS (notion, dropbox, teams, procore, …), not one
+# host. The orphaned worker is a daemon — it cannot keep the process alive
+# and its eventual return is discarded.
+#
+# Override per call with the `_op_timeout` kwarg (seconds); 0/None disables
+# the bound (used by long-running intentional ops). Default is generous
+# enough for a healthy REST/COM round-trip yet far under the per-turn
+# budget so the turn never starves.
+DEFAULT_OP_TIMEOUT_SECONDS = 20.0
+
+
 def run_op(op_id: str, **params) -> OpResult:
-    """Resolve an op_id across all connectors and run it."""
+    """Resolve an op_id across all connectors and run it.
+
+    The op runs under a hard wall-clock budget (`DEFAULT_OP_TIMEOUT_SECONDS`,
+    overridable via the `_op_timeout` kwarg) so a slow/unreachable host can
+    NEVER block the caller (the chat worker thread) unbounded — it returns an
+    honest 'unreachable' OpResult at the deadline instead.
+    """
     canonical_id = canonical_op_id(op_id)
     host = canonical_id.split(".", 1)[0] if "." in canonical_id else ""
     c = get(host)
@@ -299,7 +327,50 @@ def run_op(op_id: str, **params) -> OpResult:
     o = c.op(canonical_id)
     if o is None:
         return OpResult.fail(f"unknown op '{op_id}'", op_id)
-    return o.run(**params)
+
+    # Pull the optional per-call override out of params — it's a transport
+    # control, never a connector op input.
+    timeout = params.pop("_op_timeout", DEFAULT_OP_TIMEOUT_SECONDS)
+    try:
+        timeout = float(timeout) if timeout is not None else 0.0
+    except Exception:
+        timeout = DEFAULT_OP_TIMEOUT_SECONDS
+    if timeout <= 0:
+        # Bound explicitly disabled — run inline (back-compat escape hatch).
+        return o.run(**params)
+
+    import concurrent.futures as _cf
+    t0 = time.time()
+    pool = _cf.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix=f"connop-{host}")
+    fut = pool.submit(o.run, **params)
+    try:
+        return fut.result(timeout=timeout)
+    except _cf.TimeoutError:
+        # The op is still running on the orphaned daemon worker; we abandon
+        # it and report honestly. Do NOT pool.shutdown(wait=True) — that
+        # would re-block on the very op we just timed out. Let the daemon
+        # thread finish in the background; its result is discarded.
+        pool.shutdown(wait=False)
+        return OpResult(
+            ok=False, op_id=op_id,
+            error=(f"{op_id}: host unreachable — no response within "
+                   f"{timeout:.0f}s (connector timed out, the chat turn "
+                   f"was not blocked)."),
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+    except Exception as ex:
+        pool.shutdown(wait=False)
+        return OpResult(
+            ok=False, op_id=op_id,
+            error=f"{type(ex).__name__}: {ex}",
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+    finally:
+        # Reap the pool only if the worker already finished (non-blocking);
+        # a timed-out worker is left as a daemon, reaped by interpreter exit.
+        if fut.done():
+            pool.shutdown(wait=False)
 
 
 def load_all_connectors() -> int:

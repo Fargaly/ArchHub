@@ -30,9 +30,15 @@ from typing import Callable, Optional
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
-# Codex `exec` spins up an agent — generous ceiling so a real answer
-# isn't killed mid-run, but bounded so a hang can't freeze a chat.
-_TIMEOUT_S = 300
+# Codex `exec` spins up an agent and is ONE-SHOT (no token streaming — the
+# whole answer lands at once when it finishes). For INTERACTIVE CHAT a long
+# ceiling means the user stares at nothing for minutes, then a dump — the
+# founder's "every time I write I get nothing" on tool-ish prompts (2026-06-20:
+# "summarize my notion notes" sat for 5 min). Bound it to 60 s: a normal
+# conversational codex answer returns well under that, and a slow/stuck turn
+# trips the router's SOFT timeout → fast-provider fallback → the no-empty
+# guarantee streams a real answer within ~a minute instead of up to 5.
+_TIMEOUT_S = 60
 
 
 def codex_cli_path() -> Optional[str]:

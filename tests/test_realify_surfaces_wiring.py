@@ -83,11 +83,21 @@ class TestRailWiring:
         assert "setPanel(it.id)" in block, (
             "in a session the rail must still drive the sidebar panel switch")
 
-    def test_rail_deck_opens_command_deck(self):
+    def test_rail_stripped_to_essentials(self):
+        """Founder 2026-06-19 ('strip to essentials'): the rail drops the Command
+        Deck and the NODES/SKILLS buttons (redundant with the graph library).
+        Only the search drawer-item remains; skills move to the Cmd-K palette."""
         block = _flat("const IconRailInner = (", size=6000)
-        assert "lm-command-deck-open" in block, (
-            "the DECK item must open the real CommandDeckModal")
-        assert "rail-deck" in block, "DECK needs a data-testid for verification"
+        assert "rail-deck" not in block, "Command Deck must be removed from the rail"
+        assert "lm-command-deck-open" not in block, "the DECK rail trigger must be gone"
+        assert "it.id === 'search'" in block, (
+            "the rail items map must be filtered to the search drawer only "
+            "(nodes/skills removed)")
+        # Skills left the rail — they MUST stay reachable via the Cmd-K palette.
+        pal = _flat("'open-plan-history'", size=600)
+        assert "open-skills" in pal, (
+            "skills left the rail — add a Cmd-K 'Open skills' action so they are "
+            "not orphaned")
 
     def test_rail_share_opens_real_share_panel(self):
         """SHARE must open the REAL Share panel drawer (lm-rail-open share),
@@ -102,7 +112,7 @@ class TestRailWiring:
         # The panel items build their testid dynamically ('rail-' + it.id), so
         # rail-nodes / rail-skills / rail-search render at runtime; the static
         # items carry literal testids.
-        for tid in ("rail-home", "rail-deck", "rail-share-icon"):
+        for tid in ("rail-home", "rail-share-icon"):
             assert tid in block, f"rail item must carry data-testid {tid!r}"
         assert "'rail-' + it.id" in block, (
             "panel items must carry a per-id testid (rail-nodes/-skills/-search)")

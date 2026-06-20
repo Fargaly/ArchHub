@@ -4540,20 +4540,10 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
           <circle cx="12" cy="8.5" r="1.6" fill={LM.accent}/>
         </svg>
       </RailIcon>
-      {/* COMMAND DECK — the founder's one comprehensive view over the app +
-          all its resources (Missing-20% burndown · brain · code · connectors
-          · inbox · finances). Always live (Home AND session view) so it's
-          reachable in ONE click from the default view. Dispatches the open
-          event the always-mounted CommandDeckModal listens for. */}
-      <RailIcon title="Command Deck" label="deck" testid="rail-deck"
-        onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-command-deck-open')); } catch (e) {} }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="1.8">
-          <rect x="3" y="3" width="8" height="5" rx="1"/>
-          <rect x="3" y="11" width="8" height="10" rx="1"/>
-          <rect x="14" y="3" width="7" height="10" rx="1"/>
-          <rect x="14" y="16" width="7" height="5" rx="1"/>
-        </svg>
-      </RailIcon>
+      {/* Rail stripped to essentials (founder, 2026-06-19: "strip to
+          essentials"): Command Deck removed (a vague overview with no clear
+          job), and NODES/SKILLS removed below — they live in the graph library
+          (Cmd-K / the in-session sidebar) so the rail isn't a redundant copy. */}
       <div style={{ height:8 }}/>
       {/* MAKE-IT-REAL 2026-06-18 (founder audit: "clicking NODES/SKILLS/SEARCH
           on Home does nothing"). These items are NO LONGER dead on Home. Every
@@ -4563,7 +4553,7 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
           the docked sidebar stay in sync (existing behaviour preserved). The
           old `disabled-on-Home` branch (a dead clickable) is removed — the
           surfaces are real from Home now. */}
-      {items.map(it => {
+      {items.filter(it => it.id === 'search').map(it => {
         const inSession = setPanel !== _NOOP;
         return (
           <RailIcon key={it.id} testid={'rail-' + it.id}
@@ -18704,6 +18694,10 @@ const CommandPaletteInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-toggle-perf-hud')); } catch (e) {} } },
       { kind:'action', label:'▤ Open plan history', id:'open-plan-history',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open', { detail:{} })); } catch (e) {} } },
+      // Skills left the left rail (founder "strip to essentials" 2026-06-19) —
+      // keep them reachable here so nothing is orphaned (opens the same drawer).
+      { kind:'action', label:'★ Open skills', id:'open-skills',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-rail-open', { detail:{ panel:'skills' } })); } catch (e) {} } },
     );
     // Nodes from grammar
     (window.__archhub_LM_NODE_GRAMMAR || []).forEach(p => {

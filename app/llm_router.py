@@ -403,6 +403,26 @@ def _summarise_tool_result(inv) -> str:
         return f"Blender: {', '.join(bits)}." if bits else "Blender reachable."
     if name in ("revit_ping", "acad_ping", "max_ping", "blender_ping"):
         return f"{name.replace('_ping', '').title()} is reachable."
+    # Token-based REST connectors (notion / dropbox / teams / procore /
+    # speckle) authenticate with a saved token, not a local process. When the
+    # token is missing their ping/status returns `reachable: False` (or an
+    # `unauthorized` status) — that is "not connected, add your token", NOT a
+    # plain success. Surface the actionable message so the model never reports
+    # a token-less connector as merely "reachable=False" or as reachable.
+    # (Founder bug 2026-06-20: token-not-configured read as "(unknown)".)
+    _TOKEN_REST = ("notion", "dropbox", "teams", "procore", "speckle")
+    host_prefix = name.split("_", 1)[0] if "_" in name else name
+    if host_prefix in _TOKEN_REST:
+        disp = "Teams" if host_prefix == "teams" else host_prefix.title()
+        rst = str(result.get("status") or "").lower()
+        reachable = result.get("reachable")
+        note = str(result.get("note") or "").strip()
+        if rst == "unauthorized" or reachable is False:
+            return (note or
+                    f"{disp} not connected — add your integration token in "
+                    f"Settings -> Sign-ins -> {disp}.")
+        if rst == "live" or reachable is True:
+            return f"{disp} is connected{(' — ' + note) if note else '.'}"
     # Generic fallback — find the most informative scalar field.
     interesting = [(k, v) for k, v in result.items()
                    if k != "status" and not isinstance(v, (dict, list))

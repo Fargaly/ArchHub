@@ -451,24 +451,96 @@ def _office_com_probe(progid: str, display: str,
 
 
 # ---------------------------------------------------------------------------
-# Public surface.
-def probe_notion() -> dict:
-    """Detect Notion desktop app by process name. Notion ships as an
-    Electron app; process is `Notion.exe` on Windows. Status `live`
-    when found, `missing` otherwise. Uses the shared `_find_process`
-    helper so tests can mock it the same way as the other probes.
-    """
+# Token-based REST connectors — Notion, Dropbox, Teams, Procore, Speckle.
+#
+# These hosts are NOT local desktop apps the user runs; they are cloud REST
+# APIs that ArchHub authenticates with a saved integration token (via
+# secrets_store.load_api_key). The honest "is this host usable?" question is
+# therefore "is a token configured + accepted?" — NOT "is a process named
+# `notion` running?".
+#
+# Founder bug 2026-06-20: pinging `notion` reported "not reachable (unknown)"
+# even though api.notion.com was reachable — the real situation was simply NO
+# TOKEN CONFIGURED. The old `probe_notion` here detected a desktop process
+# (or, worse, any process whose name merely CONTAINED "notion") and reported a
+# misleading `live`/`missing` that had nothing to do with whether the REST
+# connector could actually be used. That was also a ONE-SYSTEM violation: two
+# parallel notions of "notion status" (this process probe + the REST
+# connector's token-aware `probe()`).
+#
+# Root fix: for the whole token-based REST class, DEFER to the connector's own
+# `probe()` (it already distinguishes the three honest states — token missing,
+# token rejected (401), token present but network/timeout) and map its result
+# into the host_detector shape. Status `unauthorized` is the actionable
+# "not connected — add your token" state; we surface it as-is so callers can
+# show the connector's own token hint instead of "(unknown)".
+TOKEN_REST_HOSTS = frozenset(
+    {"notion", "dropbox", "teams", "procore", "speckle"})
+
+
+def _rest_connector_status(host_id: str, display: str) -> dict:
+    """Map a token-based REST connector's `probe()` into the host_detector
+    shape {status, version, note, detail}.
+
+    The connector probe returns one of:
+      unauthorized — no token, OR token rejected (401). `note` carries the
+                     actionable "add/replace your token in Settings ->
+                     Sign-ins -> X" hint. We pass this through verbatim so the
+                     ping/status surfaces show a clear, fixable message and
+                     NEVER "(unknown)".
+      live         — token present + accepted by the API.
+      missing      — token present but the API was unreachable / errored
+                     (network, timeout, 5xx).
+
+    Never raises: a probe that itself errors is reported as `unavailable`
+    with the error note, so a single bad connector can't crash detection."""
     try:
-        proc = _find_process(["notion.exe", "notion"])
+        from connectors.base import get as _get_connector
+        c = _get_connector(host_id)
+        if c is None:
+            # Lazily import the connector module so it self-registers — the
+            # detector can run before the full connector registry is loaded.
+            # REST connectors carry no heavy host SDK, so this is cheap.
+            try:
+                import importlib
+                importlib.import_module(f"connectors.{host_id}_connector")
+                c = _get_connector(host_id)
+            except Exception:
+                c = None
+        if c is None:
+            return {"status": "unavailable", "version": "",
+                    "note": f"{display} connector not registered",
+                    "detail": {}}
+        pr = c.probe() or {}
     except Exception as ex:
         return {"status": "unavailable", "version": "",
-                 "note": f"probe failed: {ex}", "detail": {}}
-    if proc:
-        return {"status": "live", "version": "",
-                 "note": "Notion running",
-                 "detail": {"pid": getattr(proc, "pid", None)}}
-    return {"status": "missing", "version": "",
-             "note": "Notion not running", "detail": {}}
+                "note": f"{display} probe failed: "
+                        f"{type(ex).__name__}: {ex}"[:200],
+                "detail": {}}
+    status = str(pr.get("status") or "missing")
+    note = str(pr.get("note") or "")
+    detail = pr.get("detail") if isinstance(pr.get("detail"), dict) else {}
+    # An empty/garbled probe must still resolve to an HONEST, named state —
+    # never a status-less dict that downstream renders as "(unknown)".
+    if status not in ("live", "loaded_dead", "missing", "unauthorized"):
+        status = "missing"
+        note = note or f"{display} status unknown — re-check the connection"
+    if not note:
+        note = (f"{display} not connected — add your token in "
+                f"Settings -> Sign-ins -> {display}"
+                if status == "unauthorized" else f"{display} {status}")
+    return {"status": status, "version": "", "note": note, "detail": detail}
+
+
+def probe_notion() -> dict:
+    """Notion — a token-based REST connector, NOT a desktop app.
+
+    Defers to the Notion REST connector's token-aware `probe()` so the status
+    reflects whether an integration token is configured + accepted, rather
+    than whether some `notion`-named desktop process happens to be running.
+    No token -> `unauthorized` with the actionable token hint (never
+    "(unknown)")."""
+    return _rest_connector_status("notion", "Notion")
 
 
 # ── Broker-backed AEC hosts ────────────────────────────────────────────

@@ -1487,12 +1487,72 @@ class ArchHubBridge(QObject):
             if c is None:
                 return _safe_json({"status": "missing",
                                     "note": f"no connector '{host_id}'"})
-            return _safe_json(self._cached_async(
+            raw = self._cached_async(
                 f"probe:{host_id}", lambda: c.probe(),
                 empty={"status": "probing",
-                       "note": "probe in progress"}))
+                       "note": "probe in progress"})
+            # Honest-status guarantee (founder bug 2026-06-20): the result
+            # MUST always carry a `status` the JSX ping path understands
+            # (live / loaded_dead / missing / unauthorized / probing).
+            # `_cached_async` caches a status-less {"error": ...} dict when a
+            # probe raises; without normalising it the JSX fell through to
+            # `(res.status) || 'unknown'` and rendered "<host> is not
+            # reachable (unknown)" — turning a token-not-configured (or any
+            # probe error) into a dead-end "(unknown)" message. Token-based
+            # REST connectors already return `unauthorized` + an actionable
+            # "add your token in Settings -> Sign-ins -> X" note when no token
+            # is set; that note rides through here so the user sees the fix,
+            # never "(unknown)".
+            return _safe_json(self._normalise_probe_status(host_id, raw))
         except Exception as ex:
             return _safe_json({"status": "missing", "note": str(ex)})
+
+    # Token-based REST connectors authenticate with a saved token rather than
+    # a local process. A token-less probe is "not connected — add your token",
+    # NOT "unreachable" — so a missing/garbled status must never degrade into
+    # the JSX "(unknown)" string for these hosts.
+    _TOKEN_REST_HOSTS = frozenset(
+        {"notion", "dropbox", "teams", "procore", "speckle"})
+
+    def _normalise_probe_status(self, host_id: str, raw) -> dict:
+        """Guarantee the probe result carries an honest, named `status` the
+        JSX ping/status path can render — never a status-less dict that
+        becomes "<host> is not reachable (unknown)".
+
+        `_cached_async` stores {"error": <msg>} (no `status`) when a probe
+        raises; this maps that — and any other shape lacking a valid status —
+        onto the honest contract. For token-based REST connectors a
+        status-less result means the token isn't configured (or the probe
+        couldn't run), so we report `unauthorized` with an actionable
+        add-your-token hint instead of "(unknown)"."""
+        valid = ("live", "loaded_dead", "missing", "unauthorized", "probing")
+        if not isinstance(raw, dict):
+            raw = {}
+        status = str(raw.get("status") or "").strip()
+        note = str(raw.get("note") or raw.get("error") or "").strip()
+        if status in valid:
+            return {"status": status, "note": note,
+                    "detail": raw.get("detail")
+                    if isinstance(raw.get("detail"), dict) else {}}
+        # No usable status — make the honest call by host class.
+        try:
+            from host_aliases import canonical_host
+            canon = canonical_host(host_id)
+        except Exception:
+            canon = str(host_id or "").strip().lower()
+        if canon in self._TOKEN_REST_HOSTS:
+            disp = canon.title() if canon != "teams" else "Teams"
+            # The raw `error`/note from a raised probe is noise to the user;
+            # the actionable add-your-token hint is what they need. Only keep
+            # a probe note when it already mentions the Sign-ins path.
+            actionable = (f"{disp} not connected — add your token in "
+                          f"Settings -> Sign-ins -> {disp}")
+            keep = note if ("sign-in" in note.lower()
+                            or "settings" in note.lower()) else actionable
+            return {"status": "unauthorized", "note": keep, "detail": {}}
+        return {"status": "missing",
+                "note": note or f"{host_id} status unavailable",
+                "detail": {}}
 
     @pyqtSlot(str, str, result=str)
     def run_connector_op(self, op_id: str, params_json: str) -> str:

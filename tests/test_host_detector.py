@@ -59,7 +59,11 @@ def _shape_ok(result: dict, *, allowed_status=None) -> None:
     assert isinstance(result["version"], str)
     assert isinstance(result["note"], str)
     assert isinstance(result["detail"], dict)
-    allowed = allowed_status or {"live", "missing", "unavailable"}
+    # `unauthorized` is a first-class honest status (token-based REST
+    # connectors return it when no token is configured — see probe_notion
+    # deferring to the Notion REST connector).
+    allowed = allowed_status or {"live", "missing", "unavailable",
+                                 "unauthorized"}
     assert result["status"] in allowed, \
         f"unexpected status {result['status']!r}, expected one of {allowed}"
 
@@ -376,3 +380,62 @@ class TestBridgeIntegration:
         assert isinstance(decoded, dict)
         for hid, info in decoded.items():
             _shape_ok(info)
+
+
+# ---------------------------------------------------------------------------
+class TestTokenRestConnectors:
+    """Founder bug 2026-06-20: a token-based REST connector (notion / dropbox
+    / teams / procore / speckle) with NO token configured must report a clear,
+    actionable "not connected — add your token" status — NEVER the misleading
+    "not reachable (unknown)" the old process-based probe produced."""
+
+    def _no_token(self):
+        """Patch every REST connector's saved-token lookup to None so the
+        probe takes the unauthorized path without any network call."""
+        return patch("secrets_store.load_api_key", return_value=None)
+
+    def test_notion_token_missing_is_unauthorized_with_actionable_note(self):
+        import host_detector
+        host_detector._CACHE.clear()
+        with self._no_token():
+            r = host_detector.probe_notion()
+        _shape_ok(r, allowed_status={"unauthorized"})
+        assert r["status"] == "unauthorized", r
+        note = r["note"].lower()
+        # Actionable: tells the user WHERE to add the token.
+        assert "settings" in note and "sign-ins" in note, r
+        assert "notion" in note, r
+        # NEVER the dead-end strings the founder saw.
+        assert "unknown" not in note, r
+        assert "not reachable" not in note, r
+
+    @pytest.mark.parametrize("host,display", [
+        ("notion", "Notion"),
+        ("dropbox", "Dropbox"),
+        ("speckle", "Speckle"),
+        ("procore", "Procore"),
+    ])
+    def test_rest_class_token_missing_is_unauthorized(self, host, display):
+        """The shared helper gives the whole token-based class the same honest
+        'not connected, add your token' status — never (unknown)."""
+        import host_detector
+        host_detector._CACHE.clear()
+        with self._no_token():
+            r = host_detector._rest_connector_status(host, display)
+        _shape_ok(r, allowed_status={"unauthorized", "missing", "live"})
+        assert r["status"] == "unauthorized", r
+        assert "unknown" not in r["note"].lower(), r
+        assert "not reachable" not in r["note"].lower(), r
+
+    def test_notion_does_not_false_live_on_a_stray_process(self):
+        """The old probe matched ANY process whose name contained 'notion'
+        and reported `live` even with no token — a false positive. The new
+        probe ignores processes entirely and keys off the token."""
+        import host_detector
+        host_detector._CACHE.clear()
+        fake_proc = {"name": "notion.exe", "exe": "C:/notion.exe", "pid": 4242}
+        with self._no_token(), \
+             patch("host_detector._find_process", return_value=fake_proc):
+            r = host_detector.probe_notion()
+        # A running 'notion' process must NOT flip a token-less connector live.
+        assert r["status"] == "unauthorized", r

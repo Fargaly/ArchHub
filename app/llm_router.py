@@ -580,6 +580,21 @@ class LLMRouter:
         # enough that adding credits + waiting fixes it without a
         # restart.
         self._BLOCK_SECONDS = 600         # 10 minutes
+        # Providers proven SIGNED-OUT / lacking valid auth this process.
+        # DISTINCT from `_blocklist` (which is a TIME-BOXED 10-min cooldown
+        # for transient 4xx). Founder bug 2026-06-20: claude_cli is on PATH
+        # (so `configured_providers` counted it) but the subscription is
+        # signed out, so EVERY turn picked it as PRIMARY, 401'd, and churned
+        # a "switching provider…" toast. The 10-min blocklist expired and
+        # re-churned. A signed-out subscription/CLI provider stays out of the
+        # PRIMARY set until it actually authenticates again — no expiry-driven
+        # re-churn. `_mark_signed_out` adds; a later SUCCESS on that provider
+        # (`_clear_signed_out`, called from `complete`) removes it, so it
+        # comes back automatically the moment the user re-signs-in — no app
+        # restart, no founder action. We do NOT require claude_cli re-auth;
+        # the router simply routes around it to a reachable provider
+        # (archhub_cloud / metered API / Ollama).
+        self._signed_out: set[str] = set()
         # REAL provider-reported token usage, accumulated across every
         # completion this process has run. Replaces the old client-side
         # chars/4 ESTIMATE the footer ServerStrip showed. Populated by
@@ -676,6 +691,54 @@ class LLMRouter:
             if r:
                 out[p] = r
         return out
+
+    # ---- signed-out / no-credential providers -----------------------------
+
+    def _is_auth_error(self, provider: str, ex: Exception) -> bool:
+        """True when `ex` from `provider` is an AUTH failure (signed out /
+        bad key / 401-403 / expired token) — as opposed to quota, network,
+        or a generic crash. Subscription/CLI providers also match their
+        worded 'not authenticated / please log in' phrasings."""
+        if provider in ("claude_cli", "codex_cli") and _claude_cli_is_auth(ex):
+            return True
+        s = (str(ex) or "").lower()
+        auth_needles = (
+            "401", "403", "unauthorized", "forbidden",
+            "invalid api key", "invalid_api_key", "incorrect api key",
+            "api key expired", "not authenticated", "unauthenticated",
+            "please log in", "please login", "logged out", "not logged in",
+            "sign in", "signed out", "session expired", "token has expired",
+            "token expired", "permission_denied", "isn't signed in",
+        )
+        return any(n in s for n in auth_needles)
+
+    def _mark_signed_out(self, provider: str, reason: str = "") -> None:
+        """Mark a provider as SIGNED-OUT for the rest of the process (until
+        it authenticates again). Keeps it out of the PRIMARY set
+        (`configured_providers`) so the auto-router never picks a dead
+        subscription as primary turn-after-turn (the per-turn 'switching
+        provider…' churn). Re-entry is automatic on the next SUCCESS via
+        `_clear_signed_out` — no expiry, no restart, no founder action."""
+        if not provider:
+            return
+        was = provider in self._signed_out
+        self._signed_out.add(provider)
+        if not was:
+            print(f"[llm-router] {provider} SIGNED OUT — pre-skipped as "
+                  f"primary until it re-authenticates: {reason[:120]}",
+                  flush=True)
+
+    def _clear_signed_out(self, provider: str) -> None:
+        """A SUCCESSFUL completion on `provider` proves it authenticated —
+        clear any sticky signed-out flag so it returns to the primary set
+        automatically (e.g. the user re-ran `claude login`)."""
+        self._signed_out.discard(provider)
+
+    def is_provider_signed_out(self, provider: str) -> bool:
+        # getattr-guarded: configured_providers() is reached from many entry
+        # points, and some construct LLMRouter via object.__new__ (bypassing
+        # __init__) — a missing set just means 'nothing signed out yet'.
+        return provider in getattr(self, "_signed_out", ())
 
     # ---- real token accounting --------------------------------------------
 
@@ -831,7 +894,16 @@ class LLMRouter:
         # Drop providers we've blocked due to recent 4xx (no credits,
         # bad key, quota exceeded). They re-enter the set automatically
         # when the blocklist entry expires (~10 min).
-        return sorted(p for p in providers if not self.is_provider_blocked(p))
+        #
+        # ALSO drop providers proven SIGNED-OUT this process (e.g.
+        # claude_cli on PATH but the subscription is logged out). A
+        # signed-out provider must NOT be chosen as PRIMARY — that is the
+        # founder bug where every turn tried claude_cli, 401'd, and churned
+        # a 'switching provider…' toast. It re-enters automatically on the
+        # next successful completion (`_clear_signed_out`).
+        return sorted(p for p in providers
+                      if not self.is_provider_blocked(p)
+                      and not self.is_provider_signed_out(p))
 
     def _get_client(self, provider: str):
         if provider in self._clients:
@@ -1316,6 +1388,17 @@ class LLMRouter:
         # Google Gemini or local Ollama transparently.
         attempts = []
         last_error: Exception | None = None
+        # EMPTY-REPLY FIX (founder 2026-06-20): set when an attempt produced
+        # text that was RETRACTED (refusal or fabricated-tool markup) and the
+        # chain then ran out of fresh providers. A retraction WIPES the
+        # streamed bubble; if no later attempt replaces it the turn ends EMPTY
+        # (chat_done with zero chat_chunk — 'I write and get nothing'). When
+        # this is set and the loop exhausts, we DON'T raise — we fall through
+        # to a guaranteed plain-LLM answer (tools disabled) so the user always
+        # gets a real reply. Host words ('teams', 'revit', 'word', …) made the
+        # model reach for an offline host tool and fabricate; the plain-LLM
+        # pass answers honestly instead of leaving the bubble blank.
+        retracted_without_replacement = False
         # Fallback budget — enough rounds to fail through every
         # cloud provider AND the refusal-detector before reaching
         # Ollama. Six providers max: anthropic / openai / google /
@@ -1399,6 +1482,9 @@ class LLMRouter:
                         last_error = RuntimeError(
                             f"{provider} refused to use tools"
                         )
+                        # Retracted text — if the chain dries up, fall through
+                        # to a plain-LLM answer instead of an empty turn.
+                        retracted_without_replacement = True
                         continue
                     # GUARD: the model fabricated tool-call / tool-result
                     # markup in its prose instead of making a real call
@@ -1422,9 +1508,16 @@ class LLMRouter:
                             f"{provider} fabricated tool-call markup"
                         )
                         model = ROUTE_AUTO
+                        # Retracted text — if the chain dries up, fall through
+                        # to a plain-LLM answer instead of an empty turn.
+                        retracted_without_replacement = True
                         continue
                 except Exception:
                     pass
+                # SUCCESS — this provider authenticated + answered. If it had
+                # been flagged signed-out earlier, clear it so it returns to
+                # the primary set automatically (no restart).
+                self._clear_signed_out(provider)
                 return response
             except Exception as ex:
                 last_error = ex
@@ -1467,6 +1560,15 @@ class LLMRouter:
                 try: on_attempt_reset(provider)
                 except Exception: pass
                 self.block_provider(provider, reason=str(ex)[:200])
+                # PRIMARY-CHURN FIX (founder 2026-06-20): an AUTH failure
+                # (signed-out subscription / bad key / 401-403 / expired
+                # token) means this provider can't be primary until it
+                # re-authenticates. Mark it signed-out so the NEXT turn skips
+                # it BEFORE trying it — no more per-turn 'switching provider…'
+                # churn. (The 10-min blocklist alone expired + re-churned.)
+                # Cleared automatically on the next success.
+                if self._is_auth_error(provider, ex):
+                    self._mark_signed_out(provider, reason=str(ex)[:200])
                 # Tell the chat layer so it can show a fallback toast —
                 # "Switched anthropic → google: out of credit" beats a
                 # silent re-route the user can't see.
@@ -1478,10 +1580,108 @@ class LLMRouter:
                 # Force auto re-route on the next loop.
                 model = ROUTE_AUTO
                 continue
+
+        # ── NEVER-EMPTY GUARANTEE (founder 2026-06-20) ──────────────────
+        # The chain exhausted. The OLD behaviour raised here, but when the
+        # exhaustion was caused by refusal/fabrication RETRACTIONS the bubble
+        # was already wiped — the user saw NOTHING (chat_done, zero chunks).
+        # The host-word prompts ('teams', 'revit', 'word', 'max', …) tripped
+        # this every time: the word made the model reach for an offline host
+        # tool and fabricate, every tool-capable attempt got retracted, the
+        # chain ran dry, and the turn ended empty.
+        #
+        # FIX: do ONE final, tools-DISABLED plain-LLM pass on any reachable
+        # provider and return THAT. Tools off ⇒ no host reach ⇒ no fabrication
+        # ⇒ no retraction: the model just answers in natural language about
+        # what it can/can't do. Connectors/hosts being offline now produce an
+        # HONEST answer, never an empty turn. We attempt this whenever content
+        # was retracted without replacement (the empty-turn class); a pure
+        # provider-exhaustion with NO retraction still raises (honest error).
+        if retracted_without_replacement:
+            fallback = self._plain_llm_fallback(
+                history=history,
+                on_chunk=on_chunk, on_reasoning=on_reasoning,
+                on_status=on_status, on_attempt_reset=on_attempt_reset,
+                temperature=temperature, max_tokens=max_tokens,
+            )
+            if fallback is not None:
+                return fallback
         raise RuntimeError(
             f"All configured LLM providers exhausted (tried {attempts}). "
             f"Last error: {last_error}"
         )
+
+    def _plain_llm_fallback(
+        self, *, history, on_chunk, on_reasoning, on_status,
+        on_attempt_reset, temperature=None, max_tokens=None,
+    ) -> Optional[LLMResponse]:
+        """Guaranteed-non-empty fallback: stream a tools-DISABLED plain-LLM
+        answer from the first reachable provider. Used when the tool-using
+        fallback chain ended with content RETRACTED (refusal / fabricated
+        tools) and nothing replaced it — without this the turn ends empty
+        (chat_done, zero chunks: the founder's 'I write and get nothing').
+
+        Tools off ⇒ the model can't reach an offline host ⇒ it can't
+        fabricate ⇒ nothing gets retracted: it just answers honestly. We try
+        each reachable provider in routing order, streaming the FIRST that
+        produces non-empty text. Returns None only when NO provider is
+        reachable at all (the caller then raises the honest 'exhausted'
+        error). `system_override` forces the tool-less path inside
+        `_complete_once` (it sets tool_schemas=[]); we pass a plain assistant
+        instruction so the answer is normal prose, not a refusal."""
+        plain_prompt = (
+            "You are ArchHub's in-canvas copilot for AEC professionals. "
+            "Answer the user's message directly in natural language. You "
+            "have no live host/connector tools available for this reply, so "
+            "do not claim to have read or changed any host (Revit, AutoCAD, "
+            "Excel, Outlook, Teams, Word, Notion, Blender, …). If the request "
+            "needs a host that isn't reachable, say so plainly in one line "
+            "and offer what you CAN do. Never reply with an empty message."
+        )
+        try:
+            reachable = list(self.configured_providers())
+        except Exception:
+            reachable = []
+        for provider in reachable:
+            try:
+                client = self._get_client(provider)
+            except Exception as ex:
+                # A reachable-by-config provider whose client won't build
+                # (e.g. signed-out cloud) — skip to the next, mark auth.
+                if self._is_auth_error(provider, ex):
+                    self._mark_signed_out(provider, reason=str(ex)[:160])
+                continue
+            try:
+                on_status(
+                    f"answering without host tools via {provider}…"
+                )
+            except Exception:
+                pass
+            try:
+                resp = self._complete_once(
+                    history=history, provider=provider, model_name="auto",
+                    note=f"plain answer (no host tools) · {provider}",
+                    client=client,
+                    on_chunk=on_chunk, on_tool_invocation=(lambda _: None),
+                    on_reasoning=on_reasoning, on_status=on_status,
+                    system_override=plain_prompt,
+                    temperature=temperature, max_tokens=max_tokens,
+                )
+            except Exception as ex:
+                if self._is_auth_error(provider, ex):
+                    self._mark_signed_out(provider, reason=str(ex)[:160])
+                # Whatever this provider streamed (if anything) must be
+                # dropped before we try the next one.
+                try: on_attempt_reset(provider)
+                except Exception: pass
+                continue
+            if resp is not None and (getattr(resp, "text", "") or "").strip():
+                self._clear_signed_out(provider)
+                return resp
+            # Empty again — drop and try the next reachable provider.
+            try: on_attempt_reset(provider)
+            except Exception: pass
+        return None
 
     def _complete_once(
         self, *, history, provider, model_name, note, client,

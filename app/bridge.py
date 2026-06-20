@@ -2227,6 +2227,27 @@ class ArchHubBridge(QObject):
                     if text_out:
                         try: self.chat_chunk.emit(session_id, text_out)
                         except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+                # NEVER-EMPTY GUARANTEE (founder 2026-06-20: 'I write and get
+                # nothing'). If the turn produced NO streamed chunks AND the
+                # response carried no text (every attempt retracted, or a
+                # provider returned a blank final), the bubble would render
+                # empty and chat_done would land on a silent turn. The router's
+                # _plain_llm_fallback already covers the retraction class; this
+                # is the LAST-LINE backstop at the surface so a blank turn can
+                # NEVER reach the user. Emit one honest line so there is always
+                # a real assistant reply. routing_note (if any) explains why.
+                if emitted_chunks[0] == 0:
+                    note = (getattr(response, "routing_note", "")
+                            if response is not None else "") or ""
+                    fallback_line = (
+                        "I couldn't get a reply from any provider for that "
+                        "message. " + note
+                    ).strip() if note else (
+                        "I couldn't produce a reply for that message just "
+                        "now — please try again, or rephrase it."
+                    )
+                    try: self.chat_chunk.emit(session_id, fallback_line)
+                    except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
                 # AgDR-0021 — persist this Composer turn as an ai.plan
                 # record so it materialises as an inspectable, replayable
                 # canvas node (prompt + reasoning + tool-calls + result),

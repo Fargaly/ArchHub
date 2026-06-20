@@ -2151,7 +2151,7 @@ const StudioLM = () => {
   // file. Fix: createSession is now fully async — it awaits the bridge,
   // awaits openSession, THEN returns the real slug. Callers await it
   // before dispatching anything. No setTimeout, no race.
-  const createSession = React.useCallback(async (title) => {
+  const createSession = React.useCallback(async (title, seedChat) => {
     const blob = await bridgeAsync('create_session', title || 'untitled');
     const id = (blob && (blob.id || blob.session_id))
                || ('s_' + Date.now().toString(36));
@@ -2168,8 +2168,69 @@ const StudioLM = () => {
     // Await the open so window.__archhub_session_id is the real slug
     // BEFORE the caller dispatches a spawn that triggers saveCurrentGraph.
     await openSession(id);
+    // ─── FIRST-MESSAGE SEED (founder bug 2026-06-20: Home composer dropped
+    // the user's first message). ROOT CAUSE: the Home onSubmit used to
+    // createSession() then window.dispatchEvent('lm-composer-action',{chat})
+    // — that event RACED the session view's freshly-mounting listener and
+    // was LOST (live-proven: send_chat_history never fired, zero chat_chunk).
+    // FIX (deterministic, no timeout/retry): thread the first message THROUGH
+    // createSession. openSession(id) above has resolved, so LM_GRAPH is now
+    // the new session's graph and window.__archhub_session_id === id. We seed
+    // the conversation DIRECTLY here — mirroring the in-session 'chat' action
+    // handler's proven shape (ensure a cat:'ai' node, push the user msg + a
+    // streaming placeholder, call send_chat_history) — instead of relying on
+    // a window event landing on a listener that may not be mounted yet.
+    if (seedChat && typeof seedChat === 'object' && (seedChat.text || (seedChat.attachments && seedChat.attachments.length))) {
+      const _text = seedChat.text || '';
+      const _detAtts = Array.isArray(seedChat.attachments) ? seedChat.attachments : [];
+      const _imagePaths = _detAtts.filter(a => a && a.kind === 'image').map(a => a.path);
+      // (A) RENDER: mint a conversation node + a streaming placeholder so the
+      //     chat_chunk handler (onChunk) has a target to fill. Best-effort — a
+      //     render failure must NEVER block the send in (B). Each cosmetic
+      //     sub-step (focus / save) is independently guarded too.
+      try {
+        const _attLabel = _detAtts.length
+          ? `\n[attached: ${_detAtts.map(a => a.name).join(', ')}]` : '';
+        const _visibleText = (_text || '') + _attLabel;
+        const _m = model || {};
+        const _modelStamp = {
+          id: _m.id || 'auto', name: _m.name || 'Auto',
+          vendor: _m.vendor || 'ArchHub', col: _m.col || LM.accent,
+          who: ((_m.name || 'A')[0] || 'A').toUpperCase(),
+        };
+        let convNode = (LM_GRAPH.nodes || []).find(n => n.cat === 'ai' || n.kind === 'ai_chat');
+        if (!convNode) {
+          convNode = {
+            id: 'i_conv', cat: 'ai', x: 200, y: 200, w: 320, h: 240,
+            title: 'Conversation', sub: `${_modelStamp.name} · streaming`,
+            ins: [{ id:'ctx', label:'context', t:'any' }],
+            outs: [{ id:'response', label:'response', t:'completion' }],
+            params: [], _user: true, messages: [],
+          };
+          (LM_GRAPH.nodes = LM_GRAPH.nodes || []).push(convNode);
+        }
+        const _ts = new Date().toISOString().slice(11,16);
+        convNode.messages = [
+          ...(convNode.messages || []).filter(m => !m.streaming),
+          { me:true, text: _visibleText, attachments: _detAtts,
+             images: _imagePaths, who: 'You', time: _ts },
+          { me:false, text:'…', streaming:true, model: _modelStamp,
+             who: _modelStamp.who, col: _modelStamp.col, time: _ts },
+        ];
+        try { setFocusId(convNode.id); } catch (_) {}
+        try { saveCurrentGraph(); } catch (_) {}
+        bumpGraph();
+      } catch (e) { try { window.__seedErr = 'render:' + String((e && e.stack) || e); console.error('SEED_RENDER_ERR', e); } catch (_) {} }
+      // (B) SEND — ISOLATED + GUARANTEED. The actual fix for "Home composer
+      //     first message got no reply": this fires even if (A) threw. send_chat_history
+      //     emits chat_chunk/chat_done/chat_error which onChunk renders into the node above.
+      try {
+        bridgeCall('send_chat_history', id, _text || '(see attachments)',
+          JSON.stringify([{ me:true, text: _text || '(see attachments)', images: _imagePaths }]));
+      } catch (e) { try { window.__seedErr = (window.__seedErr || '') + ' send:' + String((e && e.stack) || e); console.error('SEED_SEND_ERR', e); } catch (_) {} }
+    }
     return id;
-  }, [openSession]);
+  }, [openSession, model, bumpGraph]);
 
   // Founder demand 2026-05-22: NO auto-open of the most recent
   // session.  The app stays on Home until the user picks a session.
@@ -5962,7 +6023,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
     e && e.preventDefault();
     const t = title.trim();
     setTitle('');
-    if (!t) { onCreateSession && onCreateSession('untitled'); return; }
+    if (!t && !attachments.length) { onCreateSession && onCreateSession('untitled'); return; }
     // Client-side intent detection (mirror of detectIntentJS). The bridge
     // path was async-returning-undefined so it never matched — founder bug
     // 2026-05-14 root cause. Resolve locally so spawn happens instantly.
@@ -6009,18 +6070,27 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
           }));
         } catch (e) {}
       })();
-    } else if (atts.length || (t && !host)) {
+    } else {
+      // EVERYTHING that is not a host command — plain chat, OR a message that
+      // merely CONTAINS a host-family word without being a host command
+      // ("the word PONG", "teams meeting notes", "max area"). The old code
+      // split this into `else if (t && !host)` (which seeded) + a bare `else`
+      // that called onCreateSession(t) with NO message — so any message
+      // containing a host-family substring (word/max/teams/notion/excel/revit/…)
+      // created an EMPTY session and the user's first message was DROPPED
+      // (founder bug 2026-06-20: "every time I write I get nothing back").
+      // FIX (founder bug 2026-06-20): do NOT dispatch a window
+      // 'lm-composer-action' event (it RACED the new session view's
+      // freshly-mounting listener and was lost). ONE branch — always thread the
+      // message THROUGH createSession, which seeds the conversation + calls
+      // send_chat_history DIRECTLY once openSession has resolved and LM_GRAPH is
+      // the new graph. Deterministic, no event, no race, no drop.
       (async () => {
-        await (onCreateSession && onCreateSession(t || 'untitled'));
         try {
-          window.dispatchEvent(new CustomEvent('lm-composer-action', {
-            detail: { action: { command:'chat', text: t },
-                       raw: t, focusId: '', attachments: atts },
-          }));
+          await (onCreateSession && onCreateSession(t || 'untitled',
+            { text: t, attachments: atts }));
         } catch (e) {}
       })();
-    } else {
-      onCreateSession && onCreateSession(t);
     }
   };
   const allSessions = LM_SESSIONS || [];
@@ -13767,16 +13837,25 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
       )}
       <input ref={fileInputRef} type="file" multiple style={{ display:'none' }}
         onChange={async (e) => { await addFiles(e.target.files); e.target.value = ''; }}/>
-      <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
-        <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-        <input ref={inputRef} value={text}
+      <div style={{ display:'flex', alignItems:'flex-end', gap:8, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
+        <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13, paddingBottom:2 }}>/</span>
+        {/* Multi-line auto-growing composer (founder bug 2026-06-20: this was a
+            dull single-line <input>). Mirrors the Home composer textarea: rows={1},
+            onInput auto-grows to a ~140px cap then scrolls, onKeyDown (unchanged)
+            sends on Enter / inserts a newline on Shift+Enter. Same value/onChange
+            state + the SAME submit() send path — the leading "/" affordance, slash
+            help, and Send button all keep working. */}
+        <textarea ref={inputRef} value={text} rows={1}
           onChange={(e) => { setText(e.target.value); setShowHelp(e.target.value === '/'); }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder={dragOver ? 'drop files to attach…' : 'Reply, ping a host, or type / for commands…'}
+          onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto';
+            t.style.height = Math.min(t.scrollHeight, 140) + 'px'; }}
+          placeholder={dragOver ? 'drop files to attach…' : 'Reply, ping a host, or type / for commands…  (Enter to send · Shift+Enter = new line)'}
           style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:14,
-            fontFamily:LM.sans, outline:'none',
+            fontFamily:LM.sans, outline:'none', resize:'none', overflowY:'auto',
+            minHeight:22, maxHeight:140, lineHeight:1.45, padding:0,
           }}/>
         <button onClick={(e) => { e.stopPropagation(); fileInputRef.current && fileInputRef.current.click(); }}
           title="Attach file or image"

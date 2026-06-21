@@ -24,6 +24,8 @@ installer recorded in the brain config).
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import os
 import platform
 import shutil
@@ -31,6 +33,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,6 +45,114 @@ SERVICE_ID = "io.archhub.brain"  # macOS launchd ID
 SYSTEMD_UNIT = "archhub-brain.service"
 SCHTASKS_NAME = "ArchHub Brain"
 DEFAULT_PORT = 8473
+
+# ─────────────────────── supervisor liveness knobs ─────────────────────
+# How often the supervisor probes the daemon on :PORT, how many consecutive
+# probe failures force a restart, and how long any single probe may block.
+# These bound the recovery window: with the defaults a dead OR HUNG daemon
+# is brought back within ~ (HEALTH_FAIL_THRESHOLD * HEALTH_INTERVAL_S +
+# probe timeouts) ≈ under a minute. Overridable via env so a wedge can be
+# tuned without a code change.
+HEALTH_INTERVAL_S = float(os.environ.get("BRAIN_SUPERVISE_INTERVAL", "10"))
+HEALTH_FAIL_THRESHOLD = int(os.environ.get("BRAIN_SUPERVISE_FAILS", "3"))
+HEALTH_TIMEOUT_S = float(os.environ.get("BRAIN_SUPERVISE_TIMEOUT", "4"))
+# A respawn after a kill needs a grace period before probing counts again
+# (the fresh daemon binds the socket + warms the store).
+RESPAWN_GRACE_S = float(os.environ.get("BRAIN_SUPERVISE_GRACE", "12"))
+
+
+def _supervisor_log_dir() -> Path:
+    """Per-OS, user-writable dir for the supervisor's rotating log + the
+    watchdog heartbeat file. pythonw has no console, so this file is the
+    ONLY window into a wedged supervisor."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "ArchHub" / "brain"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs"
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "archhub"
+
+
+def _supervisor_log_path() -> Path:
+    return _supervisor_log_dir() / "brain-supervisor.log"
+
+
+def _heartbeat_path() -> Path:
+    return _supervisor_log_dir() / "brain-supervisor.heartbeat"
+
+
+def _build_supervisor_logger() -> logging.Logger:
+    """Rotating file logger so a wedged supervisor is debuggable even under
+    pythonw (no stdout/stderr). 1 MB x 3 files. Never raises — falls back to
+    a null logger if the dir is unwritable."""
+    logger = logging.getLogger("personal_brain.supervisor")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    if logger.handlers:  # idempotent (re-entry / tests)
+        return logger
+    try:
+        d = _supervisor_log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = RotatingFileHandler(
+            str(_supervisor_log_path()),
+            maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+        )
+    except OSError:
+        handler = logging.NullHandler()
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+def _touch_heartbeat() -> None:
+    """Write a fresh timestamp so an OUTER watchdog (or the founder) can tell
+    a live supervisor from a wedged one. Best-effort; never raises."""
+    try:
+        p = _heartbeat_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _probe_daemon(port: int, timeout: float = HEALTH_TIMEOUT_S) -> bool:
+    """REAL liveness check: POST a JSON-RPC `brain.health` to the daemon's
+    only HTTP route (`/mcp`, streamable-HTTP SSE) and confirm it answers with
+    a 200 and a non-error body. This is strictly stronger than 'is the child
+    PID alive' — it catches a daemon that is HUNG (process up, socket bound,
+    but not serving), which the old `proc.wait()`-only loop could never see.
+
+    The brain HTTP server exposes ONLY `POST /mcp` (no /healthz GET), so the
+    probe speaks the same wire shape ArchHub's BrainClient uses. The urlopen
+    timeout bounds how long a wedged daemon can stall the probe, so the
+    supervisor loop itself can never hang on a stuck socket."""
+    url = f"http://127.0.0.1:{port}/mcp"
+    payload = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "brain.health", "arguments": {}},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            body = resp.read(8192).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    # SSE/JSON envelope: a real health answer carries the tool result; a
+    # JSON-RPC error frame ("error":) means the daemon answered but the call
+    # failed — treat as not-healthy so we restart toward a clean daemon.
+    if '"error"' in body and '"result"' not in body:
+        return False
+    return True
 
 
 def _brain_command() -> str:
@@ -62,27 +175,136 @@ def _build_daemon_argv(port: int = DEFAULT_PORT, db: Optional[str] = None) -> li
     return argv
 
 
+def _kill_proc(proc: "subprocess.Popen") -> None:
+    """Terminate a daemon child, escalating to kill if it ignores SIGTERM.
+    Best-effort; never raises."""
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    except Exception:
+        pass
+
+
 def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, Any]:
-    """Foreground KeepAlive loop — Windows parity with launchd `KeepAlive`
-    and systemd `Restart=on-failure`. Spawns the brain daemon as a child and
-    RESPAWNS it whenever it exits, with exponential backoff on repeated fast
-    failures. Runs until killed; this is the autostart target on Windows so
-    the brain stays ALWAYS alive across daemon crashes, not just relaunching
-    at logon (founder 2026-06-02: "the brain should be ALWAYS ALIVE")."""
+    """Foreground self-healing supervisor — Windows parity with launchd
+    `KeepAlive` and systemd `Restart=on-failure`, but with a REAL liveness
+    check the OS supervisors don't give us for free.
+
+    The old loop only did `proc.wait()` — it respawned the daemon when the
+    child PID EXITED, but was blind to a daemon that HANGS (process up, socket
+    bound, not serving). When that happened on the founder's machine nothing
+    restarted it and, because the autostart runs under pythonw with no console
+    and no log, there was no way to see why. This rewrite fixes both:
+
+      • LIVENESS — every HEALTH_INTERVAL_S it POSTs `brain.health` to
+        127.0.0.1:PORT (the daemon's real `/mcp` route). After
+        HEALTH_FAIL_THRESHOLD consecutive failures it KILLS the wedged child
+        and respawns a clean one. A crash (PID gone) is also caught and
+        respawned immediately.
+      • OBSERVABILITY — a rotating log file (pythonw has no stdout) records
+        every spawn / probe-failure / kill / respawn / backoff with timestamps,
+        so a wedged supervisor is debuggable after the fact.
+      • WATCHDOG TIMESTAMP — a heartbeat file is rewritten each loop tick, so
+        an OUTER watcher (or the founder) can distinguish a live supervisor
+        from a wedged one, and the bounded probe timeout means the loop itself
+        can never hang on a stuck socket.
+
+    Runs until killed (founder 2026-06-02: "the brain should be ALWAYS
+    ALIVE"). Exponential backoff still guards against a fork-bomb when the
+    daemon dies fast on every start."""
+    log = _build_supervisor_logger()
     argv = _build_daemon_argv(port, db)
     # CREATE_NO_WINDOW so each respawn doesn't flash a console.
     creationflags = 0x08000000 if sys.platform == "win32" else 0
+    log.info("supervisor start: port=%s argv=%s pid=%s log=%s",
+             port, argv, os.getpid(), _supervisor_log_path())
+
     backoff = 2
     while True:
         started = time.monotonic()
+        # ROOT FIX (founder 2026-06-21 — brain "down": daemon died rc=1 ~12s in,
+        # over and over). The supervisor runs windowless (pythonw, no console),
+        # so a child spawned with no stdout/stderr inherited a None/closed handle;
+        # the daemon's first worker print() (the sync worker, ~12s in) then crashed
+        # the whole process. Redirect the child's stdout+stderr to a daemon log
+        # file (fixes the None-stdout crash AND gives observability); fall back to
+        # DEVNULL if the file can't open. stdin=DEVNULL so it never blocks on input.
         try:
-            proc = subprocess.Popen(argv, creationflags=creationflags)
+            _dlog = open(
+                os.path.join(os.path.dirname(_supervisor_log_path()), "brain-daemon.log"),
+                "a", buffering=1, encoding="utf-8", errors="replace")
         except Exception:
-            time.sleep(min(backoff, 30)); backoff = min(backoff * 2, 30); continue
-        proc.wait()  # block until the daemon exits / crashes
-        # If it ran a healthy while, reset backoff; if it died fast, back off.
-        backoff = 2 if (time.monotonic() - started) > 30 else min(backoff * 2, 30)
-        time.sleep(min(backoff, 30))
+            _dlog = subprocess.DEVNULL
+        try:
+            proc = subprocess.Popen(
+                argv, creationflags=creationflags,
+                stdout=_dlog, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        except Exception as ex:
+            wait = min(backoff, 30)
+            log.error("spawn failed: %s: %s — backoff %ss",
+                      type(ex).__name__, ex, wait)
+            _touch_heartbeat()
+            time.sleep(wait)
+            backoff = min(backoff * 2, 30)
+            continue
+        log.info("daemon spawned: child_pid=%s", proc.pid)
+
+        # Give the fresh daemon time to bind the socket + warm up before the
+        # first probe counts against it.
+        time.sleep(min(RESPAWN_GRACE_S, 30))
+
+        # ── inner liveness loop: probe until the daemon dies or hangs ──────
+        consecutive_fail = 0
+        died = False
+        hung = False
+        while True:
+            _touch_heartbeat()
+            rc = proc.poll()
+            if rc is not None:
+                log.warning("daemon exited: child_pid=%s rc=%s", proc.pid, rc)
+                died = True
+                break
+            if _probe_daemon(port):
+                if consecutive_fail:
+                    log.info("daemon healthy again after %s miss(es)",
+                             consecutive_fail)
+                consecutive_fail = 0
+            else:
+                consecutive_fail += 1
+                log.warning("health probe miss %s/%s (child_pid=%s)",
+                            consecutive_fail, HEALTH_FAIL_THRESHOLD, proc.pid)
+                if consecutive_fail >= HEALTH_FAIL_THRESHOLD:
+                    log.error("daemon WEDGED (no health for %s probes) — "
+                              "killing child_pid=%s and respawning",
+                              consecutive_fail, proc.pid)
+                    _kill_proc(proc)
+                    hung = True
+                    break
+            time.sleep(HEALTH_INTERVAL_S)
+
+        # Ensure no orphan if we broke out without killing.
+        if proc.poll() is None:
+            _kill_proc(proc)
+
+        # If it ran a healthy while, reset backoff; if it died/hung fast,
+        # back off to avoid a respawn storm.
+        ran_for = time.monotonic() - started
+        if ran_for > 30:
+            backoff = 2
+        else:
+            backoff = min(backoff * 2, 30)
+        wait = min(backoff, 30)
+        log.info("respawning in %ss (ran %.1fs, reason=%s)", wait, ran_for,
+                 "hung" if hung else "died" if died else "loop-exit")
+        _touch_heartbeat()
+        time.sleep(wait)
 
 
 # ─────────────────────── Windows (Task Scheduler) ──────────────────────

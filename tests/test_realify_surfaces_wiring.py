@@ -83,11 +83,17 @@ class TestRailWiring:
         assert "setPanel(it.id)" in block, (
             "in a session the rail must still drive the sidebar panel switch")
 
-    def test_rail_deck_opens_command_deck(self):
+    def test_rail_deck_removed_from_rail(self):
+        # Founder 2026-06-20 ("what the fuck is this command deck for" + "strip
+        # to essentials" + "I don't want the UI cramped with shit with no use"):
+        # the Command Deck icon was REMOVED from the rail (redundant; the modal
+        # stays mounted + reachable via Cmd-K). This LOCKS the strip so a future
+        # session can't silently re-add a deck rail icon — the exact regression
+        # the founder caught 2026-06-20.
         block = _flat("const IconRailInner = (", size=6000)
-        assert "lm-command-deck-open" in block, (
-            "the DECK item must open the real CommandDeckModal")
-        assert "rail-deck" in block, "DECK needs a data-testid for verification"
+        assert "rail-deck" not in block, (
+            "the Command Deck must NOT be a rail icon (founder stripped it; it "
+            "stays reachable via Cmd-K)")
 
     def test_rail_share_opens_real_share_panel(self):
         """SHARE must open the REAL Share panel drawer (lm-rail-open share),
@@ -99,17 +105,15 @@ class TestRailWiring:
 
     def test_rail_testids_present(self):
         block = _flat("const IconRailInner = (", size=6000)
-        # The panel items build their testid dynamically ('rail-' + it.id), so
-        # rail-nodes / rail-skills / rail-search render at runtime; the static
-        # items carry literal testids.
-        for tid in ("rail-home", "rail-deck", "rail-share-icon"):
+        # Stripped rail (founder 2026-06-20): Home, Search, Share, Settings only.
+        for tid in ("rail-home", "rail-share-icon"):
             assert tid in block, f"rail item must carry data-testid {tid!r}"
+        # DECK / NODES / SKILLS are NO LONGER rail icons (redundant with the
+        # graph library / Cmd-K). Locks the strip against a silent re-add.
+        assert "rail-deck" not in block, "DECK must not be a rail icon"
+        # Search stays as a per-id rail item ('rail-' + it.id => rail-search).
         assert "'rail-' + it.id" in block, (
-            "panel items must carry a per-id testid (rail-nodes/-skills/-search)")
-        # And the drawer host stamps the resolved testids the CDP checks use.
-        host = _flat("const RAIL_DRAWER_META = {", size=400)
-        for tid in ("rail-nodes", "rail-skills", "rail-search"):
-            assert tid in host, f"the opened drawer must carry data-testid {tid!r}"
+            "the rail's Search item must carry a per-id testid")
 
     def test_rail_drawer_host_mounts_real_panels(self):
         """The drawer host renders the REAL panels — not stubs — so opening

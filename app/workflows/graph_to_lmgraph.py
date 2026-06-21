@@ -242,6 +242,72 @@ def _normalise_messages(messages: Any) -> list[dict]:
     return out
 
 
+# ── Canvas message shape (the JSX renderer's REAL contract) ───────────────
+# THE SESSION-REOPEN BUG this kills (founder: real chat-composer sessions
+# reopen with an EMPTY canvas — the conversation is gone). Two persistence
+# schemas diverged:
+#   - chat-composer sessions persist/migrate the conversation as
+#     `conversation.chat` config.body.messages (or top-level `_messages`) in the
+#     `{role, content}` shape, BUT
+#   - the live canvas (`studio-lm.jsx`) renders an ai node's messages reading
+#     `m.me` (bool) + `m.text` (str) — `{me, text}` — NOT `{role, content}`.
+# So a reopened chat node found NO `m.me`/`m.text` and rendered blank → "the
+# conversation is gone". The single mechanism every session LOAD passes through
+# (`decompose_session_to_graph` → `translate_graph_to_lmgraph`) now emits the
+# canvas `{me, text}` shape, so ALL existing on-disk sessions reopen correctly,
+# not just new ones. Lossless + idempotent: a message ALREADY in canvas shape
+# (a re-loaded canvas graph node) passes through unchanged; `model`/`images` are
+# preserved when present. role 'user' → me:true, anything else → me:false.
+def _to_canvas_message(m: Any) -> dict:
+    """Coerce ONE message (dict or ChatMessage) into the canvas `{me, text}`
+    shape the JSX renderer reads, preserving order, model + images when present.
+
+    Accepts:
+      - persisted `{role, content}` (chat-composer / legacy `_messages` /
+        config.body.messages) → role 'user' ⇒ me:true, else me:false;
+        content ⇒ text.
+      - already-canvas `{me, text}` (a re-loaded canvas graph node) → passes
+        through unchanged (idempotent).
+      - ChatMessage objects (.role/.content/.model/.images) → mapped.
+    """
+    if isinstance(m, dict):
+        # Already canvas-shaped — keep it verbatim (idempotent re-load).
+        if "me" in m or "text" in m:
+            out = dict(m)
+            out["me"] = bool(out.get("me", False))
+            out.setdefault("text", out.get("content", "") or "")
+            return out
+        role = m.get("role", "user")
+        out = {"me": (role == "user"), "text": m.get("content", "") or ""}
+        model = m.get("model")
+        images = m.get("images")
+        # Preserve a collapsed-turn marker if the migrator stamped one so the
+        # canvas can still render "Thinking ×N" after normalisation.
+        if m.get("_collapsed_count"):
+            out["_collapsed_count"] = m.get("_collapsed_count")
+        if model:
+            out["model"] = model
+        if images:
+            out["images"] = images
+        return out
+    # ChatMessage object.
+    role = getattr(m, "role", "user")
+    out = {"me": (role == "user"), "text": getattr(m, "content", "") or ""}
+    model = getattr(m, "model", None)
+    images = getattr(m, "images", None)
+    if model:
+        out["model"] = model
+    if images:
+        out["images"] = list(images)
+    return out
+
+
+def _canvas_messages(messages: Any) -> list[dict]:
+    """Normalise a whole message list to the canvas `[{me, text}]` shape,
+    preserving order. Lossless + idempotent (see `_to_canvas_message`)."""
+    return [_to_canvas_message(m) for m in (messages or [])]
+
+
 def _messages_from_config(cfg: dict) -> list[dict]:
     """Pull the chat history a conversation.chat node carries in
     config.body.messages (the wrap_legacy shape). Normalised to {role,content}.
@@ -382,11 +448,16 @@ def translate_graph_to_lmgraph(graph: Optional[dict]) -> dict:
         }
         # The conversation node renders a chat rail — attach its messages so
         # the canvas shows the turns, not an empty card. A re-loaded canvas
-        # node may already carry `messages`; keep those.
+        # node may already carry `messages` (canvas `{me,text}` shape); the
+        # wrap form stashes them in config.body.messages (`{role,content}`).
+        # Normalise EITHER source to the canvas `{me,text}` shape the JSX
+        # renderer reads — this is the load-boundary that fixes the empty-
+        # canvas reopen for chat-composer sessions (see _to_canvas_message).
         if kind == "ai_chat" or engine_type in _CHAT_TYPES:
             existing = n.get("messages")
-            lm["messages"] = (existing if isinstance(existing, list)
-                              else _messages_from_config(cfg))
+            raw = (existing if isinstance(existing, list)
+                   else _messages_from_config(cfg))
+            lm["messages"] = _canvas_messages(raw)
         # Connector nodes carry a `host` the renderer reads for the badge.
         if cat == "connector":
             host = n.get("host") or cfg.get("host")
@@ -484,7 +555,10 @@ def decompose_session_to_graph(session, messages: Optional[list] = None,
         ai_nodes = [n for n in lm["nodes"] if n.get("cat") == "ai"]
         if ai_nodes:
             ai_nodes[0]["kind"] = "ai_chat"
-            ai_nodes[0]["messages"] = _normalise_messages(msg_list)
+            # Canvas `{me,text}` shape — the JSX renderer reads m.me / m.text,
+            # NOT m.role / m.content. Without this the rail rendered blank and
+            # the conversation looked gone on reopen.
+            ai_nodes[0]["messages"] = _canvas_messages(msg_list)
         return lm
 
     # No messages, no real graph → single-node wrap, translated to LM shape.

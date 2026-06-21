@@ -24,6 +24,7 @@ on-disk sessions (a self-contained legacy-session fixture is built in-test).
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,17 @@ class TestTranslator:
         chat = next(n for n in lm["nodes"] if n["kind"] == "ai_chat")
         assert isinstance(chat.get("messages"), list)
         assert len(chat["messages"]) == 2
-        assert chat["messages"][0]["role"] == "user"
+        # SESSION-REOPEN FIX: messages come back in the canvas {me,text} shape
+        # the JSX renderer reads — NOT the persisted {role,content}. A
+        # conversation.chat node stores config.body.messages as {role,content};
+        # the translator must map role 'user' → me:true, content → text.
+        assert chat["messages"][0]["me"] is True
+        assert chat["messages"][0]["text"] == "hi"
+        assert chat["messages"][1]["me"] is False
+        assert chat["messages"][1]["text"] == "hello"
+        # The divergent persisted keys must NOT leak onto the canvas message.
+        assert "role" not in chat["messages"][0]
+        assert "content" not in chat["messages"][0]
 
     def test_empty_graph_safe(self):
         from workflows.graph_to_lmgraph import translate_graph_to_lmgraph
@@ -269,6 +280,110 @@ class TestDecomposition:
         assert len(g["nodes"]) >= 1
         for n in g["nodes"]:
             _assert_lmgraph_node_shape(n)
+
+
+# ── 2b. SESSION-REOPEN BUG — chat-composer sessions reopen with the chat ──
+# THE regression gate for the founder bug: real chat-composer sessions reopened
+# with an EMPTY canvas because two schemas diverged — the conversation persisted
+# as `conversation.chat` config.body.messages [{role,content}] (and/or top-level
+# `_messages`), but the live canvas renders an ai node's messages reading
+# m.me / m.text ([{me,text}]). So the reopened node found no me/text and showed
+# blank. The load boundary (`decompose_session_to_graph`) must hand the canvas a
+# `cat:'ai'` node whose messages carry the conversation as [{me,text}].
+class TestSessionReopenCanvasShape:
+    def _write_conversation_chat_session(self, tmp_path):
+        """Write a REAL on-disk session file in the chat-composer schema: a
+        single `conversation.chat` node with the conversation under
+        config.body.messages as {role,content}, plus the legacy `_messages`
+        mirror session_io writes. Returns the file path."""
+        import json
+        sid = "sess_reopen_" + uuid.uuid4().hex[:8]
+        convo = [
+            {"role": "user", "content": "What walls are on level 2?"},
+            {"role": "assistant", "content": "There are 8 walls on level 2."},
+            {"role": "user", "content": "Tag them."},
+            {"role": "assistant", "content": "Tagged all 8."},
+        ]
+        data = {
+            "id": sid,
+            "created_at": "2026-06-01T00:00:00",
+            "parameters": [],
+            "chain": [],
+            "graph": {
+                "id": sid,
+                "name": "wall tags",
+                "schema_version": "1.0",
+                "nodes": [
+                    {"id": "conv_abc123", "type": "conversation.chat",
+                     "label": "Conversation",
+                     "config": {"model": "auto",
+                                "body": {"messages": convo}},
+                     "inputs": [], "outputs": [],
+                     "position": {"x": 0.0, "y": 0.0}},
+                ],
+                "edges": [],
+            },
+            # session_io mirrors the conversation into `_messages` too.
+            "_messages": [
+                {"role": m["role"], "content": m["content"],
+                 "model": "", "images": [], "tool_invocations": [],
+                 "timestamp": ""}
+                for m in convo
+            ],
+            "_name": "wall tags",
+            "_saved_at": "2026-06-01T00:00:00",
+        }
+        p = tmp_path / (sid + ".archhub-session.json")
+        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return p, convo
+
+    def test_conversation_chat_fixture_reopens_with_me_text_messages(self, tmp_path):
+        """Load a `conversation.chat`-schema session fixture through the REAL
+        load path and assert the canvas graph has a cat:'ai' node whose messages
+        carry the conversation as [{me,text}] — order/role mapping preserved."""
+        from session_io import load_session_with_messages
+        from workflows.graph_to_lmgraph import decompose_session_to_graph
+
+        p, convo = self._write_conversation_chat_session(tmp_path)
+        session, name, messages = load_session_with_messages(p)
+        g = decompose_session_to_graph(session, messages, name=session.id)
+
+        # A cat:'ai' node exists (the canvas would otherwise render empty).
+        ai = [n for n in g["nodes"] if n.get("cat") == "ai"]
+        assert ai, "load produced NO cat:'ai' node — canvas would be EMPTY"
+        chat = next((n for n in ai if n.get("kind") == "ai_chat"), ai[0])
+        msgs = chat.get("messages") or []
+
+        # The conversation is present, IN ORDER, in the canvas {me,text} shape.
+        assert len(msgs) == len(convo), "messages lost on reopen"
+        for got, src in zip(msgs, convo):
+            assert "me" in got and "text" in got, \
+                f"canvas message not {{me,text}}: {got!r}"
+            assert got["me"] is (src["role"] == "user")
+            assert got["text"] == src["content"]
+            # The persisted {role,content} keys must not leak through.
+            assert "role" not in got and "content" not in got
+
+    def test_normaliser_is_idempotent_and_lossless(self):
+        """A message ALREADY in canvas {me,text} shape (a re-loaded canvas
+        graph node) passes through unchanged; model/images preserved."""
+        from workflows.graph_to_lmgraph import _canvas_messages
+        already = [
+            {"me": True, "text": "hi", "time": "10:00"},
+            {"me": False, "text": "hello", "model": {"name": "Claude"},
+             "images": ["/a.png"]},
+        ]
+        out = _canvas_messages(already)
+        assert out[0]["me"] is True and out[0]["text"] == "hi"
+        assert out[0].get("time") == "10:00"
+        assert out[1]["model"] == {"name": "Claude"}
+        assert out[1]["images"] == ["/a.png"]
+        # Mixed: {role,content} carrying model/images normalises too.
+        mixed = [{"role": "assistant", "content": "ok",
+                  "model": "auto", "images": ["/b.png"]}]
+        m = _canvas_messages(mixed)[0]
+        assert m["me"] is False and m["text"] == "ok"
+        assert m["model"] == "auto" and m["images"] == ["/b.png"]
 
 
 # ── 3. The reverse map is DERIVED from the grammar (anti-drift) ───────────

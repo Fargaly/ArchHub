@@ -659,6 +659,60 @@ def build_server(
         from .organize import brain_restore
         return brain_restore(store, fragment_id)
 
+    # ── Brain-as-folders (founder 2026-06-21): explorable + editable tree ──
+    # The flat search + do-nothing graph blob are replaced by a real folder
+    # browser in the UI (BrainFolders panel). These three tools are its
+    # READ + WRITE backend — every record is a live Fragment row, edits
+    # persist through the safe writers (ONE-SYSTEM: no new store).
+    @mcp.tool(
+        name="brain.list_facts",
+        description=(
+            "READ-ONLY. Enumerate every brain fact grouped into top-level "
+            "FOLDERS by type (User / Feedback / Projects / Reference, then "
+            "Decisions / Capability / Skills / Traces) for the explorable "
+            "folder browser. Each fact carries id, name, short desc, full "
+            "body, type, kind, scope. Returns {ok,total,folders:[{id,label,"
+            "count,facts:[...]}]}. Folders are the live store grouped by the "
+            "same facet vocabulary brain.browse uses. Safe to poll."
+        ),
+    )
+    def brain_list_facts_tool(
+        owner_user: Optional[str] = None,
+        include_archived: bool = False,
+    ) -> dict[str, Any]:
+        from .brain_facts import list_facts
+        owner = owner_user or resolve_default_owner()
+        return list_facts(store, owner_user=owner,
+                          include_archived=include_archived)
+
+    @mcp.tool(
+        name="brain.edit_fact",
+        description=(
+            "Edit a brain fact's text in place. Persists through the safe "
+            "write_fragment path (never a raw sqlite write) and stales the "
+            "embedding so the next organize pass re-embeds. Powers the folder "
+            "browser's Edit affordance — edits are REAL and persist. Returns "
+            "{ok, id, edited}."
+        ),
+    )
+    def brain_edit_fact_tool(fragment_id: str, text: str) -> dict[str, Any]:
+        from .brain_facts import edit_fact
+        return edit_fact(store, fragment_id, text)
+
+    @mcp.tool(
+        name="brain.delete_fact",
+        description=(
+            "Delete a brain fact. Default is a SOFT delete (set valid_until "
+            "→ drops out of the active tree, recoverable via brain.restore, "
+            "honouring MAKE-IT-REAL-NEVER-TRIM). Pass hard=True to remove the "
+            "row entirely. Powers the folder browser's Delete affordance. "
+            "Returns {ok, id, deleted, hard}."
+        ),
+    )
+    def brain_delete_fact_tool(fragment_id: str, hard: bool = False) -> dict[str, Any]:
+        from .brain_facts import delete_fact
+        return delete_fact(store, fragment_id, hard=hard)
+
     @mcp.tool(
         name="brain.skill_mint",
         description=(

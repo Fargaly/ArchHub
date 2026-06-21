@@ -4116,6 +4116,85 @@ class ArchHubBridge(QObject):
                                "ok": False, "error": f"pool submit: {ex}"})
         return _safe_json({"async": True, "request_id": request_id})
 
+    # ─── Brain-as-folders (founder 2026-06-21) ─────────────────────────
+    # The BrainFolders panel browses the REAL brain as an explorable folder
+    # tree (folders by type) and EDITS / DELETES facts that persist to the
+    # daemon. Read is cached + off-thread (the daemon HTTP call is slow / can
+    # be down); the two writes mirror `brain_restore` and re-pull every brain
+    # surface (brain_browse_changed + memory_changed).
+    @pyqtSlot(result=str)
+    def brain_list_facts(self) -> str:
+        """Every brain fact grouped into folders for the BrainFolders tree.
+
+        Routed through `_cached_async` (the same off-thread path the visual
+        brain browser / BrainChip use) — returns a cached snapshot instantly,
+        the background pool refreshes it via the daemon's `brain.list_facts`
+        tool, and `brain_browse_changed` fires when fresh data lands. NEVER
+        blocks the Qt main thread. Empty/daemon-down → {ok:false, folders:[]}.
+        """
+        def _work():
+            res = self._brain_tool("brain.list_facts", {}, timeout=4.0)
+            if isinstance(res, dict) and res.get("ok"):
+                return res
+            return {"ok": False, "folders": [], "total": 0,
+                    "error": (res or {}).get("error") if isinstance(res, dict)
+                              else "brain unreachable"}
+        return _safe_json(self._cached_async(
+            "brain_facts", _work, empty={"ok": False, "folders": [], "total": 0},
+            signal_name="brain_browse_changed"))
+
+    @pyqtSlot(str, str, result=str)
+    def brain_edit_fact(self, fragment_id: str, text: str) -> str:
+        """Edit a brain fact's text. Off-thread write (daemon `brain.edit_fact`).
+        Emits brain_browse_changed + memory_changed on success so every brain
+        surface re-pulls. Returns instantly with {async, request_id}."""
+        return self._brain_fact_write_async(
+            "brain.edit_fact",
+            {"fragment_id": (fragment_id or "").strip(), "text": text or ""},
+            guard=lambda: bool((fragment_id or "").strip()) and bool((text or "").strip()),
+            guard_err="missing fragment_id or text")
+
+    @pyqtSlot(str, bool, result=str)
+    def brain_delete_fact(self, fragment_id: str, hard: bool = False) -> str:
+        """Delete a brain fact (soft by default — recoverable via restore;
+        hard=True removes the row). Off-thread write (daemon `brain.delete_fact`).
+        Emits brain_browse_changed + memory_changed on success."""
+        return self._brain_fact_write_async(
+            "brain.delete_fact",
+            {"fragment_id": (fragment_id or "").strip(), "hard": bool(hard)},
+            guard=lambda: bool((fragment_id or "").strip()),
+            guard_err="missing fragment_id")
+
+    def _brain_fact_write_async(self, tool_name: str, args: dict, *,
+                                guard, guard_err: str) -> str:
+        """Shared off-thread brain-fact write (mirrors brain_restore). Submits
+        the daemon tool call to the bg pool and, on success, re-pulls every
+        brain surface. Returns {async, request_id} synchronously."""
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex[:12]
+        if not guard():
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": guard_err})
+
+        def _runner():
+            try:
+                res = self._brain_tool(tool_name, args, timeout=10.0)
+                ok = isinstance(res, dict) and res.get("ok")
+            except Exception:
+                ok = False
+            if ok:
+                try: self.brain_browse_changed.emit()
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver must not crash the backend
+                try: self.memory_changed.emit()
+                except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI re-pull; absent receiver must not crash
+
+        try:
+            self._bg_pool().submit(_runner)
+        except Exception as ex:
+            return _safe_json({"async": False, "request_id": request_id,
+                               "ok": False, "error": f"pool submit: {ex}"})
+        return _safe_json({"async": True, "request_id": request_id})
+
     # ─── Multi-device COMMUNITIES (BrainViewModal → Communities panel) ──
     # The community MECHANISM (brain.community_* — 8 tools on the daemon) was
     # wired-not-shipped: no GUI. These slots are its desktop surface. Every

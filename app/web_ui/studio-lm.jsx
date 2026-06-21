@@ -3860,6 +3860,7 @@ const StudioLM = () => {
       <AiPlanHistoryModal _themeBump={paletteBump}/>
       <CommandPalette _themeBump={paletteBump}/>
       <MemoryExplorerModal _themeBump={paletteBump}/>
+      <BrainFoldersModal _themeBump={paletteBump}/>
       <BrainViewModal _themeBump={paletteBump}/>
       <StudioSkillJson _themeBump={paletteBump}/>
       <CommandDeckModal _themeBump={paletteBump}/>
@@ -7380,10 +7381,12 @@ const BrainChip = ({ compact }) => {
   }, []);
   const click = (e) => {
     e.stopPropagation();
-    // Click-through to the Brain intelligence-layer map (the
-    // You→Brain→AI surface). The richer Memory graph stays reachable via
-    // its own entry (the Home memory-graph chip / canvas memory entry).
-    try { window.dispatchEvent(new CustomEvent('lm-brain-view-open', { detail:{} })); } catch (e2) {}
+    // BRAIN-AS-FOLDERS (founder 2026-06-21): the chip now opens the
+    // explorable + editable FOLDER browser of your real facts — the primary
+    // useful brain surface — instead of the graph blob the founder called
+    // "not visually good". The graph map is now secondary (Settings → Brain /
+    // lm-brain-view-open) for anyone who wants the visualisation.
+    try { window.dispatchEvent(new CustomEvent('lm-brain-folders-open')); } catch (e2) {}
   };
   // Derive display state.
   // COLD-START REAL COUNTS (founder 2026-06-18 "the UI doesn't SHOW it"): the
@@ -7430,7 +7433,7 @@ const BrainChip = ({ compact }) => {
             : !haveCounts ? 'Personal-brain ready. Send a Composer turn to engage Layer 5.'
             : offline ? 'Brain daemon offline. Circuit breaker open or socket refused.'
             : `Last hit: ${skillsN} skills + ${factsN} facts injected in ${Math.round(ms)}ms. Last user message: "${(stats.user_message_preview || '').slice(0,60)}"`;
-  const tip = `${tipBody}  ·  Click: open your brain map.`;
+  const tip = `${tipBody}  ·  Click: browse + edit your brain facts.`;
   return (
     <button onClick={click} title={tip}
       data-testid="brain-chip"
@@ -15005,6 +15008,236 @@ const GlobalToastInner = ({ _themeBump }) => {   // _themeBump: theme-repaint ke
 // on theme change — same behavior as before, minus the wasted re-renders.
 const GlobalToast = React.memo(GlobalToastInner);
 
+// ─── BRAIN-AS-FOLDERS (founder 2026-06-21) ─────────────────────────────────
+// "the brain graph shit isn't something visually good... it should be
+// explorable and editable as a folder system." This modal replaces the flat
+// memory search + the do-nothing graph blob with a real, simple folder browser
+// of the LIVE brain: top-level folders by type (User · Feedback · Projects ·
+// Reference · …), expand to the facts inside (name + short desc), click a fact
+// to read its full body, and EDIT / DELETE it — every write persists to the
+// brain daemon (bridge brain_edit_fact / brain_delete_fact → brain.* tools).
+// Opens via the ⌘K "Brain" command (lm-brain-folders-open). Always-mounted +
+// memo'd (early-returns null when closed), the standard modal idiom here.
+const BRAIN_FOLDER_ICON = {
+  user:'◆', feedback:'◈', projects:'▤', reference:'❏',
+  decisions:'⚖', capability:'⌬', skills:'✦', traces:'·',
+};
+const BrainFoldersModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [open, setOpen] = React.useState(false);
+  const [data, setData] = React.useState(null);   // {ok,total,folders:[...]}
+  const [loading, setLoading] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const [openFolders, setOpenFolders] = React.useState({ user:true });
+  const [sel, setSel] = React.useState(null);      // selected fact record
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const pull = React.useCallback(() => {
+    setLoading(true);
+    bridgeAsync('brain_list_facts').then(r => {
+      setData(r || { ok:false, folders:[] });
+    }).catch(() => setData({ ok:false, folders:[] }))
+      .finally(() => setLoading(false));
+  }, []);
+  React.useEffect(() => {
+    const onOpen = () => { setOpen(true); pull(); };
+    const onChanged = () => { if (open) pull(); };
+    const b = window.bridge;
+    window.addEventListener('lm-brain-folders-open', onOpen);
+    window.addEventListener('lm-memory-changed', onChanged);
+    // Brain writes land async on the daemon → re-pull when the bridge signals.
+    let off = () => {};
+    try {
+      if (b && b.brain_browse_changed && b.brain_browse_changed.connect) {
+        b.brain_browse_changed.connect(onChanged);
+        off = () => { try { b.brain_browse_changed.disconnect(onChanged); } catch (e) {} };
+      }
+    } catch (e) {}
+    return () => {
+      window.removeEventListener('lm-brain-folders-open', onOpen);
+      window.removeEventListener('lm-memory-changed', onChanged);
+      off();
+    };
+  }, [open, pull]);
+  // Filter folders + facts by the search needle (name + desc + body).
+  const folders = React.useMemo(() => {
+    const all = (data && Array.isArray(data.folders)) ? data.folders : [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return all;
+    return all.map(f => {
+      const facts = (f.facts || []).filter(x =>
+        ((x.name||'') + ' ' + (x.desc||'') + ' ' + (x.body||'')).toLowerCase().includes(needle));
+      return { ...f, facts, count: facts.length };
+    }).filter(f => f.facts.length > 0);
+  }, [data, q]);
+  const totalShown = React.useMemo(
+    () => folders.reduce((n, f) => n + (f.facts ? f.facts.length : 0), 0), [folders]);
+  if (!open) return null;
+  const close = () => { setOpen(false); setSel(null); setEditing(false); setQ(''); };
+  const toggleFolder = (id) => setOpenFolders(o => ({ ...o, [id]: !o[id] }));
+  const pick = (rec) => { setSel(rec); setEditing(false); setDraft(rec.body || ''); };
+  const startEdit = () => { if (!sel) return; setDraft(sel.body || ''); setEditing(true); };
+  const saveEdit = () => {
+    if (!sel) return;
+    const text = (draft || '').trim();
+    if (!text || text === (sel.body || '')) { setEditing(false); return; }
+    setBusy(true);
+    bridgeAsync('brain_edit_fact', sel.id, text).then(() => {
+      // Optimistic: reflect the edit immediately; the signal re-pull confirms.
+      setSel(s => s ? { ...s, body:text, desc:text.slice(0,140) } : s);
+      setEditing(false);
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail:{ msg:'Fact updated', kind:'ok' } })); } catch (e) {}
+      setTimeout(pull, 350);
+    }).catch(() => {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail:{ msg:'Edit failed — brain offline?', kind:'err' } })); } catch (e) {}
+    }).finally(() => setBusy(false));
+  };
+  const del = () => {
+    if (!sel) return;
+    setBusy(true);
+    bridgeAsync('brain_delete_fact', sel.id, false).then(() => {
+      setSel(null); setEditing(false);
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail:{ msg:'Fact deleted', kind:'ok' } })); } catch (e) {}
+      setTimeout(pull, 350);
+    }).catch(() => {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', { detail:{ msg:'Delete failed — brain offline?', kind:'err' } })); } catch (e) {}
+    }).finally(() => setBusy(false));
+  };
+  const offline = data && data.ok === false;
+  return (
+    <div onClick={close} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:82,
+      display:'grid', placeItems:'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width:920, maxWidth:'94%', height:600, maxHeight:'88vh', background:LM.bg,
+        border:`1px solid ${LM.line}`, borderRadius:12,
+        boxShadow:'0 22px 60px rgba(0,0,0,.65)',
+        display:'flex', flexDirection:'column', overflow:'hidden',
+      }}>
+        {/* Header */}
+        <div style={{ padding:'16px 20px 12px', borderBottom:`1px solid ${LM.line}`,
+          display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:22, color:LM.ink }}>Brain</span>
+          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
+            {loading ? 'loading…' : (offline ? 'brain offline' : `${(data && data.total) || 0} facts`)}
+          </span>
+          <div style={{ flex:1 }}/>
+          <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', minWidth:240,
+            background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:7 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.inkMuted} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="filter facts…" style={{
+              flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12.5, outline:'none', fontFamily:LM.sans }}/>
+          </div>
+          <button onClick={close} title="Close" style={{ background:'transparent', border:0, color:LM.inkMuted, fontSize:20, cursor:'pointer', lineHeight:1 }}>×</button>
+        </div>
+        {/* Body: folder tree | detail */}
+        <div style={{ flex:1, display:'flex', minHeight:0 }}>
+          {/* Tree */}
+          <div className="ah-scroll" style={{ width:360, borderRight:`1px solid ${LM.line}`, overflow:'auto', padding:'8px 6px' }}>
+            {offline && (
+              <div style={{ padding:'18px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+                The brain daemon is offline. Start it to browse your facts.
+              </div>
+            )}
+            {!offline && folders.length === 0 && (
+              <div style={{ padding:'18px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkMuted }}>
+                {q ? `No facts match "${q}".` : 'No facts yet.'}
+              </div>
+            )}
+            {folders.map(f => {
+              const isOpen = q.trim() ? true : !!openFolders[f.id];
+              return (
+                <div key={f.id} style={{ marginBottom:2 }}>
+                  <button onClick={() => toggleFolder(f.id)} style={{
+                    width:'100%', display:'flex', alignItems:'center', gap:9, padding:'7px 10px',
+                    background:'transparent', border:0, borderRadius:6, cursor:'pointer', textAlign:'left',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <span style={{ width:10, color:LM.inkMuted, fontSize:9, fontFamily:LM.mono }}>{isOpen ? '▾' : '▸'}</span>
+                    <span style={{ color:LM.accent, fontSize:13, width:14 }}>{BRAIN_FOLDER_ICON[f.id] || '▤'}</span>
+                    <span style={{ flex:1, fontFamily:LM.sans, fontSize:13, color:LM.ink }}>{f.label}</span>
+                    <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted,
+                      background:LM.bgSoft, borderRadius:9, padding:'1px 7px' }}>{f.count}</span>
+                  </button>
+                  {isOpen && (f.facts || []).map(rec => {
+                    const active = sel && sel.id === rec.id;
+                    return (
+                      <button key={rec.id} onClick={() => pick(rec)} style={{
+                        width:'100%', display:'block', padding:'6px 10px 6px 33px',
+                        background: active ? LM.bgSoft : 'transparent', border:0,
+                        borderLeft:`2px solid ${active ? LM.accent : 'transparent'}`,
+                        borderRadius:4, cursor:'pointer', textAlign:'left', marginBottom:1,
+                      }}
+                      onMouseEnter={e => !active && (e.currentTarget.style.background = LM.bgHover)}
+                      onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
+                        <div style={{ fontSize:12, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{rec.name}</div>
+                        {rec.desc && <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginTop:1 }}>{rec.desc}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          {/* Detail */}
+          <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'18px 22px', minHeight:0 }}>
+            {!sel && (
+              <div style={{ padding:'40px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:14, color:LM.inkMuted }}>
+                Pick a fact to read it. Open a folder on the left.
+              </div>
+            )}
+            {sel && (
+              <div>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                  <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.12em', textTransform:'uppercase',
+                    border:`1px solid ${LM.accent}55`, borderRadius:3, padding:'1px 6px' }}>{sel.type}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.1em' }}>{sel.kind} · {sel.scope}{sel.project_id ? ' · ' + sel.project_id : ''}</span>
+                  <div style={{ flex:1 }}/>
+                  {!editing && (
+                    <button onClick={startEdit} disabled={busy} style={brainBtn(LM.cyan)}>Edit</button>
+                  )}
+                  {!editing && (
+                    <button onClick={del} disabled={busy} style={brainBtn(LM.err)}>Delete</button>
+                  )}
+                </div>
+                <div style={{ fontFamily:LM.serif, fontSize:18, color:LM.ink, marginBottom:12, lineHeight:1.3 }}>{sel.name}</div>
+                {!editing && (
+                  <div style={{ fontFamily:LM.sans, fontSize:13.5, color:LM.inkSoft, lineHeight:1.6, whiteSpace:'pre-wrap' }}>{sel.body}</div>
+                )}
+                {editing && (
+                  <div>
+                    <textarea value={draft} onChange={e => setDraft(e.target.value)} autoFocus style={{
+                      width:'100%', minHeight:240, background:LM.bgSoft, color:LM.ink,
+                      border:`1px solid ${LM.accent}55`, borderRadius:8, padding:'12px 14px',
+                      fontFamily:LM.sans, fontSize:13.5, lineHeight:1.6, outline:'none', resize:'vertical' }}/>
+                    <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                      <button onClick={saveEdit} disabled={busy} style={{ ...brainBtn(LM.accent), padding:'7px 16px' }}>{busy ? 'Saving…' : 'Save'}</button>
+                      <button onClick={() => setEditing(false)} disabled={busy} style={{ ...brainBtn(LM.inkMuted), padding:'7px 16px' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ padding:'8px 18px', borderTop:`1px solid ${LM.line}`,
+          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, display:'flex', gap:18 }}>
+          <span>{q ? `${totalShown} shown` : `${folders.length} folders`}</span>
+          <span style={{ marginLeft:'auto' }}>edits persist to the brain · esc close</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+const brainBtn = (col) => ({
+  background:'transparent', border:`1px solid ${col}66`, color:col,
+  borderRadius:6, padding:'4px 12px', fontFamily:LM.sans, fontSize:11.5,
+  cursor:'pointer', letterSpacing:'0.02em',
+});
+const BrainFoldersModal = React.memo(BrainFoldersModalInner);
+
 // AgDR-0042 — Memory explorer modal. Opens when the user clicks the
 // bottom-strip memory pill. Renders a dashboard of the shared-memory
 // knowledge graph: total node + edge counts, breakdown by kind,
@@ -18793,6 +19026,8 @@ const CommandPaletteInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-library')); } catch (e) {} } },
       { kind:'action', label:'⚙ Open settings', id:'open-settings',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-settings')); } catch (e) {} } },
+      { kind:'action', label:'◆ Brain — browse + edit your facts', id:'open-brain-folders',
+        run:() => { try { window.dispatchEvent(new CustomEvent('lm-brain-folders-open')); } catch (e) {} } },
       { kind:'action', label:'⊕ Create node with AI', id:'create-ai-node',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-action-open-ai-node')); } catch (e) {} } },
       { kind:'action', label:'▶ Run current canvas', id:'run-canvas',

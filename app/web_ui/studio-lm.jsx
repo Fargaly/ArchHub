@@ -2590,6 +2590,13 @@ const StudioLM = () => {
             LM_GRAPH.wires = [...(LM_GRAPH.wires || []), { from:[hostNode.id, outId], to:[convNode.id, inId] }];
             saveCurrentGraph(); bumpGraph();
             setFocusId(convNode.id);
+            // AMBIENT SELF-BUILD trigger: a host + conversation just spawned →
+            // a natural moment to propose the next downstream node/wire.
+            try {
+              window.dispatchEvent(new CustomEvent('lm-ambient-trigger', {
+                detail: { reason: 'node_spawned' },
+              }));
+            } catch (e) {}
           }
           // Founder bug 2026-05-15: "ping autocad" was sent to the LLM as
           // a chat turn — the model then HALLUCINATED a <function_calls>
@@ -3041,8 +3048,28 @@ const StudioLM = () => {
       let step = null;
       try { step = JSON.parse(resultJson || '{}'); } catch (e) { return; }
       if (!step || !Array.isArray(step.actions)) return;
+      // AMBIENT SELF-BUILD (Phase 4): an ambient grow pass rides this SAME
+      // signal but is tagged `ambient` (envelope + per-action). When the pass
+      // produced no proposals, surface a quiet toast so the user knows it ran
+      // and found nothing — never a silent black hole.
+      const _ambientPass = !!step.ambient;
+      if (_ambientPass) {
+        // The ambient pass settled (with or without proposals) → release the
+        // scheduler's in-flight latch so the next settled event can grow again.
+        try {
+          window.dispatchEvent(new CustomEvent('lm-ambient-idle'));
+        } catch (e) {}
+        if (step.actions.length === 0) {
+          try {
+            window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+              detail: { msg: 'ambient · no new growth proposed', kind:'info' },
+            }));
+          } catch (e) {}
+        }
+      }
       step.actions.forEach((a) => {
         const tool = a && a.tool, args = (a && a.args) || {};
+        const _ambient = _ambientPass || !!(a && a.ambient);
         // BACKEND GATE — HONOR it (the agent path's ONE gate of record).
         // run_agent_step gated this host-WRITE per the composer mode: it set
         // a.gated + replaced the executable result with a typed approval
@@ -3080,8 +3107,13 @@ const StudioLM = () => {
                 detail: {
                   action: held, raw: step.text || '', focusId: focusId,
                   attachments: [],
-                  summary: (a.approval && a.approval.reason) || tool,
+                  summary: (a.approval && a.approval.reason)
+                    || (_ambient ? ('grow · ' + tool) : tool),
                   cmd: held.command, mode: a.mode || 'plan',
+                  // AMBIENT SELF-BUILD: tag the held write so the approval
+                  // queue renders it as a GHOST GROWTH proposal (distinct
+                  // from a user-typed write), with accept/dismiss.
+                  ambient: _ambient,
                 },
               }));
             } catch (e) {}
@@ -3121,6 +3153,17 @@ const StudioLM = () => {
           } catch (e) {}
         }
       });
+      // AMBIENT SELF-BUILD trigger: a COMPOSER turn just settled → schedule an
+      // ambient grow pass. Guard against self-retrigger: an ambient pass's own
+      // result must NOT schedule another (that is the runaway loop). The
+      // scheduler debounces + idle-guards (see the ambient effect below).
+      if (!_ambientPass) {
+        try {
+          window.dispatchEvent(new CustomEvent('lm-ambient-trigger', {
+            detail: { reason: 'agent_step_done', last_turn: step.text || '' },
+          }));
+        } catch (e) {}
+      }
     };
     // Connector-op result. run_connector_op is fire-and-forget + threaded;
     // it emits connector_op_done(result_json). The result carries op_id
@@ -3228,6 +3271,14 @@ const StudioLM = () => {
       if (_applyEdgesState(res.edges_state)) touched = true;
       if (touched) saveCurrentGraph();
       bumpGraph();
+      // AMBIENT SELF-BUILD trigger: a node/workflow finished cooking → the
+      // graph state settled → schedule an ambient grow pass (debounced +
+      // idle-guarded by the ambient effect).
+      try {
+        window.dispatchEvent(new CustomEvent('lm-ambient-trigger', {
+          detail: { reason: 'workflow_done' },
+        }));
+      } catch (e) {}
     };
     // LIVE WIRE-STATE (v1.4 wire-as-data-bridge). The runner streams
     // wire_state_changed(edge_id, state, preview) as a cook walks the graph;
@@ -3296,6 +3347,83 @@ const StudioLM = () => {
     // listed here. Documented per the no-fake-consumer rule.
     return () => { for (const off of wires) { try { off(); } catch (e) {} } };
   }, [bumpGraph, focusId]);
+
+  // ─── AMBIENT SELF-BUILD ("stem cells grow as you work") — Phase 4 ──────
+  // After a SETTLED event (composer turn done, node cooked, host spawned) the
+  // settled-point handlers dispatch `lm-ambient-trigger`. This single effect
+  // debounces them into ONE ambient grow pass and guards against spam:
+  //   • DEBOUNCE — bursts of triggers collapse to one pass (1.2s quiet window).
+  //   • IDLE-GUARD — skip while the user is typing (focus in input/textarea/
+  //     contenteditable) so we never propose mid-thought; reschedule instead.
+  //   • IN-FLIGHT — never start a 2nd pass while one is running (no overlap).
+  //   • FREQUENCY CAP — at most one pass per MIN_INTERVAL (avoids a tight
+  //     trigger→propose→approve→trigger loop). Ambient results do NOT
+  //     re-trigger (onAgentStep skips _ambientPass), the belt to this brace.
+  // The pass runs through bridge.ambient_grow → composer_agent (ONE-SYSTEM) →
+  // emits agent_step_done → onAgentStep replays it through the SAME approval
+  // queue. In Plan/Auto every proposed write is gated → GHOST proposals.
+  React.useEffect(() => {
+    const DEBOUNCE_MS = 1200;
+    const MIN_INTERVAL_MS = 8000;   // frequency cap between passes
+    let timer = null;
+    let inFlight = false;
+    let lastRun = 0;
+    let lastTurn = '';
+    const _userIsTyping = () => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = (el.tagName || '').toUpperCase();
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+        || !!el.isContentEditable;
+    };
+    const _fire = () => {
+      timer = null;
+      // Idle-guard: don't grow while the user is mid-typing — reschedule.
+      if (_userIsTyping()) { _schedule(); return; }
+      // In-flight guard: one pass at a time.
+      if (inFlight) return;
+      // Frequency cap.
+      const now = Date.now();
+      if (now - lastRun < MIN_INTERVAL_MS) {
+        timer = setTimeout(_fire, MIN_INTERVAL_MS - (now - lastRun));
+        return;
+      }
+      // Nothing to grow from on an empty canvas — the backend also skips this.
+      if (!(LM_GRAPH.nodes || []).length) return;
+      inFlight = true;
+      lastRun = now;
+      const _mode = (typeof window !== 'undefined'
+        && window.__archhub_composer_mode) || 'plan';
+      try {
+        bridgeCall('ambient_grow', JSON.stringify(LM_GRAPH), _mode,
+          lastTurn || '', focusId || '');
+      } catch (e) {}
+      // Release the in-flight latch when the pass settles (its result lands
+      // on agent_step_done → lm-ambient-idle when empty, or the approval
+      // queue when it proposed). A timeout backstop releases it even if the
+      // pass never reports (router down) so a stuck latch never freezes growth.
+      setTimeout(() => { inFlight = false; }, 30000);
+    };
+    let _scheduleRef = null;
+    const _schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(_fire, DEBOUNCE_MS);
+    };
+    _scheduleRef = _schedule;
+    const onTrigger = (ev) => {
+      const d = (ev && ev.detail) || {};
+      if (d.last_turn) lastTurn = d.last_turn;
+      _schedule();
+    };
+    const onIdle = () => { inFlight = false; };   // ambient pass found nothing
+    window.addEventListener('lm-ambient-trigger', onTrigger);
+    window.addEventListener('lm-ambient-idle', onIdle);
+    return () => {
+      window.removeEventListener('lm-ambient-trigger', onTrigger);
+      window.removeEventListener('lm-ambient-idle', onIdle);
+      if (timer) clearTimeout(timer);
+    };
+  }, [focusId]);
 
   // ─── SLICE F (AgDR-0009): global Tab key opens the Add-Node search
   // overlay at the viewport centre. Ignored when focus is in a form
@@ -18647,6 +18775,8 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
         summary: d.summary || (d.cmd || 'write'),
         cmd: d.cmd || (d.action && d.action.command) || 'write',
         mode: d.mode || 'plan',
+        // AMBIENT SELF-BUILD: an ambient grow proposal vs a user-typed write.
+        ambient: !!d.ambient,
       };
       setQueue(q => [...q, item]);
     };
@@ -18682,11 +18812,25 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
       }}>
       <div style={{ display:'flex', alignItems:'center', gap:10,
         padding:'10px 14px', borderBottom:`1px solid ${LM.line}`, background:LM.bg }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.16em',
-          color: LM.warn || LM.accent }}>WRITES HELD · {queue.length}</span>
-        <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>
-          Plan mode gates AI writes — approve to apply.
-        </span>
+        {(() => {
+          const _anyAmbient = queue.some(it => it.ambient);
+          const _allAmbient = queue.length > 0 && queue.every(it => it.ambient);
+          return (
+            <>
+              <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.16em',
+                color: LM.warn || LM.accent }}>
+                {_allAmbient ? 'PROPOSED GROWTH' : 'WRITES HELD'} · {queue.length}
+              </span>
+              <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>
+                {_allAmbient
+                  ? 'ArchHub proposes these as you work — accept to grow the graph.'
+                  : (_anyAmbient
+                      ? 'AI writes + ambient growth held — approve to apply.'
+                      : 'Plan mode gates AI writes — approve to apply.')}
+              </span>
+            </>
+          );
+        })()}
         <div style={S_FLEX1}/>
         {queue.length > 1 && (
           <button onClick={_approveAll} data-testid="approval-approve-all" style={{
@@ -18698,11 +18842,26 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
       </div>
       <div style={{ maxHeight:220, overflow:'auto' }}>
         {queue.map(it => (
-          <div key={it.key} data-testid="approval-row" style={{
-            display:'flex', alignItems:'center', gap:10,
-            padding:'9px 14px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+          <div key={it.key} data-testid="approval-row"
+            data-ambient={it.ambient ? '1' : undefined}
+            style={{
+              display:'flex', alignItems:'center', gap:10,
+              padding:'9px 14px', borderBottom:`1px solid ${LM.lineSoft}`,
+              // AMBIENT SELF-BUILD: a ghost-tinted row + dashed left rail so a
+              // proposed-growth write reads as distinct from a user-typed one.
+              background: it.ambient ? (LM.accentDim || 'transparent') : 'transparent',
+              borderLeft: it.ambient ? `2px dashed ${LM.accent}` : '2px solid transparent',
+            }}>
             <div style={S_FLEX1}>
-              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.ink }}>{it.summary}</div>
+              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.ink }}>
+                {it.ambient && (
+                  <span title="Ambient growth proposed as you work" style={{
+                    fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.12em',
+                    color:LM.accent, border:`1px solid ${LM.accent}66`,
+                    borderRadius:3, padding:'1px 4px', marginRight:6 }}>GROW</span>
+                )}
+                {it.summary}
+              </div>
               <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2 }}>
                 {it.cmd}{it.raw ? ` · ${it.raw}` : ''}
               </div>
@@ -18711,7 +18870,7 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
               padding:'4px 11px', borderRadius:5, border:0,
               background:LM.accent, color:'#fff', cursor:'pointer',
               fontFamily:LM.mono, fontSize:10, fontWeight:600,
-            }}>Approve</button>
+            }}>{it.ambient ? 'Accept' : 'Approve'}</button>
             <button onClick={() => _drop(it.key)} data-testid="approval-dismiss" style={{
               padding:'4px 9px', borderRadius:5, border:`1px solid ${LM.line}`,
               background:'transparent', color:LM.inkSoft, cursor:'pointer',

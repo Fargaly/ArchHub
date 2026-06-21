@@ -6407,6 +6407,66 @@ class ArchHubBridge(QObject):
         # Return immediately — JSX listens for agent_step_done.
         return _safe_json({"async": True})
 
+    # ─── Ambient self-build ("stem cells grow as you work") ─────────
+    # Phase 4 (founder): ArchHub should BUILD ITSELF mid-work — the graph
+    # grows + wires as the user works, not only on a typed command. After a
+    # settled event (a composer turn finished, a node cooked, a host spawned),
+    # the JSX debounces + idle-guards an AMBIENT GROW pass through this slot.
+    #
+    # ONE-SYSTEM (ONE-SYSTEM-PLAN-BEFORE-BUILD): this is NOT a new engine.
+    # ambient_grow.run_ambient_grow is a thin wrapper over the SAME
+    # composer_agent.run_agent_step, with the SAME 7 canvas tools and the
+    # SAME USER-AGENCY mode gate. Result rides the SAME `agent_step_done`
+    # signal → JSX `onAgentStep` replays it through the SAME approval queue.
+    # In Plan (default)/Auto every proposed WRITE is gated → GHOST proposals
+    # the user accepts/dismisses (never auto-applied); YOLO applies them
+    # (reversible). Off-thread + proposal-cap = safe, no runaway loop.
+    @pyqtSlot(str, str, result=str)
+    @pyqtSlot(str, str, str, result=str)
+    @pyqtSlot(str, str, str, str, result=str)
+    def ambient_grow(self, graph_json: str, mode: str = "plan",
+                     last_turn: str = "", focused_node_id: str = "") -> str:
+        """Run one ambient grow pass off-thread; emit `agent_step_done`
+        (the SAME signal the composer uses) with the proposed mutations.
+        Defaults to Plan mode (fail-safe gated → ghost proposals)."""
+        import json as _json
+        try:
+            graph = _json.loads(graph_json) if graph_json else {}
+        except Exception as ex:
+            return _safe_json({"async": False,
+                                "error": f"bad graph_json: {ex}"})
+        # Cheap guard: an empty graph has nothing to grow FROM — skip the
+        # LLM round-trip entirely (the pass would have nothing to propose
+        # forward of). Keeps idle canvases from firing pointless passes.
+        try:
+            _nodes = graph.get("nodes") if isinstance(graph, dict) else None
+            if not _nodes:
+                return _safe_json({"async": False, "skipped": "empty_graph"})
+        except Exception:
+            pass
+
+        def _runner():
+            try:
+                from agents.ambient_grow import run_ambient_grow
+                result = run_ambient_grow(
+                    graph=graph if isinstance(graph, dict) else {},
+                    router=self.router,
+                    focused_node_id=focused_node_id or "",
+                    mode=mode or "plan",
+                    last_turn=last_turn or "",
+                )
+            except Exception as ex:
+                result = {"actions": [], "text": "", "error": str(ex),
+                          "ambient": True}
+            try:
+                self.agent_step_done.emit(_safe_json(result))
+            except Exception:
+                pass
+
+        threading.Thread(target=_runner, daemon=True,
+                          name="ArchHubAmbientGrow").start()
+        return _safe_json({"async": True})
+
     @pyqtSlot(str, str, str, result=str)
     def apply_composer_command(self, graph_json: str, raw: str,
                                  focused_node_id: str = "") -> str:

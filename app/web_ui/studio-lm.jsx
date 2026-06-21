@@ -4568,20 +4568,15 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
   // RESTORED 2026-06-15 (MAKE-IT-REAL): Skills + Search rejoin Nodes as
   // mid-rail destinations. (They were dropped 2026-05-14 when their panels
   // were empty shells; the panels are now real, so the affordances return.)
+  // Founder 2026-06-20 ("strip to essentials" + "I don't want the UI cramped
+  // with shit with no use"): NODES + SKILLS removed from the rail — they are
+  // redundant with the graph library (Cmd-K + the in-canvas library) and the
+  // founder explicitly does not want duplicate sidebar entries for things that
+  // already live in the library. Search stays (a real navigation affordance, not
+  // a duplicate). The Nodes/Skills PANELS remain reachable via Cmd-K + the
+  // library, so nothing is lost. This SUPERSEDES the 2026-06-15/18 MAKE-IT-REAL
+  // "restore" that mis-applied that mandate against the founder's explicit strip.
   const items = [
-    { id:'nodes',  title:'Nodes',  svg:(
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <rect x="3" y="3" width="7" height="7" rx="1"/>
-        <rect x="14" y="3" width="7" height="7" rx="1"/>
-        <rect x="3" y="14" width="7" height="7" rx="1"/>
-        <rect x="14" y="14" width="7" height="7" rx="1"/>
-      </svg>
-    ) },
-    { id:'skills', title:'Skills', svg:(
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-2.8L7 19l1-6-4-4 5.5-.5z" strokeLinejoin="round"/>
-      </svg>
-    ) },
     { id:'search', title:'Search', svg:(
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" strokeLinecap="round"/>
@@ -4601,20 +4596,11 @@ const IconRailInner = ({ panel, setPanel, onHome, onSettings, _themeBump }) => {
           <circle cx="12" cy="8.5" r="1.6" fill={LM.accent}/>
         </svg>
       </RailIcon>
-      {/* COMMAND DECK — the founder's one comprehensive view over the app +
-          all its resources (Missing-20% burndown · brain · code · connectors
-          · inbox · finances). Always live (Home AND session view) so it's
-          reachable in ONE click from the default view. Dispatches the open
-          event the always-mounted CommandDeckModal listens for. */}
-      <RailIcon title="Command Deck" label="deck" testid="rail-deck"
-        onClick={() => { try { window.dispatchEvent(new CustomEvent('lm-command-deck-open')); } catch (e) {} }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="1.8">
-          <rect x="3" y="3" width="8" height="5" rx="1"/>
-          <rect x="3" y="11" width="8" height="10" rx="1"/>
-          <rect x="14" y="3" width="7" height="10" rx="1"/>
-          <rect x="14" y="16" width="7" height="5" rx="1"/>
-        </svg>
-      </RailIcon>
+      {/* COMMAND DECK rail icon REMOVED (founder 2026-06-20: "what the fuck is
+          this command deck for" + "strip to essentials" + "I don't want the UI
+          cramped with shit with no use"). The CommandDeckModal stays mounted and
+          is still reachable via Cmd-K for anyone who wants it — it just no longer
+          occupies a permanent rail slot the founder never asked for. */}
       <div style={{ height:8 }}/>
       {/* MAKE-IT-REAL 2026-06-18 (founder audit: "clicking NODES/SKILLS/SEARCH
           on Home does nothing"). These items are NO LONGER dead on Home. Every
@@ -13910,9 +13896,9 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
             );
           })}
         </div>
-        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }}
-          aria-label="Open node library"
-          style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+        {/* "library" button REMOVED (founder 2026-06-20: composer "cramped with
+            shit with no use"). The node library is already one keystroke away via
+            Cmd-K — a duplicate button in the composer was pure clutter. */}
         <button onClick={submit}
           aria-label="Send message"
           style={{ padding:'4px 11px', background:LM.accent, color:'#fff', border:0, borderRadius:5, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>

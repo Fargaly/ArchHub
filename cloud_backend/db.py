@@ -2104,3 +2104,138 @@ def mark_invite_accepted(token: str) -> None:
             "UPDATE company_invites SET accepted_at = ? WHERE token = ?",
             (int(time.time()), token),
         )
+
+
+# ---------------------------------------------------------------------------
+# Founder cockpit aggregates (PHASE 5)
+# ---------------------------------------------------------------------------
+# Read-only roll-ups over the LIVE tables for the founder-only admin
+# dashboard (cloud_backend/founder_cockpit.py). These are pure SELECT
+# aggregates — they never write — so they are safe to call on every
+# dashboard refresh. They read the same `users`, `companies`,
+# `usage_log` and `training_samples` rows the rest of the backend writes,
+# so the numbers are the real business state, never placeholders.
+
+def count_users() -> int:
+    """Total registered users (every row in `users`)."""
+    with connect() as con:
+        r = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    return int(r["n"]) if r else 0
+
+
+def count_users_by_plan() -> dict:
+    """{plan: count} over all users, e.g. {'trial': 12, 'solo': 3}."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT plan, COUNT(*) AS n FROM users GROUP BY plan"
+        ).fetchall()
+    return {r["plan"]: int(r["n"]) for r in rows}
+
+
+def count_users_since(epoch: int) -> int:
+    """Users created at/after `epoch` (e.g. signups in the last 24h/7d)."""
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE created_at >= ?",
+            (int(epoch),),
+        ).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def recent_users(limit: int = 10) -> list[dict]:
+    """Most-recent signups, newest first. Returns id/email/plan/created_at."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, email, plan, created_at, msg_used, msg_limit "
+            "FROM users ORDER BY created_at DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_paid_users() -> int:
+    """Users on a paid individual tier (not trial)."""
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE plan != 'trial'"
+        ).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def list_companies_billing() -> list[dict]:
+    """Every company row with its plan + seat_limit — the basis for
+    company-tier MRR. Read-only."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, name, plan, seat_limit, stripe_subscription_id, "
+            "period_end, created_at FROM companies ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_companies() -> int:
+    with connect() as con:
+        r = con.execute("SELECT COUNT(*) AS n FROM companies").fetchone()
+    return int(r["n"]) if r else 0
+
+
+def usage_totals() -> dict:
+    """Lifetime proxy-usage roll-up from `usage_log`:
+    chat completions (one row per proxied completion), total tokens, and
+    total spend in micro-dollars. Real counters — every /v1/chat/completions
+    that hits the hosted proxy writes a usage_log row via db.log_usage."""
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(input_toks), 0) AS in_toks, "
+            "COALESCE(SUM(output_toks), 0) AS out_toks, "
+            "COALESCE(SUM(cost_micros), 0) AS cost_micros FROM usage_log"
+        ).fetchone()
+    return {
+        "chat_completions": int(r["calls"]) if r else 0,
+        "input_tokens":     int(r["in_toks"]) if r else 0,
+        "output_tokens":    int(r["out_toks"]) if r else 0,
+        "cost_micros":      int(r["cost_micros"]) if r else 0,
+    }
+
+
+def usage_calls_since(epoch: int) -> int:
+    """Proxied chat completions at/after `epoch` (trailing-window activity)."""
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS n FROM usage_log WHERE ts >= ?",
+            (int(epoch),),
+        ).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def training_totals() -> dict:
+    """Memory-capture roll-up from `training_samples`: total captured turns
+    + a per-stage breakdown (captured/redacted/judged/rejected/approved).
+    Every /v1/memory/capture writes one row, so `total` is the real count
+    of memory captures across all users."""
+    with connect() as con:
+        total = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples"
+        ).fetchone()
+        by_stage = con.execute(
+            "SELECT stage, COUNT(*) AS n FROM training_samples GROUP BY stage"
+        ).fetchall()
+        day_ago = int(time.time()) - 86400
+        today = con.execute(
+            "SELECT COUNT(*) AS n FROM training_samples WHERE created_at >= ?",
+            (day_ago,),
+        ).fetchone()
+    return {
+        "total":      int(total["n"]) if total else 0,
+        "today":      int(today["n"]) if today else 0,
+        "by_stage":   {r["stage"]: int(r["n"]) for r in by_stage},
+    }
+
+
+def count_marketplace_packs() -> int:
+    with connect() as con:
+        r = con.execute(
+            "SELECT COUNT(*) AS n FROM marketplace_packs"
+        ).fetchone()
+    return int(r["n"]) if r else 0

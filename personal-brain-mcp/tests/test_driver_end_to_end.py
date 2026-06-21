@@ -129,9 +129,12 @@ def test_installer_wires_drive_and_completion_gate_into_claude_code(
         "without it no Stop hook reads the ledger to block a premature exit")
     assert gate.get("type") == "command"
 
-    # PRESERVED: the existing recall + anti-laziness wiring is untouched.
-    assert any(e.get("tool") == "brain.context"
-               for e in hooks["UserPromptSubmit"]), "brain.context recall lost"
+    # PRESERVED: the existing recall + anti-laziness wiring is untouched. The
+    # recall hook was repointed at the hook-shaped wrapper brain.hook_context
+    # (brain.context with the typed `arguments` map) — the DRIVE + gate wiring
+    # this test pins is ORTHOGONAL to that rename and must survive it.
+    assert any(e.get("tool") == "brain.hook_context"
+               for e in hooks["UserPromptSubmit"]), "brain.hook_context recall lost"
     assert any("anti_laziness_gate" in str(e.get("command", ""))
                for e in hooks["Stop"]), "anti_laziness_gate lost"
 
@@ -140,8 +143,9 @@ def test_installer_wires_drive_and_completion_gate_into_claude_code(
     stop_cmds = hooks["Stop"]
     gate_idx = next(i for i, e in enumerate(stop_cmds)
                     if "completion_gate" in str(e.get("command", "")))
+    # skill_mint was repointed at the hook-shaped wrapper brain.hook_skill_mint.
     mint_idx = next((i for i, e in enumerate(stop_cmds)
-                     if e.get("tool") == "brain.skill_mint"), len(stop_cmds))
+                     if e.get("tool") == "brain.hook_skill_mint"), len(stop_cmds))
     assert gate_idx < mint_idx, "completion gate must run before skill_mint"
 
 

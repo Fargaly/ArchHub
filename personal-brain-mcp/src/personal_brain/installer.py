@@ -128,6 +128,22 @@ def _gate_command() -> str:
     return f'"{py}" "{gate.as_posix()}"'
 
 
+def _completion_gate_command() -> str:
+    """Command string for the BRAIN-READING Stop gate (THE DRIVE's consumer).
+
+    The gate lives at <repo>/tools/completion_gate.py. It reads the brain's
+    server-authoritative active-work ledger and BLOCKS a premature turn-exit
+    while any claimed/open leaf's done-gate is still red (escalating to the
+    founder for human-only leaves, never an infinite grind). This is the Stop-
+    side half of the drive: pre-prompt PULLS a leaf, Stop REFUSES to exit until
+    that leaf's gate is green. Runs as a `command` hook alongside the existing
+    anti_laziness gate. Forward slashes work for Python on Windows.
+    """
+    gate = _repo_root() / "tools" / "completion_gate.py"
+    py = sys.executable or "python"
+    return f'"{py}" "{gate.as_posix()}"'
+
+
 def _brainwrap_path() -> Path:
     """The universal hook adapter (<repo>/tools/brainwrap.py).
 
@@ -162,11 +178,13 @@ HOOK_DOC_URLS: dict[str, str] = {
 
 
 def _is_gate_entry(e: Any) -> bool:
-    return (
-        isinstance(e, dict)
-        and e.get("type") == "command"
-        and "anti_laziness_gate" in str(e.get("command", ""))
-    )
+    """True for EITHER brain Stop command-gate (so install dedupes + uninstall
+    removes both): the anti-laziness gate AND the brain-reading completion gate
+    (THE DRIVE's Stop consumer)."""
+    if not (isinstance(e, dict) and e.get("type") == "command"):
+        return False
+    cmd = str(e.get("command", ""))
+    return ("anti_laziness_gate" in cmd) or ("completion_gate" in cmd)
 
 
 def _brain_hooks() -> dict[str, Any]:
@@ -183,6 +201,15 @@ def _brain_hooks() -> dict[str, Any]:
     # Field names are the ones Claude Code emits per event (UserPromptSubmit:
     # prompt/session_id/cwd · PostToolUse: tool_name/tool_input/tool_response ·
     # Stop: session_id/transcript_path · SessionStart: session_id/cwd).
+    #
+    # WRAPPER renames are ORTHOGONAL to the DRIVE: only the four canonical
+    # hook targets that needed a TYPED positional were repointed at wrappers
+    # (context→hook_context, write→observe, skill_mint→hook_skill_mint,
+    # wiring_announce→hook_session_start). The DRIVE entry
+    # (UserPromptSubmit → brain.work_assigned_block) and the brain-reading
+    # completion_gate (Stop) are SEPARATE touchpoints (AgDR-0054 BRV-02 /
+    # court defect #5, proven by test_driver_end_to_end.py) — they keep their
+    # own names and are preserved here, NOT collapsed by the wrapper change.
     return {
         "SessionStart": [
             {"type": "mcp_tool", "server": "brain",
@@ -192,6 +219,13 @@ def _brain_hooks() -> dict[str, Any]:
                   "cwd": "${cwd}",
               }}
         ],
+        # UserPromptSubmit fires BOTH halves of the pre-prompt the brain feeds
+        # every agent: RECALL (brain.hook_context — wraps brain.context to build
+        # the typed payload) AND the DRIVE (brain.work_assigned_block — the next
+        # unit of work the brain hands this runtime, claimed atomically +
+        # rendered as the <assigned_leaf> block). Without the DRIVE entry the
+        # brain drives no agent at runtime (court defect #5: the ledger was
+        # consumable but wired into nothing).
         "UserPromptSubmit": [
             {"type": "mcp_tool", "server": "brain",
               "tool": "brain.hook_context",
@@ -199,7 +233,17 @@ def _brain_hooks() -> dict[str, Any]:
                   "prompt": "${prompt}",
                   "session_id": "${session_id}",
                   "cwd": "${cwd}",
-              }}
+              }},
+            {"type": "mcp_tool", "server": "brain",
+              "tool": "brain.work_assigned_block",
+              # brain.work_assigned_block(runtime, fit, owner_user, agent_id,
+              # wrap) REQUIRES `runtime` and accepts no session_id/cwd — so the
+              # arguments map carries ONLY the runtime tag (a bare {} call would
+              # raise on the missing positional). The brain resolves the owner +
+              # claims the next leaf server-side.
+              "arguments": {
+                  "runtime": "claude_code",
+              }},
         ],
         "PostToolUse": [
             {"type": "mcp_tool", "server": "brain",
@@ -212,9 +256,19 @@ def _brain_hooks() -> dict[str, Any]:
                   "cwd": "${cwd}",
               }}
         ],
-        # Stop: the anti-laziness gate runs FIRST (it can BLOCK and force
-        # the agent to keep working), then skill_mint records the trace.
+        # Stop: TWO command gates run FIRST (either can BLOCK and force the agent
+        # to keep working), THEN skill_mint records the trace:
+        #   1. completion_gate — reads the BRAIN ledger and refuses to exit while
+        #      a claimed/open leaf's done-gate is still red (THE DRIVE's Stop
+        #      consumer; the half that makes the pre-prompt pull binding).
+        #   2. anti_laziness_gate — the never-reward-short diligence gate over
+        #      the turn's closing evidence.
+        # completion_gate runs BEFORE anti_laziness so the ledger-derived
+        # "you still have open work" verdict is checked first; both run before
+        # skill_mint (a blocking gate must fire before the trace is minted).
         "Stop": [
+            {"type": "command", "command": _completion_gate_command(),
+              "timeout": 30},
             {"type": "command", "command": _gate_command(), "timeout": 30},
             {"type": "mcp_tool", "server": "brain",
               "tool": "brain.hook_skill_mint",
@@ -956,10 +1010,14 @@ ALL_PLANS: dict[str, ClientPlan] = {
 #   docs-only               — only a rules/prompt nudge asks the agent to do
 #                            it; no executable is wired at all.
 #
-# The three touchpoints:
-#   pre_prompt_inject  → brain.context
+# The FOUR touchpoints:
+#   pre_prompt_inject  → brain.context             (RECALL: relevant memory)
+#   drive_inject       → brain.work_assigned_block (DRIVE: the next leaf the
+#                        brain hands this runtime, claimed atomically — THE
+#                        brain-driver; AgDR-0054 BRV-02 / court defect #5)
 #   post_tool_write    → brain.write
-#   stop_gate          → brain.enforce_diligence / anti_laziness_gate
+#   stop_gate          → completion_gate (brain ledger) + anti_laziness_gate /
+#                        brain.enforce_diligence
 #
 # This table is the SINGLE SOURCE the printed matrix reads — it must reflect
 # only what install() actually writes. Do NOT upgrade a cell to
@@ -972,42 +1030,50 @@ PER_TURN = "enforced-per-turn-flush"
 WRAPPER = "covered-by-brainwrap"
 DOCS = "docs-only"
 
-TOUCHPOINTS = ("pre_prompt_inject", "post_tool_write", "stop_gate")
+TOUCHPOINTS = ("pre_prompt_inject", "drive_inject", "post_tool_write", "stop_gate")
 
 COVERAGE_MATRIX: dict[str, dict[str, str]] = {
-    # Claude Code: native mcp_tool hooks for all three (with_hooks=True).
+    # Claude Code: native mcp_tool hooks for all four (with_hooks=True). The
+    # DRIVE is UserPromptSubmit → brain.work_assigned_block (claims the next leaf
+    # atomically); the Stop gate also runs completion_gate over the ledger.
     "claude-code": {
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brain.context
+        "drive_inject": ENFORCED,        # UserPromptSubmit → brain.work_assigned_block
         "post_tool_write": ENFORCED,     # PostToolUse → brain.write
-        "stop_gate": ENFORCED,           # Stop → anti_laziness_gate + skill_mint
+        "stop_gate": ENFORCED,           # Stop → completion_gate + anti_laziness + skill_mint
     },
     # Cursor: REAL Agent Hooks (https://cursor.com/docs/hooks) auto-fire
-    # brainwrap pre-prompt + stop. Cursor exposes NO per-tool hook, so the brain
-    # can't learn per-tool — but the `stop` hook → brainwrap now flushes the
+    # brainwrap pre-prompt + stop. The pre-prompt brainwrap ALSO injects the
+    # DRIVE block (brain.work_assigned_block) and the stop brainwrap ALSO runs
+    # the brain-reading completion gate. Cursor exposes NO per-tool hook, so the
+    # brain can't learn per-tool — but the `stop` hook → brainwrap flushes the
     # turn's memory to brain.write ONCE per turn (PER_TURN, not per-tool).
     "cursor": {
-        "pre_prompt_inject": ENFORCED,   # beforeSubmitPrompt → brainwrap
+        "pre_prompt_inject": ENFORCED,   # beforeSubmitPrompt → brainwrap context
+        "drive_inject": ENFORCED,        # beforeSubmitPrompt → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # stop → brainwrap flush (1×/turn)
-        "stop_gate": ENFORCED,           # stop → brainwrap
+        "stop_gate": ENFORCED,           # stop → brainwrap (completion gate + diligence)
     },
     # Codex CLI: REAL hooks.json (Confirmed: developers.openai.com/codex/hooks)
-    # auto-fires brainwrap on UserPromptSubmit (context) + Stop (gate). No
-    # per-tool hook exists — but the Stop hook → brainwrap now flushes the
-    # turn's memory to brain.write ONCE per turn (PER_TURN, not per-tool).
+    # auto-fires brainwrap on UserPromptSubmit (context + DRIVE) + Stop (gate).
+    # No per-tool hook exists — but the Stop hook → brainwrap flushes the turn's
+    # memory to brain.write ONCE per turn (PER_TURN, not per-tool).
     "codex": {
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brainwrap context
+        "drive_inject": ENFORCED,        # UserPromptSubmit → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # Stop → brainwrap flush (1×/turn)
-        "stop_gate": ENFORCED,           # Stop → brainwrap stop
+        "stop_gate": ENFORCED,           # Stop → brainwrap stop (completion gate + diligence)
     },
     # Gemini CLI: REAL settings.json hooks (Confirmed: geminicli.com/docs/
-    # hooks/reference). Per-turn BeforeAgent injects context + per-turn
+    # hooks/reference). Per-turn BeforeAgent injects context + DRIVE + per-turn
     # AfterAgent fires after the final response → both brainwrap. No per-tool
-    # hook exists — but AfterAgent → brainwrap now flushes the turn's memory to
+    # hook exists — but AfterAgent → brainwrap flushes the turn's memory to
     # brain.write ONCE per turn (PER_TURN, not per-tool).
     "gemini-cli": {
         "pre_prompt_inject": ENFORCED,   # BeforeAgent → brainwrap context
+        "drive_inject": ENFORCED,        # BeforeAgent → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # AfterAgent → brainwrap flush (1×/turn)
-        "stop_gate": ENFORCED,           # AfterAgent → brainwrap stop
+        "stop_gate": ENFORCED,           # AfterAgent → brainwrap stop (completion gate + diligence)
     },
 }
 
@@ -1044,7 +1110,9 @@ def print_coverage_matrix(
     """
     out = stream or sys.stdout
     matrix = coverage_matrix(only)
-    headers = ("pre-prompt inject", "post-tool write", "stop-gate")
+    # headers MUST align 1:1 with TOUCHPOINTS order.
+    headers = ("pre-prompt inject", "drive inject", "post-tool write",
+               "stop-gate")
     name_w = max([len("vendor")] + [len(n) for n in matrix]) if matrix else 6
     col_w = max(len(WRAPPER), len(ENFORCED), len(PER_TURN), len(DOCS),
                 *(len(h) for h in headers))

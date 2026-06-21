@@ -61,11 +61,13 @@ def test_claude_code_gets_real_hooks_for_all_three_touchpoints(fake_home):
     installer.install_all(only=["claude-code"])
     cfg = json.loads(installer._claude_code_path().read_text())
     hooks = cfg["hooks"]
-    # pre-prompt inject
-    assert any(e.get("tool") == "brain.context"
+    # pre-prompt inject — brain.context was repointed at the hook-shaped wrapper
+    # brain.hook_context (carries the typed `arguments` the bare hook lacked).
+    assert any(e.get("tool") == "brain.hook_context"
                for e in hooks["UserPromptSubmit"])
-    # post-tool write
-    assert any(e.get("tool") == "brain.write" for e in hooks["PostToolUse"])
+    # post-tool write — brain.write was repointed at the hook-shaped wrapper
+    # brain.observe (synthesizes the ADD WriteOp the bare hook couldn't).
+    assert any(e.get("tool") == "brain.observe" for e in hooks["PostToolUse"])
     # stop-gate: the anti_laziness command gate is present
     stop = hooks["Stop"]
     assert any("anti_laziness_gate" in str(e.get("command", "")) for e in stop)

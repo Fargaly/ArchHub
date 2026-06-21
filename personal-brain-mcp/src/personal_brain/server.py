@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .models import (
+    Confidence,
     ContextResponse,
     Fragment,
     FragmentKind,
@@ -784,6 +785,212 @@ def build_server(
         )
         resp = announce_wiring(store=store, req=req, owner_user=owner)
         return resp.model_dump(mode="json")
+
+    # ───────────────── Claude Code HOOK WRAPPERS (the fix) ─────────────────
+    # ROOT CAUSE (2026-06-21): Claude Code's `mcp_tool` hooks call the brain
+    # tool with the hook's RAW payload as `arguments`. The four real targets
+    # (brain.context / brain.write / brain.skill_mint / brain.wiring_announce)
+    # each take a TYPED positional (prompt / ops:LIST / trace:dict / device_id)
+    # that `${...}` interpolation cannot build from scalar hook fields — so
+    # every hook fired with the wrong/empty shape and FAILED. Result: no
+    # context recall, no memory written, no skills minted, no wiring announce
+    # → "memory + learning + drive don't persist across sessions."
+    #
+    # These four THIN wrappers accept the exact field names Claude Code emits
+    # for each event, tolerate ANY extra kwargs (hook_event_name, transcript
+    # fields, …) via **_ignored, synthesize the real typed call internally, and
+    # delegate to the SAME logic the canonical tools use (ONE-SYSTEM — no new
+    # store, no parallel path). Each is FAST + failure-tolerant: a hook must
+    # NEVER hard-error, so every wrapper swallows internal failures to a soft
+    # result dict. The hooks in settings.json / installer.py point HERE with an
+    # `arguments` map built from the hook's scalar fields.
+
+    @mcp.tool(
+        name="brain.hook_context",
+        description=(
+            "Claude Code UserPromptSubmit hook target (wrapper). Accepts the "
+            "raw hook payload (prompt + session_id + cwd + any extra fields), "
+            "resolves the bound owner, and returns the same context injection "
+            "block brain.context produces. Tolerant of unexpected kwargs so "
+            "the hook never errors."
+        ),
+    )
+    def brain_hook_context(
+        prompt: Optional[str] = None,
+        session_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        **_ignored: Any,
+    ) -> dict[str, Any]:
+        try:
+            text = (prompt or "").strip()
+            if not text:
+                # Empty prompt (e.g. slash-command turn) — nothing to recall;
+                # return an empty-but-valid context so the hook is a no-op.
+                return {
+                    "ok": True,
+                    "injection": "",
+                    "skills": [],
+                    "facts": [],
+                    "note": "empty prompt — no context injected",
+                }
+            owner = resolve_default_owner()
+            resp = make_context_payload(
+                store=store,
+                prompt=text,
+                owner_user=owner,
+                cwd=cwd,
+            )
+            out = resp.model_dump(mode="json")
+            out["ok"] = True
+            return out
+        except Exception as ex:  # a hook must never hard-error
+            return {
+                "ok": False,
+                "injection": "",
+                "skills": [],
+                "facts": [],
+                "error": f"{type(ex).__name__}: {ex}",
+            }
+
+    @mcp.tool(
+        name="brain.observe",
+        description=(
+            "Claude Code PostToolUse hook target (wrapper). Synthesizes ONE "
+            "ADD memory op from a raw tool-call payload (tool_name + "
+            "tool_input + tool_response) with provenance "
+            "(contributing_agent='claude-code', session_id, bound owner) and "
+            "applies it through the SAME write path brain.write uses — mirroring "
+            "app/memory_gate._synthesize_fragment. This is how the brain LEARNS "
+            "after every tool call. Cheap, non-blocking, swallows errors to a "
+            "soft result. Tolerant of unexpected kwargs."
+        ),
+    )
+    def brain_observe(
+        tool_name: Optional[str] = None,
+        tool_input: Optional[Any] = None,
+        tool_response: Optional[Any] = None,
+        session_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        **_ignored: Any,
+    ) -> dict[str, Any]:
+        try:
+            tname = (tool_name or "").strip() or "unknown_tool"
+            owner = resolve_default_owner()
+
+            # Strip op:// / api-key-shaped secrets from the captured payload so
+            # nothing sensitive lands in memory (same policy as memory_gate).
+            input_summary = _summarise_hook_value(_redact_hook_value(tool_input))
+            result_summary = _summarise_hook_value(_redact_hook_value(tool_response))
+            text = f"{tname}({input_summary}) → {result_summary}"
+
+            # Stable, content-derived id (dedupe re-fires of the same call).
+            frag_id = _hash_id(
+                "observe", tname, (session_id or ""), text[:200]
+            )
+            fragment = Fragment(
+                id=frag_id,
+                kind=FragmentKind.FACT,
+                text=text,
+                subject=tname,
+                predicate="produced",
+                object=result_summary[:120],
+                scope=Scope.USER,
+                visibility=Visibility.PRIVATE,
+                owner_user=owner,
+                confidence=Confidence.EXTRACTED,
+                provenance=Provenance(
+                    contributing_agent="claude-code",
+                    contributing_user=owner,
+                    session_id=session_id,
+                    created_at=datetime.now(timezone.utc),
+                ),
+                extra={"source": "hook.observe", "cwd": cwd},
+            )
+            # Same typed write path brain.write delegates to — a LIST of ops.
+            resp = apply_write(
+                store=store,
+                ops=[WriteOp(op=WriteOpType.ADD, fragment=fragment)],
+            )
+            result = resp.model_dump(mode="json")
+            result["ok"] = True
+            return result
+        except Exception as ex:  # a hook must never hard-error
+            return {"ok": False, "ops_applied": 0,
+                    "error": f"{type(ex).__name__}: {ex}"}
+
+    @mcp.tool(
+        name="brain.hook_skill_mint",
+        description=(
+            "Claude Code Stop hook target (wrapper). Reads the session "
+            "transcript JSONL (transcript_path), extracts tool_use / "
+            "tool_result events into a trace {trace_id, tool_calls:[{name, "
+            "status}]}, and runs the SAME skill_mint pipeline brain.skill_mint "
+            "uses (novelty + success gates → reflexion mint). No transcript → "
+            "soft no-op. Tolerant of unexpected kwargs; never hard-errors."
+        ),
+    )
+    def brain_hook_skill_mint(
+        session_id: Optional[str] = None,
+        transcript_path: Optional[str] = None,
+        cwd: Optional[str] = None,
+        **_ignored: Any,
+    ) -> dict[str, Any]:
+        try:
+            trace = _trace_from_transcript(transcript_path, session_id)
+            if trace is None or not trace.get("tool_calls"):
+                return {
+                    "ok": True,
+                    "queued": False,
+                    "reason": (
+                        "no transcript / no tool calls — skill mint skipped"
+                    ),
+                }
+            owner = resolve_default_owner()
+            result = queue_skill_mint(
+                store=store,
+                trace=trace,
+                outcome="success",
+                owner_user=owner,
+                contributing_agent="claude-code",
+                session_id=session_id,
+            )
+            out = result.model_dump(mode="json")
+            out["ok"] = True
+            return out
+        except Exception as ex:  # a hook must never hard-error
+            return {"ok": False, "queued": False,
+                    "error": f"{type(ex).__name__}: {ex}"}
+
+    @mcp.tool(
+        name="brain.hook_session_start",
+        description=(
+            "Claude Code SessionStart hook target (wrapper). Announces this "
+            "session's wiring (device_id=session_id, cwd) through the SAME "
+            "path brain.wiring_announce uses, so the brain has the scope hint "
+            "for the session. Tolerant of unexpected kwargs; never hard-errors."
+        ),
+    )
+    def brain_hook_session_start(
+        session_id: Optional[str] = None,
+        cwd: Optional[str] = None,
+        **_ignored: Any,
+    ) -> dict[str, Any]:
+        try:
+            owner = resolve_default_owner()
+            device = (session_id or "").strip() or "claude-code-session"
+            req = WiringAnnounceRequest(
+                device_id=device,
+                entries=[],
+                secret_refs=[],
+                cwd=cwd,
+                git_remote=None,
+            )
+            resp = announce_wiring(store=store, req=req, owner_user=owner)
+            out = resp.model_dump(mode="json")
+            out["ok"] = True
+            return out
+        except Exception as ex:  # a hook must never hard-error
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.promote",
@@ -2152,6 +2359,140 @@ def _hash_id(*parts: str) -> str:
         h.update(p.encode("utf-8"))
         h.update(b"\x1f")
     return h.hexdigest()
+
+
+# ── hook-wrapper helpers (Claude Code hook payloads → brain calls) ──────
+
+
+_SECRET_PREFIXES = ("op://", "vault://", "wcm://", "sk-", "ghp_", "AKIA",
+                    "ya29.")
+
+
+def _redact_hook_value(obj: Any) -> Any:
+    """Recursively replace secret-shaped strings with `<secret>` so a captured
+    tool payload never lands secrets in memory. Mirrors
+    app/memory_gate._strip_secrets — ONE policy, two call sites."""
+    if isinstance(obj, str):
+        if any(obj.startswith(p) for p in _SECRET_PREFIXES):
+            return "<secret>"
+        return obj
+    if isinstance(obj, dict):
+        return {k: _redact_hook_value(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_hook_value(v) for v in obj]
+    return obj
+
+
+def _summarise_hook_value(obj: Any, *, limit: int = 160) -> str:
+    """Compact one-line summary of a hook payload value (tool_input /
+    tool_response) for the fragment text. Claude Code may send these as a JSON
+    string OR an already-parsed object — handle both. Never raises."""
+    if obj is None:
+        return "∅"
+    # Claude Code interpolates ${tool_input} as a JSON STRING — try to parse
+    # it so the summary reflects structure, but fall back to the raw string.
+    if isinstance(obj, str):
+        s = obj.strip()
+        if s[:1] in ("{", "[") and s[-1:] in ("}", "]"):
+            try:
+                import json as _json
+                obj = _json.loads(s)
+            except Exception:
+                return s[:limit]
+        else:
+            return s[:limit] if s else "∅"
+    if isinstance(obj, (int, float, bool)):
+        return str(obj)[:limit]
+    if isinstance(obj, dict):
+        keys = sorted(str(k) for k in obj.keys())[:6]
+        return ("keys{" + ", ".join(keys) + "}")[:limit]
+    if isinstance(obj, list):
+        return f"list[{len(obj)}]"
+    return type(obj).__name__
+
+
+def _trace_from_transcript(
+    transcript_path: Optional[str], session_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    """Build a skill_mint trace from a Claude Code transcript JSONL.
+
+    The transcript is one JSON object per line (the agent's message stream).
+    We walk it for tool-use + tool-result events and emit a
+    `{trace_id, tool_calls:[{name, status}], outcome, user_message}` trace
+    shaped exactly like the one queue_skill_mint expects (it reads
+    `tool_calls[*].status == 'ok'`). Returns None when the file is missing /
+    unreadable / has no tool calls. Never raises."""
+    if not transcript_path:
+        return None
+    try:
+        from pathlib import Path as _Path
+        import json as _json
+
+        p = _Path(transcript_path)
+        if not p.exists():
+            return None
+
+        tool_calls: list[dict[str, Any]] = []
+        # tool_use_id → index in tool_calls, so a later tool_result can flip
+        # that call's status from the result's is_error flag.
+        by_use_id: dict[str, int] = {}
+        user_message = ""
+
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                evt = _json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(evt, dict):
+                continue
+
+            msg = evt.get("message") if isinstance(evt.get("message"), dict) else evt
+            role = msg.get("role") or evt.get("type")
+            content = msg.get("content")
+
+            # Capture the first real user prompt for the trace summary.
+            if role == "user" and not user_message:
+                if isinstance(content, str):
+                    user_message = content
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            user_message = str(block.get("text") or "")
+                            break
+
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "tool_use":
+                    name = str(block.get("name") or "tool")
+                    idx = len(tool_calls)
+                    tool_calls.append({"name": name, "status": "ok"})
+                    uid = block.get("id")
+                    if isinstance(uid, str):
+                        by_use_id[uid] = idx
+                elif btype == "tool_result":
+                    uid = block.get("tool_use_id")
+                    if isinstance(uid, str) and uid in by_use_id:
+                        if block.get("is_error"):
+                            tool_calls[by_use_id[uid]]["status"] = "error"
+
+        if not tool_calls:
+            return None
+        return {
+            "trace_id": session_id or p.stem,
+            "session_id": session_id,
+            "tool_calls": tool_calls,
+            "outcome": "success",
+            "user_message": user_message[:200],
+        }
+    except Exception:
+        return None
 
 
 def _summarise_trace(trace: dict[str, Any]) -> str:

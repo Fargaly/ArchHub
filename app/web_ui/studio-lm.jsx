@@ -15257,7 +15257,7 @@ const BrainFoldersModalInner = ({ _themeBump }) => {   // _themeBump: theme-repa
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="filter facts…" style={{
               flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12.5, outline:'none', fontFamily:LM.sans }}/>
           </div>
-          <button onClick={close} title="Close" style={{ background:'transparent', border:0, color:LM.inkMuted, fontSize:20, cursor:'pointer', lineHeight:1 }}>×</button>
+          <button onClick={close} title="Close" aria-label="Close" style={{ background:'transparent', border:0, color:LM.inkMuted, fontSize:20, cursor:'pointer', lineHeight:1 }}>×</button>
         </div>
         {/* Body: folder tree | detail */}
         <div style={{ flex:1, display:'flex', minHeight:0 }}>

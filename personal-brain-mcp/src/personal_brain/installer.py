@@ -188,26 +188,73 @@ def _is_gate_entry(e: Any) -> bool:
 
 
 def _brain_hooks() -> dict[str, Any]:
+    # Each mcp_tool hook points at a HOOK-SHAPED WRAPPER tool (server.py
+    # brain.hook_*/brain.observe) and carries an `arguments` map built from
+    # the hook event's scalar fields. WHY wrappers + arguments: Claude Code
+    # calls the hook tool with this `arguments` object; the canonical tools
+    # (brain.context / brain.write / brain.skill_mint / brain.wiring_announce)
+    # need a TYPED positional (prompt / ops:LIST / trace:dict / device_id)
+    # that `${...}` interpolation can't synthesize from scalar fields — so a
+    # bare hook with NO arguments fired every tool with the wrong/empty shape
+    # and FAILED (no recall, no learning, no mint, no announce). The wrappers
+    # accept the raw payload (+ any extra kwargs) and build the real call.
+    # Field names are the ones Claude Code emits per event (UserPromptSubmit:
+    # prompt/session_id/cwd · PostToolUse: tool_name/tool_input/tool_response ·
+    # Stop: session_id/transcript_path · SessionStart: session_id/cwd).
+    #
+    # WRAPPER renames are ORTHOGONAL to the DRIVE: only the four canonical
+    # hook targets that needed a TYPED positional were repointed at wrappers
+    # (context→hook_context, write→observe, skill_mint→hook_skill_mint,
+    # wiring_announce→hook_session_start). The DRIVE entry
+    # (UserPromptSubmit → brain.work_assigned_block) and the brain-reading
+    # completion_gate (Stop) are SEPARATE touchpoints (AgDR-0054 BRV-02 /
+    # court defect #5, proven by test_driver_end_to_end.py) — they keep their
+    # own names and are preserved here, NOT collapsed by the wrapper change.
     return {
         "SessionStart": [
             {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.wiring_announce"}
+              "tool": "brain.hook_session_start",
+              "arguments": {
+                  "session_id": "${session_id}",
+                  "cwd": "${cwd}",
+              }}
         ],
         # UserPromptSubmit fires BOTH halves of the pre-prompt the brain feeds
-        # every agent: RECALL (brain.context — relevant memory) AND the DRIVE
-        # (brain.work_assigned_block — the next unit of work the brain hands this
-        # runtime, claimed atomically + rendered as the <assigned_leaf> block).
-        # Without the DRIVE entry the brain drives no agent at runtime (court
-        # defect #5: the ledger was consumable but wired into nothing).
+        # every agent: RECALL (brain.hook_context — wraps brain.context to build
+        # the typed payload) AND the DRIVE (brain.work_assigned_block — the next
+        # unit of work the brain hands this runtime, claimed atomically +
+        # rendered as the <assigned_leaf> block). Without the DRIVE entry the
+        # brain drives no agent at runtime (court defect #5: the ledger was
+        # consumable but wired into nothing).
         "UserPromptSubmit": [
             {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.context"},
+              "tool": "brain.hook_context",
+              "arguments": {
+                  "prompt": "${prompt}",
+                  "session_id": "${session_id}",
+                  "cwd": "${cwd}",
+              }},
             {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.work_assigned_block"},
+              "tool": "brain.work_assigned_block",
+              # brain.work_assigned_block(runtime, fit, owner_user, agent_id,
+              # wrap) REQUIRES `runtime` and accepts no session_id/cwd — so the
+              # arguments map carries ONLY the runtime tag (a bare {} call would
+              # raise on the missing positional). The brain resolves the owner +
+              # claims the next leaf server-side.
+              "arguments": {
+                  "runtime": "claude_code",
+              }},
         ],
         "PostToolUse": [
             {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.write"}
+              "tool": "brain.observe",
+              "arguments": {
+                  "tool_name": "${tool_name}",
+                  "tool_input": "${tool_input}",
+                  "tool_response": "${tool_response}",
+                  "session_id": "${session_id}",
+                  "cwd": "${cwd}",
+              }}
         ],
         # Stop: TWO command gates run FIRST (either can BLOCK and force the agent
         # to keep working), THEN skill_mint records the trace:
@@ -217,13 +264,19 @@ def _brain_hooks() -> dict[str, Any]:
         #   2. anti_laziness_gate — the never-reward-short diligence gate over
         #      the turn's closing evidence.
         # completion_gate runs BEFORE anti_laziness so the ledger-derived
-        # "you still have open work" verdict is checked first.
+        # "you still have open work" verdict is checked first; both run before
+        # skill_mint (a blocking gate must fire before the trace is minted).
         "Stop": [
             {"type": "command", "command": _completion_gate_command(),
               "timeout": 30},
             {"type": "command", "command": _gate_command(), "timeout": 30},
             {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.skill_mint"},
+              "tool": "brain.hook_skill_mint",
+              "arguments": {
+                  "session_id": "${session_id}",
+                  "transcript_path": "${transcript_path}",
+                  "cwd": "${cwd}",
+              }},
         ],
     }
 
@@ -982,7 +1035,7 @@ TOUCHPOINTS = ("pre_prompt_inject", "drive_inject", "post_tool_write", "stop_gat
 COVERAGE_MATRIX: dict[str, dict[str, str]] = {
     # Claude Code: native mcp_tool hooks for all four (with_hooks=True). The
     # DRIVE is UserPromptSubmit → brain.work_assigned_block (claims the next leaf
-    # atomically); the Stop gate now also runs completion_gate over the ledger.
+    # atomically); the Stop gate also runs completion_gate over the ledger.
     "claude-code": {
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brain.context
         "drive_inject": ENFORCED,        # UserPromptSubmit → brain.work_assigned_block
@@ -990,7 +1043,7 @@ COVERAGE_MATRIX: dict[str, dict[str, str]] = {
         "stop_gate": ENFORCED,           # Stop → completion_gate + anti_laziness + skill_mint
     },
     # Cursor: REAL Agent Hooks (https://cursor.com/docs/hooks) auto-fire
-    # brainwrap pre-prompt + stop. The pre-prompt brainwrap now ALSO injects the
+    # brainwrap pre-prompt + stop. The pre-prompt brainwrap ALSO injects the
     # DRIVE block (brain.work_assigned_block) and the stop brainwrap ALSO runs
     # the brain-reading completion gate. Cursor exposes NO per-tool hook, so the
     # brain can't learn per-tool — but the `stop` hook → brainwrap flushes the

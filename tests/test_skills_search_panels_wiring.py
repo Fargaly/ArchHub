@@ -269,13 +269,18 @@ class TestSearchPanelWiring:
 
 
 class TestPanelsReachable:
-    def test_rail_has_skills_and_search_items(self):
-        # The IconRail `items` array is the visible left-rail affordance.
-        block = _jsx_window("const IconRailInner = (", size=2200)
-        assert "id:'skills', title:'Skills'" in re.sub(r"\s+", " ", block), (
-            "the left rail must expose a Skills destination icon")
-        assert "id:'search', title:'Search'" in re.sub(r"\s+", " ", block), (
-            "the left rail must expose a Search destination icon")
+    def test_rail_has_search_skills_via_cmdk(self):
+        # Founder 2026-06-20 ("strip to essentials" + "I don't want the UI
+        # cramped with shit with no use"): Skills + Nodes were REMOVED from the
+        # rail (redundant with the graph library / Cmd-K). Search stays. This
+        # locks the strip so they can't silently return to the rail.
+        block = re.sub(r"\s+", " ", _jsx_window("const IconRailInner = (", size=2200))
+        assert "id:'search', title:'Search'" in block, (
+            "the left rail must keep a Search destination icon")
+        assert "id:'skills', title:'Skills'" not in block, (
+            "Skills must NOT be a rail icon anymore (reachable via Cmd-K)")
+        assert "id:'nodes', title:'Nodes'" not in block, (
+            "Nodes must NOT be a rail icon anymore (reachable via the library)")
 
     def test_sidebar_mounts_panels_on_rail_switch(self):
         block = _jsx_window("const SidebarInner = (", size=1400)
@@ -329,7 +334,8 @@ class TestCompiledBundleParity:
                 f"{slot} async wiring must be in the compiled bundle")
 
     def test_rail_items_in_bundle(self):
-        assert "id:'skills'" in _COMPILED_FLAT
+        # Stripped rail (founder 2026-06-20): Search is the kept rail destination.
+        # (Skills/Nodes are no longer rail items — reachable via Cmd-K/library.)
         assert "id:'search'" in _COMPILED_FLAT
 
     def test_canvas_skill_drop_in_bundle(self):

@@ -1686,6 +1686,33 @@ const _lmPreferInPort = (ins) => (
   || (ins || [])[0]
 );
 
+// SESSION-REOPEN FIX — tolerate BOTH message schemas on load. The live canvas
+// renders an ai node's messages reading m.me (bool) + m.text (str). But chat-
+// composer sessions were persisted/migrated as {role,content} (role 'user' ⇒
+// user turn, 'assistant' ⇒ AI). A node carrying {role,content} rendered blank
+// → "the conversation is gone" on reopen. The Python load boundary
+// (graph_to_lmgraph) now emits {me,text}; this is the belt-and-braces JSX side
+// so even a session loaded through a path that skips the translator (or an old
+// in-memory blob) self-heals. Lossless + idempotent: a message already in
+// {me,text} shape passes through; model/images/streaming preserved.
+const _lmNormalizeMessages = (msgs) => {
+  if (!Array.isArray(msgs)) return [];
+  return msgs.map((m) => {
+    if (!m || typeof m !== 'object') return { me: false, text: String(m == null ? '' : m) };
+    // Already canvas-shaped — keep verbatim.
+    if ('me' in m || 'text' in m) {
+      if (typeof m.text === 'string') return m;
+      return { ...m, text: (m.text != null ? String(m.text) : (m.content || '')) };
+    }
+    // {role, content} → {me, text}; carry model/images when present.
+    const out = { me: m.role === 'user', text: m.content || '' };
+    if (m.model) out.model = m.model;
+    if (m.images) out.images = m.images;
+    if (m._collapsed_count) out._collapsed_count = m._collapsed_count;
+    return out;
+  });
+};
+
 // HELPER 1 — upgrade legacy saved nodes IN PLACE to the grammar shape, then
 // remap any wire whose port id no longer exists on its (now re-ported) node.
 // Extracted verbatim from openSession's inline upgrade body so there is ONE
@@ -1732,7 +1759,14 @@ const _upgradeLegacyNodes = (nodes, wires) => {
       } else if ((n.cat === 'ai' && !n.kind) || (n.kind === 'ai_chat' && portless)) {
         n.kind = 'ai_chat';
         if (!Array.isArray(n.messages)) n.messages = [];
+        // Coerce {role,content}-persisted messages to the {me,text} shape the
+        // renderer reads — otherwise the rail is blank on reopen.
+        n.messages = _lmNormalizeMessages(n.messages);
         _setPorts(n, _aiPrim);
+      } else if (n.cat === 'ai' && Array.isArray(n.messages)) {
+        // Already-kinded ai node (e.g. a translated multi-node graph) — still
+        // normalise its messages so a {role,content} carry-over renders.
+        n.messages = _lmNormalizeMessages(n.messages);
       }
     });
     // Remap any wire whose port id no longer exists on its (now re-ported)

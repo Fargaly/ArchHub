@@ -16,9 +16,29 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// web/src/lib → repo root is three up.
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const CHANGELOG_PATH = path.join(REPO_ROOT, 'CHANGELOG.md');
+
+/**
+ * Locate the repo-root CHANGELOG.md. During `astro build` this module gets
+ * bundled by Vite, so `import.meta.url` no longer points at web/src/lib —
+ * the old hard-coded "three up" resolved to web/CHANGELOG.md (ENOENT) and the
+ * page silently rendered "source unavailable". We probe a list of candidates
+ * (module-relative AND cwd-relative — `astro build` runs from web/) and use the
+ * first that exists, so the changelog renders no matter where the build runs.
+ */
+function resolveChangelogPath() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', '..', 'CHANGELOG.md'), // web/src/lib → repo root (dev)
+    path.resolve(process.cwd(), '..', 'CHANGELOG.md'),         // cwd = web/ → repo root (astro build)
+    path.resolve(process.cwd(), 'CHANGELOG.md'),               // cwd = repo root
+    path.resolve(__dirname, '..', '..', 'CHANGELOG.md'),       // bundled one level shallower
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0]; // fall back to the canonical path for a clear ENOENT error
+}
+
+const CHANGELOG_PATH = resolveChangelogPath();
 
 // Matches "## [1.3.2] — 2026-05-13" / "## [1.3.2] - 2026-05-13".
 const RELEASE_RE = /^##\s+\[([^\]]+)\]\s*[—-]\s*(.+?)\s*$/;

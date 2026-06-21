@@ -28,6 +28,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,5 +71,20 @@ run('extract_pricing (cloud_backend/billing.py)', python, ['extract_pricing.py']
 const exporter = path.resolve(__dirname, '..', '..', 'tools', 'export_web_data.py');
 run('export_web_data (brain → skills-export.json + contributors.json)',
     python, [exporter], { required: false });
+
+// 5. Mirror the repo-root CHANGELOG.md INTO web/ so the Dockerfile build
+//    context (which is web/ only) can read it. WITHOUT this, the deployed
+//    /changelog renders EMPTY even when CHANGELOG.md is current — the Docker
+//    build can't see the repo-root file, so changelog.js needs the web/ copy
+//    (founder bug 2026-06-21: live /changelog stuck at 1.3.2 while the source
+//    was already at 1.6.7). Keep this LAST so the mirror reflects the latest.
+try {
+  const _clSrc = path.resolve(__dirname, '..', '..', 'CHANGELOG.md');
+  const _clDst = path.resolve(__dirname, '..', 'CHANGELOG.md');
+  fs.copyFileSync(_clSrc, _clDst);
+  console.log('[refresh-content] mirrored CHANGELOG.md -> web/CHANGELOG.md (Docker build context)');
+} catch (e) {
+  console.warn('[refresh-content] CHANGELOG.md mirror skipped:', e.message);
+}
 
 console.log('\n[refresh-content] done. Review `git diff web/src/data web/public/brain` and commit.');

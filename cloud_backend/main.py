@@ -42,6 +42,7 @@ import billing
 import companies
 import config
 import db
+import founder_cockpit
 import google_auth
 import marketplace
 import proxy
@@ -84,6 +85,37 @@ app.include_router(marketplace.router)
 
 # Companies / multi-seat — POST /v1/companies, invites, members, switch.
 app.include_router(companies.router)
+
+# Founder Cockpit (PHASE 5) — PRIVATE founder-only admin dashboard. Every
+# route is behind founder_cockpit.require_founder (email == FOUNDER_EMAIL);
+# everyone else (incl. unauthenticated) gets 403. Cloud-backend only — it is
+# NOT part of the desktop user app.
+app.include_router(founder_cockpit.router)
+
+
+# Feed the cockpit's in-process error ring from unhandled server errors.
+# This is the minimal error store the founder dashboard surfaces — it appends
+# on every uncaught exception, then re-raises so FastAPI's normal 500 handling
+# is unchanged. HTTPExceptions with 5xx status are recorded too (a 5xx is a
+# server fault worth seeing); 4xx client errors are intentionally NOT recorded
+# (they are not server faults and would drown the ring in routine auth misses).
+@app.exception_handler(HTTPException)
+async def _record_http_exc(request: Request, exc: HTTPException):
+    from fastapi.exception_handlers import http_exception_handler
+    if exc.status_code >= 500:
+        founder_cockpit.record_error(
+            where=str(request.url.path), kind="HTTPException",
+            message=str(exc.detail), status=exc.status_code)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _record_unhandled_exc(request: Request, exc: Exception):
+    founder_cockpit.record_error(
+        where=str(request.url.path), kind=type(exc).__name__,
+        message=str(exc), status=500)
+    return JSONResponse(status_code=500,
+                        content={"detail": "internal_server_error"})
 
 
 # ---------------------------------------------------------------------------

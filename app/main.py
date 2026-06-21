@@ -699,81 +699,124 @@ def _gpu_self_probe(app) -> None:
         from PyQt6.QtCore import QCoreApplication, QEventLoop, QDeadlineTimer
         from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-        result: dict[str, object] = {"renderer": None, "done": False}
+        software_signals = (
+            "swiftshader", "software", "llvmpipe",
+            "microsoft basic render", "basic render driver", "no_webgl",
+        )
 
-        def _cb(value):
+        def _probe_once() -> "dict":
+            """One throwaway WebGL probe attempt. Returns
+            ``{ok, wedged, hardware, text}`` and never raises — a wedged or
+            errored attempt is reported, not propagated. ``hardware`` is True
+            ONLY when a real (non-software) renderer string came back; that is
+            the positive signal that overrides a sibling attempt's flake."""
+            result: dict[str, object] = {"renderer": None, "done": False}
+
+            def _cb(value):
+                try:
+                    result["renderer"] = value
+                finally:
+                    result["done"] = True
+
+            view = QWebEngineView()
             try:
-                result["renderer"] = value
+                # Tiny page: resolve the unmasked GPU renderer string, or "" on
+                # any failure to get a WebGL context (a strong software signal).
+                html = (
+                    "<!doctype html><html><body><script>"
+                    "(function(){try{"
+                    "var c=document.createElement('canvas');"
+                    "var gl=c.getContext('webgl')||c.getContext('experimental-webgl');"
+                    "if(!gl){document.title='NO_WEBGL';return;}"
+                    "var e=gl.getExtension('WEBGL_debug_renderer_info');"
+                    "var r=e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):"
+                    "gl.getParameter(gl.RENDERER);"
+                    "document.title=String(r||'');"
+                    "}catch(err){document.title='PROBE_ERR';}})();"
+                    "</script></body></html>"
+                )
+                page = view.page()
+                page.loadFinished.connect(
+                    lambda ok: page.runJavaScript("document.title", _cb))
+                view.setHtml(html)
+
+                # Pump events with a hard deadline. WaitForMoreEvents blocks each
+                # pump up to 100ms for an event (no busy-spin); deadline bounds
+                # the attempt so a wedged GPU init can't hang the boot.
+                _flags = (QEventLoop.ProcessEventsFlag.AllEvents
+                          | QEventLoop.ProcessEventsFlag.WaitForMoreEvents)
+                dl = QDeadlineTimer(4000)
+                while not result["done"] and not dl.hasExpired():
+                    QCoreApplication.processEvents(_flags, 100)
+
+                wedged = not result["done"]
+                text = str(result["renderer"] or "").strip()
+                low = text.lower()
+                is_software = (text in ("", "PROBE_ERR")
+                               or any(sig in low for sig in software_signals))
+                hardware = (not wedged and not is_software and text != "")
+                return {"ok": (not wedged and not is_software),
+                        "wedged": wedged, "hardware": hardware, "text": text}
             finally:
-                result["done"] = True
-
-        view = QWebEngineView()
-        try:
-            # Tiny page: resolve the unmasked GPU renderer string, or "" on any
-            # failure to get a WebGL context (itself a strong software signal).
-            html = (
-                "<!doctype html><html><body><script>"
-                "(function(){try{"
-                "var c=document.createElement('canvas');"
-                "var gl=c.getContext('webgl')||c.getContext('experimental-webgl');"
-                "if(!gl){document.title='NO_WEBGL';return;}"
-                "var e=gl.getExtension('WEBGL_debug_renderer_info');"
-                "var r=e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):"
-                "gl.getParameter(gl.RENDERER);"
-                "document.title=String(r||'');"
-                "}catch(err){document.title='PROBE_ERR';}})();"
-                "</script></body></html>"
-            )
-            page = view.page()
-            page.loadFinished.connect(
-                lambda ok: page.runJavaScript("document.title", _cb))
-            view.setHtml(html)
-
-            # Pump events with a hard deadline. WaitForMoreEvents blocks each
-            # pump up to 100ms for an event (no busy-spin); deadline bounds the
-            # whole probe so a wedged GPU init can't hang the boot.
-            _flags = (QEventLoop.ProcessEventsFlag.AllEvents
-                      | QEventLoop.ProcessEventsFlag.WaitForMoreEvents)
-            dl = QDeadlineTimer(4000)
-            while not result["done"] and not dl.hasExpired():
-                QCoreApplication.processEvents(_flags, 100)
-
-            renderer = result["renderer"]
-            wedged = not result["done"]
-            text = str(renderer or "").strip()
-            low = text.lower()
-            software_signals = (
-                "swiftshader", "software", "llvmpipe",
-                "microsoft basic render", "basic render driver", "no_webgl",
-            )
-            is_software = (text in ("", "PROBE_ERR")
-                           or any(sig in low for sig in software_signals))
-
-            if wedged or is_software:
-                why = ("probe wedged (no WebGL renderer before deadline)"
-                       if wedged else
-                       f"renderer reports software: {text!r}")
-                persist_software_render_marker(reason=f"boot gpu self-probe: {why}")
                 try:
-                    import logging as _logging
-                    _logging.getLogger("archhub.boot").warning(
-                        "[gpu-resilience] GPU self-probe FAILED (%s) -> pinned "
-                        "this machine to software render; next launch uses "
-                        "--disable-gpu", why)
+                    view.setParent(None)
+                    view.deleteLater()
                 except Exception:
                     pass
-            else:
+
+        # ROOT FIX (founder lag, 2026-06-21): a healthy RTX 4060 Ti intermittently
+        # flakes to NO_WEBGL on boot because the GL context isn't ready when the
+        # probe runs (a timing race) — and the OLD code pinned software render
+        # after that SINGLE transient fail, stranding a healthy GPU in slow CPU
+        # composite forever. The probe is now RESILIENT: retry up to N times this
+        # boot, and pin software ONLY if EVERY attempt fails. A single attempt
+        # that sees a real hardware renderer wins — it proves the GPU works, so a
+        # sibling flake is treated as the race it is. The never-blank guarantee is
+        # preserved: a GENUINELY dead GPU fails all N attempts and still pins.
+        _PROBE_ATTEMPTS = 3
+        last = None
+        hardware_seen = False
+        for _attempt in range(_PROBE_ATTEMPTS):
+            last = _probe_once()
+            if last.get("hardware"):
+                hardware_seen = True
+                break  # a real hardware renderer settles it -> stay on GPU.
+            if last.get("ok"):
+                break  # clean non-software result -> stay on GPU.
+            # Transient-looking failure (wedge / NO_WEBGL / empty): give the GL
+            # stack a moment to come up, then retry before concluding software.
+            if _attempt < _PROBE_ATTEMPTS - 1:
                 try:
-                    import logging as _logging
-                    _logging.getLogger("archhub.boot").info(
-                        "[gpu-resilience] GPU self-probe OK -> hardware renderer "
-                        "%r; staying on GPU", text)
+                    QCoreApplication.processEvents(
+                        QEventLoop.ProcessEventsFlag.AllEvents, 250)
                 except Exception:
                     pass
-        finally:
+
+        probe_ok = hardware_seen or (last is not None and last.get("ok"))
+
+        if not probe_ok:
+            text = (last or {}).get("text") or ""
+            wedged = bool((last or {}).get("wedged"))
+            why = ("probe wedged (no WebGL renderer before deadline)"
+                   if wedged else
+                   f"renderer reports software: {text!r}")
+            persist_software_render_marker(
+                reason=f"boot gpu self-probe ({_PROBE_ATTEMPTS} attempts): {why}")
             try:
-                view.setParent(None)
-                view.deleteLater()
+                import logging as _logging
+                _logging.getLogger("archhub.boot").warning(
+                    "[gpu-resilience] GPU self-probe FAILED across %d attempts "
+                    "(%s) -> pinned this machine to software render; next launch "
+                    "uses --disable-gpu", _PROBE_ATTEMPTS, why)
+            except Exception:
+                pass
+        else:
+            try:
+                import logging as _logging
+                _logging.getLogger("archhub.boot").info(
+                    "[gpu-resilience] GPU self-probe OK -> hardware renderer %r; "
+                    "staying on GPU (transient flakes ignored)",
+                    (last or {}).get("text"))
             except Exception:
                 pass
     except Exception:

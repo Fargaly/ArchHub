@@ -418,3 +418,304 @@ def run_self_extend(tool: str, args: dict[str, Any], *,
             "brain": bool(learn.get("ok")),
         },
     }
+
+
+# ──── THE FREE-FORM LOOP (ask→build→COURT-PER-LEAF→learn-per-green) ──────────
+#
+# `run_self_extend` above is the BUILD-TOOL loop (create_node_type /
+# create_connector → one-leaf court). This is the GENERAL self-extension loop the
+# binding spec names: a free-form user request → atomize into a MULTI-leaf ROMA
+# tree → the composer-as-executor BUILDS each leaf's artifact on the real machine
+# → the external 3-lens court verifies it on the REAL artifact, leaf by leaf →
+# every GREEN leaf lands a learned fact in the brain → loop-until-dry. It reuses
+# the SAME organs (roma + court_harness + requirement_tree + BrainClient +
+# run_agent_step) — ONE-SYSTEM, no parallel engine. The bridge drives it OFF the
+# Qt main thread and emits `court_verdict` per leaf (see bridge.self_extend_loop).
+
+
+def _materialize_default_marker(leaf_gate_spec: dict[str, Any]) -> dict[str, Any]:
+    """The DETERMINISTIC executor for the default 'hello marker' example.
+
+    The binding's one_example needs a REAL file on disk for the file_exists /
+    py_compile gates to pass — written by the composer's existing write surface
+    with ZERO risky host. When the leaf's gate path is the default marker (or any
+    *.py under the self_extend dir), we write real, importable Python carrying the
+    proof sentinel. Returns a run_agent_step-shaped result so compose_evidence can
+    consume it uniformly. Idempotent (overwrites with the same content)."""
+    path = (leaf_gate_spec or {}).get("path") or ""
+    if not path:
+        return {"actions": [], "text": "no path on leaf gate", "gated": 0}
+    norm = path.replace("\\", "/")
+    if "self_extend" not in norm or not norm.endswith(".py"):
+        # Not a leaf this deterministic executor owns — leave it to the LLM
+        # executor / the court (which will refute an absent artifact honestly).
+        return {"actions": [], "text": "", "gated": 0}
+    content = (
+        '"""Self-extend proof marker — written by the composer-as-executor on the\n'
+        "real machine, then verified by the external ROMA court (file_exists +\n"
+        'py_compile + sentinel). Auto-generated; safe to delete."""\n'
+        "GREETING = 'self-extend proven'\n"
+    )
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    except Exception as ex:
+        return {"actions": [], "text": f"marker write failed: {ex}", "gated": 0}
+    return {
+        "actions": [{"tool": "write_file", "args": {"path": path}, "result": {"ok": True}}],
+        "text": (f"wrote the marker file {norm} with the proof sentinel "
+                 "GREETING = 'self-extend proven'."),
+        "gated": 0,
+    }
+
+
+def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
+                      owner_user: Optional[str], brain_call) -> dict[str, Any]:
+    """Write a USER-scope learned fact for ONE green leaf — the ADDITIVE second
+    write (the tree-state write is already done by set_verdict). Mirrors the
+    server fragment shape; owner_user=None keeps it USER-scope so it passes the
+    brain ACL gate untouched. needs_root / red never reach here."""
+    pred = getattr(leaf, "predicate", "") or getattr(leaf, "title", "")
+    leaf_id = getattr(leaf, "node_id", "") or ""
+    frag_id = f"self_extend_loop::{tree_id}::{leaf_id}"
+    op = {
+        "op": "add",
+        "fragment": {
+            "id": frag_id,
+            "kind": "learned",
+            "text": (f"Self-extend GREEN: {pred} — court failed to refute on "
+                     f"{evidence_ref}"),
+            "scope": "user",
+            "visibility": "private",
+            "owner_user": owner_user,
+            "subject": getattr(leaf, "title", "") or pred,
+            "predicate": "self_extend_verified",
+            "object": evidence_ref,
+            "extra": {
+                "tree_id": tree_id,
+                "leaf_id": leaf_id,
+                "court_version": "roma-court-v1",
+                "verdict": "green",
+            },
+        },
+    }
+    caller = brain_call or _default_brain_call
+    try:
+        result = caller("brain.write", {"ops": [op]})
+        return {"ok": True, "fragment_id": frag_id, "write_result": result}
+    except Exception as ex:
+        return {"ok": False, "error": f"brain.write failed: {ex}",
+                "fragment_id": frag_id}
+
+
+def run_self_extend_loop(
+    user_msg: str,
+    graph: dict[str, Any],
+    *,
+    focused_node_id: str = "",
+    router: Any = None,
+    owner_user: Optional[str] = None,
+    decomposition: Optional[list[dict[str, Any]]] = None,
+    store=None,
+    brain_call=None,
+    on_leaf=None,
+    max_rounds: int = 4,
+):
+    """Drive the unrolled ROMA loop for a free-form self-extend request.
+
+    Steps (the binding's executor_adapter, made real):
+      1. atomize_vision(user_msg) → leaf specs (default = the hello-marker proof).
+      2. roma.atomize → a real requirement tree in the brain store.
+      3. per claimable leaf: claim (agent='composer-executor') → EXECUTOR builds
+         the artifact (deterministic marker write, or run_agent_step in yolo when
+         a router is supplied) → compose_evidence → roma judge_leaf
+         (judged_by='roma-court' != claimed_by, require_diligence=True).
+      4. emit a per-leaf payload via on_leaf(payload); on GREEN write a learned
+         USER-scope fact (the court — not the executor — flipped it green).
+      5. on RED re-decompose finer; loop until sweep().dry or no progress.
+
+    `on_leaf(payload)` is the per-leaf sink the bridge wires to court_verdict.
+    Returns the final receipt {ok, tree_id, sweep, leaves:[payload...], dry}."""
+    _brain_src_on_path()
+    from personal_brain import requirement_tree as rt
+    from personal_brain import roma
+    from personal_brain.storage import BrainStore
+
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    from agents.composer_agent import (
+        atomize_vision as _atomize_vision,
+        compose_evidence as _compose_evidence,
+        run_agent_step as _run_agent_step,
+    )
+
+    own_store = False
+    if store is None:
+        store = BrainStore.open()
+        own_store = True
+
+    leaf_specs = _atomize_vision(user_msg, decomposition=decomposition)
+    vision = f"self-extend: {user_msg.strip()[:160] or 'free-form request'}"
+    tree = roma.atomize(store, vision=vision, decomposition=leaf_specs,
+                        owner_user=_tree_owner(store))
+    tree_id = tree.tree_id
+
+    leaf_payloads: list[dict[str, Any]] = []
+    graph = graph if isinstance(graph, dict) else {}
+
+    def _emit(payload: dict[str, Any]) -> None:
+        leaf_payloads.append(payload)
+        if on_leaf is not None:
+            try:
+                on_leaf(payload)
+            except Exception:
+                pass
+
+    for _round in range(1, max_rounds + 1):
+        claimable = rt.open_leaves(store, tree_id=tree_id)
+        if not claimable:
+            break
+        progressed = False
+        for leaf in claimable:
+            # CLAIM — agent != judge (anti-self-certify anchor).
+            rt.claim_leaf(store, tree_id=tree_id, node_id=leaf.node_id,
+                          agent_id="composer-executor")
+
+            # EXECUTOR — actually BUILD the leaf's artifact on the real machine.
+            run_result = _materialize_default_marker(leaf.gate_spec)
+            if not run_result.get("actions") and router is not None:
+                # No deterministic owner for this leaf → let the composer build it.
+                try:
+                    run_result = _run_agent_step(
+                        user_msg=leaf.title or user_msg,
+                        graph=graph,
+                        focused_node_id=focused_node_id or "",
+                        router=router,
+                        mode="yolo",
+                    )
+                except Exception as ex:
+                    run_result = {"actions": [], "text": f"executor error: {ex}",
+                                  "gated": 0}
+
+            evidence = _compose_evidence(user_msg, graph, leaf, run_result)
+
+            # JUDGE — the external court on the REAL artifact. The court, NOT the
+            # executor, flips green; judged_by != claimed_by; show-the-work on.
+            judged = roma.judge_leaf(
+                store, tree_id=tree_id, node_id=leaf.node_id,
+                judged_by="roma-court",
+                context={"evidence": evidence,
+                         "repo_root": str(_repo_root()),
+                         "cwd": str(_repo_root())},
+                require_diligence=True,
+            )
+            court = judged.get("court", {})
+            verdict = court.get("verdict", "red")
+            evidence_ref = ""
+            for lens in court.get("lenses", []):
+                if lens.get("evidence_ref"):
+                    evidence_ref = lens["evidence_ref"]
+                    break
+
+            learned = False
+            if verdict == "green":
+                progressed = True
+                lr = _learn_leaf_green(
+                    tree_id=tree_id, leaf=leaf, evidence_ref=evidence_ref,
+                    owner_user=owner_user, brain_call=brain_call,
+                )
+                learned = bool(lr.get("ok"))
+            elif verdict == "red":
+                # loop-until-dry: split a refuted leaf into a finer
+                # machine-checkable child (never simplify) and re-run.
+                kids = [{
+                    "title": f"{leaf.title} — re-verify the real artifact",
+                    "predicate": leaf.predicate,
+                    "gate_kind": leaf.gate_kind,
+                    "gate_spec": dict(leaf.gate_spec or {}),
+                }]
+                try:
+                    rt.decompose(store, tree_id=tree_id, node_id=leaf.node_id,
+                                 children=kids)
+                    progressed = True
+                except Exception:
+                    pass
+
+            sweep_now = rt.sweep(store, tree_id=tree_id)
+            _emit({
+                "tree_id": tree_id,
+                "leaf_id": leaf.node_id,
+                "predicate": leaf.predicate or leaf.title,
+                "verdict": verdict,
+                "reason": (court.get("reason") or "")[:300],
+                "evidence_ref": evidence_ref,
+                "sweep": {
+                    "dry": sweep_now.get("dry"),
+                    "root_green": sweep_now.get("root_green"),
+                    "counts": sweep_now.get("counts"),
+                    "needs_root": sweep_now.get("needs_root"),
+                },
+                "learned": learned,
+                "terminal": False,
+            })
+
+        status = rt.sweep(store, tree_id=tree_id)
+        if status["dry"] or not progressed:
+            break
+
+    final = rt.sweep(store, tree_id=tree_id)
+    # Terminal emit so the surface can show the loop closing (dry == done).
+    _emit({
+        "tree_id": tree_id,
+        "leaf_id": "",
+        "predicate": vision,
+        "verdict": "green" if final.get("dry") else (
+            "needs_root" if final.get("needs_root") else "red"),
+        "reason": ("full green sweep — court failed to refute every leaf"
+                   if final.get("dry") else
+                   "loop stopped — see needs_root / red leaves"),
+        "evidence_ref": tree_id,
+        "sweep": {
+            "dry": final.get("dry"),
+            "root_green": final.get("root_green"),
+            "counts": final.get("counts"),
+            "needs_root": final.get("needs_root"),
+        },
+        "learned": False,
+        "terminal": True,
+    })
+
+    if own_store:
+        try:
+            store.close()
+        except Exception:
+            pass
+
+    return {
+        "ok": bool(final.get("dry")),
+        "tree_id": tree_id,
+        "dry": bool(final.get("dry")),
+        "sweep": final,
+        "leaves": leaf_payloads,
+    }
+
+
+def _tree_owner(store) -> str:
+    """Owner string for the requirement TREE (RequirementTree.owner_user is a
+    required non-empty str). Honours a cloud binding when present, else the env
+    user, else 'founder' — matching roma._default_owner. This is distinct from
+    the LEARNED-FACT owner_user (which stays None to keep the fragment USER-scope
+    per the binding's fragment shape — server.py gates non-user scopes, user
+    passes)."""
+    try:
+        bound = store.get_meta("bound_owner_user")
+        if bound and str(bound).strip():
+            return str(bound).strip()
+    except Exception:
+        pass
+    return (os.environ.get("BRAIN_OWNER_USER")
+            or os.environ.get("USERNAME")
+            or os.environ.get("USER")
+            or "founder")

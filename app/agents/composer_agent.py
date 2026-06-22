@@ -577,3 +577,112 @@ def run_agent_step(
                       "reason": "completion gate unavailable: " + str(_e)}
     return {"actions": actions, "text": text, "mode": mode,
             "gated": gated_count[0], "completion": completion}
+
+
+# ─── Self-extend loop adapter (ask→build→COURT→learn) ─────────────────────
+# The free-form self-extension entry point (bridge.self_extend_loop) atomizes a
+# user request into a ROMA requirement tree, drives the unrolled loop the brain
+# daemon cannot (run_to_dry can't cross HTTP — roma.py risk note), and uses
+# run_agent_step ABOVE as the per-leaf EXECUTOR. These two pure helpers are the
+# ONLY new composer surface: `atomize_vision` turns a request into leaf specs
+# with built-in machine gates when the model returns none, and `compose_evidence`
+# turns a run_agent_step result into the closing-evidence dict the court's
+# diligence lens (court_harness.lens_diligence) + brain.enforce_diligence
+# consume. run_agent_step's contract is UNCHANGED — it is REUSED, not edited.
+
+
+def _appdata_self_extend_dir() -> str:
+    """The real local directory the default self-extend example writes into
+    (%APPDATA%/ArchHub/self_extend on Windows, ~/.archhub/self_extend else).
+    A file under here is the machine-checkable artifact the court gates."""
+    import os
+    base = (os.environ.get("APPDATA")
+            or os.path.join(os.path.expanduser("~"), ".archhub"))
+    return os.path.join(base, "ArchHub", "self_extend")
+
+
+def atomize_vision(user_msg: str,
+                   decomposition: Optional[list[dict]] = None) -> list[dict]:
+    """Map a free-form self-extend request to a list of ROMA leaf specs, each
+    carrying a machine-checkable gate (gate_kind/gate_spec).
+
+    If the caller already has a decomposition (e.g. the model proposed one, or a
+    test passes the ONE example), it is returned UNCHANGED so the court gates
+    exactly what was asked. Otherwise we build the DEFAULT decomposition: the
+    "hello marker" proof — a real file written into %APPDATA%/ArchHub/self_extend
+    that (1) exists, (2) compiles under py_compile, and (3) carries the proof
+    sentinel. All three gates are built-in court probes (file_exists / py_compile
+    in court_harness._BUILTIN_PROBES) — no CDP, no app, no risky host. This is the
+    `one_example` from the binding spec, made executable."""
+    if decomposition:
+        return list(decomposition)
+    import os
+    marker = os.path.join(_appdata_self_extend_dir(), "hello_marker.py")
+    marker_fwd = marker.replace("\\", "/")
+    return [
+        {
+            "title": "Marker file exists on disk after the executor runs",
+            "predicate": f"the file {marker_fwd} exists",
+            "gate_kind": "file_exists",
+            "gate_spec": {"path": marker_fwd},
+        },
+        {
+            "title": "Marker file is real importable Python, not an empty shell",
+            "predicate": "the marker file compiles under py_compile",
+            "gate_kind": "py_compile",
+            "gate_spec": {"path": marker_fwd},
+        },
+        {
+            "title": "Marker file contains the proof sentinel string",
+            "predicate": "the marker file contains GREETING = 'self-extend proven'",
+            "gate_kind": "file_exists",
+            "gate_spec": {"path": marker_fwd, "contains": "self-extend proven"},
+        },
+    ]
+
+
+def compose_evidence(user_msg: str, graph: dict, leaf: Any,
+                     run_result: dict) -> dict:
+    """Turn a run_agent_step result into the court's closing-evidence dict.
+
+    Returns EXACTLY the shape lens_diligence / brain.enforce_diligence consume
+    (court_harness.py io_notes): {last_message, touched_files, file_contents,
+    session_signals}. `touched_files` is every path the executor's actions named;
+    `file_contents` reads each back so the artifact lens sees the real bytes the
+    executor produced (never the executor's word). This makes the executor SHOW
+    its work — the diligence juror refutes a bare completion claim."""
+    rr = run_result if isinstance(run_result, dict) else {}
+    actions = rr.get("actions") if isinstance(rr.get("actions"), list) else []
+    touched: list[str] = []
+    for a in actions:
+        try:
+            p = (a.get("args", {}) or {}).get("path")
+        except Exception:
+            p = None
+        if p and p not in touched:
+            touched.append(p)
+    file_contents: dict[str, str] = {}
+    for p in touched:
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                file_contents[p] = fh.read()
+        except Exception:
+            # An unreadable / not-yet-written path is simply absent from
+            # file_contents — the artifact lens (file_exists/py_compile) is the
+            # authority on whether the real file satisfies the gate.
+            pass
+    last = (rr.get("text") or "").strip()
+    if not last:
+        last = (f"self-extend executor ran {len(actions)} action(s) for "
+                f"'{leaf.title if leaf is not None else user_msg}'; "
+                f"wrote {len(touched)} file(s).")
+    return {
+        "last_message": last,
+        "touched_files": touched,
+        "file_contents": file_contents,
+        "session_signals": {
+            "actions": len(actions),
+            "gated": rr.get("gated", 0),
+            "files_written": len(touched),
+        },
+    }

@@ -709,6 +709,13 @@ class ArchHubBridge(QObject):
     trigger_fired   = pyqtSignal(str, str, str)     # (session_id, node_id, payload_json)
     agent_step_done = pyqtSignal(str)               # (result_json) — LLM-orchestrator finished
     self_extend_done = pyqtSignal(str)              # (result_json) — self-extension loop finished (SEAM 1→4)
+    # Universal self-extension (ask→build→COURT→learn) — one ROMA leaf judged.
+    # Payload {tree_id, leaf_id, predicate, verdict('green'|'red'|'needs_root'),
+    # reason, evidence_ref, sweep:{dry,root_green,counts,needs_root}, learned,
+    # terminal}. Emitted once per judged leaf AND a final terminal emit carrying
+    # the sweep so the JSX CourtVerdictQueue can show the loop closing. Mirrors
+    # agent_step_done 1:1 (one str payload, off-thread emit).
+    court_verdict = pyqtSignal(str)                 # (verdict_json) — one ROMA leaf judged
     connector_op_done = pyqtSignal(str)             # (result_json) — a connector op finished
     param_options_ready = pyqtSignal(str)           # (json) — dynamic dropdown options resolved
     node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
@@ -6468,6 +6475,67 @@ class ArchHubBridge(QObject):
 
         threading.Thread(target=_runner, daemon=True,
                          name="ArchHubSelfExtend").start()
+        return _safe_json({"async": True})
+
+    # ─── Universal self-extension LOOP — ask→build→COURT→learn (free-form) ──
+    # The binding's entry point: a free-form user request ('X' mode in the
+    # composer picker) → atomize into a MULTI-leaf ROMA requirement tree → the
+    # composer-as-executor BUILDS each leaf's artifact on the real machine → the
+    # external 3-lens court verifies it on the REAL artifact, leaf by leaf → every
+    # GREEN leaf lands a learned USER-scope fact in the brain → loop-until-dry.
+    #
+    # ONE-SYSTEM: this is the SAME organs as the build-tool `self_extend` slot
+    # above (roma + court_harness + requirement_tree + run_agent_step +
+    # memory_gate.BrainClient via _brain_tool/_default_brain_call) — NO parallel
+    # engine. A SEPARATE slot name (not an overload of `self_extend`, whose first
+    # arg is a BUILD_TOOL name) because the arg semantics differ: here arg1 is
+    # FREE-FORM user text, not a tool id. One fixed 3-arg shape (no overload
+    # juggling). Emits `court_verdict` per judged leaf + a terminal sweep.
+    #
+    # Threaded — identical async pattern to agent_step's _runner — because the
+    # body calls self._brain_tool(...) / the roma court (BLOCKING HTTP + subprocess
+    # gates) which MUST NOT run on the Qt main thread.
+    @pyqtSlot(str, str, str, result=str)
+    def self_extend_loop(self, user_msg: str, graph_json: str,
+                         focused_node_id: str = "") -> str:
+        """Run the free-form self-extension loop off-thread; emit court_verdict
+        per leaf. Returns _safe_json({'async':True}) immediately."""
+        import json as _json
+        try:
+            graph = _json.loads(graph_json) if graph_json else {}
+        except Exception as ex:
+            return _safe_json({"async": False,
+                               "error": f"bad graph_json: {ex}"})
+
+        def _emit_leaf(payload: dict) -> None:
+            try:
+                self.court_verdict.emit(_safe_json(payload))
+            except Exception:
+                pass
+
+        def _runner():
+            try:
+                from agents.self_extend import run_self_extend_loop
+                run_self_extend_loop(
+                    user_msg or "",
+                    graph if isinstance(graph, dict) else {},
+                    focused_node_id=focused_node_id or "",
+                    router=self.router,
+                    brain_call=self._brain_tool,
+                    on_leaf=_emit_leaf,
+                )
+            except Exception as ex:
+                _emit_leaf({
+                    "tree_id": "", "leaf_id": "", "predicate": user_msg or "",
+                    "verdict": "red", "reason": f"self-extend loop error: {ex}",
+                    "evidence_ref": "",
+                    "sweep": {"dry": False, "root_green": False,
+                              "counts": {}, "needs_root": []},
+                    "learned": False, "terminal": True,
+                })
+
+        threading.Thread(target=_runner, daemon=True,
+                         name="ArchHubSelfExtendLoop").start()
         return _safe_json({"async": True})
 
     # ─── Ambient self-build ("stem cells grow as you work") ─────────

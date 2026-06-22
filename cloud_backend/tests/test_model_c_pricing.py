@@ -430,6 +430,11 @@ class TestHostedMetering:
         import db, proxy
         from fastapi import HTTPException
         monkeypatch.setattr("config.PROXY_LIVE", True)
+        # Isolate the byo branch from the zero-config FREE DEFAULT (#64), which
+        # legitimately supersedes byo_key_required when a free-provider key is
+        # present in the runner's env. Free-default behaviour is covered
+        # elsewhere (test_free_default.py).
+        monkeypatch.setattr("config.free_default_available", lambda: False)
         u = _user(plan="studio")            # byo_key by default, 0 credits
         assert db.credit_balance(user_id=u["id"]) == 0
         with pytest.raises(HTTPException) as exc:

@@ -106,6 +106,15 @@ STRIPE_PRICE_CREDIT_PACK   = _req("STRIPE_PRICE_CREDIT_PACK", "")
 ANTHROPIC_API_KEY = _req("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY    = _req("OPENAI_API_KEY", "")
 GOOGLE_API_KEY    = _req("GOOGLE_API_KEY", "")
+# NVIDIA NIM (OpenAI-compatible) — a strong FREE tool-calling model. Used as
+# (a) the founder-cockpit AGENT model and (b) the zero-config FREE_PROVIDER
+# default for ALL users (#64) once NVIDIA_API_KEY is set. Accepts a raw key
+# OR an `op://...` reference resolved at call time by the same shim every
+# other secret uses — never inline a key in code.
+NVIDIA_API_KEY    = _req("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL   = _req("NVIDIA_BASE_URL",
+                         "https://integrate.api.nvidia.com/v1").strip().rstrip("/")
+NVIDIA_MODEL      = _req("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct").strip()
 
 RESEND_API_KEY = _req("RESEND_API_KEY", "")
 # PUBLIC_URL defaults to the Fly.io subdomain so the backend works
@@ -528,10 +537,12 @@ FREE_DEFAULT_ENABLED = _req("FREE_DEFAULT_ENABLED", "1").strip() in (
     "1", "true", "True", "yes")
 # Provider id for the free tier. Any OpenAI-compatible chat-completions
 # endpoint works: "groq" (default), "openrouter", "google", or "custom".
-FREE_PROVIDER = _req("FREE_PROVIDER", "groq").strip().lower()
+FREE_PROVIDER = _req("FREE_PROVIDER", "nvidia").strip().lower()
 # The model id served for free. Sensible default per provider; override
-# with ARCHHUB_FREE_MODEL. Groq's Llama-3.3-70B is strong + free + fast.
+# with ARCHHUB_FREE_MODEL. NVIDIA NIM's Llama-3.3-70B is strong + free +
+# fast (founder steer #64); Groq's is the legacy fallback.
 _FREE_MODEL_DEFAULTS = {
+    "nvidia":     "meta/llama-3.3-70b-instruct",
     "groq":       "llama-3.3-70b-versatile",
     "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
     "google":     "gemini-2.5-flash",
@@ -544,6 +555,7 @@ ARCHHUB_FREE_MODEL = _req(
 # OpenAI-compatible base URL for the free provider. Defaulted per provider
 # so the founder only needs to set the KEY, not the URL.
 _FREE_BASE_DEFAULTS = {
+    "nvidia":     "https://integrate.api.nvidia.com/v1",
     "groq":       "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "google":     "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -694,8 +706,18 @@ def _resolve_op_ref(value: str) -> str:
 
 
 def free_provider_key() -> str:
-    """The resolved free-provider API key (op:// resolved at call time)."""
-    return _resolve_op_ref(FREE_PROVIDER_API_KEY)
+    """The resolved free-provider API key (op:// resolved at call time).
+
+    When the free provider is NVIDIA (the #64 default) and no explicit
+    FREE_PROVIDER_API_KEY is set, fall back to NVIDIA_API_KEY so the founder
+    only has to set ONE secret (NVIDIA_API_KEY) to light up the free default
+    for every user — no duplicate key needed."""
+    explicit = _resolve_op_ref(FREE_PROVIDER_API_KEY)
+    if explicit:
+        return explicit
+    if FREE_PROVIDER == "nvidia":
+        return _resolve_op_ref(NVIDIA_API_KEY)
+    return ""
 
 
 def free_default_available() -> bool:
@@ -725,7 +747,7 @@ def free_default_available() -> bool:
     if not FREE_PROVIDER_BASE_URL:
         return False
     # Known hosted free providers require a key; a bare custom relay may not.
-    if FREE_PROVIDER in ("groq", "openrouter", "google"):
+    if FREE_PROVIDER in ("nvidia", "groq", "openrouter", "google"):
         return bool(free_provider_key())
     return True   # custom/keyless relay: base URL is enough
 

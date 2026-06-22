@@ -24,6 +24,13 @@ def _fresh_db(monkeypatch, tmp_path):
     importlib.reload(_db)
     importlib.reload(_proxy)
     _db.init_schema()
+    # These tests exercise the BYO-key branch specifically. The zero-config
+    # FREE DEFAULT (founder #64 — NVIDIA once NVIDIA_API_KEY is set) legitimately
+    # SUPERSEDES byo_key_required when a free-provider key exists, so pin it OFF
+    # here so the byo-branch assertions are isolated from whatever free key the
+    # runner happens to have in its env. (The free-default behaviour itself is
+    # covered by test_free_default.py + test_cockpit_agent.py.)
+    monkeypatch.setattr(_config, "free_default_available", lambda: False)
     yield
 
 

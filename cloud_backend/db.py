@@ -71,10 +71,39 @@ _TEST_ACCOUNT_SUBSTRINGS = ("+smoketest", "+test")
 # Local-part prefixes that only a synthetic probe account uses.
 _TEST_ACCOUNT_LOCALPART_PREFIXES = ("reality+", "smoketest", "test+", "test@")
 
+# Throwaway / disposable domains that are ONLY ever used for test or seed
+# accounts — a registration on one of these is synthetic on its face,
+# regardless of the local part. Includes the public throwaway providers plus
+# the cockpit test-suite's own domain. Unifying the two cockpit features that
+# each grew their own marker list, this is the single canonical set.
+_TEST_ACCOUNT_DOMAINS = frozenset({
+    "example.com",
+    "test.com",
+    "mailinator.com",
+    "example.org",
+    "archhub-cockpit-test.com",
+})
+
 
 def _norm_email(email: Optional[str]) -> str:
     """Lower-cased + trimmed email, matching how the DB stores it."""
     return (email or "").strip().lower()
+
+
+def _protected_emails() -> set:
+    """Emails that MUST NEVER be classified as a test account or purged
+    regardless of marker / domain match — first and foremost the configured
+    founder, so 'purge test users' can never delete the operator's own account
+    even if their address happens to match a test pattern (e.g. the founder
+    signs in with a throwaway-domain address in the cockpit test-suite)."""
+    protected = set()
+    try:
+        protected.add(
+            (os.environ.get("FOUNDER_EMAIL") or
+             "ahmedfargale@gmail.com").strip().lower())
+    except Exception:
+        pass
+    return protected
 
 
 def is_test_account_email(email: Optional[str]) -> bool:
@@ -85,12 +114,22 @@ def is_test_account_email(email: Optional[str]) -> bool:
       * a '+smoketest' or '+test' sub-address on ANY domain
       * a local part starting 'reality+' / 'smoketest' / 'test+' (the probe
         shapes) on ANY domain
+      * a throwaway / disposable domain (example.com, test.com, mailinator.com,
+        example.org, archhub-cockpit-test.com) — synthetic regardless of the
+        local part
       * the internal '@archhub.io' domain WHEN the local part also looks
         synthetic (contains '+' or starts reality/smoketest/test) — so a
         genuine staff '@archhub.io' mailbox is NOT flagged.
+
+    A protected email (the configured founder) is NEVER flagged, even if it
+    matches a pattern above — so the operator's own account is always treated
+    as a real user and can never be purged.
     """
     e = _norm_email(email)
     if not e or "@" not in e:
+        return False
+    # The founder (and any other protected mailbox) is never a test account.
+    if e in _protected_emails():
         return False
     local, _, domain = e.partition("@")
     # Sub-address markers — unambiguous on any domain.
@@ -101,6 +140,9 @@ def is_test_account_email(email: Optional[str]) -> bool:
     for p in _TEST_ACCOUNT_LOCALPART_PREFIXES:
         if local.startswith(p) or e.startswith(p):
             return True
+    # Throwaway / disposable domains — synthetic on their face.
+    if domain in _TEST_ACCOUNT_DOMAINS:
+        return True
     # Internal domain: flag ONLY when the local part is itself synthetic, so
     # real staff @archhub.io are never excluded.
     if domain == _TEST_ACCOUNT_INTERNAL_DOMAIN:
@@ -135,7 +177,17 @@ def _test_account_sql(col: str = "email") -> tuple[str, list]:
         f"  OR {c} LIKE 'test%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
         f"))",
     ]
-    return "(" + " OR ".join(clauses) + ")", []
+    # Throwaway / disposable domains — synthetic on their face, any local part.
+    for d in sorted(_TEST_ACCOUNT_DOMAINS):
+        clauses.append(f"{c} LIKE '%@{d}'")
+    matcher = "(" + " OR ".join(clauses) + ")"
+    # A protected email (the founder) is NEVER a test account — exclude it so
+    # the SQL stays in lock-step with `is_test_account_email`.
+    protected = sorted(_protected_emails())
+    if protected:
+        ph = ",".join("?" for _ in protected)
+        return f"({matcher} AND {c} NOT IN ({ph}))", list(protected)
+    return matcher, []
 
 
 SCHEMA = """
@@ -2367,15 +2419,22 @@ def count_paid_users(exclude_test: bool = False) -> int:
 
 
 def delete_test_users() -> int:
-    """DELETE every synthetic test/seed account row (and its dependent
-    codes / tokens / usage_log / credit_grants rows). Returns the number of
-    `users` rows deleted.
+    """DELETE every synthetic test/seed account row (and ALL its dependent
+    rows). Returns the number of `users` rows deleted.
 
-    This is the engine behind the founder-gated POST /founder/api/purge-test-users
-    endpoint. It is intentionally a plain DAO function with NO gate of its own —
+    This is the single engine behind the founder-gated
+    POST /founder/api/purge-test-users endpoint and the `purge test users`
+    command. It is intentionally a plain DAO function with NO gate of its own —
     the gate (founder identity + explicit confirm) lives at the HTTP layer. It
-    deletes ONLY rows matching `is_test_account_email`; a genuine user or staff
-    mailbox is never touched.
+    deletes ONLY rows matching `is_test_account_email` (which already excludes
+    the protected founder mailbox); a genuine user or staff mailbox is never
+    touched.
+
+    Cascades by hand (SQLite FKs are advisory here): the union of every
+    dependent table either cockpit feature cleaned up — codes, tokens,
+    usage_log, credit_grants, training_samples, memory_op_log, memory_access_log
+    (keyed on reader_user_id) and company_members — so a purged test user leaves
+    no orphan rows.
     """
     frag, params = _test_account_sql()
     with connect() as con:
@@ -2390,7 +2449,10 @@ def delete_test_users() -> int:
         for tbl, col in (("codes", "user_id"), ("tokens", "user_id"),
                          ("usage_log", "user_id"),
                          ("credit_grants", "user_id"),
-                         ("training_samples", "user_id")):
+                         ("training_samples", "user_id"),
+                         ("memory_op_log", "user_id"),
+                         ("memory_access_log", "reader_user_id"),
+                         ("company_members", "user_id")):
             try:
                 con.execute(
                     f"DELETE FROM {tbl} WHERE {col} IN ({qmarks})", ids)
@@ -2509,9 +2571,11 @@ def count_marketplace_packs() -> int:
 # returns the REAL effect (rows deleted, the new plan, the queued task id) so
 # the cockpit can report what it DID, never a canned message.
 
-# Email substrings that mark a row as a throwaway TEST account. Purge targets
-# ONLY rows whose email contains one of these — never a real customer. Kept
-# conservative + explicit so "purge test users" can never nuke production data.
+# Legacy marker list from the cockpit-command feature, kept for reference /
+# back-compat. The canonical test-account classifier is now
+# `is_test_account_email` / `_test_account_sql` (which subsumes these markers
+# via `_TEST_ACCOUNT_DOMAINS` + the sub-address prefixes), so nothing consults
+# this tuple any more — it is retained, unused, only to minimise churn.
 TEST_USER_EMAIL_MARKERS = (
     "@example.com",
     "@test.com",
@@ -2523,71 +2587,19 @@ TEST_USER_EMAIL_MARKERS = (
 )
 
 
-def _protected_emails() -> set:
-    """Emails that MUST NEVER be purged regardless of marker match — first
-    and foremost the configured founder, so 'purge test users' can never
-    delete the operator's own account even if their address happens to match
-    a test pattern."""
-    protected = set()
-    try:
-        protected.add(
-            (os.environ.get("FOUNDER_EMAIL") or
-             "ahmedfargale@gmail.com").strip().lower())
-    except Exception:
-        pass
-    return protected
-
-
-def list_test_users(markers: tuple = TEST_USER_EMAIL_MARKERS) -> list[dict]:
-    """Every user row whose email matches a test marker — excluding any
-    protected email (the founder). Read-only — the preview the cockpit shows
-    before a confirmed purge."""
-    protected = _protected_emails()
-    out = []
+def list_test_users() -> list[dict]:
+    """Every synthetic test/seed user row — the canonical `is_test_account_email`
+    set, with the protected founder mailbox already excluded by the predicate.
+    Read-only: the preview the cockpit shows before a confirmed purge. Returns
+    id / email / plan / created_at per row (id + email are guaranteed)."""
+    frag, params = _test_account_sql()
     with connect() as con:
         rows = con.execute(
-            "SELECT id, email, plan, created_at FROM users"
+            f"SELECT id, email, plan, created_at FROM users WHERE {frag} "
+            "ORDER BY created_at DESC",
+            params,
         ).fetchall()
-    for r in rows:
-        email = (r["email"] or "").lower()
-        if email in protected:
-            continue
-        if any(m in email for m in markers):
-            out.append(dict(r))
-    return out
-
-
-def delete_test_users(markers: tuple = TEST_USER_EMAIL_MARKERS) -> dict:
-    """Delete every throwaway test-account row (+ its dependent rows). Returns
-    {'deleted': N, 'emails': [...]} -- the REAL effect. Real rows leave the DB.
-
-    Cascades by hand (SQLite FKs are advisory here): tokens, codes, usage_log,
-    training_samples, memory_op_log, memory_access_log keyed on the user id are
-    removed too, so a purged test user leaves no orphan rows."""
-    victims = list_test_users(markers)
-    ids = [v["id"] for v in victims]
-    emails = [v["email"] for v in victims]
-    if not ids:
-        return {"deleted": 0, "emails": []}
-    qmarks = ",".join("?" for _ in ids)
-    with connect() as con:
-        for tbl, col in (
-            ("tokens", "user_id"),
-            ("codes", "user_id"),
-            ("usage_log", "user_id"),
-            ("training_samples", "user_id"),
-            ("memory_op_log", "user_id"),
-            ("memory_access_log", "reader_user_id"),
-            ("company_members", "user_id"),
-        ):
-            try:
-                con.execute(
-                    f"DELETE FROM {tbl} WHERE {col} IN ({qmarks})", ids)
-            except sqlite3.OperationalError:
-                # Table may not exist on a partial schema -- tolerate.
-                pass
-        con.execute(f"DELETE FROM users WHERE id IN ({qmarks})", ids)
-    return {"deleted": len(ids), "emails": emails}
+    return [dict(r) for r in rows]
 
 
 def set_user_plan(user_id_or_email: str, plan: str) -> dict:

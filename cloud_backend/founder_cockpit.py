@@ -481,11 +481,15 @@ def route_command(text: str, *, actor: str, confirm: bool = False,
                 target=target, result=json.dumps({"would_delete": len(preview)}),
                 ok=True)
             return result
-        eff = db.delete_test_users()
+        # delete_test_users() returns the int row-count; capture the emails
+        # from the preview list BEFORE deleting so the report still names them.
+        victims = db.list_test_users()
+        emails = [v["email"] for v in victims]
+        deleted = db.delete_test_users()
         result = {
-            "action": "purge_test_users", "deleted": eff["deleted"],
-            "emails": eff["emails"],
-            "message": f"Deleted {eff['deleted']} test user(s).",
+            "action": "purge_test_users", "deleted": deleted,
+            "emails": emails,
+            "message": f"Deleted {deleted} test user(s).",
         }
 
     elif action == "set_plan":
@@ -656,25 +660,38 @@ def api_purge_test_users(
       1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
          the founder email passes; everyone else (incl. unauthenticated) → 403.
       2. EXPLICIT CONFIRM — the body must carry {"confirm": true}. Without it
-         the call is a safe DRY-RUN: it returns `would_purge` (the count that
-         WOULD be deleted) and deletes nothing, so the destructive action can
-         never fire by accident.
+         the call is a safe DRY-RUN: it reports the count that WOULD be deleted
+         and deletes nothing, so the destructive action can never fire by
+         accident.
 
-    Returns:
-      confirm=false → {"dry_run": true, "would_purge": N, "purged": 0}
-      confirm=true  → {"dry_run": false, "purged": N, "remaining_test": 0}
+    The response carries BOTH naming conventions the cockpit surfaces use, so
+    the same endpoint serves the dashboard widget and the command alias:
+      confirm=false → {"dry_run": true, "needs_confirm": true,
+                       "would_purge": N, "would_delete": N, "purged": 0,
+                       "emails": [...]}
+      confirm=true  → {"dry_run": false, "purged": N, "deleted": N,
+                       "remaining_test": 0, "emails": [...]}
     """
     if not body.confirm:
+        preview = db.list_test_users()
+        n = len(preview)
         return JSONResponse({
-            "dry_run":     True,
-            "would_purge": db.count_test_users(),
-            "purged":      0,
-            "note":        "confirm:true required to actually delete.",
+            "dry_run":       True,
+            "needs_confirm": True,
+            "would_purge":   n,
+            "would_delete":  n,
+            "purged":        0,
+            "emails":        [p["email"] for p in preview],
+            "note":          "confirm:true required to actually delete.",
         })
+    victims = db.list_test_users()
+    emails = [v["email"] for v in victims]
     purged = db.delete_test_users()
     return JSONResponse({
         "dry_run":        False,
         "purged":         purged,
+        "deleted":        purged,
+        "emails":         emails,
         "remaining_test": db.count_test_users(),
     })
 

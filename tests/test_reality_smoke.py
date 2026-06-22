@@ -166,21 +166,105 @@ class TestCloudBillingPlans:
 
 
 class TestCloudRegister:
-    def test_ok_on_202(self):
+    """Root-cause fix (2026-06-22): the register check must NOT create a real
+    user against a PROD target (that polluted the live DB with hundreds of
+    reality+smoketest@archhub.io rows). Against prod it does a non-mutating
+    probe; the full 202 signup probe only runs against non-prod or with the
+    explicit --register-live opt-in.
+    """
+
+    # --- PROD target: non-mutating probe, NEVER a real signup -------------
+    def test_prod_ok_on_422_validation(self):
+        # Default make_args() points at DEFAULT_CLOUD_URL (the prod Fly app).
+        # A wired route validates the deliberately-invalid body → 422.
         with patch_http({
-            "/v1/auth/register": make_resp(202, {"status": "accepted"}),
+            "/v1/auth/register": make_resp(422, {"detail": "bad email"}),
+        }):
+            r = smoke.check_cloud_register(make_args())
+        assert r.status == "ok"
+        assert "non-mutating" in r.detail.lower()
+
+    def test_prod_ok_on_400(self):
+        with patch_http({
+            "/v1/auth/register": make_resp(400, {"detail": "bad"}),
         }):
             r = smoke.check_cloud_register(make_args())
         assert r.status == "ok"
 
-    def test_fail_when_email_send_fails(self):
+    def test_prod_fail_on_404(self):
+        with patch_http({
+            "/v1/auth/register": make_resp(404, ""),
+        }):
+            r = smoke.check_cloud_register(make_args())
+        assert r.status == "fail"
+        assert "404" in r.detail or "not registered" in r.detail
+
+    def test_prod_does_not_create_user(self):
+        # Assert the prod path NEVER sends a smoketest signup email: capture
+        # the POST body and confirm it carries an INVALID email (no real row).
+        captured = {}
+
+        def fake(url, **kwargs):
+            captured["body"] = (kwargs.get("data") or b"").decode("utf-8")
+            return make_resp(422, {"detail": "invalid"})
+
+        with mock.patch.object(smoke, "http_request", side_effect=fake):
+            r = smoke.check_cloud_register(make_args())
+        assert r.status == "ok"
+        # The body must NOT be a valid smoketest signup.
+        assert "smoketest" not in captured["body"]
+        assert "not-an-email" in captured["body"]
+
+    def test_prod_fail_if_invalid_email_accepted(self):
+        # A 202 to an invalid email is a real regression — flag it.
+        with patch_http({
+            "/v1/auth/register": make_resp(202, {"status": "accepted"}),
+        }):
+            r = smoke.check_cloud_register(make_args())
+        assert r.status == "fail"
+
+    # --- NON-prod target (or --register-live): full mutating probe OK -----
+    def test_nonprod_ok_on_202(self):
+        args = make_args(cloud_url="http://127.0.0.1:8000")
+        with patch_http({
+            "/v1/auth/register": make_resp(202, {"status": "accepted"}),
+        }):
+            r = smoke.check_cloud_register(args)
+        assert r.status == "ok"
+
+    def test_register_live_forces_full_probe_against_prod(self):
+        # Explicit opt-in: even against prod, --register-live does the 202
+        # probe (the tagged email is auto-excludable by the cockpit).
+        args = make_args(register_live=True)
+        captured = {}
+
+        def fake(url, **kwargs):
+            captured["body"] = (kwargs.get("data") or b"").decode("utf-8")
+            return make_resp(202, {"status": "accepted"})
+
+        with mock.patch.object(smoke, "http_request", side_effect=fake):
+            r = smoke.check_cloud_register(args)
+        assert r.status == "ok"
+        assert "smoketest" in captured["body"]
+
+    def test_nonprod_fail_when_email_send_fails(self):
+        args = make_args(cloud_url="http://127.0.0.1:8000")
         with patch_http({
             "/v1/auth/register": make_resp(502,
                                             {"detail": "email_send_failed"}),
         }):
-            r = smoke.check_cloud_register(make_args())
+            r = smoke.check_cloud_register(args)
         assert r.status == "fail"
         assert "RESEND" in r.detail.upper() or "email" in r.detail.lower()
+
+    def test_is_prod_target_classification(self):
+        assert smoke._is_prod_target("https://archhub-cloud.fly.dev")
+        assert smoke._is_prod_target("https://cloud.archhub.io")
+        assert smoke._is_prod_target("https://api.archhub.io")
+        assert not smoke._is_prod_target("http://127.0.0.1:8000")
+        assert not smoke._is_prod_target("http://localhost:8000")
+        assert not smoke._is_prod_target("https://archhub-cloud-pr-42.fly.dev"
+                                         .replace("archhub-cloud.fly.dev", "x"))
 
 
 class TestStripeWebhookRoute:
@@ -632,8 +716,10 @@ class TestAllGreenPath:
                 make_resp(200, {"status": "ok"}),
             "/v1/billing/plans":
                 make_resp(200, [{"id": "a"}, {"id": "b"}, {"id": "c"}]),
+            # Default (prod) target → non-mutating register probe expects a
+            # 4xx validation response (no user is created).
             "/v1/auth/register":
-                make_resp(202, {"status": "accepted"}),
+                make_resp(422, {"detail": "bad email"}),
             "/v1/webhooks/stripe":
                 make_resp(400, {"detail": "bad_signature"}),
             f"{smoke.DEFAULT_AGENTS_URL}/healthz":
@@ -701,6 +787,7 @@ class TestCLI:
         assert args.agents_url == smoke.DEFAULT_AGENTS_URL
         assert args.stripe_check is False
         assert args.llm_check is False
+        assert args.register_live is False
         assert args.json is False
         assert args.quiet is False
         assert args.retry == 1

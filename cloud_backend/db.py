@@ -17,6 +17,7 @@ of req/sec on a single instance.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import time
@@ -33,6 +34,160 @@ import config
 # so the client's expiry and the server's enforced expiry AGREE.
 # A token past this is rejected by user_for_token (server-side enforced).
 TOKEN_TTL_SECONDS = 90 * 24 * 3600   # 90 days
+
+
+# ---------------------------------------------------------------------------
+# Test / seed account predicate  (founder-cockpit honesty, 2026-06-22)
+# ---------------------------------------------------------------------------
+# Automated smoke / live-verify probes (scripts/reality_smoke.py) historically
+# POSTed throwaway signups to the LIVE registration endpoint, polluting the
+# production users table with synthetic rows shaped like
+#   reality+smoketest<unix-ts>@archhub.io
+# The cockpit counted these honestly, so every users / MRR / signups number was
+# junk. `is_test_account_email` is the ONE predicate that recognises such a
+# synthetic row so the cockpit can report REAL business numbers (test accounts
+# surfaced separately, never silently dropped) and the founder-gated purge can
+# delete exactly — and only — these rows.
+#
+# Precision matters: archhub.io is ArchHub's OWN domain, so a blanket
+# "@archhub.io is a test account" rule would wrongly flag a genuine staff
+# mailbox (e.g. ahmed@archhub.io). The synthetic accounts ALWAYS carry a
+# tell-tale local-part marker — a "+smoketest"/"+test" sub-address, or a
+# "reality+" / "smoketest" / "test" prefix — so we require BOTH the internal
+# domain AND a synthetic-looking local part before excluding on the domain
+# alone. The sub-address markers ("+smoketest", "+test", "reality+") match on
+# ANY domain (a probe could target a different host), but a plain personal
+# Gmail with no marker is never touched.
+#
+# The founder's own email (ahmedfargale@gmail.com) has no marker and a
+# non-internal domain → never matched. Genuine staff like ahmed@archhub.io →
+# no synthetic local-part marker → never matched.
+_TEST_ACCOUNT_INTERNAL_DOMAIN = "archhub.io"
+
+# Sub-address markers anywhere in the email (case-insensitive). A '+tag' style
+# address used by the probes — unambiguous, never a real customer login.
+_TEST_ACCOUNT_SUBSTRINGS = ("+smoketest", "+test")
+
+# Local-part prefixes that only a synthetic probe account uses.
+_TEST_ACCOUNT_LOCALPART_PREFIXES = ("reality+", "smoketest", "test+", "test@")
+
+# Throwaway / disposable domains that are ONLY ever used for test or seed
+# accounts — a registration on one of these is synthetic on its face,
+# regardless of the local part. Includes the public throwaway providers plus
+# the cockpit test-suite's own domain. Unifying the two cockpit features that
+# each grew their own marker list, this is the single canonical set.
+_TEST_ACCOUNT_DOMAINS = frozenset({
+    "example.com",
+    "test.com",
+    "mailinator.com",
+    "example.org",
+    "archhub-cockpit-test.com",
+})
+
+
+def _norm_email(email: Optional[str]) -> str:
+    """Lower-cased + trimmed email, matching how the DB stores it."""
+    return (email or "").strip().lower()
+
+
+def _protected_emails() -> set:
+    """Emails that MUST NEVER be classified as a test account or purged
+    regardless of marker / domain match — first and foremost the configured
+    founder, so 'purge test users' can never delete the operator's own account
+    even if their address happens to match a test pattern (e.g. the founder
+    signs in with a throwaway-domain address in the cockpit test-suite)."""
+    protected = set()
+    try:
+        protected.add(
+            (os.environ.get("FOUNDER_EMAIL") or
+             "ahmedfargale@gmail.com").strip().lower())
+    except Exception:
+        pass
+    return protected
+
+
+def is_test_account_email(email: Optional[str]) -> bool:
+    """True iff `email` is a synthetic test/seed account (a smoke-probe row),
+    NOT a genuine user or staff mailbox.
+
+    Matches (case-insensitive):
+      * a '+smoketest' or '+test' sub-address on ANY domain
+      * a local part starting 'reality+' / 'smoketest' / 'test+' (the probe
+        shapes) on ANY domain
+      * a throwaway / disposable domain (example.com, test.com, mailinator.com,
+        example.org, archhub-cockpit-test.com) — synthetic regardless of the
+        local part
+      * the internal '@archhub.io' domain WHEN the local part also looks
+        synthetic (contains '+' or starts reality/smoketest/test) — so a
+        genuine staff '@archhub.io' mailbox is NOT flagged.
+
+    A protected email (the configured founder) is NEVER flagged, even if it
+    matches a pattern above — so the operator's own account is always treated
+    as a real user and can never be purged.
+    """
+    e = _norm_email(email)
+    if not e or "@" not in e:
+        return False
+    # The founder (and any other protected mailbox) is never a test account.
+    if e in _protected_emails():
+        return False
+    local, _, domain = e.partition("@")
+    # Sub-address markers — unambiguous on any domain.
+    for s in _TEST_ACCOUNT_SUBSTRINGS:
+        if s in e:
+            return True
+    # Probe local-part prefixes — synthetic on any domain.
+    for p in _TEST_ACCOUNT_LOCALPART_PREFIXES:
+        if local.startswith(p) or e.startswith(p):
+            return True
+    # Throwaway / disposable domains — synthetic on their face.
+    if domain in _TEST_ACCOUNT_DOMAINS:
+        return True
+    # Internal domain: flag ONLY when the local part is itself synthetic, so
+    # real staff @archhub.io are never excluded.
+    if domain == _TEST_ACCOUNT_INTERNAL_DOMAIN:
+        if ("+" in local
+                or local.startswith("reality")
+                or local.startswith("smoketest")
+                or local.startswith("test")):
+            return True
+    return False
+
+
+# SQL fragment + params that reproduce `is_test_account_email` inside a
+# WHERE clause, so the count/aggregate helpers can exclude (or isolate) test
+# rows in a single query instead of pulling every row into Python. Kept in
+# lock-step with the function above — the test-suite asserts they AGREE on a
+# representative sample so the two never drift.
+#   `col` is the email column name (already lower-cased in storage; we LOWER()
+#   defensively in case a legacy row was inserted un-normalised).
+def _test_account_sql(col: str = "email") -> tuple[str, list]:
+    c = f"LOWER({col})"
+    clauses = [
+        f"{c} LIKE '%+smoketest%'",
+        f"{c} LIKE '%+test%'",
+        f"{c} LIKE 'reality+%'",
+        f"{c} LIKE 'smoketest%'",
+        f"{c} LIKE 'test+%'",
+        # internal domain with a synthetic local part
+        f"({c} LIKE '%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}' AND ("
+        f"  {c} LIKE '%+%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'reality%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'smoketest%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'test%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"))",
+    ]
+    # Throwaway / disposable domains — synthetic on their face, any local part.
+    for d in sorted(_TEST_ACCOUNT_DOMAINS):
+        clauses.append(f"{c} LIKE '%@{d}'")
+    matcher = "(" + " OR ".join(clauses) + ")"
+    # A protected email (the founder) is NEVER a test account — exclude it so
+    # the SQL stays in lock-step with `is_test_account_email`.
+    protected = sorted(_protected_emails())
+    if protected:
+        ph = ",".join("?" for _ in protected)
+        return f"({matcher} AND {c} NOT IN ({ph}))", list(protected)
+    return matcher, []
 
 
 SCHEMA = """
@@ -360,6 +515,52 @@ CREATE TABLE IF NOT EXISTS training_samples (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+-- Founder cockpit: persisted config flags the founder can toggle from the
+-- cockpit command surface (e.g. the free-default flag). A tiny key/value
+-- store separate from schema_meta (which holds internal migration markers) so
+-- founder-controlled runtime behaviour never collides with schema bookkeeping.
+CREATE TABLE IF NOT EXISTS founder_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    updated_by  TEXT
+);
+
+-- Founder cockpit: an append-only audit log of every command the founder
+-- executes through the cockpit. Every real action (purge, set-plan, toggle,
+-- agent-direction) writes one row BEFORE/AFTER it runs, so the cockpit's
+-- authority is accountable + reviewable. Never deleted from app code.
+CREATE TABLE IF NOT EXISTS founder_action_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    actor       TEXT NOT NULL,         -- founder email that ran the command
+    command     TEXT NOT NULL,         -- the raw typed instruction
+    action      TEXT NOT NULL,         -- resolved action id (set_plan, purge_test_users, ...)
+    target      TEXT,                  -- e.g. user email / flag name / task id
+    result      TEXT NOT NULL DEFAULT '',  -- JSON summary of the real effect
+    ok          INTEGER NOT NULL DEFAULT 1
+);
+
+-- Founder cockpit -> AGENT DIRECTION. A real durable task queue the
+-- founder fills by typing a directive in the cockpit; the app-side agent
+-- loop (composer/ambient self-extension) picks rows up and works them.
+-- Enqueuing a row IS the real "started" effect for the agent-direction
+-- command — it is observable state the agent reads, not a no-op.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id          TEXT PRIMARY KEY,
+    created_at  INTEGER NOT NULL,
+    created_by  TEXT NOT NULL,         -- founder email
+    kind        TEXT NOT NULL DEFAULT 'self_extend',  -- self_extend | task | workflow
+    directive   TEXT NOT NULL,         -- what the agent should build/do
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | claimed | running | done | failed
+    claimed_by  TEXT,
+    claimed_at  INTEGER,
+    finished_at INTEGER,
+    result      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_founder_action_ts ON founder_action_log(ts);
 CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
 CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
@@ -2116,50 +2317,149 @@ def mark_invite_accepted(token: str) -> None:
 # `usage_log` and `training_samples` rows the rest of the backend writes,
 # so the numbers are the real business state, never placeholders.
 
-def count_users() -> int:
-    """Total registered users (every row in `users`)."""
+def count_users(exclude_test: bool = False) -> int:
+    """Total registered users (every row in `users`).
+
+    `exclude_test=True` omits synthetic smoke-probe rows (see
+    `is_test_account_email`) so the founder cockpit can show the REAL count.
+    Default False preserves the historical behaviour for every other caller.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f" WHERE NOT {frag}", p)
     with connect() as con:
-        r = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        r = con.execute(f"SELECT COUNT(*) AS n FROM users{where}",
+                        params).fetchone()
     return int(r["n"]) if r else 0
 
 
-def count_users_by_plan() -> dict:
-    """{plan: count} over all users, e.g. {'trial': 12, 'solo': 3}."""
+def count_test_users() -> int:
+    """Count of synthetic test/seed accounts (the inverse of the real count)."""
+    frag, params = _test_account_sql()
+    with connect() as con:
+        r = con.execute(f"SELECT COUNT(*) AS n FROM users WHERE {frag}",
+                        params).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def count_users_by_plan(exclude_test: bool = False) -> dict:
+    """{plan: count} over all users, e.g. {'trial': 12, 'solo': 3}.
+
+    `exclude_test=True` omits synthetic smoke-probe rows.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f" WHERE NOT {frag}", p)
     with connect() as con:
         rows = con.execute(
-            "SELECT plan, COUNT(*) AS n FROM users GROUP BY plan"
+            f"SELECT plan, COUNT(*) AS n FROM users{where} GROUP BY plan",
+            params,
         ).fetchall()
     return {r["plan"]: int(r["n"]) for r in rows}
 
 
-def count_users_since(epoch: int) -> int:
-    """Users created at/after `epoch` (e.g. signups in the last 24h/7d)."""
+def count_users_since(epoch: int, exclude_test: bool = False) -> int:
+    """Users created at/after `epoch` (e.g. signups in the last 24h/7d).
+
+    `exclude_test=True` omits synthetic smoke-probe rows.
+    """
+    clauses = ["created_at >= ?"]
+    params: list = [int(epoch)]
+    if exclude_test:
+        frag, p = _test_account_sql()
+        clauses.append(f"NOT {frag}")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE created_at >= ?",
-            (int(epoch),),
+            f"SELECT COUNT(*) AS n FROM users{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
 
 
-def recent_users(limit: int = 10) -> list[dict]:
-    """Most-recent signups, newest first. Returns id/email/plan/created_at."""
+def recent_users(limit: int = 10, exclude_test: bool = False) -> list[dict]:
+    """Most-recent signups, newest first. Returns id/email/plan/created_at.
+
+    `exclude_test=True` omits synthetic smoke-probe rows so the founder's
+    'Recent signups' list shows only real people.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f"WHERE NOT {frag} ", p)
     with connect() as con:
         rows = con.execute(
             "SELECT id, email, plan, created_at, msg_used, msg_limit "
-            "FROM users ORDER BY created_at DESC LIMIT ?",
-            (int(limit),),
+            f"FROM users {where}ORDER BY created_at DESC LIMIT ?",
+            [*params, int(limit)],
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def count_paid_users() -> int:
-    """Users on a paid individual tier (not trial)."""
+def count_paid_users(exclude_test: bool = False) -> int:
+    """Users on a paid individual tier (not trial).
+
+    `exclude_test=True` omits synthetic smoke-probe rows (a probe row is
+    'trial' anyway, but the flag keeps every count helper consistent).
+    """
+    clauses = ["plan != 'trial'"]
+    params: list = []
+    if exclude_test:
+        frag, p = _test_account_sql()
+        clauses.append(f"NOT {frag}")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE plan != 'trial'"
+            f"SELECT COUNT(*) AS n FROM users{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
+
+
+def delete_test_users() -> int:
+    """DELETE every synthetic test/seed account row (and ALL its dependent
+    rows). Returns the number of `users` rows deleted.
+
+    This is the single engine behind the founder-gated
+    POST /founder/api/purge-test-users endpoint and the `purge test users`
+    command. It is intentionally a plain DAO function with NO gate of its own —
+    the gate (founder identity + explicit confirm) lives at the HTTP layer. It
+    deletes ONLY rows matching `is_test_account_email` (which already excludes
+    the protected founder mailbox); a genuine user or staff mailbox is never
+    touched.
+
+    Cascades by hand (SQLite FKs are advisory here): the union of every
+    dependent table either cockpit feature cleaned up — codes, tokens,
+    usage_log, credit_grants, training_samples, memory_op_log, memory_access_log
+    (keyed on reader_user_id) and company_members — so a purged test user leaves
+    no orphan rows.
+    """
+    frag, params = _test_account_sql()
+    with connect() as con:
+        ids = [row["id"] for row in con.execute(
+            f"SELECT id FROM users WHERE {frag}", params).fetchall()]
+        if not ids:
+            return 0
+        qmarks = ",".join("?" for _ in ids)
+        # Best-effort clean of dependent rows so no orphans linger. Each is
+        # wrapped defensively — a table that doesn't exist in some deploy
+        # (e.g. credit_grants on an old DB) must not abort the purge.
+        for tbl, col in (("codes", "user_id"), ("tokens", "user_id"),
+                         ("usage_log", "user_id"),
+                         ("credit_grants", "user_id"),
+                         ("training_samples", "user_id"),
+                         ("memory_op_log", "user_id"),
+                         ("memory_access_log", "reader_user_id"),
+                         ("company_members", "user_id")):
+            try:
+                con.execute(
+                    f"DELETE FROM {tbl} WHERE {col} IN ({qmarks})", ids)
+            except sqlite3.OperationalError:
+                pass
+        con.execute(f"DELETE FROM users WHERE id IN ({qmarks})", ids)
+        return len(ids)
 
 
 def list_companies_billing() -> list[dict]:
@@ -2179,17 +2479,28 @@ def count_companies() -> int:
     return int(r["n"]) if r else 0
 
 
-def usage_totals() -> dict:
+def usage_totals(exclude_test: bool = False) -> dict:
     """Lifetime proxy-usage roll-up from `usage_log`:
     chat completions (one row per proxied completion), total tokens, and
     total spend in micro-dollars. Real counters — every /v1/chat/completions
-    that hits the hosted proxy writes a usage_log row via db.log_usage."""
+    that hits the hosted proxy writes a usage_log row via db.log_usage.
+
+    `exclude_test=True` drops usage rows owned by synthetic test accounts
+    (joined via users.email) so the cockpit's spend/token totals are real.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql("u.email")
+        where = (" WHERE user_id NOT IN "
+                 f"(SELECT id FROM users u WHERE {frag})")
+        params = p
     with connect() as con:
         r = con.execute(
             "SELECT COUNT(*) AS calls, "
             "COALESCE(SUM(input_toks), 0) AS in_toks, "
             "COALESCE(SUM(output_toks), 0) AS out_toks, "
-            "COALESCE(SUM(cost_micros), 0) AS cost_micros FROM usage_log"
+            f"COALESCE(SUM(cost_micros), 0) AS cost_micros FROM usage_log{where}",
+            params,
         ).fetchone()
     return {
         "chat_completions": int(r["calls"]) if r else 0,
@@ -2199,12 +2510,22 @@ def usage_totals() -> dict:
     }
 
 
-def usage_calls_since(epoch: int) -> int:
-    """Proxied chat completions at/after `epoch` (trailing-window activity)."""
+def usage_calls_since(epoch: int, exclude_test: bool = False) -> int:
+    """Proxied chat completions at/after `epoch` (trailing-window activity).
+
+    `exclude_test=True` drops usage rows owned by synthetic test accounts.
+    """
+    clauses = ["ts >= ?"]
+    params: list = [int(epoch)]
+    if exclude_test:
+        frag, p = _test_account_sql("u.email")
+        clauses.append("user_id NOT IN "
+                       f"(SELECT id FROM users u WHERE {frag})")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM usage_log WHERE ts >= ?",
-            (int(epoch),),
+            f"SELECT COUNT(*) AS n FROM usage_log{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
 
@@ -2239,3 +2560,201 @@ def count_marketplace_packs() -> int:
             "SELECT COUNT(*) AS n FROM marketplace_packs"
         ).fetchone()
     return int(r["n"]) if r else 0
+
+
+# ---------------------------------------------------------------------------
+# Founder cockpit ACTIONS (PHASE 5 — real authority, WRITE paths)
+# ---------------------------------------------------------------------------
+# Unlike the read-only aggregates above, these mutate real rows. They are the
+# state-changing organs the founder cockpit command surface
+# (cloud_backend/founder_cockpit.py) drives. Each is small, explicit, and
+# returns the REAL effect (rows deleted, the new plan, the queued task id) so
+# the cockpit can report what it DID, never a canned message.
+
+# Legacy marker list from the cockpit-command feature, kept for reference /
+# back-compat. The canonical test-account classifier is now
+# `is_test_account_email` / `_test_account_sql` (which subsumes these markers
+# via `_TEST_ACCOUNT_DOMAINS` + the sub-address prefixes), so nothing consults
+# this tuple any more — it is retained, unused, only to minimise churn.
+TEST_USER_EMAIL_MARKERS = (
+    "@example.com",
+    "@test.com",
+    "@archhub-cockpit-test.com",   # the cockpit test-suite domain
+    "+test@",
+    "test+",
+    "@mailinator.com",
+    "@example.org",
+)
+
+
+def list_test_users() -> list[dict]:
+    """Every synthetic test/seed user row — the canonical `is_test_account_email`
+    set, with the protected founder mailbox already excluded by the predicate.
+    Read-only: the preview the cockpit shows before a confirmed purge. Returns
+    id / email / plan / created_at per row (id + email are guaranteed)."""
+    frag, params = _test_account_sql()
+    with connect() as con:
+        rows = con.execute(
+            f"SELECT id, email, plan, created_at FROM users WHERE {frag} "
+            "ORDER BY created_at DESC",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_user_plan(user_id_or_email: str, plan: str) -> dict:
+    """Set a user's plan/tier by id OR email. REAL UPDATE on the users row.
+
+    Reuses the canonical quota table (config.PLAN_QUOTAS) so the seat's
+    msg_limit moves with the tier, exactly like a billing webhook would.
+    Returns {'ok', 'user_id', 'email', 'plan', 'msg_limit'} reflecting the
+    row AFTER the write -- the proof the cockpit reports. Raises ValueError on
+    an unknown plan or a user that does not exist (the route maps these to a
+    clean 4xx, never a silent no-op)."""
+    plan = (plan or "").strip().lower()
+    if plan not in config.PLAN_QUOTAS:
+        raise ValueError(f"unknown_plan:{plan}")
+    key = (user_id_or_email or "").strip()
+    if not key:
+        raise ValueError("missing_user")
+    user = get_user_by_email(key) if "@" in key else get_user(key)
+    if user is None:
+        # Fall back to the other lookup so either form works.
+        user = get_user(key) or get_user_by_email(key.lower())
+    if user is None:
+        raise ValueError(f"no_such_user:{key}")
+    msg_limit = config.PLAN_QUOTAS[plan]
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET plan = ?, msg_limit = ? WHERE id = ?",
+            (plan, msg_limit, user["id"]),
+        )
+    return {
+        "ok": True, "user_id": user["id"], "email": user["email"],
+        "plan": plan, "msg_limit": msg_limit,
+    }
+
+
+# --- Founder config flags (persisted, founder-toggleable) ------------------
+def get_founder_flag(key: str, default: Optional[str] = None) -> Optional[str]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT value FROM founder_config WHERE key = ?", (key,)).fetchone()
+    return r["value"] if r else default
+
+
+def set_founder_flag(key: str, value: str, *, actor: Optional[str] = None) -> dict:
+    """Upsert a founder config flag. REAL persisted effect on runtime
+    behaviour (e.g. 'free_default'). Returns the new {key, value}."""
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "INSERT INTO founder_config (key, value, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (key, str(value), now, actor),
+        )
+    return {"key": key, "value": str(value), "updated_at": now}
+
+
+def all_founder_flags() -> dict:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT key, value FROM founder_config").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+# --- Founder action audit log ----------------------------------------------
+def log_founder_action(*, actor: str, command: str, action: str,
+                        target: Optional[str], result: str, ok: bool) -> int:
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO founder_action_log "
+            "(ts, actor, command, action, target, result, ok) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(time.time()), actor, command[:1000], action,
+             (target or None), result[:2000], 1 if ok else 0),
+        )
+        return int(cur.lastrowid)
+
+
+def recent_founder_actions(limit: int = 30) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, ts, actor, command, action, target, result, ok "
+            "FROM founder_action_log ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Agent task queue (cockpit DIRECTS agents) -----------------------------
+def enqueue_agent_task(*, directive: str, created_by: str,
+                        kind: str = "self_extend") -> dict:
+    """Insert a real task row the app-side agent loop picks up. The inserted
+    row IS the observable 'queued/started' effect of an agent-direction
+    command. Returns the row {id, status, kind, directive}."""
+    import uuid
+    tid = "task_" + uuid.uuid4().hex[:16]
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "INSERT INTO agent_tasks "
+            "(id, created_at, created_by, kind, directive, status) "
+            "VALUES (?, ?, ?, ?, ?, 'queued')",
+            (tid, now, created_by, kind, directive[:2000]),
+        )
+    return {"id": tid, "status": "queued", "kind": kind,
+            "directive": directive[:2000], "created_at": now}
+
+
+def get_agent_task(task_id: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def list_agent_tasks(limit: int = 30,
+                      status: Optional[str] = None) -> list[dict]:
+    with connect() as con:
+        if status:
+            rows = con.execute(
+                "SELECT * FROM agent_tasks WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (status, int(limit))).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM agent_tasks ORDER BY created_at DESC LIMIT ?",
+                (int(limit),)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_agent_tasks(status: Optional[str] = None) -> int:
+    with connect() as con:
+        if status:
+            r = con.execute(
+                "SELECT COUNT(*) AS n FROM agent_tasks WHERE status = ?",
+                (status,)).fetchone()
+        else:
+            r = con.execute(
+                "SELECT COUNT(*) AS n FROM agent_tasks").fetchone()
+    return int(r["n"]) if r else 0
+
+
+def claim_agent_task(task_id: str, claimed_by: str):
+    """Atomically move a queued task to 'claimed'. Returns the row, or None if
+    it was not queued (already taken). This is the agent side of the contract --
+    proves the enqueued row is real, pick-up-able work."""
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE agent_tasks SET status='claimed', claimed_by=?, "
+            "claimed_at=? WHERE id=? AND status='queued'",
+            (claimed_by, now, task_id))
+        if cur.rowcount == 0:
+            return None
+        r = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(r) if r else None

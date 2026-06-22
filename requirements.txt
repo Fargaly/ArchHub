@@ -1,6 +1,6 @@
 PyQt6>=6.11.0,<7
 anthropic>=0.111.0,<1
-openai>=1.50,<2
+openai>=2.43.0,<3
 google-generativeai>=0.8.6,<1
 keyring>=25.7.0,<27
 requests>=2.34.2,<3

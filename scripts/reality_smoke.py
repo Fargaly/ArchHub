@@ -224,11 +224,71 @@ def check_cloud_billing_plans(args: argparse.Namespace) -> CheckResult:
                        f"expected ≥3 tiers, got {len(tiers)}")
 
 
+def _is_prod_target(url: str) -> bool:
+    """True iff `url` points at a PRODUCTION host whose DB must NOT be
+    polluted by smoke-test signups. The Fly prod app + the public domains
+    are prod; anything else (localhost, a PR/staging app, an explicit test
+    env) is fair game for a real register probe.
+    """
+    host = (url or "").lower()
+    prod_markers = (
+        "archhub-cloud.fly.dev",   # the live Fly app
+        "cloud.archhub.io",         # public API domain
+        "api.archhub.io",
+        "archhub.io",               # any archhub.io host
+    )
+    return any(m in host for m in prod_markers)
+
+
 @check("cloud.register", "Cloud backend")
 def check_cloud_register(args: argparse.Namespace) -> CheckResult:
-    """POST /v1/auth/register with throwaway +smoketest email → 202."""
+    """Verify /v1/auth/register is wired — WITHOUT polluting the prod DB.
+
+    ROOT-CAUSE FIX (2026-06-22): this check used to POST a throwaway
+    `reality+smoketest<ts>@archhub.io` signup on every run. Against the LIVE
+    Fly app — which the hourly reality cron + post-deploy verify both target —
+    each run created a NEW real `users` row (salted email), so production
+    accrued hundreds of synthetic accounts and every cockpit users/MRR/signups
+    number was junk.
+
+    Now:
+      * Against a PROD target (default) we do a NON-MUTATING reachability probe:
+        POST a deliberately INVALID body and accept 4xx (422 validation / 400)
+        as proof the route exists and validates. No user is ever created.
+      * Against a NON-prod target (localhost / staging / an explicit test env,
+        via --cloud-url) OR when --register-live is passed, we do the full
+        202 magic-link probe with a clearly-tagged, auto-excludable email.
+
+    Either way the synthetic email keeps the `+smoketest` / `@archhub.io`
+    markers so db.is_test_account_email recognises it and the founder cockpit
+    excludes / can purge it.
+    """
     url = f"{args.cloud_url.rstrip('/')}/v1/auth/register"
-    # Salt the email so repeated runs don't reuse the same DB row.
+    live = getattr(args, "register_live", False)
+    prod = _is_prod_target(args.cloud_url)
+
+    if prod and not live:
+        # Non-mutating probe: an invalid email can never create a user, but a
+        # wired route still validates it and returns 422 (pydantic) / 400.
+        body = json.dumps({"email": "not-an-email", "code_challenge": "x"}
+                          ).encode("utf-8")
+        r = http_request(url, method="POST", data=body,
+                         headers={"Content-Type": "application/json"})
+        if r.status in (400, 422):
+            return CheckResult("cloud.register", "Cloud backend", STATUS_OK,
+                               f"route wired (validates, HTTP {r.status}) — "
+                               "non-mutating prod probe")
+        if r.status == 404:
+            return CheckResult("cloud.register", "Cloud backend", STATUS_FAIL,
+                               "route not registered (404)")
+        # A 202 here would mean the server ACCEPTED an invalid email — a real
+        # regression worth flagging (and it shouldn't create a usable row).
+        return CheckResult("cloud.register", "Cloud backend", STATUS_FAIL,
+                           f"unexpected HTTP {r.status}: {r.text[:120]}")
+
+    # Non-prod (or explicit --register-live): full mutating probe is OK here.
+    # Salt the email so repeated runs don't reuse the same DB row; keep the
+    # +smoketest / @archhub.io markers so the row is auto-excludable.
     salt = str(int(time.time()))
     body = json.dumps({
         "email": f"reality+smoketest{salt}@archhub.io",
@@ -240,7 +300,7 @@ def check_cloud_register(args: argparse.Namespace) -> CheckResult:
                      headers={"Content-Type": "application/json"})
     if r.status == 202:
         return CheckResult("cloud.register", "Cloud backend", STATUS_OK,
-                           "magic-link issued (202)")
+                           "magic-link issued (202) — non-prod target")
     # 502 email_send_failed means the route works but Resend isn't
     # configured. Surface clearly — still a deployment problem.
     if r.status == 502:
@@ -941,6 +1001,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                    help="Exercise live Stripe API (uses STRIPE_SECRET_KEY)")
     p.add_argument("--llm-check", action="store_true",
                    help="Exercise live LLM APIs (Anthropic/OpenAI/Google) — costs cents")
+    p.add_argument("--register-live", action="store_true",
+                   help="Allow the FULL mutating /v1/auth/register probe (creates "
+                        "a tagged smoke-test user). Off by default; against a PROD "
+                        "target the register check is non-mutating regardless. Use "
+                        "only against localhost / a staging / test env.")
     p.add_argument("--json", action="store_true",
                    help="Emit JSON instead of human text")
     p.add_argument("--quiet", action="store_true",

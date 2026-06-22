@@ -33,11 +33,18 @@ import time
 from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 
 import config
 import db
+
+# Name of the cookie the browser carries to authenticate the founder. It holds
+# the SAME bearer token the API uses; it is set HttpOnly + Secure + SameSite=Lax
+# by POST /founder/login and read as an alternate token source by
+# require_founder (so a plain browser navigation to /founder works).
+FOUNDER_COOKIE = "founder_session"
 
 
 # ---------------------------------------------------------------------------
@@ -70,24 +77,45 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     return parts[1].strip()
 
 
-def require_founder(authorization: Optional[str] = Header(None)) -> dict:
+def _founder_user_for_token(token: Optional[str]) -> Optional[dict]:
+    """Resolve a token to the FOUNDER user, or None. The single, shared
+    validation path used by BOTH the route gate (require_founder) and the
+    cookie-login POST: db.user_for_token -> email == founder_email. Returns
+    None for a missing/invalid token OR a valid token belonging to any
+    non-founder user — the caller decides how to surface that (403 / re-render).
+    """
+    if not token:
+        return None
+    user = db.user_for_token(token)
+    if user is None:
+        return None
+    email = (user.get("email") or "").strip().lower()
+    if not email or email != founder_email():
+        return None
+    return user
+
+
+def require_founder(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    founder_session: Optional[str] = Cookie(None),
+) -> dict:
     """FastAPI dependency: resolve the caller via the SAME token/me() path
     the rest of the API uses (db.user_for_token), then allow ONLY the
     founder. Everyone else — any other authenticated user, OR an
     unauthenticated caller — gets 403.
 
-    This is the one and only gate for every cockpit route. There is no
-    bypass: a missing token, an invalid token, and a valid token for a
-    non-founder user ALL resolve to 403 founder_only.
+    The founder token may arrive via EITHER source, validated identically:
+      - `Authorization: Bearer <token>` header (API clients, curl), OR
+      - the `founder_session` cookie (a browser navigating to /founder),
+        set by POST /founder/login.
+    The header wins when both are present. There is no other bypass: a
+    missing token, an invalid token, and a valid token for a non-founder
+    user ALL resolve to 403 founder_only.
     """
-    token = _bearer(authorization)
-    if not token:
-        raise HTTPException(status_code=403, detail="founder_only")
-    user = db.user_for_token(token)
+    token = _bearer(authorization) or (founder_session or "").strip() or None
+    user = _founder_user_for_token(token)
     if user is None:
-        raise HTTPException(status_code=403, detail="founder_only")
-    email = (user.get("email") or "").strip().lower()
-    if not email or email != founder_email():
         raise HTTPException(status_code=403, detail="founder_only")
     return user
 
@@ -135,14 +163,35 @@ def clear_errors() -> None:
 # Data builders (all read LIVE tables / config — no placeholders)
 # ---------------------------------------------------------------------------
 def _users_panel(recent_n: int = 12) -> dict:
+    """Real user metrics — synthetic smoke-probe accounts EXCLUDED from every
+    headline number, but surfaced honestly as a separate `test_seed` block so
+    nothing is hidden (MAKE-IT-REAL: exclude from the real count, never drop).
+
+    The pollution this fixes: scripts/reality_smoke.py historically registered
+    reality+smoketest<ts>@archhub.io against the live DB on a 30-min cron, so
+    `total` / `signups` / `by_plan` were inflated by hundreds of fake rows.
+    Every number below is now the REAL business state; `test_seed.count` is how
+    many synthetic rows were set aside.
+    """
     now = int(time.time())
+    test_total = db.count_test_users()
     return {
-        "total":          db.count_users(),
-        "paid":           db.count_paid_users(),
-        "by_plan":        db.count_users_by_plan(),
-        "signups_24h":    db.count_users_since(now - 86400),
-        "signups_7d":     db.count_users_since(now - 7 * 86400),
-        "recent":         db.recent_users(recent_n),
+        # Real (test/seed accounts excluded) — the headline numbers.
+        "total":          db.count_users(exclude_test=True),
+        "paid":           db.count_paid_users(exclude_test=True),
+        "by_plan":        db.count_users_by_plan(exclude_test=True),
+        "signups_24h":    db.count_users_since(now - 86400, exclude_test=True),
+        "signups_7d":     db.count_users_since(now - 7 * 86400,
+                                               exclude_test=True),
+        "recent":         db.recent_users(recent_n, exclude_test=True),
+        # Honest disclosure of what was set aside (NOT hidden).
+        "total_incl_test": db.count_users(),
+        "test_seed": {
+            "count":   test_total,
+            "note":   ("Synthetic smoke-test / seed accounts (e.g. "
+                       "reality+smoketest<ts>@archhub.io) excluded from the "
+                       "numbers above. Purge from the cockpit when ready."),
+        },
     }
 
 
@@ -159,7 +208,9 @@ def _subscriptions_panel() -> dict:
     labelled `mrr_estimate` + `basis: "derived_from_stored_plans"` so the
     founder reads it as an estimate, not a billed figure.
     """
-    by_plan = db.count_users_by_plan()
+    # Real plan counts — synthetic smoke-probe rows excluded so MRR and the
+    # trial-user headline are never inflated by fake signups.
+    by_plan = db.count_users_by_plan(exclude_test=True)
     plans = config.PLANS
     tiers = []
     mrr = 0.0
@@ -268,11 +319,14 @@ def _system_panel() -> dict:
 def _usage_panel() -> dict:
     """Usage / progress: chat completions + memory captures (real counters)."""
     now = int(time.time())
-    usage = db.usage_totals()
+    # Real usage — drop rows owned by synthetic test accounts so spend/token
+    # totals reflect genuine customers only.
+    usage = db.usage_totals(exclude_test=True)
     training = db.training_totals()
     return {
         "chat_completions_total": usage["chat_completions"],
-        "chat_completions_24h":   db.usage_calls_since(now - 86400),
+        "chat_completions_24h":   db.usage_calls_since(now - 86400,
+                                                       exclude_test=True),
         "input_tokens":           usage["input_tokens"],
         "output_tokens":          usage["output_tokens"],
         "spend_usd_estimate":     round(usage["cost_micros"] / 1_000_000.0, 4),
@@ -564,19 +618,6 @@ def api_command(payload: dict = Body(default={}),
     return JSONResponse(result)
 
 
-@router.post("/api/purge-test-users")
-def api_purge_test_users(payload: dict = Body(default={}),
-                         _founder: dict = Depends(require_founder)) -> JSONResponse:
-    """Direct destructive route (also reachable as the 'purge test users'
-    command). Requires {"confirm": true} or returns a preview with
-    needs_confirm=true and HTTP 200 (nothing deleted)."""
-    actor = (_founder.get("email") or "").strip().lower()
-    confirm = bool(payload.get("confirm"))
-    result = route_command("purge test users", actor=actor, confirm=confirm,
-                           args={"action": "purge_test_users"})
-    return JSONResponse(result)
-
-
 @router.get("/api/actions")
 def api_actions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The founder action audit log (most recent first)."""
@@ -593,6 +634,51 @@ def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
     })
 
 
+# --- Test-account purge (founder-gated, confirm-required) -------------------
+class PurgeTestUsersReq(BaseModel):
+    """Body for POST /founder/api/purge-test-users. `confirm` MUST be true —
+    an unconfirmed call is a dry-run that reports the count WITHOUT deleting,
+    so the founder can see exactly how many rows would go before committing."""
+    confirm: bool = False
+
+
+@router.post("/api/purge-test-users")
+def api_purge_test_users(
+    body: PurgeTestUsersReq = Body(default_factory=PurgeTestUsersReq),
+    _founder: dict = Depends(require_founder),
+) -> JSONResponse:
+    """DELETE every synthetic test/seed account (rows matching
+    db.is_test_account_email) — the one-click cleanup for the polluted
+    production users table. Also reachable as the 'purge test users' command
+    (which additionally writes the founder_action_log audit row).
+
+    Two locks, both required:
+      1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
+         the founder email passes; everyone else (incl. unauthenticated) → 403.
+      2. EXPLICIT CONFIRM — the body must carry {"confirm": true}. Without it
+         the call is a safe DRY-RUN: it returns `would_purge` (the count that
+         WOULD be deleted) and deletes nothing, so the destructive action can
+         never fire by accident.
+
+    Returns:
+      confirm=false → {"dry_run": true, "would_purge": N, "purged": 0}
+      confirm=true  → {"dry_run": false, "purged": N, "remaining_test": 0}
+    """
+    if not body.confirm:
+        return JSONResponse({
+            "dry_run":     True,
+            "would_purge": db.count_test_users(),
+            "purged":      0,
+            "note":        "confirm:true required to actually delete.",
+        })
+    purged = db.delete_test_users()
+    return JSONResponse({
+        "dry_run":        False,
+        "purged":         purged,
+        "remaining_test": db.count_test_users(),
+    })
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
@@ -601,6 +687,53 @@ def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
     auto-refreshes every 30s. All styling is inline so the page has zero
     external dependencies."""
     return HTMLResponse(_PAGE_HTML)
+
+
+# --- Cookie login (the ONLY ungated cockpit routes) ------------------------
+# A browser navigating to /founder sends no Authorization header, so without a
+# session it 403s. These two routes let the founder mint a `founder_session`
+# cookie (validated through the SAME token->founder path as the gate) so the
+# browser carries it on every subsequent /founder* request. The login page +
+# its POST are deliberately UNGATED; everything else stays founder-gated.
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    """Ungated, on-brand sign-in page: one token field -> POST /founder/login."""
+    return HTMLResponse(_login_html())
+
+
+@router.post("/login")
+def login_submit(token: str = Form(default="")) -> Response:
+    """Validate the submitted token via the SAME path the gate uses
+    (db.user_for_token -> email == founder_email). On success: set the
+    HttpOnly + Secure + SameSite=Lax `founder_session` cookie and 303 to
+    /founder. On failure: re-render the login page with a generic error
+    (HTTP 401) and NEVER echo the token back."""
+    token = (token or "").strip()
+    if _founder_user_for_token(token) is None:
+        return HTMLResponse(
+            _login_html(error="That token is not valid for the founder account."),
+            status_code=401,
+        )
+    resp = RedirectResponse(url="/founder", status_code=303)
+    resp.set_cookie(
+        key=FOUNDER_COOKIE,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/founder",
+        max_age=90 * 86400,  # mirrors the token's 90-day server-side lifetime
+    )
+    return resp
+
+
+@router.get("/logout")
+def logout() -> Response:
+    """Clear the founder_session cookie and bounce to the login page."""
+    resp = RedirectResponse(url="/founder/login", status_code=303)
+    resp.delete_cookie(key=FOUNDER_COOKIE, path="/founder")
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +807,11 @@ _PAGE_HTML = """<!doctype html>
   .dot.good{background:var(--good)} .dot.warn{background:var(--warn)}
   .dot.bad{background:var(--bad)}
   .empty{color:var(--ink-faint);font-style:italic;padding:10px 2px}
+  .btn{background:var(--terracotta-soft);color:var(--terracotta);
+    border:1px solid rgba(217,119,87,.4);border-radius:8px;
+    padding:6px 12px;font-size:12.5px;font-family:inherit;cursor:pointer}
+  .btn:hover{background:rgba(217,119,87,.22)}
+  .btn:disabled{opacity:.5;cursor:default}
   .note{color:var(--ink-faint);font-size:11.5px;margin-top:12px;line-height:1.45}
   .err{font-size:12.5px;padding:8px 0;border-bottom:1px solid var(--panel-2)}
   .err:last-child{border-bottom:none}
@@ -714,7 +852,8 @@ _PAGE_HTML = """<!doctype html>
       <span class="refresh">auto-refresh 30s</span> &nbsp;|&nbsp;
       <b id="version">-</b> &nbsp;|&nbsp;
       <span id="env">-</span> &nbsp;|&nbsp;
-      updated <b id="updated">-</b>
+      updated <b id="updated">-</b> &nbsp;|&nbsp;
+      <a href="/founder/logout">Sign out</a>
     </div>
   </header>
   <p class="meta">Private business oversight + control. Live numbers from the
@@ -794,8 +933,11 @@ function render(d){
   $('env').textContent = sys.env;
   $('updated').textContent = ago(d.generated_at);
 
+  const testN = (u.test_seed && u.test_seed.count) || 0;
+  const usersDelta = fmt(u.signups_24h)+' new in 24h'+
+    (testN ? ' · '+fmt(testN)+' test/seed excluded' : '');
   $('kpis').innerHTML =
-    kpi('Total users', fmt(u.total), false, fmt(u.signups_24h)+' new in 24h')+
+    kpi('Total users (real)', fmt(u.total), false, usersDelta)+
     kpi('Paying', fmt(s.paying_subscribers), false, fmt(s.trial_users)+' on trial')+
     kpi('MRR (est.)', money(s.mrr_estimate), true, 'ARR '+money(s.arr_estimate))+
     kpi('Chat completions', fmt(us.chat_completions_total), false, fmt(us.chat_completions_24h)+' in 24h')+
@@ -817,14 +959,23 @@ function render(d){
       `<div class="note">${esc(s.note)}</div>`;
   }
 
-  // By plan
+  // By plan (real users only)
   const bp=u.by_plan||{}; const keys=Object.keys(bp);
+  let t='';
   if(keys.length){
-    let t='';
     keys.sort((a,b)=>bp[b]-bp[a]).forEach(k=>{
       t+=`<div class="row"><span class="k">${esc(k)}</span><span class="v">${fmt(bp[k])}</span></div>`; });
-    $('byplan').innerHTML=t;
-  } else { $('byplan').innerHTML='<div class="empty">No users yet.</div>'; }
+  } else { t='<div class="empty">No real users yet.</div>'; }
+  // Honest test/seed disclosure + one-click purge (founder-gated endpoint).
+  t+=`<div class="row" style="margin-top:8px"><span class="k">test/seed (excluded)</span>`+
+     `<span class="v">${fmt(testN)}</span></div>`;
+  if(testN){
+    t+=`<div style="margin-top:10px"><button id="purgeBtn" class="btn">Purge ${fmt(testN)} test accounts</button>`+
+       `<span id="purgeMsg" class="note"></span></div>`;
+  }
+  $('byplan').innerHTML=t;
+  const pb=$('purgeBtn');
+  if(pb){ pb.onclick=()=>purgeTest(testN); }
 
   // Recent signups
   if(u.recent && u.recent.length){
@@ -929,6 +1080,22 @@ async function runCommand(){
 $('cmdRun').addEventListener('click', runCommand);
 $('cmd').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ runCommand(); }});
 
+async function purgeTest(n){
+  const msg=$('purgeMsg'); const btn=$('purgeBtn');
+  if(!window.confirm('Permanently delete '+n+' synthetic test/seed accounts '+
+    '(reality+smoketest@archhub.io etc.)? Real users are never touched.')) return;
+  if(btn){ btn.disabled=true; btn.textContent='Purging...'; }
+  try{
+    const r=await fetch('/founder/api/purge-test-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({confirm:true})});
+    const j=await r.json();
+    if(r.ok){ if(msg) msg.textContent=' purged '+fmt(j.purged)+'.'; load(); }
+    else { if(msg) msg.textContent=' error '+r.status; if(btn) btn.disabled=false; }
+  }catch(e){ if(msg) msg.textContent=' request failed'; if(btn) btn.disabled=false; }
+}
+
 async function load(){
   try{
     const r = await fetch('/founder/api/overview', {headers:{'Accept':'application/json'}});
@@ -942,3 +1109,76 @@ setInterval(()=>{ load(); loadActions(); }, 30000);
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# The login page (ungated). On-brand: terracotta #d97757, Instrument Serif
+# heading, Inter body, no emoji. One password-type token field that POSTs to
+# /founder/login. Optional error banner (escaped; the token is NEVER echoed).
+# ---------------------------------------------------------------------------
+import html as _html
+
+_LOGIN_HTML_TMPL = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>ArchHub - Founder Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f0f12; --panel:#16161b; --line:#2a2a33;
+    --ink:#ece8e0; --ink-dim:#a39e93; --ink-faint:#6f6a60;
+    --terracotta:#d97757; --terracotta-soft:rgba(217,119,87,.14);
+    --bad:#d96757;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:34px 32px;width:100%;max-width:420px}
+  h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
+    font-size:36px;letter-spacing:.3px;margin:0 0 6px;line-height:1.05}
+  h1 .sub{color:var(--terracotta)}
+  p.help{color:var(--ink-dim);font-size:13px;margin:0 0 22px}
+  label{display:block;color:var(--ink-faint);font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+  input[type=password]{width:100%;background:#0f0f12;border:1px solid var(--line);
+    border-radius:10px;color:var(--ink);font-family:inherit;font-size:14px;
+    padding:11px 13px;outline:none}
+  input[type=password]:focus{border-color:var(--terracotta)}
+  button{margin-top:16px;width:100%;background:var(--terracotta);color:#16110e;
+    border:none;border-radius:10px;font-family:inherit;font-size:14px;
+    font-weight:600;padding:11px 13px;cursor:pointer}
+  button:hover{filter:brightness(1.05)}
+  .err{background:rgba(217,103,87,.12);border:1px solid rgba(217,103,87,.35);
+    color:#e7a99a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:18px}
+  .foot{color:var(--ink-faint);font-size:11.5px;margin-top:18px;line-height:1.45}
+</style>
+</head>
+<body>
+  <form class="card" method="post" action="/founder/login" autocomplete="off">
+    <h1>Founder <span class="sub">Cockpit</span></h1>
+    <p class="help">Private business oversight. Sign in to continue.</p>
+    {error_block}
+    <label for="token">ArchHub token</label>
+    <input id="token" name="token" type="password" autofocus
+           autocomplete="off" spellcheck="false" />
+    <button type="submit">Sign in</button>
+    <div class="foot">Paste your ArchHub account token (Settings -&gt; Account).</div>
+  </form>
+</body>
+</html>
+"""
+
+
+def _login_html(error: Optional[str] = None) -> str:
+    """Render the login page. `error`, if given, is HTML-escaped and shown in a
+    banner; the submitted token is never reflected back into the page."""
+    block = (f'<div class="err">{_html.escape(error)}</div>') if error else ""
+    return _LOGIN_HTML_TMPL.replace("{error_block}", block)

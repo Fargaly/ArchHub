@@ -36,6 +36,108 @@ import config
 TOKEN_TTL_SECONDS = 90 * 24 * 3600   # 90 days
 
 
+# ---------------------------------------------------------------------------
+# Test / seed account predicate  (founder-cockpit honesty, 2026-06-22)
+# ---------------------------------------------------------------------------
+# Automated smoke / live-verify probes (scripts/reality_smoke.py) historically
+# POSTed throwaway signups to the LIVE registration endpoint, polluting the
+# production users table with synthetic rows shaped like
+#   reality+smoketest<unix-ts>@archhub.io
+# The cockpit counted these honestly, so every users / MRR / signups number was
+# junk. `is_test_account_email` is the ONE predicate that recognises such a
+# synthetic row so the cockpit can report REAL business numbers (test accounts
+# surfaced separately, never silently dropped) and the founder-gated purge can
+# delete exactly — and only — these rows.
+#
+# Precision matters: archhub.io is ArchHub's OWN domain, so a blanket
+# "@archhub.io is a test account" rule would wrongly flag a genuine staff
+# mailbox (e.g. ahmed@archhub.io). The synthetic accounts ALWAYS carry a
+# tell-tale local-part marker — a "+smoketest"/"+test" sub-address, or a
+# "reality+" / "smoketest" / "test" prefix — so we require BOTH the internal
+# domain AND a synthetic-looking local part before excluding on the domain
+# alone. The sub-address markers ("+smoketest", "+test", "reality+") match on
+# ANY domain (a probe could target a different host), but a plain personal
+# Gmail with no marker is never touched.
+#
+# The founder's own email (ahmedfargale@gmail.com) has no marker and a
+# non-internal domain → never matched. Genuine staff like ahmed@archhub.io →
+# no synthetic local-part marker → never matched.
+_TEST_ACCOUNT_INTERNAL_DOMAIN = "archhub.io"
+
+# Sub-address markers anywhere in the email (case-insensitive). A '+tag' style
+# address used by the probes — unambiguous, never a real customer login.
+_TEST_ACCOUNT_SUBSTRINGS = ("+smoketest", "+test")
+
+# Local-part prefixes that only a synthetic probe account uses.
+_TEST_ACCOUNT_LOCALPART_PREFIXES = ("reality+", "smoketest", "test+", "test@")
+
+
+def _norm_email(email: Optional[str]) -> str:
+    """Lower-cased + trimmed email, matching how the DB stores it."""
+    return (email or "").strip().lower()
+
+
+def is_test_account_email(email: Optional[str]) -> bool:
+    """True iff `email` is a synthetic test/seed account (a smoke-probe row),
+    NOT a genuine user or staff mailbox.
+
+    Matches (case-insensitive):
+      * a '+smoketest' or '+test' sub-address on ANY domain
+      * a local part starting 'reality+' / 'smoketest' / 'test+' (the probe
+        shapes) on ANY domain
+      * the internal '@archhub.io' domain WHEN the local part also looks
+        synthetic (contains '+' or starts reality/smoketest/test) — so a
+        genuine staff '@archhub.io' mailbox is NOT flagged.
+    """
+    e = _norm_email(email)
+    if not e or "@" not in e:
+        return False
+    local, _, domain = e.partition("@")
+    # Sub-address markers — unambiguous on any domain.
+    for s in _TEST_ACCOUNT_SUBSTRINGS:
+        if s in e:
+            return True
+    # Probe local-part prefixes — synthetic on any domain.
+    for p in _TEST_ACCOUNT_LOCALPART_PREFIXES:
+        if local.startswith(p) or e.startswith(p):
+            return True
+    # Internal domain: flag ONLY when the local part is itself synthetic, so
+    # real staff @archhub.io are never excluded.
+    if domain == _TEST_ACCOUNT_INTERNAL_DOMAIN:
+        if ("+" in local
+                or local.startswith("reality")
+                or local.startswith("smoketest")
+                or local.startswith("test")):
+            return True
+    return False
+
+
+# SQL fragment + params that reproduce `is_test_account_email` inside a
+# WHERE clause, so the count/aggregate helpers can exclude (or isolate) test
+# rows in a single query instead of pulling every row into Python. Kept in
+# lock-step with the function above — the test-suite asserts they AGREE on a
+# representative sample so the two never drift.
+#   `col` is the email column name (already lower-cased in storage; we LOWER()
+#   defensively in case a legacy row was inserted un-normalised).
+def _test_account_sql(col: str = "email") -> tuple[str, list]:
+    c = f"LOWER({col})"
+    clauses = [
+        f"{c} LIKE '%+smoketest%'",
+        f"{c} LIKE '%+test%'",
+        f"{c} LIKE 'reality+%'",
+        f"{c} LIKE 'smoketest%'",
+        f"{c} LIKE 'test+%'",
+        # internal domain with a synthetic local part
+        f"({c} LIKE '%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}' AND ("
+        f"  {c} LIKE '%+%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'reality%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'smoketest%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"  OR {c} LIKE 'test%@{_TEST_ACCOUNT_INTERNAL_DOMAIN}'"
+        f"))",
+    ]
+    return "(" + " OR ".join(clauses) + ")", []
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
@@ -2163,50 +2265,139 @@ def mark_invite_accepted(token: str) -> None:
 # `usage_log` and `training_samples` rows the rest of the backend writes,
 # so the numbers are the real business state, never placeholders.
 
-def count_users() -> int:
-    """Total registered users (every row in `users`)."""
+def count_users(exclude_test: bool = False) -> int:
+    """Total registered users (every row in `users`).
+
+    `exclude_test=True` omits synthetic smoke-probe rows (see
+    `is_test_account_email`) so the founder cockpit can show the REAL count.
+    Default False preserves the historical behaviour for every other caller.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f" WHERE NOT {frag}", p)
     with connect() as con:
-        r = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        r = con.execute(f"SELECT COUNT(*) AS n FROM users{where}",
+                        params).fetchone()
     return int(r["n"]) if r else 0
 
 
-def count_users_by_plan() -> dict:
-    """{plan: count} over all users, e.g. {'trial': 12, 'solo': 3}."""
+def count_test_users() -> int:
+    """Count of synthetic test/seed accounts (the inverse of the real count)."""
+    frag, params = _test_account_sql()
+    with connect() as con:
+        r = con.execute(f"SELECT COUNT(*) AS n FROM users WHERE {frag}",
+                        params).fetchone()
+    return int(r["n"]) if r else 0
+
+
+def count_users_by_plan(exclude_test: bool = False) -> dict:
+    """{plan: count} over all users, e.g. {'trial': 12, 'solo': 3}.
+
+    `exclude_test=True` omits synthetic smoke-probe rows.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f" WHERE NOT {frag}", p)
     with connect() as con:
         rows = con.execute(
-            "SELECT plan, COUNT(*) AS n FROM users GROUP BY plan"
+            f"SELECT plan, COUNT(*) AS n FROM users{where} GROUP BY plan",
+            params,
         ).fetchall()
     return {r["plan"]: int(r["n"]) for r in rows}
 
 
-def count_users_since(epoch: int) -> int:
-    """Users created at/after `epoch` (e.g. signups in the last 24h/7d)."""
+def count_users_since(epoch: int, exclude_test: bool = False) -> int:
+    """Users created at/after `epoch` (e.g. signups in the last 24h/7d).
+
+    `exclude_test=True` omits synthetic smoke-probe rows.
+    """
+    clauses = ["created_at >= ?"]
+    params: list = [int(epoch)]
+    if exclude_test:
+        frag, p = _test_account_sql()
+        clauses.append(f"NOT {frag}")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE created_at >= ?",
-            (int(epoch),),
+            f"SELECT COUNT(*) AS n FROM users{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
 
 
-def recent_users(limit: int = 10) -> list[dict]:
-    """Most-recent signups, newest first. Returns id/email/plan/created_at."""
+def recent_users(limit: int = 10, exclude_test: bool = False) -> list[dict]:
+    """Most-recent signups, newest first. Returns id/email/plan/created_at.
+
+    `exclude_test=True` omits synthetic smoke-probe rows so the founder's
+    'Recent signups' list shows only real people.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        where, params = (f"WHERE NOT {frag} ", p)
     with connect() as con:
         rows = con.execute(
             "SELECT id, email, plan, created_at, msg_used, msg_limit "
-            "FROM users ORDER BY created_at DESC LIMIT ?",
-            (int(limit),),
+            f"FROM users {where}ORDER BY created_at DESC LIMIT ?",
+            [*params, int(limit)],
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def count_paid_users() -> int:
-    """Users on a paid individual tier (not trial)."""
+def count_paid_users(exclude_test: bool = False) -> int:
+    """Users on a paid individual tier (not trial).
+
+    `exclude_test=True` omits synthetic smoke-probe rows (a probe row is
+    'trial' anyway, but the flag keeps every count helper consistent).
+    """
+    clauses = ["plan != 'trial'"]
+    params: list = []
+    if exclude_test:
+        frag, p = _test_account_sql()
+        clauses.append(f"NOT {frag}")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE plan != 'trial'"
+            f"SELECT COUNT(*) AS n FROM users{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
+
+
+def delete_test_users() -> int:
+    """DELETE every synthetic test/seed account row (and its dependent
+    codes / tokens / usage_log / credit_grants rows). Returns the number of
+    `users` rows deleted.
+
+    This is the engine behind the founder-gated POST /founder/api/purge-test-users
+    endpoint. It is intentionally a plain DAO function with NO gate of its own —
+    the gate (founder identity + explicit confirm) lives at the HTTP layer. It
+    deletes ONLY rows matching `is_test_account_email`; a genuine user or staff
+    mailbox is never touched.
+    """
+    frag, params = _test_account_sql()
+    with connect() as con:
+        ids = [row["id"] for row in con.execute(
+            f"SELECT id FROM users WHERE {frag}", params).fetchall()]
+        if not ids:
+            return 0
+        qmarks = ",".join("?" for _ in ids)
+        # Best-effort clean of dependent rows so no orphans linger. Each is
+        # wrapped defensively — a table that doesn't exist in some deploy
+        # (e.g. credit_grants on an old DB) must not abort the purge.
+        for tbl, col in (("codes", "user_id"), ("tokens", "user_id"),
+                         ("usage_log", "user_id"),
+                         ("credit_grants", "user_id"),
+                         ("training_samples", "user_id")):
+            try:
+                con.execute(
+                    f"DELETE FROM {tbl} WHERE {col} IN ({qmarks})", ids)
+            except sqlite3.OperationalError:
+                pass
+        con.execute(f"DELETE FROM users WHERE id IN ({qmarks})", ids)
+        return len(ids)
 
 
 def list_companies_billing() -> list[dict]:
@@ -2226,17 +2417,28 @@ def count_companies() -> int:
     return int(r["n"]) if r else 0
 
 
-def usage_totals() -> dict:
+def usage_totals(exclude_test: bool = False) -> dict:
     """Lifetime proxy-usage roll-up from `usage_log`:
     chat completions (one row per proxied completion), total tokens, and
     total spend in micro-dollars. Real counters — every /v1/chat/completions
-    that hits the hosted proxy writes a usage_log row via db.log_usage."""
+    that hits the hosted proxy writes a usage_log row via db.log_usage.
+
+    `exclude_test=True` drops usage rows owned by synthetic test accounts
+    (joined via users.email) so the cockpit's spend/token totals are real.
+    """
+    where, params = ("", [])
+    if exclude_test:
+        frag, p = _test_account_sql("u.email")
+        where = (" WHERE user_id NOT IN "
+                 f"(SELECT id FROM users u WHERE {frag})")
+        params = p
     with connect() as con:
         r = con.execute(
             "SELECT COUNT(*) AS calls, "
             "COALESCE(SUM(input_toks), 0) AS in_toks, "
             "COALESCE(SUM(output_toks), 0) AS out_toks, "
-            "COALESCE(SUM(cost_micros), 0) AS cost_micros FROM usage_log"
+            f"COALESCE(SUM(cost_micros), 0) AS cost_micros FROM usage_log{where}",
+            params,
         ).fetchone()
     return {
         "chat_completions": int(r["calls"]) if r else 0,
@@ -2246,12 +2448,22 @@ def usage_totals() -> dict:
     }
 
 
-def usage_calls_since(epoch: int) -> int:
-    """Proxied chat completions at/after `epoch` (trailing-window activity)."""
+def usage_calls_since(epoch: int, exclude_test: bool = False) -> int:
+    """Proxied chat completions at/after `epoch` (trailing-window activity).
+
+    `exclude_test=True` drops usage rows owned by synthetic test accounts.
+    """
+    clauses = ["ts >= ?"]
+    params: list = [int(epoch)]
+    if exclude_test:
+        frag, p = _test_account_sql("u.email")
+        clauses.append("user_id NOT IN "
+                       f"(SELECT id FROM users u WHERE {frag})")
+        params.extend(p)
+    where = " WHERE " + " AND ".join(clauses)
     with connect() as con:
         r = con.execute(
-            "SELECT COUNT(*) AS n FROM usage_log WHERE ts >= ?",
-            (int(epoch),),
+            f"SELECT COUNT(*) AS n FROM usage_log{where}", params,
         ).fetchone()
     return int(r["n"]) if r else 0
 

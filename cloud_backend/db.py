@@ -357,6 +357,25 @@ CREATE TABLE IF NOT EXISTS marketplace_reports (
     FOREIGN KEY (reporter_user_id) REFERENCES users(id)
 );
 
+-- Community Gallery (final self-extension rung) ---------------------------
+-- The one-vote-per-user spine. The composite PRIMARY KEY (pack_id,
+-- voter_user_id) is what enforces ONE vote per user per pack: a re-vote is
+-- an UPSERT that flips the same row, never a second row. The denormalised
+-- up_votes/down_votes counters on marketplace_packs are recomputed from
+-- SUM(vote) over THIS ledger on every write (honest-from-ledger, mirroring
+-- the credit_balance cache pattern) so the cache can never disagree with the
+-- vote rows. `vote` is +1 (up) or -1 (down); a cleared vote DELETEs the row.
+CREATE TABLE IF NOT EXISTS marketplace_pack_votes (
+    pack_id        TEXT NOT NULL,
+    voter_user_id  TEXT NOT NULL,
+    vote           INTEGER NOT NULL,        -- +1 up | -1 down
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (pack_id, voter_user_id),
+    FOREIGN KEY (pack_id) REFERENCES marketplace_packs(id),
+    FOREIGN KEY (voter_user_id) REFERENCES users(id)
+);
+
 -- ── Memory architecture (ADR-002, v1.3.4+) ──────────────────────────
 --
 -- Five tiers; this DB layer implements three of them:
@@ -564,6 +583,7 @@ CREATE INDEX IF NOT EXISTS idx_founder_action_ts ON founder_action_log(ts);
 CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
 CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
+CREATE INDEX IF NOT EXISTS idx_pack_votes_pack ON marketplace_pack_votes(pack_id);
 CREATE INDEX IF NOT EXISTS idx_training_user_stage ON training_samples(user_id, stage);
 CREATE INDEX IF NOT EXISTS idx_training_created ON training_samples(created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_user_scope ON memory_facts(user_id, scope, valid_until);
@@ -649,6 +669,34 @@ def init_schema() -> None:
             # ALTER. Nullable because ALTER can't add a NOT NULL column with
             # a per-row default — the backfill fills it immediately after.
             "ALTER TABLE users ADD COLUMN brain_id TEXT",
+            # Community Gallery (final self-extension rung): turn the existing
+            # marketplace into a voted, source-tagged gallery. Additive only —
+            # defaults make every existing pack row safe (an already-uploaded
+            # pack is source='user', a skill, at_own_risk=1, zero votes). The
+            # gallery EXTENDS the marketplace; it is not a parallel store.
+            #
+            #   source     — user | agent | official. 'agent' = published by the
+            #                self-extend loop (the agent BUILT it); 'official' =
+            #                founder-promoted (the existing approved/seed tier).
+            #   pack_type  — skill | connector | node | widget (the four
+            #                self-extend artifact classes). `category` stays as a
+            #                freeform sub-tag.
+            #   up_votes / down_votes — denormalised counters, recomputed from
+            #                SUM over marketplace_pack_votes on every vote write
+            #                (mirrors the credit_balance honest-from-ledger cache).
+            #   at_own_risk — 1 for unreviewed community (user/agent) packs,
+            #                flipped to 0 when a founder promotes to official.
+            #                Drives the adopt warning.
+            #   promoted_at / promoted_by — when/who lifted user|agent → official
+            #                (parallels approved_at/approved_by for the official
+            #                tier).
+            "ALTER TABLE marketplace_packs ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+            "ALTER TABLE marketplace_packs ADD COLUMN pack_type TEXT NOT NULL DEFAULT 'skill'",
+            "ALTER TABLE marketplace_packs ADD COLUMN up_votes INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE marketplace_packs ADD COLUMN down_votes INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE marketplace_packs ADD COLUMN at_own_risk INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE marketplace_packs ADD COLUMN promoted_at INTEGER",
+            "ALTER TABLE marketplace_packs ADD COLUMN promoted_by TEXT",
         ):
             try:
                 con.execute(ddl)
@@ -692,6 +740,26 @@ def init_schema() -> None:
         # for new sign-ins; this backfill covers users who never re-login.)
         con.execute(
             "UPDATE users SET brain_id = id WHERE brain_id IS NULL")
+        # Community Gallery backfill: any pack whose slug is the offline
+        # OFFICIAL-seed namespace ('official.*' — see app/payload/marketplace/
+        # catalog.json) is the official tier → source='official', not at-own-
+        # risk. Idempotent: only restamps rows still on the 'user' default, so
+        # a later founder demotion (if ever added) is never clobbered.
+        con.execute(
+            "UPDATE marketplace_packs SET source = 'official', at_own_risk = 0"
+            " WHERE slug LIKE 'official.%' AND source = 'user'")
+        # Re-derive the denormalised up/down vote counters from the vote
+        # ledger so the cache can never disagree with the rows after an
+        # upgrade (same honest-from-ledger shape as the credit_balance
+        # backfill above). Packs with no votes settle to 0.
+        con.execute(
+            "UPDATE marketplace_packs SET"
+            "  up_votes = COALESCE((SELECT COUNT(*) FROM marketplace_pack_votes v"
+            "                       WHERE v.pack_id = marketplace_packs.id"
+            "                         AND v.vote > 0), 0),"
+            "  down_votes = COALESCE((SELECT COUNT(*) FROM marketplace_pack_votes v"
+            "                         WHERE v.pack_id = marketplace_packs.id"
+            "                           AND v.vote < 0), 0)")
         # cloud-brain-unify (2026-05-31): the FTS index is now a CONTENTLESS
         # external table owned explicitly by the DAO (keyed on the public
         # fact-id), not auto-synced from the legacy memory_facts table.
@@ -2787,3 +2855,131 @@ def claim_agent_task(task_id: str, claimed_by: str):
         r = con.execute(
             "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
     return dict(r) if r else None
+
+
+# ---------------------------------------------------------------------------
+# Community Gallery — votes (one per user) + promotion
+# ---------------------------------------------------------------------------
+# The vote ledger (marketplace_pack_votes) is the source of truth; the
+# up_votes/down_votes columns on marketplace_packs are a denormalised cache
+# recomputed from the ledger on every write — the SAME honest-from-ledger
+# discipline as credit_balance vs credit_grants. One vote per user is the
+# composite PK (pack_id, voter_user_id): a flip is an UPSERT, never a 2nd row.
+def _recompute_pack_votes(con, pack_id: str) -> tuple[int, int]:
+    """Recompute + persist the up/down counters for a pack from the ledger.
+    Returns (up_votes, down_votes). Caller holds the connection."""
+    row = con.execute(
+        "SELECT"
+        "  COALESCE(SUM(CASE WHEN vote > 0 THEN 1 ELSE 0 END), 0) AS up,"
+        "  COALESCE(SUM(CASE WHEN vote < 0 THEN 1 ELSE 0 END), 0) AS down"
+        " FROM marketplace_pack_votes WHERE pack_id = ?",
+        (pack_id,),
+    ).fetchone()
+    up = int(row["up"]) if row else 0
+    down = int(row["down"]) if row else 0
+    con.execute(
+        "UPDATE marketplace_packs SET up_votes = ?, down_votes = ?,"
+        " updated_at = ? WHERE id = ?",
+        (up, down, int(time.time()), pack_id),
+    )
+    return up, down
+
+
+def cast_vote(pack_id: str, user_id: str, vote: int) -> dict:
+    """Record (or flip) a user's single vote on a pack.
+
+    vote in {+1, -1} UPSERTs the one row keyed on (pack_id, voter_user_id);
+    vote == 0 clears it (DELETE). After every change the denormalised
+    counters are recomputed from the ledger so the cache stays honest.
+    Returns {"up_votes", "down_votes", "my_vote"}. Raises ValueError when the
+    pack does not exist (caller maps to 404) or the vote is out of range.
+    """
+    v = int(vote)
+    if v not in (-1, 0, 1):
+        raise ValueError("vote_out_of_range")
+    now = int(time.time())
+    with connect() as con:
+        exists = con.execute(
+            "SELECT id FROM marketplace_packs WHERE id = ?", (pack_id,),
+        ).fetchone()
+        if exists is None:
+            raise ValueError("pack_not_found")
+        if v == 0:
+            con.execute(
+                "DELETE FROM marketplace_pack_votes"
+                " WHERE pack_id = ? AND voter_user_id = ?",
+                (pack_id, user_id),
+            )
+        else:
+            # UPSERT on the composite PK — re-voting flips the SAME row, which
+            # is exactly the one-vote-per-user guarantee.
+            con.execute(
+                "INSERT INTO marketplace_pack_votes"
+                " (pack_id, voter_user_id, vote, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(pack_id, voter_user_id) DO UPDATE SET"
+                "   vote = excluded.vote, updated_at = excluded.updated_at",
+                (pack_id, user_id, v, now, now),
+            )
+        up, down = _recompute_pack_votes(con, pack_id)
+    return {"up_votes": up, "down_votes": down, "my_vote": v}
+
+
+def pack_vote_for_user(pack_id: str, user_id: str) -> int:
+    """Return the user's current vote on a pack: +1, -1, or 0 (no vote)."""
+    if not user_id:
+        return 0
+    with connect() as con:
+        r = con.execute(
+            "SELECT vote FROM marketplace_pack_votes"
+            " WHERE pack_id = ? AND voter_user_id = ?",
+            (pack_id, user_id),
+        ).fetchone()
+    return int(r["vote"]) if r else 0
+
+
+def pack_votes_for_user(pack_ids: list, user_id: str) -> dict:
+    """Batch form of pack_vote_for_user for a listing page. Returns
+    {pack_id: vote} only for packs the user has actually voted on."""
+    if not user_id or not pack_ids:
+        return {}
+    out: dict[str, int] = {}
+    with connect() as con:
+        # Chunk to stay well under SQLite's variable limit on huge pages.
+        ids = list(pack_ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            ph = ",".join("?" for _ in chunk)
+            rows = con.execute(
+                f"SELECT pack_id, vote FROM marketplace_pack_votes"
+                f" WHERE voter_user_id = ? AND pack_id IN ({ph})",
+                [user_id, *chunk],
+            ).fetchall()
+            for r in rows:
+                out[r["pack_id"]] = int(r["vote"])
+    return out
+
+
+def promote_pack_to_official(pack_id: str, admin_id: str) -> Optional[dict]:
+    """Founder/admin-gated lift of a user|agent pack to the official tier.
+
+    Sets source='official', at_own_risk=0, and stamps promoted_at/by. Returns
+    the updated row, or None if the pack does not exist. Never auto-runs — the
+    caller (the /promote endpoint) is admin-gated.
+    """
+    now = int(time.time())
+    with connect() as con:
+        r = con.execute(
+            "SELECT id FROM marketplace_packs WHERE id = ?", (pack_id,),
+        ).fetchone()
+        if r is None:
+            return None
+        con.execute(
+            "UPDATE marketplace_packs SET source = 'official', at_own_risk = 0,"
+            " promoted_at = ?, promoted_by = ?, updated_at = ? WHERE id = ?",
+            (now, admin_id, now, pack_id),
+        )
+        out = con.execute(
+            "SELECT * FROM marketplace_packs WHERE id = ?", (pack_id,),
+        ).fetchone()
+    return dict(out) if out else None

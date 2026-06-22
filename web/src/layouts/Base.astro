@@ -168,6 +168,7 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </a>
         <nav class="nav-links">
           <a href="/features" class={isActive('/features') ? 'active' : undefined}>Features</a>
+          <a href="/gallery" class={isActive('/gallery') ? 'active' : undefined}>Gallery</a>
           <a href="/docs" class={isActive('/docs') ? 'active' : undefined}>Docs</a>
           <a href="/security" class={isActive('/security') ? 'active' : undefined}>Security</a>
           <a href="/pricing" class={isActive('/pricing') ? 'active' : undefined}>Pricing</a>
@@ -220,6 +221,7 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <div class="col">
             <h5>PRODUCT</h5>
             <a href="/features">Features</a>
+            <a href="/gallery">Gallery</a>
             <a href="/docs">Docs</a>
             <a href="/pricing">Pricing</a>
             <a href="/changelog">Changelog</a>

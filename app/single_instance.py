@@ -28,11 +28,28 @@ reopen=latest (founder, 2026-06-04 — "tackle this from the roots"):
   or any error/timeout → summon exactly as before.
 
 Cross-platform-safe (TCP loopback works on Windows + Linux + Mac).
-Stale lock file is auto-recovered: if connect to old port fails,
-the new instance steals the lock and starts fresh.
+
+STALE-LOCK HARDENING (founder #70, 2026-06-22 — "survive a missing/stale lock"):
+  A MISSING or STALE lock must NEVER refuse the launch and must NEVER spawn a
+  duplicate. "Stale" has THREE independent detectors, any one of which reclaims:
+    1. PORT DEAD  — the lock's port no longer answers our PING handshake
+       (crash-without-release: the original liveness check; still primary).
+    2. PID DEAD   — the lock records the owning PID; if that process is gone
+       the lock is stale even if some UNRELATED process recycled the port
+       (a foreign listener can't crash us into refusing to start).
+    3. TOO OLD    — the lock records a write timestamp; a lock older than
+       ``_LOCK_MAX_AGE_SEC`` whose PID we cannot positively confirm alive is
+       treated as a leftover and reclaimed (belt-and-braces for the rare case
+       a recycled PID confuses the alive check).
+  A lock is considered LIVE only when it positively passes ALL applicable
+  checks (PID alive when known AND port answers PING). Anything else is
+  reclaimed: the lock is rewritten atomically and THIS launch becomes the
+  single instance. The legacy bare-port lock format is still read (treated as
+  unknown PID/ts) so an in-flight upgrade never strands a running app.
 """
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
@@ -49,15 +66,182 @@ _HEARTBEAT = "PING\n"
 _SHOW = "SHOW\n"
 _QUIT = "QUIT\n"
 
+# A lock older than this whose owner PID can't be confirmed alive is reclaimed.
+# Generous (a real instance refreshes nothing but keeps answering PING, so the
+# PORT-DEAD + PID-DEAD checks carry liveness; this age is only the last-ditch
+# guard against a recycled-PID + recycled-port coincidence).
+_LOCK_MAX_AGE_SEC = 7 * 24 * 3600
 
-def _read_existing_port() -> Optional[int]:
+
+def _pid_alive(pid: Optional[int]) -> Optional[bool]:
+    """Cross-platform 'is this PID running?' check.
+
+    Returns True (alive), False (definitely gone), or None (unknown — we could
+    not determine it, e.g. PID not recorded or the OS check was inconclusive).
+    None is treated conservatively by callers (fall back to the PING check), so
+    an inconclusive result never causes us to wrongly steal a live lock NOR to
+    wrongly refuse to start over a dead one.
+
+    No Qt, no third-party deps — safe at module-import time, before
+    QApplication exists (single_instance runs at the very top of boot)."""
+    if not pid or pid <= 0:
+        return None
+    try:
+        if sys.platform == "win32":
+            # OpenProcess(SYNCHRONIZE) succeeds for a live PID; ERROR_INVALID_
+            # PARAMETER (87) means no such process. A still-open handle to an
+            # EXITED process returns WAIT_OBJECT_0 from WaitForSingleObject, so
+            # we distinguish a running process (WAIT_TIMEOUT) from a zombie.
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            # use_last_error=True so ctypes.get_last_error() reflects the real
+            # Win32 error from OpenProcess (the shared windll handle does not
+            # capture it -> we'd read 0 and wrongly return None / inconclusive).
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+            if not handle:
+                err = ctypes.get_last_error()
+                # ERROR_ACCESS_DENIED (5) => the process EXISTS (owned by another
+                # user / elevated): treat as alive. ERROR_INVALID_PARAMETER (87)
+                # => no such PID.
+                if err == 5:
+                    return True
+                if err == 87:
+                    return False
+                return None
+            try:
+                WAIT_TIMEOUT = 0x00000102
+                rc = kernel32.WaitForSingleObject(handle, 0)
+                return rc == WAIT_TIMEOUT  # signalled => exited; timeout => alive
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            # POSIX: signal 0 probes existence without delivering a signal.
+            # ESRCH => gone; EPERM => exists but not ours (alive).
+            import errno
+            try:
+                os.kill(int(pid), 0)
+                return True
+            except OSError as ex:  # noqa: PERF203
+                if ex.errno == errno.ESRCH:
+                    return False
+                if ex.errno == errno.EPERM:
+                    return True
+                return None
+    except Exception:
+        return None
+
+
+def _read_lock() -> Optional[dict]:
+    """Parse the lock file into ``{port, pid, ts}`` (pid/ts may be None for the
+    legacy bare-port format), or None when absent/unparseable.
+
+    Tolerates BOTH the new JSON format ``{"port":N,"pid":N,"ts":F}`` and the
+    legacy plain-integer port file (pre-#70) — a running pre-upgrade instance
+    must never be mis-read as stale."""
     if not _LOCK_FILE.exists():
         return None
     try:
-        text = _LOCK_FILE.read_text(encoding="utf-8").strip()
-        return int(text)
+        raw = _LOCK_FILE.read_text(encoding="utf-8").strip()
     except Exception:
         return None
+    if not raw:
+        return None
+    # New JSON format.
+    if raw[:1] == "{":
+        try:
+            d = json.loads(raw)
+            port = int(d.get("port"))
+            pid = d.get("pid")
+            ts = d.get("ts")
+            return {"port": port,
+                    "pid": int(pid) if pid not in (None, "") else None,
+                    "ts": float(ts) if ts not in (None, "") else None}
+        except Exception:
+            return None
+    # Legacy bare-port format: unknown pid/ts -> liveness falls back to PING.
+    try:
+        port = int(raw)
+        ts = None
+        try:
+            ts = _LOCK_FILE.stat().st_mtime
+        except Exception:
+            ts = None
+        return {"port": port, "pid": None, "ts": ts}
+    except Exception:
+        return None
+
+
+def _read_existing_port() -> Optional[int]:
+    """Back-compat shim: the bare owning port (new JSON or legacy format)."""
+    d = _read_lock()
+    return d["port"] if d else None
+
+
+def _is_lock_stale(d: Optional[dict]) -> bool:
+    """True when the lock should be RECLAIMED (missing / dead-port / dead-pid /
+    too-old). The single source of truth for "can I take this lock?".
+
+    A lock is LIVE (returns False) only when it positively passes every
+    applicable check: the owner PID (when recorded) is alive AND the port
+    answers our PING handshake. If the PID is recorded and DEFINITELY dead, the
+    lock is stale immediately — no need to PING (a recycled foreign listener on
+    the same port can't keep a dead instance's lock alive). If the PID is
+    unknown/inconclusive we defer to the PING check (legacy locks, cross-user).
+    A very old lock whose PID we can't confirm alive is reclaimed as a leftover.
+    """
+    if not d:
+        return True  # missing lock -> reclaim (start cleanly)
+    # Detector 2 — PID DEAD. If the lock records an owner PID and that process
+    # is DEFINITELY gone, the lock is stale outright: a foreign process that
+    # recycled the same port can't keep a dead instance's lock alive, and we
+    # don't even need to PING.
+    pid = d.get("pid")
+    if pid and _pid_alive(pid) is False:
+        return True
+
+    # Detector 1 — PORT DEAD. The lock is LIVE only if its port answers our PING
+    # handshake. A dead/wedged/recycled-by-something-else port means there is no
+    # ArchHub instance to summon, so we must reclaim — never refuse to start.
+    port = d.get("port")
+    if not port or not _ping(int(port)):
+        return True
+
+    # Detector 3 — TOO OLD. The port answered, but if the lock is ancient AND we
+    # cannot positively confirm the recorded PID is alive (recycled PID + a
+    # foreign listener answering a PING-shaped probe is a vanishingly rare
+    # coincidence, but we guard it), treat it as a leftover and reclaim.
+    ts = d.get("ts")
+    if (ts and (time.time() - float(ts)) > _LOCK_MAX_AGE_SEC
+            and not (pid and _pid_alive(pid) is True)):
+        return True
+
+    return False  # LIVE — PID not dead, port answers, not an unconfirmed antique
+
+
+def _write_lock(port: int) -> None:
+    """Atomically write the lock with our port + PID + timestamp.
+
+    Atomic = write a temp file in the SAME dir then ``os.replace`` (atomic on
+    Windows + POSIX), so a concurrent reader never sees a half-written lock and
+    a reclaim can't race a torn file. Best-effort: falls back to a direct write
+    if the atomic replace is unavailable."""
+    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"port": int(port), "pid": int(os.getpid()),
+                          "ts": time.time()})
+    tmp = _LOCK_FILE.with_name(_LOCK_FILE.name + f".tmp.{os.getpid()}")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(str(tmp), str(_LOCK_FILE))
+    except Exception:
+        try:
+            _LOCK_FILE.write_text(payload, encoding="utf-8")
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
 
 
 def _ping(port: int, timeout: float = 1.0) -> bool:
@@ -125,13 +309,13 @@ def quit_existing(timeout: float = 4.0) -> bool:
     Used by the reopen=latest path so a fresh launch can take over after
     new code is detected. Safe + graceful: any error → False (caller falls
     back to summon / normal startup)."""
-    existing = _read_existing_port()
-    if not existing:
+    d = _read_lock()
+    if not d:
         return True
-    if not _ping(existing):
-        return True  # stale lock — nobody home, treat as quit
+    if _is_lock_stale(d):
+        return True  # stale lock (dead port / dead PID / too old) — nobody home
     try:
-        return _quit(existing, timeout=timeout)
+        return _quit(int(d["port"]), timeout=timeout)
     except Exception:
         return False
 
@@ -178,12 +362,21 @@ def acquire_or_summon(
     `on_quit` (optional): called from a worker thread when a future launch
     asks US to quit (mirrors `on_summon`). Must marshal a graceful
     QApplication.quit() back to the main Qt thread."""
-    existing = _read_existing_port()
-    if existing and _ping(existing):
-        # An instance is running. reopen=latest: only when the caller wired a
-        # predicate AND it says "there is new code" do we try to take over.
-        # Any error in the predicate, a False result, or a failed/timed-out
-        # quit all fall through to summon-and-exit (today's exact behaviour).
+    # Read + classify the lock ONCE. A MISSING or STALE lock (dead port / dead
+    # owner PID / too-old leftover) is reclaimed — we fall straight through to
+    # bind a fresh port and become the single instance. We NEVER refuse to start
+    # over a stale lock, and we NEVER summon a dead instance (that would just
+    # fail silently and leave the user with no window).
+    existing_lock = _read_lock()
+    is_stale = _is_lock_stale(existing_lock)
+    existing = existing_lock["port"] if (existing_lock and not is_stale) else None
+
+    if existing is not None:
+        # A LIVE instance is confirmed running. reopen=latest: only when the
+        # caller wired a predicate AND it says "there is new code" do we try to
+        # take over. Any error in the predicate, a False result, or a
+        # failed/timed-out quit all fall through to summon-and-exit (today's
+        # exact behaviour).
         if should_supersede is not None:
             superseded = False
             try:
@@ -201,8 +394,10 @@ def acquire_or_summon(
             _summon(existing)
             return False
 
-    # Either no lock, stale lock, or we just superseded the old instance.
-    # Bind a fresh ephemeral port.
+    # Either no lock, a stale lock we just reclaimed, or we superseded a live
+    # instance. Bind a fresh ephemeral port + atomically claim the lock with our
+    # PID + timestamp, so the NEXT launch can detect us as live (or, if we die,
+    # detect our dead PID and reclaim cleanly).
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind((_HOST, 0))
@@ -213,8 +408,7 @@ def acquire_or_summon(
     sock.listen(8)
     port = sock.getsockname()[1]
 
-    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    _LOCK_FILE.write_text(str(port), encoding="utf-8")
+    _write_lock(port)
 
     threading.Thread(target=_serve_forever,
                      args=(sock, on_summon),
@@ -270,9 +464,19 @@ def _serve_forever(
 
 
 def release() -> None:
-    """Best-effort lock cleanup. Call from atexit."""
+    """Best-effort lock cleanup. Call from atexit.
+
+    Only deletes the lock if it is OURS (records our PID) — or is the legacy
+    bare-port format / unparseable. This prevents a slow-exiting instance from
+    clobbering a lock that a SUCCESSOR launch already reclaimed and rewrote with
+    its own PID (which would leave the new instance lockless). Best-effort and
+    never raises."""
     try:
-        if _LOCK_FILE.exists():
+        if not _LOCK_FILE.exists():
+            return
+        d = _read_lock()
+        # Reclaim only our own / unowned lock; leave a successor's lock intact.
+        if d is None or d.get("pid") in (None, os.getpid()):
             _LOCK_FILE.unlink()
     except Exception:
         pass

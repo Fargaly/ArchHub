@@ -148,6 +148,10 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
       }
     </style>
     <slot name="head" />
+    <!-- Auth client in <head>: window.ArchHubAuth MUST be defined before any
+         page body script (signin/account/brain) calls it, else the page throws
+         "Cannot read properties of undefined (reading 'sendMagicLink')". -->
+    <script src="/auth.js" is:inline></script>
   </head>
   <body>
     <!-- NAV -->
@@ -240,10 +244,8 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </div>
       </div>
     </footer>
-    <!-- Shared auth client + nav state. Loaded on every page: reflects the
-         signed-in state (account chip from /v1/me) AND reveals the Brain link.
-         Single source of truth = window.ArchHubAuth (one token key). -->
-    <script src="/auth.js" is:inline></script>
+    <!-- Nav state: reflects signed-in (account chip from /v1/me) + reveals the
+         Brain link. window.ArchHubAuth is loaded in <head> (one token key). -->
     <script is:inline>
       (function () {
         var A = window.ArchHubAuth;

@@ -6386,10 +6386,24 @@ class ArchHubBridge(QObject):
             return _safe_json({"async": False,
                                 "error": f"bad graph_json: {ex}"})
 
-        def _runner():
+        # Last-resort WATCHDOG ceiling. run_agent_step already enforces its
+        # own COMPOSER_TURN_DEADLINE_SECONDS (~90s) wall-clock budget and
+        # returns a timed_out result — that is the primary defence against
+        # the "I write and get nothing back" hang. This ceiling is the
+        # BELT-AND-BRACES net: if run_agent_step itself somehow blocks past
+        # its deadline (e.g. a future regression, a C-level stall the
+        # join() can't interrupt), we STILL emit agent_step_done so the UI
+        # never spins forever. Set strictly ABOVE the composer deadline so
+        # the inner (cleaner, action-preserving) timeout normally wins and
+        # this only fires on a true pathology.
+        BRIDGE_AGENT_STEP_CEILING_SECONDS = 105.0
+
+        _box = {}
+
+        def _work():
             try:
                 from agents.composer_agent import run_agent_step
-                result = run_agent_step(
+                _box["result"] = run_agent_step(
                     user_msg=user_msg or "",
                     graph=graph if isinstance(graph, dict) else {},
                     focused_node_id=focused_node_id or "",
@@ -6397,7 +6411,27 @@ class ArchHubBridge(QObject):
                     mode=mode or "plan",
                 )
             except Exception as ex:
-                result = {"actions": [], "text": "", "error": str(ex)}
+                _box["result"] = {"actions": [], "text": "", "error": str(ex)}
+
+        def _runner():
+            worker = threading.Thread(target=_work, daemon=True,
+                                      name="ArchHubAgentStepWork")
+            worker.start()
+            worker.join(BRIDGE_AGENT_STEP_CEILING_SECONDS)
+            if worker.is_alive():
+                # run_agent_step overran even its own deadline — emit an
+                # honest timeout so the composer ALWAYS gets a reply. The
+                # abandoned daemon worker dies with the process.
+                result = {
+                    "actions": [],
+                    "text": ("<provider timed out / unreachable — try "
+                             "again or check your LLM provider>"),
+                    "error": "turn_timeout",
+                    "timed_out": True,
+                }
+            else:
+                result = _box.get("result") or {
+                    "actions": [], "text": "", "error": "no_result"}
             try:
                 self.agent_step_done.emit(_safe_json(result))
             except Exception:

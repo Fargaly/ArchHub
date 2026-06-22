@@ -372,9 +372,33 @@ class TestFreeDefaultNvidia:
         monkeypatch.setenv("FREE_PROVIDER", "nvidia")
         monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
         monkeypatch.delenv("FREE_PROVIDER_API_KEY", raising=False)
+        # ONE-SYSTEM (#64): the selector also falls back to Gemini via
+        # GOOGLE_API_KEY. To assert the genuine "nothing reachable" state we
+        # must clear GOOGLE too (the runner's real env may carry it).
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         importlib.reload(config)
         try:
             assert config.free_provider_key() == ""
             assert config.free_default_available() is False
+            assert config.select_free_model() is None
         finally:
+            importlib.reload(config)
+
+    def test_free_falls_back_to_gemini_when_only_google_keyed(self, monkeypatch):
+        """#64 headline at the cockpit layer: with ONLY GOOGLE_API_KEY set,
+        the shared selector lights up via Gemini (no NVIDIA key needed)."""
+        import importlib, config
+        monkeypatch.setenv("FREE_PROVIDER", "nvidia")  # committed default
+        monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+        monkeypatch.delenv("FREE_PROVIDER_API_KEY", raising=False)
+        monkeypatch.setenv("GOOGLE_API_KEY", "deployed-google-key")
+        importlib.reload(config)
+        try:
+            assert config.free_default_available() is True
+            sel = config.select_free_model()
+            assert sel["provider"] == "google"
+            assert sel["model"] == "gemini-2.5-flash"
+            assert config.free_provider_key() == "deployed-google-key"
+        finally:
+            monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
             importlib.reload(config)

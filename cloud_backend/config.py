@@ -730,25 +730,113 @@ def _resolve_op_ref(value: str) -> str:
 def free_provider_key() -> str:
     """The resolved free-provider API key (op:// resolved at call time).
 
-    When the free provider is NVIDIA (the #64 default) and no explicit
-    FREE_PROVIDER_API_KEY is set, fall back to NVIDIA_API_KEY so the founder
-    only has to set ONE secret (NVIDIA_API_KEY) to light up the free default
-    for every user — no duplicate key needed."""
+    Thin wrapper over `select_free_model()` so there is exactly ONE place
+    that knows how the free key is sourced: the explicit FREE_PROVIDER_API_KEY
+    when set, else the NVIDIA→Gemini fallback chain. Returns "" when no
+    provider can serve. NEVER logs the key."""
+    sel = select_free_model()
+    return sel["key"] if sel else ""
+
+
+# ── ONE-SYSTEM free-model selection (founder #64, 2026-06-22) ─────────
+# THE single source of "which free provider can serve a no-key user RIGHT
+# NOW". Both the user-facing free proxy path (proxy._serve_free_default /
+# list_models / _stream_free, via free_provider_key/free_selected_*) AND the
+# founder-cockpit agent (cockpit_agent.reachable_model) call THIS — there is
+# no parallel provider-selection logic. Order mirrors the cockpit agent that
+# is already proven live:
+#   1. NVIDIA NIM  — preferred (strong + free tool-use) when NVIDIA_API_KEY
+#      (or an explicit FREE_PROVIDER_API_KEY when FREE_PROVIDER=nvidia) is set.
+#   2. Gemini free — reachable TODAY via the already-deployed GOOGLE_API_KEY
+#      over its OpenAI-compatible endpoint (no new secret needed).
+#   3. The explicitly-configured FREE_PROVIDER (groq/openrouter/custom/…) when
+#      its own FREE_PROVIDER_API_KEY is set — so an operator override still
+#      works exactly as before.
+# Returns {provider, base_url, model, key} or None when NOTHING is reachable
+# (callers then honestly degrade: proxy → byo_key_required 402; cockpit →
+# offline keyword router). Secrets are resolved at call time via the op://
+# shim and are NEVER logged.
+def _gemini_free_base() -> str:
+    return "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def select_free_model() -> dict | None:
+    """Pick the free model provider that can serve a request now, or None.
+
+    See the module note above for the order + the ONE-SYSTEM contract. This
+    is the canonical selector reused by the cloud free path AND the cockpit
+    agent."""
+    # 1) Explicit free-provider key wins for the CONFIGURED provider — honours
+    #    an operator override (e.g. FREE_PROVIDER=groq + a Groq key) without
+    #    forcing the NVIDIA/Gemini chain. NVIDIA is handled in (2)/(3) so the
+    #    key-fallback to NVIDIA_API_KEY stays available.
     explicit = _resolve_op_ref(FREE_PROVIDER_API_KEY)
-    if explicit:
-        return explicit
-    if FREE_PROVIDER == "nvidia":
-        return _resolve_op_ref(NVIDIA_API_KEY)
-    return ""
+    if explicit and FREE_PROVIDER != "nvidia":
+        base = FREE_PROVIDER_BASE_URL or _FREE_BASE_DEFAULTS.get(FREE_PROVIDER, "")
+        if base:
+            return {"provider": FREE_PROVIDER,
+                    "base_url": base.rstrip("/"),
+                    "model":    ARCHHUB_FREE_MODEL,
+                    "key":      explicit}
+    # 2) NVIDIA preferred (the #64 default). Explicit FREE_PROVIDER_API_KEY (when
+    #    FREE_PROVIDER=nvidia) OR NVIDIA_API_KEY — one secret lights it up.
+    nvidia_key = explicit if FREE_PROVIDER == "nvidia" else ""
+    if not nvidia_key:
+        nvidia_key = _resolve_op_ref(NVIDIA_API_KEY)
+    if nvidia_key:
+        base = (FREE_PROVIDER_BASE_URL
+                if FREE_PROVIDER == "nvidia" and FREE_PROVIDER_BASE_URL
+                else NVIDIA_BASE_URL)
+        model = (ARCHHUB_FREE_MODEL if FREE_PROVIDER == "nvidia"
+                 else NVIDIA_MODEL)
+        return {"provider": "nvidia",
+                "base_url": (base or NVIDIA_BASE_URL).rstrip("/"),
+                "model":    model,
+                "key":      nvidia_key}
+    # 3) Gemini free — reachable TODAY via the deployed GOOGLE_API_KEY, no new
+    #    secret. This is what lights #64 up for real users right now.
+    google_key = (GOOGLE_API_KEY or "").strip()
+    if google_key:
+        base = (FREE_PROVIDER_BASE_URL
+                if FREE_PROVIDER == "google" and FREE_PROVIDER_BASE_URL
+                else _gemini_free_base())
+        model = (ARCHHUB_FREE_MODEL if FREE_PROVIDER == "google"
+                 else _FREE_MODEL_DEFAULTS["google"])
+        return {"provider": "google",
+                "base_url": base.rstrip("/"),
+                "model":    model,
+                "key":      google_key}
+    return None
+
+
+def free_selected_base_url() -> str:
+    """Base URL of the selected free provider (server-side), or ""."""
+    sel = select_free_model()
+    return sel["base_url"] if sel else ""
+
+
+def free_selected_model() -> str:
+    """Model id the free tier will actually serve. Falls back to the
+    configured ARCHHUB_FREE_MODEL when nothing is reachable (display only)."""
+    sel = select_free_model()
+    return sel["model"] if sel else ARCHHUB_FREE_MODEL
+
+
+def free_selected_provider() -> str:
+    """Provider id the free tier will actually use (e.g. 'google' today,
+    'nvidia' once keyed), or "" when nothing is reachable."""
+    sel = select_free_model()
+    return sel["provider"] if sel else ""
 
 
 def free_default_available() -> bool:
     """True when the free default tier can actually serve a request.
 
-    Requires the master switch ON + a base URL. A key is required for
-    every supported provider's free tier (Groq/OpenRouter/Google all gate
-    on a free-account key); when one is genuinely keyless ("custom" with a
-    local relay) leave FREE_PROVIDER_API_KEY empty and set the base URL.
+    Requires the master switch ON + a reachable provider (NVIDIA or Gemini
+    or an explicitly-keyed FREE_PROVIDER). With ONLY GOOGLE_API_KEY set this
+    returns True via the Gemini free path — that's what makes #64 light up
+    today with no new secret. When NOTHING is reachable it returns False and
+    the proxy honestly degrades to the BYO path (never a fake).
     """
     # Founder runtime override (cockpit command surface). The founder can
     # toggle the free default ON/OFF live from the cockpit without a redeploy;
@@ -766,12 +854,16 @@ def free_default_available() -> bool:
         pass
     if not FREE_DEFAULT_ENABLED:
         return False
-    if not FREE_PROVIDER_BASE_URL:
-        return False
-    # Known hosted free providers require a key; a bare custom relay may not.
-    if FREE_PROVIDER in ("nvidia", "groq", "openrouter", "google"):
-        return bool(free_provider_key())
-    return True   # custom/keyless relay: base URL is enough
+    # A provider is reachable iff the canonical selector resolves one. This
+    # covers NVIDIA (keyed), Gemini (GOOGLE_API_KEY), and an explicitly-keyed
+    # FREE_PROVIDER — all through the ONE selector.
+    if select_free_model() is not None:
+        return True
+    # Custom/keyless relay: a bare base URL with no key is enough (the selector
+    # returns None for it since it has no key to carry).
+    if FREE_PROVIDER == "custom" and FREE_PROVIDER_BASE_URL:
+        return True
+    return False
 
 
 # ── Cloud LLM proxy gate (founder, 2026-05-24; Model C 2026-05-31) ────

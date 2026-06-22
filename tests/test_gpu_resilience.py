@@ -188,6 +188,65 @@ class TestSoftwareRenderAutoRecovery:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# (1c) BOOT GPU SELF-PROBE decision contract — the DETECTION half of the root
+# fix (founder #69): try GPU first, detect a blank/wedged GPU at boot, and
+# AUTO-FALLBACK by persisting the marker so the NEXT launch starts software —
+# with NO manual env var. These gate the decision logic WITHOUT constructing a
+# real QtWebEngine renderer (which is non-reproducible / segfaults in-process):
+# the persist-on-fail contract is asserted by driving the SAME persistence the
+# probe calls, and the skip-paths (already pinned / opted out) are exercised
+# directly so the probe is proven to never re-pin a machine that's already
+# software and never blocks the boot.
+# ──────────────────────────────────────────────────────────────────────────
+class TestBootGpuProbeDecision:
+    def _fresh(self, monkeypatch):
+        monkeypatch.delenv("ARCHHUB_FORCE_SOFTWARE_RENDER", raising=False)
+        monkeypatch.delenv("ARCHHUB_VERIFY_NO_GPU", raising=False)
+        monkeypatch.delenv("ARCHHUB_SKIP_GPU_PROBE", raising=False)
+
+    def test_probe_noop_when_already_pinned(self, monkeypatch):
+        """Already software-pinned -> probe is a complete no-op (GPU not in play,
+        nothing to detect). It must NOT build a view or re-touch the marker."""
+        import main
+        self._fresh(monkeypatch)
+        assert main.persist_software_render_marker(reason="prior fail") is True
+        before = main.software_render_marker_path().read_text(encoding="utf-8")
+        main._gpu_self_probe(object())   # must early-return on the pin
+        after = main.software_render_marker_path().read_text(encoding="utf-8")
+        assert after == before, "probe must not re-pin an already-software machine"
+
+    def test_probe_noop_without_app_or_opt_out(self, monkeypatch):
+        """No QApplication, or ARCHHUB_SKIP_GPU_PROBE=1 -> early no-op, no marker
+        written (the boot must never be blocked / crashed by the probe)."""
+        import main
+        self._fresh(monkeypatch)
+        main._gpu_self_probe(None)                      # no app -> no-op
+        assert not main.software_render_marker_path().exists()
+        monkeypatch.setenv("ARCHHUB_SKIP_GPU_PROBE", "1")
+        main._gpu_self_probe(object())                  # opted out -> no-op
+        assert not main.software_render_marker_path().exists()
+
+    def test_failed_probe_persists_then_next_launch_is_software(self, monkeypatch):
+        """THE detection->fallback->persist contract, end to end at the marker
+        layer: a FAILED boot probe persists the marker (what _gpu_self_probe does
+        on an all-attempts-fail), and the NEXT launch's _apply_software_render_
+        marker then applies --disable-gpu — i.e. the app auto-recovers to a
+        working software surface with NO manual env var."""
+        import main
+        self._fresh(monkeypatch)
+        monkeypatch.setenv(
+            "QTWEBENGINE_CHROMIUM_FLAGS",
+            "--ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy")
+        # blank/wedged GPU detected at boot -> persist (the probe's action).
+        assert main.persist_software_render_marker(
+            reason="boot gpu self-probe (3 attempts): probe wedged") is True
+        # next launch: marker present -> software render applied automatically.
+        assert main.software_render_enabled() is True
+        main._apply_software_render_marker()
+        assert "--disable-gpu" in os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # WebShell crash-recovery handler LOGIC  (real handler methods, no render proc)
 #
 # These call the ACTUAL WebShell handler methods. The instance is built with

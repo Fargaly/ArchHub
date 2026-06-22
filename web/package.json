@@ -10,7 +10,6 @@
     "preview": "astro preview",
     "refresh-content": "node scripts/refresh-content.js",
     "build-info": "node scripts/build-info.js",
-    "copy-brain-viz": "node scripts/copy-brain-viz.js",
     "from-brain": "node scripts/from-brain.js",
     "export-web-data": "python ../tools/export_web_data.py",
     "extract-pricing": "python scripts/extract_pricing.py"

@@ -1,5 +1,5 @@
 PyQt6>=6.11.0,<7
-anthropic>=0.104.1,<1
+anthropic>=0.111.0,<1
 openai>=1.50,<2
 google-generativeai>=0.8.6,<1
 keyring>=25.7.0,<27

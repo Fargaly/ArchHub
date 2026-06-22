@@ -272,3 +272,124 @@ def test_node_type_library_first_reuse(_clean_lib):
     assert first["ok"] and first["reused"] is False
     second = self_extend.build_artifact("create_node_type", dict(_NODE_SPEC))
     assert second["ok"] is True and second["reused"] is True
+
+
+# ── THE FREE-FORM LOOP — ask → build → COURT-PER-LEAF → learn-per-green ──────
+# bridge.self_extend_loop → run_self_extend_loop: a free-form request atomizes
+# into a MULTI-leaf ROMA tree, the composer-as-executor BUILDS each leaf on the
+# real machine, the external court verifies it on the REAL artifact leaf-by-leaf,
+# every GREEN leaf is learned. The court — not the executor — flips green.
+
+
+@pytest.fixture
+def _isolated_marker(tmp_path, monkeypatch):
+    """Point %APPDATA% at a throwaway dir so the marker file + the brain store
+    land in tmp — never the founder's real brain/marker. Reversible by teardown
+    (tmp_path is auto-removed)."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    marker = composer_agent._appdata_self_extend_dir()
+    return Path(marker) / "hello_marker.py"
+
+
+def test_atomize_vision_default_decomposition():
+    specs = composer_agent.atomize_vision("add a hello marker file")
+    assert len(specs) == 3
+    assert [s["gate_kind"] for s in specs] == ["file_exists", "py_compile", "file_exists"]
+    # The contains-sentinel gate carries the proof string.
+    assert specs[2]["gate_spec"]["contains"] == "self-extend proven"
+
+
+def test_atomize_vision_passthrough():
+    custom = [{"title": "x", "gate_kind": "py_compile", "gate_spec": {"path": "a.py"}}]
+    assert composer_agent.atomize_vision("anything", decomposition=custom) == custom
+
+
+def test_compose_evidence_shape_reads_real_file(tmp_path):
+    p = tmp_path / "m.py"
+    p.write_text("GREETING = 'self-extend proven'\n", encoding="utf-8")
+    run_result = {"actions": [{"tool": "write_file", "args": {"path": str(p)}}],
+                  "text": "wrote it", "gated": 0}
+
+    class _Leaf:
+        title = "marker"
+    ev = composer_agent.compose_evidence("u", {}, _Leaf(), run_result)
+    assert ev["last_message"] == "wrote it"
+    assert ev["touched_files"] == [str(p)]
+    assert "self-extend proven" in ev["file_contents"][str(p)]
+    assert ev["session_signals"]["actions"] == 1
+
+
+def _validating_brain_call(captured):
+    """A brain.write stand-in that VALIDATES each op against the REAL WriteOp
+    schema before accepting it. The blind ``{"ok": True}`` mock let a malformed
+    learn op through (kind='learned' not in the enum, owner_user=None, missing
+    provenance) — so every production learn write was silently rejected while
+    the loop reported learned=true. Validating here makes that class FAIL the
+    test instead of passing. Returns a realistic applied-count."""
+    from personal_brain.models import WriteOp
+
+    def _call(tool, args):
+        captured.append((tool, args))
+        if tool == "brain.write":
+            for op in args.get("ops", []):
+                WriteOp.model_validate(op)        # raises on a malformed op
+            return {"ops_applied": len(args.get("ops", []))}
+        return {"ok": True}
+
+    return _call
+
+
+def test_loop_court_gated_green_and_learns(_isolated_marker):
+    marker = _isolated_marker
+    if marker.exists():
+        marker.unlink()
+    captured = []
+    out = self_extend.run_self_extend_loop(
+        "add a hello marker file proving self-extend works",
+        graph={"nodes": [], "wires": []},
+        router=None,                       # deterministic marker executor builds it
+        brain_call=_validating_brain_call(captured),
+        store=_store(),
+    )
+    # The court flipped a FULL green sweep on the REAL artifact.
+    assert marker.exists(), "executor must write the REAL marker file"
+    assert out["dry"] is True and out["ok"] is True
+    leaf_rows = [p for p in out["leaves"] if not p["terminal"]]
+    assert len(leaf_rows) == 3
+    assert all(p["verdict"] == "green" for p in leaf_rows)
+    # Each green carries a NAMED evidence_ref (no trust-me green).
+    assert all(p["evidence_ref"] for p in leaf_rows)
+    # SEAM 4 — one USER-scope learned fact per green leaf.
+    writes = [a for (t, a) in captured if t == "brain.write"]
+    assert len(writes) == 3
+    frags = [w["ops"][0]["fragment"] for w in writes]
+    assert all(f["scope"] == "user" for f in frags)
+    assert all(f["predicate"] == "self_extend_verified" for f in frags)
+    assert all(p["learned"] for p in leaf_rows)
+    # Terminal sweep emit closes the loop.
+    assert out["leaves"][-1]["terminal"] is True
+    assert out["leaves"][-1]["verdict"] == "green"
+
+
+def test_loop_court_refuses_absent_artifact(_isolated_marker, monkeypatch):
+    """The court — not the executor — is the gate: with the artifact absent AND
+    the deterministic executor disabled (router=None → no LLM build), NO leaf
+    greens. Proves a green rests on the real artifact, never the agent's word."""
+    marker = _isolated_marker
+    if marker.exists():
+        marker.unlink()
+    monkeypatch.setattr(self_extend, "_materialize_default_marker",
+                        lambda spec: {"actions": [], "text": "", "gated": 0})
+    captured = []
+    out = self_extend.run_self_extend_loop(
+        "add a hello marker file proving self-extend works",
+        graph={"nodes": [], "wires": []},
+        router=None,
+        brain_call=lambda t, a: (captured.append((t, a)) or {"ok": True}),
+        store=_store(),
+    )
+    assert not marker.exists()
+    assert out["dry"] is False and out["ok"] is False
+    leaf_rows = [p for p in out["leaves"] if not p["terminal"]]
+    assert all(p["verdict"] != "green" for p in leaf_rows)
+    assert [a for (t, a) in captured if t == "brain.write"] == []  # nothing learned

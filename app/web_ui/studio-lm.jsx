@@ -3432,6 +3432,18 @@ const StudioLM = () => {
         } catch (e) {}
       }
     };
+    // Universal self-extension ('X' mode) — ONE leaf judged by the ROMA court.
+    // bridge.self_extend_loop emits court_verdict(verdict_json) per judged leaf
+    // (+ a terminal sweep). Re-broadcast as a window CustomEvent the always-
+    // mounted CourtVerdictQueue listens on, so the loop closing is visible.
+    const onCourtVerdict = (verdictJson) => {
+      let payload = null;
+      try { payload = JSON.parse(verdictJson || '{}'); } catch (e) { return; }
+      if (!payload) return;
+      try {
+        window.dispatchEvent(new CustomEvent('lm-court-verdict', { detail: payload }));
+      } catch (e) {}
+    };
     wire('chat_chunk',     onChunk);
     wire('chat_reasoning', onReasoning);
     wire('chat_status',    onChatStatus);   // router fallback/retry + "answered by"
@@ -3440,6 +3452,7 @@ const StudioLM = () => {
     wire('trigger_fired',  onTrigger);
     wire('agent_step_done', onAgentStep);
     wire('self_extend_done', onSelfExtendDone);   // SEAM 1→4 receipt → toast
+    wire('court_verdict',   onCourtVerdict);      // self-extend per-leaf verdict → CourtVerdictQueue
     wire('connector_op_done', onConnectorOpDone);
     wire('param_options_ready', onParamOptions);
     wire('node_created',   onNodeCreated);
@@ -4108,6 +4121,7 @@ const StudioLM = () => {
           open the REAL panel from Home AND in-session (no more no-op). */}
       <RailDrawerHost _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
+      <CourtVerdictQueue _themeBump={paletteBump}/>
       <SelfHealInspector _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
       <UpdateNotifier/>
@@ -14048,6 +14062,20 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
     const _composerMode = mode
       || (typeof window !== 'undefined' && window.__archhub_composer_mode)
       || 'plan';
+    // Universal self-extension ('X' mode): instead of agent_step, route to the
+    // ask→build→COURT→learn loop. ArchHub atomizes the request into a ROMA tree,
+    // the composer-as-executor BUILDS each leaf on the real machine, the external
+    // court verifies it on the REAL artifact, and each green leaf is learned into
+    // the brain. Per-leaf verdicts arrive on court_verdict → CourtVerdictQueue.
+    if (_composerMode === 'extend') {
+      try {
+        bridgeCall('self_extend_loop', t, JSON.stringify(LM_GRAPH), focusId || '');
+        window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+          detail: { msg: 'self-extend · atomizing → build → court → learn…', kind:'info' },
+        }));
+      } catch (e) {}
+      return;
+    }
     try { bridgeCall('agent_step', t, JSON.stringify(LM_GRAPH), focusId || '', _composerMode); }
     catch (e) {}
   };
@@ -14147,6 +14175,10 @@ const FloatingComposer = ({ setLibraryOpen, focusId }) => {
             { id:'plan', lbl:'P', tip:'Plan · all writes gated (default)' },
             { id:'auto', lbl:'A', tip:'Auto · reads free, writes gated' },
             { id:'yolo', lbl:'Y', tip:'YOLO · auto-runs everything (reversible)' },
+            // Universal self-extension: build + court-verify + learn. Picking X
+            // routes submit() to bridge.self_extend_loop (ask→build→COURT→learn)
+            // and surfaces each leaf's verdict in the CourtVerdictQueue.
+            { id:'extend', lbl:'X', tip:'Self-extend · build + court-verify + learn' },
           ].map(m => {
             const active = mode === m.id;
             const isYolo = m.id === 'yolo';
@@ -19005,6 +19037,141 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
               background:'transparent', color:LM.inkSoft, cursor:'pointer',
               fontFamily:LM.mono, fontSize:10,
             }}>Dismiss</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// UNIVERSAL SELF-EXTENSION — COURT VERDICT QUEUE (the loop's result surface).
+// The 'X' (self-extend) composer mode routes a request through
+// bridge.self_extend_loop (ask→build→COURT→learn). The backend emits
+// court_verdict per judged ROMA leaf; the StudioLM root re-broadcasts it as
+// `lm-court-verdict`. This always-mounted panel accumulates one row per leaf and
+// shows, for each, its predicate + a status dot colored by the court's verdict:
+//   green      = LM.accent  — the court FAILED TO REFUTE on the real artifact
+//                             (and the leaf was learned into the brain).
+//   red        = LM.err     — the court refuted; the loop re-decomposes.
+//   needs_root = LM.warn    — no machine gate / unverifiable → the FOUNDER must
+//                             decide. A green is the court's receipt, never the
+//                             agent's claim; needs_root is NEVER silently green —
+//                             it carries a 'decide' affordance (founder override).
+// Cloned from ApprovalQueue: same fixed-panel shell, same window-event listener
+// idiom, same _themeBump-only prop. Early-returns null when no verdicts yet.
+const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [rows, setRows] = React.useState([]);
+  React.useEffect(() => {
+    const onVerdict = (ev) => {
+      const d = (ev && ev.detail) || {};
+      if (!d || (!d.leaf_id && !d.terminal)) return;
+      const key = d.terminal ? `${d.tree_id || ''}::__terminal__`
+                             : `${d.tree_id || ''}::${d.leaf_id || ''}`;
+      setRows(prev => {
+        const next = prev.filter(r => r.key !== key);
+        next.push({
+          key,
+          predicate: d.predicate || '(leaf)',
+          verdict: d.verdict || 'red',
+          reason: d.reason || '',
+          evidence_ref: d.evidence_ref || '',
+          learned: !!d.learned,
+          terminal: !!d.terminal,
+          sweep: d.sweep || {},
+          tree_id: d.tree_id || '',
+          leaf_id: d.leaf_id || '',
+        });
+        return next;
+      });
+    };
+    window.addEventListener('lm-court-verdict', onVerdict);
+    return () => window.removeEventListener('lm-court-verdict', onVerdict);
+  }, []);
+  const _dot = (v) => v === 'green' ? LM.accent : v === 'needs_root' ? LM.warn : LM.err;
+  // needs_root → founder override. We do NOT silently green it: the founder
+  // explicitly settles it (set_verdict is_root_authority server-side). Here the
+  // 'decide' affordance seeds the composer so the founder can re-run / inspect.
+  const _decide = (r) => {
+    try {
+      window.dispatchEvent(new CustomEvent('lm-composer-seed', {
+        detail: { text: `/inspect court leaf ${r.tree_id} ${r.leaf_id} — ${r.predicate}` },
+      }));
+    } catch (e) {}
+    try {
+      window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+        detail: { msg: 'court · needs you — this leaf has no machine gate; you decide', kind:'warn' },
+      }));
+    } catch (e) {}
+  };
+  const _clear = () => setRows([]);
+  const leafRows = rows.filter(r => !r.terminal);
+  const green = leafRows.filter(r => r.verdict === 'green').length;
+  const needsRoot = leafRows.filter(r => r.verdict === 'needs_root').length;
+  const total = leafRows.length;
+  if (!rows.length) return null;
+  return (
+    <div data-testid="court-verdict-queue" role="region" aria-label="Self-extend court verdicts"
+      style={{
+        position:'fixed', left:'50%', bottom:96, transform:'translateX(-50%)',
+        zIndex:71, width:520, maxWidth:'92%',
+        background:LM.bgPanel, border:`1px solid ${LM.accent}`, borderRadius:10,
+        boxShadow:'0 18px 48px rgba(0,0,0,.55)', overflow:'hidden',
+      }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10,
+        padding:'10px 14px', borderBottom:`1px solid ${LM.line}`, background:LM.bg }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.16em',
+          color:LM.accent }}>
+          COURT · {green}/{total}{needsRoot ? ` · ${needsRoot} need you` : ''}
+        </span>
+        <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>
+          Each leaf built on your machine, then verified by the court before green.
+        </span>
+        <div style={S_FLEX1}/>
+        <button onClick={_clear} data-testid="court-clear" style={{
+          padding:'4px 9px', borderRadius:5, border:`1px solid ${LM.line}`,
+          background:'transparent', color:LM.inkSoft, cursor:'pointer',
+          fontFamily:LM.mono, fontSize:10,
+        }}>Clear</button>
+      </div>
+      <div style={{ maxHeight:220, overflow:'auto' }}>
+        {rows.map(r => (
+          <div key={r.key} data-testid="court-row"
+            data-verdict={r.verdict}
+            style={{
+              display:'flex', alignItems:'center', gap:10,
+              padding:'9px 14px', borderBottom:`1px solid ${LM.lineSoft}`,
+              borderLeft: r.terminal ? `2px solid ${_dot(r.verdict)}` : '2px solid transparent',
+            }}>
+            <span aria-hidden="true" style={{
+              width:9, height:9, borderRadius:'50%', flex:'0 0 auto',
+              background:_dot(r.verdict),
+              boxShadow:`0 0 6px ${_dot(r.verdict)}88`,
+            }}/>
+            <div style={S_FLEX1}>
+              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.ink }}>
+                {r.terminal && (
+                  <span style={{ fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.12em',
+                    color:_dot(r.verdict), border:`1px solid ${_dot(r.verdict)}66`,
+                    borderRadius:3, padding:'1px 4px', marginRight:6 }}>SWEEP</span>
+                )}
+                {r.learned && (
+                  <span title="Promoted to brain memory" style={{ fontFamily:LM.mono, fontSize:8.5,
+                    letterSpacing:'0.12em', color:LM.accent, border:`1px solid ${LM.accent}66`,
+                    borderRadius:3, padding:'1px 4px', marginRight:6 }}>LEARNED</span>
+                )}
+                {r.predicate}
+              </div>
+              <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2 }}>
+                {r.verdict}{r.evidence_ref ? ` · ${r.evidence_ref}` : ''}{r.reason ? ` · ${r.reason}` : ''}
+              </div>
+            </div>
+            {r.verdict === 'needs_root' && !r.terminal && (
+              <button onClick={() => _decide(r)} data-testid="court-decide" style={{
+                padding:'4px 11px', borderRadius:5, border:0,
+                background:LM.warn, color:'#1a1a1a', cursor:'pointer',
+                fontFamily:LM.mono, fontSize:10, fontWeight:600,
+              }}>Decide</button>
+            )}
           </div>
         ))}
       </div>

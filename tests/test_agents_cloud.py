@@ -26,7 +26,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+# NOTE: repo-root is added to sys.path PER-TEST by the _isolate_agents_package
+# fixture (with teardown) — NOT at module level. A module-level insert leaked
+# repo-root permanently onto sys.path, so after this file's tests ran, the
+# ambiguous top-level name `agents` resolved to the repo-root cloud-agents
+# package instead of `app/agents/` for the rest of the suite (it broke the
+# self-extend loop tests). Keep the global-state mutation scoped + restored.
 
 
 def _force_top_level_agents() -> None:
@@ -46,11 +51,23 @@ def _force_top_level_agents() -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_agents_package():
-    """Run for every test in this file."""
+    """Run for every test in this file. Snapshot global import state, force the
+    TOP-LEVEL `agents/` for this file's tests, then RESTORE on teardown so the
+    repo-root-first sys.path hack + agents.* eviction never leak into the rest
+    of the suite (which expects `agents` == app/agents/). The missing teardown
+    here previously broke any later test importing app's agents.* modules."""
+    saved_path = list(sys.path)
+    saved_mods = {k: v for k, v in sys.modules.items()
+                  if k == "agents" or k.startswith("agents.")}
     _force_top_level_agents()
-    yield
-    # No teardown — leaving modules cached is fine; the next test
-    # gets a fresh purge anyway.
+    try:
+        yield
+    finally:
+        sys.path[:] = saved_path
+        for k in [m for m in sys.modules
+                  if m == "agents" or m.startswith("agents.")]:
+            del sys.modules[k]
+        sys.modules.update(saved_mods)
 
 
 # ---------------------------------------------------------------------------

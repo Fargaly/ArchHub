@@ -74,6 +74,21 @@ def test_four_founder_folders_always_present_even_when_empty():
     assert {"user", "feedback", "projects", "reference"} <= ids
 
 
+def test_extra_project_tag_lands_in_projects_folder():
+    """Regression: organize tags project-coded facts via the ACL-free
+    extra.project (NOT the ACL-gated project_id column). folder_for must surface
+    those into the Projects folder — otherwise it stays empty even when codes are
+    detected (the original 'Projects: 0' empty-shell bug)."""
+    store = FakeStore([
+        _mk("p1", FragmentKind.FACT, "Missoni cornice spec", predicate="note",
+            extra={"project": "P-679"}),
+    ])
+    res = bf.list_facts(store)
+    rec = next(r for f in res["folders"] for r in f["facts"] if r["id"] == "p1")
+    assert rec["type"] == "projects"        # surfaced via extra.project
+    assert rec["project_id"] == "P-679"     # record carries the code for the UI
+
+
 def test_each_fact_record_has_name_desc_body(store):
     res = bf.list_facts(store)
     rec = next(r for f in res["folders"] for r in f["facts"] if r["id"] == "f1")

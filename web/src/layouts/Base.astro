@@ -118,6 +118,18 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
       .btn-primary { background: var(--accent); border-color: var(--accent); color: #160d08; font-weight: 600; }
       .btn-primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
 
+      /* auth nav entry points */
+      .auth-nav { display: flex; align-items: center; }
+      .auth-nav .auth-anon, .auth-nav .auth-user { display: inline-flex; align-items: center; gap: 8px; }
+      .auth-nav [hidden] { display: none !important; }
+      .acct-chip { max-width: 220px; }
+      .acct-chip #acctEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+      .acct-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--ok); box-shadow: 0 0 0 3px rgba(126,193,142,0.18); flex: none; }
+      @media (max-width: 720px) {
+        .auth-nav .auth-user .btn:first-child { display: none; }
+        .acct-chip #acctEmail { max-width: 96px; }
+      }
+
       main { display: block; }
 
       /* footer */
@@ -158,7 +170,22 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <a href="/changelog" class={isActive('/changelog') ? 'active' : undefined}>Changelog</a>
         </nav>
         <span class="ver">{connectors} connectors · MIT</span>
-        <a class="btn btn-primary" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download</a>
+        <!-- AUTH ENTRY POINTS — wired to the EXISTING cloud auth backend via
+             /auth.js (no new auth system). Signed-out shows Sign in + Get
+             started; once a session token exists the script below swaps in the
+             account chip. Both states are pre-rendered so there is no flash. -->
+        <div class="auth-nav" id="authNav">
+          <span class="auth-anon">
+            <a class="btn" href="/signin">Sign in</a>
+            <a class="btn btn-primary" href="/signin?new=1">Get started</a>
+          </span>
+          <span class="auth-user" hidden>
+            <a class="btn" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download</a>
+            <a class="btn btn-primary acct-chip" href="/account" id="acctChip" title="Your account">
+              <span class="acct-dot"></span><span id="acctEmail">Account</span>
+            </a>
+          </span>
+        </div>
       </div>
     </header>
 
@@ -208,5 +235,32 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </div>
       </div>
     </footer>
+    <!-- Shared auth client (talks to the live cloud backend). Loaded on every
+         page so the nav can reflect the signed-in state everywhere. -->
+    <script src="/auth.js" is:inline></script>
+    <script is:inline>
+      // Reflect the session in the nav: signed-in -> account chip with the
+      // user's email (from GET /v1/me); signed-out -> Sign in / Get started.
+      (function () {
+        var A = window.ArchHubAuth;
+        var nav = document.getElementById('authNav');
+        if (!A || !nav) return;
+        var anon = nav.querySelector('.auth-anon');
+        var user = nav.querySelector('.auth-user');
+        function show(signedIn) {
+          anon.hidden = signedIn;
+          user.hidden = !signedIn;
+        }
+        if (!A.isSignedIn()) { show(false); return; }
+        // Have a token — optimistically show the chip, then confirm + fill the
+        // email. A dead token (401) is cleared by me() and we fall back to anon.
+        show(true);
+        A.me().then(function (m) {
+          if (!m) { show(false); return; }
+          var el = document.getElementById('acctEmail');
+          if (el && m.email) el.textContent = m.email;
+        });
+      })();
+    </script>
   </body>
 </html>

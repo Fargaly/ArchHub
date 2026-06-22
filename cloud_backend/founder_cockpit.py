@@ -26,12 +26,14 @@ canonical tier prices in config.PLANS and is clearly labelled as an estimate.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
@@ -293,6 +295,223 @@ def build_overview() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# COMMAND ENGINE — the cockpit's real authority (PHASE 5)
+# ---------------------------------------------------------------------------
+# A typed founder instruction is parsed into ONE real action, executed against
+# real state, and the REAL effect is returned + audited. This is what turns the
+# cockpit from a read-only display into an actor. Every action below mutates
+# real rows (db.py write paths) or directs a real agent (the agent_tasks queue
+# the app-side self-extension loop drains). Destructive actions require
+# {confirm: true}; everything is gated by require_founder and logged via
+# db.log_founder_action.
+
+# Each entry: (action_id, list of keyword regexes that route to it).
+# Kept a small deterministic intent map for v1 (LLM NL routing is an optional
+# upgrade — see route_command). First matching rule wins.
+_INTENTS = [
+    ("purge_test_users", [r"\bpurge\b.*\btest\b", r"\bdelete\b.*\btest user",
+                          r"\bclean(up)?\b.*\btest\b"]),
+    ("set_plan",         [r"\bset\b.*\bplan\b", r"\b(set|make|move|upgrade|downgrade)\b.*\bto\s+(trial|solo|studio|firm)\b",
+                          r"\b(plan|tier)\b.*\b(trial|solo|studio|firm)\b"]),
+    ("toggle_free",      [r"\bfree[\s_-]?default\b", r"\bfree tier\b", r"\bfree\b.*\b(on|off|enable|disable)\b"]),
+    ("direct_agent",     [r"\b(build|extend|create|implement|make|add)\b",
+                          r"\bself[\s_-]?extend\b", r"\bagent\b", r"\bbuild me\b"]),
+    ("help",             [r"\bhelp\b", r"\bwhat can you do\b", r"\bcommands\b"]),
+]
+
+_PLANS = ("trial", "solo", "studio", "firm")
+
+
+def _detect_action(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return "help"
+    for action, pats in _INTENTS:
+        for p in pats:
+            if re.search(p, t):
+                return action
+    return "unknown"
+
+
+def _extract_email(text: str) -> Optional[str]:
+    m = re.search(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", text or "")
+    return m.group(0) if m else None
+
+
+def _extract_plan(text: str) -> Optional[str]:
+    t = (text or "").lower()
+    for p in _PLANS:
+        if re.search(rf"\b{p}\b", t):
+            return p
+    return None
+
+
+def _extract_onoff(text: str) -> Optional[bool]:
+    t = (text or "").lower()
+    if re.search(r"\b(off|disable|disabled|false|no)\b", t):
+        return False
+    if re.search(r"\b(on|enable|enabled|true|yes)\b", t):
+        return True
+    return None
+
+
+HELP_TEXT = (
+    "Founder commands — type any of these:\n"
+    "  purge test users            (destructive — needs Confirm)\n"
+    "  set <email> to studio       (plans: trial | solo | studio | firm)\n"
+    "  free default off            (toggle the zero-config free tier on/off)\n"
+    "  build <something>           (directs an agent: queues a self-extension task)\n"
+    "  help"
+)
+
+
+def _try_brain_self_extend(directive: str) -> Optional[dict]:
+    """Best-effort: also fire the brain's ROMA self-extension loop if the
+    daemon is reachable, so a 'build' command can kick REAL agent work beyond
+    the durable queue row. Never blocks / never raises — the queued task row is
+    the guaranteed effect; this is an extra real trigger when the brain is up.
+    Returns a small status dict or None when unreachable."""
+    url = os.environ.get("BRAIN_MCP_URL", "http://127.0.0.1:8473/mcp")
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "brain.roma_atomize",
+                       "arguments": {"vision": directive}},
+        }).encode()
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            return {"brain": "triggered", "status": resp.status}
+    except Exception as e:
+        return {"brain": "unreachable", "error": str(e)[:120]}
+
+
+def route_command(text: str, *, actor: str, confirm: bool = False,
+                  args: Optional[dict] = None) -> dict:
+    """Parse + EXECUTE one founder instruction. Returns the REAL effect.
+
+    actor   = founder email (already gated by require_founder upstream).
+    confirm = required True for destructive actions.
+    args    = optional explicit structured args (email/plan/value/directive)
+              that override what the parser extracts from free text.
+    """
+    args = args or {}
+    text = (text or "").strip()
+    action = (args.get("action") or _detect_action(text)).strip().lower()
+    target: Optional[str] = None
+    result: dict
+    ok = True
+
+    if action == "help":
+        result = {"action": "help", "message": HELP_TEXT}
+
+    elif action == "purge_test_users":
+        target = "test_users"
+        if not confirm:
+            preview = db.list_test_users()
+            result = {
+                "action": "purge_test_users",
+                "needs_confirm": True,
+                "would_delete": len(preview),
+                "emails": [p["email"] for p in preview],
+                "message": (f"This will permanently delete {len(preview)} test "
+                            f"user(s). Re-run with Confirm to proceed."),
+            }
+            ok = True
+            # Do NOT log a no-op preview as an action effect, but record intent.
+            db.log_founder_action(
+                actor=actor, command=text, action="purge_test_users.preview",
+                target=target, result=json.dumps({"would_delete": len(preview)}),
+                ok=True)
+            return result
+        eff = db.delete_test_users()
+        result = {
+            "action": "purge_test_users", "deleted": eff["deleted"],
+            "emails": eff["emails"],
+            "message": f"Deleted {eff['deleted']} test user(s).",
+        }
+
+    elif action == "set_plan":
+        email = (args.get("email") or _extract_email(text))
+        plan = (args.get("plan") or _extract_plan(text))
+        target = email
+        if not email or not plan:
+            ok = False
+            result = {"action": "set_plan", "error": "need_email_and_plan",
+                      "message": ("Usage: set <email> to <trial|solo|studio|firm>. "
+                                  f"Got email={email!r} plan={plan!r}.")}
+        else:
+            try:
+                eff = db.set_user_plan(email, plan)
+                result = {"action": "set_plan", **eff,
+                          "message": f"Set {eff['email']} to plan '{eff['plan']}'."}
+            except ValueError as ve:
+                ok = False
+                result = {"action": "set_plan", "error": str(ve),
+                          "message": f"Could not set plan: {ve}"}
+
+    elif action == "toggle_free":
+        val = args.get("value")
+        if val is None:
+            val = _extract_onoff(text)
+        if val is None:
+            ok = False
+            result = {"action": "toggle_free", "error": "need_on_or_off",
+                      "message": "Say 'free default on' or 'free default off'."}
+        else:
+            target = "free_default"
+            eff = db.set_founder_flag(
+                "free_default", "1" if val else "0", actor=actor)
+            # Reflect the real downstream effect on serving.
+            available = False
+            try:
+                available = bool(config.free_default_available())
+            except Exception:
+                pass
+            result = {"action": "toggle_free", "free_default": bool(val),
+                      "flag": eff,
+                      "serving_free_now": available,
+                      "message": (f"Free default turned {'ON' if val else 'OFF'}. "
+                                  f"Serving free now: {available}.")}
+
+    elif action == "direct_agent":
+        directive = (args.get("directive") or text).strip()
+        if not directive:
+            ok = False
+            result = {"action": "direct_agent", "error": "empty_directive",
+                      "message": "Tell the agent what to build."}
+        else:
+            task = db.enqueue_agent_task(
+                directive=directive, created_by=actor,
+                kind=(args.get("kind") or "self_extend"))
+            target = task["id"]
+            brain = _try_brain_self_extend(directive)
+            result = {"action": "direct_agent", "task": task,
+                      "queued": True, "task_id": task["id"],
+                      "brain": brain,
+                      "message": (f"Queued agent task {task['id']} "
+                                  f"(status={task['status']}). The self-extension "
+                                  f"loop will pick it up.")}
+
+    else:  # unknown
+        ok = False
+        result = {"action": "unknown",
+                  "message": ("I didn't recognise that command. Type 'help' "
+                              "for the list."),
+                  "help": HELP_TEXT}
+
+    # Audit every executed command (success or handled failure).
+    db.log_founder_action(
+        actor=actor, command=text, action=result.get("action", action),
+        target=target, result=json.dumps(result)[:2000], ok=ok)
+    result["ok"] = ok
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 from fastapi import Depends
@@ -328,6 +547,50 @@ def api_usage(_founder: dict = Depends(require_founder)) -> JSONResponse:
 @router.get("/api/errors")
 def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"errors": recent_errors(50)})
+
+
+# --- ACTION routes (real authority) ----------------------------------------
+@router.post("/api/command")
+def api_command(payload: dict = Body(default={}),
+                _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Execute a typed founder instruction. Behind require_founder; destructive
+    actions require {"confirm": true}. Returns the REAL effect, audited."""
+    actor = (_founder.get("email") or "").strip().lower()
+    text = str(payload.get("command") or payload.get("text") or "")
+    confirm = bool(payload.get("confirm"))
+    args = payload.get("args") if isinstance(payload.get("args"), dict) else None
+    result = route_command(text, actor=actor, confirm=confirm, args=args)
+    # 200 for executed/handled; the body carries ok + needs_confirm flags.
+    return JSONResponse(result)
+
+
+@router.post("/api/purge-test-users")
+def api_purge_test_users(payload: dict = Body(default={}),
+                         _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Direct destructive route (also reachable as the 'purge test users'
+    command). Requires {"confirm": true} or returns a preview with
+    needs_confirm=true and HTTP 200 (nothing deleted)."""
+    actor = (_founder.get("email") or "").strip().lower()
+    confirm = bool(payload.get("confirm"))
+    result = route_command("purge test users", actor=actor, confirm=confirm,
+                           args={"action": "purge_test_users"})
+    return JSONResponse(result)
+
+
+@router.get("/api/actions")
+def api_actions(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The founder action audit log (most recent first)."""
+    return JSONResponse({"actions": db.recent_founder_actions(40)})
+
+
+@router.get("/api/agent-tasks")
+def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The agent task queue the cockpit fills + the app-side loop drains."""
+    return JSONResponse({
+        "tasks": db.list_agent_tasks(40),
+        "queued": db.count_agent_tasks("queued"),
+        "total": db.count_agent_tasks(),
+    })
 
 
 @router.get("", response_class=HTMLResponse)
@@ -419,6 +682,27 @@ _PAGE_HTML = """<!doctype html>
   .err .w{color:var(--terracotta)}
   .refresh{color:var(--ink-faint);font-size:12px}
   .span2{grid-column:span 2}
+  .cmdbar{display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap}
+  .cmd-input{flex:1;min-width:280px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:11px;color:var(--ink);
+    font-family:'Inter',sans-serif;font-size:14px;padding:13px 15px;outline:none}
+  .cmd-input:focus{border-color:var(--terracotta)}
+  .cmd-input::placeholder{color:var(--ink-faint)}
+  .cmd-confirm{color:var(--ink-dim);font-size:12.5px;display:flex;
+    align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
+  .cmd-btn{background:var(--terracotta);color:#fff;border:none;
+    border-radius:11px;font-family:'Inter',sans-serif;font-weight:600;
+    font-size:14px;padding:13px 26px;cursor:pointer}
+  .cmd-btn:disabled{opacity:.5;cursor:default}
+  .cmd-out{margin-top:12px;font-size:13px;min-height:0}
+  .cmd-out .ok{border:1px solid rgba(95,167,119,.4);background:rgba(95,167,119,.08);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out .bad{border:1px solid rgba(217,103,87,.45);background:rgba(217,103,87,.08);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out .confirm{border:1px solid rgba(217,166,87,.5);background:rgba(217,166,87,.1);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out pre{margin:8px 0 0;white-space:pre-wrap;color:var(--ink-dim);
+    font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   @media(max-width:740px){.span2{grid-column:auto}h1{font-size:34px}}
 </style>
 </head>
@@ -433,8 +717,18 @@ _PAGE_HTML = """<!doctype html>
       updated <b id="updated">-</b>
     </div>
   </header>
-  <p class="meta">Private business oversight. Live numbers from the cloud
-    database, billing config, and the brain replica store.</p>
+  <p class="meta">Private business oversight + control. Live numbers from the
+    cloud database, billing config, and the brain replica store. Type a command
+    below to ACT — purge test users, set a plan, toggle the free tier, or direct
+    an agent.</p>
+
+  <div class="cmdbar">
+    <input id="cmd" class="cmd-input" type="text" autocomplete="off"
+      placeholder="e.g.  set someone@studio.com to studio   ·   purge test users   ·   build a Notion connector   ·   free default off" />
+    <label class="cmd-confirm"><input type="checkbox" id="cmdConfirm" /> Confirm (destructive)</label>
+    <button id="cmdRun" class="cmd-btn">Run</button>
+  </div>
+  <div id="cmdOut" class="cmd-out"></div>
 
   <div class="grid kpis" id="kpis"></div>
 
@@ -458,6 +752,14 @@ _PAGE_HTML = """<!doctype html>
     <div class="card">
       <h2>Usage &amp; progress</h2>
       <div id="usage"></div>
+    </div>
+    <div class="card">
+      <h2>Agent tasks</h2>
+      <div id="agentTasks"></div>
+    </div>
+    <div class="card">
+      <h2>Recent commands</h2>
+      <div id="actions"></div>
     </div>
     <div class="card span2">
       <h2>Recent errors</h2>
@@ -572,6 +874,61 @@ function render(d){
   } else { $('errors').innerHTML='<div class="empty">No server errors recorded since last restart.</div>'; }
 }
 
+function renderActions(d){
+  const a=d.actions||[];
+  if(!a.length){ $('actions').innerHTML='<div class="empty">No commands run yet.</div>'; return; }
+  let t='';
+  a.forEach(x=>{
+    t+=`<div class="err"><div class="t">${ago(x.ts)} &middot; <span class="w">${esc(x.action)}</span>${x.target?(' &middot; '+esc(x.target)):''} &middot; ${x.ok?'ok':'fail'}</div>`+
+       `<div class="m">${esc(x.command)}</div></div>`; });
+  $('actions').innerHTML=t;
+}
+function renderAgentTasks(d){
+  const a=d.tasks||[];
+  let head=`<div class="row"><span class="k">Queued</span><span class="v">${fmt(d.queued)}</span></div>`+
+           `<div class="row"><span class="k">Total</span><span class="v">${fmt(d.total)}</span></div>`;
+  if(!a.length){ $('agentTasks').innerHTML=head+'<div class="empty">No agent tasks queued.</div>'; return; }
+  let t=head;
+  a.slice(0,8).forEach(x=>{
+    t+=`<div class="err"><div class="t">${ago(x.created_at)} &middot; <span class="w">${esc(x.status)}</span> &middot; ${esc(x.kind)}</div>`+
+       `<div class="m">${esc(x.directive)}</div></div>`; });
+  $('agentTasks').innerHTML=t;
+}
+async function loadActions(){
+  try{
+    const [ra,rt] = await Promise.all([
+      fetch('/founder/api/actions',{headers:{'Accept':'application/json'}}),
+      fetch('/founder/api/agent-tasks',{headers:{'Accept':'application/json'}})]);
+    if(ra.ok) renderActions(await ra.json());
+    if(rt.ok) renderAgentTasks(await rt.json());
+  }catch(e){}
+}
+
+async function runCommand(){
+  const inp=$('cmd'), btn=$('cmdRun'), out=$('cmdOut');
+  const command=inp.value.trim();
+  if(!command){ return; }
+  const confirm=$('cmdConfirm').checked;
+  btn.disabled=true;
+  out.innerHTML='<div class="ok">Running…</div>';
+  try{
+    const r=await fetch('/founder/api/command',{method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({command, confirm})});
+    const d=await r.json();
+    let cls = d.needs_confirm ? 'confirm' : (d.ok ? 'ok' : 'bad');
+    let body=`<div class="${cls}"><b>${esc(d.message||(d.ok?'Done.':'Failed.'))}</b>`+
+      `<pre>${esc(JSON.stringify(d,null,2))}</pre></div>`;
+    out.innerHTML=body;
+    if(d.needs_confirm){ $('cmdConfirm').checked=true; }
+    else if(d.ok){ inp.value=''; $('cmdConfirm').checked=false; }
+    load(); loadActions();
+  }catch(e){ out.innerHTML='<div class="bad">Command failed: '+esc(e)+'</div>'; }
+  finally{ btn.disabled=false; }
+}
+$('cmdRun').addEventListener('click', runCommand);
+$('cmd').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ runCommand(); }});
+
 async function load(){
   try{
     const r = await fetch('/founder/api/overview', {headers:{'Accept':'application/json'}});
@@ -579,8 +936,8 @@ async function load(){
     render(await r.json());
   }catch(e){ $('updated').textContent='load error'; }
 }
-load();
-setInterval(load, 30000);
+load(); loadActions();
+setInterval(()=>{ load(); loadActions(); }, 30000);
 </script>
 </body>
 </html>

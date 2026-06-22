@@ -573,6 +573,20 @@ def free_default_available() -> bool:
     on a free-account key); when one is genuinely keyless ("custom" with a
     local relay) leave FREE_PROVIDER_API_KEY empty and set the base URL.
     """
+    # Founder runtime override (cockpit command surface). The founder can
+    # toggle the free default ON/OFF live from the cockpit without a redeploy;
+    # that persisted flag wins over the env default. ONE-SYSTEM: same flag the
+    # cockpit writes via db.set_founder_flag('free_default', ...). Read
+    # defensively so a missing table / import cycle never breaks serving.
+    try:
+        import db as _db
+        _ov = _db.get_founder_flag("free_default")
+        if _ov is not None:
+            if str(_ov).strip().lower() in ("0", "false", "no", "off"):
+                return False
+            # explicit ON falls through to the capability checks below
+    except Exception:
+        pass
     if not FREE_DEFAULT_ENABLED:
         return False
     if not FREE_PROVIDER_BASE_URL:

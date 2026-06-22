@@ -17,6 +17,7 @@ of req/sec on a single instance.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import time
@@ -360,6 +361,52 @@ CREATE TABLE IF NOT EXISTS training_samples (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+-- Founder cockpit: persisted config flags the founder can toggle from the
+-- cockpit command surface (e.g. the free-default flag). A tiny key/value
+-- store separate from schema_meta (which holds internal migration markers) so
+-- founder-controlled runtime behaviour never collides with schema bookkeeping.
+CREATE TABLE IF NOT EXISTS founder_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    updated_by  TEXT
+);
+
+-- Founder cockpit: an append-only audit log of every command the founder
+-- executes through the cockpit. Every real action (purge, set-plan, toggle,
+-- agent-direction) writes one row BEFORE/AFTER it runs, so the cockpit's
+-- authority is accountable + reviewable. Never deleted from app code.
+CREATE TABLE IF NOT EXISTS founder_action_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    actor       TEXT NOT NULL,         -- founder email that ran the command
+    command     TEXT NOT NULL,         -- the raw typed instruction
+    action      TEXT NOT NULL,         -- resolved action id (set_plan, purge_test_users, ...)
+    target      TEXT,                  -- e.g. user email / flag name / task id
+    result      TEXT NOT NULL DEFAULT '',  -- JSON summary of the real effect
+    ok          INTEGER NOT NULL DEFAULT 1
+);
+
+-- Founder cockpit -> AGENT DIRECTION. A real durable task queue the
+-- founder fills by typing a directive in the cockpit; the app-side agent
+-- loop (composer/ambient self-extension) picks rows up and works them.
+-- Enqueuing a row IS the real "started" effect for the agent-direction
+-- command — it is observable state the agent reads, not a no-op.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id          TEXT PRIMARY KEY,
+    created_at  INTEGER NOT NULL,
+    created_by  TEXT NOT NULL,         -- founder email
+    kind        TEXT NOT NULL DEFAULT 'self_extend',  -- self_extend | task | workflow
+    directive   TEXT NOT NULL,         -- what the agent should build/do
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued | claimed | running | done | failed
+    claimed_by  TEXT,
+    claimed_at  INTEGER,
+    finished_at INTEGER,
+    result      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_founder_action_ts ON founder_action_log(ts);
 CREATE INDEX IF NOT EXISTS idx_packs_status ON marketplace_packs(status);
 CREATE INDEX IF NOT EXISTS idx_packs_author ON marketplace_packs(author_user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_pack ON marketplace_reports(pack_id);
@@ -2239,3 +2286,251 @@ def count_marketplace_packs() -> int:
             "SELECT COUNT(*) AS n FROM marketplace_packs"
         ).fetchone()
     return int(r["n"]) if r else 0
+
+
+# ---------------------------------------------------------------------------
+# Founder cockpit ACTIONS (PHASE 5 — real authority, WRITE paths)
+# ---------------------------------------------------------------------------
+# Unlike the read-only aggregates above, these mutate real rows. They are the
+# state-changing organs the founder cockpit command surface
+# (cloud_backend/founder_cockpit.py) drives. Each is small, explicit, and
+# returns the REAL effect (rows deleted, the new plan, the queued task id) so
+# the cockpit can report what it DID, never a canned message.
+
+# Email substrings that mark a row as a throwaway TEST account. Purge targets
+# ONLY rows whose email contains one of these — never a real customer. Kept
+# conservative + explicit so "purge test users" can never nuke production data.
+TEST_USER_EMAIL_MARKERS = (
+    "@example.com",
+    "@test.com",
+    "@archhub-cockpit-test.com",   # the cockpit test-suite domain
+    "+test@",
+    "test+",
+    "@mailinator.com",
+    "@example.org",
+)
+
+
+def _protected_emails() -> set:
+    """Emails that MUST NEVER be purged regardless of marker match — first
+    and foremost the configured founder, so 'purge test users' can never
+    delete the operator's own account even if their address happens to match
+    a test pattern."""
+    protected = set()
+    try:
+        protected.add(
+            (os.environ.get("FOUNDER_EMAIL") or
+             "ahmedfargale@gmail.com").strip().lower())
+    except Exception:
+        pass
+    return protected
+
+
+def list_test_users(markers: tuple = TEST_USER_EMAIL_MARKERS) -> list[dict]:
+    """Every user row whose email matches a test marker — excluding any
+    protected email (the founder). Read-only — the preview the cockpit shows
+    before a confirmed purge."""
+    protected = _protected_emails()
+    out = []
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, email, plan, created_at FROM users"
+        ).fetchall()
+    for r in rows:
+        email = (r["email"] or "").lower()
+        if email in protected:
+            continue
+        if any(m in email for m in markers):
+            out.append(dict(r))
+    return out
+
+
+def delete_test_users(markers: tuple = TEST_USER_EMAIL_MARKERS) -> dict:
+    """Delete every throwaway test-account row (+ its dependent rows). Returns
+    {'deleted': N, 'emails': [...]} -- the REAL effect. Real rows leave the DB.
+
+    Cascades by hand (SQLite FKs are advisory here): tokens, codes, usage_log,
+    training_samples, memory_op_log, memory_access_log keyed on the user id are
+    removed too, so a purged test user leaves no orphan rows."""
+    victims = list_test_users(markers)
+    ids = [v["id"] for v in victims]
+    emails = [v["email"] for v in victims]
+    if not ids:
+        return {"deleted": 0, "emails": []}
+    qmarks = ",".join("?" for _ in ids)
+    with connect() as con:
+        for tbl, col in (
+            ("tokens", "user_id"),
+            ("codes", "user_id"),
+            ("usage_log", "user_id"),
+            ("training_samples", "user_id"),
+            ("memory_op_log", "user_id"),
+            ("memory_access_log", "reader_user_id"),
+            ("company_members", "user_id"),
+        ):
+            try:
+                con.execute(
+                    f"DELETE FROM {tbl} WHERE {col} IN ({qmarks})", ids)
+            except sqlite3.OperationalError:
+                # Table may not exist on a partial schema -- tolerate.
+                pass
+        con.execute(f"DELETE FROM users WHERE id IN ({qmarks})", ids)
+    return {"deleted": len(ids), "emails": emails}
+
+
+def set_user_plan(user_id_or_email: str, plan: str) -> dict:
+    """Set a user's plan/tier by id OR email. REAL UPDATE on the users row.
+
+    Reuses the canonical quota table (config.PLAN_QUOTAS) so the seat's
+    msg_limit moves with the tier, exactly like a billing webhook would.
+    Returns {'ok', 'user_id', 'email', 'plan', 'msg_limit'} reflecting the
+    row AFTER the write -- the proof the cockpit reports. Raises ValueError on
+    an unknown plan or a user that does not exist (the route maps these to a
+    clean 4xx, never a silent no-op)."""
+    plan = (plan or "").strip().lower()
+    if plan not in config.PLAN_QUOTAS:
+        raise ValueError(f"unknown_plan:{plan}")
+    key = (user_id_or_email or "").strip()
+    if not key:
+        raise ValueError("missing_user")
+    user = get_user_by_email(key) if "@" in key else get_user(key)
+    if user is None:
+        # Fall back to the other lookup so either form works.
+        user = get_user(key) or get_user_by_email(key.lower())
+    if user is None:
+        raise ValueError(f"no_such_user:{key}")
+    msg_limit = config.PLAN_QUOTAS[plan]
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET plan = ?, msg_limit = ? WHERE id = ?",
+            (plan, msg_limit, user["id"]),
+        )
+    return {
+        "ok": True, "user_id": user["id"], "email": user["email"],
+        "plan": plan, "msg_limit": msg_limit,
+    }
+
+
+# --- Founder config flags (persisted, founder-toggleable) ------------------
+def get_founder_flag(key: str, default: Optional[str] = None) -> Optional[str]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT value FROM founder_config WHERE key = ?", (key,)).fetchone()
+    return r["value"] if r else default
+
+
+def set_founder_flag(key: str, value: str, *, actor: Optional[str] = None) -> dict:
+    """Upsert a founder config flag. REAL persisted effect on runtime
+    behaviour (e.g. 'free_default'). Returns the new {key, value}."""
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "INSERT INTO founder_config (key, value, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (key, str(value), now, actor),
+        )
+    return {"key": key, "value": str(value), "updated_at": now}
+
+
+def all_founder_flags() -> dict:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT key, value FROM founder_config").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+# --- Founder action audit log ----------------------------------------------
+def log_founder_action(*, actor: str, command: str, action: str,
+                        target: Optional[str], result: str, ok: bool) -> int:
+    with connect() as con:
+        cur = con.execute(
+            "INSERT INTO founder_action_log "
+            "(ts, actor, command, action, target, result, ok) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(time.time()), actor, command[:1000], action,
+             (target or None), result[:2000], 1 if ok else 0),
+        )
+        return int(cur.lastrowid)
+
+
+def recent_founder_actions(limit: int = 30) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, ts, actor, command, action, target, result, ok "
+            "FROM founder_action_log ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Agent task queue (cockpit DIRECTS agents) -----------------------------
+def enqueue_agent_task(*, directive: str, created_by: str,
+                        kind: str = "self_extend") -> dict:
+    """Insert a real task row the app-side agent loop picks up. The inserted
+    row IS the observable 'queued/started' effect of an agent-direction
+    command. Returns the row {id, status, kind, directive}."""
+    import uuid
+    tid = "task_" + uuid.uuid4().hex[:16]
+    now = int(time.time())
+    with connect() as con:
+        con.execute(
+            "INSERT INTO agent_tasks "
+            "(id, created_at, created_by, kind, directive, status) "
+            "VALUES (?, ?, ?, ?, ?, 'queued')",
+            (tid, now, created_by, kind, directive[:2000]),
+        )
+    return {"id": tid, "status": "queued", "kind": kind,
+            "directive": directive[:2000], "created_at": now}
+
+
+def get_agent_task(task_id: str) -> Optional[dict]:
+    with connect() as con:
+        r = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def list_agent_tasks(limit: int = 30,
+                      status: Optional[str] = None) -> list[dict]:
+    with connect() as con:
+        if status:
+            rows = con.execute(
+                "SELECT * FROM agent_tasks WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (status, int(limit))).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM agent_tasks ORDER BY created_at DESC LIMIT ?",
+                (int(limit),)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_agent_tasks(status: Optional[str] = None) -> int:
+    with connect() as con:
+        if status:
+            r = con.execute(
+                "SELECT COUNT(*) AS n FROM agent_tasks WHERE status = ?",
+                (status,)).fetchone()
+        else:
+            r = con.execute(
+                "SELECT COUNT(*) AS n FROM agent_tasks").fetchone()
+    return int(r["n"]) if r else 0
+
+
+def claim_agent_task(task_id: str, claimed_by: str):
+    """Atomically move a queued task to 'claimed'. Returns the row, or None if
+    it was not queued (already taken). This is the agent side of the contract --
+    proves the enqueued row is real, pick-up-able work."""
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE agent_tasks SET status='claimed', claimed_by=?, "
+            "claimed_at=? WHERE id=? AND status='queued'",
+            (claimed_by, now, task_id))
+        if cur.rowcount == 0:
+            return None
+        r = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(r) if r else None

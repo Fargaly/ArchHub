@@ -81,7 +81,12 @@ def folder_for(frag: Fragment) -> str:
     text = (frag.text or "").lower()
     if pred == "feedback" or any(m in text for m in _FEEDBACK_MARKERS):
         return "feedback"
-    if frag.project_id:
+    # Projects folder keys on EITHER the ACL-gated project_id OR the ACL-free
+    # extra.project tag that _tag_projects (organize) actually populates. Before,
+    # only project_id was checked — and that column is deliberately never set —
+    # so project-coded facts (BBC4/P-679/…) were tagged but never surfaced here,
+    # leaving the Projects folder permanently empty even when codes were detected.
+    if frag.project_id or (frag.extra or {}).get("project"):
         return "projects"
     return "user"
 
@@ -109,7 +114,7 @@ def _fact_record(frag: Fragment) -> dict[str, Any]:
         "kind": frag.kind.value,
         "scope": frag.scope.value,
         "predicate": frag.predicate or "",
-        "project_id": frag.project_id or "",
+        "project_id": frag.project_id or (frag.extra or {}).get("project") or "",
         "archived": frag.valid_until is not None,
     }
 

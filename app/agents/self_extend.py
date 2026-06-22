@@ -66,6 +66,74 @@ def _brain_src_on_path() -> None:
         sys.path.insert(0, str(src))
 
 
+def _app_import(modpath: str):
+    """Import an app/-internal module robustly — collision- AND eviction-proof.
+
+    ROOT CAUSE this kills: the repo has TWO ``agents`` packages — ``app/agents/``
+    (composer_agent, self_extend) and the repo-root ``agents/`` (cloud agents,
+    which has NO composer_agent). A bare ``import agents.composer_agent`` is
+    therefore AMBIGUOUS. In the full suite ``tests/test_agents_cloud.py`` inserts
+    the repo root first on ``sys.path`` and evicts ``agents.*`` from
+    ``sys.modules``; a later lazy ``import agents.composer_agent`` then resolves
+    the WRONG package → ``ModuleNotFoundError: agents.composer_agent`` (the two
+    full-suite failures). The targeted run passed only because that polluting
+    test never ran.
+
+    Fix: resolve ``app/agents.*`` modules by FILE PATH anchored to THIS file's
+    own ``app/`` dir (independent of sys.path order / sys.modules eviction),
+    loaded under a private cache name so the ambiguous ``agents`` namespace is
+    never consulted. Other app modules (``library``, ``memory_gate``,
+    ``connectors.*`` — no name clash) import normally. app/ is kept on sys.path
+    for the loaded module's own top-level app imports (e.g. host_detector)."""
+    import importlib
+    import importlib.util
+    app_dir = Path(__file__).resolve().parents[1]          # .../app
+    if str(app_dir) not in sys.path:
+        sys.path.insert(0, str(app_dir))
+    if modpath.startswith("agents."):
+        rel = modpath.split(".", 1)[1].replace(".", "/") + ".py"
+        fpath = app_dir / "agents" / rel
+        cache = "archhub_app__" + modpath.replace(".", "_")
+        cached = sys.modules.get(cache)
+        if cached is not None:
+            return cached
+        spec = importlib.util.spec_from_file_location(cache, fpath)
+        if spec is None or spec.loader is None:
+            raise ModuleNotFoundError(f"cannot load {modpath} from {fpath}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[cache] = mod                           # register before exec
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop(cache, None)
+            raise
+        return mod
+    return importlib.import_module(modpath)
+
+
+def _write_ok(result: Any) -> bool:
+    """True only if a brain.write GENUINELY persisted at least one op.
+
+    The transports swallow failures differently — MemoryGate.write returns None
+    on error, and the daemon returns {ops_applied: 0} on an ACL-deny / invalid
+    op — so the old unconditional ``return {"ok": True}`` reported a learned
+    fact that never landed (the live-run false-green: learned=true, nothing in
+    the store). Accept an explicit applied-count OR an explicit ok:True with no
+    error; treat None / error / zero-applied as NOT learned."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("error"):
+        return False
+    for key in ("ops_applied", "fragments_added", "accepted", "written"):
+        val = result.get(key)
+        try:
+            if val is not None and int(val) >= 1:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return result.get("ok") is True
+
+
 def is_build_tool(name: str) -> bool:
     return (name or "") in BUILD_TOOLS
 
@@ -95,7 +163,7 @@ def _build_node_type(args: dict[str, Any]) -> dict[str, Any]:
     app_dir = str(_repo_root() / "app")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
-    import library as _lib  # the REAL organ (dual-registers into the runner)
+    _lib = _app_import("library")  # the REAL organ (dual-registers into the runner)
 
     spec = args.get("spec") if isinstance(args.get("spec"), dict) else dict(args)
     type_name = (spec.get("type") or "").strip()
@@ -149,7 +217,7 @@ def _build_connector(args: dict[str, Any]) -> dict[str, Any]:
     app_dir = str(_repo_root() / "app")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
-    from connectors import scaffold as _scaffold
+    _scaffold = _app_import("connectors.scaffold")
 
     spec = args.get("spec") if isinstance(args.get("spec"), dict) else dict(args)
     res = _scaffold.create_connector(spec, overwrite=bool(args.get("overwrite")))
@@ -297,7 +365,7 @@ def _make_registered_node_probe():
         if app_dir not in sys.path:
             sys.path.insert(0, app_dir)
         try:
-            import library as _lib
+            _lib = _app_import("library")
             spec = _lib.inspect(type_name)
         except Exception as ex:
             return ProbeResult(passed=False, applied=True,
@@ -364,6 +432,10 @@ def learn_capability(build: dict[str, Any], court: dict[str, Any], *,
     except Exception as ex:
         return {"ok": False, "error": f"brain.write failed: {ex}",
                 "fragment_id": frag_id}
+    if not _write_ok(result):
+        return {"ok": False, "fragment_id": frag_id, "owner_user": owner_user,
+                "error": f"brain.write did not persist (result={result})",
+                "write_result": result}
     return {"ok": True, "fragment_id": frag_id, "owner_user": owner_user,
             "write_result": result}
 
@@ -373,7 +445,7 @@ def _default_brain_call(tool_name: str, args: dict) -> dict:
     app_dir = str(_repo_root() / "app")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
-    from memory_gate import BrainClient
+    BrainClient = _app_import("memory_gate").BrainClient
     client = BrainClient()
     return client._call(tool_name, args, timeout=6.0)
 
@@ -483,15 +555,30 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
         "op": "add",
         "fragment": {
             "id": frag_id,
-            "kind": "learned",
+            # kind MUST be a valid WriteOp enum ('learned' is rejected by the
+            # brain → the write silently failed and nothing persisted). A
+            # court-verified capability is a 'fact'; the self_extend_verified
+            # predicate + extra.verdict carry the "learned" semantics.
+            "kind": "fact",
             "text": (f"Self-extend GREEN: {pred} — court failed to refute on "
                      f"{evidence_ref}"),
             "scope": "user",
             "visibility": "private",
-            "owner_user": owner_user,
+            # owner_user MUST be a non-empty string (the brain rejects None);
+            # fall back to the founder's stable owner so USER-scope recall finds it.
+            "owner_user": owner_user or DEFAULT_OWNER_USER,
             "subject": getattr(leaf, "title", "") or pred,
             "predicate": "self_extend_verified",
             "object": evidence_ref,
+            # provenance is REQUIRED by the brain's WriteOp schema — omitting it
+            # (the loop did) made every learn write fail validation. Mirror the
+            # learn_capability shape so the court-verified fact actually lands.
+            "provenance": {
+                "contributing_agent": "self-extend-loop",
+                "contributing_user": owner_user or DEFAULT_OWNER_USER,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "accessed_resources": [],
+            },
             "extra": {
                 "tree_id": tree_id,
                 "leaf_id": leaf_id,
@@ -503,10 +590,14 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
     caller = brain_call or _default_brain_call
     try:
         result = caller("brain.write", {"ops": [op]})
-        return {"ok": True, "fragment_id": frag_id, "write_result": result}
     except Exception as ex:
         return {"ok": False, "error": f"brain.write failed: {ex}",
                 "fragment_id": frag_id}
+    if not _write_ok(result):
+        return {"ok": False, "fragment_id": frag_id,
+                "error": f"brain.write did not persist (result={result})",
+                "write_result": result}
+    return {"ok": True, "fragment_id": frag_id, "write_result": result}
 
 
 def run_self_extend_loop(
@@ -545,11 +636,10 @@ def run_self_extend_loop(
     app_dir = str(_repo_root() / "app")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
-    from agents.composer_agent import (
-        atomize_vision as _atomize_vision,
-        compose_evidence as _compose_evidence,
-        run_agent_step as _run_agent_step,
-    )
+    _ca = _app_import("agents.composer_agent")
+    _atomize_vision = _ca.atomize_vision
+    _compose_evidence = _ca.compose_evidence
+    _run_agent_step = _ca.run_agent_step
 
     own_store = False
     if store is None:

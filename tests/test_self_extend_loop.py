@@ -319,6 +319,26 @@ def test_compose_evidence_shape_reads_real_file(tmp_path):
     assert ev["session_signals"]["actions"] == 1
 
 
+def _validating_brain_call(captured):
+    """A brain.write stand-in that VALIDATES each op against the REAL WriteOp
+    schema before accepting it. The blind ``{"ok": True}`` mock let a malformed
+    learn op through (kind='learned' not in the enum, owner_user=None, missing
+    provenance) — so every production learn write was silently rejected while
+    the loop reported learned=true. Validating here makes that class FAIL the
+    test instead of passing. Returns a realistic applied-count."""
+    from personal_brain.models import WriteOp
+
+    def _call(tool, args):
+        captured.append((tool, args))
+        if tool == "brain.write":
+            for op in args.get("ops", []):
+                WriteOp.model_validate(op)        # raises on a malformed op
+            return {"ops_applied": len(args.get("ops", []))}
+        return {"ok": True}
+
+    return _call
+
+
 def test_loop_court_gated_green_and_learns(_isolated_marker):
     marker = _isolated_marker
     if marker.exists():
@@ -328,7 +348,7 @@ def test_loop_court_gated_green_and_learns(_isolated_marker):
         "add a hello marker file proving self-extend works",
         graph={"nodes": [], "wires": []},
         router=None,                       # deterministic marker executor builds it
-        brain_call=lambda t, a: (captured.append((t, a)) or {"ok": True}),
+        brain_call=_validating_brain_call(captured),
         store=_store(),
     )
     # The court flipped a FULL green sweep on the REAL artifact.

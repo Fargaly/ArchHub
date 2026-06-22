@@ -237,6 +237,45 @@ def _is_loopback_redirect(redirect: str) -> bool:
     return host in _LOOPBACK_HOSTS
 
 
+def _website_return_origin(redirect: str) -> str:
+    """If `redirect` is a URL whose ORIGIN is one of the FIXED, allowlisted
+    website origins (config.WEBSITE_RETURN_ORIGINS), return that canonical
+    origin (scheme://host[:port]); otherwise return "".
+
+    This is the cross-domain counterpart of `_is_loopback_redirect`: it lets
+    /auth/return bounce the one-time code back to the marketing site
+    (archhub.io) so a magic-link click / Google sign-in finishes signed-in
+    ON the website. It is NOT an open redirect — the origin must EXACTLY
+    match an entry in the fixed allowlist (scheme + host + optional port),
+    so an attacker host, a protocol-relative "//evil.com", a non-https
+    scheme, or "https://archhub.io.evil.com" all return "" (rejected).
+
+    Note we compare on the ORIGIN only (scheme/host/port), never the path —
+    the redirect we ultimately emit uses our OWN fixed path
+    ("{origin}/signin"), so a smuggled path in the supplied redirect can
+    never steer where the code lands.
+    """
+    if not redirect:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(redirect)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = (parsed.hostname or "").lower()
+    if not host:
+        # Scheme-relative ("//evil.com") or path-only values have no host —
+        # reject so they can't be reinterpreted by the browser.
+        return ""
+    # Rebuild a canonical origin from the PARSED parts (never the raw string)
+    # so userinfo / fragments / a smuggled path cannot ride along.
+    origin = f"{parsed.scheme.lower()}://{host}"
+    if parsed.port:
+        origin = f"{origin}:{parsed.port}"
+    return origin if config.is_allowed_website_return_origin(origin) else ""
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -332,16 +371,22 @@ def google_start(code_challenge: str = "", redirect: str = "",
     the loopback on the final redirect. Optional -- the browser/magic-link
     path sends none and is unaffected.
 
-    Open-redirect guard: a SUPPLIED redirect must be a loopback
-    (127.0.0.1 / localhost / ::1) http(s) URL. Because the callback ends
-    up forwarding a freshly-minted auth code to this target, any other
-    host is rejected (400 google_redirect_not_loopback) so a code can
-    never be bounced to an attacker-controlled URL.
+    Open-redirect guard: a SUPPLIED redirect must be EITHER a loopback
+    (127.0.0.1 / localhost / ::1) http(s) URL — the desktop client's own
+    return server — OR one of the FIXED allowlisted website origins
+    (archhub.io / archhub-web.fly.dev) so the marketing site's Google
+    sign-in lands back ON the website. Because the callback ends up
+    forwarding a freshly-minted auth code to this target via /auth/return,
+    any OTHER host is rejected (400 google_redirect_not_allowed) so a code
+    can never be bounced to an attacker-controlled URL. The website case
+    carries the bare ORIGIN; /auth/return appends our own fixed "/signin".
     """
-    if redirect and not _is_loopback_redirect(redirect):
+    if redirect and not (
+            _is_loopback_redirect(redirect)
+            or _website_return_origin(redirect)):
         raise HTTPException(
             status_code=400,
-            detail={"error": "google_redirect_not_loopback"})
+            detail={"error": "google_redirect_not_allowed"})
     try:
         url = google_auth.build_authorization_url(
             code_challenge=code_challenge, redirect=redirect,
@@ -1295,26 +1340,46 @@ async function submitEmail(ev) {{
     return HTMLResponse(content=html)
 
 
-@app.get("/auth/return")
+@app.get("/auth/return", response_model=None)
 def auth_return(code: str = "", redirect: str = "",
-                state: str = "") -> HTMLResponse:
-    """Lands here from the magic-link email. If a `redirect` was
-    provided by the desktop client, forward to it with ?code=...
-    so the desktop's loopback server catches it.
+                state: str = "") -> HTMLResponse | RedirectResponse:
+    """Lands here from the magic-link email (and from the Google
+    callback). The one-time `code` is forwarded to wherever sign-in
+    began:
 
-    For direct-browser flows (no redirect), the /signin page stashed
-    a PKCE verifier in sessionStorage — finish the exchange here +
-    drop a session token in localStorage so /dashboard, /upgrade,
-    etc. can call authenticated endpoints."""
+      * A WEBSITE origin (archhub.io / archhub-web.fly.dev) — 302 to
+        {origin}/signin?code=... so auth.js on the website finishes the
+        exchange and the user lands signed-in ON the website. This is
+        the cross-domain fix (founder 2026-06-22): magic-link click OR
+        Google consent both converge here and bounce home.
+      * A desktop LOOPBACK URL (http://127.0.0.1:<port>/cb) — 302 with
+        ?code=... so the desktop's loopback server catches it.
+      * No redirect — the plain browser finisher below exchanges the
+        code here + drops a session token in localStorage.
+
+    SECURITY (open-redirect / CodeQL "URL redirection from remote
+    source"): the only non-empty redirects ever honoured are (a) an
+    EXACT-match entry in the FIXED website-origin allowlist, or (b) a
+    loopback host. Anything else — an arbitrary host, a protocol-relative
+    "//evil", a non-http(s) scheme — is rejected (400). The website case
+    uses our OWN fixed "/signin" path, so a smuggled path can't steer the
+    code; the loopback case reuses the unchanged _is_loopback_redirect
+    guard."""
     if redirect:
-        # SECURITY (open-redirect / CodeQL "URL redirection from remote source"):
-        # only ever 302 to the desktop's OWN loopback URL — never an attacker-
-        # supplied external host. Reuses the SAME _is_loopback_redirect guard
-        # that /v1/auth/google/start already applies, so /auth/return cannot be
-        # turned into an open redirect that leaks the one-time code off-box.
+        # 1) Cross-domain WEBSITE return — bounce the code to the marketing
+        #    site's /signin so auth.js (inlineCode path) exchanges it there.
+        website_origin = _website_return_origin(redirect)
+        if website_origin:
+            url = (website_origin + "/signin?code="
+                   + urllib.parse.quote(code, safe=""))
+            if state:
+                url += "&state=" + urllib.parse.quote(state, safe="")
+            return RedirectResponse(url=url, status_code=302)
+        # 2) Desktop LOOPBACK return — only ever 302 to the desktop's OWN
+        #    loopback URL, never an attacker-supplied external host.
         if not _is_loopback_redirect(redirect):
             raise HTTPException(status_code=400,
-                                detail={"error": "redirect_not_loopback"})
+                                detail={"error": "redirect_not_allowed"})
         sep = "&" if "?" in redirect else "?"
         # Forward the desktop loopback's expected CSRF token. The Google
         # flow passes the client's own `state` (recovered from the signed

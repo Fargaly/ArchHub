@@ -154,6 +154,53 @@ def google_login_enabled() -> bool:
     return bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
 
 
+# ── Cross-domain website sign-in return (founder, 2026-06-22) ─────────
+# The marketing site (archhub.io) signs users in by bouncing auth through
+# THIS cloud backend (magic-link + Google both finish on a cloud route).
+# To land the user back ON archhub.io signed-in, /auth/return must be
+# allowed to 302 the one-time code to the WEBSITE origin — not only to the
+# desktop's loopback. This is the FIXED allowlist of website origins it may
+# return to. It is NOT an open redirect: only these exact, scheme+host
+# matched origins are accepted; an arbitrary/attacker host, a path, a
+# protocol-relative "//evil", or any non-https origin is rejected.
+#
+# Override per-deploy with WEBSITE_RETURN_ORIGINS (comma-separated full
+# origins, e.g. "https://archhub.io,https://archhub-web.fly.dev"). The
+# default carries the two known production website origins so cross-domain
+# sign-in works out of the box.
+def _origin_set(env_name: str, default: tuple[str, ...]) -> frozenset[str]:
+    raw = _req(env_name, "").strip()
+    if not raw:
+        items = default
+    else:
+        items = tuple(p.strip() for p in raw.split(",") if p.strip())
+    # Normalise: lower-case scheme+host, drop a trailing slash. We store the
+    # canonical ORIGIN (scheme://host[:port]) so comparison is exact.
+    out: set[str] = set()
+    for it in items:
+        out.add(it.rstrip("/").lower())
+    return frozenset(out)
+
+
+WEBSITE_RETURN_ORIGINS: frozenset[str] = _origin_set(
+    "WEBSITE_RETURN_ORIGINS",
+    ("https://archhub.io", "https://archhub-web.fly.dev"),
+)
+
+
+def is_allowed_website_return_origin(origin: str) -> bool:
+    """True iff `origin` exactly matches one of the FIXED website origins
+    allowed as a cross-domain sign-in return target.
+
+    `origin` is the scheme://host[:port] form (no path). Comparison is
+    case-insensitive on scheme+host and ignores a trailing slash, but is
+    otherwise EXACT — there is no suffix/substring match, so
+    "https://archhub.io.evil.com" or "https://evil.com" never passes."""
+    if not origin:
+        return False
+    return origin.rstrip("/").lower() in WEBSITE_RETURN_ORIGINS
+
+
 # Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
 # they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).
 # Polar signup is ~10 min vs Stripe's 30-120 min KYC verification.

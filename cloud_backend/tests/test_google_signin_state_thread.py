@@ -282,7 +282,12 @@ class TestAuthReturnLoopbackOnly:
             "state": "abc",
         })
         assert r.status_code == 400, r.text
-        assert "loopback" in (r.text or "").lower()
+        # The guard now spans loopback OR the fixed website-origin allowlist,
+        # so the rejection code is the broader "redirect_not_allowed"; the
+        # security invariant (an off-allowlist external host is refused, the
+        # one-time code never bounced) is unchanged.
+        assert "redirect_not_allowed" in (r.text or "").lower()
+        assert "evil.example.com" not in (r.headers.get("location") or "")
 
     def test_external_redirect_no_location_leak(self, client):
         r = client.get("/auth/return", params={

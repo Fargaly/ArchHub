@@ -663,15 +663,56 @@ def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
 @router.post("/api/command")
 def api_command(payload: dict = Body(default={}),
                 _founder: dict = Depends(require_founder)) -> JSONResponse:
-    """Execute a typed founder instruction. Behind require_founder; destructive
-    actions require {"confirm": true}. Returns the REAL effect, audited."""
+    """Execute a founder instruction through the AGENT LOOP (reason -> tool ->
+    observe), behind the unchanged require_founder gate.
+
+    Flow:
+      * A `pending` write the founder has confirmed ({confirm:true, pending:
+        {tool,args}}) is executed directly via cockpit_agent.confirm_pending
+        (the second half of the preview->confirm protocol) + audited.
+      * Otherwise the natural-language command runs the agent loop: READ tools
+        execute immediately, a gated WRITE returns a preview card
+        (needs_confirm) the UI confirms.
+      * If NO model key is reachable OR the model errors, we FALL BACK to the
+        deterministic keyword router route_command (the offline fallback) —
+        the cockpit always works, model or not.
+    """
     actor = (_founder.get("email") or "").strip().lower()
     text = str(payload.get("command") or payload.get("text") or "")
     confirm = bool(payload.get("confirm"))
     args = payload.get("args") if isinstance(payload.get("args"), dict) else None
-    result = route_command(text, actor=actor, confirm=confirm, args=args)
-    # 200 for executed/handled; the body carries ok + needs_confirm flags.
-    return JSONResponse(result)
+    history = payload.get("history") if isinstance(payload.get("history"),
+                                                   list) else None
+    pending = payload.get("pending") if isinstance(payload.get("pending"),
+                                                   dict) else None
+
+    import cockpit_agent
+
+    # (1) Confirmed gated write from the agent path: execute + audit directly.
+    if confirm and pending and pending.get("tool") in cockpit_agent.TOOLS:
+        result = cockpit_agent.confirm_pending(
+            actor=actor, tool=pending["tool"],
+            args=pending.get("args") or {}, command=text)
+        result.setdefault("mode", "agent")
+        return JSONResponse(result)
+
+    # (2) Explicit structured args OR a confirmed keyword action (e.g. the
+    #     legacy 'purge test users' confirm) → keep the deterministic router.
+    if args is not None or (confirm and not pending):
+        result = route_command(text, actor=actor, confirm=confirm, args=args)
+        result.setdefault("mode", "keyword")
+        return JSONResponse(result)
+
+    # (3) Natural-language → AGENT LOOP, with keyword router as offline fallback.
+    try:
+        result = cockpit_agent.agent_command(text, actor=actor,
+                                             history=history)
+        result.setdefault("mode", "agent")
+        return JSONResponse(result)
+    except cockpit_agent.ModelError:
+        result = route_command(text, actor=actor, confirm=confirm, args=args)
+        result.setdefault("mode", "keyword_fallback")
+        return JSONResponse(result)
 
 
 @router.get("/api/actions")
@@ -912,15 +953,43 @@ _PAGE_HTML = """<!doctype html>
     border-radius:11px;font-family:'Inter',sans-serif;font-weight:600;
     font-size:14px;padding:13px 26px;cursor:pointer}
   .cmd-btn:disabled{opacity:.5;cursor:default}
-  .cmd-out{margin-top:12px;font-size:13px;min-height:0}
-  .cmd-out .ok{border:1px solid rgba(95,167,119,.4);background:rgba(95,167,119,.08);
-    border-radius:11px;padding:12px 15px;color:var(--ink)}
-  .cmd-out .bad{border:1px solid rgba(217,103,87,.45);background:rgba(217,103,87,.08);
-    border-radius:11px;padding:12px 15px;color:var(--ink)}
-  .cmd-out .confirm{border:1px solid rgba(217,166,87,.5);background:rgba(217,166,87,.1);
-    border-radius:11px;padding:12px 15px;color:var(--ink)}
-  .cmd-out pre{margin:8px 0 0;white-space:pre-wrap;color:var(--ink-dim);
+  /* Chat transcript (scrolling) */
+  .chat{margin-top:14px;border:1px solid var(--line);border-radius:14px;
+    background:var(--panel);max-height:430px;overflow-y:auto;padding:14px 16px;
+    display:flex;flex-direction:column;gap:12px}
+  .chat:empty{display:none}
+  .turn{display:flex;flex-direction:column;gap:4px;max-width:88%}
+  .turn.me{align-self:flex-end;align-items:flex-end}
+  .turn.agent{align-self:flex-start;align-items:flex-start}
+  .turn .who{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;
+    color:var(--ink-faint)}
+  .bubble{border-radius:12px;padding:10px 14px;font-size:13.5px;line-height:1.5;
+    white-space:pre-wrap;word-break:break-word}
+  .turn.me .bubble{background:var(--terracotta-soft);color:var(--ink);
+    border:1px solid rgba(217,119,87,.3)}
+  .turn.agent .bubble{background:var(--panel-2);color:var(--ink);
+    border:1px solid var(--line)}
+  .turn.agent .bubble.bad{border-color:rgba(217,103,87,.45);
+    background:rgba(217,103,87,.08)}
+  .turn .model{font-size:10.5px;color:var(--ink-faint);margin-top:2px}
+  /* Inline confirm card */
+  .confirm-card{border:1px solid rgba(217,166,87,.5);background:rgba(217,166,87,.1);
+    border-radius:12px;padding:13px 15px;font-size:13px;color:var(--ink);
+    align-self:flex-start;max-width:88%}
+  .confirm-card h3{margin:0 0 8px;font-family:'Instrument Serif',Georgia,serif;
+    font-weight:400;font-size:18px;color:var(--warn)}
+  .confirm-card .target{color:var(--ink);font-size:13px;margin:2px 0}
+  .confirm-card .target b{color:var(--terracotta)}
+  .confirm-card pre{margin:8px 0;white-space:pre-wrap;color:var(--ink-dim);
     font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .confirm-card .acts{display:flex;gap:8px;margin-top:10px}
+  .confirm-card .acts button{font-family:inherit;font-size:12.5px;font-weight:600;
+    border-radius:8px;padding:7px 16px;cursor:pointer;border:none}
+  .confirm-card .yes{background:var(--terracotta);color:#fff}
+  .confirm-card .no{background:transparent;color:var(--ink-dim);
+    border:1px solid var(--line)}
+  .typing{color:var(--ink-faint);font-style:italic;font-size:12.5px;
+    align-self:flex-start}
   @media(max-width:740px){.span2{grid-column:auto}h1{font-size:34px}}
 </style>
 </head>
@@ -941,13 +1010,13 @@ _PAGE_HTML = """<!doctype html>
     below to ACT — purge test users, set a plan, toggle the free tier, or direct
     an agent.</p>
 
+  <div id="chat" class="chat"></div>
   <div class="cmdbar">
     <input id="cmd" class="cmd-input" type="text" autocomplete="off"
-      placeholder="e.g.  set someone@studio.com to studio   ·   purge test users   ·   build a Notion connector   ·   free default off" />
+      placeholder="Ask or instruct…  e.g.  how many users on studio?   ·   set someone@studio.com to studio   ·   grant 500 credits to x@y.com   ·   free default off" />
     <label class="cmd-confirm"><input type="checkbox" id="cmdConfirm" /> Confirm (destructive)</label>
-    <button id="cmdRun" class="cmd-btn">Run</button>
+    <button id="cmdRun" class="cmd-btn">Send</button>
   </div>
-  <div id="cmdOut" class="cmd-out"></div>
 
   <div class="grid kpis" id="kpis"></div>
 
@@ -1135,26 +1204,84 @@ async function loadActions(){
   }catch(e){}
 }
 
+// --- Chat transcript (founder turn + agent answer + inline confirm cards) --
+const CHAT_HISTORY=[];   // {role, content} pairs sent back for context
+function chatScroll(){ const c=$('chat'); c.scrollTop=c.scrollHeight; }
+function addTurn(role, text, model){
+  const c=$('chat');
+  const div=document.createElement('div');
+  div.className='turn '+(role==='me'?'me':'agent');
+  const bad=(role==='agent' && model==='__bad__');
+  div.innerHTML=`<div class="who">${role==='me'?'You':'Agent'}</div>`+
+    `<div class="bubble${bad?' bad':''}">${esc(text)}</div>`+
+    (model && model!=='__bad__'?`<div class="model">${esc(model)}</div>`:'');
+  c.appendChild(div); chatScroll();
+  return div;
+}
+function addTyping(){
+  const c=$('chat');
+  const d=document.createElement('div');
+  d.className='typing'; d.id='typing'; d.textContent='Agent is thinking…';
+  c.appendChild(d); chatScroll();
+}
+function clearTyping(){ const t=$('typing'); if(t) t.remove(); }
+
+function addConfirmCard(d){
+  const c=$('chat');
+  const pv=d.preview||{}; const tgt=pv.target||{}; const chg=pv.change||{};
+  const card=document.createElement('div');
+  card.className='confirm-card';
+  let tgtStr=Object.keys(tgt).map(k=>`${esc(k)}: <b>${esc(tgt[k])}</b>`).join(' · ');
+  card.innerHTML=`<h3>Confirm: ${esc(d.action)}</h3>`+
+    `<div class="target">${tgtStr||'—'}</div>`+
+    `<pre>${esc(JSON.stringify(chg,null,2))}</pre>`+
+    `<div class="acts"><button class="yes">Confirm &amp; apply</button>`+
+    `<button class="no">Cancel</button></div>`;
+  c.appendChild(card); chatScroll();
+  card.querySelector('.yes').onclick=async()=>{
+    card.querySelector('.acts').innerHTML='<span class="model">applying…</span>';
+    try{
+      const r=await fetch('/founder/api/command',{method:'POST',
+        headers:{'Content-Type':'application/json','Accept':'application/json'},
+        body:JSON.stringify({command:d.message||'', confirm:true,
+                             pending:d.pending})});
+      const res=await r.json();
+      card.remove();
+      addTurn('agent', res.message||(res.ok?'Done.':'Failed.'),
+              res.ok?null:'__bad__');
+      load(); loadActions();
+    }catch(e){ addTurn('agent','Apply failed: '+e,'__bad__'); }
+  };
+  card.querySelector('.no').onclick=()=>{ card.remove();
+    addTurn('agent','Cancelled — nothing was changed.'); };
+}
+
 async function runCommand(){
-  const inp=$('cmd'), btn=$('cmdRun'), out=$('cmdOut');
+  const inp=$('cmd'), btn=$('cmdRun');
   const command=inp.value.trim();
   if(!command){ return; }
   const confirm=$('cmdConfirm').checked;
-  btn.disabled=true;
-  out.innerHTML='<div class="ok">Running…</div>';
+  addTurn('me', command);
+  CHAT_HISTORY.push({role:'user', content:command});
+  inp.value=''; btn.disabled=true; addTyping();
   try{
     const r=await fetch('/founder/api/command',{method:'POST',
       headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify({command, confirm})});
+      body:JSON.stringify({command, confirm, history:CHAT_HISTORY.slice(-8)})});
     const d=await r.json();
-    let cls = d.needs_confirm ? 'confirm' : (d.ok ? 'ok' : 'bad');
-    let body=`<div class="${cls}"><b>${esc(d.message||(d.ok?'Done.':'Failed.'))}</b>`+
-      `<pre>${esc(JSON.stringify(d,null,2))}</pre></div>`;
-    out.innerHTML=body;
-    if(d.needs_confirm){ $('cmdConfirm').checked=true; }
-    else if(d.ok){ inp.value=''; $('cmdConfirm').checked=false; }
+    clearTyping();
+    if(d.needs_confirm){
+      addTurn('agent', d.message||'Please confirm this change.',
+              d.model||null);
+      addConfirmCard(d);
+    } else {
+      addTurn('agent', d.message||(d.ok?'Done.':'Failed.'),
+              d.ok?(d.model||null):'__bad__');
+      CHAT_HISTORY.push({role:'assistant', content:d.message||''});
+    }
+    $('cmdConfirm').checked=false;
     load(); loadActions();
-  }catch(e){ out.innerHTML='<div class="bad">Command failed: '+esc(e)+'</div>'; }
+  }catch(e){ clearTyping(); addTurn('agent','Command failed: '+e,'__bad__'); }
   finally{ btn.disabled=false; }
 }
 $('cmdRun').addEventListener('click', runCommand);

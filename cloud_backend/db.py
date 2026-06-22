@@ -2743,6 +2743,35 @@ def count_agent_tasks(status: Optional[str] = None) -> int:
     return int(r["n"]) if r else 0
 
 
+def find_users(query: str, *, limit: int = 20,
+               exclude_test: bool = False) -> list[dict]:
+    """Read-only user search by email substring OR exact id, newest first.
+
+    Powers the founder cockpit `users.find` agent tool. Pure SELECT — never
+    writes, never returns secrets (tokens / codes live in other tables and
+    are not selected here). An empty/blank query returns the most-recent
+    users (a useful default the agent can page through)."""
+    q = (query or "").strip().lower()
+    clauses: list[str] = []
+    params: list = []
+    if q:
+        clauses.append("(LOWER(email) LIKE ? OR id = ?)")
+        params.extend([f"%{q}%", query.strip()])
+    if exclude_test:
+        frag, p = _test_account_sql()
+        clauses.append(f"NOT {frag}")
+        params.extend(p)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, email, plan, created_at, msg_used, msg_limit, "
+            "current_company_id FROM users"
+            f"{where} ORDER BY created_at DESC LIMIT ?",
+            [*params, int(max(1, min(limit, 200)))],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def claim_agent_task(task_id: str, claimed_by: str):
     """Atomically move a queued task to 'claimed'. Returns the row, or None if
     it was not queued (already taken). This is the agent side of the contract --

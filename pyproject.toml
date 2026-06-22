@@ -48,6 +48,15 @@ addopts = [
     "--ignore=tests/test_ui_smoke.py",
 ]
 
+# markers — custom marks the suites use (required because --strict-markers
+# makes any UNregistered mark a collection ERROR). `live` tags a test that
+# drives a REAL external model / network (the self-extend free-text-live
+# witness); it self-skips when no provider key is reachable, so it stays green
+# in CI-without-secrets while running for real in the keyed env.
+markers = [
+    "live: drives a real external model/network; self-skips without a key",
+]
+
 # NOTE — no pytest-asyncio option (e.g. asyncio_mode) here ON PURPOSE.
 # This root config is loaded by EVERY repo-root `pytest` invocation,
 # including jobs that install bare pytest WITHOUT pytest-asyncio (the

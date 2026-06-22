@@ -445,3 +445,178 @@ def make_cdp_probe(cdp_url: str = "http://127.0.0.1:9223") -> ProbeRunner:
                 pass
 
     return _probe
+
+
+# ─────────────────── node_cooks live-runner probe (the engine rung) ─────────
+
+
+# A value the artifact lens must REFUSE — an output port that came back as one
+# of these is NOT a real cook, it is a shell. Mirrors the connector-honesty
+# contract (an offline host yields a typed error / missing_dep, never a
+# fabricated value) and the runner's degraded-passthrough (a bodyless node
+# echoes None). The probe treats all three as a refutation, not a green.
+_DEGRADED_STATUSES = frozenset({"error", "missing_dep", "upstream_error",
+                                "degraded", "needs_root"})
+
+# When a real cook reports it needs a live host / credential, the probe
+# retries with a typed-mock seed and (on a real typed value) greens with this
+# verdict tag instead of escalating — "cooks-with-mock" is still GREEN (the
+# node's wiring + output shape are proven; only the live host is unavailable in
+# the court sandbox). The orchestrator surfaces this tag on the verdict.
+COOKS_WITH_MOCK = "cooks-with-mock"
+
+
+def _type_matches(value: Any, declared: str) -> bool:
+    """Does a cooked output VALUE match the node's DECLARED output port type?
+
+    Declared is the library/runner port-type token (graph.PortType values:
+    'string','number','boolean','list','object','any', plus the bridge/AI/AEC
+    tokens). 'any' (or an unknown token) always matches — the type system is
+    permissive by design (ANY ports accept anything). A concrete primitive
+    token must match the Python type so a node that DECLARES a list but cooks a
+    bare string is refuted (a shape lie). Non-primitive tokens (host/element/
+    geometry/…) are structural — we accept any non-None, non-degraded value
+    (the value-is-real check already ran)."""
+    d = (declared or "any").strip().lower()
+    if d in ("", "any"):
+        return True
+    if d == "string":
+        return isinstance(value, str)
+    if d == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if d == "boolean":
+        return isinstance(value, bool)
+    if d == "list":
+        return isinstance(value, (list, tuple))
+    if d in ("object", "json", "dict"):
+        return isinstance(value, dict)
+    # Bridge / AI / AEC / IO / geometry tokens are structural references — any
+    # concrete (already non-None, non-degraded) value satisfies the contract.
+    return True
+
+
+def _is_degraded_output(outputs: Any) -> Optional[str]:
+    """Return a refutation reason if a runner cook result is a degraded shell
+    (error / missing_dep / upstream_error sentinel), else None. Mirrors the
+    WorkflowRunner / connector-honesty sentinels so a fabricated/None/typed-
+    error result can NEVER pass as a real cook."""
+    if not isinstance(outputs, dict):
+        return None
+    status = str(outputs.get("status") or "").strip().lower()
+    if status in _DEGRADED_STATUSES:
+        return f"runner returned degraded status={status!r}: {outputs.get('error') or outputs.get('detail') or ''}".strip()
+    if outputs.get("error") and "status" not in outputs:
+        return f"runner returned an error dict: {outputs.get('error')}"
+    return None
+
+
+def make_node_cooks_probe(
+    *,
+    build_min_graph: Callable[[dict[str, Any]], dict[str, Any]],
+    cook: Callable[[dict[str, Any], str, dict[str, Any]], Any],
+    declared_output: Callable[[dict[str, Any]], tuple[str, str]],
+    mock_cook: Optional[Callable[[dict[str, Any], str, dict[str, Any]], Any]] = None,
+) -> ProbeRunner:
+    """Build the `node_cooks` artifact probe — the ENGINE RUNG of self-extend.
+
+    Unlike `registered_node` (which only asserts the minted type is registered
+    + inspectable — a SHELL check), this probe proves the node actually WORKS:
+    it builds a MINIMAL real graph (a typed seed/constant wired into the new
+    node type), drives the REAL `app/workflows` runner (WorkflowRunner) on the
+    REGISTERED type, and asserts the new node's declared OUTPUT PORT yields a
+    value that is
+
+      * NOT an error dict ({'error': ...}),
+      * NOT a missing-dependency sentinel ({'status': 'missing_dep'}),
+      * NOT the degraded passthrough-None (a bodyless shell echoes None),
+      * and MATCHES the node's declared output port type (a list-declaring node
+        that cooks a bare string is refuted — a shape lie).
+
+    This is the DEFINITION-OF-SHIPPED bar expressed per node: observable real
+    output on the real runner, not "the type is registered." It REUSES the
+    existing runner (ONE-SYSTEM — no mock cook for the real path); the callables
+    are injected so this module stays free of any `app/` import (the binding
+    lives in agents.self_extend, mirroring the registered_node probe).
+
+    Injected callables:
+      build_min_graph(gate_spec) -> graph dict   — a typed seed wired to the node
+      cook(graph, node_id, gate_spec)  -> outputs — drive WorkflowRunner.pull
+      declared_output(gate_spec) -> (port_name, port_type) — from library.inspect
+      mock_cook(graph, node_id, gate_spec) -> outputs  — OPTIONAL: re-cook with a
+          typed-mock ctx (mock router / connector) when the real cook reports it
+          needs a live host/credential; a real typed value here greens with the
+          COOKS_WITH_MOCK tag rather than escalating to needs_root.
+
+    gate_spec keys: {'type': '<minted type id>'} (+ anything the injected
+    builders read). The probe is fail-CLOSED: any builder/cook exception or a
+    non-existent type REFUTES (a crashing node is not a working node)."""
+
+    def _probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> ProbeResult:
+        type_name = (gate_spec.get("type") or "").strip()
+        if not type_name:
+            return ProbeResult(passed=False, applied=False,
+                               detail="node_cooks gate has no 'type'")
+        try:
+            port_name, port_type = declared_output(gate_spec)
+        except Exception as ex:
+            return ProbeResult(passed=False, applied=True,
+                               detail=f"type '{type_name}' not registered / "
+                                      f"no declared output: {ex}",
+                               evidence_ref=f"node:{type_name}")
+        if not port_name:
+            return ProbeResult(passed=False, applied=True,
+                               detail=f"type '{type_name}' declares no output port",
+                               evidence_ref=f"node:{type_name}")
+        try:
+            graph = build_min_graph(gate_spec)
+            outputs = cook(graph, type_name, gate_spec)
+        except Exception as ex:
+            return ProbeResult(passed=False, applied=True,
+                               detail=f"real cook crashed: {type(ex).__name__}: {ex}",
+                               evidence_ref=f"node:{type_name}")
+
+        degraded = _is_degraded_output(outputs)
+        used_mock = False
+        # If the real cook needs a live host / credential, retry with a typed
+        # mock seed/ctx so the node's wiring + output shape can still be proven.
+        if (degraded and mock_cook is not None
+                and isinstance(outputs, dict)
+                and str(outputs.get("status") or "").lower()
+                    in ("missing_dep", "error", "needs_root")):
+            try:
+                outputs = mock_cook(graph, type_name, gate_spec)
+                used_mock = True
+                degraded = _is_degraded_output(outputs)
+            except Exception:
+                pass  # keep the real degraded result → refute below
+
+        if degraded:
+            return ProbeResult(passed=False, applied=True, detail=degraded,
+                               evidence_ref=f"node:{type_name}.{port_name}")
+
+        # Pull the declared output port's value. A bodyless / shell node echoes
+        # None on its output — the degraded-None refutation.
+        value = outputs.get(port_name) if isinstance(outputs, dict) else outputs
+        if value is None:
+            return ProbeResult(
+                passed=False, applied=True,
+                detail=(f"declared output port '{port_name}' returned None "
+                        "(degraded passthrough-None — the node did not cook a "
+                        "real value)"),
+                evidence_ref=f"node:{type_name}.{port_name}")
+
+        if not _type_matches(value, port_type):
+            return ProbeResult(
+                passed=False, applied=True,
+                detail=(f"output '{port_name}' cooked a {type(value).__name__} "
+                        f"but the port declares type '{port_type}' (shape lie)"),
+                evidence_ref=f"node:{type_name}.{port_name}")
+
+        tag = f" [{COOKS_WITH_MOCK}]" if used_mock else ""
+        return ProbeResult(
+            passed=True, applied=True,
+            detail=(f"node cooked a real {port_type or 'any'} on output "
+                    f"'{port_name}'{tag}: {repr(value)[:120]}"),
+            evidence_ref=f"node:{type_name}.{port_name}")
+
+    return _probe

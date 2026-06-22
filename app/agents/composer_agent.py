@@ -386,6 +386,7 @@ def run_agent_step(
     router: Any = None,
     max_iters: int = 4,
     mode: str = _DEFAULT_MODE,
+    model: str = "auto",
 ) -> dict:
     """One step of the composer agent. Returns a list of actions for
     the JSX side to execute, plus the final assistant text.
@@ -512,7 +513,7 @@ def run_agent_step(
         # alias.)
         response = router.complete(
             history=history,
-            model="auto",
+            model=model or "auto",
             on_chunk=_on_chunk,
             on_tool_invocation=_on_inv,
             extra_tools=TOOL_SCHEMA,
@@ -531,7 +532,7 @@ def run_agent_step(
         try:
             response = router.complete(
                 history=history,
-                model="auto",
+                model=model or "auto",
                 on_chunk=_on_chunk,
                 on_tool_invocation=_on_inv,
             )

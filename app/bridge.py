@@ -6635,6 +6635,24 @@ class ArchHubBridge(QObject):
     # In Plan (default)/Auto every proposed WRITE is gated → GHOST proposals
     # the user accepts/dismisses (never auto-applied); YOLO applies them
     # (reversible). Off-thread + proposal-cap = safe, no runaway loop.
+    @pyqtSlot(result=bool)
+    @pyqtSlot(str, result=bool)
+    def ambient_default_on(self, user_pref: str = "") -> bool:
+        """Whether ambient self-extend runs by default (founder steer: ON).
+
+        USER-AGENCY: an explicit persisted user toggle wins; only when the user
+        has expressed no preference does the AMBIENT_DEFAULT_ON default (True)
+        apply. The JSX reads this on boot to decide whether to arm the ambient
+        triggers — so default-ON is the out-of-box behaviour while a user OFF is
+        honoured. Reversible + court-gated + visible per the ambient_grow
+        contract (an ambient build only applies on a GREEN court verdict and is
+        undoable)."""
+        try:
+            from agents.ambient_grow import ambient_default_on as _add
+            return bool(_add(user_pref if user_pref != "" else None))
+        except Exception:
+            return True   # fail to the founder-chosen default (ambient ON)
+
     @pyqtSlot(str, str, result=str)
     @pyqtSlot(str, str, str, result=str)
     @pyqtSlot(str, str, str, str, result=str)

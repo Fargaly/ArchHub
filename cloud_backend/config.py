@@ -201,6 +201,28 @@ def is_allowed_website_return_origin(origin: str) -> bool:
     return origin.rstrip("/").lower() in WEBSITE_RETURN_ORIGINS
 
 
+def canonical_website_return_origin(origin: str) -> str:
+    """If `origin` matches an allowlisted website origin, return the FIXED
+    canonical value FROM THE ALLOWLIST CONSTANT (WEBSITE_RETURN_ORIGINS) —
+    never the caller's string. Otherwise return "".
+
+    This is the open-redirect-safe resolver: the returned value's data flow
+    originates in the fixed config set, not in the (user-supplied) `origin`
+    argument, so a redirect built from it carries no tainted data into the
+    Location header. `origin` is used only as a lookup key for an exact match.
+    """
+    if not origin:
+        return ""
+    key = origin.rstrip("/").lower()
+    # Return the actual stored allowlist member (a constant), selected by exact
+    # match — not the argument. WEBSITE_RETURN_ORIGINS is already normalised to
+    # canonical lower-cased origins, so the stored member IS the value to emit.
+    for allowed in WEBSITE_RETURN_ORIGINS:
+        if allowed == key:
+            return allowed
+    return ""
+
+
 # Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
 # they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).
 # Polar signup is ~10 min vs Stripe's 30-120 min KYC verification.

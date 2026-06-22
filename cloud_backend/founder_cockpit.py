@@ -375,6 +375,25 @@ _INTENTS = [
 
 _PLANS = ("trial", "solo", "studio", "firm")
 
+# Fixed, server-controlled vocabulary of set_plan failure codes. db.set_user_plan
+# raises ValueError("<code>:<detail>") with one of these codes; we classify the
+# exception to one of THESE LITERALS and put only the literal in the HTTP
+# response — the raw exception text (which CodeQL treats as stack-trace
+# information) is logged server-side, never echoed to the client.
+_SET_PLAN_ERROR_CODES = ("no_such_user", "unknown_plan", "missing_user")
+
+
+def _classify_set_plan_error(exc: Exception) -> str:
+    """Map a set_plan ValueError to one of the FIXED _SET_PLAN_ERROR_CODES
+    literals (or 'invalid' as the safe catch-all). The returned value is a
+    constant from our own code, NOT a substring of str(exc), so no
+    exception-derived text reaches the response body."""
+    head = str(exc).split(":", 1)[0].strip()
+    for code in _SET_PLAN_ERROR_CODES:
+        if head == code:
+            return code
+    return "invalid"
+
 
 def _detect_action(text: str) -> str:
     t = (text or "").strip().lower()
@@ -387,8 +406,24 @@ def _detect_action(text: str) -> str:
     return "unknown"
 
 
+# Linear-time e-mail matcher. The previous pattern
+# (r"[\w.+\-]+@[\w\-]+\.[\w.\-]+") had overlapping quantifiers around the dot
+# (the trailing "\.[\w.\-]+" lets a '.' be claimed by either the literal or the
+# class), which CodeQL flagged as polynomial ReDoS on uncontrolled command text.
+# This rewrite removes the ambiguity: the domain is one-or-more dot-separated
+# labels, each label a single bounded run of [A-Za-z0-9-] with NO dot inside it,
+# so the engine never has two ways to partition a run of dots. Every quantifier
+# is bounded; there is no nested/overlapping repetition → strictly linear.
+_EMAIL_RE = re.compile(
+    r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){1,8}"
+)
+# Hard cap on how much text we ever scan, so even a degenerate input can't make
+# the matcher (or anything downstream) chew through an unbounded string.
+_EMAIL_SCAN_CAP = 2048
+
+
 def _extract_email(text: str) -> Optional[str]:
-    m = re.search(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", text or "")
+    m = _EMAIL_RE.search((text or "")[:_EMAIL_SCAN_CAP])
     return m.group(0) if m else None
 
 
@@ -440,7 +475,12 @@ def _try_brain_self_extend(directive: str) -> Optional[dict]:
         with urllib.request.urlopen(req, timeout=2.5) as resp:
             return {"brain": "triggered", "status": resp.status}
     except Exception as e:
-        return {"brain": "unreachable", "error": str(e)[:120]}
+        # Log the real reason server-side; return only a fixed status string to
+        # the caller (which surfaces it in the HTTP response) so no
+        # exception-derived text is exposed (CodeQL py/stack-trace-exposure).
+        record_error(where="founder._try_brain_self_extend",
+                     kind=type(e).__name__, message=str(e))
+        return {"brain": "unreachable"}
 
 
 def route_command(text: str, *, actor: str, confirm: bool = False,
@@ -508,8 +548,20 @@ def route_command(text: str, *, actor: str, confirm: bool = False,
                           "message": f"Set {eff['email']} to plan '{eff['plan']}'."}
             except ValueError as ve:
                 ok = False
-                result = {"action": "set_plan", "error": str(ve),
-                          "message": f"Could not set plan: {ve}"}
+                # Classify to a FIXED code literal; never echo str(ve) (the
+                # exception text) into the response — log the detail server-side
+                # only (CodeQL py/stack-trace-exposure).
+                code = _classify_set_plan_error(ve)
+                record_error(where="founder.route_command.set_plan",
+                             kind="ValueError", message=str(ve))
+                _GENERIC_SET_PLAN_MSG = {
+                    "no_such_user": "No user with that email.",
+                    "unknown_plan": "Unknown plan (use trial|solo|studio|firm).",
+                    "missing_user": "An email is required.",
+                    "invalid":      "Could not set plan (invalid request).",
+                }
+                result = {"action": "set_plan", "error": code,
+                          "message": _GENERIC_SET_PLAN_MSG[code]}
 
     elif action == "toggle_free":
         val = args.get("value")
@@ -722,20 +774,31 @@ def login_page() -> HTMLResponse:
 @router.post("/login")
 def login_submit(token: str = Form(default="")) -> Response:
     """Validate the submitted token via the SAME path the gate uses
-    (db.user_for_token -> email == founder_email). On success: set the
-    HttpOnly + Secure + SameSite=Lax `founder_session` cookie and 303 to
+    (db.user_for_token -> email == founder_email). On success: MINT A FRESH
+    server-issued session token for the validated founder user and set THAT as
+    the HttpOnly + Secure + SameSite=Lax `founder_session` cookie, then 303 to
     /founder. On failure: re-render the login page with a generic error
-    (HTTP 401) and NEVER echo the token back."""
+    (HTTP 401) and NEVER echo the token back.
+
+    Security (CodeQL py/cookie-injection): the cookie value is NEVER the raw
+    user-supplied `token` form field. We validate that field, then call
+    db.issue_token(user.id) to generate a brand-new server-controlled token
+    (`secrets.token_urlsafe`) and store only that in the cookie. The supplied
+    token is used solely to authenticate the request, not to build the cookie,
+    so no user-supplied input reaches Set-Cookie."""
     token = (token or "").strip()
-    if _founder_user_for_token(token) is None:
+    user = _founder_user_for_token(token)
+    if user is None:
         return HTMLResponse(
             _login_html(error="That token is not valid for the founder account."),
             status_code=401,
         )
+    # Server-controlled session token (NOT the submitted form value) → cookie.
+    session_token = db.issue_token(user["id"])
     resp = RedirectResponse(url="/founder", status_code=303)
     resp.set_cookie(
         key=FOUNDER_COOKIE,
-        value=token,
+        value=session_token,
         httponly=True,
         secure=True,
         samesite="lax",

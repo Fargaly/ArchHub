@@ -349,8 +349,8 @@ class TestFreeDefaultNvidia:
     def test_nvidia_is_default_free_provider(self):
         import config
         assert config.FREE_PROVIDER == "nvidia"
-        assert config.FREE_PROVIDER_BASE_URL.startswith(
-            "https://integrate.api.nvidia.com")
+        from urllib.parse import urlparse
+        assert urlparse(config.FREE_PROVIDER_BASE_URL).hostname == "integrate.api.nvidia.com"
         assert "llama-3.3-70b" in config.ARCHHUB_FREE_MODEL
 
     def test_free_key_falls_back_to_nvidia_key(self, monkeypatch):

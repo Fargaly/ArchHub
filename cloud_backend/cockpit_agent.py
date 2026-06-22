@@ -666,8 +666,13 @@ def _classify_write_error(exc: Exception) -> str:
     constant from our own code, NOT a substring of str(exc), so no
     exception-derived text reaches the response body."""
     head = str(exc).split(":", 1)[0].strip()
-    if head in _WRITE_ERROR_CODES:
-        return head
+    # Return the LITERAL key from our own table — never `head` itself (which is
+    # str(exc)-derived). `head` is used ONLY for comparison; the returned value
+    # is our own constant, so no exception-derived text can flow to the response
+    # (CodeQL py/stack-trace-exposure: taint broken here).
+    for code in _WRITE_ERROR_CODES:
+        if code == head:
+            return code
     return "invalid" if isinstance(exc, ValueError) else "failed"
 
 

@@ -453,6 +453,136 @@ PLAN_QUOTAS: dict[str, int] = {
     "firm":   1_000_000,
 }
 
+# ── FREE DEFAULT tier (founder, 2026-06-22 — zero-config, no 402) ─────
+# THE default experience: a strong free/cheap model served BY OUR cloud
+# to EVERY user with NO BYO key and NO paid plan — so the composer works
+# the moment someone installs ArchHub, zero config. This replaces the old
+# `byo_key_required` 402 for the no-key case (BYO + hosted-credit paths
+# stay intact and still win when configured).
+#
+# How it works: we proxy to a free OpenAI-compatible endpoint (Groq's
+# free tier by default — fast Llama/Qwen models; or any OpenAI-shape base
+# such as OpenRouter ":free" models or Google AI Studio's free Gemini).
+# The provider's free key lives SERVER-SIDE (this one key serves all
+# users), never on the user's machine — that's what makes it zero-config.
+#
+# `FREE_DEFAULT_ENABLED` (default ON) is the master switch. When ON and a
+# request arrives with no BYO key + not hosted, we serve `ARCHHUB_FREE_MODEL`
+# via the free provider instead of returning 402. The free tier is metered
+# against the legacy per-actor `msg_used` fair-use ceiling (so it can't be
+# abused) but NEVER touches hosted credits — free is free.
+#
+# Secrets: `FREE_PROVIDER_API_KEY` accepts a raw key OR an `op://...`
+# reference resolved at launch by the same op→keyring→env shim the rest of
+# ArchHub uses — NEVER inline the key in code. If the chosen provider needs
+# a (free-account) key and none is configured, the free tier degrades to
+# an honest 402 `free_unavailable` (BYO still works) rather than crashing.
+FREE_DEFAULT_ENABLED = _req("FREE_DEFAULT_ENABLED", "1").strip() in (
+    "1", "true", "True", "yes")
+# Provider id for the free tier. Any OpenAI-compatible chat-completions
+# endpoint works: "groq" (default), "openrouter", "google", or "custom".
+FREE_PROVIDER = _req("FREE_PROVIDER", "groq").strip().lower()
+# The model id served for free. Sensible default per provider; override
+# with ARCHHUB_FREE_MODEL. Groq's Llama-3.3-70B is strong + free + fast.
+_FREE_MODEL_DEFAULTS = {
+    "groq":       "llama-3.3-70b-versatile",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "google":     "gemini-2.5-flash",
+    "custom":     "llama-3.3-70b-versatile",
+}
+ARCHHUB_FREE_MODEL = _req(
+    "ARCHHUB_FREE_MODEL",
+    _FREE_MODEL_DEFAULTS.get(FREE_PROVIDER, "llama-3.3-70b-versatile"),
+).strip()
+# OpenAI-compatible base URL for the free provider. Defaulted per provider
+# so the founder only needs to set the KEY, not the URL.
+_FREE_BASE_DEFAULTS = {
+    "groq":       "https://api.groq.com/openai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "google":     "https://generativelanguage.googleapis.com/v1beta/openai",
+    "custom":     "",
+}
+FREE_PROVIDER_BASE_URL = _req(
+    "FREE_PROVIDER_BASE_URL",
+    _FREE_BASE_DEFAULTS.get(FREE_PROVIDER, ""),
+).strip().rstrip("/")
+# Free provider API key — raw OR op:// reference (resolved at launch by the
+# secret shim; see resolve_secret below). One server-side key serves every
+# user. Empty → free tier returns an honest free_unavailable 402 (BYO
+# still works) so a missing key never crashes the box.
+FREE_PROVIDER_API_KEY = _req("FREE_PROVIDER_API_KEY", "")
+
+
+def _resolve_op_ref(value: str) -> str:
+    """Resolve an `op://...` secret reference → plaintext at call time.
+
+    Tries, in order: 1Password CLI (`op read`), Windows/keyring
+    (`OP_<SANITISED>` cred or the same env name), then a sanitised env var.
+    Returns the raw value unchanged when it is NOT an op:// reference.
+    NEVER logs the resolved value. Mirrors the resolver pattern ArchHub's
+    dashscope/MCP launch uses so secrets stay out of code + git.
+    """
+    if not value or not value.startswith("op://"):
+        return value
+    # 1) 1Password CLI
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["op", "read", value],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    # 2) keyring (vault/item from the op path → archhub/<item>)
+    try:
+        import keyring  # type: ignore
+        parts = value[len("op://"):].split("/")
+        if len(parts) >= 2:
+            svc, item = parts[0], parts[1]
+            got = keyring.get_password(svc, item)
+            if got:
+                return got
+    except Exception:
+        pass
+    # 3) env fallback: op://vault/item/field → OP_VAULT_ITEM_FIELD
+    try:
+        sanitised = (
+            "OP_" + value[len("op://"):].upper()
+            .replace("/", "_").replace("-", "_").replace(".", "_")
+        )
+        env_val = os.environ.get(sanitised)
+        if env_val:
+            return env_val
+    except Exception:
+        pass
+    return ""   # unresolved op:// → treat as absent (free tier degrades)
+
+
+def free_provider_key() -> str:
+    """The resolved free-provider API key (op:// resolved at call time)."""
+    return _resolve_op_ref(FREE_PROVIDER_API_KEY)
+
+
+def free_default_available() -> bool:
+    """True when the free default tier can actually serve a request.
+
+    Requires the master switch ON + a base URL. A key is required for
+    every supported provider's free tier (Groq/OpenRouter/Google all gate
+    on a free-account key); when one is genuinely keyless ("custom" with a
+    local relay) leave FREE_PROVIDER_API_KEY empty and set the base URL.
+    """
+    if not FREE_DEFAULT_ENABLED:
+        return False
+    if not FREE_PROVIDER_BASE_URL:
+        return False
+    # Known hosted free providers require a key; a bare custom relay may not.
+    if FREE_PROVIDER in ("groq", "openrouter", "google"):
+        return bool(free_provider_key())
+    return True   # custom/keyless relay: base URL is enough
+
+
 # ── Cloud LLM proxy gate (founder, 2026-05-24; Model C 2026-05-31) ────
 # Hosted LLM access requires (a) a paid tier and (b) the workspace in
 # `hosted` AI mode with credits. byo_key workspaces never hit the proxy

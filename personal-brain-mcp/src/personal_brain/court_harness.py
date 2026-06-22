@@ -620,3 +620,103 @@ def make_node_cooks_probe(
             evidence_ref=f"node:{type_name}.{port_name}")
 
     return _probe
+
+
+# ─────────────── ui_renders live-render probe (the UI RUNG) ──────────────
+#
+# The UI twin of make_node_cooks_probe. Where node_cooks drives the REAL runner
+# on a minted node type, ui_renders launches an ISOLATED ArchHub (temp profile,
+# NO_GPU, free CDP port, --no-dev-source-sync — per reference_isolated-cdp-verify-
+# launch.md) and asserts, against the LIVE DOM, that an agent-authored widget
+# (1) RENDERS + is VISIBLE, (2) did NOT blank the app (the shell still painted
+# with the expected node/shell count — a JSX fault blanks EVERYTHING, this catches
+# it), and (3) raised zero uncaught / React-error-boundary console errors. Green
+# only if all three hold. This is the founder's guardrail expressed per-widget:
+# free-form widget code is allowed, but it cannot ship if it breaks the app.
+#
+# This module stays free of any `app/` import: the actual isolated-instance launch
+# + CDP eval lives in the binding (agents.self_extend._make_ui_renders_probe),
+# injected here as `live_probe`. The probe shape mirrors node_cooks: fail-CLOSED
+# (any launch/CDP/eval exception REFUTES — a widget that can't be proven to render
+# safely is not a working widget).
+
+
+def make_ui_renders_probe(
+    *,
+    live_probe: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+) -> ProbeRunner:
+    """Build the `ui_renders` artifact probe — the UI RUNG of self-extend.
+
+    Injected callable:
+      live_probe(gate_spec, context) -> dict — launches the ISOLATED ArchHub,
+        registers the widget, and runs the three CDP assertions. MUST return:
+          {
+            "rendered":   bool,   # widget element present + offsetParent!=null
+            "app_alive":  bool,   # ANTI-BLANK: app root still painted (shell ok)
+            "errors":     [..],   # uncaught / error-boundary console errors
+            "detail":     str,    # human summary for the receipt
+            "evidence_ref": str,  # e.g. "cdp:ui_widget:<id>"
+            "applied":    bool?,  # False => env couldn't run (e.g. no app/CDP)
+          }
+        A live_probe that cannot run the live check (missing dep / launch
+        failure it wants to treat as inconclusive) sets applied=False; the court
+        then escalates rather than greening. Any EXCEPTION from live_probe is
+        fail-closed → REFUTE.
+
+    gate_spec keys: {'widget_id': '<sanitized id>', 'testid'?: '<dom testid>'}.
+    Green requires rendered AND app_alive AND no errors."""
+
+    def _probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> ProbeResult:
+        wid = (gate_spec.get("widget_id") or gate_spec.get("id") or "").strip()
+        if not wid:
+            return ProbeResult(passed=False, applied=False,
+                               detail="ui_renders gate has no 'widget_id'")
+        try:
+            res = live_probe(gate_spec, context)
+        except Exception as ex:  # fail-closed: an unprovable widget is refuted
+            return ProbeResult(passed=False, applied=True,
+                               detail=f"ui_renders live probe crashed: "
+                                      f"{type(ex).__name__}: {ex}",
+                               evidence_ref=f"ui_widget:{wid}")
+        if not isinstance(res, dict):
+            return ProbeResult(passed=False, applied=True,
+                               detail="ui_renders live probe returned non-dict",
+                               evidence_ref=f"ui_widget:{wid}")
+        if res.get("applied") is False:
+            # The live environment could not run the check (no app / no CDP /
+            # missing websocket-client). Inconclusive — NOT a green, NOT a hard
+            # refute; convene_court turns an inapplicable artifact lens into
+            # needs_root (escalate to the founder), never a silent green.
+            return ProbeResult(passed=False, applied=False,
+                               detail=res.get("detail")
+                                      or "ui_renders live check could not run "
+                                         "(no running app / CDP)",
+                               evidence_ref=res.get("evidence_ref")
+                                            or f"ui_widget:{wid}")
+        rendered = bool(res.get("rendered"))
+        app_alive = bool(res.get("app_alive"))
+        errors = res.get("errors") or []
+        ev = res.get("evidence_ref") or f"cdp:ui_widget:{wid}"
+        detail = res.get("detail") or ""
+        # Green requires ALL THREE: widget visible, app NOT blanked, no errors.
+        if not app_alive:
+            return ProbeResult(passed=False, applied=True, evidence_ref=ev,
+                               detail=("ANTI-BLANK FAIL: the app root did not "
+                                       "stay painted after the widget rendered "
+                                       "(a JSX fault blanked the shell). "
+                                       + detail).strip())
+        if errors:
+            joined = "; ".join(str(e)[:140] for e in errors[:4])
+            return ProbeResult(passed=False, applied=True, evidence_ref=ev,
+                               detail=f"widget raised console/error-boundary "
+                                      f"errors: {joined}")
+        if not rendered:
+            return ProbeResult(passed=False, applied=True, evidence_ref=ev,
+                               detail=("widget element did not render / is not "
+                                       "visible (offsetParent==null). "
+                                       + detail).strip())
+        return ProbeResult(passed=True, applied=True, evidence_ref=ev,
+                           detail=("widget rendered + visible, app shell intact, "
+                                   "zero console errors. " + detail).strip())
+
+    return _probe

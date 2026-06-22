@@ -40,12 +40,20 @@ WRITE_TOOLS = frozenset({
     # under Plan/Auto (an approve-able build) exactly like a host mutation. An
     # approved build flows to agents.self_extend.run_self_extend (build → ROMA
     # court → brain.write), the ONE agent-driven loop.
-    "create_node_type", "create_connector",
+    "create_node_type", "create_connector", "create_ui_widget",
 })
 # The subset of WRITE_TOOLS that SELF-EXTEND ArchHub (build a new capability)
 # rather than mutate the canvas/host. The bridge routes an approved one of these
 # through agents.self_extend instead of the canvas replay path.
-BUILD_TOOLS = frozenset({"create_node_type", "create_connector"})
+#
+# create_ui_widget (the UI RUNG, founder steer "ALLOW AGENT FREE-FORM UI CODE BUT
+# PUT GUARDRAILS AGAINST BAD EDITS") lets the agent author REAL free-form widget
+# code — but it is persisted to a widgets registry (NOT the monolith), rendered
+# only inside the sandboxed error-boundaried AgentWidgetHost, court-gated on
+# gate_kind 'ui_renders' (renders+visible / app-not-blanked / no errors), and
+# AUTO-REVERTED on a red verdict. The court + auto-revert ARE the guardrail.
+BUILD_TOOLS = frozenset({"create_node_type", "create_connector",
+                         "create_ui_widget"})
 # Pure reads — always allowed, in every mode.
 READ_TOOLS = frozenset({"query_graph", "chat"})
 
@@ -273,6 +281,41 @@ TOOL_SCHEMA = [
                 },
             },
             "required": ["host"],
+        },
+    },
+    {
+        "name": "create_ui_widget",
+        "description": (
+            "BUILD a new FREE-FORM UI widget — real component code the user asked "
+            "for ('add a side panel with a slider that controls X'). You write the "
+            "widget body as a JS function returning a React element; it is rendered "
+            "ONLY inside ArchHub's sandboxed error-boundaried host (a side panel), "
+            "so a bad widget can NEVER blank the app — it shows a fallback. The "
+            "built widget is auto-verified through the ROMA court (gate_kind "
+            "'ui_renders': it must RENDER + be VISIBLE, must NOT blank the app "
+            "shell, and must raise zero errors) and, on a RED verdict, is "
+            "AUTO-REVERTED (unregistered). On GREEN it is learned. Gated under "
+            "Plan/Auto (an approve-able build). CODE CONTRACT: the body receives "
+            "`React`, `bridge` (async slot caller: await bridge('slot', ...args)), "
+            "and `api` (helpers); it MUST `return` a React element and set "
+            "data-testid on the root to the widget id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string",
+                       "description": "unique snake/kebab widget id, e.g. 'co2_panel'"},
+                "title": {"type": "string", "description": "Human display name"},
+                "description": {"type": "string"},
+                "code": {"type": "string",
+                         "description": ("JS function body returning a React "
+                                         "element; gets (React, bridge, api). Set "
+                                         "data-testid={id} on the root element.")},
+                "slots": {"type": "array", "items": {"type": "string"},
+                          "description": "bridge slot names the widget reads"},
+                "placement": {"type": "string", "enum": ["panel", "float"]},
+            },
+            "required": ["id", "code"],
         },
     },
 ]

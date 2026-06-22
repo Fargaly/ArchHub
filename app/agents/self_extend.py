@@ -51,7 +51,9 @@ from typing import Any, Optional
 DEFAULT_OWNER_USER = "u_19e5ab4adb8_82513da5e30d"
 
 # The build tool names the composer agent gained in TOOL_SCHEMA (SEAM 1).
-BUILD_TOOLS = frozenset({"create_node_type", "create_connector"})
+# create_ui_widget is the UI RUNG (free-form agent UI + court/auto-revert guards).
+BUILD_TOOLS = frozenset({"create_node_type", "create_connector",
+                         "create_ui_widget"})
 
 
 def _repo_root() -> Path:
@@ -155,6 +157,8 @@ def build_artifact(tool: str, args: dict[str, Any]) -> dict[str, Any]:
         return _build_node_type(args)
     if tool == "create_connector":
         return _build_connector(args)
+    if tool == "create_ui_widget":
+        return _build_ui_widget(args)
     return {"ok": False, "error": f"not a build tool: {tool}"}
 
 
@@ -244,6 +248,44 @@ def _build_connector(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": res.get("error", "scaffold failed")}
 
 
+def _build_ui_widget(args: dict[str, Any]) -> dict[str, Any]:
+    """Persist a FREE-FORM agent-authored UI widget via the REAL widgets organ
+    (app/widgets.py), to the LOCALAPPDATA widgets registry — NOT the repo tree
+    and NOT the studio-lm.jsx monolith. The widget is rendered only inside the
+    sandboxed error-boundaried AgentWidgetHost; the court (gate_kind
+    'ui_renders') + AUTO-REVERT are the guardrail against a bad edit.
+
+    The court gate is 'ui_renders': the just-registered widget must RENDER +
+    be VISIBLE, must NOT blank the app, and must raise no errors on the live
+    isolated instance. gate_spec carries the sanitized widget id + its testid."""
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    _widgets = _app_import("widgets")  # the REAL persistence organ
+
+    spec = args.get("spec") if isinstance(args.get("spec"), dict) else dict(args)
+    try:
+        path = _widgets.write_widget(spec)
+    except ValueError as ex:
+        return {"ok": False, "error": str(ex)}
+    except Exception as ex:
+        return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+    wid = _widgets.safe_widget_id(spec.get("id") or spec.get("widget_id")
+                                  or spec.get("name") or "")
+    return {
+        "ok": True, "reused": False, "kind": "ui_widget",
+        "widget_id": wid,
+        "path": str(path),
+        "detail": f"registered free-form UI widget '{wid}' (sandboxed host)",
+        # The court launches an isolated ArchHub and asserts the widget renders
+        # + visible / app-not-blanked / no errors. testid == the widget id (the
+        # host sets data-testid on the widget container to this id).
+        "gate_kind": "ui_renders",
+        "gate_spec": {"widget_id": wid, "testid": f"agent-widget-{wid}"},
+    }
+
+
 # ───────────────────────── SEAM 2+3 — AUTO COURT ───────────────────────────
 
 
@@ -293,6 +335,14 @@ def court_verify(build: dict[str, Any], *, store=None,
     elif gate_kind == "registered_node":
         court_gate_kind = "registered_node"
         extra["registered_node"] = _make_registered_node_probe()
+    elif gate_kind == "ui_renders":
+        # The UI RUNG: launch an ISOLATED ArchHub, render the agent-authored
+        # widget inside the sandboxed host, and assert renders+visible /
+        # app-not-blanked / no-errors on the live DOM. The launch binding lives
+        # in _make_ui_renders_probe (this module — app-coupled), mirroring
+        # node_cooks; court_harness stays app-decoupled.
+        court_gate_kind = "ui_renders"
+        extra["ui_renders"] = _make_ui_renders_probe()
 
     vision = f"self-extend: build + verify capability '{cap}'"
     decomposition = [{
@@ -520,6 +570,266 @@ def _make_node_cooks_probe():
     )
 
 
+# ── ui_renders — the UI RUNG: render the widget on an ISOLATED live ArchHub ──
+
+
+def _free_tcp_port() -> int:
+    """Bind :0 to grab a free port for the isolated instance's CDP endpoint.
+    NEVER 9223 (a foreign ArchHub / concurrent agent often holds it — you'd
+    connect to the WRONG bundle). Per reference_isolated-cdp-verify-launch.md."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+    finally:
+        s.close()
+
+
+def _real_python_exe() -> Optional[str]:
+    """The REAL python.exe by absolute path — NOT bare python/py (PyManager
+    shims auto-install a PyQt6-less interpreter under an overridden LOCALAPPDATA).
+    Prefer the current interpreter (sys.executable) when it is a real exe, else
+    the known pythoncore path from the isolation recipe."""
+    exe = sys.executable or ""
+    base = os.path.basename(exe).lower()
+    if exe and base not in ("py.exe", "py") and os.path.exists(exe):
+        return exe
+    cand = (Path(os.environ.get("LOCALAPPDATA",
+                                os.path.expanduser("~/AppData/Local"))).parent
+            / "Local" / "Python" / "pythoncore-3.14-64" / "python.exe")
+    return str(cand) if cand.exists() else (exe or None)
+
+
+def _make_ui_renders_probe():
+    """Bind the isolated-CDP live-render check into court_harness.make_ui_renders_
+    probe (the module stays app-decoupled; the launch binding lives here, mirroring
+    _make_node_cooks_probe). The injected `live_probe`:
+
+      1. launches an ISOLATED ArchHub (temp APPDATA+LOCALAPPDATA, ARCHHUB_VERIFY_
+         NO_GPU=1, a FREE CDP port, --no-dev-source-sync, real python.exe abs
+         path, PYTHONIOENCODING=utf-8) — never touches the founder's app/profile;
+      2. waits for the REAL ArchHub page tab + the widget host to mount;
+      3. via CDP Runtime.evaluate asserts:
+           (a) the widget element renders + is VISIBLE (offsetParent!=null by its
+               data-testid),
+           (b) ANTI-BLANK — the app root (#root) still painted + a positive shell
+               node count (a JSX fault blanks EVERYTHING; this catches it),
+           (c) zero uncaught / React-error-boundary console errors;
+      4. tears the instance down + removes the temp profile.
+
+    Returns the {rendered, app_alive, errors, detail, evidence_ref, applied}
+    dict make_ui_renders_probe consumes. applied=False when the live env cannot
+    run (no display / no websocket-client / launch failed) → the court escalates
+    to needs_root rather than greening blind."""
+    _brain_src_on_path()
+    from personal_brain.court_harness import make_ui_renders_probe
+
+    def _live_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        wid = (gate_spec.get("widget_id") or gate_spec.get("id") or "").strip()
+        testid = gate_spec.get("testid") or f"agent-widget-{wid}"
+        ev = f"cdp:ui_widget:{wid}"
+
+        # Court can be told to SKIP the live launch (CI / headless suite) — then
+        # the live check is inconclusive (applied=False → needs_root), never a
+        # false green. The widget still persisted; the founder can verify live.
+        if os.environ.get("ARCHHUB_UI_RENDERS_SKIP") == "1":
+            return {"applied": False, "evidence_ref": ev,
+                    "detail": "ui_renders live launch skipped (ARCHHUB_UI_RENDERS_SKIP=1)"}
+
+        try:
+            import websocket  # noqa: F401  # websocket-client (CDP transport)
+        except Exception:
+            return {"applied": False, "evidence_ref": ev,
+                    "detail": "websocket-client not installed — ui_renders live check skipped"}
+
+        py = _real_python_exe()
+        if not py:
+            return {"applied": False, "evidence_ref": ev,
+                    "detail": "no real python.exe found for isolated launch"}
+
+        import json as _json
+        import subprocess
+        import tempfile
+        import time as _time
+        import urllib.request as _ureq
+
+        repo = _repo_root()
+        port = _free_tcp_port()
+        tmp = Path(tempfile.mkdtemp(prefix="archhub_uirender_"))
+        ad = tmp / "ad"
+        lad = tmp / "lad"
+        (ad / "ArchHub" / "ui_widgets").mkdir(parents=True, exist_ok=True)
+        (lad / "ArchHub" / "ui_widgets").mkdir(parents=True, exist_ok=True)
+
+        # The widget under test lives in the FOUNDER's LOCALAPPDATA (where the
+        # build wrote it). Copy it into the ISOLATED LOCALAPPDATA so the launched
+        # instance's widgets registry (get_ui_widgets) serves it. We do NOT point
+        # the instance at the real profile (isolation — never disrupt the app).
+        try:
+            _widgets = _app_import("widgets")
+            src_file = _widgets.widget_path(wid)
+            if src_file.exists():
+                import shutil
+                shutil.copy2(str(src_file),
+                             str(lad / "ArchHub" / "ui_widgets" / src_file.name))
+        except Exception:
+            pass
+
+        env = dict(os.environ)
+        env["APPDATA"] = str(ad)
+        env["LOCALAPPDATA"] = str(lad)
+        env["ARCHHUB_VERIFY_NO_GPU"] = "1"
+        env["QTWEBENGINE_REMOTE_DEBUGGING"] = str(port)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        # Real per-user site so PyQt6 imports under the overridden APPDATA.
+        user_site = (Path(os.path.expanduser("~")) / "AppData" / "Roaming"
+                     / "Python" / "Python314" / "site-packages")
+        if user_site.exists():
+            env["PYTHONPATH"] = (str(user_site) + os.pathsep
+                                 + env.get("PYTHONPATH", "")).strip(os.pathsep)
+
+        proc = None
+        ws = None
+        try:
+            proc = subprocess.Popen(
+                [py, str(repo / "app" / "main.py"), "--no-dev-source-sync"],
+                cwd=str(repo), env=env,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            # Wait for the REAL ArchHub page tab (skip about:blank/devtools).
+            tab = None
+            deadline = _time.time() + 60.0
+            while _time.time() < deadline and proc.poll() is None:
+                try:
+                    with _ureq.urlopen(f"http://127.0.0.1:{port}/json", timeout=3) as r:
+                        tabs = _json.loads(r.read())
+                    tab = next((t for t in tabs
+                                if t.get("type") == "page"
+                                and "devtools" not in (t.get("url") or "")
+                                and (t.get("url") or "") != "about:blank"), None)
+                    if tab and tab.get("webSocketDebuggerUrl"):
+                        break
+                except Exception:
+                    pass
+                _time.sleep(1.0)
+            if not tab or not tab.get("webSocketDebuggerUrl"):
+                return {"applied": False, "evidence_ref": ev,
+                        "detail": "isolated ArchHub did not expose a CDP page tab in 60s"}
+
+            import websocket as _wsmod
+            ws = _wsmod.create_connection(tab["webSocketDebuggerUrl"], timeout=20,
+                                          skip_utf8_validation=True)
+            _id = [0]
+
+            def _call(method, params, timeout):
+                _id[0] += 1
+                mid = _id[0]
+                ws.send(_json.dumps({"id": mid, "method": method, "params": params}))
+                ws.settimeout(timeout)
+                end = _time.time() + timeout
+                while _time.time() < end:
+                    try:
+                        obj = _json.loads(ws.recv())
+                    except Exception:
+                        continue
+                    if obj.get("id") == mid:
+                        if "error" in obj:
+                            raise RuntimeError(obj["error"])
+                        return obj.get("result", {})
+                raise TimeoutError(f"{method} no reply")
+
+            _call("Runtime.enable", {}, 20.0)
+            # Open the agent-widget panel so the host mounts the widget (the panel
+            # is reachable via the lm-agent-widgets-open window event).
+            _call("Runtime.evaluate", {
+                "expression": ("try{window.dispatchEvent(new CustomEvent("
+                               "'lm-agent-widgets-open'));}catch(e){}"),
+                "returnByValue": True,
+            }, 15.0)
+
+            # Poll up to ~25s for the widget container to render + be visible.
+            assert_js = (
+                "(function(){"
+                "var root=document.getElementById('root');"
+                "var shell=document.querySelectorAll('[data-testid]').length;"
+                "var crash=document.querySelector('pre') && "
+                "  (document.body.innerText||'').indexOf('ArchHub render crash')>=0;"
+                "var el=document.querySelector('[data-testid=\"" + testid + "\"]');"
+                "var vis=!!(el && el.offsetParent!==null);"
+                "var fb=document.querySelector('[data-testid=\"agent-widget-fallback-"
+                + wid + "\"]');"
+                "return {root:!!root, shell:shell, crash:!!crash, "
+                "rendered:vis, fallback:!!fb};"
+                "})()"
+            )
+            result = {"root": False, "shell": 0, "crash": False,
+                      "rendered": False, "fallback": False}
+            poll_end = _time.time() + 25.0
+            while _time.time() < poll_end:
+                res = _call("Runtime.evaluate", {
+                    "expression": assert_js, "returnByValue": True,
+                }, 15.0)
+                val = res.get("result", {}).get("value")
+                if isinstance(val, dict):
+                    result = val
+                    if result.get("rendered") or result.get("fallback") or result.get("crash"):
+                        break
+                _time.sleep(1.0)
+
+            # Collect uncaught / error-boundary errors the page recorded. The
+            # boot ErrorBoundary swaps the whole app for a crash screen — that is
+            # the ANTI-BLANK signal (crash==true OR shell collapsed). A widget's
+            # OWN boundary instead renders the agent-widget-fallback (caught — the
+            # app shell stays intact → a refute on rendered, NOT on app_alive).
+            app_alive = bool(result.get("root")) and not result.get("crash") \
+                and int(result.get("shell") or 0) >= 3
+            errors = []
+            if result.get("crash"):
+                errors.append("boot ErrorBoundary tripped — widget blanked the app")
+            if result.get("fallback"):
+                errors.append("widget threw — caught by its sandbox boundary "
+                              "(fallback shown; app intact)")
+            return {
+                "applied": True,
+                "rendered": bool(result.get("rendered")),
+                "app_alive": app_alive,
+                "errors": errors,
+                "evidence_ref": ev,
+                "detail": (f"shell_nodes={result.get('shell')} root="
+                           f"{result.get('root')} crash={result.get('crash')} "
+                           f"fallback={result.get('fallback')}"),
+            }
+        except Exception as ex:
+            # A launch / CDP failure is INCONCLUSIVE (env couldn't run), not a
+            # widget refutation — applied=False → court escalates to needs_root.
+            return {"applied": False, "evidence_ref": ev,
+                    "detail": f"ui_renders live launch failed: {type(ex).__name__}: {ex}"}
+        finally:
+            try:
+                if ws is not None:
+                    ws.close()
+            except Exception:
+                pass
+            try:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=8)
+                    except Exception:
+                        proc.kill()
+            except Exception:
+                pass
+            try:
+                import shutil
+                shutil.rmtree(str(tmp), ignore_errors=True)
+            except Exception:
+                pass
+
+    return make_ui_renders_probe(live_probe=_live_probe)
+
+
 # ─────────────────────────── SEAM 4 — AUTO LEARN ───────────────────────────
 
 
@@ -614,11 +924,21 @@ def run_self_extend(tool: str, args: dict[str, Any], *,
                 "seams": {"build": False, "court": False, "brain": False}}
 
     court = court_verify(build, store=store, owner_user=owner_user)
+
+    # AUTO-REVERT (the founder's guardrail): a RED ui_renders verdict means the
+    # free-form widget did not render safely / blanked the app / raised errors —
+    # so we UNREGISTER it, restoring the app. A broken widget is NEVER left
+    # applied. needs_root (the live check could not run) is NOT reverted — the
+    # widget is fine, only unverified, and is surfaced for a founder live-check.
+    reverted = None
+    if build.get("kind") == "ui_widget" and court.get("verdict") == "red":
+        reverted = revert_ui_widget(build.get("widget_id") or "")
+
     learn = learn_capability(
         build, court, owner_user=owner_user,
         contributing_agent=contributing_agent, brain_call=brain_call,
     )
-    return {
+    receipt = {
         "ok": bool(build.get("ok") and court.get("green") and learn.get("ok")),
         "tool": tool,
         "build": build,
@@ -630,6 +950,10 @@ def run_self_extend(tool: str, args: dict[str, Any], *,
             "brain": bool(learn.get("ok")),
         },
     }
+    if reverted is not None:
+        receipt["reverted"] = reverted
+        receipt["auto_reverted"] = bool(reverted.get("ok"))
+    return receipt
 
 
 # ──── FREE-TEXT LIVE — the MODEL emits the build tool, then the loop fires ───
@@ -901,6 +1225,27 @@ def undo_artifact(path: str) -> dict[str, Any]:
     except Exception:
         return {"ok": False, "error": "remove failed", "path": str(cand)}
     return {"ok": True, "removed": True, "path": str(cand)}
+
+
+def revert_ui_widget(widget_id: str) -> dict[str, Any]:
+    """Reverse a UI-widget build by UNREGISTERING the widget — the AUTO-REVERT
+    (on a red ui_renders verdict) AND the manual-undo primitive.
+
+    SECURITY (path-jailed): delegates to widgets.delete_widget, which sanitizes
+    the id and commonpath-confines the unlink to the LOCALAPPDATA widgets dir —
+    a crafted id can never remove a file outside the jail (mirrors
+    undo_artifact's self_extend jail on the connector/node side)."""
+    raw = (widget_id or "").strip()
+    if not raw:
+        return {"ok": False, "error": "no widget_id"}
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    try:
+        _widgets = _app_import("widgets")
+        return _widgets.delete_widget(raw)
+    except Exception as ex:
+        return {"ok": False, "error": f"revert failed: {type(ex).__name__}: {ex}"}
 
 
 def run_self_extend_loop(

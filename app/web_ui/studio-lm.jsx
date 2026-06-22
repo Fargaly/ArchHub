@@ -3493,6 +3493,18 @@ const StudioLM = () => {
     let inFlight = false;
     let lastRun = 0;
     let lastTurn = '';
+    // AMBIENT DEFAULT-ON (founder steer: on/ambient). Read the backend default
+    // (USER-AGENCY: an explicit user OFF wins; absent a preference it is ON).
+    // Default ON optimistically so the first triggers are not lost while the
+    // async probe resolves; flip OFF only if the user has explicitly disabled.
+    let ambientOn = true;
+    try {
+      const _pref = (typeof window !== 'undefined'
+        && window.__archhub_ambient_pref);
+      bridgeCall('ambient_default_on', _pref == null ? '' : String(_pref))
+        .then((on) => { ambientOn = (on !== false); })
+        .catch(() => { ambientOn = true; });
+    } catch (e) {}
     const _userIsTyping = () => {
       const el = document.activeElement;
       if (!el) return false;
@@ -3502,6 +3514,9 @@ const StudioLM = () => {
     };
     const _fire = () => {
       timer = null;
+      // AMBIENT DEFAULT-ON gate: skip when the user has explicitly turned
+      // ambient OFF (USER-AGENCY). Default is ON (founder steer).
+      if (!ambientOn) return;
       // Idle-guard: don't grow while the user is mid-typing — reschedule.
       if (_userIsTyping()) { _schedule(); return; }
       // In-flight guard: one pass at a time.

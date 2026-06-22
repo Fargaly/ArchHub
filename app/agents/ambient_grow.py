@@ -28,10 +28,45 @@ the SAME approval queue. No parallel store, no parallel surface.
 
 Off-thread + cap-bounded + gated-by-default = SAFE: the founder watches
 the canvas grow as ghost proposals, and nothing runs without the gate.
+
+────────────────────────────────────────────────────────────────────────────
+AMBIENT DEFAULT-ON (founder steer 2026-06-22: "on / ambient") — the contract
+────────────────────────────────────────────────────────────────────────────
+Ambient self-extend is DEFAULT-ON: the ambient path may PROPOSE and BUILD
+extensions proactively as the user works. The founder chose the ambient
+default; the safety is not "off by default" but a THREE-PART contract every
+ambient build is held to (so default-ON is safe):
+
+  1. COURT-GATED — an ambient pass that proposes a BUILD (create_node_type /
+     create_connector) routes through the SAME self-extend loop the typed
+     composer uses (bridge.self_extend → run_self_extend → build → COURT →
+     learn). The build is APPLIED/LEARNED ONLY on a GREEN court verdict; a red
+     never applies (the court is the gate, not the ambient proposer).
+  2. REVERSIBLE — a green build wrote a single removable local artifact; the UI
+     offers an Undo (bridge.self_extend_undo → self_extend.undo_artifact, path-
+     jailed to the self_extend dir). Red applies nothing → nothing to undo.
+  3. VISIBLE — every ambient pass + every court verdict is SURFACED, never
+     silent: the pass rides the SAME `agent_step_done` signal (tagged
+     `ambient:true` so the JSX labels it "grow · …"), and each build's court
+     verdict rides the `court_verdict` log. The founder always SEES what
+     ambient proposed and how the court ruled.
+
+`AMBIENT_DEFAULT_ON` is the single source of truth for the default; the bridge
++ JSX read it (an explicit user OFF still wins — USER-AGENCY). Honour Plan/Auto/
+YOLO for explicit typed asks; ambient proposals ALWAYS pass through the court
+regardless of mode (a green build in YOLO still required the court to green it).
 """
 from __future__ import annotations
 
 from typing import Any
+
+# AMBIENT DEFAULT-ON (founder steer 2026-06-22). The single source of truth for
+# whether ambient self-extend runs by default. True = the ambient path proposes/
+# builds proactively (every build court-gated + reversible + visible, see the
+# module docstring contract). An explicit user toggle OFF overrides this
+# (USER-AGENCY) — this is only the DEFAULT when the user has expressed no
+# preference. The bridge.ambient_grow slot + the JSX ambient effect both read it.
+AMBIENT_DEFAULT_ON = True
 
 # How many proposed mutations one ambient pass may surface. The pass asks
 # the model for "1-3" next nodes/wires; we hard-cap the returned ACTION
@@ -45,6 +80,23 @@ AMBIENT_MAX_PROPOSALS = 3
 # fires AFTER one of these SETTLES (composer turn done, a node finished
 # cooking, a host was spawned). Mid-typing is skipped by the JSX idle guard.
 AMBIENT_TRIGGERS = ("agent_step_done", "workflow_done", "node_spawned")
+
+
+def ambient_default_on(user_pref: Any = None) -> bool:
+    """Resolve whether ambient runs, honouring USER-AGENCY: an explicit user
+    preference (True/False) ALWAYS wins; only when the user expressed no
+    preference (None / unset) does the AMBIENT_DEFAULT_ON default apply. The
+    bridge passes the persisted user toggle (or None) so default-ON is the
+    out-of-box behaviour while a user OFF is respected."""
+    if isinstance(user_pref, bool):
+        return user_pref
+    if isinstance(user_pref, str):
+        v = user_pref.strip().lower()
+        if v in ("1", "true", "on", "yes"):
+            return True
+        if v in ("0", "false", "off", "no"):
+            return False
+    return AMBIENT_DEFAULT_ON
 
 
 def ambient_prompt(*, last_turn: str = "", brain_facts: str = "") -> str:

@@ -201,14 +201,18 @@ def _build_node_type(args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     # The library persists to LOCALAPPDATA, not the repo tree — so the court's
-    # artifact gate is "the type is registered + persisted", checked via a
-    # pytest predicate that re-imports library and asserts the type exists.
+    # artifact gate is the ENGINE RUNG: "node_cooks" drives the REAL runner on
+    # the just-registered type (a typed seed → the node) and asserts a real,
+    # type-matching output value — not merely "the type is registered" (the old
+    # registered_node SHELL gate). This is DEFINITION-OF-SHIPPED per node:
+    # observable real output on the real runner, never a registration claim.
+    minted = result.get("type", type_name)
     return {
         "ok": True, "reused": False, "kind": "node_type",
-        "type": result.get("type", type_name),
-        "detail": f"registered modular node type '{result.get('type', type_name)}'",
-        "gate_kind": "registered_node",
-        "gate_spec": {"type": result.get("type", type_name)},
+        "type": minted,
+        "detail": f"registered + cooked modular node type '{minted}'",
+        "gate_kind": "node_cooks",
+        "gate_spec": {"type": minted},
     }
 
 
@@ -273,12 +277,20 @@ def court_verify(build: dict[str, Any], *, store=None,
 
     # Map our build gate kinds onto court probes.
     # - py_compile/file_exists/pytest  → built-in court probes (real artifact).
-    # - registered_node                → a custom probe that re-imports the
-    #   library and asserts the type is registered (the REAL artifact for a
-    #   library-persisted node that has no repo-tree file).
+    # - node_cooks                     → the ENGINE RUNG: a custom probe that
+    #   builds a minimal real graph (typed seed → the new type) and drives the
+    #   REAL WorkflowRunner on the registered type, asserting a real,
+    #   type-matching output value (compiles + registers-in-both + cooks +
+    #   persists — not registered_node's registration-only SHELL check).
+    # - registered_node                → LEGACY shell probe, kept for back-compat
+    #   (a build that explicitly asks for it / an older artifact); node_cooks
+    #   SUPERSEDES it for create_node_type.
     extra: dict[str, ProbeRunner] = {}
     court_gate_kind = gate_kind
-    if gate_kind == "registered_node":
+    if gate_kind == "node_cooks":
+        court_gate_kind = "node_cooks"
+        extra["node_cooks"] = _make_node_cooks_probe()
+    elif gate_kind == "registered_node":
         court_gate_kind = "registered_node"
         extra["registered_node"] = _make_registered_node_probe()
 
@@ -337,10 +349,16 @@ def court_verify(build: dict[str, Any], *, store=None,
                 reason = leaves[-1].get("reason", "")
     except Exception:
         pass
+    # cooks-with-mock: a node that needed a live host/credential cooked a real
+    # typed value under a typed mock — still GREEN, but surfaced so the receipt
+    # is honest about what was proven (wiring + shape, not the live host).
+    from personal_brain.court_harness import COOKS_WITH_MOCK
+    cooks_with_mock = COOKS_WITH_MOCK in (reason or "")
     return {
         "ok": True,
         "green": bool(final.get("dry") and final.get("root_green")),
         "verdict": verdict,
+        "cooks_with_mock": cooks_with_mock,
         "tree_id": tree.tree_id,
         "gate_kind": gate_kind,
         "court_reason": reason,
@@ -378,6 +396,128 @@ def _make_registered_node_probe():
                            evidence_ref=f"library:{type_name}")
 
     return _probe
+
+
+# ── node_cooks — the ENGINE RUNG: drive the REAL runner on the new type ──────
+
+# Seed value the typed constant feeds the node, keyed by the node's declared
+# INPUT port type so the cook receives a value the node can actually process
+# (a list-input node gets a list, a string-input node gets a string). 'any' /
+# unknown → a string (the most permissive useful seed). This is the typed seed.
+_SEED_BY_TYPE: dict[str, Any] = {
+    "string": "self-extend seed",
+    "number": 42,
+    "boolean": True,
+    "list": ["self-extend seed"],
+    "object": {"seed": "self-extend"},
+    "json": {"seed": "self-extend"},
+    "dict": {"seed": "self-extend"},
+}
+
+
+def _declared_ports(type_name: str) -> tuple[list[dict], list[dict]]:
+    """(inputs, outputs) as [{name, port_type}] from the REAL library spec.
+    The library is the source of truth for the DECLARED typed contract (the
+    runner coerces minted ports to ANY, so we read the library, not the
+    runner)."""
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    _lib = _app_import("library")
+    spec = _lib.inspect(type_name)  # raises if not registered (fail-closed)
+
+    def _norm(side: str) -> list[dict]:
+        out: list[dict] = []
+        for p in (spec.get(side) or []):
+            if isinstance(p, dict):
+                name = p.get("name") or p.get("id") or ""
+                ptype = (p.get("port_type") or p.get("type") or "any")
+                if name:
+                    out.append({"name": name, "port_type": str(ptype)})
+            elif isinstance(p, str):
+                out.append({"name": p, "port_type": "any"})
+        return out
+
+    return _norm("inputs"), _norm("outputs")
+
+
+class _MockRouter:
+    """A typed-mock LLMRouter for the cooks-with-mock fallback: an `ai`-impl
+    node with no real provider key would cook a missing_dep sentinel; this lets
+    the court still prove the node's WIRING + output SHAPE by returning a small
+    real string completion. Used ONLY in the court's mock retry, never in the
+    user's real cook."""
+
+    def complete(self, history=None, model="auto", on_chunk=None,
+                 on_tool_invocation=None, **kw):
+        text = "self-extend mock completion"
+        if on_chunk:
+            try:
+                on_chunk(text)
+            except Exception:
+                pass
+        from types import SimpleNamespace
+        return SimpleNamespace(text=text)
+
+
+def _make_node_cooks_probe():
+    """Bind the app's REAL runner + library into court_harness.make_node_cooks_
+    probe (the module stays app-decoupled; the binding lives here, mirroring
+    _make_registered_node_probe). The probe builds a minimal real graph and
+    drives WorkflowRunner.pull on the registered type — the engine rung."""
+    _brain_src_on_path()
+    from personal_brain.court_harness import make_node_cooks_probe
+
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+
+    def _build_min_graph(gate_spec: dict[str, Any]) -> dict[str, Any]:
+        """A typed seed/constant wired into EACH declared input of the new node.
+        An input-less node still cooks (no wires) — its output is pulled
+        directly. data.constant is the engine's built-in seed primitive."""
+        type_name = (gate_spec.get("type") or "").strip()
+        inputs, _outs = _declared_ports(type_name)
+        nodes: list[dict] = [{"id": "n1", "type": type_name, "config": {}}]
+        wires: list[dict] = []
+        for i, port in enumerate(inputs):
+            seed = _SEED_BY_TYPE.get(port["port_type"].lower(),
+                                     "self-extend seed")
+            sid = f"seed{i}"
+            nodes.append({"id": sid, "type": "data.constant",
+                          "config": {"value": seed}})
+            wires.append({"from": [sid, "value"], "to": ["n1", port["name"]]})
+        return {"nodes": nodes, "wires": wires}
+
+    def _cook(graph: dict[str, Any], type_name: str,
+              gate_spec: dict[str, Any], *, router=None) -> Any:
+        from workflows.runner import WorkflowRunner
+        runner = WorkflowRunner(graph, router=router)
+        return runner.pull("n1")
+
+    def _real_cook(graph, type_name, gate_spec):
+        # The REAL runner with NO injected router/host — a node that genuinely
+        # needs one cooks a missing_dep sentinel, which triggers the mock retry.
+        return _cook(graph, type_name, gate_spec, router=None)
+
+    def _mock_cook(graph, type_name, gate_spec):
+        # cooks-with-mock: re-cook with a typed-mock router so an ai-impl node's
+        # wiring + output shape can be proven without a live provider key.
+        return _cook(graph, type_name, gate_spec, router=_MockRouter())
+
+    def _declared_output(gate_spec: dict[str, Any]) -> tuple[str, str]:
+        type_name = (gate_spec.get("type") or "").strip()
+        _ins, outs = _declared_ports(type_name)
+        if not outs:
+            return "", ""
+        return outs[0]["name"], outs[0]["port_type"]
+
+    return make_node_cooks_probe(
+        build_min_graph=_build_min_graph,
+        cook=_real_cook,
+        declared_output=_declared_output,
+        mock_cook=_mock_cook,
+    )
 
 
 # ─────────────────────────── SEAM 4 — AUTO LEARN ───────────────────────────
@@ -490,6 +630,104 @@ def run_self_extend(tool: str, args: dict[str, Any], *,
             "brain": bool(learn.get("ok")),
         },
     }
+
+
+# ──── FREE-TEXT LIVE — the MODEL emits the build tool, then the loop fires ───
+#
+# This is the SEAM the binding's free-text composer ask drives: a typed request
+# like "add an Airtable connector" goes to the REAL model through the SAME router
+# the chat/composer uses (run_agent_step → router.complete with the BUILD tools
+# in TOOL_SCHEMA). The model — not a deterministic marker — DECIDES to call
+# create_connector / create_node_type. We extract that emitted tool + args from
+# the run_agent_step actions and route it into run_self_extend (build → court →
+# learn). The seam is witnessed: the model PICKED the tool, the court greened the
+# REAL artifact. With the router pinned to NVIDIA (model="nvidia:meta/
+# llama-3.3-70b-instruct") this proves the free-text path on the real NVIDIA
+# Llama-3.3-70B — not the deterministic marker.
+
+
+def extract_build_call(run_result: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Pull the FIRST build-tool call the MODEL emitted out of a run_agent_step
+    result. A gated action (Plan/Auto) still names the tool + args under
+    `approval`/`args`; a YOLO action carries them at the top level. Returns
+    {tool, args} or None if the model called no build tool."""
+    if not isinstance(run_result, dict):
+        return None
+    for act in run_result.get("actions") or []:
+        if not isinstance(act, dict):
+            continue
+        tool = act.get("tool") or ""
+        if not is_build_tool(tool):
+            continue
+        # YOLO: args at top level. Plan/Auto gated: the approval payload carries
+        # the original args (the gate replaced the executable action).
+        args = act.get("args")
+        if not isinstance(args, dict):
+            appr = act.get("approval") if isinstance(act.get("approval"), dict) else {}
+            args = appr.get("args") if isinstance(appr.get("args"), dict) else {}
+        return {"tool": tool, "args": args or {}}
+    return None
+
+
+def run_free_text_self_extend(
+    user_msg: str,
+    graph: Optional[dict[str, Any]] = None,
+    *,
+    router: Any,
+    model: str = "auto",
+    focused_node_id: str = "",
+    owner_user: str = DEFAULT_OWNER_USER,
+    contributing_agent: str = "claude-opus-4-8",
+    store=None,
+    brain_call=None,
+) -> dict[str, Any]:
+    """FREE-TEXT LIVE: a typed ask → the REAL model emits a build tool → the
+    self-extend loop (build → COURT → learn) fires on the model's choice.
+
+    The model runs in YOLO so its build-tool call surfaces with args at the top
+    level (the witness needs the model's actual tool + args, not a gated stub);
+    the COURT is still the gate (a build only persists/learns on green), so YOLO
+    here does not bypass verification — it bypasses the human approval step that
+    the live witness is standing in for.
+
+    Returns {ok, picked, agent, build, court, learn, seams} where `picked` is the
+    {tool, args} the MODEL chose (None if it called no build tool). This is the
+    proof the seam is witnessed: `picked.tool` is set by the model, and the court
+    verdict is green on the real artifact."""
+    app_dir = str(_repo_root() / "app")
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+    _ca = _app_import("agents.composer_agent")
+
+    agent = _ca.run_agent_step(
+        user_msg=user_msg,
+        graph=graph if isinstance(graph, dict) else {"nodes": [], "wires": []},
+        focused_node_id=focused_node_id or "",
+        router=router,
+        mode="yolo",
+        model=model or "auto",
+    )
+    picked = extract_build_call(agent)
+    if picked is None:
+        return {
+            "ok": False, "picked": None, "agent": agent,
+            "error": "the model did not emit a build tool for this request",
+            "seams": {"model_picked": False, "build": False,
+                      "court": False, "brain": False},
+        }
+
+    receipt = run_self_extend(
+        picked["tool"], picked["args"],
+        owner_user=owner_user, contributing_agent=contributing_agent,
+        store=store, brain_call=brain_call,
+    )
+    receipt["picked"] = picked
+    receipt["agent"] = {"text": agent.get("text", ""),
+                        "mode": agent.get("mode"),
+                        "n_actions": len(agent.get("actions") or [])}
+    receipt.setdefault("seams", {})["model_picked"] = True
+    receipt["ok"] = bool(receipt.get("ok"))
+    return receipt
 
 
 # ──── THE FREE-FORM LOOP (ask→build→COURT-PER-LEAF→learn-per-green) ──────────
@@ -677,6 +915,7 @@ def run_self_extend_loop(
     brain_call=None,
     on_leaf=None,
     max_rounds: int = 4,
+    model: str = "auto",
 ):
     """Drive the unrolled ROMA loop for a free-form self-extend request.
 
@@ -749,6 +988,7 @@ def run_self_extend_loop(
                         focused_node_id=focused_node_id or "",
                         router=router,
                         mode="yolo",
+                        model=model or "auto",
                     )
                 except Exception as ex:
                     run_result = {"actions": [], "text": f"executor error: {ex}",

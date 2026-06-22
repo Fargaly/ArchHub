@@ -261,8 +261,10 @@ def test_node_type_path_all_seams_fire(_clean_lib):
         brain_call=lambda t, a: (captured.update(tool=t, args=a) or {"ops_applied": 1}),
     )
     assert result["seams"] == {"build": True, "court": True, "brain": True}, result
-    # The node-type gate is the REAL library-registration probe, not py_compile.
-    assert result["court"]["gate_kind"] == "registered_node"
+    # The node-type gate is the ENGINE RUNG: node_cooks drives the REAL runner on
+    # the registered type + asserts a real, type-matching output (supersedes the
+    # registered_node registration-only SHELL check).
+    assert result["court"]["gate_kind"] == "node_cooks"
     assert captured["tool"] == "brain.write"
     assert result["learn"]["fragment_id"] == "self_extend::node_type::selfext.area_filter"
 

@@ -53,6 +53,20 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
         "402",
         "permission_denied",
         "api key expired",
+        # ArchHub Cloud's managed proxy returns 402 with a typed
+        # `byo_key_required` body when the user has no managed quota and
+        # hasn't pasted a provider key. The stringified openai SDK error
+        # usually carries the bare "402" too, but match the worded form
+        # explicitly so a body whose numeric code got stripped is STILL
+        # classified as "skip to next provider" — never a fatal turn
+        # error that leaves the user with nothing while a local provider
+        # (claude_cli / codex / ollama) was sitting right there.
+        "byo_key_required",
+        "byo_key",
+        "byo key",
+        "bring your own key",
+        "no managed quota",
+        "quota_exhausted",
     )
     return any(n in s for n in needles)
 
@@ -729,6 +743,13 @@ class LLMRouter:
             "please log in", "please login", "logged out", "not logged in",
             "sign in", "signed out", "session expired", "token has expired",
             "token expired", "permission_denied", "isn't signed in",
+            # ArchHub Cloud 402 byo_key_required / no-managed-quota: the
+            # managed tier can't serve this user until they add a key or
+            # top up. Treat it like signed-out so the cloud is pre-skipped
+            # as primary for the rest of the process and a local provider
+            # takes over instead of re-trying the 402 every turn.
+            "402", "payment required", "byo_key_required", "byo_key",
+            "byo key", "bring your own key", "no managed quota",
         )
         return any(n in s for n in auth_needles)
 
@@ -1118,11 +1139,74 @@ class LLMRouter:
         # No preferred model available — fall back to whatever was first.
         return local[0]
 
+    # Local, no-credential providers in PREFERENCE order. These run on the
+    # user's own machine / subscription — no BYO key, no metered cloud quota,
+    # so they are the right answer whenever a cloud key is missing or
+    # byo-blocked. claude_cli first (tool-capable via the ArchHub MCP
+    # server), then codex_cli, then a running Ollama, then LM Studio.
+    _LOCAL_PROVIDERS = ("claude_cli", "codex_cli", "ollama", "lmstudio")
+
+    def _first_available_local(self, configured: set) -> Optional[tuple[str, str, str]]:
+        """Return (provider, model, note) for the highest-preference LOCAL
+        provider present in `configured`, or None if none are available.
+        This is the LOCAL-FIRST unblocker: when there is no usable BYO key
+        (every cloud provider is missing / blocked / byo-key-required) we
+        PREFER an available local provider instead of leaving the user with
+        a 402 and an empty bubble. ollama/lmstudio resolve a concrete model;
+        the CLIs take an alias the client maps."""
+        for p in self._LOCAL_PROVIDERS:
+            if p not in configured:
+                continue
+            if p == "claude_cli":
+                return ("claude_cli", "sonnet",
+                        "local Claude Code · subscription · no API credit")
+            if p == "codex_cli":
+                return ("codex_cli", "auto",
+                        "local Codex CLI · subscription · no API quota")
+            if p == "ollama":
+                m = self._pick_ollama_model("default")
+                if m:
+                    return ("ollama", m, f"local Ollama {m} · no API credit")
+                # Ollama running but no model resolved — skip to next local.
+                continue
+            if p == "lmstudio":
+                return ("lmstudio", "auto", "local LM Studio · no API credit")
+        return None
+
     def _route(self, history: list[dict], requested_model: str) -> tuple[str, str, str]:
         """Return (provider, model_name, note)."""
         if requested_model and requested_model != ROUTE_AUTO:
             provider, _, model = requested_model.partition(":")
-            return provider, model, ""
+            # LOCAL-FIRST GUARD (founder 2026-06-22 'composer gives nothing
+            # back'): an explicit pick is honoured AS LONG AS the provider is
+            # not already PROVEN unusable this session. The 402 dead-end was:
+            # a managed-cloud pick (archhub_cloud / relay) that has no managed
+            # quota / is byo-key-required answers a turn with HTTP 402 and the
+            # turn never fell through to a local provider. Once such a cloud
+            # 402s it is marked signed-out / blocked; on the NEXT turn the
+            # explicit pick still pointed straight back at it. So: when the
+            # named provider is BLOCKED or SIGNED-OUT, redirect to the first
+            # available local provider (claude_cli / codex / ollama / lmstudio)
+            # if there is one, else fall through to the auto heuristics (which
+            # also prefer local). A provider that is merely not-yet-probed but
+            # not proven-dead is still honoured verbatim (unchanged behaviour
+            # for a normal model-picker selection).
+            _dead = (self.is_provider_blocked(provider)
+                     or self.is_provider_signed_out(provider))
+            if _dead:
+                try:
+                    configured = set(self.configured_providers())
+                except Exception:
+                    configured = set()
+                local = self._first_available_local(configured)
+                if local is not None:
+                    prov, mdl, _note = local
+                    return (prov, mdl, f"{provider} unavailable → {_note}")
+                # No local available — fall through to auto routing so the
+                # cloud-fallback chain (and its honest error) takes over
+                # rather than dead-ending on the proven-dead explicit pick.
+            else:
+                return provider, model, ""
 
         # Auto-routing heuristics
         last_user_msg = next(
@@ -1245,7 +1329,13 @@ class LLMRouter:
                 if m:
                     return "ollama", m, f"auto: short → local Ollama {m}"
 
-        # Default
+        # Default. Direct BYO keys (anthropic/openai/google/openrouter) are
+        # user-configured + immediately usable, so they lead. But the MANAGED
+        # cloud paths (relay / archhub_cloud) are the 402 source — when the
+        # user has no managed quota / hasn't pasted a key, archhub_cloud
+        # answers a turn with HTTP 402 byo_key_required. So a running LOCAL
+        # provider (ollama / lmstudio) is preferred OVER those managed-cloud
+        # fallbacks: better a real local reply than a 402 round-trip.
         if "anthropic" in configured:
             return "anthropic", "claude-sonnet-4-6", "auto: default → Claude Sonnet 4.6"
         if "openrouter" in configured:
@@ -1254,14 +1344,17 @@ class LLMRouter:
             return "openai", "gpt-4o", "auto: default → GPT-4o"
         if "google" in configured:
             return "google", "gemini-2.5-pro", "auto: default → Gemini 2.5 Pro"
-        if "relay" in configured:
-            return "relay", "auto", "auto: default → firm relay"
-        if "archhub_cloud" in configured:
-            return "archhub_cloud", "auto", "auto: default → ArchHub Cloud"
+        # Local before managed-cloud (avoid the 402 when a local model exists).
         if "ollama" in configured:
             m = self._pick_ollama_model("default")
             if m:
                 return "ollama", m, f"auto: default → local Ollama {m}"
+        if "lmstudio" in configured:
+            return "lmstudio", "auto", "auto: default → local LM Studio"
+        if "relay" in configured:
+            return "relay", "auto", "auto: default → firm relay"
+        if "archhub_cloud" in configured:
+            return "archhub_cloud", "auto", "auto: default → ArchHub Cloud"
         # Last resort before giving up: local Claude Code on the user's
         # subscription. Reachable whenever the `claude` binary exists —
         # so a credit-exhausted API never leaves the user with nothing.

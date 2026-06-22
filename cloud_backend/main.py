@@ -436,6 +436,15 @@ def me(authorization: str | None = Header(None)) -> dict:
     }
 
 
+@app.get("/v1/models")
+def models(authorization: str | None = Header(None)) -> dict:
+    """OpenAI-compatible model list. Advertises the FREE DEFAULT model to
+    no-key / non-hosted workspaces so the client has a usable default
+    without any configuration (founder 2026-06-22 — zero-config free)."""
+    user = _require_user(authorization)
+    return proxy.list_models(user=user)
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: Request,
                 authorization: str | None = Header(None)):

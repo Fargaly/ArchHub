@@ -212,6 +212,81 @@ def test_accessibility_docstring_not_lying():
     )
 
 
+# ─────────────────── 9. Simplified LLM settings (2026-06-22) ────────────
+def test_providers_tab_shows_one_working_on_line(qapp):
+    """SIMPLIFY (founder 2026-06-22 'far too sophisticated'): the AI/Providers
+    default view leads with ONE auto-detected state line — 'Working on:
+    <provider/model>' — that is non-empty (Auto resolves to a real label)."""
+    from settings_dialog import ProvidersTab
+    tab = ProvidersTab(_ParentWithBridge(_RecordingBridge()))
+    assert hasattr(tab, "_working_label"), (
+        "ProvidersTab lost the 'Working on' state line."
+    )
+    assert tab._working_label.text().strip(), (
+        "The 'Working on' state line is empty — auto-detect must always "
+        "resolve a real label (defaults to ArchHub free cloud)."
+    )
+
+
+def test_working_on_defaults_to_free_cloud_when_nothing_configured(
+        qapp, monkeypatch):
+    """Zero-config: with no local CLI and no key, the auto-detect line falls
+    back to the bundled free cloud — never an error, never empty."""
+    import settings_dialog
+    monkeypatch.setattr(settings_dialog, "_detect_local_cli", lambda: "")
+    monkeypatch.setattr(settings_dialog, "_key_present",
+                        lambda *a, **k: False)
+    monkeypatch.setattr(settings_dialog, "load_setting",
+                        lambda *a, **k: "auto")
+    state = settings_dialog._resolve_working_on()
+    assert state["kind"] == "cloud"
+    assert "free cloud" in state["label"].lower()
+
+
+def test_working_on_prefers_local_cli(qapp, monkeypatch):
+    """Auto prefers a local CLI the user already has over the free cloud."""
+    import settings_dialog
+    monkeypatch.setattr(settings_dialog, "_detect_local_cli",
+                        lambda: "Claude CLI (local)")
+    monkeypatch.setattr(settings_dialog, "load_setting",
+                        lambda *a, **k: "auto")
+    state = settings_dialog._resolve_working_on()
+    assert state["kind"] == "local"
+    assert state["label"] == "Claude CLI (local)"
+
+
+def test_providers_inline_key_add_uses_real_store(qapp, monkeypatch):
+    """The ONE 'Add your own key' control routes through the SAME
+    secrets_store.save_api_key the full Keys & Secrets table uses (ONE-SYSTEM
+    — no parallel key store), not a no-op."""
+    import secrets_store
+    saved = {}
+    monkeypatch.setattr(secrets_store, "save_api_key",
+                        lambda slug, val: saved.__setitem__(slug, val))
+    from settings_dialog import ProvidersTab
+    tab = ProvidersTab(_ParentWithBridge(_RecordingBridge()))
+    tab._key_provider.setCurrentIndex(0)  # anthropic
+    tab._key_edit.setText("sk-test-123")
+    tab._on_add_key()
+    assert saved.get("anthropic") == "sk-test-123", (
+        "Inline 'Add your own key' did not persist through "
+        "secrets_store.save_api_key."
+    )
+
+
+def test_advanced_knobs_preserved_not_deleted(qapp):
+    """MAKE-IT-REAL: the sophisticated knobs are MOVED behind disclosures,
+    never deleted. The provider-stats banner, the show-local toggle, and the
+    inline key-add controls must all still exist on the tab."""
+    from settings_dialog import ProvidersTab
+    tab = ProvidersTab(_ParentWithBridge(_RecordingBridge()))
+    for attr in ("_banner", "_show_local", "_key_edit", "_key_provider"):
+        assert hasattr(tab, attr), (
+            f"ProvidersTab lost '{attr}' — an advanced knob was deleted "
+            "instead of moved behind the Advanced disclosure."
+        )
+
+
 # ─────────────────── 5. Brain Subscribe WIRED ──────────────────────────
 def test_brain_subscribe_calls_real_mcp_tool(qapp, monkeypatch):
     """BrainTab Subscribe must call the REAL daemon tool

@@ -110,19 +110,35 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
     actor = "company" if user.get("current_company_id") else "user"
 
     if ai_mode != "hosted":
-        # byo_key (or anything unrecognised → default byo_key): decline
-        # hosted inference, no credit touched. The client uses its own
-        # key. This is the "byo_key → no hosted limit, AI cost $0" path.
+        # byo_key (or anything unrecognised → default byo_key). Historically
+        # this returned a 402 byo_key_required and the user was stuck until
+        # they pasted a key. NEW (founder 2026-06-22): serve a strong FREE
+        # model BY DEFAULT via our cloud so the composer just works, zero
+        # config — no credit touched, no key needed by the user. The free
+        # provider's key lives server-side (one key serves everyone).
+        #
+        # The free tier is still metered against the per-actor `msg_used`
+        # fair-use ceiling (the quota gate above already ran), but never
+        # touches hosted credits. BYO + hosted paths are untouched and win
+        # when the user configures them.
+        if config.free_default_available():
+            return _serve_free_default(user=user, body=body)
+        # Free tier not configured (no provider key / switch off): fall back
+        # to the honest BYO message so a missing free key never breaks the
+        # box — BYO still works, and the founder funds the free key to flip
+        # the zero-config default on.
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "byo_key_required",
                 "ai_mode": ai_mode,
                 "plan":  plan,
+                "free_default": "unavailable",
                 "reason": ("This workspace runs in BYO-key mode — paste "
                            "your own provider key in ArchHub → Settings → "
                            "LLM, or switch the workspace to Hosted AI to "
-                           "use credits."),
+                           "use credits. (The free default model is not "
+                           "configured on this server yet.)"),
                 "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
             },
         )
@@ -253,6 +269,98 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
                                   "Cache-Control": "no-cache",
                                   "X-Accel-Buffering": "no",
                               })
+
+
+# ---------------------------------------------------------------------------
+def list_models(*, user: dict) -> dict:
+    """OpenAI-compatible model list for /v1/models.
+
+    Always advertises the FREE DEFAULT model when it's available + the
+    workspace is not in hosted mode — so a no-key client sees a usable
+    model (not an empty list / 402) and selects it by default. Hosted
+    workspaces additionally see the configured upstream models.
+    """
+    ai_mode = db.ai_mode_for_actor(user)
+    models: list[dict] = []
+    free_on = (ai_mode != "hosted") and config.free_default_available()
+    if free_on:
+        models.append({
+            "id": config.ARCHHUB_FREE_MODEL,
+            "object": "model",
+            "owned_by": "archhub-free",
+            "archhub_tier": "free-default",
+            "archhub_default": True,
+        })
+    if ai_mode == "hosted":
+        for m in _COST_PER_MTOK_USD:
+            models.append({"id": m, "object": "model",
+                            "owned_by": "archhub-hosted",
+                            "archhub_tier": "hosted"})
+    return {"object": "list", "data": models,
+            "archhub_free_default": free_on,
+            "archhub_default_model": (config.ARCHHUB_FREE_MODEL
+                                      if free_on else None)}
+
+
+# ---------------------------------------------------------------------------
+def _serve_free_default(*, user: dict, body: dict) -> StreamingResponse:
+    """Serve the FREE DEFAULT model via our cloud (zero-config, no key).
+
+    Proxies to a free OpenAI-compatible endpoint (Groq / OpenRouter /
+    Google free tier — see config.FREE_PROVIDER) using a server-side key.
+    No hosted credit is touched; the free tier is metered ONLY against the
+    legacy per-actor `msg_used` fair-use counter (the quota gate already
+    ran in chat_completions). The user pays nothing and configures nothing.
+    """
+    # Force the server-chosen free model — the client's requested model
+    # (often "auto" or a paid model id) is overridden so a no-key user can
+    # never aim our free key at an arbitrary/expensive upstream model.
+    model = config.ARCHHUB_FREE_MODEL
+    out_body = {**body, "model": model}
+    upstream = _stream_free(model, out_body)
+
+    async def iter_with_meter() -> AsyncIterator[bytes]:
+        async for chunk in upstream:
+            yield chunk
+        # End-of-stream: bump the fair-use counter only. NO hosted credit.
+        try:
+            db.increment_usage_for_actor(user, 1)
+        except Exception:
+            pass
+        try:
+            db.log_usage(user["id"], model=f"free:{model}",
+                          input_toks=0, output_toks=0, cost_micros=0)
+        except Exception:
+            pass
+
+    return StreamingResponse(iter_with_meter(),
+                              media_type="text/event-stream",
+                              headers={
+                                  "Cache-Control": "no-cache",
+                                  "X-Accel-Buffering": "no",
+                                  "X-ArchHub-Tier": "free-default",
+                                  "X-ArchHub-Model": model,
+                              })
+
+
+async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
+    """Forward to the configured free OpenAI-compatible provider."""
+    body = {**body, "model": model, "stream": True}
+    key = config.free_provider_key()
+    url = f"{config.FREE_PROVIDER_BASE_URL}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    # OpenRouter recommends (optional) attribution headers; harmless else.
+    if config.FREE_PROVIDER == "openrouter":
+        headers["HTTP-Referer"] = config.PUBLIC_URL
+        headers["X-Title"] = "ArchHub"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with client.stream(
+            "POST", url, headers=headers, json=body,
+        ) as resp:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
 
 
 # ---------------------------------------------------------------------------

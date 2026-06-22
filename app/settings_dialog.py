@@ -338,6 +338,27 @@ def _groupbox_with_chip(title: str, scope: str = "") -> QGroupBox:
     return grp
 
 
+def _make_disclosure(title: str, *, expanded: bool = False):
+    """A collapsed-by-default 'disclosure' group: a checkable QGroupBox whose
+    body widget shows only when the box is ticked. Returns (group, body_layout)
+    so the caller fills `body_layout` with the advanced controls. Keeps the
+    sophisticated knobs present (MAKE-IT-REAL) while the default view stays
+    minimal — they're one click away under the disclosure, never deleted."""
+    grp = QGroupBox(title)
+    grp.setCheckable(True)
+    grp.setChecked(bool(expanded))
+    body = QWidget()
+    body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(0, 0, 0, 0)
+    body_layout.setSpacing(8)
+    wrap = QVBoxLayout(grp)
+    wrap.setContentsMargins(12, 16, 12, 12)
+    wrap.addWidget(body)
+    body.setVisible(bool(expanded))
+    grp.toggled.connect(body.setVisible)
+    return grp, body_layout
+
+
 def _run_js_best_effort(parent, js: str) -> bool:
     """Walk up the parent chain to the bridge and call `run_js(js)` if the
     slot exists. Returns True if the call was dispatched, False if no
@@ -572,6 +593,86 @@ def _key_present(provider: str, env_var: str) -> bool:
     return bool(env_var and os.environ.get(env_var, ""))
 
 
+# ── Zero-config "Working on:" auto-detect ────────────────────────────────
+# Founder demand 2026-06-22: the LLM settings were "far too sophisticated".
+# The DEFAULT view must answer ONE question — "what AI am I using right
+# now?" — with zero choices to make. This helper resolves that single line
+# from what's already on the machine, in the same priority order the router
+# itself prefers (a local CLI/model the user already has → their own key →
+# the bundled free cloud). It is intentionally CHEAP (no network probe, no
+# blocking provider scan) so it never freezes the dialog: file/CLI presence
+# + already-resolved key sources only. The model picker (Advanced) is the
+# place to override; this is the honest read-out of the auto choice.
+_LLM_KEY_LABELS = {
+    "openrouter": "OpenRouter",
+    "anthropic":  "Anthropic",
+    "openai":     "OpenAI",
+    "google":     "Google",
+}
+_LLM_KEY_ENVS = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "anthropic":  "ANTHROPIC_API_KEY",
+    "openai":     "OPENAI_API_KEY",
+    "google":     "GOOGLE_API_KEY",
+}
+
+
+def _detect_local_cli() -> str:
+    """Return a friendly label for a local AI CLI/app the user already has
+    (Claude CLI, Codex, Gemini, Ollama, LM Studio), or '' if none is
+    cheaply detectable. Filesystem presence only — no network."""
+    import shutil
+    home = Path(os.path.expanduser("~"))
+    # Claude Code / CLI — config dir or the `claude` binary on PATH.
+    if (home / ".claude").is_dir() or shutil.which("claude"):
+        return "Claude CLI (local)"
+    if (home / ".codex").is_dir() or shutil.which("codex"):
+        return "Codex CLI (local)"
+    if (home / ".gemini").is_dir() or shutil.which("gemini"):
+        return "Gemini CLI (local)"
+    if shutil.which("ollama") or (home / ".ollama").is_dir():
+        return "Ollama (local)"
+    return ""
+
+
+def _resolve_working_on() -> dict:
+    """Resolve the single 'Working on:' state line for the default view.
+
+    Returns {'label': str, 'detail': str, 'kind': 'local'|'key'|'cloud'}.
+    Priority mirrors the router's own preference: a pinned non-auto model
+    wins (the user chose it); else a local CLI/model already installed;
+    else the user's own provider key; else the bundled ArchHub free cloud.
+    """
+    # 1) An explicit per-machine pin (set in Advanced → Default model). If the
+    #    founder pinned something other than Auto, that IS what they're on.
+    try:
+        pinned = (load_setting("default_model") or "auto").strip()
+    except Exception:
+        pinned = "auto"
+    if pinned and pinned.lower() not in ("", "auto"):
+        provider = pinned.partition(":")[0] or pinned
+        nice = _LLM_KEY_LABELS.get(provider, provider.capitalize())
+        return {"label": f"{nice} — {pinned}", "kind": "key",
+                "detail": "You pinned this model in Advanced › Default model."}
+
+    # 2) Auto. Resolve what Auto will actually reach, cheapest-first.
+    local = _detect_local_cli()
+    if local:
+        return {"label": local, "kind": "local",
+                "detail": "ArchHub found a local AI on your machine and uses "
+                          "it automatically — private and free."}
+
+    for slug, env in _LLM_KEY_ENVS.items():
+        if _key_present(slug, env):
+            return {"label": f"{_LLM_KEY_LABELS[slug]} (your key)", "kind": "key",
+                    "detail": "Using the key you added. Unlocks that "
+                              "provider's full model range."}
+
+    return {"label": "ArchHub free cloud", "kind": "cloud",
+            "detail": "No setup needed — ArchHub routes you to a free "
+                      "cloud model. Add your own key below for more power."}
+
+
 # ── Tab: General ─────────────────────────────────────────────────────────
 class GeneralTab(QWidget):
     """Profile (name / email / firm) + theme + default model."""
@@ -625,9 +726,14 @@ class GeneralTab(QWidget):
         af.addRow("Language", lang_lbl)
         outer.addWidget(appe)
 
-        modg = QGroupBox("Default model")
-        mf = QVBoxLayout(modg); mf.setSpacing(8); mf.setContentsMargins(12, 18, 12, 12)
-        hint = QLabel("Model new sessions start in. Switch per-session with "
+        # Default model — collapsed by default (zero required choice; Auto is
+        # the default and ArchHub auto-picks). Open the disclosure only to pin
+        # a specific model. The picker itself (self._model) is unchanged so
+        # _load()/_save() keep working; it just lives under a disclosure now.
+        modg, mf = _make_disclosure("Default model (optional — defaults to Auto)",
+                                    expanded=False)
+        hint = QLabel("Model new sessions start in. Leave on <b>Auto</b> to let "
+                       "ArchHub pick. Switch per-session any time with "
                        "<kbd>Ctrl+M</kbd>.")
         hint.setObjectName("muted"); hint.setWordWrap(True)
         mf.addWidget(hint)
@@ -776,7 +882,17 @@ class GeneralTab(QWidget):
 
 # ── Tab: Providers ───────────────────────────────────────────────────────
 class ProvidersTab(QWidget):
-    """All LLM providers — sign-in state + connection counts."""
+    """AI — the simplified, zero-config LLM surface.
+
+    Founder demand 2026-06-22 ("the current LLM settings are far too
+    sophisticated"): the DEFAULT view is now just ONE state line —
+    "Working on: <auto-detected provider/model>" — plus ONE collapsed
+    "Add your own key for better models". Every sophisticated knob the
+    old tab carried (provider-count banner, show-local toggle, the
+    Keys & Secrets pointer, the default-model pointer) is PRESERVED but
+    moved behind an "Advanced" disclosure (MAKE-IT-REAL — nothing
+    deleted). Default = Auto; zero required choices.
+    """
 
     def __init__(self, parent_dialog: "SettingsDialog"):
         super().__init__()
@@ -787,81 +903,123 @@ class ProvidersTab(QWidget):
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(10)
 
-        _add_title(outer, "Providers",
-                    "Which AI providers you've connected, and their live "
-                    "status. Key management now lives in one place — "
-                    "<b>Connections › Keys &amp; Secrets</b>.",
+        _add_title(outer, "AI",
+                    "ArchHub picks the best AI for each task automatically. "
+                    "Nothing to set up.",
                     scope="USER")
 
-        # Status banner — uses bridge.get_provider_stats.
+        # ── THE one state line: "Working on: <auto-detected>" ────────────
+        self._working_card = QFrame()
+        self._working_card.setObjectName("settingsCard")
+        self._working_card.setStyleSheet(
+            f"QFrame#settingsCard {{ background: {TOKENS['card']}; "
+            f"border: 1px solid {TOKENS['accent']}; border-radius: 10px; }}"
+        )
+        wc = QVBoxLayout(self._working_card)
+        wc.setContentsMargins(16, 14, 16, 14); wc.setSpacing(4)
+        cap = QLabel("WORKING ON")
+        cap.setObjectName("mono")
+        cap.setStyleSheet(f"color:{TOKENS['muted']}; letter-spacing:1px;")
+        wc.addWidget(cap)
+        self._working_label = QLabel("…")
+        self._working_label.setStyleSheet(
+            "font-size:18px; font-weight:600;")
+        wc.addWidget(self._working_label)
+        self._working_detail = QLabel("")
+        self._working_detail.setObjectName("muted")
+        self._working_detail.setWordWrap(True)
+        wc.addWidget(self._working_detail)
+        outer.addWidget(self._working_card)
+
+        # ── ONE optional collapsed disclosure: add your own key ──────────
+        key_grp, key_body = _make_disclosure(
+            "Add your own key for better models", expanded=False)
+        khint = QLabel(
+            "Optional. Paste a key from Anthropic, OpenAI, Google or "
+            "OpenRouter to unlock that provider's full model range. "
+            "Stored on this machine only."
+        )
+        khint.setObjectName("muted"); khint.setWordWrap(True)
+        key_body.addWidget(khint)
+        krow = QHBoxLayout(); krow.setSpacing(8)
+        self._key_provider = QComboBox()
+        for slug in ("anthropic", "openai", "google", "openrouter"):
+            self._key_provider.addItem(_LLM_KEY_LABELS[slug], slug)
+        krow.addWidget(self._key_provider)
+        self._key_edit = QLineEdit()
+        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_edit.setPlaceholderText("sk-…  or  op://vault/item/field")
+        krow.addWidget(self._key_edit, 1)
+        add_btn = QPushButton("Add key"); add_btn.setObjectName("primary")
+        add_btn.clicked.connect(self._on_add_key)
+        krow.addWidget(add_btn)
+        key_body.addLayout(krow)
+        outer.addWidget(key_grp)
+
+        # ── "Advanced" disclosure — every sophisticated knob, preserved ──
+        adv_grp, adv = _make_disclosure("Advanced", expanded=False)
+
+        # Default-model pointer (the picker itself lives in General; keep the
+        # founder's muscle-memory + a direct jump).
+        dm_hint = QLabel(
+            "<b>Default model</b> — pin a specific model for new sessions "
+            "instead of Auto. Lives in <b>General › Default model</b>; "
+            "switch per-session any time with <kbd>Ctrl+M</kbd>."
+        )
+        dm_hint.setObjectName("muted"); dm_hint.setWordWrap(True)
+        adv.addWidget(dm_hint)
+        dm_btn = QPushButton("Open General › Default model")
+        dm_btn.clicked.connect(lambda: self._parent_dlg.focus_section("general"))
+        dm_row = QHBoxLayout(); dm_row.addWidget(dm_btn); dm_row.addStretch(1)
+        adv.addLayout(dm_row)
+
+        # Provider-count banner — uses bridge.get_provider_stats.
         self._banner = QLabel("")
         self._banner.setObjectName("mono")
-        outer.addWidget(self._banner)
+        adv.addWidget(self._banner)
 
-        # No per-provider key rows here anymore — anthropic/openai/etc keys
-        # are managed in the comprehensive Keys & Secrets table (SecretsTab),
-        # so this tab stops duplicating key management. `self._rows` stays an
-        # empty list so refresh()'s `for row in self._rows` is a safe no-op.
+        # `self._rows` kept (empty) so refresh()'s loop is a safe no-op —
+        # per-provider key rows live in the single Keys & Secrets table.
         self._rows: list = []
 
-        # Prototype "Provider keys" card (settings-redesign-2026-06-02.html
-        # line 226): one row that routes to the single key surface.
-        keys_card = QFrame()
-        keys_card.setObjectName("settingsCard")
-        keys_card.setStyleSheet(
-            f"QFrame#settingsCard {{ background: {TOKENS['card']}; "
-            f"border: 1px solid {TOKENS['border']}; border-radius: 8px; }}"
-        )
-        kc = QHBoxLayout(keys_card)
-        kc.setContentsMargins(14, 10, 14, 10)
-        kc.setSpacing(12)
-        kcol = QVBoxLayout(); kcol.setSpacing(2)
-        klabel = QLabel("Manage API keys")
-        klabel.setStyleSheet("font-weight: 600;")
-        kdesc = QLabel("Now one place — see Connections › Keys & Secrets")
-        kdesc.setObjectName("muted"); kdesc.setWordWrap(True)
-        kcol.addWidget(klabel); kcol.addWidget(kdesc)
-        kc.addLayout(kcol, 1)
-        keys_btn = QPushButton("Go to Keys && Secrets")
-        keys_btn.setObjectName("primary")
+        # Manage-all-keys pointer to the comprehensive Secrets table.
+        keys_btn = QPushButton("Manage all keys (Connections › Keys && Secrets)")
         keys_btn.clicked.connect(
-            lambda: self._parent_dlg.focus_section("secrets")
-        )
-        kc.addWidget(keys_btn)
-        outer.addWidget(keys_card)
+            lambda: self._parent_dlg.focus_section("secrets"))
+        kb_row = QHBoxLayout(); kb_row.addWidget(keys_btn); kb_row.addStretch(1)
+        adv.addLayout(kb_row)
 
-        # Trailing toggle: show local Ollama / LM Studio models in the picker.
-        # MAKE-IT-REAL: this used to read/write `show_local_models`, a setting
-        # NOTHING consumes any more — the model picker (chat_window._populate*)
-        # was changed to read the INVERTED `hide_local_models` flag (default
-        # False = local models show) after users kept asking "where's my
-        # qwen/llama?". So the old checkbox was a dead write. It is now bound
-        # to the REAL `hide_local_models` flag with inverted semantics:
-        # checked here (show) == hide_local_models False. Persisted on toggle
-        # and re-read by the picker on its next repaint (DEFINITION-OF-SHIPPED:
-        # the control takes effect + the user sees the local models appear).
+        # Show-local toggle — REAL `hide_local_models` flag the model picker
+        # honours (inverted: checked == show == hide False). Preserved.
         self._show_local = QCheckBox(
             "Show local Ollama / LM Studio models in the picker  "
-            "(advanced — local inference is slower than cloud)"
+            "(local inference is slower than cloud)"
         )
         self._show_local.setChecked(not bool(load_setting("hide_local_models")))
         self._show_local.toggled.connect(
-            lambda v: self._on_toggle_local(bool(v))
-        )
-        outer.addWidget(self._show_local)
+            lambda v: self._on_toggle_local(bool(v)))
+        adv.addWidget(self._show_local)
 
-        # Refresh row.
-        rrow = QHBoxLayout()
-        rrow.addStretch(1)
+        # Refresh row (re-runs auto-detect + provider counts).
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
-        rrow.addWidget(refresh)
-        outer.addLayout(rrow)
+        rrow = QHBoxLayout(); rrow.addStretch(1); rrow.addWidget(refresh)
+        adv.addLayout(rrow)
 
+        outer.addWidget(adv_grp)
         outer.addStretch(1)
         self.refresh()
 
     def refresh(self) -> None:
+        # 1) The one state line — auto-detected, cheap (no network probe).
+        try:
+            state = _resolve_working_on()
+        except Exception:
+            state = {"label": "ArchHub free cloud", "detail": "", "kind": "cloud"}
+        self._working_label.setText(state.get("label", "ArchHub free cloud"))
+        self._working_detail.setText(state.get("detail", ""))
+
+        # 2) Advanced: provider counts (safe no-op when collapsed/headless).
         for row in self._rows:
             row.refresh()
         stats = _bridge_call(self._parent_dlg, "get_provider_stats",
@@ -873,13 +1031,39 @@ class ProvidersTab(QWidget):
             (f"  ·  {blocked} blocked" if blocked else "")
         )
 
+    def _on_add_key(self) -> None:
+        """Save the pasted key for the chosen provider (inline mini key-add).
+        Routes through the SAME secrets_store.save_api_key the full Keys &
+        Secrets table uses (ONE-SYSTEM — no parallel key store), accepts a
+        raw token or an op:// reference, then re-runs auto-detect so the
+        'Working on:' line reflects the new key immediately."""
+        slug = self._key_provider.currentData() or "anthropic"
+        val = (self._key_edit.text() or "").strip()
+        if not val:
+            QMessageBox.warning(self, "Add key",
+                                 "Paste a key or op:// reference first.")
+            return
+        try:
+            from secrets_store import save_api_key
+            save_api_key(slug, val)
+        except Exception as ex:
+            QMessageBox.warning(self, "Add key", f"Save failed: {ex}")
+            return
+        self._key_edit.clear()
+        QMessageBox.information(
+            self, "Add key",
+            f"{_LLM_KEY_LABELS.get(slug, slug)} key saved on this machine.")
+        self.refresh()
+        try:
+            self._parent_dlg.notify_changed()
+        except Exception:
+            pass
+
     def _on_toggle_local(self, show: bool) -> None:
         """Persist the REAL `hide_local_models` flag the model picker honours
         (inverted: 'show' checked == hide False) and nudge the running app to
         repopulate its picker so the change is visible without a relaunch."""
         save_setting("hide_local_models", not bool(show))
-        # Best-effort live refresh: clear router client cache + ask the parent
-        # to rebuild the model picker (the same nudge a provider sign-in fires).
         try:
             self._parent_dlg.notify_changed()
         except Exception:

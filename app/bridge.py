@@ -719,6 +719,7 @@ class ArchHubBridge(QObject):
     connector_op_done = pyqtSignal(str)             # (result_json) — a connector op finished
     param_options_ready = pyqtSignal(str)           # (json) — dynamic dropdown options resolved
     node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
+    widgets_changed = pyqtSignal()                  # () — agent UI widget registry changed (built / reverted)
     # Brain #32 — emitted when a brain_export_dataset worker finishes. Payload
     # is the brain.dataset_export manifest JSON ({ok,row_count,files,...}) with
     # `request_id` stamped in so the Brain view can match its pending click.
@@ -6527,6 +6528,14 @@ class ArchHubBridge(QObject):
                 self.self_extend_done.emit(_safe_json(result))
             except Exception:
                 pass
+            # UI RUNG: a create_ui_widget build (or its AUTO-REVERT) changed the
+            # widget registry → tell the JSX to re-pull get_ui_widgets so the
+            # sandboxed host mounts the new widget (or drops a reverted one).
+            try:
+                if tool == "create_ui_widget":
+                    self.widgets_changed.emit()
+            except Exception:
+                pass
 
         threading.Thread(target=_runner, daemon=True,
                          name="ArchHubSelfExtend").start()
@@ -6784,6 +6793,59 @@ class ArchHubBridge(QObject):
             return _safe_json(out)
         except Exception as ex:
             return _safe_json({"error": str(ex)})
+
+    # ─── UI RUNG — agent-authored free-form UI widgets ────────────────
+    # Founder steer: "ALLOW AGENT FREE-FORM UI CODE BUT PUT GUARDRAILS AGAINST
+    # BAD EDITS." A create_ui_widget build persists a widget (component code +
+    # bound slots) to the LOCALAPPDATA widgets registry (app/widgets.py). The JSX
+    # AgentWidgetHost reads this slot on boot + on widgets_changed and renders
+    # each widget inside its OWN error boundary — a crashing widget shows a
+    # fallback, NEVER blanks the app. The court (ui_renders) + AUTO-REVERT gate
+    # what lands; this slot just serves the registry to the host (read-only).
+    @pyqtSlot(result=str)
+    def get_ui_widgets(self) -> str:
+        """Every agent-authored UI widget spec, for the sandboxed host registry.
+        Returns a list of {id,title,description,code,slots,placement}. Reused by
+        the JSX host (AgentWidgetHost) which renders each inside an error
+        boundary. Bad files are skipped server-side (never block the rest)."""
+        try:
+            import widgets as _w
+            return _safe_json(_w.list_widgets() or [])
+        except Exception:
+            # Never echo raw exception text to the client (CodeQL: information
+            # exposure). An empty registry is the safe, honest fallback.
+            try:
+                import traceback as _tb
+                print("[get_ui_widgets] " + _tb.format_exc())
+            except Exception:
+                pass
+            return _safe_json([])
+
+    # MANUAL undo of an applied (green) UI widget — the user removes a widget
+    # they no longer want. SAME path-jailed primitive the AUTO-REVERT uses
+    # (agents.self_extend.revert_ui_widget → widgets.delete_widget, commonpath-
+    # confined to the widgets dir). SYNCHRONOUS (a tiny os.unlink). Emits
+    # widgets_changed so the host drops the widget immediately.
+    @pyqtSlot(str, result=str)
+    def revert_ui_widget(self, widget_id: str) -> str:
+        """Unregister an agent UI widget by id (path-jailed). Returns
+        {ok, removed, id} or {ok:False, error}."""
+        try:
+            from agents.self_extend import revert_ui_widget as _revert
+            res = _revert(widget_id or "")
+            try:
+                if res.get("ok"):
+                    self.widgets_changed.emit()
+            except Exception:
+                pass
+            return _safe_json(res)
+        except Exception:
+            try:
+                import traceback as _tb
+                print("[revert_ui_widget] " + _tb.format_exc())
+            except Exception:
+                pass
+            return _safe_json({"ok": False, "error": "revert failed"})
 
     # ─── AgDR-0028 — library item actions (delete + bulk clear) ─────
 

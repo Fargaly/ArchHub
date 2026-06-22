@@ -1596,6 +1596,10 @@ const LM_CONNECTORS = window.__archhub_LM_CONNECTORS = window.__archhub_LM_CONNE
 const LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR || [];
 // User-minted custom nodes — AI-designed via Node Smith or hand-built.
 const LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES || [];
+// Agent-authored free-form UI widgets (the UI RUNG). Each is {id,title,
+// description,code,slots,placement}; the sandboxed AgentWidgetHost renders each
+// inside its OWN error boundary so a bad widget can never blank the app.
+const LM_UI_WIDGETS = window.__archhub_LM_UI_WIDGETS = window.__archhub_LM_UI_WIDGETS || [];
 
 // ─── Shared wire-integrity helpers (ENGINEERING mandate, founder 2026-06-02:
 // "WHERE ARE THE WIRES?" — fix the CLASS, not the instance).
@@ -3080,7 +3084,7 @@ const StudioLM = () => {
         // FIRST, before the canvas gate/replay below (which has no branch for a
         // build tool → would silently drop it). ONE-SYSTEM: reuses the existing
         // self_extend slot + the SAME approval queue; no parallel build path.
-        const _BUILD_TOOLS = ['create_node_type', 'create_connector'];
+        const _BUILD_TOOLS = ['create_node_type', 'create_connector', 'create_ui_widget'];
         if (_BUILD_TOOLS.indexOf(tool) >= 0) {
           // USER-AGENCY: a build is a WRITE. In Plan/Auto it must clear the
           // EXISTING approval queue before it runs. The backend already gated it
@@ -3108,7 +3112,8 @@ const StudioLM = () => {
                   raw: step.text || '', focusId: focusId, attachments: [],
                   summary: (a && a.approval && a.approval.reason)
                     || `Build + court-verify ${tool === 'create_connector'
-                          ? 'connector' : 'node'}: ${_cap}`,
+                          ? 'connector' : tool === 'create_ui_widget'
+                          ? 'UI widget' : 'node'}: ${_cap}`,
                   cmd: 'self_extend', mode: _mode, ambient: _ambient,
                 },
               }));
@@ -3425,11 +3430,20 @@ const StudioLM = () => {
             why = 'self-extension did not complete';
           }
         }
+        // UI RUNG guardrail: a red ui_renders verdict AUTO-REVERTS the widget so
+        // the app is restored. Name it so the founder sees the guardrail fired
+        // ("auto-reverted: <reason>") rather than a bare court refusal.
+        if (r.auto_reverted) {
+          why = `auto-reverted (widget removed, app restored) · ${why}`;
+        }
         try {
           window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
             detail: { msg: `self-extend · ${why}`, kind:'err' },
           }));
         } catch (e) {}
+        // Whether reverted or just refused, the widget registry may have changed
+        // → refresh the host so a removed widget drops from view immediately.
+        try { window.dispatchEvent(new CustomEvent('lm-agent-widgets-refresh')); } catch (e) {}
       }
     };
     // Universal self-extension ('X' mode) — ONE leaf judged by the ROMA court.
@@ -3453,6 +3467,12 @@ const StudioLM = () => {
     wire('agent_step_done', onAgentStep);
     wire('self_extend_done', onSelfExtendDone);   // SEAM 1→4 receipt → toast
     wire('court_verdict',   onCourtVerdict);      // self-extend per-leaf verdict → CourtVerdictQueue
+    // UI RUNG: the widget registry changed (a create_ui_widget build landed or
+    // was auto-reverted) → tell the always-mounted AgentWidgetHost to re-pull
+    // get_ui_widgets so the sandboxed host mounts/drops the widget live.
+    wire('widgets_changed', () => {
+      try { window.dispatchEvent(new CustomEvent('lm-agent-widgets-refresh')); } catch (e) {}
+    });
     wire('connector_op_done', onConnectorOpDone);
     wire('param_options_ready', onParamOptions);
     wire('node_created',   onNodeCreated);
@@ -4137,6 +4157,10 @@ const StudioLM = () => {
       <RailDrawerHost _themeBump={paletteBump}/>
       <ApprovalQueue _themeBump={paletteBump}/>
       <CourtVerdictQueue _themeBump={paletteBump}/>
+      {/* UI RUNG: the sandboxed host for agent-authored free-form widgets. Each
+          widget renders inside its own error boundary — a bad widget shows a
+          fallback, never blanks the app shell. */}
+      <AgentWidgetHost _themeBump={paletteBump}/>
       <SelfHealInspector _themeBump={paletteBump}/>
       <GlobalToast _themeBump={paletteBump}/>
       <UpdateNotifier/>
@@ -19331,6 +19355,175 @@ const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint k
                   fontFamily:LM.mono, fontSize:10,
                 }}>{r.undone ? 'Undone' : 'Undo'}</button>
             )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ───────────────────────── THE UI RUNG — sandboxed agent widget host ────────
+// Founder steer: "ALLOW AGENT FREE-FORM UI CODE BUT PUT GUARDRAILS AGAINST BAD
+// EDITS." The agent authors REAL free-form widget code (create_ui_widget →
+// app/widgets.py registry, court-gated on 'ui_renders', auto-reverted on red).
+// It is rendered ONLY here, inside a sandboxed, error-boundaried host:
+//   * AgentWidgetBoundary — a per-widget React error boundary. A widget THROW
+//     during render is CAUGHT → a fallback chip (data-testid agent-widget-
+//     fallback-<id>), and the throw NEVER propagates to the app-boot
+//     ErrorBoundary, so the app shell stays painted. THIS containment is what
+//     makes free-form widget code safe (the founder's guardrail, in the UI).
+//   * AgentWidget — compiles the widget's free-form body via `new Function(
+//     'React','bridge','api', code)` and renders its returned element inside an
+//     ISOLATED container. bridge = async slot caller (slot-allowlisted to the
+//     widget's declared `slots`); api = small safe helpers. The body MUST set
+//     data-testid on its root to the widget id so the court can assert it.
+// The host is an always-mounted side panel (opened via lm-agent-widgets-open),
+// reading the LM_UI_WIDGETS registry (re-pulled on widgets_changed).
+
+class AgentWidgetBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    try { console.error('[archhub] agent widget crash:', this.props.wid, error, info); } catch (e) {}
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    const wid = this.props.wid || 'widget';
+    // The widget threw — show a contained fallback. The app shell is untouched
+    // (this boundary stopped the throw). The court's ui_renders probe reads this
+    // testid as "widget threw — caught" → a refute on `rendered`, NOT on
+    // `app_alive`, so a thrown widget is auto-reverted but never blanks the app.
+    return (
+      <div data-testid={'agent-widget-fallback-' + wid}
+        style={{
+          padding:'12px 14px', border:`1px solid ${LM.err}`, borderRadius:8,
+          background:LM.bgSoft, color:LM.inkSoft, fontFamily:LM.mono, fontSize:11,
+        }}>
+        <div style={{ color:LM.err, marginBottom:4 }}>widget “{wid}” failed to render</div>
+        <div style={{ color:LM.inkMuted, fontSize:10 }}>
+          Caught by its sandbox — the app is unaffected. This build will be reverted.
+        </div>
+      </div>
+    );
+  }
+}
+
+// Compile + render ONE free-form widget. Kept tiny + pure so a re-render is cheap.
+const AgentWidget = ({ w }) => {
+  const wid = (w && w.id) || 'widget';
+  // A slot-allowlisted async bridge caller: a widget may only call the bridge
+  // slots it DECLARED (w.slots). An undeclared slot rejects — the widget cannot
+  // reach arbitrary backend surface (least-privilege; the registry is the
+  // contract). Reads go through the SAME bridgeAsync the rest of the app uses.
+  const allow = new Set((w && w.slots) || []);
+  const bridge = React.useCallback((slot, ...args) => {
+    if (!allow.has(slot)) {
+      return Promise.reject(new Error('widget slot not allowed: ' + slot));
+    }
+    return bridgeAsync(slot, ...args);
+  }, [wid]);
+  const api = React.useMemo(() => ({
+    LM, wid,
+    toast: (msg, kind) => {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+        { detail:{ msg: String(msg||''), kind: kind||'info' } })); } catch (e) {}
+    },
+  }), [wid]);
+  // Compile the free-form body ONCE per code string. A compile error is thrown
+  // up to AgentWidgetBoundary (→ fallback), never crashing the host.
+  const render = React.useMemo(() => {
+    const code = (w && w.code) || 'return null;';
+    // eslint-disable-next-line no-new-func
+    return new Function('React', 'bridge', 'api', code);
+  }, [w && w.code]);
+  // Run the body. Any throw propagates to the boundary (which is its parent).
+  const el = render(React, bridge, api);
+  return (
+    <div data-testid={'agent-widget-' + wid}
+      data-widget-id={wid}
+      style={{ contain:'layout paint', position:'relative' }}>
+      {el}
+    </div>
+  );
+};
+
+const AgentWidgetHost = ({ _themeBump }) => {   // _themeBump: theme-repaint key only
+  const [open, setOpen] = React.useState(false);
+  const [widgets, setWidgets] = React.useState(() =>
+    Array.isArray(window.__archhub_LM_UI_WIDGETS) ? window.__archhub_LM_UI_WIDGETS.slice() : []);
+  const pull = React.useCallback(async () => {
+    try {
+      const list = await bridgeAsync('get_ui_widgets');
+      if (Array.isArray(list)) {
+        try { window.__archhub_LM_UI_WIDGETS = list; } catch (e) {}
+        setWidgets(list.slice());
+      }
+    } catch (e) {}
+  }, []);
+  React.useEffect(() => {
+    pull();
+    const onOpen = () => { setOpen(true); pull(); };
+    const onRefresh = () => { pull(); };
+    window.addEventListener('lm-agent-widgets-open', onOpen);
+    window.addEventListener('lm-agent-widgets-refresh', onRefresh);
+    // The bridge widgets_changed signal is re-broadcast as this window event by
+    // the StudioLM root signal-wiring (mirrors skills_changed → lm-skills-refresh).
+    return () => {
+      window.removeEventListener('lm-agent-widgets-open', onOpen);
+      window.removeEventListener('lm-agent-widgets-refresh', onRefresh);
+    };
+  }, [pull]);
+  const _revert = async (wid) => {
+    try {
+      const res = await bridgeAsync('revert_ui_widget', wid);
+      if (res && res.ok) {
+        setWidgets(prev => prev.filter(x => x.id !== wid));
+        try { window.dispatchEvent(new CustomEvent('lm-canvas-toast',
+          { detail:{ msg:'widget removed', kind:'info' } })); } catch (e) {}
+      }
+    } catch (e) {}
+  };
+  // Auto-open when there is at least one widget so a freshly-built (green) widget
+  // is visible without a manual open — but stay closed on an empty registry.
+  React.useEffect(() => { if (widgets.length && !open) setOpen(true); }, [widgets.length]);
+  if (!open || !widgets.length) return null;
+  return (
+    <div data-testid="agent-widget-host" role="region" aria-label="Agent widgets"
+      style={{
+        position:'fixed', right:16, top:80, bottom:120, width:340, maxWidth:'42%',
+        zIndex:69, display:'flex', flexDirection:'column',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:10,
+        boxShadow:'0 18px 48px rgba(0,0,0,.5)', overflow:'hidden',
+      }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8,
+        padding:'10px 14px', borderBottom:`1px solid ${LM.line}`, background:LM.bg }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10, letterSpacing:'0.16em',
+          color:LM.accent }}>WIDGETS · {widgets.length}</span>
+        <div style={S_FLEX1}/>
+        <button onClick={() => setOpen(false)} data-testid="agent-widget-host-close"
+          style={{ padding:'3px 8px', borderRadius:5, border:`1px solid ${LM.line}`,
+            background:'transparent', color:LM.inkSoft, cursor:'pointer',
+            fontFamily:LM.mono, fontSize:10 }}>Hide</button>
+      </div>
+      <div style={{ overflow:'auto', padding:'12px', display:'flex',
+        flexDirection:'column', gap:14 }}>
+        {widgets.map(w => (
+          <div key={w.id} style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <span style={{ fontFamily:LM.sans, fontSize:12, color:LM.ink,
+                fontWeight:600 }}>{w.title || w.id}</span>
+              <div style={S_FLEX1}/>
+              <button onClick={() => _revert(w.id)} data-testid={'agent-widget-remove-' + w.id}
+                title="Remove this widget"
+                style={{ padding:'2px 8px', borderRadius:5, border:`1px solid ${LM.line}`,
+                  background:'transparent', color:LM.inkMuted, cursor:'pointer',
+                  fontFamily:LM.mono, fontSize:9.5 }}>Remove</button>
+            </div>
+            {/* The guardrail: each widget in its OWN boundary. A crash here is
+                contained — it can never reach the app-boot ErrorBoundary. */}
+            <AgentWidgetBoundary wid={w.id}>
+              <AgentWidget w={w}/>
+            </AgentWidgetBoundary>
           </div>
         ))}
       </div>

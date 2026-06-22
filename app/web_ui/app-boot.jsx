@@ -81,6 +81,9 @@ async function pullAll() {
     ['get_node_grammar', '__archhub_LM_NODE_GRAMMAR'],
     // User-minted custom nodes (AI-designed or hand-built).
     ['get_custom_nodes', '__archhub_LM_CUSTOM_NODES'],
+    // Agent-authored free-form UI widgets (the UI RUNG) — rendered by the
+    // sandboxed AgentWidgetHost, each inside its own error boundary.
+    ['get_ui_widgets',   '__archhub_LM_UI_WIDGETS'],
   ];
   let any = false;
   for (const [slot, target] of pulls) {

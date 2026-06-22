@@ -99,8 +99,19 @@ import Base from '../layouts/Base.astro';
       var A = window.ArchHubAuth;
       var qs = new URLSearchParams(location.search);
 
-      // If already signed in, go straight to the account page.
-      if (A && A.isSignedIn() && !qs.get('code')) { location.replace('/account'); return; }
+      // Where to land after a successful sign-in. Honors ?redirect= so pages
+      // like /brain can bounce back here and return. SAME-ORIGIN PATHS ONLY:
+      // must start with a single '/' (reject '//host' protocol-relative and
+      // any absolute/external URL) to avoid an open-redirect. Default /account.
+      function safeRedirect() {
+        var r = qs.get('redirect') || '';
+        if (r.charAt(0) === '/' && r.charAt(1) !== '/') return r;
+        return '/account';
+      }
+      var dest = safeRedirect();
+
+      // If already signed in, go straight to the destination.
+      if (A && A.isSignedIn() && !qs.get('code')) { location.replace(dest); return; }
 
       var emailForm = document.getElementById('emailForm');
       var emailEl = document.getElementById('email');
@@ -133,7 +144,7 @@ import Base from '../layouts/Base.astro';
         A.exchangeCode(rawCode).then(function (res) {
           if (res.ok) {
             setMsg('ok', "You're signed in. Taking you to your account…");
-            setTimeout(function () { location.href = '/account'; }, 600);
+            setTimeout(function () { location.href = dest; }, 600);
           } else {
             setMsg('err', 'Could not finish sign-in: ' + res.detail + ' — the link may have expired. Send a fresh one.');
             if (codeBtn) codeBtn.disabled = false;

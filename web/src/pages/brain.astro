@@ -71,50 +71,15 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
 
   <script is:inline define:vars={{ CLOUD_API }}>
     const API = CLOUD_API;
-    const TOKEN_KEY = 'archhub_token';
-    const VERIFIER_KEY = 'archhub_pkce_verifier';
 
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
       c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-    const b64url = (buf) => btoa(String.fromCharCode.apply(null,
-      new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_')
-      .replace(/=+$/,'');
 
-    async function exchangeCode(code) {
-      // The website's brain page reuses the SAME PKCE flow as the cloud
-      // /signin — but it is cross-origin, so it finishes the exchange itself
-      // and stores the bearer for return visits.
-      const verifier = sessionStorage.getItem(VERIFIER_KEY);
-      if (!verifier) return null;
-      try {
-        const ex = await fetch(API + '/v1/auth/exchange', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, code_verifier: verifier }),
-        });
-        if (!ex.ok) return null;
-        const tok = (await ex.json()).token;
-        sessionStorage.removeItem(VERIFIER_KEY);
-        if (tok) localStorage.setItem(TOKEN_KEY, tok);
-        // strip ?code from the URL so a refresh doesn't re-exchange.
-        history.replaceState({}, '', '/brain');
-        return tok;
-      } catch (e) { return null; }
-    }
-
-    async function startSignin() {
-      // Mint a PKCE pair, stash the verifier, then send the user to the
-      // cloud /signin with our challenge + a redirect back to /brain. The
-      // cloud emails the magic-link; clicking it returns here with ?code.
-      const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
-      const h = await crypto.subtle.digest('SHA-256',
-        new TextEncoder().encode(v));
-      const challenge = b64url(h);
-      sessionStorage.setItem(VERIFIER_KEY, v);
-      const redirect = location.origin + '/brain';
-      location.href = API + '/signin?challenge=' + encodeURIComponent(challenge)
-        + '&redirect=' + encodeURIComponent(redirect);
-    }
+    // ONE-SYSTEM: this page does NOT mint its own auth. Sign-in + the session
+    // token live in the shared website client (window.ArchHubAuth, loaded by
+    // Base.astro via /auth.js, token key 'archhub_session_token'). The website
+    // /signin page owns the magic-link/Google exchange; we just read the token.
 
     function showSignin() {
       $('gate').innerHTML =
@@ -122,7 +87,10 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
         + '<p class="muted">Sign in to view your synced brain.</p>'
         + '<button class="btn btn-primary lg" id="si">Sign in with email →</button>'
         + '</div>';
-      $('si').addEventListener('click', startSignin);
+      // Bounce to the website sign-in, returning here once signed in.
+      $('si').addEventListener('click', function () {
+        location.href = '/signin?redirect=' + encodeURIComponent('/brain');
+      });
     }
 
     function factCard(f) {
@@ -175,7 +143,8 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
       try {
         const meR = await fetch(API + '/v1/me', { headers: H });
         if (meR.status === 401) { // token expired/invalid → re-auth
-          localStorage.removeItem(TOKEN_KEY);
+          const A = window.ArchHubAuth;
+          if (A && A.signOut) A.signOut();
           $('gate').hidden = false; $('portal').hidden = true;
           showSignin(); return;
         }
@@ -228,13 +197,10 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
     }
 
     async function boot() {
-      const code = new URLSearchParams(location.search).get('code');
-      if (code) {
-        const tok = await exchangeCode(code);
-        if (tok) { await loadPortal(tok); return; }
-      }
-      const saved = localStorage.getItem(TOKEN_KEY);
-      if (saved) { await loadPortal(saved); return; }
+      // Read the session from the shared client; the website /signin owns the
+      // magic-link/Google exchange and stores the token under its own key.
+      const A = window.ArchHubAuth;
+      if (A && A.isSignedIn()) { await loadPortal(A.getToken()); return; }
       showSignin();
     }
     boot();

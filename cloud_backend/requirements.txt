@@ -22,5 +22,5 @@ python-multipart==0.0.32
 # v1.1.0 marketplace signing — needed for Ed25519 signature verification
 # of uploaded packs. Re-uses the same dep app/requirements.txt added.
 cryptography>=49.0.0
-pytest==9.1.0
+pytest==9.1.1
 pytest-asyncio==1.4.0

@@ -1,0 +1,192 @@
+---
+import Base from '../layouts/Base.astro';
+// Sign in / sign up — the real auth surface. Talks to the EXISTING cloud
+// backend (cloud_backend/main.py) via /auth.js. No new auth system:
+//   email -> POST /v1/auth/register (magic-link)
+//   paste the link/code from the email -> POST /v1/auth/exchange -> {token}
+//   "Continue with Google" -> GET /v1/auth/google/start -> consent URL
+// The token is stored in localStorage (archhub_session_token); the nav chip
+// in Base.astro reflects the signed-in state on every page.
+---
+<Base title="Sign in" description="Sign in or create your ArchHub account. Magic-link or Google. Your work stays local; the cloud holds your license, your brain replica, and your plan.">
+  <section class="auth-page">
+    <div class="wrap auth-wrap">
+      <div class="auth-card">
+        <div class="eyebrow" id="eyebrow">● Account</div>
+        <h1 class="serif auth-h1" id="title">Sign in to <span class="ital">ArchHub</span></h1>
+        <p class="auth-sub" id="sub">No password. We email you a one-time sign-in link — or continue with Google.</p>
+
+        <!-- STEP 1 — email -->
+        <form id="emailForm" class="auth-form">
+          <label class="auth-label" for="email">Work email</label>
+          <input id="email" class="auth-input" type="email" required autocomplete="email" placeholder="you@studio.com" />
+          <button id="emailBtn" class="btn btn-primary lg auth-btn" type="submit">Email me a sign-in link</button>
+        </form>
+
+        <div class="auth-or"><span>or</span></div>
+
+        <button id="googleBtn" class="btn lg auth-btn auth-google" type="button">
+          <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Continue with Google
+        </button>
+
+        <!-- STEP 2 — confirm with the code/link from the email -->
+        <div id="confirm" class="auth-confirm" hidden>
+          <div class="auth-or"><span>got the email?</span></div>
+          <p class="auth-sub auth-sub-sm">Open the email and click the link to finish — or paste the link (or code) from it below.</p>
+          <label class="auth-label" for="code">Sign-in link or code</label>
+          <input id="code" class="auth-input" type="text" autocomplete="one-time-code" placeholder="https://archhub-cloud.fly.dev/auth/return?code=… or the code" />
+          <button id="codeBtn" class="btn btn-primary lg auth-btn" type="button">Finish sign-in</button>
+        </div>
+
+        <div id="msg" class="auth-msg" hidden></div>
+
+        <p class="auth-fine">By continuing you agree to keep your work local-first. ArchHub Cloud stores your license, plan, and a brain replica — never your drawings or keys.</p>
+      </div>
+
+      <aside class="auth-aside">
+        <div class="aside-tag serif">One account. <span class="ital">Every surface.</span></div>
+        <ul class="aside-list">
+          <li><b>Your license + plan</b> — synced to the desktop app the moment you sign in.</li>
+          <li><b>Your brain replica</b> — your knowledge graph, backed up and portable.</li>
+          <li><b>Your projects</b> — opt-in cloud collaboration, off by default.</li>
+        </ul>
+        <a class="btn lg aside-dl" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download the app ↓</a>
+      </aside>
+    </div>
+  </section>
+
+  <style>
+    .auth-page { padding: 64px 0 96px; }
+    .auth-wrap { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px; align-items: start; }
+    .auth-card { background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-xl); padding: 40px; max-width: 520px; }
+    .auth-h1 { font-size: 40px; margin: 10px 0 10px; line-height: 1.05; }
+    .auth-sub { color: var(--ink-soft); font-size: 14.5px; line-height: 1.55; margin: 0 0 24px; }
+    .auth-sub-sm { font-size: 13px; margin: 8px 0 14px; }
+    .auth-form { display: flex; flex-direction: column; gap: 10px; }
+    .auth-label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-muted); }
+    .auth-input { background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink); font-family: var(--sans); font-size: 14.5px; padding: 12px 14px; width: 100%; transition: border-color .15s; }
+    .auth-input:focus { outline: none; border-color: var(--accent); }
+    .auth-input::placeholder { color: var(--ink-dim); }
+    .btn.lg.auth-btn { width: 100%; justify-content: center; padding: 13px 16px; font-size: 14.5px; margin-top: 4px; }
+    .auth-google { gap: 9px; }
+    .auth-or { display: flex; align-items: center; gap: 14px; margin: 22px 0; color: var(--ink-muted); }
+    .auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .auth-or span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
+    .auth-confirm { margin-top: 4px; }
+    .auth-confirm .auth-input { margin-bottom: 10px; }
+    .auth-msg { margin-top: 18px; padding: 13px 14px; border-radius: var(--r-md); font-size: 13.5px; line-height: 1.5; border: 1px solid var(--line); }
+    .auth-msg.ok { background: rgba(126,193,142,0.1); border-color: var(--ok); color: var(--ok); }
+    .auth-msg.err { background: rgba(230,112,95,0.1); border-color: var(--err); color: var(--err); }
+    .auth-msg.info { background: var(--bg-soft); border-color: var(--line); color: var(--ink-soft); }
+    .auth-fine { color: var(--ink-muted); font-size: 11.5px; line-height: 1.55; margin: 22px 0 0; }
+    .auth-aside { padding-top: 18px; }
+    .aside-tag { font-size: 30px; line-height: 1.1; color: var(--ink); }
+    .aside-list { list-style: none; padding: 0; margin: 24px 0; display: flex; flex-direction: column; gap: 16px; }
+    .aside-list li { color: var(--ink-soft); font-size: 14px; line-height: 1.5; padding-left: 18px; position: relative; }
+    .aside-list li::before { content: ""; position: absolute; left: 0; top: 8px; width: 7px; height: 7px; border-radius: 999px; background: var(--accent); }
+    .aside-list b { color: var(--ink); font-weight: 600; }
+    .aside-dl { margin-top: 6px; }
+    @media (max-width: 900px) {
+      .auth-wrap { grid-template-columns: 1fr; gap: 40px; }
+      .auth-card { max-width: none; padding: 28px; }
+      .auth-h1 { font-size: 32px; }
+    }
+  </style>
+
+  <script is:inline>
+    (function () {
+      var A = window.ArchHubAuth;
+      var qs = new URLSearchParams(location.search);
+
+      // If already signed in, go straight to the account page.
+      if (A && A.isSignedIn() && !qs.get('code')) { location.replace('/account'); return; }
+
+      var emailForm = document.getElementById('emailForm');
+      var emailEl = document.getElementById('email');
+      var emailBtn = document.getElementById('emailBtn');
+      var googleBtn = document.getElementById('googleBtn');
+      var confirm = document.getElementById('confirm');
+      var codeEl = document.getElementById('code');
+      var codeBtn = document.getElementById('codeBtn');
+      var msg = document.getElementById('msg');
+
+      // "Get started" entry point just retitles the same surface — register
+      // and sign-in are one passwordless flow on the backend.
+      if (qs.get('new')) {
+        document.getElementById('eyebrow').textContent = '● Create your account';
+        document.getElementById('title').innerHTML = 'Get started with <span class="ital">ArchHub</span>';
+        document.getElementById('sub').textContent =
+          'Free in open beta. We email you a one-time link to create your account — or continue with Google.';
+        emailBtn.textContent = 'Create my account';
+      }
+
+      function setMsg(kind, text) {
+        msg.hidden = false;
+        msg.className = 'auth-msg ' + kind;
+        msg.textContent = text;
+      }
+
+      function finishWith(rawCode) {
+        codeBtn && (codeBtn.disabled = true);
+        setMsg('info', 'Finishing sign-in…');
+        A.exchangeCode(rawCode).then(function (res) {
+          if (res.ok) {
+            setMsg('ok', "You're signed in. Taking you to your account…");
+            setTimeout(function () { location.href = '/account'; }, 600);
+          } else {
+            setMsg('err', 'Could not finish sign-in: ' + res.detail + ' — the link may have expired. Send a fresh one.');
+            if (codeBtn) codeBtn.disabled = false;
+          }
+        });
+      }
+
+      // Magic-links from the email land on the cloud /auth/return page, but if
+      // a code ever arrives here (e.g. the user pasted the link into the bar)
+      // finish it automatically.
+      var inlineCode = qs.get('code');
+      if (inlineCode && A) { confirm.hidden = false; finishWith(inlineCode); }
+
+      emailForm.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var email = (emailEl.value || '').trim();
+        if (!email) return;
+        emailBtn.disabled = true;
+        var orig = emailBtn.textContent;
+        emailBtn.textContent = 'Sending…';
+        A.sendMagicLink(email).then(function (res) {
+          emailBtn.disabled = false; emailBtn.textContent = orig;
+          if (res.ok) {
+            confirm.hidden = false;
+            setMsg('ok', 'Check ' + email + ' — open the sign-in link to finish. (Same browser or not, both work.)');
+            codeEl.focus();
+          } else {
+            setMsg('err', 'Could not send the link: ' + res.detail);
+          }
+        });
+      });
+
+      codeBtn.addEventListener('click', function () {
+        var raw = (codeEl.value || '').trim();
+        if (!raw) { setMsg('err', 'Paste the sign-in link or code from your email first.'); return; }
+        finishWith(raw);
+      });
+      codeEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') codeBtn.click(); });
+
+      googleBtn.addEventListener('click', function () {
+        googleBtn.disabled = true;
+        setMsg('info', 'Redirecting to Google…');
+        A.googleStart().then(function (res) {
+          if (!res.ok) {
+            googleBtn.disabled = false;
+            if (res.detail === 'google_login_unconfigured') {
+              setMsg('info', 'Google sign-in is coming soon — use the magic-link above for now.');
+            } else {
+              setMsg('err', 'Google sign-in failed: ' + res.detail);
+            }
+          }
+        });
+      });
+    })();
+  </script>
+</Base>

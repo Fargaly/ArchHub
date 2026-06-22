@@ -393,3 +393,72 @@ def test_loop_court_refuses_absent_artifact(_isolated_marker, monkeypatch):
     leaf_rows = [p for p in out["leaves"] if not p["terminal"]]
     assert all(p["verdict"] != "green" for p in leaf_rows)
     assert [a for (t, a) in captured if t == "brain.write"] == []  # nothing learned
+
+
+# ── REVERSIBLE — a green build is undoable; undo is path-jailed ───────────────
+
+def test_loop_green_leaf_carries_artifact_path(_isolated_marker):
+    """USER-AGENCY: each GREEN leaf payload names the file it applied so the UI
+    can offer an Undo. The path points at the real marker the executor wrote."""
+    marker = _isolated_marker
+    if marker.exists():
+        marker.unlink()
+    out = self_extend.run_self_extend_loop(
+        "add a hello marker file proving self-extend works",
+        graph={"nodes": [], "wires": []},
+        router=None,
+        brain_call=lambda t, a: {"ops_applied": 1},
+        store=_store(),
+    )
+    leaf_rows = [p for p in out["leaves"] if not p["terminal"]]
+    greens = [p for p in leaf_rows if p["verdict"] == "green"]
+    assert greens, "expected at least one green leaf"
+    # The green leaf that actually wrote a file carries its path; it resolves to
+    # the real marker on disk (the thing an Undo would remove).
+    paths = {p["artifact_path"] for p in greens if p["artifact_path"]}
+    assert paths, "a green build must name its applied artifact for Undo"
+    assert any(Path(pp).resolve() == marker.resolve() for pp in paths)
+
+
+def test_undo_artifact_removes_a_real_build(_isolated_marker):
+    """The reversible escape hatch: undo_artifact removes exactly the green
+    build's file, then is idempotent on a second call."""
+    marker = _isolated_marker
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("GREETING = 'self-extend proven'\n", encoding="utf-8")
+    assert marker.exists()
+    res = self_extend.undo_artifact(str(marker))
+    assert res["ok"] is True and res["removed"] is True
+    assert not marker.exists()
+    # Idempotent — undoing again is ok (already absent), never an error.
+    res2 = self_extend.undo_artifact(str(marker))
+    assert res2["ok"] is True and res2["removed"] is False
+
+
+def test_undo_artifact_refuses_path_outside_jail(tmp_path):
+    """SECURITY: undo can NEVER delete an arbitrary file — a path outside the
+    self_extend package dir is refused and the file is left untouched."""
+    victim = tmp_path / "important.py"
+    victim.write_text("KEEP_ME = 1\n", encoding="utf-8")
+    res = self_extend.undo_artifact(str(victim))
+    assert res["ok"] is False
+    assert "outside" in res["error"] or "jail" in res["error"]
+    assert victim.exists(), "undo must not touch files outside the jail"
+
+
+def test_undo_artifact_refuses_non_py(_isolated_marker):
+    """SECURITY: only generated .py artifacts are removable (suffix gate)."""
+    bad = _isolated_marker.parent / "notes.txt"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("x", encoding="utf-8")
+    res = self_extend.undo_artifact(str(bad))
+    assert res["ok"] is False
+    assert bad.exists()
+    bad.unlink()
+
+
+def test_undo_artifact_refuses_traversal(tmp_path):
+    """SECURITY: a `..` traversal that resolves outside the jail is refused."""
+    res = self_extend.undo_artifact(
+        str(Path(self_extend.__file__).parent / ".." / ".." / "bridge.py"))
+    assert res["ok"] is False

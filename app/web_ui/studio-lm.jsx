@@ -19178,6 +19178,10 @@ const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint k
           sweep: d.sweep || {},
           tree_id: d.tree_id || '',
           leaf_id: d.leaf_id || '',
+          // REVERSIBLE: the file this green build applied (empty for red /
+          // needs_root / terminal). Drives the per-row Undo affordance below.
+          artifact_path: d.artifact_path || '',
+          undone: false,
         });
         return next;
       });
@@ -19201,6 +19205,32 @@ const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint k
       }));
     } catch (e) {}
   };
+  // REVERSIBLE (USER-AGENCY): undo one applied green build by removing the file
+  // it wrote. The court is the GATE (it only greened — and thus applied — a leaf
+  // it failed to refute on the real artifact); this is the matching escape hatch
+  // so an applied build is never permanent. bridge.self_extend_undo path-jails
+  // the request, so an undo can only remove a generated self-extend artifact.
+  const _undo = async (r) => {
+    if (!r || !r.artifact_path) return;
+    try {
+      const res = await bridgeAsync('self_extend_undo', r.artifact_path);
+      if (res && res.ok) {
+        setRows(prev => prev.map(x => x.key === r.key ? { ...x, undone: true } : x));
+        window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+          detail: { msg: 'self-extend · undone — built file removed', kind:'info' },
+        }));
+        // The reverted node type is gone server-side; refresh MY NODES.
+        try { window.dispatchEvent(new CustomEvent('lm-skills-refresh')); } catch (e) {}
+      } else {
+        window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+          detail: { msg: `self-extend · undo failed: ${(res && res.error) || 'unknown'}`, kind:'err' },
+        }));
+      }
+    } catch (e) {
+      try { window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+        detail: { msg: 'self-extend · undo failed', kind:'err' } })); } catch (e2) {}
+    }
+  };
   const _clear = () => setRows([]);
   const leafRows = rows.filter(r => !r.terminal);
   const green = leafRows.filter(r => r.verdict === 'green').length;
@@ -19222,7 +19252,7 @@ const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint k
           COURT · {green}/{total}{needsRoot ? ` · ${needsRoot} need you` : ''}
         </span>
         <span style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkMuted }}>
-          Each leaf built on your machine, then verified by the court before green.
+          Built on your machine, court-verified before green, and undoable.
         </span>
         <div style={S_FLEX1}/>
         <button onClick={_clear} data-testid="court-clear" style={{
@@ -19269,6 +19299,22 @@ const CourtVerdictQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint k
                 background:LM.warn, color:'#1a1a1a', cursor:'pointer',
                 fontFamily:LM.mono, fontSize:10, fontWeight:600,
               }}>Decide</button>
+            )}
+            {/* REVERSIBLE: a green leaf that APPLIED a file → an Undo that removes
+                it. Court is the gate; this is the matching escape hatch so an
+                applied build is never permanent. Disabled once undone. */}
+            {r.verdict === 'green' && !r.terminal && r.artifact_path && (
+              <button onClick={() => _undo(r)} data-testid="court-undo"
+                disabled={r.undone}
+                title={r.undone ? 'Already undone' : `Remove ${r.artifact_path}`}
+                style={{
+                  padding:'4px 11px', borderRadius:5,
+                  border:`1px solid ${LM.line}`,
+                  background:'transparent',
+                  color: r.undone ? LM.inkDim : LM.inkSoft,
+                  cursor: r.undone ? 'default' : 'pointer',
+                  fontFamily:LM.mono, fontSize:10,
+                }}>{r.undone ? 'Undone' : 'Undo'}</button>
             )}
           </div>
         ))}

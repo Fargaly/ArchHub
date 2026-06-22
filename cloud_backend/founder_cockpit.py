@@ -31,11 +31,17 @@ import time
 from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Cookie, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import config
 import db
+
+# Name of the cookie the browser carries to authenticate the founder. It holds
+# the SAME bearer token the API uses; it is set HttpOnly + Secure + SameSite=Lax
+# by POST /founder/login and read as an alternate token source by
+# require_founder (so a plain browser navigation to /founder works).
+FOUNDER_COOKIE = "founder_session"
 
 
 # ---------------------------------------------------------------------------
@@ -68,24 +74,45 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     return parts[1].strip()
 
 
-def require_founder(authorization: Optional[str] = Header(None)) -> dict:
+def _founder_user_for_token(token: Optional[str]) -> Optional[dict]:
+    """Resolve a token to the FOUNDER user, or None. The single, shared
+    validation path used by BOTH the route gate (require_founder) and the
+    cookie-login POST: db.user_for_token -> email == founder_email. Returns
+    None for a missing/invalid token OR a valid token belonging to any
+    non-founder user — the caller decides how to surface that (403 / re-render).
+    """
+    if not token:
+        return None
+    user = db.user_for_token(token)
+    if user is None:
+        return None
+    email = (user.get("email") or "").strip().lower()
+    if not email or email != founder_email():
+        return None
+    return user
+
+
+def require_founder(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    founder_session: Optional[str] = Cookie(None),
+) -> dict:
     """FastAPI dependency: resolve the caller via the SAME token/me() path
     the rest of the API uses (db.user_for_token), then allow ONLY the
     founder. Everyone else — any other authenticated user, OR an
     unauthenticated caller — gets 403.
 
-    This is the one and only gate for every cockpit route. There is no
-    bypass: a missing token, an invalid token, and a valid token for a
-    non-founder user ALL resolve to 403 founder_only.
+    The founder token may arrive via EITHER source, validated identically:
+      - `Authorization: Bearer <token>` header (API clients, curl), OR
+      - the `founder_session` cookie (a browser navigating to /founder),
+        set by POST /founder/login.
+    The header wins when both are present. There is no other bypass: a
+    missing token, an invalid token, and a valid token for a non-founder
+    user ALL resolve to 403 founder_only.
     """
-    token = _bearer(authorization)
-    if not token:
-        raise HTTPException(status_code=403, detail="founder_only")
-    user = db.user_for_token(token)
+    token = _bearer(authorization) or (founder_session or "").strip() or None
+    user = _founder_user_for_token(token)
     if user is None:
-        raise HTTPException(status_code=403, detail="founder_only")
-    email = (user.get("email") or "").strip().lower()
-    if not email or email != founder_email():
         raise HTTPException(status_code=403, detail="founder_only")
     return user
 
@@ -340,6 +367,53 @@ def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
     return HTMLResponse(_PAGE_HTML)
 
 
+# --- Cookie login (the ONLY ungated cockpit routes) ------------------------
+# A browser navigating to /founder sends no Authorization header, so without a
+# session it 403s. These two routes let the founder mint a `founder_session`
+# cookie (validated through the SAME token->founder path as the gate) so the
+# browser carries it on every subsequent /founder* request. The login page +
+# its POST are deliberately UNGATED; everything else stays founder-gated.
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    """Ungated, on-brand sign-in page: one token field -> POST /founder/login."""
+    return HTMLResponse(_login_html())
+
+
+@router.post("/login")
+def login_submit(token: str = Form(default="")) -> Response:
+    """Validate the submitted token via the SAME path the gate uses
+    (db.user_for_token -> email == founder_email). On success: set the
+    HttpOnly + Secure + SameSite=Lax `founder_session` cookie and 303 to
+    /founder. On failure: re-render the login page with a generic error
+    (HTTP 401) and NEVER echo the token back."""
+    token = (token or "").strip()
+    if _founder_user_for_token(token) is None:
+        return HTMLResponse(
+            _login_html(error="That token is not valid for the founder account."),
+            status_code=401,
+        )
+    resp = RedirectResponse(url="/founder", status_code=303)
+    resp.set_cookie(
+        key=FOUNDER_COOKIE,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/founder",
+        max_age=90 * 86400,  # mirrors the token's 90-day server-side lifetime
+    )
+    return resp
+
+
+@router.get("/logout")
+def logout() -> Response:
+    """Clear the founder_session cookie and bounce to the login page."""
+    resp = RedirectResponse(url="/founder/login", status_code=303)
+    resp.delete_cookie(key=FOUNDER_COOKIE, path="/founder")
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # The page (on-brand: terracotta #d97757, Instrument Serif headings, Inter
 # body, no emoji, cards + small tables, auto-refresh ~30s).
@@ -430,7 +504,8 @@ _PAGE_HTML = """<!doctype html>
       <span class="refresh">auto-refresh 30s</span> &nbsp;|&nbsp;
       <b id="version">-</b> &nbsp;|&nbsp;
       <span id="env">-</span> &nbsp;|&nbsp;
-      updated <b id="updated">-</b>
+      updated <b id="updated">-</b> &nbsp;|&nbsp;
+      <a href="/founder/logout">Sign out</a>
     </div>
   </header>
   <p class="meta">Private business oversight. Live numbers from the cloud
@@ -585,3 +660,76 @@ setInterval(load, 30000);
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# The login page (ungated). On-brand: terracotta #d97757, Instrument Serif
+# heading, Inter body, no emoji. One password-type token field that POSTs to
+# /founder/login. Optional error banner (escaped; the token is NEVER echoed).
+# ---------------------------------------------------------------------------
+import html as _html
+
+_LOGIN_HTML_TMPL = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>ArchHub - Founder Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f0f12; --panel:#16161b; --line:#2a2a33;
+    --ink:#ece8e0; --ink-dim:#a39e93; --ink-faint:#6f6a60;
+    --terracotta:#d97757; --terracotta-soft:rgba(217,119,87,.14);
+    --bad:#d96757;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:34px 32px;width:100%;max-width:420px}
+  h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
+    font-size:36px;letter-spacing:.3px;margin:0 0 6px;line-height:1.05}
+  h1 .sub{color:var(--terracotta)}
+  p.help{color:var(--ink-dim);font-size:13px;margin:0 0 22px}
+  label{display:block;color:var(--ink-faint);font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+  input[type=password]{width:100%;background:#0f0f12;border:1px solid var(--line);
+    border-radius:10px;color:var(--ink);font-family:inherit;font-size:14px;
+    padding:11px 13px;outline:none}
+  input[type=password]:focus{border-color:var(--terracotta)}
+  button{margin-top:16px;width:100%;background:var(--terracotta);color:#16110e;
+    border:none;border-radius:10px;font-family:inherit;font-size:14px;
+    font-weight:600;padding:11px 13px;cursor:pointer}
+  button:hover{filter:brightness(1.05)}
+  .err{background:rgba(217,103,87,.12);border:1px solid rgba(217,103,87,.35);
+    color:#e7a99a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:18px}
+  .foot{color:var(--ink-faint);font-size:11.5px;margin-top:18px;line-height:1.45}
+</style>
+</head>
+<body>
+  <form class="card" method="post" action="/founder/login" autocomplete="off">
+    <h1>Founder <span class="sub">Cockpit</span></h1>
+    <p class="help">Private business oversight. Sign in to continue.</p>
+    {error_block}
+    <label for="token">ArchHub token</label>
+    <input id="token" name="token" type="password" autofocus
+           autocomplete="off" spellcheck="false" />
+    <button type="submit">Sign in</button>
+    <div class="foot">Paste your ArchHub account token (Settings -&gt; Account).</div>
+  </form>
+</body>
+</html>
+"""
+
+
+def _login_html(error: Optional[str] = None) -> str:
+    """Render the login page. `error`, if given, is HTML-escaped and shown in a
+    banner; the submitted token is never reflected back into the page."""
+    block = (f'<div class="err">{_html.escape(error)}</div>') if error else ""
+    return _LOGIN_HTML_TMPL.replace("{error_block}", block)

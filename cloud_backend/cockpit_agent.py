@@ -45,41 +45,32 @@ import db
 
 # ---------------------------------------------------------------------------
 # Model transport — OpenAI-compatible tool-calling, NVIDIA-preferred.
+# Provider SELECTION is the shared config.select_free_model() (ONE-SYSTEM #64):
+# the cockpit agent and the user-facing free proxy pick from the identical
+# NVIDIA->Gemini chain, so they can never diverge.
 # ---------------------------------------------------------------------------
-def _nvidia_key() -> str:
-    """Resolve the NVIDIA key (raw or op://) at call time."""
-    try:
-        return config._resolve_op_ref(config.NVIDIA_API_KEY)
-    except Exception:
-        return (config.NVIDIA_API_KEY or "").strip()
-
-
 def reachable_model() -> Optional[dict]:
     """Pick the agent model provider that can serve RIGHT NOW, or None.
 
-    Order: NVIDIA (preferred, strong + free) -> Gemini OpenAI-compat
+    ONE-SYSTEM (#64): this REUSES config.select_free_model() — the single
+    canonical NVIDIA->Gemini selector shared with the user-facing free proxy
+    path — so the cockpit and the free default can never drift to different
+    providers. Order: NVIDIA (preferred, strong + free) -> Gemini OpenAI-compat
     (reachable today via the deployed GOOGLE_API_KEY). Returns a dict
     {provider, base_url, model, key} or None when no key is configured (the
-    caller then uses the offline keyword router)."""
-    nv = _nvidia_key()
-    if nv:
-        return {
-            "provider": "nvidia",
-            "base_url": config.NVIDIA_BASE_URL,
-            "model":    config.NVIDIA_MODEL,
-            "key":      nv,
-        }
-    gk = (config.GOOGLE_API_KEY or "").strip()
-    if gk:
-        return {
-            "provider": "google",
-            "base_url": ("https://generativelanguage.googleapis.com/"
-                         "v1beta/openai"),
-            "model":    os.environ.get("COCKPIT_AGENT_GEMINI_MODEL",
-                                       "gemini-2.5-flash").strip(),
-            "key":      gk,
-        }
-    return None
+    caller then uses the offline keyword router).
+
+    The ONE cockpit-specific knob preserved: COCKPIT_AGENT_GEMINI_MODEL may
+    override the Gemini model id for the agent loop only (the free proxy keeps
+    config.ARCHHUB_FREE_MODEL / the Gemini default)."""
+    sel = config.select_free_model()
+    if sel is None:
+        return None
+    if sel.get("provider") == "google":
+        override = os.environ.get("COCKPIT_AGENT_GEMINI_MODEL", "").strip()
+        if override:
+            sel = {**sel, "model": override}
+    return sel
 
 
 def model_available() -> bool:

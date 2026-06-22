@@ -283,9 +283,13 @@ def list_models(*, user: dict) -> dict:
     ai_mode = db.ai_mode_for_actor(user)
     models: list[dict] = []
     free_on = (ai_mode != "hosted") and config.free_default_available()
+    # ONE-SYSTEM (#64): advertise the model the free path will ACTUALLY serve
+    # (the shared selector's choice — Gemini today, NVIDIA when keyed), not the
+    # static config default which can differ from the reachable provider.
+    free_model = config.free_selected_model() if free_on else None
     if free_on:
         models.append({
-            "id": config.ARCHHUB_FREE_MODEL,
+            "id": free_model,
             "object": "model",
             "owned_by": "archhub-free",
             "archhub_tier": "free-default",
@@ -298,8 +302,7 @@ def list_models(*, user: dict) -> dict:
                             "archhub_tier": "hosted"})
     return {"object": "list", "data": models,
             "archhub_free_default": free_on,
-            "archhub_default_model": (config.ARCHHUB_FREE_MODEL
-                                      if free_on else None)}
+            "archhub_default_model": free_model}
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +318,10 @@ def _serve_free_default(*, user: dict, body: dict) -> StreamingResponse:
     # Force the server-chosen free model — the client's requested model
     # (often "auto" or a paid model id) is overridden so a no-key user can
     # never aim our free key at an arbitrary/expensive upstream model.
-    model = config.ARCHHUB_FREE_MODEL
+    # ONE-SYSTEM (#64): the model id comes from the shared selector so it
+    # always matches the provider _stream_free will actually call (Gemini
+    # today, NVIDIA when keyed) — never a stale static default.
+    model = config.free_selected_model()
     out_body = {**body, "model": model}
     upstream = _stream_free(model, out_body)
 
@@ -344,15 +350,25 @@ def _serve_free_default(*, user: dict, body: dict) -> StreamingResponse:
 
 
 async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
-    """Forward to the configured free OpenAI-compatible provider."""
+    """Forward to the SELECTED free OpenAI-compatible provider.
+
+    ONE-SYSTEM (#64): base URL + key + provider come from the shared
+    config.select_free_model() selection — Gemini (deployed GOOGLE_API_KEY)
+    today, NVIDIA when keyed — so this streams to whatever provider
+    free_default_available() said yes to, never a stale static default. The
+    server-side key is read from config only and is NEVER logged.
+    """
     body = {**body, "model": model, "stream": True}
-    key = config.free_provider_key()
-    url = f"{config.FREE_PROVIDER_BASE_URL}/chat/completions"
+    sel = config.select_free_model() or {}
+    provider = sel.get("provider") or config.FREE_PROVIDER
+    base = sel.get("base_url") or config.FREE_PROVIDER_BASE_URL
+    key = sel.get("key") or config.free_provider_key()
+    url = f"{base.rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     # OpenRouter recommends (optional) attribution headers; harmless else.
-    if config.FREE_PROVIDER == "openrouter":
+    if provider == "openrouter":
         headers["HTTP-Referer"] = config.PUBLIC_URL
         headers["X-Title"] = "ArchHub"
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:

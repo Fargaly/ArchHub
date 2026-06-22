@@ -409,4 +409,20 @@ def load_all_connectors() -> int:
             # skip it. The host simply won't appear until its module
             # lands. Never fatal.
             pass
+    # Self-extension: auto-discover any *_connector.py NOT in the explicit
+    # list (e.g. a connector the agent self-extension loop just scaffolded),
+    # so a built connector is LOADED + usable WITHOUT a manual loader edit.
+    # Best-effort: a broken module is skipped, never fatal.
+    try:
+        import pathlib
+        _known = {m.rsplit(".", 1)[-1] for m in modules}
+        for _f in sorted(pathlib.Path(__file__).parent.glob("*_connector.py")):
+            if _f.stem in _known:
+                continue
+            try:
+                importlib.import_module(f"connectors.{_f.stem}")
+            except Exception:
+                pass
+    except Exception:
+        pass
     return len(_CONNECTORS)

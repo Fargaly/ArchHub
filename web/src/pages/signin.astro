@@ -13,6 +13,15 @@ import Base from '../layouts/Base.astro';
     <div class="wrap auth-wrap">
       <div class="auth-card">
         <div class="eyebrow" id="eyebrow">● Account</div>
+
+        <!-- MODE TOGGLE — explicit Sign in / Create account. Both run the
+             same passwordless flow; the toggle just makes "create an account"
+             obvious to a first-time visitor (and retitles the card live). -->
+        <div class="auth-seg" role="tablist" aria-label="Sign in or create an account">
+          <button id="segSignin" class="auth-seg-btn is-active" type="button" role="tab" aria-selected="true">Sign in</button>
+          <button id="segSignup" class="auth-seg-btn" type="button" role="tab" aria-selected="false">Create account</button>
+        </div>
+
         <h1 class="serif auth-h1" id="title">Sign in to <span class="ital">ArchHub</span></h1>
         <p class="auth-sub" id="sub">No password. We email you a one-time sign-in link — or continue with Google.</p>
 
@@ -61,6 +70,10 @@ import Base from '../layouts/Base.astro';
     .auth-wrap { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px; align-items: start; }
     .auth-card { background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-xl); padding: 40px; max-width: 520px; }
     .auth-h1 { font-size: 40px; margin: 10px 0 10px; line-height: 1.05; }
+    .auth-seg { display: inline-flex; gap: 2px; padding: 3px; margin: 14px 0 4px; background: var(--bg-deep); border: 1px solid var(--line); border-radius: 999px; }
+    .auth-seg-btn { appearance: none; border: 0; background: transparent; color: var(--ink-muted); font-family: var(--sans); font-size: 13px; font-weight: 600; letter-spacing: 0.01em; padding: 7px 18px; border-radius: 999px; cursor: pointer; transition: background .15s, color .15s; }
+    .auth-seg-btn:hover { color: var(--ink-soft); }
+    .auth-seg-btn.is-active { background: var(--accent); color: #fff; }
     .auth-sub { color: var(--ink-soft); font-size: 14.5px; line-height: 1.55; margin: 0 0 24px; }
     .auth-sub-sm { font-size: 13px; margin: 8px 0 14px; }
     .auth-form { display: flex; flex-direction: column; gap: 10px; }
@@ -99,8 +112,19 @@ import Base from '../layouts/Base.astro';
       var A = window.ArchHubAuth;
       var qs = new URLSearchParams(location.search);
 
-      // If already signed in, go straight to the account page.
-      if (A && A.isSignedIn() && !qs.get('code')) { location.replace('/account'); return; }
+      // Where to land after a successful sign-in. Honors ?redirect= so pages
+      // like /brain can bounce back here and return. SAME-ORIGIN PATHS ONLY:
+      // must start with a single '/' (reject '//host' protocol-relative and
+      // any absolute/external URL) to avoid an open-redirect. Default /account.
+      function safeRedirect() {
+        var r = qs.get('redirect') || '';
+        if (r.charAt(0) === '/' && r.charAt(1) !== '/') return r;
+        return '/account';
+      }
+      var dest = safeRedirect();
+
+      // If already signed in, go straight to the destination.
+      if (A && A.isSignedIn() && !qs.get('code')) { location.replace(dest); return; }
 
       var emailForm = document.getElementById('emailForm');
       var emailEl = document.getElementById('email');
@@ -111,15 +135,41 @@ import Base from '../layouts/Base.astro';
       var codeBtn = document.getElementById('codeBtn');
       var msg = document.getElementById('msg');
 
-      // "Get started" entry point just retitles the same surface — register
-      // and sign-in are one passwordless flow on the backend.
-      if (qs.get('new')) {
-        document.getElementById('eyebrow').textContent = '● Create your account';
-        document.getElementById('title').innerHTML = 'Get started with <span class="ital">ArchHub</span>';
-        document.getElementById('sub').textContent =
-          'Free in open beta. We email you a one-time link to create your account — or continue with Google.';
-        emailBtn.textContent = 'Create my account';
+      // Explicit Sign in / Create account toggle. Register and sign-in are
+      // ONE passwordless flow on the backend, so the toggle only changes the
+      // copy (eyebrow / title / sub / button) — no page reload, no separate
+      // endpoint. A first-time visitor SEES "Create account" and knows they
+      // can sign up. ?new=1 (legacy deep-link) just preselects sign-up.
+      var eyebrowEl = document.getElementById('eyebrow');
+      var titleEl = document.getElementById('title');
+      var subEl = document.getElementById('sub');
+      var segSignin = document.getElementById('segSignin');
+      var segSignup = document.getElementById('segSignup');
+
+      function applyMode(mode) {
+        var signup = (mode === 'signup');
+        segSignup.classList.toggle('is-active', signup);
+        segSignup.setAttribute('aria-selected', signup ? 'true' : 'false');
+        segSignin.classList.toggle('is-active', !signup);
+        segSignin.setAttribute('aria-selected', signup ? 'false' : 'true');
+        if (signup) {
+          eyebrowEl.textContent = '● Create your account';
+          titleEl.innerHTML = 'Get started with <span class="ital">ArchHub</span>';
+          subEl.textContent =
+            'Free in open beta. We email you a one-time link to create your account — or continue with Google.';
+          emailBtn.textContent = 'Create my account';
+        } else {
+          eyebrowEl.textContent = '● Account';
+          titleEl.innerHTML = 'Sign in to <span class="ital">ArchHub</span>';
+          subEl.textContent =
+            'No password. We email you a one-time sign-in link — or continue with Google.';
+          emailBtn.textContent = 'Email me a sign-in link';
+        }
       }
+      segSignin.addEventListener('click', function () { applyMode('signin'); });
+      segSignup.addEventListener('click', function () { applyMode('signup'); });
+      // Default: Sign in, unless the visitor arrived via a "create account" link.
+      applyMode(qs.get('new') ? 'signup' : 'signin');
 
       function setMsg(kind, text) {
         msg.hidden = false;
@@ -133,7 +183,7 @@ import Base from '../layouts/Base.astro';
         A.exchangeCode(rawCode).then(function (res) {
           if (res.ok) {
             setMsg('ok', "You're signed in. Taking you to your account…");
-            setTimeout(function () { location.href = '/account'; }, 600);
+            setTimeout(function () { location.href = dest; }, 600);
           } else {
             setMsg('err', 'Could not finish sign-in: ' + res.detail + ' — the link may have expired. Send a fresh one.');
             if (codeBtn) codeBtn.disabled = false;

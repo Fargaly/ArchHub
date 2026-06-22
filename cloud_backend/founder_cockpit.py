@@ -26,16 +26,25 @@ canonical tier prices in config.PLANS and is clearly labelled as an estimate.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 
 import config
 import db
+
+# Name of the cookie the browser carries to authenticate the founder. It holds
+# the SAME bearer token the API uses; it is set HttpOnly + Secure + SameSite=Lax
+# by POST /founder/login and read as an alternate token source by
+# require_founder (so a plain browser navigation to /founder works).
+FOUNDER_COOKIE = "founder_session"
 
 
 # ---------------------------------------------------------------------------
@@ -68,24 +77,45 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     return parts[1].strip()
 
 
-def require_founder(authorization: Optional[str] = Header(None)) -> dict:
+def _founder_user_for_token(token: Optional[str]) -> Optional[dict]:
+    """Resolve a token to the FOUNDER user, or None. The single, shared
+    validation path used by BOTH the route gate (require_founder) and the
+    cookie-login POST: db.user_for_token -> email == founder_email. Returns
+    None for a missing/invalid token OR a valid token belonging to any
+    non-founder user — the caller decides how to surface that (403 / re-render).
+    """
+    if not token:
+        return None
+    user = db.user_for_token(token)
+    if user is None:
+        return None
+    email = (user.get("email") or "").strip().lower()
+    if not email or email != founder_email():
+        return None
+    return user
+
+
+def require_founder(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    founder_session: Optional[str] = Cookie(None),
+) -> dict:
     """FastAPI dependency: resolve the caller via the SAME token/me() path
     the rest of the API uses (db.user_for_token), then allow ONLY the
     founder. Everyone else — any other authenticated user, OR an
     unauthenticated caller — gets 403.
 
-    This is the one and only gate for every cockpit route. There is no
-    bypass: a missing token, an invalid token, and a valid token for a
-    non-founder user ALL resolve to 403 founder_only.
+    The founder token may arrive via EITHER source, validated identically:
+      - `Authorization: Bearer <token>` header (API clients, curl), OR
+      - the `founder_session` cookie (a browser navigating to /founder),
+        set by POST /founder/login.
+    The header wins when both are present. There is no other bypass: a
+    missing token, an invalid token, and a valid token for a non-founder
+    user ALL resolve to 403 founder_only.
     """
-    token = _bearer(authorization)
-    if not token:
-        raise HTTPException(status_code=403, detail="founder_only")
-    user = db.user_for_token(token)
+    token = _bearer(authorization) or (founder_session or "").strip() or None
+    user = _founder_user_for_token(token)
     if user is None:
-        raise HTTPException(status_code=403, detail="founder_only")
-    email = (user.get("email") or "").strip().lower()
-    if not email or email != founder_email():
         raise HTTPException(status_code=403, detail="founder_only")
     return user
 
@@ -133,14 +163,35 @@ def clear_errors() -> None:
 # Data builders (all read LIVE tables / config — no placeholders)
 # ---------------------------------------------------------------------------
 def _users_panel(recent_n: int = 12) -> dict:
+    """Real user metrics — synthetic smoke-probe accounts EXCLUDED from every
+    headline number, but surfaced honestly as a separate `test_seed` block so
+    nothing is hidden (MAKE-IT-REAL: exclude from the real count, never drop).
+
+    The pollution this fixes: scripts/reality_smoke.py historically registered
+    reality+smoketest<ts>@archhub.io against the live DB on a 30-min cron, so
+    `total` / `signups` / `by_plan` were inflated by hundreds of fake rows.
+    Every number below is now the REAL business state; `test_seed.count` is how
+    many synthetic rows were set aside.
+    """
     now = int(time.time())
+    test_total = db.count_test_users()
     return {
-        "total":          db.count_users(),
-        "paid":           db.count_paid_users(),
-        "by_plan":        db.count_users_by_plan(),
-        "signups_24h":    db.count_users_since(now - 86400),
-        "signups_7d":     db.count_users_since(now - 7 * 86400),
-        "recent":         db.recent_users(recent_n),
+        # Real (test/seed accounts excluded) — the headline numbers.
+        "total":          db.count_users(exclude_test=True),
+        "paid":           db.count_paid_users(exclude_test=True),
+        "by_plan":        db.count_users_by_plan(exclude_test=True),
+        "signups_24h":    db.count_users_since(now - 86400, exclude_test=True),
+        "signups_7d":     db.count_users_since(now - 7 * 86400,
+                                               exclude_test=True),
+        "recent":         db.recent_users(recent_n, exclude_test=True),
+        # Honest disclosure of what was set aside (NOT hidden).
+        "total_incl_test": db.count_users(),
+        "test_seed": {
+            "count":   test_total,
+            "note":   ("Synthetic smoke-test / seed accounts (e.g. "
+                       "reality+smoketest<ts>@archhub.io) excluded from the "
+                       "numbers above. Purge from the cockpit when ready."),
+        },
     }
 
 
@@ -157,7 +208,9 @@ def _subscriptions_panel() -> dict:
     labelled `mrr_estimate` + `basis: "derived_from_stored_plans"` so the
     founder reads it as an estimate, not a billed figure.
     """
-    by_plan = db.count_users_by_plan()
+    # Real plan counts — synthetic smoke-probe rows excluded so MRR and the
+    # trial-user headline are never inflated by fake signups.
+    by_plan = db.count_users_by_plan(exclude_test=True)
     plans = config.PLANS
     tiers = []
     mrr = 0.0
@@ -266,11 +319,14 @@ def _system_panel() -> dict:
 def _usage_panel() -> dict:
     """Usage / progress: chat completions + memory captures (real counters)."""
     now = int(time.time())
-    usage = db.usage_totals()
+    # Real usage — drop rows owned by synthetic test accounts so spend/token
+    # totals reflect genuine customers only.
+    usage = db.usage_totals(exclude_test=True)
     training = db.training_totals()
     return {
         "chat_completions_total": usage["chat_completions"],
-        "chat_completions_24h":   db.usage_calls_since(now - 86400),
+        "chat_completions_24h":   db.usage_calls_since(now - 86400,
+                                                       exclude_test=True),
         "input_tokens":           usage["input_tokens"],
         "output_tokens":          usage["output_tokens"],
         "spend_usd_estimate":     round(usage["cost_micros"] / 1_000_000.0, 4),
@@ -290,6 +346,227 @@ def build_overview() -> dict:
         "usage":         _usage_panel(),
         "errors":        recent_errors(20),
     }
+
+
+# ---------------------------------------------------------------------------
+# COMMAND ENGINE — the cockpit's real authority (PHASE 5)
+# ---------------------------------------------------------------------------
+# A typed founder instruction is parsed into ONE real action, executed against
+# real state, and the REAL effect is returned + audited. This is what turns the
+# cockpit from a read-only display into an actor. Every action below mutates
+# real rows (db.py write paths) or directs a real agent (the agent_tasks queue
+# the app-side self-extension loop drains). Destructive actions require
+# {confirm: true}; everything is gated by require_founder and logged via
+# db.log_founder_action.
+
+# Each entry: (action_id, list of keyword regexes that route to it).
+# Kept a small deterministic intent map for v1 (LLM NL routing is an optional
+# upgrade — see route_command). First matching rule wins.
+_INTENTS = [
+    ("purge_test_users", [r"\bpurge\b.*\btest\b", r"\bdelete\b.*\btest user",
+                          r"\bclean(up)?\b.*\btest\b"]),
+    ("set_plan",         [r"\bset\b.*\bplan\b", r"\b(set|make|move|upgrade|downgrade)\b.*\bto\s+(trial|solo|studio|firm)\b",
+                          r"\b(plan|tier)\b.*\b(trial|solo|studio|firm)\b"]),
+    ("toggle_free",      [r"\bfree[\s_-]?default\b", r"\bfree tier\b", r"\bfree\b.*\b(on|off|enable|disable)\b"]),
+    ("direct_agent",     [r"\b(build|extend|create|implement|make|add)\b",
+                          r"\bself[\s_-]?extend\b", r"\bagent\b", r"\bbuild me\b"]),
+    ("help",             [r"\bhelp\b", r"\bwhat can you do\b", r"\bcommands\b"]),
+]
+
+_PLANS = ("trial", "solo", "studio", "firm")
+
+
+def _detect_action(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return "help"
+    for action, pats in _INTENTS:
+        for p in pats:
+            if re.search(p, t):
+                return action
+    return "unknown"
+
+
+def _extract_email(text: str) -> Optional[str]:
+    m = re.search(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", text or "")
+    return m.group(0) if m else None
+
+
+def _extract_plan(text: str) -> Optional[str]:
+    t = (text or "").lower()
+    for p in _PLANS:
+        if re.search(rf"\b{p}\b", t):
+            return p
+    return None
+
+
+def _extract_onoff(text: str) -> Optional[bool]:
+    t = (text or "").lower()
+    if re.search(r"\b(off|disable|disabled|false|no)\b", t):
+        return False
+    if re.search(r"\b(on|enable|enabled|true|yes)\b", t):
+        return True
+    return None
+
+
+HELP_TEXT = (
+    "Founder commands — type any of these:\n"
+    "  purge test users            (destructive — needs Confirm)\n"
+    "  set <email> to studio       (plans: trial | solo | studio | firm)\n"
+    "  free default off            (toggle the zero-config free tier on/off)\n"
+    "  build <something>           (directs an agent: queues a self-extension task)\n"
+    "  help"
+)
+
+
+def _try_brain_self_extend(directive: str) -> Optional[dict]:
+    """Best-effort: also fire the brain's ROMA self-extension loop if the
+    daemon is reachable, so a 'build' command can kick REAL agent work beyond
+    the durable queue row. Never blocks / never raises — the queued task row is
+    the guaranteed effect; this is an extra real trigger when the brain is up.
+    Returns a small status dict or None when unreachable."""
+    url = os.environ.get("BRAIN_MCP_URL", "http://127.0.0.1:8473/mcp")
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "brain.roma_atomize",
+                       "arguments": {"vision": directive}},
+        }).encode()
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            return {"brain": "triggered", "status": resp.status}
+    except Exception as e:
+        return {"brain": "unreachable", "error": str(e)[:120]}
+
+
+def route_command(text: str, *, actor: str, confirm: bool = False,
+                  args: Optional[dict] = None) -> dict:
+    """Parse + EXECUTE one founder instruction. Returns the REAL effect.
+
+    actor   = founder email (already gated by require_founder upstream).
+    confirm = required True for destructive actions.
+    args    = optional explicit structured args (email/plan/value/directive)
+              that override what the parser extracts from free text.
+    """
+    args = args or {}
+    text = (text or "").strip()
+    action = (args.get("action") or _detect_action(text)).strip().lower()
+    target: Optional[str] = None
+    result: dict
+    ok = True
+
+    if action == "help":
+        result = {"action": "help", "message": HELP_TEXT}
+
+    elif action == "purge_test_users":
+        target = "test_users"
+        if not confirm:
+            preview = db.list_test_users()
+            result = {
+                "action": "purge_test_users",
+                "needs_confirm": True,
+                "would_delete": len(preview),
+                "emails": [p["email"] for p in preview],
+                "message": (f"This will permanently delete {len(preview)} test "
+                            f"user(s). Re-run with Confirm to proceed."),
+            }
+            ok = True
+            # Do NOT log a no-op preview as an action effect, but record intent.
+            db.log_founder_action(
+                actor=actor, command=text, action="purge_test_users.preview",
+                target=target, result=json.dumps({"would_delete": len(preview)}),
+                ok=True)
+            return result
+        # delete_test_users() returns the int row-count; capture the emails
+        # from the preview list BEFORE deleting so the report still names them.
+        victims = db.list_test_users()
+        emails = [v["email"] for v in victims]
+        deleted = db.delete_test_users()
+        result = {
+            "action": "purge_test_users", "deleted": deleted,
+            "emails": emails,
+            "message": f"Deleted {deleted} test user(s).",
+        }
+
+    elif action == "set_plan":
+        email = (args.get("email") or _extract_email(text))
+        plan = (args.get("plan") or _extract_plan(text))
+        target = email
+        if not email or not plan:
+            ok = False
+            result = {"action": "set_plan", "error": "need_email_and_plan",
+                      "message": ("Usage: set <email> to <trial|solo|studio|firm>. "
+                                  f"Got email={email!r} plan={plan!r}.")}
+        else:
+            try:
+                eff = db.set_user_plan(email, plan)
+                result = {"action": "set_plan", **eff,
+                          "message": f"Set {eff['email']} to plan '{eff['plan']}'."}
+            except ValueError as ve:
+                ok = False
+                result = {"action": "set_plan", "error": str(ve),
+                          "message": f"Could not set plan: {ve}"}
+
+    elif action == "toggle_free":
+        val = args.get("value")
+        if val is None:
+            val = _extract_onoff(text)
+        if val is None:
+            ok = False
+            result = {"action": "toggle_free", "error": "need_on_or_off",
+                      "message": "Say 'free default on' or 'free default off'."}
+        else:
+            target = "free_default"
+            eff = db.set_founder_flag(
+                "free_default", "1" if val else "0", actor=actor)
+            # Reflect the real downstream effect on serving.
+            available = False
+            try:
+                available = bool(config.free_default_available())
+            except Exception:
+                pass
+            result = {"action": "toggle_free", "free_default": bool(val),
+                      "flag": eff,
+                      "serving_free_now": available,
+                      "message": (f"Free default turned {'ON' if val else 'OFF'}. "
+                                  f"Serving free now: {available}.")}
+
+    elif action == "direct_agent":
+        directive = (args.get("directive") or text).strip()
+        if not directive:
+            ok = False
+            result = {"action": "direct_agent", "error": "empty_directive",
+                      "message": "Tell the agent what to build."}
+        else:
+            task = db.enqueue_agent_task(
+                directive=directive, created_by=actor,
+                kind=(args.get("kind") or "self_extend"))
+            target = task["id"]
+            brain = _try_brain_self_extend(directive)
+            result = {"action": "direct_agent", "task": task,
+                      "queued": True, "task_id": task["id"],
+                      "brain": brain,
+                      "message": (f"Queued agent task {task['id']} "
+                                  f"(status={task['status']}). The self-extension "
+                                  f"loop will pick it up.")}
+
+    else:  # unknown
+        ok = False
+        result = {"action": "unknown",
+                  "message": ("I didn't recognise that command. Type 'help' "
+                              "for the list."),
+                  "help": HELP_TEXT}
+
+    # Audit every executed command (success or handled failure).
+    db.log_founder_action(
+        actor=actor, command=text, action=result.get("action", action),
+        target=target, result=json.dumps(result)[:2000], ok=ok)
+    result["ok"] = ok
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +607,95 @@ def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"errors": recent_errors(50)})
 
 
+# --- ACTION routes (real authority) ----------------------------------------
+@router.post("/api/command")
+def api_command(payload: dict = Body(default={}),
+                _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Execute a typed founder instruction. Behind require_founder; destructive
+    actions require {"confirm": true}. Returns the REAL effect, audited."""
+    actor = (_founder.get("email") or "").strip().lower()
+    text = str(payload.get("command") or payload.get("text") or "")
+    confirm = bool(payload.get("confirm"))
+    args = payload.get("args") if isinstance(payload.get("args"), dict) else None
+    result = route_command(text, actor=actor, confirm=confirm, args=args)
+    # 200 for executed/handled; the body carries ok + needs_confirm flags.
+    return JSONResponse(result)
+
+
+@router.get("/api/actions")
+def api_actions(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The founder action audit log (most recent first)."""
+    return JSONResponse({"actions": db.recent_founder_actions(40)})
+
+
+@router.get("/api/agent-tasks")
+def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The agent task queue the cockpit fills + the app-side loop drains."""
+    return JSONResponse({
+        "tasks": db.list_agent_tasks(40),
+        "queued": db.count_agent_tasks("queued"),
+        "total": db.count_agent_tasks(),
+    })
+
+
+# --- Test-account purge (founder-gated, confirm-required) -------------------
+class PurgeTestUsersReq(BaseModel):
+    """Body for POST /founder/api/purge-test-users. `confirm` MUST be true —
+    an unconfirmed call is a dry-run that reports the count WITHOUT deleting,
+    so the founder can see exactly how many rows would go before committing."""
+    confirm: bool = False
+
+
+@router.post("/api/purge-test-users")
+def api_purge_test_users(
+    body: PurgeTestUsersReq = Body(default_factory=PurgeTestUsersReq),
+    _founder: dict = Depends(require_founder),
+) -> JSONResponse:
+    """DELETE every synthetic test/seed account (rows matching
+    db.is_test_account_email) — the one-click cleanup for the polluted
+    production users table. Also reachable as the 'purge test users' command
+    (which additionally writes the founder_action_log audit row).
+
+    Two locks, both required:
+      1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
+         the founder email passes; everyone else (incl. unauthenticated) → 403.
+      2. EXPLICIT CONFIRM — the body must carry {"confirm": true}. Without it
+         the call is a safe DRY-RUN: it reports the count that WOULD be deleted
+         and deletes nothing, so the destructive action can never fire by
+         accident.
+
+    The response carries BOTH naming conventions the cockpit surfaces use, so
+    the same endpoint serves the dashboard widget and the command alias:
+      confirm=false → {"dry_run": true, "needs_confirm": true,
+                       "would_purge": N, "would_delete": N, "purged": 0,
+                       "emails": [...]}
+      confirm=true  → {"dry_run": false, "purged": N, "deleted": N,
+                       "remaining_test": 0, "emails": [...]}
+    """
+    if not body.confirm:
+        preview = db.list_test_users()
+        n = len(preview)
+        return JSONResponse({
+            "dry_run":       True,
+            "needs_confirm": True,
+            "would_purge":   n,
+            "would_delete":  n,
+            "purged":        0,
+            "emails":        [p["email"] for p in preview],
+            "note":          "confirm:true required to actually delete.",
+        })
+    victims = db.list_test_users()
+    emails = [v["email"] for v in victims]
+    purged = db.delete_test_users()
+    return JSONResponse({
+        "dry_run":        False,
+        "purged":         purged,
+        "deleted":        purged,
+        "emails":         emails,
+        "remaining_test": db.count_test_users(),
+    })
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
@@ -338,6 +704,53 @@ def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
     auto-refreshes every 30s. All styling is inline so the page has zero
     external dependencies."""
     return HTMLResponse(_PAGE_HTML)
+
+
+# --- Cookie login (the ONLY ungated cockpit routes) ------------------------
+# A browser navigating to /founder sends no Authorization header, so without a
+# session it 403s. These two routes let the founder mint a `founder_session`
+# cookie (validated through the SAME token->founder path as the gate) so the
+# browser carries it on every subsequent /founder* request. The login page +
+# its POST are deliberately UNGATED; everything else stays founder-gated.
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    """Ungated, on-brand sign-in page: one token field -> POST /founder/login."""
+    return HTMLResponse(_login_html())
+
+
+@router.post("/login")
+def login_submit(token: str = Form(default="")) -> Response:
+    """Validate the submitted token via the SAME path the gate uses
+    (db.user_for_token -> email == founder_email). On success: set the
+    HttpOnly + Secure + SameSite=Lax `founder_session` cookie and 303 to
+    /founder. On failure: re-render the login page with a generic error
+    (HTTP 401) and NEVER echo the token back."""
+    token = (token or "").strip()
+    if _founder_user_for_token(token) is None:
+        return HTMLResponse(
+            _login_html(error="That token is not valid for the founder account."),
+            status_code=401,
+        )
+    resp = RedirectResponse(url="/founder", status_code=303)
+    resp.set_cookie(
+        key=FOUNDER_COOKIE,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/founder",
+        max_age=90 * 86400,  # mirrors the token's 90-day server-side lifetime
+    )
+    return resp
+
+
+@router.get("/logout")
+def logout() -> Response:
+    """Clear the founder_session cookie and bounce to the login page."""
+    resp = RedirectResponse(url="/founder/login", status_code=303)
+    resp.delete_cookie(key=FOUNDER_COOKIE, path="/founder")
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +824,11 @@ _PAGE_HTML = """<!doctype html>
   .dot.good{background:var(--good)} .dot.warn{background:var(--warn)}
   .dot.bad{background:var(--bad)}
   .empty{color:var(--ink-faint);font-style:italic;padding:10px 2px}
+  .btn{background:var(--terracotta-soft);color:var(--terracotta);
+    border:1px solid rgba(217,119,87,.4);border-radius:8px;
+    padding:6px 12px;font-size:12.5px;font-family:inherit;cursor:pointer}
+  .btn:hover{background:rgba(217,119,87,.22)}
+  .btn:disabled{opacity:.5;cursor:default}
   .note{color:var(--ink-faint);font-size:11.5px;margin-top:12px;line-height:1.45}
   .err{font-size:12.5px;padding:8px 0;border-bottom:1px solid var(--panel-2)}
   .err:last-child{border-bottom:none}
@@ -419,6 +837,27 @@ _PAGE_HTML = """<!doctype html>
   .err .w{color:var(--terracotta)}
   .refresh{color:var(--ink-faint);font-size:12px}
   .span2{grid-column:span 2}
+  .cmdbar{display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap}
+  .cmd-input{flex:1;min-width:280px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:11px;color:var(--ink);
+    font-family:'Inter',sans-serif;font-size:14px;padding:13px 15px;outline:none}
+  .cmd-input:focus{border-color:var(--terracotta)}
+  .cmd-input::placeholder{color:var(--ink-faint)}
+  .cmd-confirm{color:var(--ink-dim);font-size:12.5px;display:flex;
+    align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
+  .cmd-btn{background:var(--terracotta);color:#fff;border:none;
+    border-radius:11px;font-family:'Inter',sans-serif;font-weight:600;
+    font-size:14px;padding:13px 26px;cursor:pointer}
+  .cmd-btn:disabled{opacity:.5;cursor:default}
+  .cmd-out{margin-top:12px;font-size:13px;min-height:0}
+  .cmd-out .ok{border:1px solid rgba(95,167,119,.4);background:rgba(95,167,119,.08);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out .bad{border:1px solid rgba(217,103,87,.45);background:rgba(217,103,87,.08);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out .confirm{border:1px solid rgba(217,166,87,.5);background:rgba(217,166,87,.1);
+    border-radius:11px;padding:12px 15px;color:var(--ink)}
+  .cmd-out pre{margin:8px 0 0;white-space:pre-wrap;color:var(--ink-dim);
+    font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   @media(max-width:740px){.span2{grid-column:auto}h1{font-size:34px}}
 </style>
 </head>
@@ -430,11 +869,22 @@ _PAGE_HTML = """<!doctype html>
       <span class="refresh">auto-refresh 30s</span> &nbsp;|&nbsp;
       <b id="version">-</b> &nbsp;|&nbsp;
       <span id="env">-</span> &nbsp;|&nbsp;
-      updated <b id="updated">-</b>
+      updated <b id="updated">-</b> &nbsp;|&nbsp;
+      <a href="/founder/logout">Sign out</a>
     </div>
   </header>
-  <p class="meta">Private business oversight. Live numbers from the cloud
-    database, billing config, and the brain replica store.</p>
+  <p class="meta">Private business oversight + control. Live numbers from the
+    cloud database, billing config, and the brain replica store. Type a command
+    below to ACT — purge test users, set a plan, toggle the free tier, or direct
+    an agent.</p>
+
+  <div class="cmdbar">
+    <input id="cmd" class="cmd-input" type="text" autocomplete="off"
+      placeholder="e.g.  set someone@studio.com to studio   ·   purge test users   ·   build a Notion connector   ·   free default off" />
+    <label class="cmd-confirm"><input type="checkbox" id="cmdConfirm" /> Confirm (destructive)</label>
+    <button id="cmdRun" class="cmd-btn">Run</button>
+  </div>
+  <div id="cmdOut" class="cmd-out"></div>
 
   <div class="grid kpis" id="kpis"></div>
 
@@ -458,6 +908,14 @@ _PAGE_HTML = """<!doctype html>
     <div class="card">
       <h2>Usage &amp; progress</h2>
       <div id="usage"></div>
+    </div>
+    <div class="card">
+      <h2>Agent tasks</h2>
+      <div id="agentTasks"></div>
+    </div>
+    <div class="card">
+      <h2>Recent commands</h2>
+      <div id="actions"></div>
     </div>
     <div class="card span2">
       <h2>Recent errors</h2>
@@ -492,8 +950,11 @@ function render(d){
   $('env').textContent = sys.env;
   $('updated').textContent = ago(d.generated_at);
 
+  const testN = (u.test_seed && u.test_seed.count) || 0;
+  const usersDelta = fmt(u.signups_24h)+' new in 24h'+
+    (testN ? ' · '+fmt(testN)+' test/seed excluded' : '');
   $('kpis').innerHTML =
-    kpi('Total users', fmt(u.total), false, fmt(u.signups_24h)+' new in 24h')+
+    kpi('Total users (real)', fmt(u.total), false, usersDelta)+
     kpi('Paying', fmt(s.paying_subscribers), false, fmt(s.trial_users)+' on trial')+
     kpi('MRR (est.)', money(s.mrr_estimate), true, 'ARR '+money(s.arr_estimate))+
     kpi('Chat completions', fmt(us.chat_completions_total), false, fmt(us.chat_completions_24h)+' in 24h')+
@@ -515,14 +976,23 @@ function render(d){
       `<div class="note">${esc(s.note)}</div>`;
   }
 
-  // By plan
+  // By plan (real users only)
   const bp=u.by_plan||{}; const keys=Object.keys(bp);
+  let t='';
   if(keys.length){
-    let t='';
     keys.sort((a,b)=>bp[b]-bp[a]).forEach(k=>{
       t+=`<div class="row"><span class="k">${esc(k)}</span><span class="v">${fmt(bp[k])}</span></div>`; });
-    $('byplan').innerHTML=t;
-  } else { $('byplan').innerHTML='<div class="empty">No users yet.</div>'; }
+  } else { t='<div class="empty">No real users yet.</div>'; }
+  // Honest test/seed disclosure + one-click purge (founder-gated endpoint).
+  t+=`<div class="row" style="margin-top:8px"><span class="k">test/seed (excluded)</span>`+
+     `<span class="v">${fmt(testN)}</span></div>`;
+  if(testN){
+    t+=`<div style="margin-top:10px"><button id="purgeBtn" class="btn">Purge ${fmt(testN)} test accounts</button>`+
+       `<span id="purgeMsg" class="note"></span></div>`;
+  }
+  $('byplan').innerHTML=t;
+  const pb=$('purgeBtn');
+  if(pb){ pb.onclick=()=>purgeTest(testN); }
 
   // Recent signups
   if(u.recent && u.recent.length){
@@ -572,6 +1042,77 @@ function render(d){
   } else { $('errors').innerHTML='<div class="empty">No server errors recorded since last restart.</div>'; }
 }
 
+function renderActions(d){
+  const a=d.actions||[];
+  if(!a.length){ $('actions').innerHTML='<div class="empty">No commands run yet.</div>'; return; }
+  let t='';
+  a.forEach(x=>{
+    t+=`<div class="err"><div class="t">${ago(x.ts)} &middot; <span class="w">${esc(x.action)}</span>${x.target?(' &middot; '+esc(x.target)):''} &middot; ${x.ok?'ok':'fail'}</div>`+
+       `<div class="m">${esc(x.command)}</div></div>`; });
+  $('actions').innerHTML=t;
+}
+function renderAgentTasks(d){
+  const a=d.tasks||[];
+  let head=`<div class="row"><span class="k">Queued</span><span class="v">${fmt(d.queued)}</span></div>`+
+           `<div class="row"><span class="k">Total</span><span class="v">${fmt(d.total)}</span></div>`;
+  if(!a.length){ $('agentTasks').innerHTML=head+'<div class="empty">No agent tasks queued.</div>'; return; }
+  let t=head;
+  a.slice(0,8).forEach(x=>{
+    t+=`<div class="err"><div class="t">${ago(x.created_at)} &middot; <span class="w">${esc(x.status)}</span> &middot; ${esc(x.kind)}</div>`+
+       `<div class="m">${esc(x.directive)}</div></div>`; });
+  $('agentTasks').innerHTML=t;
+}
+async function loadActions(){
+  try{
+    const [ra,rt] = await Promise.all([
+      fetch('/founder/api/actions',{headers:{'Accept':'application/json'}}),
+      fetch('/founder/api/agent-tasks',{headers:{'Accept':'application/json'}})]);
+    if(ra.ok) renderActions(await ra.json());
+    if(rt.ok) renderAgentTasks(await rt.json());
+  }catch(e){}
+}
+
+async function runCommand(){
+  const inp=$('cmd'), btn=$('cmdRun'), out=$('cmdOut');
+  const command=inp.value.trim();
+  if(!command){ return; }
+  const confirm=$('cmdConfirm').checked;
+  btn.disabled=true;
+  out.innerHTML='<div class="ok">Running…</div>';
+  try{
+    const r=await fetch('/founder/api/command',{method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({command, confirm})});
+    const d=await r.json();
+    let cls = d.needs_confirm ? 'confirm' : (d.ok ? 'ok' : 'bad');
+    let body=`<div class="${cls}"><b>${esc(d.message||(d.ok?'Done.':'Failed.'))}</b>`+
+      `<pre>${esc(JSON.stringify(d,null,2))}</pre></div>`;
+    out.innerHTML=body;
+    if(d.needs_confirm){ $('cmdConfirm').checked=true; }
+    else if(d.ok){ inp.value=''; $('cmdConfirm').checked=false; }
+    load(); loadActions();
+  }catch(e){ out.innerHTML='<div class="bad">Command failed: '+esc(e)+'</div>'; }
+  finally{ btn.disabled=false; }
+}
+$('cmdRun').addEventListener('click', runCommand);
+$('cmd').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ runCommand(); }});
+
+async function purgeTest(n){
+  const msg=$('purgeMsg'); const btn=$('purgeBtn');
+  if(!window.confirm('Permanently delete '+n+' synthetic test/seed accounts '+
+    '(reality+smoketest@archhub.io etc.)? Real users are never touched.')) return;
+  if(btn){ btn.disabled=true; btn.textContent='Purging...'; }
+  try{
+    const r=await fetch('/founder/api/purge-test-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({confirm:true})});
+    const j=await r.json();
+    if(r.ok){ if(msg) msg.textContent=' purged '+fmt(j.purged)+'.'; load(); }
+    else { if(msg) msg.textContent=' error '+r.status; if(btn) btn.disabled=false; }
+  }catch(e){ if(msg) msg.textContent=' request failed'; if(btn) btn.disabled=false; }
+}
+
 async function load(){
   try{
     const r = await fetch('/founder/api/overview', {headers:{'Accept':'application/json'}});
@@ -579,9 +1120,82 @@ async function load(){
     render(await r.json());
   }catch(e){ $('updated').textContent='load error'; }
 }
-load();
-setInterval(load, 30000);
+load(); loadActions();
+setInterval(()=>{ load(); loadActions(); }, 30000);
 </script>
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# The login page (ungated). On-brand: terracotta #d97757, Instrument Serif
+# heading, Inter body, no emoji. One password-type token field that POSTs to
+# /founder/login. Optional error banner (escaped; the token is NEVER echoed).
+# ---------------------------------------------------------------------------
+import html as _html
+
+_LOGIN_HTML_TMPL = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>ArchHub - Founder Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f0f12; --panel:#16161b; --line:#2a2a33;
+    --ink:#ece8e0; --ink-dim:#a39e93; --ink-faint:#6f6a60;
+    --terracotta:#d97757; --terracotta-soft:rgba(217,119,87,.14);
+    --bad:#d96757;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:34px 32px;width:100%;max-width:420px}
+  h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;
+    font-size:36px;letter-spacing:.3px;margin:0 0 6px;line-height:1.05}
+  h1 .sub{color:var(--terracotta)}
+  p.help{color:var(--ink-dim);font-size:13px;margin:0 0 22px}
+  label{display:block;color:var(--ink-faint);font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+  input[type=password]{width:100%;background:#0f0f12;border:1px solid var(--line);
+    border-radius:10px;color:var(--ink);font-family:inherit;font-size:14px;
+    padding:11px 13px;outline:none}
+  input[type=password]:focus{border-color:var(--terracotta)}
+  button{margin-top:16px;width:100%;background:var(--terracotta);color:#16110e;
+    border:none;border-radius:10px;font-family:inherit;font-size:14px;
+    font-weight:600;padding:11px 13px;cursor:pointer}
+  button:hover{filter:brightness(1.05)}
+  .err{background:rgba(217,103,87,.12);border:1px solid rgba(217,103,87,.35);
+    color:#e7a99a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:18px}
+  .foot{color:var(--ink-faint);font-size:11.5px;margin-top:18px;line-height:1.45}
+</style>
+</head>
+<body>
+  <form class="card" method="post" action="/founder/login" autocomplete="off">
+    <h1>Founder <span class="sub">Cockpit</span></h1>
+    <p class="help">Private business oversight. Sign in to continue.</p>
+    {error_block}
+    <label for="token">ArchHub token</label>
+    <input id="token" name="token" type="password" autofocus
+           autocomplete="off" spellcheck="false" />
+    <button type="submit">Sign in</button>
+    <div class="foot">Paste your ArchHub account token (Settings -&gt; Account).</div>
+  </form>
+</body>
+</html>
+"""
+
+
+def _login_html(error: Optional[str] = None) -> str:
+    """Render the login page. `error`, if given, is HTML-escaped and shown in a
+    banner; the submitted token is never reflected back into the page."""
+    block = (f'<div class="err">{_html.escape(error)}</div>') if error else ""
+    return _LOGIN_HTML_TMPL.replace("{error_block}", block)

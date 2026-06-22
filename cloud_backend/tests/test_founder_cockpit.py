@@ -69,6 +69,19 @@ def _auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _cookie_client(value):
+    """A TestClient that carries `founder_session=value` on every request.
+    Driven over https:// so the Secure cookie is actually sent, and set on the
+    client instance (not per-request) to avoid the ambiguous-persistence
+    deprecation — this is the faithful real-browser shape."""
+    from fastapi.testclient import TestClient
+    import main
+    c = TestClient(main.app, base_url="https://testserver",
+                   raise_server_exceptions=False)
+    c.cookies.set("founder_session", value)
+    return c
+
+
 COCKPIT_API = [
     "/founder/api/overview",
     "/founder/api/users",
@@ -174,6 +187,119 @@ class TestFounderAllowed:
         # Auto-refresh wired.
         assert "/founder/api/overview" in html
         assert "setInterval" in html
+
+
+# --- cookie login (browser-openable cockpit) ------------------------------
+class TestCookieLogin:
+    """The browser path: GET /founder/login is ungated, POST /founder/login
+    with a founder token mints a `founder_session` cookie, and that cookie
+    then authenticates /founder exactly like the bearer header does."""
+
+    def test_login_page_is_ungated_200(self, client):
+        # (a) The login page must be reachable with NO auth at all.
+        r = client.get("/founder/login")
+        assert r.status_code == 200, r.text
+        assert "text/html" in r.headers["content-type"]
+        html = r.text
+        # On-brand + the single token field + helper text, no token echoed.
+        assert "#d97757" in html
+        assert "Instrument Serif" in html and "Inter" in html
+        assert 'type="password"' in html
+        assert 'name="token"' in html
+        assert "Settings -&gt; Account" in html or "Settings -> Account" in html
+
+    def test_founder_post_sets_cookie_and_redirects(self, client, monkeypatch):
+        # (b) POST with a FOUNDER token -> 303 + Set-Cookie founder_session.
+        token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
+        r = client.post("/founder/login", data={"token": token},
+                        follow_redirects=False)
+        assert r.status_code == 303, r.text
+        assert r.headers.get("location") == "/founder"
+        set_cookie = r.headers.get("set-cookie", "")
+        assert "founder_session=" in set_cookie
+        # Hardened cookie attributes.
+        low = set_cookie.lower()
+        assert "httponly" in low
+        assert "secure" in low
+        assert "samesite=lax" in low
+
+    def test_founder_cookie_opens_cockpit_200(self, client, monkeypatch):
+        # (c) With the founder cookie, GET /founder returns the real cockpit.
+        token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
+        bc = _cookie_client(token)
+        r = bc.get("/founder")
+        assert r.status_code == 200, r.text
+        assert "text/html" in r.headers["content-type"]
+        assert "Founder" in r.text and "Cockpit" in r.text
+        # API routes share the same cookie gate.
+        r2 = bc.get("/founder/api/overview")
+        assert r2.status_code == 200, r2.text
+
+    def test_full_browser_flow_post_then_get(self, client, monkeypatch):
+        # End-to-end via the client's own cookie jar, exactly like a real
+        # browser: POST login -> 303 -> GET /founder, then a fresh plain
+        # GET /founder, all carrying the founder_session cookie automatically.
+        # Driven over https:// because the cookie is Secure (as in production
+        # behind Fly's TLS) — an http:// client would refuse to send it, which
+        # is the correct hardening, not a bug.
+        from fastapi.testclient import TestClient
+        import main
+        token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
+        bc = TestClient(main.app, base_url="https://testserver",
+                        raise_server_exceptions=False)
+        rp = bc.post("/founder/login", data={"token": token})
+        assert rp.status_code == 200  # followed 303 -> /founder
+        assert "Cockpit" in rp.text
+        rg = bc.get("/founder")  # cookie jar carries founder_session
+        assert rg.status_code == 200
+        assert "Cockpit" in rg.text
+
+    def test_nonfounder_cookie_is_403(self, client, monkeypatch):
+        # (d) A valid NON-founder token in the cookie -> still 403.
+        token = _sign_in(client, monkeypatch, "intruder@studio.com")
+        assert client.get("/v1/me", headers=_auth(token)).status_code == 200
+        bc = _cookie_client(token)
+        for path in ("/founder", "/founder/api/overview"):
+            r = bc.get(path)
+            assert r.status_code == 403, (path, r.status_code)
+
+    def test_no_cookie_no_header_is_403(self, client):
+        # (e) No cookie + no header -> 403 (the original bug must stay closed
+        # for everything except the explicitly-ungated login routes).
+        for path in ("/founder", "/founder/", "/founder/api/overview"):
+            assert client.get(path).status_code == 403, path
+
+    def test_header_auth_still_works(self, client, monkeypatch):
+        # (f) The original Authorization: Bearer header path is unchanged.
+        token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
+        assert client.get("/founder", headers=_auth(token)).status_code == 200
+        assert client.get("/founder/api/overview",
+                          headers=_auth(token)).status_code == 200
+
+    def test_garbage_cookie_is_403(self, client):
+        # A bogus token in the cookie is treated identically to no token.
+        r = _cookie_client("ah_live_garbage").get("/founder")
+        assert r.status_code == 403
+
+    def test_bad_post_token_rerenders_without_leak(self, client, monkeypatch):
+        # POST with a non-founder/garbage token re-renders the login page (401)
+        # and does NOT set a session cookie nor echo the token back.
+        token = _sign_in(client, monkeypatch, "nope@studio.com")
+        r = client.post("/founder/login", data={"token": token},
+                        follow_redirects=False)
+        assert r.status_code == 401, r.text
+        assert "founder_session=" not in r.headers.get("set-cookie", "")
+        assert token not in r.text  # never reflect the secret
+        assert 'name="token"' in r.text  # but the form is shown again
+
+    def test_logout_clears_cookie(self, client, monkeypatch):
+        token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
+        r = _cookie_client(token).get("/founder/logout", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers.get("location") == "/founder/login"
+        # Cookie deletion is expressed as an expiry in the Set-Cookie header.
+        sc = r.headers.get("set-cookie", "").lower()
+        assert "founder_session=" in sc
 
 
 # --- founder identity / gate internals ------------------------------------

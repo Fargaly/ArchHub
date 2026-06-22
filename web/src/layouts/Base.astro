@@ -168,6 +168,9 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <a href="/pricing" class={isActive('/pricing') ? 'active' : undefined}>Pricing</a>
           <a href="/community" class={isActive('/community') ? 'active' : undefined}>Community</a>
           <a href="/changelog" class={isActive('/changelog') ? 'active' : undefined}>Changelog</a>
+          <!-- Shown only when the visitor has a saved cloud token (signed in).
+               The static build can't know auth state, so JS unhides it. -->
+          <a href="/brain" id="nav-brain" class={isActive('/brain') ? 'active' : undefined} hidden style="display:none">Brain</a>
         </nav>
         <span class="ver">{connectors} connectors · MIT</span>
         <!-- AUTH ENTRY POINTS — wired to the EXISTING cloud auth backend via
@@ -235,14 +238,21 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </div>
       </div>
     </footer>
-    <!-- Shared auth client (talks to the live cloud backend). Loaded on every
-         page so the nav can reflect the signed-in state everywhere. -->
+    <!-- Shared auth client + nav state. Loaded on every page: reflects the
+         signed-in state (account chip from /v1/me) AND reveals the Brain link.
+         Single source of truth = window.ArchHubAuth (one token key). -->
     <script src="/auth.js" is:inline></script>
     <script is:inline>
-      // Reflect the session in the nav: signed-in -> account chip with the
-      // user's email (from GET /v1/me); signed-out -> Sign in / Get started.
       (function () {
         var A = window.ArchHubAuth;
+        // Brain nav link — only needs a valid session (the shared client's
+        // token), so a user who signed in anywhere on the site sees it.
+        try {
+          if (A && A.isSignedIn && A.isSignedIn()) {
+            var brn = document.getElementById('nav-brain');
+            if (brn) { brn.hidden = false; brn.style.display = ''; }
+          }
+        } catch (e) {}
         var nav = document.getElementById('authNav');
         if (!A || !nav) return;
         var anon = nav.querySelector('.auth-anon');

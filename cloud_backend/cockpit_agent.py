@@ -641,13 +641,65 @@ def _target_of(preview: dict) -> Optional[str]:
     return None
 
 
+# Fixed, server-controlled vocabulary of write-execute failure codes. The write
+# executors raise ValueError("<code>:<detail>") / ValueError("<code>") with one
+# of these heads; confirm_pending classifies the exception to one of THESE
+# LITERALS and returns only the literal + a generic message — the raw exception
+# text (CodeQL py/stack-trace-exposure) is logged server-side, never echoed to
+# the client. Mirrors founder_cockpit._classify_set_plan_error (ONE pattern).
+_WRITE_ERROR_CODES = ("exceeds_usd_cap", "no_such_user", "unknown_plan",
+                      "missing_user")
+_GENERIC_WRITE_MSG = {
+    "exceeds_usd_cap": ("That grant exceeds the per-grant safety cap. Grant a "
+                        "smaller amount or raise the cap."),
+    "no_such_user":    "No user with that email.",
+    "unknown_plan":    "Unknown plan (use trial|solo|studio|firm).",
+    "missing_user":    "An email is required.",
+    "invalid":         "Could not apply the change (invalid request).",
+    "failed":          "The write could not be completed. Please try again.",
+}
+
+
+def _classify_write_error(exc: Exception) -> str:
+    """Map a write-execute exception to one of the FIXED _WRITE_ERROR_CODES
+    literals (or 'invalid'/'failed' safe catch-alls). The returned value is a
+    constant from our own code, NOT a substring of str(exc), so no
+    exception-derived text reaches the response body."""
+    head = str(exc).split(":", 1)[0].strip()
+    if head in _WRITE_ERROR_CODES:
+        return head
+    return "invalid" if isinstance(exc, ValueError) else "failed"
+
+
+def _record_server_error(where: str, exc: Exception) -> None:
+    """Log the real exception detail server-side (never to the client)."""
+    try:
+        import founder_cockpit
+        founder_cockpit.record_error(
+            where=where, kind=type(exc).__name__, message=str(exc))
+    except Exception:
+        pass
+
+
+def _record_write_error(tool: str, exc: Exception) -> None:
+    _record_server_error(f"cockpit_agent.confirm_pending.{tool}", exc)
+
+
+def _record_read_error(tool: str, exc: Exception) -> None:
+    _record_server_error(f"cockpit_agent.read.{tool}", exc)
+
+
 def confirm_pending(*, actor: str, tool: str, args: dict,
                     command: str = "") -> dict:
     """Execute a previously-previewed gated WRITE after the founder confirms.
 
     Called by founder_cockpit.api_command when the UI sends back
     {confirm:true, pending:{tool,args}}. Re-validates the dollar cap inside
-    execute(); writes the real change; audits. Returns the executed effect."""
+    execute(); writes the real change; audits. Returns the executed effect.
+
+    Security (CodeQL py/stack-trace-exposure): a failed write returns only a
+    FIXED code literal + a generic message — never str(exc). The real detail is
+    logged server-side via founder_cockpit.record_error."""
     spec = TOOLS.get(tool)
     if spec is None or spec.get("kind") != "write":
         return {"ok": False, "action": tool, "error": "not_a_write_tool",
@@ -656,14 +708,11 @@ def confirm_pending(*, actor: str, tool: str, args: dict,
     exec_args["_actor"] = actor
     try:
         eff = spec["execute"](exec_args)
-    except ValueError as ve:
-        out = {"ok": False, "action": tool, "error": str(ve),
-               "message": f"Could not apply: {ve}"}
-        _audit(actor, command or tool, tool, None, out, False)
-        return out
-    except Exception as e:  # noqa: BLE001
-        out = {"ok": False, "action": tool, "error": str(e)[:200],
-               "message": f"Write failed: {str(e)[:200]}"}
+    except Exception as e:  # noqa: BLE001 — classify; never expose str(e)
+        _record_write_error(tool, e)
+        code = _classify_write_error(e)
+        out = {"ok": False, "action": tool, "error": code,
+               "message": _GENERIC_WRITE_MSG[code]}
         _audit(actor, command or tool, tool, None, out, False)
         return out
     out = {"ok": True, "action": tool, "executed": True, "effect": eff,
@@ -749,8 +798,14 @@ def agent_command(text: str, *, actor: str, history: Optional[list] = None,
             if spec["kind"] == "read":
                 try:
                     result = spec["run"](args)
-                except Exception as e:  # noqa: BLE001
-                    result = {"error": str(e)[:200]}
+                except Exception as e:  # noqa: BLE001 — log detail, not echo
+                    # Feed the model a generic, fixed error note (no exception
+                    # text) and log the real detail server-side. Keeps internals
+                    # out of anything the model might surface to the client
+                    # (CodeQL py/stack-trace-exposure, defense in depth).
+                    _record_read_error(name, e)
+                    result = {"error": "tool_failed",
+                              "note": f"The {name} read tool failed."}
                 tool_trace.append({"tool": name, "args": args})
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id"),

@@ -1,0 +1,125 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection, render } from 'astro:content';
+
+// One page per doc in the `docs` collection. getStaticPaths walks the
+// collection so every committed Markdown file becomes /docs/<slug>/. The body
+// is rendered to real HTML via render(entry) and styled with the .prose block
+// below, on-brand (terracotta accents, Instrument Serif headings, the bg/ink
+// ramps from Base's is:global tokens).
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  return docs.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+
+// Prev / next + a back-to-index link, ordered the same way the listing is.
+const ordered = (await getCollection('docs')).sort((a, b) => {
+  const ao = a.data.order ?? 999;
+  const bo = b.data.order ?? 999;
+  if (ao !== bo) return ao - bo;
+  return a.data.title.localeCompare(b.data.title);
+});
+const idx = ordered.findIndex((d) => d.id === entry.id);
+const prev = idx > 0 ? ordered[idx - 1] : null;
+const next = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : null;
+---
+<Base title={entry.data.title} description={entry.data.description}>
+
+  <section class="doc-wrap wrap">
+    <nav class="crumbs">
+      <a href="/docs">Docs</a>
+      <span class="sep">/</span>
+      <span class="cur">{entry.data.title}</span>
+    </nav>
+
+    <article class="prose">
+      <Content />
+    </article>
+
+    <nav class="doc-nav">
+      {prev
+        ? <a class="dn dn-prev" href={`/docs/${prev.id}/`}><span class="dn-k">← Previous</span><span class="dn-t">{prev.data.title}</span></a>
+        : <span></span>}
+      {next
+        ? <a class="dn dn-next" href={`/docs/${next.id}/`}><span class="dn-k">Next →</span><span class="dn-t">{next.data.title}</span></a>
+        : <span></span>}
+    </nav>
+  </section>
+
+  <style>
+    .doc-wrap { padding: var(--sp-4xl) 0 var(--sp-6xl); max-width: 840px; }
+    .crumbs { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ink-muted);
+      text-transform: uppercase; margin-bottom: var(--sp-2xl); }
+    .crumbs a { color: var(--accent); }
+    .crumbs a:hover { color: var(--accent-hi); }
+    .crumbs .sep { margin: 0 8px; color: var(--ink-dim); }
+    .crumbs .cur { color: var(--ink-soft); }
+
+    /* doc nav (prev/next) */
+    .doc-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: var(--sp-5xl);
+      padding-top: var(--sp-2xl); border-top: 1px solid var(--line); }
+    .dn { display: flex; flex-direction: column; gap: 4px; background: var(--bg-panel); border: 1px solid var(--line);
+      border-radius: 10px; padding: 16px 18px; transition: border-color .15s; }
+    .dn:hover { border-color: var(--accent); }
+    .dn-next { text-align: right; }
+    .dn-k { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-muted); }
+    .dn-t { font-family: var(--serif); font-size: 17px; letter-spacing: -0.015em; color: var(--ink); line-height: 1.2; }
+
+    @media (max-width: 720px) {
+      .doc-nav { grid-template-columns: 1fr; }
+      .dn-next { text-align: left; }
+    }
+  </style>
+
+  <!-- is:global — the rendered Markdown is injected as a child of .prose, so its
+       element styles must not be scoped away by Astro's per-component hashing.
+       Confined to `.prose ...` selectors so it can't leak into nav/footer. -->
+  <style is:global>
+    .prose { color: var(--ink); font-size: 15.5px; line-height: 1.7; }
+    .prose > :first-child { margin-top: 0; }
+    .prose h1 { font-family: var(--serif); font-weight: 400; font-size: var(--fs-h1); line-height: 1.05;
+      letter-spacing: -0.035em; margin: 0 0 var(--sp-lg); }
+    .prose h2 { font-family: var(--serif); font-weight: 400; font-size: 30px; line-height: 1.12;
+      letter-spacing: -0.025em; margin: var(--sp-4xl) 0 var(--sp-md); padding-top: var(--sp-lg);
+      border-top: 1px solid var(--line-soft); }
+    .prose h3 { font-family: var(--serif); font-weight: 400; font-size: 22px; letter-spacing: -0.02em;
+      margin: var(--sp-2xl) 0 var(--sp-sm); color: var(--ink); }
+    .prose h4 { font-family: var(--sans); font-weight: 600; font-size: 15px; margin: var(--sp-xl) 0 var(--sp-xs); }
+    .prose p { margin: 0 0 var(--sp-lg); color: var(--ink-soft); }
+    .prose a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+    .prose a:hover { color: var(--accent-hi); border-bottom-color: var(--accent-hi); }
+    .prose strong, .prose b { color: var(--ink); font-weight: 600; }
+    .prose em { color: var(--ink); }
+    .prose ul, .prose ol { margin: 0 0 var(--sp-lg); padding-left: 22px; color: var(--ink-soft); }
+    .prose li { margin: var(--sp-xs) 0; }
+    .prose li::marker { color: var(--ink-muted); }
+    .prose hr { border: 0; border-top: 1px solid var(--line); margin: var(--sp-3xl) 0; }
+
+    /* inline + block code */
+    .prose code { font-family: var(--mono); font-size: 0.86em; background: var(--bg-soft);
+      border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px; color: var(--accent-hi); }
+    .prose pre { background: var(--bg-deep); border: 1px solid var(--line); border-radius: 10px;
+      padding: 16px 18px; overflow-x: auto; margin: 0 0 var(--sp-lg); line-height: 1.6; }
+    .prose pre code { background: none; border: 0; padding: 0; color: var(--ink-soft); font-size: 12.5px; }
+
+    /* blockquote — the docs use these for "heads-up / note" callouts */
+    .prose blockquote { margin: 0 0 var(--sp-lg); padding: var(--sp-md) var(--sp-lg); background: var(--bg-ink);
+      border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; }
+    .prose blockquote p { margin: 0 0 var(--sp-sm); color: var(--ink); }
+    .prose blockquote p:last-child { margin-bottom: 0; }
+
+    /* tables — connectors/account docs lean on these */
+    .prose table { width: 100%; border-collapse: collapse; margin: 0 0 var(--sp-lg); font-size: 13.5px; display: block; overflow-x: auto; }
+    .prose thead { background: var(--bg-soft); }
+    .prose th { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--ink); text-align: left; padding: 10px 14px; border: 1px solid var(--line); white-space: nowrap; }
+    .prose td { padding: 10px 14px; border: 1px solid var(--line); color: var(--ink-soft); vertical-align: top; }
+    .prose tbody tr:nth-child(even) { background: rgba(28,28,35,0.4); }
+  </style>
+</Base>

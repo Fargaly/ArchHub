@@ -12,6 +12,12 @@
 // `npm run refresh-content`.
 import buildInfo from '../data/build-info.json';
 const { title, description } = Astro.props;
+// SEO: avoid the "X — ArchHub — ArchHub" double when a page title already
+// carries the brand (the home title does); canonical + OG/Twitter cards.
+const fullTitle = (title && title.includes('ArchHub')) ? title : `${title} — ArchHub`;
+const desc = description ?? "The graph-first AI workspace for architects, engineers, and contractors. One canvas, every host you already use, wired together. Local-first.";
+const canonical = new URL(Astro.url.pathname, 'https://archhub.io').href;
+const ogImage = 'https://archhub.io/og.svg';
 const sha = buildInfo.git_sha ?? 'unknown';
 const builtDate = (buildInfo.git_date ?? '').slice(0, 10) || 'unknown';
 const connectors = buildInfo.connectors ?? 0;
@@ -24,9 +30,27 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title} — ArchHub</title>
-    <meta name="description" content={description ?? "The graph-first AI workspace for architects, engineers, and contractors. One canvas, every tool you already use, wired together. Local-first. MIT."} />
-    <link rel="icon" href="/favicon.svg" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={desc} />
+    <link rel="canonical" href={canonical} />
+    <meta name="theme-color" content="#d97757" />
+    <meta name="robots" content="index, follow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ArchHub" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={desc} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={desc} />
+    <meta name="twitter:image" content={ogImage} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&display=swap" rel="stylesheet" />
@@ -128,7 +152,6 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </a>
         <nav class="nav-links">
           <a href="/features" class={isActive('/features') ? 'active' : undefined}>Features</a>
-          <a href="/brain" class={isActive('/brain') ? 'active' : undefined}>Brain</a>
           <a href="/security" class={isActive('/security') ? 'active' : undefined}>Security</a>
           <a href="/pricing" class={isActive('/pricing') ? 'active' : undefined}>Pricing</a>
           <a href="/community" class={isActive('/community') ? 'active' : undefined}>Community</a>
@@ -162,7 +185,6 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <div class="col">
             <h5>PRODUCT</h5>
             <a href="/features">Features</a>
-            <a href="/brain">Brain</a>
             <a href="/pricing">Pricing</a>
             <a href="/changelog">Changelog</a>
           </div>

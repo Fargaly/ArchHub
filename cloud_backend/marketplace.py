@@ -66,6 +66,20 @@ DEFAULT_LIST_LIMIT = 20
 MAX_LIST_LIMIT = 100
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 
+# Community Gallery — the enum spines (kept here, mirrored by the db defaults).
+# A pack's `source` is who published it; `pack_type` is which of the four
+# self-extend artifact classes it is.
+SOURCE_USER = "user"
+SOURCE_AGENT = "agent"
+SOURCE_OFFICIAL = "official"
+VALID_SOURCES = frozenset({SOURCE_USER, SOURCE_AGENT, SOURCE_OFFICIAL})
+# `all` is a list FILTER value, never stored — it means "no source filter".
+SOURCE_FILTERS = frozenset({SOURCE_USER, SOURCE_AGENT, SOURCE_OFFICIAL, "all"})
+VALID_PACK_TYPES = frozenset({"skill", "connector", "node", "widget"})
+SORT_NEW = "new"
+SORT_TOP = "top"
+VALID_SORTS = frozenset({SORT_NEW, SORT_TOP})
+
 
 # ---------------------------------------------------------------------------
 # Auth helpers (mirror main.py patterns)
@@ -145,8 +159,21 @@ class ReportReq(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
-def _pack_to_dict(row: dict, *, with_readme: bool = False) -> dict:
-    """Project a marketplace_packs row to the public JSON shape."""
+class VoteReq(BaseModel):
+    # +1 up, -1 down, 0 clears the user's vote.
+    vote: int = Field(ge=-1, le=1)
+
+
+def _pack_to_dict(row: dict, *, with_readme: bool = False,
+                  my_vote: int | None = None) -> dict:
+    """Project a marketplace_packs row to the public JSON shape.
+
+    Surfaces the Community Gallery fields (source / pack_type / vote counts /
+    at_own_risk) alongside the original marketplace fields. `my_vote`, when
+    provided, is the requesting user's current vote (+1/-1/0) on this pack.
+    """
+    up = int(row.get("up_votes") or 0)
+    down = int(row.get("down_votes") or 0)
     out = {
         "id": row["id"],
         "slug": row["slug"],
@@ -162,7 +189,18 @@ def _pack_to_dict(row: dict, *, with_readme: bool = False) -> dict:
         "approved_at": row.get("approved_at"),
         "signature": row["signature"],
         "pubkey": row["pubkey"],
+        # Community Gallery fields (additive; defaults keep legacy rows valid).
+        "source": row.get("source") or SOURCE_USER,
+        "pack_type": row.get("pack_type") or "skill",
+        "up_votes": up,
+        "down_votes": down,
+        "score": up - down,
+        "at_own_risk": bool(int(row.get("at_own_risk") if row.get("at_own_risk")
+                                is not None else 1)),
+        "promoted_at": row.get("promoted_at"),
     }
+    if my_vote is not None:
+        out["my_vote"] = int(my_vote)
     try:
         manifest = json.loads(row["manifest_json"])
     except Exception:
@@ -186,6 +224,7 @@ async def upload_pack(
     signature: str = Form(default=""),
     pubkey: str = Form(default=""),
     manifest: str = Form(default=""),
+    source: str = Form(default=""),
     authorization: str | None = Header(None),
 ) -> dict:
     user = _require_user(authorization)
@@ -208,6 +247,22 @@ async def upload_pack(
     version = str(manifest_obj.get("version") or "0.1.0").strip()
     description = str(manifest_obj.get("description") or "")
     category = str(manifest_obj.get("category") or "")
+    # Community Gallery: pack_type is one of the four self-extend artifact
+    # classes, read from the manifest (defaults to 'skill' for legacy packs).
+    pack_type = str(manifest_obj.get("pack_type") or "skill").strip().lower()
+    if pack_type not in VALID_PACK_TYPES:
+        raise HTTPException(status_code=400, detail="invalid_pack_type")
+    # `source` is server-authoritative: a normal architect can only publish a
+    # 'user' pack. 'agent' (published by the self-extend loop) is accepted ONLY
+    # from an admin/agent caller. 'official' is NEVER set on upload — it is
+    # reached solely via the founder-gated /promote endpoint.
+    requested_source = (source or "").strip().lower()
+    pack_source = SOURCE_USER
+    if requested_source == SOURCE_AGENT and int(user.get("is_admin") or 0):
+        pack_source = SOURCE_AGENT
+    # at_own_risk is 1 for all freshly uploaded community packs (user + agent);
+    # only promotion to official clears it.
+    at_own_risk = 1
 
     # Read upload with hard size cap. UploadFile.read(N) blocks until N
     # bytes or EOF, so reading MAX+1 and checking length is enough.
@@ -243,11 +298,13 @@ async def upload_pack(
             "INSERT INTO marketplace_packs"
             " (id, slug, title, description, version, category,"
             "  author_user_id, manifest_json, signature, pubkey,"
-            "  status, download_count, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            "  status, download_count, created_at, updated_at,"
+            "  source, pack_type, at_own_risk)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
             (pack_id, slug, title, description, version, category,
              user["id"], json.dumps(manifest_obj), signature, pubkey,
-             STATUS_PENDING, now, now),
+             STATUS_PENDING, now, now,
+             pack_source, pack_type, at_own_risk),
         )
         con.execute(
             "INSERT INTO marketplace_pack_files"
@@ -261,6 +318,9 @@ async def upload_pack(
         "slug": slug,
         "version": version,
         "status": STATUS_PENDING,
+        "source": pack_source,
+        "pack_type": pack_type,
+        "at_own_risk": bool(at_own_risk),
         "sha256": sha,
     }
 
@@ -272,6 +332,9 @@ async def upload_pack(
 def list_packs(
     query: str = Query("", max_length=200),
     category: str = Query("", max_length=64),
+    source: str = Query("", max_length=16),
+    pack_type: str = Query("", max_length=16),
+    sort: str = Query(SORT_NEW, max_length=8),
     verified_only: bool = Query(False),
     cursor: str = Query("", max_length=64),
     limit: int = Query(DEFAULT_LIST_LIMIT, ge=1, le=MAX_LIST_LIMIT),
@@ -279,6 +342,18 @@ def list_packs(
 ) -> dict:
     user = _optional_user(authorization)
     is_admin = bool(user and int(user.get("is_admin") or 0))
+
+    # Validate the gallery filters up front so a bad value is a clean 400
+    # rather than a silently-empty list.
+    src = (source or "").strip().lower()
+    if src and src not in SOURCE_FILTERS:
+        raise HTTPException(status_code=400, detail="invalid_source")
+    ptype = (pack_type or "").strip().lower()
+    if ptype and ptype not in VALID_PACK_TYPES:
+        raise HTTPException(status_code=400, detail="invalid_pack_type")
+    sort_mode = (sort or SORT_NEW).strip().lower()
+    if sort_mode not in VALID_SORTS:
+        raise HTTPException(status_code=400, detail="invalid_sort")
 
     # Approved-only by default; admins viewing without verified_only see
     # the full pipeline so they can review pending packs from the same
@@ -295,21 +370,40 @@ def list_packs(
     if category:
         wheres.append("category = ?")
         args.append(category)
+    # Gallery source filter ('all' = no filter); the "official" value maps to
+    # the existing approved/seed tier (source='official').
+    if src and src != "all":
+        wheres.append("source = ?")
+        args.append(src)
+    if ptype:
+        wheres.append("pack_type = ?")
+        args.append(ptype)
     if cursor:
         # Cursor is an opaque created_at — newer rows have higher ts; we
-        # paginate descending so the cursor caps from above.
+        # paginate descending so the cursor caps from above. Cursor pagination
+        # only applies to the 'new' (created_at) ordering.
         try:
             cursor_ts = int(cursor)
         except ValueError:
             raise HTTPException(status_code=400, detail="bad_cursor")
-        wheres.append("created_at < ?")
-        args.append(cursor_ts)
+        if sort_mode == SORT_NEW:
+            wheres.append("created_at < ?")
+            args.append(cursor_ts)
     where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
+
+    # sort=top ranks by net score (up - down), newest as the tiebreak; sort=new
+    # is the original created_at-desc feed. Column names are from the fixed
+    # enum above — never user input — so this is not an injection surface.
+    if sort_mode == SORT_TOP:
+        order_sql = " ORDER BY (up_votes - down_votes) DESC, created_at DESC"
+    else:
+        order_sql = " ORDER BY created_at DESC"
 
     sql = (
         "SELECT * FROM marketplace_packs"
         + where_sql
-        + " ORDER BY created_at DESC LIMIT ?"
+        + order_sql
+        + " LIMIT ?"
     )
     args.append(limit + 1)   # fetch +1 to detect more
 
@@ -318,11 +412,22 @@ def list_packs(
 
     has_more = len(rows) > limit
     rows = rows[:limit]
-    next_cursor = str(rows[-1]["created_at"]) if (has_more and rows) else None
+    # next_cursor only meaningful for the created_at feed; top-sort callers
+    # page by limit instead (votes shift the order between requests).
+    next_cursor = (str(rows[-1]["created_at"])
+                   if (has_more and rows and sort_mode == SORT_NEW) else None)
+
+    # Attach the requesting user's own vote per pack (one batched query).
+    my_votes: dict = {}
+    if user:
+        my_votes = db.pack_votes_for_user([r["id"] for r in rows], user["id"])
 
     return {
-        "packs": [_pack_to_dict(r) for r in rows],
+        "packs": [_pack_to_dict(r, my_vote=my_votes.get(r["id"], 0)
+                                if user else None)
+                  for r in rows],
         "next_cursor": next_cursor,
+        "sort": sort_mode,
     }
 
 
@@ -350,7 +455,8 @@ def get_pack(pack_id: str,
         # The author can always see their own pack though.
         if not (user and user["id"] == row["author_user_id"]):
             raise HTTPException(status_code=404, detail="pack_not_found")
-    out = _pack_to_dict(row, with_readme=True)
+    my_vote = db.pack_vote_for_user(pack_id, user["id"]) if user else None
+    out = _pack_to_dict(row, with_readme=True, my_vote=my_vote)
     if f is not None:
         out["sha256"] = f["sha256"]
         out["size_bytes"] = int(f["size_bytes"])
@@ -367,7 +473,8 @@ def download_pack(pack_id: str,
     is_admin = bool(user and int(user.get("is_admin") or 0))
     with db.connect() as con:
         r = con.execute(
-            "SELECT status, author_user_id, signature, pubkey, slug, version"
+            "SELECT status, author_user_id, signature, pubkey, slug, version,"
+            " source, at_own_risk"
             " FROM marketplace_packs WHERE id = ?",
             (pack_id,),
         ).fetchone()
@@ -394,6 +501,10 @@ def download_pack(pack_id: str,
         "X-Pack-Signature": r["signature"],
         "X-Pack-Pubkey": r["pubkey"],
         "X-Pack-Id": pack_id,
+        # Community Gallery: tell the client whether this pack is unreviewed
+        # community content so it can show the adopt-at-own-risk warning.
+        "X-Pack-Source": r["source"] or SOURCE_USER,
+        "X-Pack-At-Own-Risk": "1" if int(r["at_own_risk"] or 0) else "0",
     }
     return FastResponse(
         content=bytes(f["content"]),
@@ -430,6 +541,55 @@ def review_pack(pack_id: str, body: ReviewReq,
         )
     return {"pack_id": pack_id, "status": new_status,
             "decided_by": admin["id"], "decided_at": now}
+
+
+# ---------------------------------------------------------------------------
+# POST /marketplace/packs/{pack_id}/vote  — one vote per user (up/down/clear)
+# ---------------------------------------------------------------------------
+@router.post("/marketplace/packs/{pack_id}/vote")
+def vote_pack(pack_id: str, body: VoteReq,
+              authorization: str | None = Header(None)) -> dict:
+    """Cast / flip / clear the signed-in user's single vote on a pack.
+
+    One-vote-per-user is enforced by the (pack_id, voter_user_id) composite
+    PK in db.cast_vote — re-voting flips the SAME row, it never stacks. The
+    denormalised up/down counters are recomputed from the ledger inside the
+    same transaction so the returned counts are always honest.
+    """
+    user = _require_user(authorization)
+    try:
+        result = db.cast_vote(pack_id, user["id"], int(body.vote))
+    except ValueError as ex:
+        # Map the DAO's sentinel reasons to clean HTTP — never leak the raw
+        # exception text to the client (CodeQL: stack-trace exposure).
+        reason = str(ex)
+        if reason == "pack_not_found":
+            raise HTTPException(status_code=404, detail="pack_not_found")
+        raise HTTPException(status_code=400, detail="invalid_vote")
+    result["pack_id"] = pack_id
+    return result
+
+
+# ---------------------------------------------------------------------------
+# POST /marketplace/packs/{pack_id}/promote  — founder-gated lift to official
+# ---------------------------------------------------------------------------
+@router.post("/marketplace/packs/{pack_id}/promote")
+def promote_pack(pack_id: str,
+                 authorization: str | None = Header(None)) -> dict:
+    """Promote a top-voted user|agent pack to the OFFICIAL tier.
+
+    Founder/admin-gated (`_require_admin`) — a community pack NEVER becomes
+    official automatically. Sets source='official', clears at_own_risk, and
+    stamps promoted_at/by. This is the approved->official tier lift; the
+    existing /review remains the pending->approved moderation gate.
+    """
+    admin = _require_admin(authorization)
+    row = db.promote_pack_to_official(pack_id, admin["id"])
+    if row is None:
+        raise HTTPException(status_code=404, detail="pack_not_found")
+    out = _pack_to_dict(row)
+    out["promoted_by"] = admin["id"]
+    return out
 
 
 # ---------------------------------------------------------------------------

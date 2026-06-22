@@ -48,10 +48,17 @@ import marketplace
 import proxy
 
 
+# Hide the interactive API docs + OpenAPI schema in production / on Fly so
+# the public endpoint map is not exposed to anonymous visitors (security
+# audit 2026-06-22). Local dev keeps /docs for convenience.
+_HIDE_API_DOCS = config.is_production() or config._on_fly()
 app = FastAPI(
     title="ArchHub Cloud",
     version="1.0.0",
     description="Managed AI proxy for the ArchHub desktop client.",
+    docs_url=None if _HIDE_API_DOCS else "/docs",
+    redoc_url=None if _HIDE_API_DOCS else "/redoc",
+    openapi_url=None if _HIDE_API_DOCS else "/openapi.json",
 )
 
 

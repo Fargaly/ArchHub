@@ -34,7 +34,18 @@ _DEFAULT_MODE = MODE_PLAN   # default-gated, matching the chip + mandate
 # TOOL_SCHEMA below.
 WRITE_TOOLS = frozenset({
     "spawn_node", "add_wire", "set_node_param", "run_node", "run_workflow",
+    # SEAM 1 (universal self-extension): the BUILD tools that let a composer ask
+    # self-extend ArchHub — they WRITE a new capability (a library node / a
+    # base.py connector file) to the local machine, so they are gated WRITES
+    # under Plan/Auto (an approve-able build) exactly like a host mutation. An
+    # approved build flows to agents.self_extend.run_self_extend (build → ROMA
+    # court → brain.write), the ONE agent-driven loop.
+    "create_node_type", "create_connector",
 })
+# The subset of WRITE_TOOLS that SELF-EXTEND ArchHub (build a new capability)
+# rather than mutate the canvas/host. The bridge routes an approved one of these
+# through agents.self_extend instead of the canvas replay path.
+BUILD_TOOLS = frozenset({"create_node_type", "create_connector"})
 # Pure reads — always allowed, in every mode.
 READ_TOOLS = frozenset({"query_graph", "chat"})
 
@@ -192,6 +203,78 @@ TOOL_SCHEMA = [
             "required": ["text"],
         },
     },
+    # ── SEAM 1 — BUILD tools (universal self-extension) ───────────────────
+    # These let the agent EXTEND ArchHub itself, not just operate the canvas.
+    # LIBRARY-FIRST: ALWAYS call `query_graph`/`library` reasoning first — the
+    # backend (agents.self_extend) runs library.search before create and REUSES
+    # a match, so prefer describing the capability and let the build dedup. The
+    # built artifact is AUTO-handed to the ROMA court (py_compile/registration
+    # gate) and, on a GREEN verdict, AUTO-recorded in the brain as a learned
+    # capability — no human stitches the organs.
+    {
+        "name": "create_node_type",
+        "description": (
+            "BUILD a new MODULAR library node type (a reusable canvas node) "
+            "from a spec, then auto-verify it through the ROMA court and learn "
+            "it. LIBRARY-FIRST: the backend searches the library first and "
+            "REUSES an existing node if one matches — so call this only when no "
+            "existing node fits. The spec MUST be modular: typed inputs/outputs, "
+            "a config_schema (no hard-coded literals), description + examples. "
+            "Gated under Plan/Auto (an approve-able build)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string",
+                         "description": "unique kebab/snake type id, e.g. 'f_area'"},
+                "display_name": {"type": "string"},
+                "category": {"type": "string",
+                             "description": "source|transform|filter|sink|ai"},
+                "description": {"type": "string"},
+                "inputs": {"type": "array", "items": {"type": "string"}},
+                "outputs": {"type": "array", "items": {"type": "string"}},
+                "config_schema": {"type": "object"},
+                "examples": {"type": "array"},
+            },
+            "required": ["type", "description"],
+        },
+    },
+    {
+        "name": "create_connector",
+        "description": (
+            "BUILD a new host CONNECTOR scaffold that implements the uniform "
+            "connectors.base contract (typed ops, honest OpResult status), "
+            "written as a real local file under app/connectors/, then auto-"
+            "verify it through the ROMA court (py_compile on the new file) and "
+            "learn it. Use this to teach ArchHub to talk to a NEW host/service. "
+            "Each op body is an honest stub until filled in (never fabricated "
+            "data). Gated under Plan/Auto (an approve-able build)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "host": {"type": "string",
+                         "description": "host id, e.g. 'airtable' (→ airtable_connector.py)"},
+                "label": {"type": "string", "description": "Human display name"},
+                "description": {"type": "string"},
+                "operations": {
+                    "type": "array",
+                    "description": "ops the connector exposes",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op_id": {"type": "string"},
+                            "kind": {"type": "string", "enum": ["read", "action"]},
+                            "label": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["op_id"],
+                    },
+                },
+            },
+            "required": ["host"],
+        },
+    },
 ]
 
 
@@ -279,6 +362,13 @@ def system_prompt(graph: dict) -> str:
         "c_sched (build schedule), o_pdf (publish pdf), o_email (send "
         "email). Wires connect output port to input port. Use "
         "add_wire after spawning. "
+        "SELF-EXTENSION: if the user asks for a capability ArchHub does not "
+        "yet have, you may BUILD it — create_node_type (a new reusable canvas "
+        "node) or create_connector (talk to a new host/service). LIBRARY-FIRST: "
+        "do NOT mint a duplicate — only build when no existing node/host fits; "
+        "the backend also searches the library first and reuses a match. A "
+        "built capability is auto-verified by the court and only kept if it "
+        "passes. "
         f"Current graph has {n} nodes and {w} wires. "
         "HOST STATUS (only use hosts marked 'live' for real work; for "
         "'missing' / 'installed' / 'unavailable' hosts, tell the user "

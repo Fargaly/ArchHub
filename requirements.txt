@@ -7,4 +7,4 @@ requests>=2.34.2,<3
 # Telemetry + crash reporting (opt-in; clients are no-op until the
 # user grants consent in the first-run dialog).
 posthog>=7.16.3,<8
-sentry-sdk>=2.18,<3
+sentry-sdk>=2.63.0,<3

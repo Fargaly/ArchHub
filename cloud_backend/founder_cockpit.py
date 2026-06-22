@@ -31,8 +31,9 @@ import time
 from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 
 import config
 import db
@@ -133,14 +134,35 @@ def clear_errors() -> None:
 # Data builders (all read LIVE tables / config — no placeholders)
 # ---------------------------------------------------------------------------
 def _users_panel(recent_n: int = 12) -> dict:
+    """Real user metrics — synthetic smoke-probe accounts EXCLUDED from every
+    headline number, but surfaced honestly as a separate `test_seed` block so
+    nothing is hidden (MAKE-IT-REAL: exclude from the real count, never drop).
+
+    The pollution this fixes: scripts/reality_smoke.py historically registered
+    reality+smoketest<ts>@archhub.io against the live DB on a 30-min cron, so
+    `total` / `signups` / `by_plan` were inflated by hundreds of fake rows.
+    Every number below is now the REAL business state; `test_seed.count` is how
+    many synthetic rows were set aside.
+    """
     now = int(time.time())
+    test_total = db.count_test_users()
     return {
-        "total":          db.count_users(),
-        "paid":           db.count_paid_users(),
-        "by_plan":        db.count_users_by_plan(),
-        "signups_24h":    db.count_users_since(now - 86400),
-        "signups_7d":     db.count_users_since(now - 7 * 86400),
-        "recent":         db.recent_users(recent_n),
+        # Real (test/seed accounts excluded) — the headline numbers.
+        "total":          db.count_users(exclude_test=True),
+        "paid":           db.count_paid_users(exclude_test=True),
+        "by_plan":        db.count_users_by_plan(exclude_test=True),
+        "signups_24h":    db.count_users_since(now - 86400, exclude_test=True),
+        "signups_7d":     db.count_users_since(now - 7 * 86400,
+                                               exclude_test=True),
+        "recent":         db.recent_users(recent_n, exclude_test=True),
+        # Honest disclosure of what was set aside (NOT hidden).
+        "total_incl_test": db.count_users(),
+        "test_seed": {
+            "count":   test_total,
+            "note":   ("Synthetic smoke-test / seed accounts (e.g. "
+                       "reality+smoketest<ts>@archhub.io) excluded from the "
+                       "numbers above. Purge from the cockpit when ready."),
+        },
     }
 
 
@@ -157,7 +179,9 @@ def _subscriptions_panel() -> dict:
     labelled `mrr_estimate` + `basis: "derived_from_stored_plans"` so the
     founder reads it as an estimate, not a billed figure.
     """
-    by_plan = db.count_users_by_plan()
+    # Real plan counts — synthetic smoke-probe rows excluded so MRR and the
+    # trial-user headline are never inflated by fake signups.
+    by_plan = db.count_users_by_plan(exclude_test=True)
     plans = config.PLANS
     tiers = []
     mrr = 0.0
@@ -266,11 +290,14 @@ def _system_panel() -> dict:
 def _usage_panel() -> dict:
     """Usage / progress: chat completions + memory captures (real counters)."""
     now = int(time.time())
-    usage = db.usage_totals()
+    # Real usage — drop rows owned by synthetic test accounts so spend/token
+    # totals reflect genuine customers only.
+    usage = db.usage_totals(exclude_test=True)
     training = db.training_totals()
     return {
         "chat_completions_total": usage["chat_completions"],
-        "chat_completions_24h":   db.usage_calls_since(now - 86400),
+        "chat_completions_24h":   db.usage_calls_since(now - 86400,
+                                                       exclude_test=True),
         "input_tokens":           usage["input_tokens"],
         "output_tokens":          usage["output_tokens"],
         "spend_usd_estimate":     round(usage["cost_micros"] / 1_000_000.0, 4),
@@ -328,6 +355,50 @@ def api_usage(_founder: dict = Depends(require_founder)) -> JSONResponse:
 @router.get("/api/errors")
 def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"errors": recent_errors(50)})
+
+
+# --- Test-account purge (founder-gated, confirm-required, build-only) -------
+class PurgeTestUsersReq(BaseModel):
+    """Body for POST /founder/api/purge-test-users. `confirm` MUST be true —
+    an unconfirmed call is a dry-run that reports the count WITHOUT deleting,
+    so the founder can see exactly how many rows would go before committing."""
+    confirm: bool = False
+
+
+@router.post("/api/purge-test-users")
+def api_purge_test_users(
+    body: PurgeTestUsersReq = Body(default_factory=PurgeTestUsersReq),
+    _founder: dict = Depends(require_founder),
+) -> JSONResponse:
+    """DELETE every synthetic test/seed account (rows matching
+    db.is_test_account_email) — the one-click cleanup for the polluted
+    production users table.
+
+    Two locks, both required:
+      1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
+         the founder email passes; everyone else (incl. unauthenticated) → 403.
+      2. EXPLICIT CONFIRM — the body must carry {"confirm": true}. Without it
+         the call is a safe DRY-RUN: it returns `would_purge` (the count that
+         WOULD be deleted) and deletes nothing, so the destructive action can
+         never fire by accident.
+
+    Returns:
+      confirm=false → {"dry_run": true, "would_purge": N, "purged": 0}
+      confirm=true  → {"dry_run": false, "purged": N, "remaining_test": 0}
+    """
+    if not body.confirm:
+        return JSONResponse({
+            "dry_run":     True,
+            "would_purge": db.count_test_users(),
+            "purged":      0,
+            "note":        "confirm:true required to actually delete.",
+        })
+    purged = db.delete_test_users()
+    return JSONResponse({
+        "dry_run":        False,
+        "purged":         purged,
+        "remaining_test": db.count_test_users(),
+    })
 
 
 @router.get("", response_class=HTMLResponse)
@@ -411,6 +482,11 @@ _PAGE_HTML = """<!doctype html>
   .dot.good{background:var(--good)} .dot.warn{background:var(--warn)}
   .dot.bad{background:var(--bad)}
   .empty{color:var(--ink-faint);font-style:italic;padding:10px 2px}
+  .btn{background:var(--terracotta-soft);color:var(--terracotta);
+    border:1px solid rgba(217,119,87,.4);border-radius:8px;
+    padding:6px 12px;font-size:12.5px;font-family:inherit;cursor:pointer}
+  .btn:hover{background:rgba(217,119,87,.22)}
+  .btn:disabled{opacity:.5;cursor:default}
   .note{color:var(--ink-faint);font-size:11.5px;margin-top:12px;line-height:1.45}
   .err{font-size:12.5px;padding:8px 0;border-bottom:1px solid var(--panel-2)}
   .err:last-child{border-bottom:none}
@@ -492,8 +568,11 @@ function render(d){
   $('env').textContent = sys.env;
   $('updated').textContent = ago(d.generated_at);
 
+  const testN = (u.test_seed && u.test_seed.count) || 0;
+  const usersDelta = fmt(u.signups_24h)+' new in 24h'+
+    (testN ? ' · '+fmt(testN)+' test/seed excluded' : '');
   $('kpis').innerHTML =
-    kpi('Total users', fmt(u.total), false, fmt(u.signups_24h)+' new in 24h')+
+    kpi('Total users (real)', fmt(u.total), false, usersDelta)+
     kpi('Paying', fmt(s.paying_subscribers), false, fmt(s.trial_users)+' on trial')+
     kpi('MRR (est.)', money(s.mrr_estimate), true, 'ARR '+money(s.arr_estimate))+
     kpi('Chat completions', fmt(us.chat_completions_total), false, fmt(us.chat_completions_24h)+' in 24h')+
@@ -515,14 +594,23 @@ function render(d){
       `<div class="note">${esc(s.note)}</div>`;
   }
 
-  // By plan
+  // By plan (real users only)
   const bp=u.by_plan||{}; const keys=Object.keys(bp);
+  let t='';
   if(keys.length){
-    let t='';
     keys.sort((a,b)=>bp[b]-bp[a]).forEach(k=>{
       t+=`<div class="row"><span class="k">${esc(k)}</span><span class="v">${fmt(bp[k])}</span></div>`; });
-    $('byplan').innerHTML=t;
-  } else { $('byplan').innerHTML='<div class="empty">No users yet.</div>'; }
+  } else { t='<div class="empty">No real users yet.</div>'; }
+  // Honest test/seed disclosure + one-click purge (founder-gated endpoint).
+  t+=`<div class="row" style="margin-top:8px"><span class="k">test/seed (excluded)</span>`+
+     `<span class="v">${fmt(testN)}</span></div>`;
+  if(testN){
+    t+=`<div style="margin-top:10px"><button id="purgeBtn" class="btn">Purge ${fmt(testN)} test accounts</button>`+
+       `<span id="purgeMsg" class="note"></span></div>`;
+  }
+  $('byplan').innerHTML=t;
+  const pb=$('purgeBtn');
+  if(pb){ pb.onclick=()=>purgeTest(testN); }
 
   // Recent signups
   if(u.recent && u.recent.length){
@@ -570,6 +658,22 @@ function render(d){
         `<div class="m">${esc(e.kind)}: ${esc(e.message)}</div></div>`; });
     $('errors').innerHTML=t;
   } else { $('errors').innerHTML='<div class="empty">No server errors recorded since last restart.</div>'; }
+}
+
+async function purgeTest(n){
+  const msg=$('purgeMsg'); const btn=$('purgeBtn');
+  if(!window.confirm('Permanently delete '+n+' synthetic test/seed accounts '+
+    '(reality+smoketest@archhub.io etc.)? Real users are never touched.')) return;
+  if(btn){ btn.disabled=true; btn.textContent='Purging...'; }
+  try{
+    const r=await fetch('/founder/api/purge-test-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({confirm:true})});
+    const j=await r.json();
+    if(r.ok){ if(msg) msg.textContent=' purged '+fmt(j.purged)+'.'; load(); }
+    else { if(msg) msg.textContent=' error '+r.status; if(btn) btn.disabled=false; }
+  }catch(e){ if(msg) msg.textContent=' request failed'; if(btn) btn.disabled=false; }
 }
 
 async function load(){

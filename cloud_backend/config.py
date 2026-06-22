@@ -154,6 +154,75 @@ def google_login_enabled() -> bool:
     return bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
 
 
+# ── Cross-domain website sign-in return (founder, 2026-06-22) ─────────
+# The marketing site (archhub.io) signs users in by bouncing auth through
+# THIS cloud backend (magic-link + Google both finish on a cloud route).
+# To land the user back ON archhub.io signed-in, /auth/return must be
+# allowed to 302 the one-time code to the WEBSITE origin — not only to the
+# desktop's loopback. This is the FIXED allowlist of website origins it may
+# return to. It is NOT an open redirect: only these exact, scheme+host
+# matched origins are accepted; an arbitrary/attacker host, a path, a
+# protocol-relative "//evil", or any non-https origin is rejected.
+#
+# Override per-deploy with WEBSITE_RETURN_ORIGINS (comma-separated full
+# origins, e.g. "https://archhub.io,https://archhub-web.fly.dev"). The
+# default carries the two known production website origins so cross-domain
+# sign-in works out of the box.
+def _origin_set(env_name: str, default: tuple[str, ...]) -> frozenset[str]:
+    raw = _req(env_name, "").strip()
+    if not raw:
+        items = default
+    else:
+        items = tuple(p.strip() for p in raw.split(",") if p.strip())
+    # Normalise: lower-case scheme+host, drop a trailing slash. We store the
+    # canonical ORIGIN (scheme://host[:port]) so comparison is exact.
+    out: set[str] = set()
+    for it in items:
+        out.add(it.rstrip("/").lower())
+    return frozenset(out)
+
+
+WEBSITE_RETURN_ORIGINS: frozenset[str] = _origin_set(
+    "WEBSITE_RETURN_ORIGINS",
+    ("https://archhub.io", "https://archhub-web.fly.dev"),
+)
+
+
+def is_allowed_website_return_origin(origin: str) -> bool:
+    """True iff `origin` exactly matches one of the FIXED website origins
+    allowed as a cross-domain sign-in return target.
+
+    `origin` is the scheme://host[:port] form (no path). Comparison is
+    case-insensitive on scheme+host and ignores a trailing slash, but is
+    otherwise EXACT — there is no suffix/substring match, so
+    "https://archhub.io.evil.com" or "https://evil.com" never passes."""
+    if not origin:
+        return False
+    return origin.rstrip("/").lower() in WEBSITE_RETURN_ORIGINS
+
+
+def canonical_website_return_origin(origin: str) -> str:
+    """If `origin` matches an allowlisted website origin, return the FIXED
+    canonical value FROM THE ALLOWLIST CONSTANT (WEBSITE_RETURN_ORIGINS) —
+    never the caller's string. Otherwise return "".
+
+    This is the open-redirect-safe resolver: the returned value's data flow
+    originates in the fixed config set, not in the (user-supplied) `origin`
+    argument, so a redirect built from it carries no tainted data into the
+    Location header. `origin` is used only as a lookup key for an exact match.
+    """
+    if not origin:
+        return ""
+    key = origin.rstrip("/").lower()
+    # Return the actual stored allowlist member (a constant), selected by exact
+    # match — not the argument. WEBSITE_RETURN_ORIGINS is already normalised to
+    # canonical lower-cased origins, so the stored member IS the value to emit.
+    for allowed in WEBSITE_RETURN_ORIGINS:
+        if allowed == key:
+            return allowed
+    return ""
+
+
 # Billing provider — Stripe (direct, requires KYC) OR Polar.sh (MoR;
 # they handle tax + chargebacks; ~4% + $0.40 vs Stripe's 2.9% + $0.30).
 # Polar signup is ~10 min vs Stripe's 30-120 min KYC verification.
@@ -513,6 +582,92 @@ FREE_PROVIDER_BASE_URL = _req(
 FREE_PROVIDER_API_KEY = _req("FREE_PROVIDER_API_KEY", "")
 
 
+# ── BRAIN PORTAL tier gating (founder, 2026-06-22 — per-tier read access) ──
+# The cloud brain portal (`/brain` + GET /v1/brain/facts|search|stats) reads
+# the caller's OWN per-user replica (cloud_backend/data/replicas/<user_id>/
+# brain.db — the same store /v1/brain/sync writes). Access is gated by the
+# user's `plan` (db.users.plan: trial/solo/studio/firm), mirroring the
+# existing PROXY_ENABLED_PLANS "paid feature" gate rather than minting a new
+# concept.
+#
+# Every tier may READ their own synced facts (owner-only — never another
+# user's brain). What the tier changes is HOW MUCH + WHICH features:
+#   * BRAIN_FACT_CAPS — max facts a `GET /v1/brain/facts` / search returns
+#     for the tier (real enforcement: the endpoint clamps `limit` to this).
+#   * BRAIN_SEARCH_PLANS — tiers allowed to run server-side search. trial is
+#     excluded → search returns a typed 402 `upgrade_required` (a real
+#     limit, not cosmetic; the desktop/web surfaces show the upgrade CTA).
+#   * BRAIN_SHARED_SCOPE_PLANS — tiers that may union firm/community shared
+#     replicas into their list (studio/firm); solo/trial see USER scope only.
+#   * BRAIN_EXPORT_PLANS — tiers allowed dataset export of their brain.
+# Tune via env (comma-separated plan ids / "tier:cap" pairs) so the caps
+# live in config, never hardcoded in the endpoint.
+def _plan_set(env_name: str, default: set[str]) -> set[str]:
+    raw = _req(env_name, "").strip()
+    if not raw:
+        return set(default)
+    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+
+
+def _cap_map(env_name: str, default: dict[str, int]) -> dict[str, int]:
+    raw = _req(env_name, "").strip()
+    if not raw:
+        return dict(default)
+    out = dict(default)
+    for pair in raw.split(","):
+        if ":" not in pair:
+            continue
+        tier, _, cap = pair.partition(":")
+        try:
+            out[tier.strip().lower()] = int(cap)
+        except ValueError:
+            continue
+    return out
+
+
+# Per-tier ceiling on how many facts a single read returns. Trial is a
+# read-only taste (100 most-recent); paid tiers get the full working set.
+BRAIN_FACT_CAPS: dict[str, int] = _cap_map("BRAIN_FACT_CAPS", {
+    "trial":  100,
+    "solo":   500,
+    "studio": 1000,
+    "firm":   2000,
+})
+# Absolute hard ceiling no tier (or env override) can exceed — defence so a
+# misconfigured env can't ask the replica for an unbounded scan.
+BRAIN_FACT_CAP_MAX: int = int(_req("BRAIN_FACT_CAP_MAX", "5000"))
+# Tiers allowed to run server-side brain search (trial excluded → upgrade).
+BRAIN_SEARCH_PLANS: set[str] = _plan_set(
+    "BRAIN_SEARCH_PLANS", {"solo", "studio", "firm"})
+# Tiers that may union firm/community shared replicas into their brain view.
+BRAIN_SHARED_SCOPE_PLANS: set[str] = _plan_set(
+    "BRAIN_SHARED_SCOPE_PLANS", {"studio", "firm"})
+# Tiers allowed dataset export of their brain (paid only).
+BRAIN_EXPORT_PLANS: set[str] = _plan_set(
+    "BRAIN_EXPORT_PLANS", {"solo", "studio", "firm"})
+
+
+def brain_fact_cap(plan: str | None) -> int:
+    """Resolve the per-read fact cap for `plan`, clamped to the hard max.
+
+    Unknown / missing plan falls back to the trial cap (the safe floor)."""
+    cap = BRAIN_FACT_CAPS.get((plan or "trial").lower(),
+                              BRAIN_FACT_CAPS.get("trial", 100))
+    return max(1, min(int(cap), BRAIN_FACT_CAP_MAX))
+
+
+def brain_can_search(plan: str | None) -> bool:
+    return (plan or "trial").lower() in BRAIN_SEARCH_PLANS
+
+
+def brain_can_shared_scope(plan: str | None) -> bool:
+    return (plan or "trial").lower() in BRAIN_SHARED_SCOPE_PLANS
+
+
+def brain_can_export(plan: str | None) -> bool:
+    return (plan or "trial").lower() in BRAIN_EXPORT_PLANS
+
+
 def _resolve_op_ref(value: str) -> str:
     """Resolve an `op://...` secret reference → plaintext at call time.
 
@@ -573,6 +728,20 @@ def free_default_available() -> bool:
     on a free-account key); when one is genuinely keyless ("custom" with a
     local relay) leave FREE_PROVIDER_API_KEY empty and set the base URL.
     """
+    # Founder runtime override (cockpit command surface). The founder can
+    # toggle the free default ON/OFF live from the cockpit without a redeploy;
+    # that persisted flag wins over the env default. ONE-SYSTEM: same flag the
+    # cockpit writes via db.set_founder_flag('free_default', ...). Read
+    # defensively so a missing table / import cycle never breaks serving.
+    try:
+        import db as _db
+        _ov = _db.get_founder_flag("free_default")
+        if _ov is not None:
+            if str(_ov).strip().lower() in ("0", "false", "no", "off"):
+                return False
+            # explicit ON falls through to the capability checks below
+    except Exception:
+        pass
     if not FREE_DEFAULT_ENABLED:
         return False
     if not FREE_PROVIDER_BASE_URL:

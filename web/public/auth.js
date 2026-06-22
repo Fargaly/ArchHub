@@ -47,14 +47,25 @@
     return s;
   }
 
+  // The WEBSITE's own sign-in return target. We pass our origin's /signin so
+  // the cloud /auth/return bounces the one-time code BACK to archhub.io
+  // (?code=…), where auth.js auto-finishes it — instead of finishing on the
+  // cloud domain. The backend only honours this when `origin` exactly matches
+  // its FIXED website-origin allowlist, so it is not an open redirect.
+  function websiteReturn() {
+    try { return global.location.origin + '/signin'; } catch (e) { return ''; }
+  }
+
   // Step 1 — send the magic-link email. Browser flow: empty PKCE challenge +
-  // no redirect, so the backend issues a code the browser can exchange with
-  // an empty verifier (the /auth/return path the backend already ships).
+  // a WEBSITE redirect, so the backend issues a code AND remembers to bounce
+  // the magic-link's /auth/return back to THIS website's /signin (?code=…),
+  // which the browser exchanges with an empty verifier.
   function sendMagicLink(email) {
     return fetch(API + '/v1/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, code_challenge: '', redirect: '' })
+      body: JSON.stringify({ email: email, code_challenge: '',
+                             redirect: websiteReturn() })
     }).then(function (r) {
       if (r.status === 202 || r.ok) return { ok: true };
       return r.json().catch(function () { return {}; }).then(function (d) {
@@ -85,10 +96,17 @@
   }
 
   // Continue with Google — ask the backend for the consent URL, then go there.
+  // We thread the WEBSITE return (origin/signin) through the SAME `redirect`
+  // the backend packs into its signed Google state, so after consent the
+  // google callback -> /auth/return -> 302 back to THIS website's /signin
+  // (?code=…) and auth.js finishes there. The backend only honours an
+  // allowlisted website origin, so this is not an open redirect.
   // The backend returns 503 {error:"google_login_unconfigured"} until the
   // founder supplies OAuth creds; surface that cleanly instead of a dead button.
   function googleStart() {
-    return fetch(API + '/v1/auth/google/start').then(function (r) {
+    var url = API + '/v1/auth/google/start?redirect='
+      + encodeURIComponent(websiteReturn());
+    return fetch(url).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (d) {
         if (r.ok && d && d.auth_url) {
           global.location.href = d.auth_url;

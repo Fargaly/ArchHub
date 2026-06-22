@@ -237,6 +237,84 @@ def _is_loopback_redirect(redirect: str) -> bool:
     return host in _LOOPBACK_HOSTS
 
 
+def _loopback_return_url(redirect: str, *, code: str, state: str) -> str:
+    """Build the FINAL desktop-loopback return URL from VALIDATED, RECONSTRUCTED
+    parts — never by interpolating the raw user-supplied `redirect` string.
+
+    Returns "" when `redirect` is not a loopback http(s) URL (caller 400s).
+    Otherwise returns `<scheme>://<loopback-host>[:port]<path>?code=..&state=..`
+    rebuilt with urlunparse from the parsed components (scheme/host/port/path),
+    with the host pinned to the loopback allowlist. Because the emitted value is
+    assembled from re-validated parts (and the query is set by us from `code`/
+    `state`, url-encoded), no tainted data flows into the redirect Location
+    header (CodeQL py/url-redirection). Any query/fragment smuggled in the
+    supplied redirect is dropped — the desktop loopback only ever needs
+    code+state, matching the historical `?code=..&state=..` output."""
+    if not redirect:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(redirect)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = (parsed.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        return ""
+    # Re-pin the netloc to the validated loopback host (+ original port). The
+    # host is taken from the fixed _LOOPBACK_HOSTS membership we just proved, so
+    # it is one of a closed set of constants, not arbitrary input.
+    netloc = host
+    if parsed.port:
+        netloc = f"{host}:{parsed.port}"
+    path = parsed.path or "/"
+    query = urllib.parse.urlencode({"code": code, "state": state})
+    return urllib.parse.urlunparse((parsed.scheme, netloc, path, "", query, ""))
+
+
+def _website_return_origin(redirect: str) -> str:
+    """If `redirect` is a URL whose ORIGIN is one of the FIXED, allowlisted
+    website origins (config.WEBSITE_RETURN_ORIGINS), return that canonical
+    origin (scheme://host[:port]); otherwise return "".
+
+    This is the cross-domain counterpart of `_is_loopback_redirect`: it lets
+    /auth/return bounce the one-time code back to the marketing site
+    (archhub.io) so a magic-link click / Google sign-in finishes signed-in
+    ON the website. It is NOT an open redirect — the origin must EXACTLY
+    match an entry in the fixed allowlist (scheme + host + optional port),
+    so an attacker host, a protocol-relative "//evil.com", a non-https
+    scheme, or "https://archhub.io.evil.com" all return "" (rejected).
+
+    Note we compare on the ORIGIN only (scheme/host/port), never the path —
+    the redirect we ultimately emit uses our OWN fixed path
+    ("{origin}/signin"), so a smuggled path in the supplied redirect can
+    never steer where the code lands.
+    """
+    if not redirect:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(redirect)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = (parsed.hostname or "").lower()
+    if not host:
+        # Scheme-relative ("//evil.com") or path-only values have no host —
+        # reject so they can't be reinterpreted by the browser.
+        return ""
+    # Rebuild a canonical origin from the PARSED parts (never the raw string)
+    # so userinfo / fragments / a smuggled path cannot ride along. This local
+    # `origin` is used ONLY as an exact-match lookup key — the value we RETURN
+    # comes from the fixed allowlist constant (config.canonical_website_return_
+    # origin), not from the request, so no tainted data flows out to a redirect
+    # Location header (CodeQL py/url-redirection).
+    origin = f"{parsed.scheme.lower()}://{host}"
+    if parsed.port:
+        origin = f"{origin}:{parsed.port}"
+    return config.canonical_website_return_origin(origin)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -332,16 +410,22 @@ def google_start(code_challenge: str = "", redirect: str = "",
     the loopback on the final redirect. Optional -- the browser/magic-link
     path sends none and is unaffected.
 
-    Open-redirect guard: a SUPPLIED redirect must be a loopback
-    (127.0.0.1 / localhost / ::1) http(s) URL. Because the callback ends
-    up forwarding a freshly-minted auth code to this target, any other
-    host is rejected (400 google_redirect_not_loopback) so a code can
-    never be bounced to an attacker-controlled URL.
+    Open-redirect guard: a SUPPLIED redirect must be EITHER a loopback
+    (127.0.0.1 / localhost / ::1) http(s) URL — the desktop client's own
+    return server — OR one of the FIXED allowlisted website origins
+    (archhub.io / archhub-web.fly.dev) so the marketing site's Google
+    sign-in lands back ON the website. Because the callback ends up
+    forwarding a freshly-minted auth code to this target via /auth/return,
+    any OTHER host is rejected (400 google_redirect_not_allowed) so a code
+    can never be bounced to an attacker-controlled URL. The website case
+    carries the bare ORIGIN; /auth/return appends our own fixed "/signin".
     """
-    if redirect and not _is_loopback_redirect(redirect):
+    if redirect and not (
+            _is_loopback_redirect(redirect)
+            or _website_return_origin(redirect)):
         raise HTTPException(
             status_code=400,
-            detail={"error": "google_redirect_not_loopback"})
+            detail={"error": "google_redirect_not_allowed"})
     try:
         url = google_auth.build_authorization_url(
             code_challenge=code_challenge, redirect=redirect,
@@ -805,6 +889,221 @@ def brain_sync_delete(authorization: str | None = Header(None)) -> dict:
     return {"deleted": bool(removed), "user_id": user["id"]}
 
 
+# ---------------------------------------------------------------------------
+# Brain READ + SEARCH (the genuine gap — /v1/brain/sync was write-only).
+#
+# These EXTEND the existing /v1/brain/* surface (same prefix, same
+# brain_replica module) with owner-only, tier-gated reads of the caller's
+# real per-user cloud replica — the SAME `replicas/<user_id>/brain.db` that
+# /v1/brain/sync writes. No parallel store, no parallel API:
+#   * Resolve the user from the bearer token (the existing `_require_user`).
+#   * Open THAT user's replica (BrainReplica.open forces owner == caller, so
+#     one user can never read another's USER-scope facts).
+#   * studio/firm additionally union their firm/community shared replicas
+#     (the Slice-17 read-set already wired into export_delta), gated by plan.
+#   * Tier caps + search gating come from config (BRAIN_FACT_CAPS /
+#     BRAIN_SEARCH_PLANS) — real enforcement, returning a typed 402 on the
+#     trial search ceiling rather than a cosmetic block.
+# ---------------------------------------------------------------------------
+def _brain_read_replica(user: dict):
+    """Open the caller's per-user replica with the tier-correct read-set.
+
+    USER/PROJECT facts always come from the caller's own private replica.
+    studio/firm (BRAIN_SHARED_SCOPE_PLANS) additionally union the firm
+    shared replicas they belong to + any firm/community keys they have
+    contributed to — exactly the export_delta fanout, never widened past
+    the account's real memberships."""
+    firm_keys: list[str] = []
+    community_keys: list[str] = []
+    if config.brain_can_shared_scope(user.get("plan")):
+        firm_keys = _firm_keys_for_user(user)
+    replica = brain_replica.BrainReplica.open(
+        user_id=user["id"],
+        firm_keys=firm_keys,
+        community_keys=community_keys,
+    )
+    if config.brain_can_shared_scope(user.get("plan")):
+        # Durable contributed keys (communities joined by code have no cloud
+        # membership table) so a later read still unions device A's shares.
+        replica.firm_keys = sorted(
+            set(replica.firm_keys) | set(replica.contributed_firm_keys()))
+        replica.community_keys = sorted(
+            set(replica.community_keys)
+            | set(replica.contributed_community_keys()))
+    return replica
+
+
+def _fact_view(frag: dict) -> dict:
+    """Project a replica fragment to the portal's read shape (no internals
+    like rowid; provenance/extra already decoded by list_fragments)."""
+    return {
+        "id":         frag.get("id"),
+        "text":       frag.get("text") or "",
+        "subject":    frag.get("subject"),
+        "predicate":  frag.get("predicate"),
+        "object":     frag.get("object"),
+        "scope":      frag.get("scope") or "user",
+        "visibility": frag.get("visibility") or "private",
+        "confidence": frag.get("confidence") or "extracted",
+        "project_id": frag.get("project_id"),
+        "firm_id":    frag.get("firm_id"),
+        "updated_at": frag.get("updated_at"),
+        "created_at": frag.get("created_at"),
+    }
+
+
+@app.get("/v1/brain/facts")
+def brain_facts(scope: str | None = None,
+                limit: int = 200,
+                authorization: str | None = Header(None)) -> dict:
+    """List the caller's synced brain facts (kind='fact'), newest first.
+
+    Owner-only: reads ONLY this user's replica (+ their firm/community shared
+    replicas on studio/firm). `limit` is clamped to the per-tier cap from
+    config.BRAIN_FACT_CAPS — a trial sees at most 100, paid tiers more. An
+    optional `scope` filters to user/project/firm/community. Honest empty
+    state: a user who has never synced gets `{results: [], count: 0}`.
+    """
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    cap = config.brain_fact_cap(plan)
+    want = max(1, min(int(limit), cap))
+    replica = _brain_read_replica(user)
+    # Fetch up to the cap (export_delta-style union for shared scopes; for the
+    # USER-only tiers list_fragments reads the private replica directly).
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        rows = [f for f in merged.get("fragments", [])
+                if (f.get("kind") or "fact") == "fact"
+                and not f.get("valid_until")]
+        # export_delta returns hlc-asc; portal wants newest-updated first.
+        rows.sort(key=lambda d: (d.get("updated_at") or ""), reverse=True)
+    else:
+        # Fetch one past the cap so we can honestly report whether facts were
+        # withheld (the `capped` flag) without an extra COUNT query.
+        rows = replica.list_fragments(kind="fact", limit=cap + 1)
+    if scope:
+        rows = [f for f in rows if (f.get("scope") or "user") == scope]
+    total_available = len(rows)
+    rows = rows[:want]
+    return {
+        "results": [_fact_view(f) for f in rows],
+        "count":   len(rows),
+        "plan":    plan,
+        "cap":     cap,
+        "scope":   scope,
+        # True only when facts were actually withheld by the tier cap — an
+        # empty/under-cap result is NOT "capped" (honest empty state).
+        "capped":  total_available > len(rows),
+    }
+
+
+@app.get("/v1/brain/search")
+def brain_search(q: str = "",
+                 limit: int = 50,
+                 authorization: str | None = Header(None)) -> dict:
+    """Case-insensitive scored search over the caller's brain facts.
+
+    Tier-gated (config.BRAIN_SEARCH_PLANS): trial is denied with a typed 402
+    `upgrade_required` (a REAL limit, surfaced as an upgrade CTA), paid tiers
+    search their full working set. Owner-only, same replica read-set as
+    /v1/brain/facts. Scores text > subject/object substring hits.
+    """
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    if not config.brain_can_search(plan):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "upgrade_required",
+                "feature": "brain_search",
+                "plan": plan,
+                "message": "Brain search is available on paid plans. "
+                           "Upgrade to search your synced knowledge.",
+            },
+        )
+    cap = config.brain_fact_cap(plan)
+    want = max(1, min(int(limit), cap))
+    needle = (q or "").strip().lower()
+    replica = _brain_read_replica(user)
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        pool = [f for f in merged.get("fragments", [])
+                if (f.get("kind") or "fact") == "fact"
+                and not f.get("valid_until")]
+    else:
+        pool = replica.list_fragments(kind="fact", limit=cap)
+    if not needle:
+        results = pool
+    else:
+        scored: list[tuple[int, dict]] = []
+        for f in pool:
+            text = (f.get("text") or "").lower()
+            subj = (f.get("subject") or "").lower()
+            obj = (f.get("object") or "").lower()
+            pred = (f.get("predicate") or "").lower()
+            score = 0
+            if needle in text:
+                score += 3
+            if needle in subj or needle in obj:
+                score += 2
+            if needle in pred:
+                score += 1
+            if score:
+                scored.append((score, f))
+        scored.sort(key=lambda t: (t[0], t[1].get("updated_at") or ""),
+                    reverse=True)
+        results = [f for _, f in scored]
+    results = results[:want]
+    return {
+        "results": [_fact_view(f) for f in results],
+        "count":   len(results),
+        "query":   q,
+        "plan":    plan,
+        "cap":     cap,
+    }
+
+
+@app.get("/v1/brain/stats")
+def brain_stats(authorization: str | None = Header(None)) -> dict:
+    """Portal header counters for the caller's brain: total facts, a
+    per-scope breakdown, the last-sync HLC watermark, and the tier
+    capabilities the UI uses to render caps + the upgrade CTA.
+
+    Owner-only; honest zeros for a user who has never synced."""
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    replica = _brain_read_replica(user)
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        facts = [f for f in merged.get("fragments", [])
+                 if (f.get("kind") or "fact") == "fact"
+                 and not f.get("valid_until")]
+    else:
+        facts = replica.list_fragments(
+            kind="fact", limit=config.BRAIN_FACT_CAP_MAX)
+    by_scope: dict[str, int] = {}
+    for f in facts:
+        s = (f.get("scope") or "user")
+        by_scope[s] = by_scope.get(s, 0) + 1
+    last_hlc = replica.last_hlc()
+    zero_hlc = "0000000000000000.00000000"
+    return {
+        "total_facts":   len(facts),
+        "by_scope":      by_scope,
+        "last_sync_hlc": last_hlc,
+        "ever_synced":   last_hlc != zero_hlc,
+        "plan":          plan,
+        "caps": {
+            "fact_cap":     config.brain_fact_cap(plan),
+            "can_search":   config.brain_can_search(plan),
+            "shared_scope": config.brain_can_shared_scope(plan),
+            "can_export":   config.brain_can_export(plan),
+        },
+        "can_upgrade":   plan != "firm",
+    }
+
+
 async def _has_body(req: Request) -> bool:
     """FastAPI lets you call .json() on an empty body; we want to
     distinguish that from a JSON object. Returns False when the
@@ -1080,38 +1379,58 @@ async function submitEmail(ev) {{
     return HTMLResponse(content=html)
 
 
-@app.get("/auth/return")
+@app.get("/auth/return", response_model=None)
 def auth_return(code: str = "", redirect: str = "",
-                state: str = "") -> HTMLResponse:
-    """Lands here from the magic-link email. If a `redirect` was
-    provided by the desktop client, forward to it with ?code=...
-    so the desktop's loopback server catches it.
+                state: str = "") -> HTMLResponse | RedirectResponse:
+    """Lands here from the magic-link email (and from the Google
+    callback). The one-time `code` is forwarded to wherever sign-in
+    began:
 
-    For direct-browser flows (no redirect), the /signin page stashed
-    a PKCE verifier in sessionStorage — finish the exchange here +
-    drop a session token in localStorage so /dashboard, /upgrade,
-    etc. can call authenticated endpoints."""
+      * A WEBSITE origin (archhub.io / archhub-web.fly.dev) — 302 to
+        {origin}/signin?code=... so auth.js on the website finishes the
+        exchange and the user lands signed-in ON the website. This is
+        the cross-domain fix (founder 2026-06-22): magic-link click OR
+        Google consent both converge here and bounce home.
+      * A desktop LOOPBACK URL (http://127.0.0.1:<port>/cb) — 302 with
+        ?code=... so the desktop's loopback server catches it.
+      * No redirect — the plain browser finisher below exchanges the
+        code here + drops a session token in localStorage.
+
+    SECURITY (open-redirect / CodeQL "URL redirection from remote
+    source"): the only non-empty redirects ever honoured are (a) an
+    EXACT-match entry in the FIXED website-origin allowlist, or (b) a
+    loopback host. Anything else — an arbitrary host, a protocol-relative
+    "//evil", a non-http(s) scheme — is rejected (400). The website case
+    uses our OWN fixed "/signin" path, so a smuggled path can't steer the
+    code; the loopback case reuses the unchanged _is_loopback_redirect
+    guard."""
     if redirect:
-        # SECURITY (open-redirect / CodeQL "URL redirection from remote source"):
-        # only ever 302 to the desktop's OWN loopback URL — never an attacker-
-        # supplied external host. Reuses the SAME _is_loopback_redirect guard
-        # that /v1/auth/google/start already applies, so /auth/return cannot be
-        # turned into an open redirect that leaks the one-time code off-box.
-        if not _is_loopback_redirect(redirect):
-            raise HTTPException(status_code=400,
-                                detail={"error": "redirect_not_loopback"})
-        sep = "&" if "?" in redirect else "?"
+        # 1) Cross-domain WEBSITE return — bounce the code to the marketing
+        #    site's /signin so auth.js (inlineCode path) exchanges it there.
+        website_origin = _website_return_origin(redirect)
+        if website_origin:
+            url = (website_origin + "/signin?code="
+                   + urllib.parse.quote(code, safe=""))
+            if state:
+                url += "&state=" + urllib.parse.quote(state, safe="")
+            return RedirectResponse(url=url, status_code=302)
+        # 2) Desktop LOOPBACK return — only ever 302 to the desktop's OWN
+        #    loopback URL, never an attacker-supplied external host. The final
+        #    URL is rebuilt from VALIDATED parts by _loopback_return_url (host
+        #    pinned to the loopback allowlist), so the raw user redirect string
+        #    never reaches the Location header (open-redirect / CodeQL safe).
+        #
         # Forward the desktop loopback's expected CSRF token. The Google
         # flow passes the client's own `state` (recovered from the signed
         # state in exchange_callback) so the loopback's expected_state
         # check passes. The magic-link path sends no `state`, so we keep
         # the historical "archhub" default -- byte-for-byte unchanged.
         fwd_state = state or "archhub"
-        return RedirectResponse(
-            url=f"{redirect}{sep}code={code}&state="
-                + urllib.parse.quote(fwd_state, safe=""),
-            status_code=302,
-        )
+        loopback_url = _loopback_return_url(redirect, code=code, state=fwd_state)
+        if not loopback_url:
+            raise HTTPException(status_code=400,
+                                detail={"error": "redirect_not_allowed"})
+        return RedirectResponse(url=loopback_url, status_code=302)
     safe_code = "".join(c for c in code if c.isalnum() or c in "-_.")
     html = f"""<!doctype html><html><head><title>Signing you in — ArchHub</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
@@ -1515,6 +1834,238 @@ async function init() {
     document.getElementById('lead').textContent =
       'Signed in. Here is your account.';
     await loadDashboard(tok);
+  } catch(e) { showErr('Network error: ' + e); }
+}
+init();
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/brain", response_class=HTMLResponse)
+def brain_portal() -> HTMLResponse:
+    """Cloud brain portal — a signed-in user sees their REAL synced personal
+    brain (the per-user replica /v1/brain/sync writes), searchable, with their
+    tier badge + caps.
+
+    Self-contained, mirroring /dashboard: client-side magic-link PKCE
+    (register → /auth/return → exchange), then reads the EXISTING /v1/me +
+    the new /v1/brain/stats + /v1/brain/facts + /v1/brain/search with the
+    bearer and renders. No new auth, no new store — same-origin /v1 API."""
+    html = """<!doctype html><html><head>
+<title>Brain — ArchHub</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style>
+  :root { --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
+          --soft:#9b938a; --line:#26262d; --accent:#d97757;
+          --ok:#7ec18e; --warn:#e5b25a; }
+  body { margin:0; padding:48px 24px; background:var(--bg);
+         color:var(--ink); font-family:system-ui,-apple-system,
+         'Segoe UI',sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; }
+  h1 { margin:0 0 6px; font-family:Georgia,serif; font-style:italic;
+       font-size:30px; letter-spacing:-0.02em; }
+  .lead { color:var(--soft); font-size:14px; line-height:1.55;
+          margin:0 0 24px; }
+  .card { background:var(--raised); border:1px solid var(--line);
+          border-radius:12px; padding:20px 22px; margin-bottom:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; letter-spacing:0.12em;
+             text-transform:uppercase; color:var(--soft); }
+  .row { display:flex; justify-content:space-between; padding:7px 0;
+         border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--soft); }
+  .row .v { color:var(--ink); font-weight:500; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px;
+          font-size:11px; background:var(--accent); color:#fff;
+          letter-spacing:0.04em; }
+  .pill.muted { background:var(--line); color:var(--soft); }
+  .pill.ok { background:rgba(126,193,142,0.16); color:var(--ok); }
+  .fact { padding:12px 0; border-bottom:1px solid var(--line); }
+  .fact:last-child { border-bottom:none; }
+  .fact .t { font-size:14px; line-height:1.5; color:var(--ink); }
+  .fact .m { margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;
+             font-size:11px; color:var(--soft); align-items:center; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:6px;
+         background:var(--line); color:var(--soft); font-size:10px;
+         letter-spacing:0.03em; }
+  input { width:100%; padding:13px 15px; border-radius:10px;
+          border:1px solid var(--line); background:var(--bg);
+          color:var(--ink); font-size:15px; margin-top:16px;
+          box-sizing:border-box; }
+  #q { margin-top:0; }
+  button { width:100%; padding:13px; margin-top:12px;
+           background:var(--accent); color:#fff; border:none;
+           border-radius:10px; font-size:15px; font-weight:500;
+           cursor:pointer; }
+  .err { margin-top:16px; padding:13px; border-radius:10px;
+         background:rgba(229,178,90,0.1); border:1px solid #e5b25a;
+         color:#e5b25a; font-size:13px; }
+  .empty { color:var(--soft); font-size:13px; padding:8px 0; }
+  .cta { display:inline-block; margin-top:10px; padding:8px 14px;
+         border-radius:8px; background:var(--accent); color:#fff;
+         font-size:13px; cursor:pointer; }
+  a { color:var(--accent); }
+</style></head><body>
+<div class='wrap'>
+  <h1>Your ArchHub brain</h1>
+  <p class='lead' id='lead'>Sign in with your email — we'll send a
+     magic-link to open your synced knowledge.</p>
+  <form id='f' onsubmit='return submitEmail(event)'>
+    <input id='email' type='email' placeholder='you@studio.com'
+            required autofocus>
+    <button type='submit' id='b'>Email me the sign-in link</button>
+  </form>
+  <div id='out'></div>
+  <div id='portal'></div>
+</div>
+<script>
+const b64url = (buf) => btoa(String.fromCharCode.apply(null,
+  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
+  .replace(/=+$/,'');
+async function pkce() {
+  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
+  const h = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(v));
+  return { verifier:v, challenge:b64url(h) };
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function showErr(msg) {
+  document.getElementById('out').innerHTML =
+    '<div class="err">' + esc(msg) + '</div>';
+}
+async function submitEmail(ev) {
+  ev.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const btn = document.getElementById('b');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const p = await pkce();
+    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
+    const r = await fetch('/v1/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, code_challenge:p.challenge,
+        redirect:'/brain' }),
+    });
+    if (r.ok) {
+      document.getElementById('out').innerHTML =
+        '<div class="err" style="background:rgba(126,193,142,0.1);'
+        + 'border-color:#7ec18e;color:#7ec18e;">Check your inbox — '
+        + 'click the magic-link to open your brain.</div>';
+    } else {
+      showErr('Could not send the link.');
+      btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+    }
+  } catch(e) {
+    showErr('Network error: ' + e);
+    btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+  }
+  return false;
+}
+let TOKEN = null;
+function factCard(f) {
+  const tags = [];
+  tags.push('<span class="tag">' + esc(f.scope || 'user') + '</span>');
+  if (f.visibility && f.visibility !== 'private')
+    tags.push('<span class="tag">' + esc(f.visibility) + '</span>');
+  if (f.confidence)
+    tags.push('<span class="tag">' + esc(f.confidence) + '</span>');
+  if (f.updated_at)
+    tags.push('<span>' + esc(String(f.updated_at).slice(0,10)) + '</span>');
+  return '<div class="fact"><div class="t">' + esc(f.text)
+    + '</div><div class="m">' + tags.join('') + '</div></div>';
+}
+function renderFacts(rows, capped) {
+  if (!rows || !rows.length)
+    return '<div class="empty">No facts yet. Open ArchHub and sync your '
+      + 'brain — your synced knowledge appears here.</div>';
+  let h = rows.map(factCard).join('');
+  if (capped)
+    h += '<div class="empty">Showing your most recent facts (tier cap). '
+      + '<a href="/upgrade">Upgrade</a> to see more.</div>';
+  return h;
+}
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  const list = document.getElementById('list');
+  const H = { 'Authorization':'Bearer ' + TOKEN };
+  list.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const r = await fetch('/v1/brain/search?q=' + encodeURIComponent(q)
+      + '&limit=200', {headers:H});
+    if (r.status === 402) {
+      list.innerHTML = '<div class="empty">Search is a paid feature. '
+        + '<a href="/upgrade">Upgrade</a> to search your brain.</div>';
+      return;
+    }
+    const d = await r.json();
+    list.innerHTML = renderFacts(d.results, false);
+  } catch(e) { list.innerHTML = '<div class="err">' + esc(''+e) + '</div>'; }
+}
+async function loadPortal(token) {
+  TOKEN = token;
+  const H = { 'Authorization':'Bearer ' + token };
+  const portal = document.getElementById('portal');
+  try {
+    const me = await (await fetch('/v1/me', {headers:H})).json();
+    const stats = await (await fetch('/v1/brain/stats',
+      {headers:H})).json();
+    const facts = await (await fetch('/v1/brain/facts?limit=200',
+      {headers:H})).json();
+    const caps = stats.caps || {};
+    let html = '<div class="card"><h2>Account</h2>'
+      + '<div class="row"><span class="k">Email</span><span class="v">'
+      + esc(me.email) + '</span></div>'
+      + '<div class="row"><span class="k">Plan</span><span class="v">'
+      + '<span class="pill">' + esc(me.plan) + '</span></span></div>'
+      + '<div class="row"><span class="k">Synced facts</span>'
+      + '<span class="v">' + (stats.total_facts || 0) + '</span></div>'
+      + '<div class="row"><span class="k">Last sync</span><span class="v">'
+      + (stats.ever_synced
+          ? '<span class="pill ok">synced</span>'
+          : '<span class="pill muted">never synced</span>')
+      + '</span></div></div>';
+    // search box (gated)
+    html += '<div class="card"><h2>Search your knowledge</h2>';
+    if (caps.can_search) {
+      html += '<input id="q" placeholder="Search facts…" '
+        + 'oninput="if(window._t)clearTimeout(window._t);'
+        + 'window._t=setTimeout(doSearch,250)">';
+    } else {
+      html += '<div class="empty">Search is available on paid plans. '
+        + '<a class="cta" href="/upgrade">Upgrade to search</a></div>';
+    }
+    html += '<div id="list" style="margin-top:14px">'
+      + renderFacts(facts.results, facts.capped) + '</div></div>';
+    portal.innerHTML = html;
+  } catch(e) {
+    showErr('Could not load your brain: ' + e);
+  }
+}
+async function init() {
+  const code = new URLSearchParams(location.search).get('code');
+  if (!code) return;
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('lead').textContent = 'Loading your brain…';
+  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
+  if (!verifier) {
+    showErr('Sign-in session lost — reload /brain to retry.');
+    return;
+  }
+  try {
+    const ex = await fetch('/v1/auth/exchange', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code, code_verifier:verifier }),
+    });
+    if (!ex.ok) { showErr('Sign-in failed — the link may have expired.');
+                  return; }
+    const tok = (await ex.json()).token;
+    sessionStorage.removeItem('archhub_pkce_verifier');
+    document.getElementById('lead').textContent =
+      'Signed in. Here is your synced knowledge.';
+    await loadPortal(tok);
   } catch(e) { showErr('Network error: ' + e); }
 }
 init();

@@ -195,6 +195,93 @@ class TestAuthReturn:
         assert r.status_code == 200
         assert "signed in" in r.text.lower()
 
+    # ── Cross-domain WEBSITE return (founder 2026-06-22) ──────────────
+    def test_accepts_allowlisted_website_origin(self, client):
+        """An allowlisted website origin (archhub.io) is honoured: the
+        code is bounced to {origin}/signin?code=… so the website finishes
+        the exchange and the user lands signed-in ON the website."""
+        r = client.get(
+            "/auth/return?code=abc123&redirect=https://archhub.io",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        loc = r.headers["location"]
+        assert loc.startswith("https://archhub.io/signin?code=abc123")
+
+    def test_accepts_second_allowlisted_website_origin(self, client):
+        r = client.get(
+            "/auth/return?code=abc123&redirect=https://archhub-web.fly.dev",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        assert r.headers["location"].startswith(
+            "https://archhub-web.fly.dev/signin?code=abc123")
+
+    def test_rejects_arbitrary_external_host(self, client):
+        """A non-allowlisted host is NOT an open redirect — rejected 400,
+        never bounced (the one-time code must never leak off-allowlist)."""
+        r = client.get(
+            "/auth/return?code=abc123&redirect=https://evil.com",
+            follow_redirects=False,
+        )
+        assert r.status_code == 400
+
+    def test_rejects_protocol_relative_evil(self, client):
+        """"//evil.com" has no scheme/host of its own — must be rejected,
+        not reinterpreted by the browser as a redirect to evil.com."""
+        r = client.get(
+            "/auth/return?code=abc123&redirect=//evil.com",
+            follow_redirects=False,
+        )
+        assert r.status_code == 400
+
+    def test_rejects_lookalike_subdomain(self, client):
+        """A suffix/lookalike host ("archhub.io.evil.com") is an EXACT-match
+        miss — rejected, proving the allowlist is not a substring check."""
+        r = client.get(
+            "/auth/return?code=abc123&redirect=https://archhub.io.evil.com",
+            follow_redirects=False,
+        )
+        assert r.status_code == 400
+
+
+class TestWebsiteReturnGuard:
+    """Unit-level checks on the fixed website-origin allowlist guard +
+    its use in the Google start route (open-redirect defence)."""
+
+    def test_guard_accepts_allowlisted(self):
+        import main
+        assert main._website_return_origin("https://archhub.io") == \
+            "https://archhub.io"
+        assert main._website_return_origin("https://archhub.io/anything") == \
+            "https://archhub.io"
+        assert main._website_return_origin(
+            "https://archhub-web.fly.dev") == "https://archhub-web.fly.dev"
+
+    def test_guard_rejects_evil_and_relative(self):
+        import main
+        for bad in ("https://evil.com", "//evil.com",
+                    "https://archhub.io.evil.com", "http://archhub.io",
+                    "javascript:alert(1)", "", "/signin"):
+            assert main._website_return_origin(bad) == "", bad
+
+    def test_google_start_accepts_website_origin(self, client):
+        """Google start tolerates an allowlisted website origin as redirect
+        (so the website's Google sign-in returns home). With Google login
+        unconfigured it 503s AFTER passing the redirect guard — proving the
+        guard did not 400 the allowlisted origin."""
+        r = client.get(
+            "/v1/auth/google/start?redirect=https://archhub.io")
+        # 503 (unconfigured) means the redirect guard PASSED; a 400 would
+        # mean it was rejected as not-allowed.
+        assert r.status_code in (503, 200)
+
+    def test_google_start_rejects_evil_redirect(self, client):
+        r = client.get(
+            "/v1/auth/google/start?redirect=https://evil.com")
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "google_redirect_not_allowed"
+
 
 class TestDashboardPage:
     """Customer admin dashboard — GET /dashboard (roadmap #P2)."""

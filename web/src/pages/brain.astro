@@ -1,0 +1,209 @@
+---
+import Base from '../layouts/Base.astro';
+
+// /brain — the signed-in user's cloud brain portal on the WEBSITE.
+//
+// One-system: this page does NOT mint a parallel store or auth. It reads the
+// SAME cloud API as the desktop app + the cloud's own /brain page:
+//   * sign-in uses the existing /v1/auth/* magic-link PKCE flow (same
+//     endpoints the cloud /signin + /dashboard use), token kept in
+//     localStorage so a return visit stays signed in;
+//   * data comes from the new owner-only, tier-gated read endpoints
+//     /v1/brain/stats + /v1/brain/facts + /v1/brain/search, which read the
+//     user's real per-user replica (replicas/<user_id>/brain.db);
+//   * /v1/me supplies the plan badge + caps.
+//
+// The marketing site is STATIC + cross-origin from the cloud API, so the
+// API base is build-time configurable via PUBLIC_CLOUD_API and defaults to
+// the canonical live backend (mirrors app/cloud_client.py's default). Anon
+// visitors are bounced to the cloud /signin (?redirect back to /brain).
+//
+// On-brand: Base.astro tokens (terracotta #d97757, Instrument Serif + Inter,
+// no emoji). Nav gets a /brain link (see Base.astro).
+const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
+  ?? 'https://archhub-cloud.fly.dev').replace(/\/$/, '');
+---
+<Base title="Brain" description="Your synced ArchHub knowledge — every fact your brain has learned, searchable, gated by your plan. Sign in to view your personal cloud brain.">
+
+  <section class="bhead">
+    <div class="wrap">
+      <div class="eyebrow">● Your brain</div>
+      <h1 class="title serif">Everything ArchHub<br/><span class="ital">learned for you.</span></h1>
+      <p class="lede">Your personal cloud brain — the facts your ArchHub synced from your work, searchable from anywhere. Owner-only: only you can read your brain. Your plan sets how much you see and whether search is on.</p>
+    </div>
+  </section>
+
+  <section class="sec wrap">
+    <!-- gate: anon → sign in; signed-in → portal. Rendered by JS below. -->
+    <div id="gate" class="gate">
+      <div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">CHECKING SESSION</span><span class="rule"></span><span class="tick"></span></div>
+      <p class="muted" style="text-align:center;margin-top:18px;">Loading your brain…</p>
+    </div>
+    <div id="portal" hidden></div>
+  </section>
+
+  <style>
+    .bhead { padding: 64px 0 24px; }
+    .bhead .title { font-size: var(--fs-d2); line-height: 1.02; margin: 14px 0 18px; }
+    .bhead .lede { color: var(--ink-soft); font-size: var(--fs-body-lg); max-width: 620px; line-height: 1.6; }
+    .sec { padding: 24px 0 80px; }
+    .muted { color: var(--ink-soft); font-size: var(--fs-body-sm); }
+    .acct { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 28px; }
+    .stat { background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px 20px; min-width: 150px; }
+    .stat .k { font-family: var(--mono); font-size: 28px; color: var(--ink); }
+    .stat .v { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-muted); margin-top: 4px; }
+    .pill { display: inline-block; padding: 3px 11px; border-radius: var(--r-pill); font-size: 11px; background: var(--accent); color: #160d08; font-weight: 600; letter-spacing: 0.04em; }
+    .pill.muted { background: var(--line); color: var(--ink-soft); }
+    .pill.ok { background: rgba(126,193,142,0.16); color: var(--ok); }
+    .search { width: 100%; padding: 14px 16px; border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--bg-panel); color: var(--ink); font-size: 15px; font-family: var(--sans); box-sizing: border-box; }
+    .search:focus { outline: none; border-color: var(--accent); }
+    .facts { margin-top: 18px; }
+    .fact { padding: 14px 0; border-bottom: 1px solid var(--line-soft); }
+    .fact:last-child { border-bottom: none; }
+    .fact .t { font-size: 14.5px; line-height: 1.55; color: var(--ink); }
+    .fact .m { margin-top: 7px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; padding: 2px 8px; border-radius: var(--r-sm); background: var(--bg-soft); color: var(--ink-soft); }
+    .date { font-family: var(--mono); font-size: 10px; color: var(--ink-muted); }
+    .empty { color: var(--ink-soft); font-size: 13.5px; padding: 18px 0; line-height: 1.6; }
+    .cta { display: inline-block; margin-top: 8px; }
+    .err { padding: 14px; border-radius: var(--r-lg); background: rgba(229,178,90,0.1); border: 1px solid var(--warn); color: var(--warn); font-size: 13px; }
+  </style>
+
+  <script is:inline define:vars={{ CLOUD_API }}>
+    const API = CLOUD_API;
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
+      c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+    // ONE-SYSTEM: this page does NOT mint its own auth. Sign-in + the session
+    // token live in the shared website client (window.ArchHubAuth, loaded by
+    // Base.astro via /auth.js, token key 'archhub_session_token'). The website
+    // /signin page owns the magic-link/Google exchange; we just read the token.
+
+    function showSignin() {
+      $('gate').innerHTML =
+        '<div class="acct" style="flex-direction:column;align-items:flex-start;gap:14px;">'
+        + '<p class="muted">Sign in to view your synced brain.</p>'
+        + '<button class="btn btn-primary lg" id="si">Sign in with email →</button>'
+        + '</div>';
+      // Bounce to the website sign-in, returning here once signed in.
+      $('si').addEventListener('click', function () {
+        location.href = '/signin?redirect=' + encodeURIComponent('/brain');
+      });
+    }
+
+    function factCard(f) {
+      const tags = [];
+      tags.push('<span class="tag">' + esc(f.scope || 'user') + '</span>');
+      if (f.visibility && f.visibility !== 'private')
+        tags.push('<span class="tag">' + esc(f.visibility) + '</span>');
+      if (f.confidence)
+        tags.push('<span class="tag">' + esc(f.confidence) + '</span>');
+      if (f.updated_at)
+        tags.push('<span class="date">' + esc(String(f.updated_at).slice(0,10)) + '</span>');
+      return '<div class="fact"><div class="t">' + esc(f.text)
+        + '</div><div class="m">' + tags.join('') + '</div></div>';
+    }
+
+    function renderFacts(rows, capped) {
+      if (!rows || !rows.length)
+        return '<div class="empty">No facts yet. Open ArchHub and sync your '
+          + 'brain — your synced knowledge appears here.</div>';
+      let h = rows.map(factCard).join('');
+      if (capped)
+        h += '<div class="empty">Showing your most recent facts (your plan’s '
+          + 'cap). <a class="cta" href="' + API + '/upgrade">Upgrade</a> to see more.</div>';
+      return h;
+    }
+
+    let TOKEN = null;
+    async function doSearch() {
+      const q = ($('q') || {}).value ? $('q').value.trim() : '';
+      const list = $('list');
+      list.innerHTML = '<div class="empty">Searching…</div>';
+      try {
+        const r = await fetch(API + '/v1/brain/search?q='
+          + encodeURIComponent(q) + '&limit=200',
+          { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+        if (r.status === 402) {
+          list.innerHTML = '<div class="empty">Search is a paid feature. '
+            + '<a class="cta" href="' + API + '/upgrade">Upgrade</a> to '
+            + 'search your brain.</div>';
+          return;
+        }
+        const d = await r.json();
+        list.innerHTML = renderFacts(d.results, false);
+      } catch (e) { list.innerHTML = '<div class="err">' + esc(''+e) + '</div>'; }
+    }
+
+    async function loadPortal(token) {
+      TOKEN = token;
+      const H = { 'Authorization': 'Bearer ' + token };
+      try {
+        const meR = await fetch(API + '/v1/me', { headers: H });
+        if (meR.status === 401) { // token expired/invalid → re-auth
+          const A = window.ArchHubAuth;
+          if (A && A.signOut) A.signOut();
+          $('gate').hidden = false; $('portal').hidden = true;
+          showSignin(); return;
+        }
+        const me = await meR.json();
+        const stats = await (await fetch(API + '/v1/brain/stats',
+          { headers: H })).json();
+        const facts = await (await fetch(API + '/v1/brain/facts?limit=200',
+          { headers: H })).json();
+        const caps = stats.caps || {};
+        let html = '';
+        html += '<div class="acct">'
+          + '<div class="stat"><div class="k">' + (stats.total_facts || 0)
+          + '</div><div class="v">Synced facts</div></div>'
+          + '<div class="stat"><div class="k" style="font-size:18px;'
+          + 'padding-top:6px;"><span class="pill">' + esc(me.plan)
+          + '</span></div><div class="v">Your plan</div></div>'
+          + '<div class="stat"><div class="k" style="font-size:18px;'
+          + 'padding-top:6px;">' + (stats.ever_synced
+            ? '<span class="pill ok">synced</span>'
+            : '<span class="pill muted">never</span>')
+          + '</div><div class="v">Last sync</div></div>'
+          + '<div class="stat"><div class="k" style="font-size:18px;'
+          + 'padding-top:6px;">' + esc(me.email)
+          + '</div><div class="v">Account</div></div>'
+          + '</div>';
+        html += '<h2 class="serif" style="font-size:var(--fs-h2);margin:0 0 12px;">Search your knowledge</h2>';
+        if (caps.can_search) {
+          html += '<input class="search" id="q" placeholder="Search facts…">';
+        } else {
+          html += '<div class="empty">Search is available on paid plans. '
+            + '<a class="btn btn-primary cta" href="' + API + '/upgrade">'
+            + 'Upgrade to search</a></div>';
+        }
+        html += '<div class="facts" id="list">'
+          + renderFacts(facts.results, facts.capped) + '</div>';
+        $('portal').innerHTML = html;
+        $('gate').hidden = true; $('portal').hidden = false;
+        const q = $('q');
+        if (q) {
+          let t = null;
+          q.addEventListener('input', () => {
+            if (t) clearTimeout(t);
+            t = setTimeout(doSearch, 250);
+          });
+        }
+      } catch (e) {
+        $('gate').innerHTML = '<div class="err">Could not load your brain: '
+          + esc(''+e) + '</div>';
+      }
+    }
+
+    async function boot() {
+      // Read the session from the shared client; the website /signin owns the
+      // magic-link/Google exchange and stores the token under its own key.
+      const A = window.ArchHubAuth;
+      if (A && A.isSignedIn()) { await loadPortal(A.getToken()); return; }
+      showSignin();
+    }
+    boot();
+  </script>
+
+</Base>

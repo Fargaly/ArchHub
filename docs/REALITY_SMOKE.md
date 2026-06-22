@@ -73,9 +73,30 @@ The cloud_backend Fly app is not deployed, or has crashed.
 
 The `/v1/billing/plans` endpoint does not yet exist in `cloud_backend/main.py`. The script *expects* the deployed backend to publish a public read-only plans endpoint. Until that endpoint lands, this check will be red. The fix is server-side, not a misconfiguration.
 
-### `cloud.register` — FAIL HTTP 502 email_send_failed
+### `cloud.register` — non-mutating against PROD (does NOT create users)
 
-The `/v1/auth/register` route is up, but `RESEND_API_KEY` is missing or the sending domain isn't verified.
+Root-cause fix (2026-06-22): this check used to POST a throwaway
+`reality+smoketest<ts>@archhub.io` signup on **every** run. Against the live
+Fly app — which the hourly cron (`reality.yml`) and post-deploy verify both
+target — each run created a NEW real `users` row, so production accrued
+hundreds of synthetic accounts and the founder cockpit's users/MRR/signups
+numbers were junk.
+
+Now, against a **prod** target (`archhub-cloud.fly.dev` / `*.archhub.io`,
+detected by `_is_prod_target`), the check sends a deliberately **invalid** body
+and accepts `400`/`422` as proof the route is wired — **no user is created**.
+The full 202 magic-link probe runs only against a **non-prod** `--cloud-url`
+(localhost / staging) or with the explicit `--register-live` opt-in; the
+synthetic email it then uses keeps its `+smoketest` / `@archhub.io` markers so
+`db.is_test_account_email` recognises it and the cockpit excludes / can purge
+it.
+
+To clean up the rows already accrued: open the Founder Cockpit → "Users by
+plan" card → "Purge N test accounts" (calls the founder-gated
+`POST /founder/api/purge-test-users` with `{confirm:true}`).
+
+If you DO run a live register probe and see `502 email_send_failed`: the route
+is up but `RESEND_API_KEY` is missing or the sending domain isn't verified.
 
 - `flyctl secrets list -a archhub-cloud` and check `RESEND_API_KEY` exists.
 - Resend dashboard → Domains → verify `archhub.io`.

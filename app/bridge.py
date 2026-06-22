@@ -6593,6 +6593,34 @@ class ArchHubBridge(QObject):
                          name="ArchHubSelfExtendLoop").start()
         return _safe_json({"async": True})
 
+    # ─── Self-extend UNDO — reverse one applied (green) build ────────────
+    # USER-AGENCY (reversible): a court-greened self-extend build APPLIED a single
+    # local file. The CourtVerdictQueue surfaces that path with an Undo button;
+    # this slot removes exactly that file. SYNCHRONOUS (a tiny os.unlink — no host
+    # probe / LLM / HTTP), so it returns the receipt directly for the UI to toast.
+    #
+    # SECURITY: the path is NOT trusted — agents.self_extend.undo_artifact
+    # HARD-CONFINES it to the self_extend package dir + a `.py` suffix
+    # (commonpath jail), so a request can never delete an arbitrary file. The slot
+    # passes the client string straight to that sanitizer; no path joins here.
+    @pyqtSlot(str, result=str)
+    def self_extend_undo(self, path: str) -> str:
+        """Remove the file an applied self-extend build wrote (path-jailed).
+        Returns {ok, removed, path} or {ok:False, error}."""
+        try:
+            from agents.self_extend import undo_artifact
+            return _safe_json(undo_artifact(path or ""))
+        except Exception:
+            # Never echo raw exception text to the client (CodeQL: information
+            # exposure). The error path here is an import/internal failure; log
+            # it server-side and return a generic, safe message.
+            try:
+                import traceback as _tb
+                print("[self_extend_undo] " + _tb.format_exc())
+            except Exception:
+                pass
+            return _safe_json({"ok": False, "error": "undo failed"})
+
     # ─── Ambient self-build ("stem cells grow as you work") ─────────
     # Phase 4 (founder): ArchHub should BUILD ITSELF mid-work — the graph
     # grows + wires as the user works, not only on a typed command. After a

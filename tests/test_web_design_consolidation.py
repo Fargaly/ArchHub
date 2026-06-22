@@ -95,6 +95,15 @@ def test_base_nav_links_to_real_routes():
     for p in pages_dir.glob("*.astro"):
         if p.stem != "index":
             real_routes.add(f"/{p.stem}")
+    # Subdirectory routes: pages/docs/index.astro → /docs (the docs-publish PR
+    # ships docs as a directory route, not a top-level *.astro). Recognise any
+    # immediate subdir that carries an index.astro or a [...slug].astro page.
+    for sub in pages_dir.iterdir():
+        if sub.is_dir() and (
+            (sub / "index.astro").exists()
+            or any(sub.glob("*.astro"))
+        ):
+            real_routes.add(f"/{sub.name}")
     # /brain is a real static route shipped under public/brain/.
     real_routes.add("/brain")
     hrefs = set(re.findall(r'href="(/[a-z0-9-]*)"', html))

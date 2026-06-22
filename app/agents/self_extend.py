@@ -600,6 +600,71 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
     return {"ok": True, "fragment_id": frag_id, "write_result": result}
 
 
+def _artifact_path_of(run_result: dict[str, Any]) -> str:
+    """Pull the single written artifact path out of an executor run_result so the
+    loop can surface it on the per-leaf payload — that path is what makes a green
+    build REVERSIBLE (the UI offers an Undo that removes exactly this file). Only
+    a `write_file` action carries a path; returns '' when none (e.g. a leaf the
+    LLM executor handled with non-file actions)."""
+    if not isinstance(run_result, dict):
+        return ""
+    for act in run_result.get("actions") or []:
+        if not isinstance(act, dict):
+            continue
+        if act.get("tool") == "write_file":
+            p = (act.get("args") or {}).get("path") or ""
+            if p:
+                return str(p)
+    return ""
+
+
+def undo_artifact(path: str) -> dict[str, Any]:
+    """Reverse ONE green self-extend build by removing the file it wrote.
+
+    USER-AGENCY (reversible): a court-greened build wrote a single local file;
+    this removes exactly that file so any applied build is undoable from the UI.
+
+    SECURITY (no user-controlled path escape): the path is HARD-CONFINED to the
+    self-extend artifact directory (%APPDATA%/ArchHub/self_extend — the SAME dir
+    the default marker executor writes into) and must end in `.py`. We resolve
+    the candidate and assert it is *inside* that directory (os.path.commonpath),
+    so a request can never delete an arbitrary file on disk — even a crafted
+    `..`/symlink path resolves outside the jail and is refused. This mirrors the
+    build side's confinement on the delete side."""
+    raw = (path or "").strip()
+    if not raw:
+        return {"ok": False, "error": "no path"}
+    # Jail = the real artifact dir the executor writes into. Resolve it the SAME
+    # way (via composer_agent) so undo confines to exactly where builds land.
+    try:
+        _ca = _app_import("agents.composer_agent")
+        jail = Path(_ca._appdata_self_extend_dir()).resolve()
+    except Exception:
+        jail = (Path(__file__).resolve().parent / "self_extend").resolve()
+    try:
+        cand = Path(raw).resolve()
+    except Exception:
+        return {"ok": False, "error": "bad path"}
+    if cand.suffix != ".py":
+        return {"ok": False, "error": "refused: only generated .py artifacts"}
+    try:
+        # commonpath raises ValueError on different drives → treat as outside.
+        inside = os.path.commonpath([str(jail), str(cand)]) == str(jail)
+    except ValueError:
+        inside = False
+    if not inside or cand == jail:
+        return {"ok": False, "error": "refused: path outside self-extend jail"}
+    if not cand.exists():
+        # Already gone (idempotent) — report removed so the UI clears the row.
+        return {"ok": True, "removed": False, "path": str(cand),
+                "note": "already absent"}
+    try:
+        cand.unlink()
+    except Exception:
+        return {"ok": False, "error": "remove failed", "path": str(cand)}
+    return {"ok": True, "removed": True, "path": str(cand)}
+
+
 def run_self_extend_loop(
     user_msg: str,
     graph: dict[str, Any],
@@ -689,6 +754,10 @@ def run_self_extend_loop(
                     run_result = {"actions": [], "text": f"executor error: {ex}",
                                   "gated": 0}
 
+            # The artifact this leaf actually wrote — carried onto the payload so
+            # a green row is REVERSIBLE (the UI Undo removes exactly this file).
+            artifact_path = _artifact_path_of(run_result)
+
             evidence = _compose_evidence(user_msg, graph, leaf, run_result)
 
             # JUDGE — the external court on the REAL artifact. The court, NOT the
@@ -748,6 +817,11 @@ def run_self_extend_loop(
                     "needs_root": sweep_now.get("needs_root"),
                 },
                 "learned": learned,
+                # REVERSIBLE: the file the executor wrote for THIS green leaf.
+                # The UI offers an Undo (self_extend_undo) that removes it; only
+                # set when the build is applied (green) so the affordance is
+                # honest (a red leaf applied nothing → nothing to undo).
+                "artifact_path": artifact_path if verdict == "green" else "",
                 "terminal": False,
             })
 

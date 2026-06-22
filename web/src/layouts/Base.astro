@@ -156,6 +156,9 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <a href="/pricing" class={isActive('/pricing') ? 'active' : undefined}>Pricing</a>
           <a href="/community" class={isActive('/community') ? 'active' : undefined}>Community</a>
           <a href="/changelog" class={isActive('/changelog') ? 'active' : undefined}>Changelog</a>
+          <!-- Shown only when the visitor has a saved cloud token (signed in).
+               The static build can't know auth state, so JS unhides it. -->
+          <a href="/brain" id="nav-brain" class={isActive('/brain') ? 'active' : undefined} hidden style="display:none">Brain</a>
         </nav>
         <span class="ver">{connectors} connectors · MIT</span>
         <a class="btn btn-primary" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download</a>
@@ -208,5 +211,19 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </div>
       </div>
     </footer>
+    <!-- Reveal the Brain nav link for signed-in visitors. The token is set by
+         /brain after the magic-link exchange (same key as the cloud client),
+         so this only lights up once the user has authenticated. Pure
+         progressive enhancement — no auth state baked into the static build. -->
+    <script is:inline>
+      (function () {
+        try {
+          if (localStorage.getItem('archhub_token')) {
+            var el = document.getElementById('nav-brain');
+            if (el) { el.hidden = false; el.style.display = ''; }
+          }
+        } catch (e) {}
+      })();
+    </script>
   </body>
 </html>

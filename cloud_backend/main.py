@@ -805,6 +805,221 @@ def brain_sync_delete(authorization: str | None = Header(None)) -> dict:
     return {"deleted": bool(removed), "user_id": user["id"]}
 
 
+# ---------------------------------------------------------------------------
+# Brain READ + SEARCH (the genuine gap — /v1/brain/sync was write-only).
+#
+# These EXTEND the existing /v1/brain/* surface (same prefix, same
+# brain_replica module) with owner-only, tier-gated reads of the caller's
+# real per-user cloud replica — the SAME `replicas/<user_id>/brain.db` that
+# /v1/brain/sync writes. No parallel store, no parallel API:
+#   * Resolve the user from the bearer token (the existing `_require_user`).
+#   * Open THAT user's replica (BrainReplica.open forces owner == caller, so
+#     one user can never read another's USER-scope facts).
+#   * studio/firm additionally union their firm/community shared replicas
+#     (the Slice-17 read-set already wired into export_delta), gated by plan.
+#   * Tier caps + search gating come from config (BRAIN_FACT_CAPS /
+#     BRAIN_SEARCH_PLANS) — real enforcement, returning a typed 402 on the
+#     trial search ceiling rather than a cosmetic block.
+# ---------------------------------------------------------------------------
+def _brain_read_replica(user: dict):
+    """Open the caller's per-user replica with the tier-correct read-set.
+
+    USER/PROJECT facts always come from the caller's own private replica.
+    studio/firm (BRAIN_SHARED_SCOPE_PLANS) additionally union the firm
+    shared replicas they belong to + any firm/community keys they have
+    contributed to — exactly the export_delta fanout, never widened past
+    the account's real memberships."""
+    firm_keys: list[str] = []
+    community_keys: list[str] = []
+    if config.brain_can_shared_scope(user.get("plan")):
+        firm_keys = _firm_keys_for_user(user)
+    replica = brain_replica.BrainReplica.open(
+        user_id=user["id"],
+        firm_keys=firm_keys,
+        community_keys=community_keys,
+    )
+    if config.brain_can_shared_scope(user.get("plan")):
+        # Durable contributed keys (communities joined by code have no cloud
+        # membership table) so a later read still unions device A's shares.
+        replica.firm_keys = sorted(
+            set(replica.firm_keys) | set(replica.contributed_firm_keys()))
+        replica.community_keys = sorted(
+            set(replica.community_keys)
+            | set(replica.contributed_community_keys()))
+    return replica
+
+
+def _fact_view(frag: dict) -> dict:
+    """Project a replica fragment to the portal's read shape (no internals
+    like rowid; provenance/extra already decoded by list_fragments)."""
+    return {
+        "id":         frag.get("id"),
+        "text":       frag.get("text") or "",
+        "subject":    frag.get("subject"),
+        "predicate":  frag.get("predicate"),
+        "object":     frag.get("object"),
+        "scope":      frag.get("scope") or "user",
+        "visibility": frag.get("visibility") or "private",
+        "confidence": frag.get("confidence") or "extracted",
+        "project_id": frag.get("project_id"),
+        "firm_id":    frag.get("firm_id"),
+        "updated_at": frag.get("updated_at"),
+        "created_at": frag.get("created_at"),
+    }
+
+
+@app.get("/v1/brain/facts")
+def brain_facts(scope: str | None = None,
+                limit: int = 200,
+                authorization: str | None = Header(None)) -> dict:
+    """List the caller's synced brain facts (kind='fact'), newest first.
+
+    Owner-only: reads ONLY this user's replica (+ their firm/community shared
+    replicas on studio/firm). `limit` is clamped to the per-tier cap from
+    config.BRAIN_FACT_CAPS — a trial sees at most 100, paid tiers more. An
+    optional `scope` filters to user/project/firm/community. Honest empty
+    state: a user who has never synced gets `{results: [], count: 0}`.
+    """
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    cap = config.brain_fact_cap(plan)
+    want = max(1, min(int(limit), cap))
+    replica = _brain_read_replica(user)
+    # Fetch up to the cap (export_delta-style union for shared scopes; for the
+    # USER-only tiers list_fragments reads the private replica directly).
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        rows = [f for f in merged.get("fragments", [])
+                if (f.get("kind") or "fact") == "fact"
+                and not f.get("valid_until")]
+        # export_delta returns hlc-asc; portal wants newest-updated first.
+        rows.sort(key=lambda d: (d.get("updated_at") or ""), reverse=True)
+    else:
+        # Fetch one past the cap so we can honestly report whether facts were
+        # withheld (the `capped` flag) without an extra COUNT query.
+        rows = replica.list_fragments(kind="fact", limit=cap + 1)
+    if scope:
+        rows = [f for f in rows if (f.get("scope") or "user") == scope]
+    total_available = len(rows)
+    rows = rows[:want]
+    return {
+        "results": [_fact_view(f) for f in rows],
+        "count":   len(rows),
+        "plan":    plan,
+        "cap":     cap,
+        "scope":   scope,
+        # True only when facts were actually withheld by the tier cap — an
+        # empty/under-cap result is NOT "capped" (honest empty state).
+        "capped":  total_available > len(rows),
+    }
+
+
+@app.get("/v1/brain/search")
+def brain_search(q: str = "",
+                 limit: int = 50,
+                 authorization: str | None = Header(None)) -> dict:
+    """Case-insensitive scored search over the caller's brain facts.
+
+    Tier-gated (config.BRAIN_SEARCH_PLANS): trial is denied with a typed 402
+    `upgrade_required` (a REAL limit, surfaced as an upgrade CTA), paid tiers
+    search their full working set. Owner-only, same replica read-set as
+    /v1/brain/facts. Scores text > subject/object substring hits.
+    """
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    if not config.brain_can_search(plan):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "upgrade_required",
+                "feature": "brain_search",
+                "plan": plan,
+                "message": "Brain search is available on paid plans. "
+                           "Upgrade to search your synced knowledge.",
+            },
+        )
+    cap = config.brain_fact_cap(plan)
+    want = max(1, min(int(limit), cap))
+    needle = (q or "").strip().lower()
+    replica = _brain_read_replica(user)
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        pool = [f for f in merged.get("fragments", [])
+                if (f.get("kind") or "fact") == "fact"
+                and not f.get("valid_until")]
+    else:
+        pool = replica.list_fragments(kind="fact", limit=cap)
+    if not needle:
+        results = pool
+    else:
+        scored: list[tuple[int, dict]] = []
+        for f in pool:
+            text = (f.get("text") or "").lower()
+            subj = (f.get("subject") or "").lower()
+            obj = (f.get("object") or "").lower()
+            pred = (f.get("predicate") or "").lower()
+            score = 0
+            if needle in text:
+                score += 3
+            if needle in subj or needle in obj:
+                score += 2
+            if needle in pred:
+                score += 1
+            if score:
+                scored.append((score, f))
+        scored.sort(key=lambda t: (t[0], t[1].get("updated_at") or ""),
+                    reverse=True)
+        results = [f for _, f in scored]
+    results = results[:want]
+    return {
+        "results": [_fact_view(f) for f in results],
+        "count":   len(results),
+        "query":   q,
+        "plan":    plan,
+        "cap":     cap,
+    }
+
+
+@app.get("/v1/brain/stats")
+def brain_stats(authorization: str | None = Header(None)) -> dict:
+    """Portal header counters for the caller's brain: total facts, a
+    per-scope breakdown, the last-sync HLC watermark, and the tier
+    capabilities the UI uses to render caps + the upgrade CTA.
+
+    Owner-only; honest zeros for a user who has never synced."""
+    user = _require_user(authorization)
+    plan = user.get("plan")
+    replica = _brain_read_replica(user)
+    if config.brain_can_shared_scope(plan):
+        merged = replica.export_delta(since_hlc="")
+        facts = [f for f in merged.get("fragments", [])
+                 if (f.get("kind") or "fact") == "fact"
+                 and not f.get("valid_until")]
+    else:
+        facts = replica.list_fragments(
+            kind="fact", limit=config.BRAIN_FACT_CAP_MAX)
+    by_scope: dict[str, int] = {}
+    for f in facts:
+        s = (f.get("scope") or "user")
+        by_scope[s] = by_scope.get(s, 0) + 1
+    last_hlc = replica.last_hlc()
+    zero_hlc = "0000000000000000.00000000"
+    return {
+        "total_facts":   len(facts),
+        "by_scope":      by_scope,
+        "last_sync_hlc": last_hlc,
+        "ever_synced":   last_hlc != zero_hlc,
+        "plan":          plan,
+        "caps": {
+            "fact_cap":     config.brain_fact_cap(plan),
+            "can_search":   config.brain_can_search(plan),
+            "shared_scope": config.brain_can_shared_scope(plan),
+            "can_export":   config.brain_can_export(plan),
+        },
+        "can_upgrade":   plan != "firm",
+    }
+
+
 async def _has_body(req: Request) -> bool:
     """FastAPI lets you call .json() on an empty body; we want to
     distinguish that from a JSON object. Returns False when the
@@ -1515,6 +1730,238 @@ async function init() {
     document.getElementById('lead').textContent =
       'Signed in. Here is your account.';
     await loadDashboard(tok);
+  } catch(e) { showErr('Network error: ' + e); }
+}
+init();
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/brain", response_class=HTMLResponse)
+def brain_portal() -> HTMLResponse:
+    """Cloud brain portal — a signed-in user sees their REAL synced personal
+    brain (the per-user replica /v1/brain/sync writes), searchable, with their
+    tier badge + caps.
+
+    Self-contained, mirroring /dashboard: client-side magic-link PKCE
+    (register → /auth/return → exchange), then reads the EXISTING /v1/me +
+    the new /v1/brain/stats + /v1/brain/facts + /v1/brain/search with the
+    bearer and renders. No new auth, no new store — same-origin /v1 API."""
+    html = """<!doctype html><html><head>
+<title>Brain — ArchHub</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style>
+  :root { --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
+          --soft:#9b938a; --line:#26262d; --accent:#d97757;
+          --ok:#7ec18e; --warn:#e5b25a; }
+  body { margin:0; padding:48px 24px; background:var(--bg);
+         color:var(--ink); font-family:system-ui,-apple-system,
+         'Segoe UI',sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; }
+  h1 { margin:0 0 6px; font-family:Georgia,serif; font-style:italic;
+       font-size:30px; letter-spacing:-0.02em; }
+  .lead { color:var(--soft); font-size:14px; line-height:1.55;
+          margin:0 0 24px; }
+  .card { background:var(--raised); border:1px solid var(--line);
+          border-radius:12px; padding:20px 22px; margin-bottom:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; letter-spacing:0.12em;
+             text-transform:uppercase; color:var(--soft); }
+  .row { display:flex; justify-content:space-between; padding:7px 0;
+         border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--soft); }
+  .row .v { color:var(--ink); font-weight:500; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px;
+          font-size:11px; background:var(--accent); color:#fff;
+          letter-spacing:0.04em; }
+  .pill.muted { background:var(--line); color:var(--soft); }
+  .pill.ok { background:rgba(126,193,142,0.16); color:var(--ok); }
+  .fact { padding:12px 0; border-bottom:1px solid var(--line); }
+  .fact:last-child { border-bottom:none; }
+  .fact .t { font-size:14px; line-height:1.5; color:var(--ink); }
+  .fact .m { margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;
+             font-size:11px; color:var(--soft); align-items:center; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:6px;
+         background:var(--line); color:var(--soft); font-size:10px;
+         letter-spacing:0.03em; }
+  input { width:100%; padding:13px 15px; border-radius:10px;
+          border:1px solid var(--line); background:var(--bg);
+          color:var(--ink); font-size:15px; margin-top:16px;
+          box-sizing:border-box; }
+  #q { margin-top:0; }
+  button { width:100%; padding:13px; margin-top:12px;
+           background:var(--accent); color:#fff; border:none;
+           border-radius:10px; font-size:15px; font-weight:500;
+           cursor:pointer; }
+  .err { margin-top:16px; padding:13px; border-radius:10px;
+         background:rgba(229,178,90,0.1); border:1px solid #e5b25a;
+         color:#e5b25a; font-size:13px; }
+  .empty { color:var(--soft); font-size:13px; padding:8px 0; }
+  .cta { display:inline-block; margin-top:10px; padding:8px 14px;
+         border-radius:8px; background:var(--accent); color:#fff;
+         font-size:13px; cursor:pointer; }
+  a { color:var(--accent); }
+</style></head><body>
+<div class='wrap'>
+  <h1>Your ArchHub brain</h1>
+  <p class='lead' id='lead'>Sign in with your email — we'll send a
+     magic-link to open your synced knowledge.</p>
+  <form id='f' onsubmit='return submitEmail(event)'>
+    <input id='email' type='email' placeholder='you@studio.com'
+            required autofocus>
+    <button type='submit' id='b'>Email me the sign-in link</button>
+  </form>
+  <div id='out'></div>
+  <div id='portal'></div>
+</div>
+<script>
+const b64url = (buf) => btoa(String.fromCharCode.apply(null,
+  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
+  .replace(/=+$/,'');
+async function pkce() {
+  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
+  const h = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(v));
+  return { verifier:v, challenge:b64url(h) };
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function showErr(msg) {
+  document.getElementById('out').innerHTML =
+    '<div class="err">' + esc(msg) + '</div>';
+}
+async function submitEmail(ev) {
+  ev.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const btn = document.getElementById('b');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const p = await pkce();
+    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
+    const r = await fetch('/v1/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, code_challenge:p.challenge,
+        redirect:'/brain' }),
+    });
+    if (r.ok) {
+      document.getElementById('out').innerHTML =
+        '<div class="err" style="background:rgba(126,193,142,0.1);'
+        + 'border-color:#7ec18e;color:#7ec18e;">Check your inbox — '
+        + 'click the magic-link to open your brain.</div>';
+    } else {
+      showErr('Could not send the link.');
+      btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+    }
+  } catch(e) {
+    showErr('Network error: ' + e);
+    btn.disabled = false; btn.textContent = 'Email me the sign-in link';
+  }
+  return false;
+}
+let TOKEN = null;
+function factCard(f) {
+  const tags = [];
+  tags.push('<span class="tag">' + esc(f.scope || 'user') + '</span>');
+  if (f.visibility && f.visibility !== 'private')
+    tags.push('<span class="tag">' + esc(f.visibility) + '</span>');
+  if (f.confidence)
+    tags.push('<span class="tag">' + esc(f.confidence) + '</span>');
+  if (f.updated_at)
+    tags.push('<span>' + esc(String(f.updated_at).slice(0,10)) + '</span>');
+  return '<div class="fact"><div class="t">' + esc(f.text)
+    + '</div><div class="m">' + tags.join('') + '</div></div>';
+}
+function renderFacts(rows, capped) {
+  if (!rows || !rows.length)
+    return '<div class="empty">No facts yet. Open ArchHub and sync your '
+      + 'brain — your synced knowledge appears here.</div>';
+  let h = rows.map(factCard).join('');
+  if (capped)
+    h += '<div class="empty">Showing your most recent facts (tier cap). '
+      + '<a href="/upgrade">Upgrade</a> to see more.</div>';
+  return h;
+}
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  const list = document.getElementById('list');
+  const H = { 'Authorization':'Bearer ' + TOKEN };
+  list.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const r = await fetch('/v1/brain/search?q=' + encodeURIComponent(q)
+      + '&limit=200', {headers:H});
+    if (r.status === 402) {
+      list.innerHTML = '<div class="empty">Search is a paid feature. '
+        + '<a href="/upgrade">Upgrade</a> to search your brain.</div>';
+      return;
+    }
+    const d = await r.json();
+    list.innerHTML = renderFacts(d.results, false);
+  } catch(e) { list.innerHTML = '<div class="err">' + esc(''+e) + '</div>'; }
+}
+async function loadPortal(token) {
+  TOKEN = token;
+  const H = { 'Authorization':'Bearer ' + token };
+  const portal = document.getElementById('portal');
+  try {
+    const me = await (await fetch('/v1/me', {headers:H})).json();
+    const stats = await (await fetch('/v1/brain/stats',
+      {headers:H})).json();
+    const facts = await (await fetch('/v1/brain/facts?limit=200',
+      {headers:H})).json();
+    const caps = stats.caps || {};
+    let html = '<div class="card"><h2>Account</h2>'
+      + '<div class="row"><span class="k">Email</span><span class="v">'
+      + esc(me.email) + '</span></div>'
+      + '<div class="row"><span class="k">Plan</span><span class="v">'
+      + '<span class="pill">' + esc(me.plan) + '</span></span></div>'
+      + '<div class="row"><span class="k">Synced facts</span>'
+      + '<span class="v">' + (stats.total_facts || 0) + '</span></div>'
+      + '<div class="row"><span class="k">Last sync</span><span class="v">'
+      + (stats.ever_synced
+          ? '<span class="pill ok">synced</span>'
+          : '<span class="pill muted">never synced</span>')
+      + '</span></div></div>';
+    // search box (gated)
+    html += '<div class="card"><h2>Search your knowledge</h2>';
+    if (caps.can_search) {
+      html += '<input id="q" placeholder="Search facts…" '
+        + 'oninput="if(window._t)clearTimeout(window._t);'
+        + 'window._t=setTimeout(doSearch,250)">';
+    } else {
+      html += '<div class="empty">Search is available on paid plans. '
+        + '<a class="cta" href="/upgrade">Upgrade to search</a></div>';
+    }
+    html += '<div id="list" style="margin-top:14px">'
+      + renderFacts(facts.results, facts.capped) + '</div></div>';
+    portal.innerHTML = html;
+  } catch(e) {
+    showErr('Could not load your brain: ' + e);
+  }
+}
+async function init() {
+  const code = new URLSearchParams(location.search).get('code');
+  if (!code) return;
+  document.getElementById('f').style.display = 'none';
+  document.getElementById('lead').textContent = 'Loading your brain…';
+  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
+  if (!verifier) {
+    showErr('Sign-in session lost — reload /brain to retry.');
+    return;
+  }
+  try {
+    const ex = await fetch('/v1/auth/exchange', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code, code_verifier:verifier }),
+    });
+    if (!ex.ok) { showErr('Sign-in failed — the link may have expired.');
+                  return; }
+    const tok = (await ex.json()).token;
+    sessionStorage.removeItem('archhub_pkce_verifier');
+    document.getElementById('lead').textContent =
+      'Signed in. Here is your synced knowledge.';
+    await loadPortal(tok);
   } catch(e) { showErr('Network error: ' + e); }
 }
 init();

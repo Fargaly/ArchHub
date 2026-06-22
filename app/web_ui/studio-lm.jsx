@@ -4793,9 +4793,9 @@ const LM_NODE_TEMPLATES = window.__archhub_LM_NODE_TEMPLATES = window.__archhub_
   l_loop:     { w:220, h:118, ins:[{ id:'list', label:'list', t:'walls' }], outs:[{ id:'each', label:'each', t:'walls' }] },
   l_merge:    { w:220, h:118, ins:[{ id:'a', label:'a', t:'walls' }, { id:'b', label:'b', t:'walls' }], outs:[{ id:'out', label:'out', t:'walls' }] },
   // ai
-  i_conv:     { w:320, h:240, ins:[{ id:'ctx', label:'context', t:'any' }], outs:[{ id:'response', label:'response', t:'completion' }], messages:[], params:[{ k:'model', v:'Claude Sonnet 4.5', type:'select' }, { k:'system', v:'You are an architect copilot.', type:'text' }] },
-  i_think:    { w:280, h:160, ins:[{ id:'ctx', label:'context', t:'view' }], outs:[{ id:'intent', label:'intent', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5', type:'select' }, { k:'temperature', v:0.7, min:0, max:2, step:0.05, type:'slider' }, { k:'max_tokens', v:4096, min:256, max:32000, step:256, type:'slider' }, { k:'system', v:'concise + technical', type:'text' }] },
-  i_vis:      { w:240, h:140, ins:[{ id:'img', label:'image', t:'file' }], outs:[{ id:'desc', label:'description', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5 vision', type:'select' }] },
+  i_conv:     { w:320, h:240, ins:[{ id:'ctx', label:'context', t:'any' }], outs:[{ id:'response', label:'response', t:'completion' }], messages:[], params:[{ k:'model', v:'Claude Sonnet 4.5', type:'select', options_source:'models' }, { k:'system', v:'You are an architect copilot.', type:'text' }] },
+  i_think:    { w:280, h:160, ins:[{ id:'ctx', label:'context', t:'view' }], outs:[{ id:'intent', label:'intent', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5', type:'select', options_source:'models' }, { k:'temperature', v:0.7, min:0, max:2, step:0.05, type:'slider' }, { k:'max_tokens', v:4096, min:256, max:32000, step:256, type:'slider' }, { k:'system', v:'concise + technical', type:'text' }] },
+  i_vis:      { w:240, h:140, ins:[{ id:'img', label:'image', t:'file' }], outs:[{ id:'desc', label:'description', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5 vision', type:'select', options_source:'models' }] },
   i_match:    { w:240, h:140, ins:[{ id:'intent', label:'intent', t:'intent' }], outs:[{ id:'skill', label:'skill', t:'trace' }], params:[{ k:'top_k', v:3, min:1, max:10, step:1, type:'slider' }] },
   i_embed:    { w:220, h:118, ins:[{ id:'text', label:'text', t:'intent' }], outs:[{ id:'vec', label:'vector', t:'trace' }] },
   // output
@@ -15753,8 +15753,27 @@ const brainFacetCol = (f) => {
 // opacity when salient, faded when decaying. The quiet "used N times" chip,
 // the plain "why is this here", and the facet colour are all here. Raw
 // subject/predicate/object hide behind the Details disclosure (FOUNDER-SPEAK).
+// The scope ladder a single fact can climb. Each ring carries the brain's
+// real target_scope value, the founder-facing label, and the rank used to
+// only ever offer rings ABOVE the fact's current scope (you promote up,
+// never down). "collective" maps onto the brain's community scope in the
+// bridge slot + applies cross-boundary redaction automatically.
+const BRAIN_PROMOTE_RINGS = [
+  { scope: 'project',    label: 'Project',    rank: 1, blurb: 'shared with this project' },
+  { scope: 'firm',       label: 'Firm',       rank: 2, blurb: 'shared across your firm' },
+  { scope: 'collective', label: 'Collective', rank: 3, blurb: 'shared publicly (redacted)' },
+];
+const BRAIN_SCOPE_RANK = { user: 0, private: 0, project: 1, firm: 2,
+  community: 3, collective: 3, global: 4 };
+
 const BrainCard = ({ card, dim }) => {
   const [showRaw, setShowRaw] = React.useState(false);
+  // Promotion UI state: the scope picker drawer + the in-flight ring + the
+  // real result note (ANTI-LIE — we surface the daemon's actual verdict,
+  // never a fabricated "done").
+  const [showPromote, setShowPromote] = React.useState(false);
+  const [promoting, setPromoting] = React.useState('');     // scope in flight
+  const [promoteNote, setPromoteNote] = React.useState(null); // {msg, ok}
   if (!card) return null;
   const col = brainFacetCol(card.facet);
   // Salience → opacity weight. brain.browse salience is ~0.3..1.6; map to a
@@ -15762,6 +15781,34 @@ const BrainCard = ({ card, dim }) => {
   const s = typeof card.salience === 'number' ? card.salience : 0.5;
   const weight = dim ? 0.5 : Math.max(0.55, Math.min(1, 0.5 + s * 0.4));
   const used = card.used_count || 0;
+  // Current ring of this fact (from the real fragment scope) — only offer
+  // promotions strictly ABOVE it.
+  const curScope = String((card.details && card.details.scope) || 'user').toLowerCase();
+  const curRank = BRAIN_SCOPE_RANK[curScope] != null ? BRAIN_SCOPE_RANK[curScope] : 0;
+  const rings = BRAIN_PROMOTE_RINGS.filter((r) => r.rank > curRank);
+  // The fact's extracted project code (organize stamps card.project) is the
+  // natural project target; firm/collective fall through to the daemon's
+  // defaults in the bridge slot.
+  const promoteTo = async (ring) => {
+    if (!card.id || promoting) return;
+    setPromoting(ring.scope);
+    setPromoteNote(null);
+    const tid = ring.scope === 'project' ? (card.project || '') : '';
+    const r = await bridgeAsync('brain_promote', card.id, ring.scope, 0, tid);
+    const ok = !!(r && (r.promoted || r.ok) && !r.error);
+    setPromoteNote({
+      ok,
+      msg: ok
+        ? ('Promoted to ' + ring.label
+           + (r && r.redaction_required ? ' (redacted for sharing)' : ''))
+        : ((r && (r.error || (r.promoted === false && 'cannot promote'))) || 'Promote failed'),
+    });
+    setPromoting('');
+    if (ok) {
+      // Refresh the browser so the moved/copied fact + counts re-pull.
+      try { window.dispatchEvent(new CustomEvent('brain-browse-refresh')); } catch (e) {}
+    }
+  };
   return (
     <div data-testid="brain-card" data-facet={card.facet} style={{
       background: LM.bgPanel, border: `1px solid ${LM.line}`,
@@ -15795,6 +15842,17 @@ const BrainCard = ({ card, dim }) => {
           fontFamily:LM.mono, fontSize:9, color:col, marginLeft:'auto',
           textTransform:'lowercase',
         }}>{card.cluster}</span>
+        {/* Promote — lift this fact up the scope ladder. Only shown when a
+            higher ring exists than the fact's current scope (you promote up).
+            Wires the per-card affordance to the real brain_promote slot. */}
+        {rings.length > 0 && (
+          <button onClick={() => { setShowPromote(v => !v); setPromoteNote(null); }}
+            data-testid="brain-card-promote" title="Share this fact with a wider scope"
+            style={{
+              border:0, background:'transparent', cursor:'pointer', padding:'0 2px',
+              fontFamily:LM.mono, fontSize:9, color: col,
+            }}>{showPromote ? '▾ promote' : '↑ promote'}</button>
+        )}
         {/* Details drawer toggle — raw SPO/JSON lives here, never at the top. */}
         <button onClick={() => setShowRaw(v => !v)} data-testid="brain-card-details"
           title="Show the raw record (subject · predicate · object)"
@@ -15803,6 +15861,40 @@ const BrainCard = ({ card, dim }) => {
             fontFamily:LM.mono, fontSize:9, color:LM.inkMuted,
           }}>{showRaw ? '▾ details' : '▸ details'}</button>
       </div>
+      {showPromote && rings.length > 0 && (
+        <div data-testid="brain-card-promote-picker" style={{
+          marginTop:8, padding:'9px 10px', background:LM.bgSoft,
+          border:`1px solid ${LM.line}`, borderRadius:7,
+        }}>
+          <div style={{
+            fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginBottom:7,
+          }}>Share up from <b style={{color:LM.inkSoft}}>{curScope === 'user' ? 'private' : curScope}</b> →</div>
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+            {rings.map((ring) => (
+              <button key={ring.scope} onClick={() => promoteTo(ring)}
+                disabled={!!promoting}
+                data-testid={`brain-card-promote-${ring.scope}`}
+                title={ring.blurb}
+                style={{
+                  fontFamily:LM.mono, fontSize:9.5, fontWeight:600,
+                  border:`1px solid ${col}55`, borderRadius:20,
+                  padding:'3px 10px', cursor: promoting ? 'default' : 'pointer',
+                  background: promoting === ring.scope ? col : LM.bg,
+                  color: promoting === ring.scope ? '#fff' : col,
+                  opacity: (promoting && promoting !== ring.scope) ? 0.5 : 1,
+                }}>
+                {promoting === ring.scope ? 'promoting…' : ring.label}
+              </button>
+            ))}
+          </div>
+          {promoteNote && (
+            <div data-testid="brain-card-promote-note" style={{
+              marginTop:7, fontFamily:LM.mono, fontSize:9,
+              color: promoteNote.ok ? col : (LM.err || '#c0392b'),
+            }}>{promoteNote.msg}</div>
+          )}
+        </div>
+      )}
       {showRaw && card.details && (
         <div data-testid="brain-card-raw" style={{
           marginTop:8, padding:'8px 10px', background:LM.bgSoft,
@@ -16159,11 +16251,17 @@ const BrainBrowser = ({ open }) => {
       onChanged = () => pull();
       try { b.brain_browse_changed.connect(onChanged); } catch (e) {}
     }
+    // A per-card Promote re-pulls the view so the moved/copied fact + its new
+    // scope land immediately (same-tab DOM event; the signal above covers the
+    // off-thread re-embed that follows).
+    const onLocalRefresh = () => pull();
+    try { window.addEventListener('brain-browse-refresh', onLocalRefresh); } catch (e) {}
     return () => {
       alive = false;
       if (onChanged && b && b.brain_browse_changed && b.brain_browse_changed.disconnect) {
         try { b.brain_browse_changed.disconnect(onChanged); } catch (e) {}
       }
+      try { window.removeEventListener('brain-browse-refresh', onLocalRefresh); } catch (e) {}
     };
   }, [open]);
 

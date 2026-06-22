@@ -1615,6 +1615,33 @@ class ArchHubBridge(QObject):
 
         def _runner():
             try:
+                # Built-in source: 'models' → the live LLM catalogue (the same
+                # list the model picker uses: KNOWN_MODELS + configured cloud
+                # + local Ollama / LM Studio). Lets an AI node's `model` param
+                # render a REAL dropdown instead of a free-text box. Reuses the
+                # existing get_models slot (ONE-SYSTEM) — no parallel probe.
+                if source_op_id == "models":
+                    try:
+                        raw = _json.loads(self.get_models()) or []
+                    except Exception:
+                        raw = []
+                    opts = []
+                    if isinstance(raw, list):
+                        for m in raw:
+                            if not isinstance(m, dict):
+                                continue
+                            mid = m.get("id")
+                            if not mid:
+                                continue
+                            opts.append({"id": str(mid),
+                                         "label": str(m.get("label") or mid)})
+                    payload = {"req_id": req_id, "ok": True,
+                               "options": opts, "error": ""}
+                    try:
+                        self.param_options_ready.emit(_safe_json(payload))
+                    except Exception:
+                        pass
+                    return
                 from connectors.base import run_op, get as _get_conn
                 host = source_op_id.split(".", 1)[0] if "." in source_op_id else ""
                 conn = _get_conn(host)
@@ -3892,14 +3919,42 @@ class ArchHubBridge(QObject):
     def brain_firm_leave(self) -> str:
         return _safe_json(self._brain_tool("brain.firm_leave", {}))
 
+    @pyqtSlot(str, str, result=str)
     @pyqtSlot(str, str, int, result=str)
+    @pyqtSlot(str, str, int, str, result=str)
     def brain_promote(self, fragment_id: str, target_scope: str,
-                       is_maintainer: int = 0) -> str:
-        return _safe_json(self._brain_tool("brain.promote", {
+                       is_maintainer: int = 0, target_id: str = "") -> str:
+        """Promote one brain fact up the scope ladder
+        (user → project → firm → community/collective).
+
+        The Brain browser's per-card "Promote" affordance calls this; the
+        daemon's brain.promote tool + cloud /v1/memory/facts/{id}/promote
+        route already enforce ACL + cross-boundary redaction. `target_id`
+        is the project / firm / community the fact rises into — forwarded
+        so the daemon's ACL identity matches the requested scope and the
+        promotion actually succeeds (not just returns an ACL error). For
+        the collective ring it defaults to the daemon's shared community
+        pool so a plain "promote to collective" works with no extra setup.
+        """
+        args = {
             "fragment_id": fragment_id,
             "target_scope": target_scope,
             "is_maintainer": bool(is_maintainer),
-        }))
+        }
+        tid = (target_id or "").strip()
+        scope = (target_scope or "").strip().lower()
+        if scope == "project":
+            args["target_project_id"] = tid or "default"
+        elif scope == "firm":
+            args["target_firm_id"] = tid or "default"
+        elif scope in ("community", "collective"):
+            # Map the founder-facing "collective" ring onto the brain's
+            # community scope + a concrete community id so the ACL identity
+            # is subscribed (the tool builds the actor's subscriptions from
+            # this id) and the redacted cross-boundary write is allowed.
+            args["target_scope"] = "community"
+            args["target_community_id"] = tid or "default"
+        return _safe_json(self._brain_tool("brain.promote", args))
 
     @pyqtSlot(result=str)
     def brain_wiring_announce(self) -> str:

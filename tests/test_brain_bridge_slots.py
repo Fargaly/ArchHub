@@ -256,6 +256,33 @@ def test_brain_promote_proxies_with_scope_args(bridge_inst, mock_brain_call):
     assert rec["params"]["fragment_id"] == "frag-1"
     assert rec["params"]["target_scope"] == "firm"
     assert rec["params"]["is_maintainer"] is True
+    # firm promotion forwards a firm id so the daemon ACL identity matches
+    # the requested scope (else can_promote refuses).
+    assert rec["params"].get("target_firm_id")
+
+
+def test_brain_promote_project_forwards_project_id(bridge_inst, mock_brain_call):
+    """A project promotion forwards the project id the BrainCard supplies so
+    the daemon's ACL actor is in that project (can_promote requires
+    actor.project_id == target_project_id)."""
+    mock_brain_call["set"]({"ok": True, "promoted": True})
+    bridge_inst.brain_promote("frag-2", "project", 0, "BBC4")
+    rec = mock_brain_call["calls"][0]
+    assert rec["params"]["target_scope"] == "project"
+    assert rec["params"]["target_project_id"] == "BBC4"
+
+
+def test_brain_promote_collective_maps_to_community(bridge_inst, mock_brain_call):
+    """The founder-facing 'collective' ring maps onto the brain's community
+    scope and supplies a concrete community id so the ACL identity is
+    subscribed (the daemon builds subscriptions from this id) and the
+    redacted cross-boundary write is allowed."""
+    mock_brain_call["set"]({"ok": True, "promoted": True,
+                            "redaction_required": True})
+    bridge_inst.brain_promote("frag-3", "collective", 0)
+    rec = mock_brain_call["calls"][0]
+    assert rec["params"]["target_scope"] == "community"
+    assert rec["params"].get("target_community_id")
 
 
 def test_brain_wiring_announce_includes_device_and_cwd(

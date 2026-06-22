@@ -237,6 +237,41 @@ def _is_loopback_redirect(redirect: str) -> bool:
     return host in _LOOPBACK_HOSTS
 
 
+def _loopback_return_url(redirect: str, *, code: str, state: str) -> str:
+    """Build the FINAL desktop-loopback return URL from VALIDATED, RECONSTRUCTED
+    parts — never by interpolating the raw user-supplied `redirect` string.
+
+    Returns "" when `redirect` is not a loopback http(s) URL (caller 400s).
+    Otherwise returns `<scheme>://<loopback-host>[:port]<path>?code=..&state=..`
+    rebuilt with urlunparse from the parsed components (scheme/host/port/path),
+    with the host pinned to the loopback allowlist. Because the emitted value is
+    assembled from re-validated parts (and the query is set by us from `code`/
+    `state`, url-encoded), no tainted data flows into the redirect Location
+    header (CodeQL py/url-redirection). Any query/fragment smuggled in the
+    supplied redirect is dropped — the desktop loopback only ever needs
+    code+state, matching the historical `?code=..&state=..` output."""
+    if not redirect:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(redirect)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    host = (parsed.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        return ""
+    # Re-pin the netloc to the validated loopback host (+ original port). The
+    # host is taken from the fixed _LOOPBACK_HOSTS membership we just proved, so
+    # it is one of a closed set of constants, not arbitrary input.
+    netloc = host
+    if parsed.port:
+        netloc = f"{host}:{parsed.port}"
+    path = parsed.path or "/"
+    query = urllib.parse.urlencode({"code": code, "state": state})
+    return urllib.parse.urlunparse((parsed.scheme, netloc, path, "", query, ""))
+
+
 def _website_return_origin(redirect: str) -> str:
     """If `redirect` is a URL whose ORIGIN is one of the FIXED, allowlisted
     website origins (config.WEBSITE_RETURN_ORIGINS), return that canonical
@@ -269,11 +304,15 @@ def _website_return_origin(redirect: str) -> str:
         # reject so they can't be reinterpreted by the browser.
         return ""
     # Rebuild a canonical origin from the PARSED parts (never the raw string)
-    # so userinfo / fragments / a smuggled path cannot ride along.
+    # so userinfo / fragments / a smuggled path cannot ride along. This local
+    # `origin` is used ONLY as an exact-match lookup key — the value we RETURN
+    # comes from the fixed allowlist constant (config.canonical_website_return_
+    # origin), not from the request, so no tainted data flows out to a redirect
+    # Location header (CodeQL py/url-redirection).
     origin = f"{parsed.scheme.lower()}://{host}"
     if parsed.port:
         origin = f"{origin}:{parsed.port}"
-    return origin if config.is_allowed_website_return_origin(origin) else ""
+    return config.canonical_website_return_origin(origin)
 
 
 # ---------------------------------------------------------------------------
@@ -1376,22 +1415,22 @@ def auth_return(code: str = "", redirect: str = "",
                 url += "&state=" + urllib.parse.quote(state, safe="")
             return RedirectResponse(url=url, status_code=302)
         # 2) Desktop LOOPBACK return — only ever 302 to the desktop's OWN
-        #    loopback URL, never an attacker-supplied external host.
-        if not _is_loopback_redirect(redirect):
-            raise HTTPException(status_code=400,
-                                detail={"error": "redirect_not_allowed"})
-        sep = "&" if "?" in redirect else "?"
+        #    loopback URL, never an attacker-supplied external host. The final
+        #    URL is rebuilt from VALIDATED parts by _loopback_return_url (host
+        #    pinned to the loopback allowlist), so the raw user redirect string
+        #    never reaches the Location header (open-redirect / CodeQL safe).
+        #
         # Forward the desktop loopback's expected CSRF token. The Google
         # flow passes the client's own `state` (recovered from the signed
         # state in exchange_callback) so the loopback's expected_state
         # check passes. The magic-link path sends no `state`, so we keep
         # the historical "archhub" default -- byte-for-byte unchanged.
         fwd_state = state or "archhub"
-        return RedirectResponse(
-            url=f"{redirect}{sep}code={code}&state="
-                + urllib.parse.quote(fwd_state, safe=""),
-            status_code=302,
-        )
+        loopback_url = _loopback_return_url(redirect, code=code, state=fwd_state)
+        if not loopback_url:
+            raise HTTPException(status_code=400,
+                                detail={"error": "redirect_not_allowed"})
+        return RedirectResponse(url=loopback_url, status_code=302)
     safe_code = "".join(c for c in code if c.isalnum() or c in "-_.")
     html = f"""<!doctype html><html><head><title>Signing you in — ArchHub</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>

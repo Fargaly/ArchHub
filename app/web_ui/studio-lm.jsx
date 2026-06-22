@@ -3070,6 +3070,61 @@ const StudioLM = () => {
       step.actions.forEach((a) => {
         const tool = a && a.tool, args = (a && a.args) || {};
         const _ambient = _ambientPass || !!(a && a.ambient);
+        // ─── SEAM 1→4 — UNIVERSAL SELF-EXTENSION (ask → build → court → learn) ───
+        // The agent gained BUILD tools (create_node_type / create_connector,
+        // composer_agent.BUILD_TOOLS). These do NOT replay onto the canvas like
+        // spawn_node/add_wire — they self-EXTEND ArchHub through the backend
+        // loop (bridge.self_extend → agents.self_extend.run_self_extend: writes
+        // the real artifact locally, hands it to the ROMA court, and on a green
+        // sweep records the learned capability via brain.write). Intercept them
+        // FIRST, before the canvas gate/replay below (which has no branch for a
+        // build tool → would silently drop it). ONE-SYSTEM: reuses the existing
+        // self_extend slot + the SAME approval queue; no parallel build path.
+        const _BUILD_TOOLS = ['create_node_type', 'create_connector'];
+        if (_BUILD_TOOLS.indexOf(tool) >= 0) {
+          // USER-AGENCY: a build is a WRITE. In Plan/Auto it must clear the
+          // EXISTING approval queue before it runs. The backend already gated it
+          // (run_agent_step → gated_action) so a.gated is set in Plan/Auto; we
+          // also re-derive the mode from the live composer mirror as a belt so a
+          // YOLO turn whose action arrives ungated still routes correctly.
+          const _mode = (a && a.mode)
+            || (typeof window !== 'undefined' && window.__archhub_composer_mode)
+            || 'plan';
+          const _buildGated = !!(a && (a.gated
+            || (a.approval && a.approval.type === 'approval_required')))
+            || _mode === 'plan' || _mode === 'auto';
+          const _cap = (args && (args.title || args.name || args.host
+            || args.type || args.id)) || tool.replace('create_', '');
+          if (_buildGated) {
+            // Queue a self_extend approval in the SAME bar gated canvas writes
+            // use. The held action carries command:'self_extend' so the queue's
+            // _approve calls the slot (mode='yolo', approved=1) instead of
+            // re-dispatching a canvas action.
+            try {
+              window.dispatchEvent(new CustomEvent('lm-approval-request', {
+                detail: {
+                  action: { command: 'self_extend', tool, args, mode: _mode,
+                            summary: `build · ${tool} · ${_cap}` },
+                  raw: step.text || '', focusId: focusId, attachments: [],
+                  summary: (a && a.approval && a.approval.reason)
+                    || `Build + court-verify ${tool === 'create_connector'
+                          ? 'connector' : 'node'}: ${_cap}`,
+                  cmd: 'self_extend', mode: _mode, ambient: _ambient,
+                },
+              }));
+            } catch (e) {}
+          } else {
+            // YOLO: run the self-extension loop now. Off the Qt main thread
+            // server-side; the receipt arrives on self_extend_done (toasted).
+            try {
+              bridgeAsync('self_extend', tool, JSON.stringify(args), 'yolo', 1);
+              window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+                detail: { msg: `self-extend · building ${_cap}…`, kind:'info' },
+              }));
+            } catch (e) {}
+          }
+          return; // build tools never fall through to the canvas replay below.
+        }
         // BACKEND GATE — HONOR it (the agent path's ONE gate of record).
         // run_agent_step gated this host-WRITE per the composer mode: it set
         // a.gated + replaced the executable result with a typed approval
@@ -3322,6 +3377,61 @@ const StudioLM = () => {
           { detail: { msg, kind } }));
       } catch (e) {}
     };
+    // ─── SEAM 1→4 receipt — self-extension loop finished ──────────────────
+    // bridge.self_extend runs ask→build→court→learn off-thread and emits
+    // self_extend_done(result_json). Surface the per-seam receipt as a toast so
+    // a build is never a silent black hole: an HONEST success names the learned
+    // capability ("built + court-verified + learned"); an HONEST failure names
+    // which seam refused (build / court / brain) + the court reason. result shape
+    // (agents/self_extend.run_self_extend): {ok, tool, build:{kind,reused},
+    // court:{green,court_reason}, learn:{ok}, seams:{build,court,brain}}.
+    const onSelfExtendDone = (resultJson) => {
+      let r = null;
+      try { r = JSON.parse(resultJson || '{}'); } catch (e) { return; }
+      if (!r) return;
+      const seams = r.seams || {};
+      const kind = (r.build && r.build.kind) || (r.tool || 'capability');
+      const cap = (r.build && (r.build.detail || r.build.title || r.build.id
+        || r.build.type)) || kind;
+      if (r.ok) {
+        const reused = r.build && r.build.reused;
+        try {
+          window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+            detail: {
+              msg: reused
+                ? `self-extend · reused existing ${kind}: ${cap}`
+                : `Built + court-verified + learned: ${cap}`,
+              kind: 'info',
+            },
+          }));
+        } catch (e) {}
+        // The minted node type is now registered server-side; refresh MY NODES
+        // so it appears without a relaunch (mirrors onNodeCreated's contract).
+        try { window.dispatchEvent(new CustomEvent('lm-skills-refresh')); } catch (e) {}
+      } else {
+        // HONEST failure — name the seam that refused. court refusal is the
+        // most common (the artifact built but did not pass the real gate).
+        let why = (r.error || '').trim();
+        if (!why) {
+          if (seams.build === false) {
+            why = 'build failed' + ((r.build && r.build.error)
+              ? `: ${r.build.error}` : '');
+          } else if (seams.court === false) {
+            why = 'court refused' + ((r.court && r.court.court_reason)
+              ? `: ${r.court.court_reason}` : ' (gate not satisfied)');
+          } else if (seams.brain === false) {
+            why = 'built + court-verified, but not learned (brain write failed)';
+          } else {
+            why = 'self-extension did not complete';
+          }
+        }
+        try {
+          window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+            detail: { msg: `self-extend · ${why}`, kind:'err' },
+          }));
+        } catch (e) {}
+      }
+    };
     wire('chat_chunk',     onChunk);
     wire('chat_reasoning', onReasoning);
     wire('chat_status',    onChatStatus);   // router fallback/retry + "answered by"
@@ -3329,6 +3439,7 @@ const StudioLM = () => {
     wire('chat_error',     onError);
     wire('trigger_fired',  onTrigger);
     wire('agent_step_done', onAgentStep);
+    wire('self_extend_done', onSelfExtendDone);   // SEAM 1→4 receipt → toast
     wire('connector_op_done', onConnectorOpDone);
     wire('param_options_ready', onParamOptions);
     wire('node_created',   onNodeCreated);
@@ -18785,6 +18896,24 @@ const ApprovalQueue = ({ _themeBump }) => {   // _themeBump: theme-repaint key o
   }, []);
   const _drop = (key) => setQueue(q => q.filter(it => it.key !== key));
   const _approve = (it) => {
+    // SEAM 1→4 — UNIVERSAL SELF-EXTENSION: an approved BUILD tool does NOT
+    // re-run as a canvas action. It runs the self-extension loop through the
+    // EXISTING bridge slot (build → ROMA court → brain.write). USER-AGENCY: the
+    // approval IS the gate, so we pass approved=1 + mode='yolo' to let the build
+    // through. The receipt arrives on self_extend_done → toast.
+    const _act = it.action || {};
+    if (_act.command === 'self_extend' && _act.tool) {
+      try {
+        bridgeAsync('self_extend', _act.tool,
+          JSON.stringify(_act.args || {}), 'yolo', 1);
+        window.dispatchEvent(new CustomEvent('lm-canvas-toast', {
+          detail: { msg: `self-extend · building ${_act.tool.replace('create_','')}…`,
+                    kind:'info' },
+        }));
+      } catch (e) {}
+      _drop(it.key);
+      return;
+    }
     // Re-run the EXACT held action, but mark it approved + yolo so the gate at
     // the chokepoint lets it through and the canvas/host write actually lands.
     try {

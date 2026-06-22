@@ -708,6 +708,7 @@ class ArchHubBridge(QObject):
     workflow_started = pyqtSignal(str, str)          # (kind, request_id)
     trigger_fired   = pyqtSignal(str, str, str)     # (session_id, node_id, payload_json)
     agent_step_done = pyqtSignal(str)               # (result_json) — LLM-orchestrator finished
+    self_extend_done = pyqtSignal(str)              # (result_json) — self-extension loop finished (SEAM 1→4)
     connector_op_done = pyqtSignal(str)             # (result_json) — a connector op finished
     param_options_ready = pyqtSignal(str)           # (json) — dynamic dropdown options resolved
     node_created    = pyqtSignal(str)               # (json) — AI-minted custom node registered
@@ -6405,6 +6406,68 @@ class ArchHubBridge(QObject):
         threading.Thread(target=_runner, daemon=True,
                           name="ArchHubAgentStep").start()
         # Return immediately — JSX listens for agent_step_done.
+        return _safe_json({"async": True})
+
+    # ─── SEAM 1→4 — universal self-extension (ask→build→court→learn) ──────
+    # The ONE agent-driven mechanism: an approved composer BUILD tool
+    # (create_node_type / create_connector) self-extends ArchHub WITHOUT a
+    # human stitching the organs. agents.self_extend.run_self_extend writes the
+    # REAL artifact locally (reusing library.create_node_type / the base.py
+    # connector scaffold — LIBRARY-FIRST), AUTO-hands it to the ROMA court (real
+    # py_compile / registration gate), and on a GREEN sweep AUTO-records the
+    # learned capability via brain.write. ONE-SYSTEM: no parallel engine.
+    #
+    # USER-AGENCY: the build is an approve-able WRITE. In Plan/Auto this slot
+    # REFUSES to build and returns a typed approval action (the composer surfaces
+    # it; the JSX re-calls with mode='yolo' / approved=1 once the user approves).
+    # Only YOLO or an explicit approval runs the build. Off the Qt main thread.
+    @pyqtSlot(str, str, result=str)
+    @pyqtSlot(str, str, str, result=str)
+    @pyqtSlot(str, str, str, int, result=str)
+    def self_extend(self, tool: str, args_json: str, mode: str = "plan",
+                    approved: int = 0) -> str:
+        """Run the self-extension loop for one approved BUILD tool call.
+
+        `tool` ∈ {create_node_type, create_connector}. `args_json` is the build
+        spec. Emits `self_extend_done(result_json)` with the per-seam receipt.
+        Returns immediately ({async:True}) or a gated approval ({gated:True})."""
+        import json as _json
+        try:
+            from agents.composer_agent import (
+                mode_gates_write, gated_action, normalize_mode, BUILD_TOOLS,
+            )
+        except Exception as ex:
+            return _safe_json({"async": False, "error": f"composer import: {ex}"})
+
+        if tool not in BUILD_TOOLS:
+            return _safe_json({"async": False,
+                               "error": f"not a self-extend build tool: {tool}"})
+        try:
+            args = _json.loads(args_json) if args_json else {}
+        except Exception as ex:
+            return _safe_json({"async": False, "error": f"bad args_json: {ex}"})
+
+        m = normalize_mode(mode)
+        # USER-AGENCY gate: a build is a WRITE. Gate it unless approved or YOLO.
+        if not approved and mode_gates_write(m, tool):
+            return _safe_json({**gated_action(tool, args, m),
+                               "async": False, "gated": True})
+
+        def _runner():
+            try:
+                from agents.self_extend import run_self_extend
+                result = run_self_extend(tool, args if isinstance(args, dict) else {})
+            except Exception as ex:
+                result = {"ok": False, "tool": tool, "error": str(ex),
+                          "seams": {"build": False, "court": False,
+                                    "brain": False}}
+            try:
+                self.self_extend_done.emit(_safe_json(result))
+            except Exception:
+                pass
+
+        threading.Thread(target=_runner, daemon=True,
+                         name="ArchHubSelfExtend").start()
         return _safe_json({"async": True})
 
     # ─── Ambient self-build ("stem cells grow as you work") ─────────

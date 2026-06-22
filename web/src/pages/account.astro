@@ -1,0 +1,83 @@
+---
+import Base from '../layouts/Base.astro';
+// Account — the signed-in surface. Reads GET /v1/me with the localStorage
+// bearer token (set by the /signin flow) and renders email + plan + messages
+// remaining. ONE-SYSTEM: same backend, same token, no new auth.
+---
+<Base title="Account" description="Your ArchHub account — plan, usage, and your link to the desktop app.">
+  <section class="acct-page">
+    <div class="wrap">
+      <div class="eyebrow">● Account</div>
+      <h1 class="serif acct-h1" id="acctTitle">Your <span class="ital">account</span></h1>
+
+      <div id="acctBody" class="acct-body">
+        <div class="acct-loading">Loading your account…</div>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    .acct-page { padding: 64px 0 96px; }
+    .acct-h1 { font-size: 40px; margin: 10px 0 28px; }
+    .acct-body { max-width: 640px; }
+    .acct-loading { color: var(--ink-soft); font-size: 14px; }
+    .acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .acct-cell { background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px 22px; }
+    .acct-cell.wide { grid-column: 1 / -1; }
+    .acct-k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-muted); }
+    .acct-v { font-size: 20px; color: var(--ink); margin-top: 8px; word-break: break-all; }
+    .acct-v.plan { text-transform: capitalize; }
+    .acct-pill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ok); background: rgba(126,193,142,0.1); border: 1px solid var(--ok); border-radius: var(--r-pill); padding: 4px 11px; }
+    .acct-pill .d { width: 7px; height: 7px; border-radius: 999px; background: var(--ok); }
+    .acct-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
+    .acct-err { background: rgba(230,112,95,0.1); border: 1px solid var(--err); color: var(--err); border-radius: var(--r-md); padding: 16px 18px; font-size: 14px; line-height: 1.55; }
+    .acct-err a { color: var(--accent); text-decoration: underline; }
+    @media (max-width: 620px) { .acct-grid { grid-template-columns: 1fr; } .acct-h1 { font-size: 32px; } }
+  </style>
+
+  <script is:inline>
+    (function () {
+      var A = window.ArchHubAuth;
+      var body = document.getElementById('acctBody');
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+      if (!A || !A.isSignedIn()) {
+        body.innerHTML =
+          '<div class="acct-err">You are not signed in. <a href="/signin">Sign in</a> to see your account.</div>';
+        return;
+      }
+      A.me().then(function (m) {
+        if (!m) {
+          body.innerHTML =
+            '<div class="acct-err">Your session expired. <a href="/signin">Sign in again</a>.</div>';
+          return;
+        }
+        var remaining = (m.remaining_messages != null) ? m.remaining_messages : '—';
+        var canUpgrade = m.can_upgrade !== false && m.plan !== 'firm';
+        body.innerHTML =
+          '<div class="acct-grid">' +
+            '<div class="acct-cell wide"><div class="acct-k">Signed in as</div>' +
+              '<div class="acct-v">' + esc(m.email) + '</div></div>' +
+            '<div class="acct-cell"><div class="acct-k">Plan</div>' +
+              '<div class="acct-v plan">' + esc(m.plan || 'trial') +
+              ' &nbsp; <span class="acct-pill"><span class="d"></span>active</span></div></div>' +
+            '<div class="acct-cell"><div class="acct-k">Messages remaining</div>' +
+              '<div class="acct-v">' + esc(remaining) + '</div></div>' +
+          '</div>' +
+          '<div class="acct-actions">' +
+            '<a class="btn btn-primary lg" href="' + A.APP_URL + '" rel="noopener">Open the app ↓</a>' +
+            (canUpgrade ? '<a class="btn lg" href="/pricing">Upgrade plan</a>' : '') +
+            '<button class="btn lg" id="signOutBtn" type="button">Sign out</button>' +
+          '</div>';
+        var so = document.getElementById('signOutBtn');
+        if (so) so.addEventListener('click', function () {
+          so.disabled = true; so.textContent = 'Signing out…';
+          A.signOut().then(function () { location.href = '/'; });
+        });
+      });
+    })();
+  </script>
+</Base>

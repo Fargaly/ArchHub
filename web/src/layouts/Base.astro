@@ -118,6 +118,18 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
       .btn-primary { background: var(--accent); border-color: var(--accent); color: #160d08; font-weight: 600; }
       .btn-primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
 
+      /* auth nav entry points */
+      .auth-nav { display: flex; align-items: center; }
+      .auth-nav .auth-anon, .auth-nav .auth-user { display: inline-flex; align-items: center; gap: 8px; }
+      .auth-nav [hidden] { display: none !important; }
+      .acct-chip { max-width: 220px; }
+      .acct-chip #acctEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+      .acct-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--ok); box-shadow: 0 0 0 3px rgba(126,193,142,0.18); flex: none; }
+      @media (max-width: 720px) {
+        .auth-nav .auth-user .btn:first-child { display: none; }
+        .acct-chip #acctEmail { max-width: 96px; }
+      }
+
       main { display: block; }
 
       /* footer */
@@ -161,7 +173,22 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <a href="/brain" id="nav-brain" class={isActive('/brain') ? 'active' : undefined} hidden style="display:none">Brain</a>
         </nav>
         <span class="ver">{connectors} connectors · MIT</span>
-        <a class="btn btn-primary" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download</a>
+        <!-- AUTH ENTRY POINTS — wired to the EXISTING cloud auth backend via
+             /auth.js (no new auth system). Signed-out shows Sign in + Get
+             started; once a session token exists the script below swaps in the
+             account chip. Both states are pre-rendered so there is no flash. -->
+        <div class="auth-nav" id="authNav">
+          <span class="auth-anon">
+            <a class="btn" href="/signin">Sign in</a>
+            <a class="btn btn-primary" href="/signin?new=1">Get started</a>
+          </span>
+          <span class="auth-user" hidden>
+            <a class="btn" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download</a>
+            <a class="btn btn-primary acct-chip" href="/account" id="acctChip" title="Your account">
+              <span class="acct-dot"></span><span id="acctEmail">Account</span>
+            </a>
+          </span>
+        </div>
       </div>
     </header>
 
@@ -211,18 +238,38 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
         </div>
       </div>
     </footer>
-    <!-- Reveal the Brain nav link for signed-in visitors. The token is set by
-         /brain after the magic-link exchange (same key as the cloud client),
-         so this only lights up once the user has authenticated. Pure
-         progressive enhancement — no auth state baked into the static build. -->
+    <!-- Shared auth client + nav state. Loaded on every page: reflects the
+         signed-in state (account chip from /v1/me) AND reveals the Brain link.
+         Single source of truth = window.ArchHubAuth (one token key). -->
+    <script src="/auth.js" is:inline></script>
     <script is:inline>
       (function () {
+        var A = window.ArchHubAuth;
+        // Brain nav link — only needs a valid session (the shared client's
+        // token), so a user who signed in anywhere on the site sees it.
         try {
-          if (localStorage.getItem('archhub_token')) {
-            var el = document.getElementById('nav-brain');
-            if (el) { el.hidden = false; el.style.display = ''; }
+          if (A && A.isSignedIn && A.isSignedIn()) {
+            var brn = document.getElementById('nav-brain');
+            if (brn) { brn.hidden = false; brn.style.display = ''; }
           }
         } catch (e) {}
+        var nav = document.getElementById('authNav');
+        if (!A || !nav) return;
+        var anon = nav.querySelector('.auth-anon');
+        var user = nav.querySelector('.auth-user');
+        function show(signedIn) {
+          anon.hidden = signedIn;
+          user.hidden = !signedIn;
+        }
+        if (!A.isSignedIn()) { show(false); return; }
+        // Have a token — optimistically show the chip, then confirm + fill the
+        // email. A dead token (401) is cleared by me() and we fall back to anon.
+        show(true);
+        A.me().then(function (m) {
+          if (!m) { show(false); return; }
+          var el = document.getElementById('acctEmail');
+          if (el && m.email) el.textContent = m.email;
+        });
       })();
     </script>
   </body>

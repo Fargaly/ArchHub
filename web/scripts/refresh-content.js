@@ -11,7 +11,6 @@
  * abort the others — e.g. the brain daemon being down still lets the connector
  * counts + changelog refresh):
  *   1. build-info.js          — git sha/date + real connector/op counts (no daemon)
- *   2. copy-brain-viz.js      — copy the in-app brain graph + data into public/brain/
  *   3. extract_pricing.py     — pricing.json from cloud_backend (needs ../cloud_backend)
  *   4. export_web_data.py     — skills-export.json + contributors.json from the
  *                               brain store (REAL community skills WITH success
@@ -58,8 +57,6 @@ const python = process.platform === 'win32' ? 'python' : 'python3';
 // 1. Always-available: provenance + connector counts (no external services).
 run('build-info (git sha + connector counts)', node, ['build-info.js'], { required: true });
 
-// 2. Always-available: copy the real in-app brain viz into public/brain/.
-run('copy-brain-viz (app/web_ui → public/brain)', node, ['copy-brain-viz.js'], { required: true });
 
 // 3. Best-effort: pricing from cloud_backend.
 run('extract_pricing (cloud_backend/billing.py)', python, ['extract_pricing.py'], { required: false });

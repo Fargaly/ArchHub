@@ -122,6 +122,31 @@ async def chat_completions(*, user: dict, body: dict) -> StreamingResponse:
         # touches hosted credits. BYO + hosted paths are untouched and win
         # when the user configures them.
         if config.free_default_available():
+            # Per-user DAILY free cap (shared-key budget guard). One user can't
+            # exhaust the shared founder key for everyone: over the cap we return
+            # an honest 402 free_daily_cap (BYO + hosted still work; resets next
+            # UTC day). cap<=0 disables it. Meters ONLY the free path.
+            cap = config.free_daily_cap()
+            if cap > 0:
+                used_today = db.free_messages_today(user["id"])
+                if used_today >= cap:
+                    raise HTTPException(
+                        status_code=402,
+                        detail={
+                            "error": "free_daily_cap",
+                            "ai_mode": ai_mode,
+                            "plan":  plan,
+                            "free_used_today": used_today,
+                            "free_daily_cap":  cap,
+                            "reason": (
+                                "You've used today's free messages "
+                                f"({used_today}/{cap}). The free default "
+                                "resets tomorrow — or paste your own provider "
+                                "key (BYO) / switch to Hosted AI to keep going "
+                                "now."),
+                            "upgrade_url": f"{config.PUBLIC_URL.rstrip('/')}/upgrade",
+                        },
+                    )
             return _serve_free_default(user=user, body=body)
         # Free tier not configured (no provider key / switch off): fall back
         # to the honest BYO message so a missing free key never breaks the
@@ -350,33 +375,69 @@ def _serve_free_default(*, user: dict, body: dict) -> StreamingResponse:
 
 
 async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
-    """Forward to the SELECTED free OpenAI-compatible provider.
+    """Forward to the SELECTED free OpenAI-compatible provider, ROTATING
+    across the free pool on a rate-limit / 4xx.
 
-    ONE-SYSTEM (#64): base URL + key + provider come from the shared
-    config.select_free_model() selection — Gemini (deployed GOOGLE_API_KEY)
-    today, NVIDIA when keyed — so this streams to whatever provider
-    free_default_available() said yes to, never a stale static default. The
-    server-side key is read from config only and is NEVER logged.
+    ONE-SYSTEM (#64): the candidate list comes from the shared
+    config.free_model_rotation() — its HEAD is exactly select_free_model()
+    (OpenRouter when the founder's key is set, else NVIDIA / Gemini), and for
+    OpenRouter its TAIL is the rest of the curated `:free` pool on the SAME
+    key/base. We try candidates in order: the FIRST one whose upstream returns
+    a non-4xx status is streamed through; a 429 / 4xx (model throttled, free
+    quota hit, model unavailable) falls through to the next so one throttled
+    free model never breaks serving. The server-side key is read from config
+    only and is NEVER logged. If every candidate 4xxes, the LAST upstream
+    response is streamed through so the client still gets an honest error body.
     """
-    body = {**body, "model": model, "stream": True}
-    sel = config.select_free_model() or {}
-    provider = sel.get("provider") or config.FREE_PROVIDER
-    base = sel.get("base_url") or config.FREE_PROVIDER_BASE_URL
-    key = sel.get("key") or config.free_provider_key()
-    url = f"{base.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    # OpenRouter recommends (optional) attribution headers; harmless else.
-    if provider == "openrouter":
-        headers["HTTP-Referer"] = config.PUBLIC_URL
-        headers["X-Title"] = "ArchHub"
+    candidates = config.free_model_rotation()
+    if not candidates:
+        # Nothing reachable via the selector — preserve the legacy single-shot
+        # behaviour (degrade honestly rather than crash).
+        candidates = [{
+            "provider": config.FREE_PROVIDER,
+            "base_url": config.FREE_PROVIDER_BASE_URL,
+            "model":    model,
+            "key":      config.free_provider_key(),
+        }]
+
+    last_resp = None
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-        async with client.stream(
-            "POST", url, headers=headers, json=body,
-        ) as resp:
-            async for chunk in resp.aiter_bytes():
-                yield chunk
+        for idx, cand in enumerate(candidates):
+            cand_model = cand.get("model") or model
+            out_body = {**body, "model": cand_model, "stream": True}
+            base = (cand.get("base_url") or config.FREE_PROVIDER_BASE_URL or "")
+            url = f"{base.rstrip('/')}/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            key = cand.get("key")
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            # OpenRouter recommends (optional) attribution headers; harmless else.
+            if cand.get("provider") == "openrouter":
+                headers["HTTP-Referer"] = config.PUBLIC_URL
+                headers["X-Title"] = "ArchHub"
+            is_last = idx == len(candidates) - 1
+            async with client.stream(
+                "POST", url, headers=headers, json=out_body,
+            ) as resp:
+                # Rotate on a rate-limit / 4xx (throttled free model, free
+                # quota hit, model not available) — UNLESS this is the last
+                # candidate, in which case stream its (error) body through so
+                # the client sees an honest response instead of silence.
+                status_code = getattr(resp, "status_code", 200)
+                if 400 <= status_code < 500 and not is_last:
+                    last_resp = resp.status_code
+                    # Drain so the connection is released cleanly before retry.
+                    try:
+                        await resp.aread()
+                    except Exception:
+                        pass
+                    continue
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+                return
+    # Unreachable in practice (the last candidate always yields), but keep the
+    # function honest if the loop somehow exits without streaming.
+    _ = last_resp
 
 
 # ---------------------------------------------------------------------------

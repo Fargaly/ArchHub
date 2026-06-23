@@ -126,6 +126,55 @@ NVIDIA_BASE_URL   = _req("NVIDIA_BASE_URL",
                          "https://integrate.api.nvidia.com/v1").strip().rstrip("/")
 NVIDIA_MODEL      = _req("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct").strip()
 
+# ── OpenRouter (OpenAI-compatible) — the founder's FREE-FOR-ALL key ────
+# OpenRouter exposes a large pool of `:free` models behind ONE key. The
+# founder has staged OPENROUTER_API_KEY on archhub-cloud so the cloud free
+# default can serve those :free models to EVERY signed-in user with no BYO
+# key and no paid plan (#64). Accepts a raw key OR an `op://...` reference
+# resolved at call time by the same secret shim — never inline a key in code.
+# When set, OpenRouter becomes the PREFERRED free provider in
+# select_free_model() (NVIDIA/Gemini stay as alternates), and _stream_free
+# rotates across OPENROUTER_FREE_MODELS on a rate-limit / 4xx so one model
+# being throttled doesn't break free serving.
+OPENROUTER_API_KEY  = _req("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = _req(
+    "OPENROUTER_BASE_URL",
+    "https://openrouter.ai/api/v1").strip().rstrip("/")
+# A small CURATED list of strong, currently-available OpenRouter `:free`
+# models, tried in order on rate-limit / 4xx so a throttled model falls
+# through to the next instead of failing the user. The first entry is the
+# high-quality free default (a Llama-3.3-70B :free). Override per-deploy with
+# OPENROUTER_FREE_MODELS (comma-separated). ARCHHUB_FREE_MODEL still wins as
+# the single explicit default when FREE_PROVIDER=openrouter.
+_OPENROUTER_FREE_MODELS_DEFAULT = (
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "mistralai/mistral-small-3.2-24b-instruct:free",
+)
+
+
+def _csv_tuple(env_name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma-separated env → ordered de-duped tuple (preserves order)."""
+    raw = _req(env_name, "").strip()
+    if not raw:
+        return tuple(default)
+    out: list[str] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item and item not in out:
+            out.append(item)
+    return tuple(out) if out else tuple(default)
+
+
+OPENROUTER_FREE_MODELS: tuple[str, ...] = _csv_tuple(
+    "OPENROUTER_FREE_MODELS", _OPENROUTER_FREE_MODELS_DEFAULT)
+# The single OpenRouter free model id used as the high-quality default —
+# the head of the curated pool unless explicitly overridden.
+OPENROUTER_MODEL = _req(
+    "OPENROUTER_MODEL", OPENROUTER_FREE_MODELS[0]).strip()
+
 RESEND_API_KEY = _req("RESEND_API_KEY", "")
 # PUBLIC_URL defaults to the Fly.io subdomain so the backend works
 # WITHOUT requiring a custom domain to be purchased/configured first.
@@ -603,6 +652,21 @@ FREE_PROVIDER_BASE_URL = _req(
 # still works) so a missing key never crashes the box.
 FREE_PROVIDER_API_KEY = _req("FREE_PROVIDER_API_KEY", "")
 
+# ── Per-user DAILY free-message cap (shared-key budget guard) ─────────
+# The free default is served on ONE shared founder key (OpenRouter / NVIDIA /
+# Gemini). Without a per-user ceiling a single user could exhaust that shared
+# budget for everyone. FREE_DAILY_CAP_PER_USER caps how many FREE turns one
+# user gets per UTC day; over the cap the proxy returns an honest 402
+# `free_daily_cap` (BYO + hosted still work, and the cap resets next day).
+# 0 / negative disables the cap (unlimited free) — explicit opt-out only.
+# This meters ONLY the free path; hosted credits + BYO are unaffected.
+FREE_DAILY_CAP_PER_USER = int(_req("FREE_DAILY_CAP_PER_USER", "200"))
+
+
+def free_daily_cap() -> int:
+    """The per-user daily free-message cap (<=0 ⇒ unlimited)."""
+    return int(FREE_DAILY_CAP_PER_USER)
+
 
 # ── BRAIN PORTAL tier gating (founder, 2026-06-22 — per-tier read access) ──
 # The cloud brain portal (`/brain` + GET /v1/brain/facts|search|stats) reads
@@ -753,15 +817,17 @@ def free_provider_key() -> str:
 # NOW". Both the user-facing free proxy path (proxy._serve_free_default /
 # list_models / _stream_free, via free_provider_key/free_selected_*) AND the
 # founder-cockpit agent (cockpit_agent.reachable_model) call THIS — there is
-# no parallel provider-selection logic. Order mirrors the cockpit agent that
-# is already proven live:
-#   1. NVIDIA NIM  — preferred (strong + free tool-use) when NVIDIA_API_KEY
-#      (or an explicit FREE_PROVIDER_API_KEY when FREE_PROVIDER=nvidia) is set.
-#   2. Gemini free — reachable TODAY via the already-deployed GOOGLE_API_KEY
-#      over its OpenAI-compatible endpoint (no new secret needed).
-#   3. The explicitly-configured FREE_PROVIDER (groq/openrouter/custom/…) when
+# no parallel provider-selection logic. Order (the founder's free-for-all key
+# leads when present, then the proven cockpit chain):
+#   1. The explicitly-configured FREE_PROVIDER (groq/openrouter/custom/…) when
 #      its own FREE_PROVIDER_API_KEY is set — so an operator override still
 #      works exactly as before.
+#   2. OpenRouter — PREFERRED when OPENROUTER_API_KEY is set: the founder's
+#      one key fronts a big pool of strong `:free` models for ALL users (#64).
+#   3. NVIDIA NIM  — strong + free tool-use when NVIDIA_API_KEY (or an explicit
+#      FREE_PROVIDER_API_KEY when FREE_PROVIDER=nvidia) is set.
+#   4. Gemini free — reachable via the already-deployed GOOGLE_API_KEY over its
+#      OpenAI-compatible endpoint (no new secret needed).
 # Returns {provider, base_url, model, key} or None when NOTHING is reachable
 # (callers then honestly degrade: proxy → byo_key_required 402; cockpit →
 # offline keyword router). Secrets are resolved at call time via the op://
@@ -788,7 +854,27 @@ def select_free_model() -> dict | None:
                     "base_url": base.rstrip("/"),
                     "model":    ARCHHUB_FREE_MODEL,
                     "key":      explicit}
-    # 2) NVIDIA preferred (the #64 default). Explicit FREE_PROVIDER_API_KEY (when
+    # 2) OpenRouter — the founder's FREE-FOR-ALL key (#64). The moment
+    #    OPENROUTER_API_KEY is set it becomes the PREFERRED free provider: one
+    #    key serves a big pool of strong `:free` models to every signed-in user
+    #    (NVIDIA/Gemini below stay as alternates). The model id is the curated
+    #    high-quality default (OPENROUTER_MODEL = head of OPENROUTER_FREE_MODELS),
+    #    or ARCHHUB_FREE_MODEL when the operator pinned FREE_PROVIDER=openrouter.
+    #    _stream_free rotates across the rest of the pool on a rate-limit / 4xx.
+    openrouter_key = (explicit if FREE_PROVIDER == "openrouter" else "")
+    if not openrouter_key:
+        openrouter_key = _resolve_op_ref(OPENROUTER_API_KEY)
+    if openrouter_key:
+        base = (FREE_PROVIDER_BASE_URL
+                if FREE_PROVIDER == "openrouter" and FREE_PROVIDER_BASE_URL
+                else OPENROUTER_BASE_URL)
+        model = (ARCHHUB_FREE_MODEL if FREE_PROVIDER == "openrouter"
+                 else OPENROUTER_MODEL)
+        return {"provider": "openrouter",
+                "base_url": (base or OPENROUTER_BASE_URL).rstrip("/"),
+                "model":    model,
+                "key":      openrouter_key}
+    # 3) NVIDIA preferred (the #64 default). Explicit FREE_PROVIDER_API_KEY (when
     #    FREE_PROVIDER=nvidia) OR NVIDIA_API_KEY — one secret lights it up.
     nvidia_key = explicit if FREE_PROVIDER == "nvidia" else ""
     if not nvidia_key:
@@ -803,7 +889,7 @@ def select_free_model() -> dict | None:
                 "base_url": (base or NVIDIA_BASE_URL).rstrip("/"),
                 "model":    model,
                 "key":      nvidia_key}
-    # 3) Gemini free — reachable TODAY via the deployed GOOGLE_API_KEY, no new
+    # 4) Gemini free — reachable TODAY via the deployed GOOGLE_API_KEY, no new
     #    secret. This is what lights #64 up for real users right now.
     google_key = (GOOGLE_API_KEY or "").strip()
     if google_key:
@@ -817,6 +903,37 @@ def select_free_model() -> dict | None:
                 "model":    model,
                 "key":      google_key}
     return None
+
+
+def free_model_rotation() -> list[dict]:
+    """Ordered list of free candidates to TRY in turn on rate-limit / 4xx.
+
+    The head is exactly what `select_free_model()` returns (so the advertised
+    default is always tried first). For OpenRouter, the tail is the rest of the
+    curated `:free` pool (OPENROUTER_FREE_MODELS) carried on the SAME key/base —
+    so a throttled model falls through to the next instead of failing the user.
+    For NVIDIA/Gemini/custom there is a single candidate (no extra free pool),
+    which is the existing behaviour. Returns [] when nothing is reachable.
+
+    ONE-SYSTEM: this is the SAME selection as select_free_model() — it only
+    appends the provider's own free pool as alternates; it never introduces a
+    parallel selector.
+    """
+    sel = select_free_model()
+    if not sel:
+        return []
+    out: list[dict] = [dict(sel)]
+    if sel["provider"] == "openrouter":
+        seen = {sel["model"]}
+        for m in OPENROUTER_FREE_MODELS:
+            if m in seen:
+                continue
+            seen.add(m)
+            out.append({"provider": "openrouter",
+                        "base_url": sel["base_url"],
+                        "model":    m,
+                        "key":      sel["key"]})
+    return out
 
 
 def free_selected_base_url() -> str:

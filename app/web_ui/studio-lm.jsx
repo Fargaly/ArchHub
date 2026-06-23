@@ -6355,7 +6355,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   // Defensive: fetch sessions on every Home mount so the list is fresh
   // even if the index.html hydration race lost. Splice in-place so
   // every consumer sees the same reference.
-  const [, _setBump] = React.useState(0);
+  const [_bumpN, _setBump] = React.useState(0);
   React.useEffect(() => {
     let cancel = false;
     // bridgeJson is sync but QWebChannel slots are async — use bridgeAsync.
@@ -6449,29 +6449,52 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   //   workflows → graphs with 3+ nodes (peeks at .graph or .node_count)
   //   (the dead "scheduled" chip was removed 2026-06-02 — roadmap #P2; no
   //    session-schedule model exists, so it filtered to nothing.)
-  const sessions = React.useMemo(() => {
-    if (filter === 'all') return allSessions;
-    if (filter === 'mine') {
-      const withAuthor = allSessions.filter(s => s.author);
+  //
+  // Pure, reference-free filter over the LIVE session array. Kept as a
+  // standalone fn (not a closure over `sessions`) so select-all / range
+  // ops can recompute the visible set FRESH at call time — LM_SESSIONS is
+  // mutated in place via .splice (lines ~902, ~6365), so its reference
+  // never changes and any memo keyed on it goes stale. Computing fresh
+  // from the live array + the active filter is the robust source of truth.
+  const filterSessions = React.useCallback((src, f) => {
+    const list = src || [];
+    if (f === 'mine') {
+      const withAuthor = list.filter(s => s.author);
       // If no authors are tracked anywhere, treat "mine" as "all" (single-user app).
-      if (withAuthor.length === 0) return allSessions;
+      if (withAuthor.length === 0) return list;
       return withAuthor.filter(s => s.author === 'me' || s.author === (window.__archhub_user || 'me'));
     }
-    if (filter === 'workflows') {
-      return allSessions.filter(s => {
+    if (f === 'workflows') {
+      return list.filter(s => {
         const n = (s.graph && Array.isArray(s.graph.nodes) ? s.graph.nodes.length : null)
                || s.node_count || 0;
         return n >= 3;
       });
     }
-    return allSessions;
-  }, [filter, allSessions.length]);
+    return list;            // 'all' (and any unknown filter) → no filter
+  }, []);
+  const sessions = React.useMemo(
+    () => filterSessions(allSessions, filter),
+    // `_bumpN` (the value half of _setBump's state) is included so the memo
+    // recomputes after an in-place LM_SESSIONS splice even when the array
+    // reference AND its length are unchanged (e.g. a same-count refresh).
+    [filter, allSessions.length, _bumpN, filterSessions]);
   // ── Multi-select wiring ──────────────────────────────────────────
   // The ids visible under the current filter — select-all / range ops
   // operate over THIS list, not the full LM_SESSIONS, so "select all"
   // never silently selects hidden (filtered-out) sessions.
+  //
+  // Always recompute live (not from a memo keyed on the splice-mutated
+  // array) so it is never stale. This is the value used by render-time
+  // derivations (allVisibleSelected); the handlers below ALSO recompute
+  // fresh at click time via currentVisibleIds() as a belt-and-braces
+  // guard against any reference-staleness.
+  const currentVisibleIds = React.useCallback(
+    () => filterSessions(LM_SESSIONS || [], filter).map(s => s.id).filter(Boolean),
+    [filter, filterSessions]);
   const visibleIds = React.useMemo(
-    () => sessions.map(s => s.id).filter(Boolean), [sessions]);
+    currentVisibleIds,
+    [currentVisibleIds, allSessions.length, _bumpN]);
   const selectedCount = selected.size;
   const allVisibleSelected = visibleIds.length > 0
     && visibleIds.every(id => selected.has(id));
@@ -6484,19 +6507,22 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   // Toggle one card. Shift-click selects the contiguous range from the
   // last-clicked anchor to this card (over the visible, filtered order).
   const toggleSelect = React.useCallback((id, shiftKey) => {
+    // Recompute the visible/filtered order FRESH at click time — the memo'd
+    // visibleIds can be stale because LM_SESSIONS is spliced in place.
+    const vis = currentVisibleIds();
     setSelected(prev => {
       const next = new Set(prev);
       if (shiftKey && lastSelectedRef.current
           && lastSelectedRef.current !== id) {
-        const a = visibleIds.indexOf(lastSelectedRef.current);
-        const b = visibleIds.indexOf(id);
+        const a = vis.indexOf(lastSelectedRef.current);
+        const b = vis.indexOf(id);
         if (a !== -1 && b !== -1) {
           const [lo, hi] = a < b ? [a, b] : [b, a];
           // Range follows the anchor card's resulting state.
           const turnOn = !prev.has(id);
           for (let i = lo; i <= hi; i++) {
-            if (turnOn) next.add(visibleIds[i]);
-            else next.delete(visibleIds[i]);
+            if (turnOn) next.add(vis[i]);
+            else next.delete(vis[i]);
           }
           lastSelectedRef.current = id;
           return next;
@@ -6506,16 +6532,21 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       lastSelectedRef.current = id;
       return next;
     });
-  }, [visibleIds]);
+  }, [currentVisibleIds]);
   const toggleSelectAll = React.useCallback(() => {
+    // Source of truth = the LIVE filtered ids, computed at click time. This
+    // is the actual fix for "select-all selects nothing": the previous code
+    // read a memo keyed on the splice-mutated LM_SESSIONS reference, which
+    // never recomputed, so the id set was empty.
+    const vis = currentVisibleIds();
     setSelected(prev => {
-      if (visibleIds.length > 0 && visibleIds.every(id => prev.has(id))) {
+      if (vis.length > 0 && vis.every(id => prev.has(id))) {
         return new Set();            // all selected → clear
       }
-      return new Set(visibleIds);    // else select all visible
+      return new Set(vis);           // else select EVERY visible card
     });
     lastSelectedRef.current = null;
-  }, [visibleIds]);
+  }, [currentVisibleIds]);
   const deleteSelected = React.useCallback(async () => {
     const ids = Array.from(selected);
     if (!ids.length) return;

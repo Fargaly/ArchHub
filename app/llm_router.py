@@ -629,6 +629,18 @@ class LLMRouter:
         # the router simply routes around it to a reachable provider
         # (archhub_cloud / metered API / Ollama).
         self._signed_out: set[str] = set()
+        # Providers that have actually returned a successful completion THIS
+        # process. Populated by `_clear_signed_out` (called on every success).
+        # Used by `_route` to decide whether a local CLI is proven-working
+        # this session: a signed-in-cloud user is routed to archhub_cloud
+        # FIRST (the working free model) ahead of claude_cli / codex_cli —
+        # UNLESS one of those CLIs has already proven it works this session,
+        # in which case we don't regress that user. Founder bug 2026-06-23:
+        # claude/codex installed but SIGNED OUT → claude 401s fast, codex
+        # HANGS to the subprocess timeout before the router reaches the
+        # working cloud model. Cloud-first-when-signed-in is the safe default;
+        # a proven CLI stays first for the user whose CLI actually works.
+        self._proven_ok: set[str] = set()
         # REAL provider-reported token usage, accumulated across every
         # completion this process has run. Replaces the old client-side
         # chars/4 ESTIMATE the footer ServerStrip showed. Populated by
@@ -774,6 +786,19 @@ class LLMRouter:
         clear any sticky signed-out flag so it returns to the primary set
         automatically (e.g. the user re-ran `claude login`)."""
         self._signed_out.discard(provider)
+        # Record positively that this provider WORKED this session. _route
+        # uses this to keep a proven-working local CLI ahead of the
+        # cloud-first default (don't regress a user whose CLI actually works).
+        try:
+            self._proven_ok.add(provider)
+        except AttributeError:
+            # object.__new__-constructed router (bypassed __init__) — create
+            # the set lazily so the positive signal still lands.
+            self._proven_ok = {provider}
+
+    def is_provider_proven_ok(self, provider: str) -> bool:
+        """True iff `provider` returned a successful completion this process."""
+        return provider in getattr(self, "_proven_ok", ())
 
     def is_provider_signed_out(self, provider: str) -> bool:
         # getattr-guarded: configured_providers() is reached from many entry
@@ -1244,11 +1269,46 @@ class LLMRouter:
         # or when the local CLI fails. (Vision is handled above; `claude
         # -p` headless can't take image attachments here.)
         configured = set(self.configured_providers())
+        # ── SIGNED-IN CLOUD GOES FIRST (founder bug 2026-06-23: "first AI
+        # call is slow"). The founder has the `claude` + `codex` CLIs
+        # installed but SIGNED OUT. claude_cli 401s fast, but codex_cli HANGS
+        # to its subprocess timeout — and BOTH used to be tried as PRIMARY
+        # before anything else, so the user's FIRST turn stalled before the
+        # router ever reached the working archhub_cloud free model.
+        #
+        # When ArchHub Cloud is signed in (in `configured`) AND the caller did
+        # not explicitly choose a provider (we are in auto routing — the
+        # explicit-pick branch returned above) AND a local CLI IS installed but
+        # has NOT PROVEN it works this session, prefer archhub_cloud AHEAD of
+        # that CLI so the first call hits the working free model fast and clean.
+        #
+        # The guard is SCOPED to "a CLI would otherwise be tried first": it
+        # fires ONLY when an unproven claude_cli / codex_cli is configured.
+        # That keeps it surgical — it reorders cloud vs the CLIs ONLY, and
+        # never demotes a BYO key or a local Ollama/LM Studio (those are
+        # resolved by the heuristic priority lists below and are reached
+        # unchanged whenever no CLI is in the way). So:
+        #   • CLI installed + signed out/hung  → cloud first (the fix).
+        #   • CLI proven-working this session   → CLI stays first (no regress).
+        #   • No CLI installed                  → guard skipped → BYO/local
+        #                                         priority lists run as before.
+        #   • Signed-out-everything             → archhub_cloud not configured,
+        #                                         guard skipped, honest no-LLM.
+        _cli_installed = ("claude_cli" in configured
+                          or "codex_cli" in configured)
+        _cli_proven = (self.is_provider_proven_ok("claude_cli")
+                       or self.is_provider_proven_ok("codex_cli"))
+        if ("archhub_cloud" in configured and _cli_installed
+                and not _cli_proven):
+            return ("archhub_cloud", "auto",
+                    "auto: ArchHub Cloud · signed-in · free model")
         # Free local subscriptions first — claude_cli preferred (it is
         # tool-capable via the ArchHub MCP server), codex_cli next.
         # Either one missing from `configured` means it's blocked after
         # a recent failure — routing then falls through to the metered
-        # API providers below.
+        # API providers below. (When cloud is signed in this is reached only
+        # for a CLI that PROVED it works this session — see the cloud-first
+        # guard above — so a working-CLI user is not regressed.)
         if "claude_cli" in configured:
             return ("claude_cli", "sonnet",
                     "local Claude Code · subscription · no API credit")

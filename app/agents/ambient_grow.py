@@ -81,6 +81,61 @@ AMBIENT_MAX_PROPOSALS = 3
 # cooking, a host was spawned). Mid-typing is skipped by the JSX idle guard.
 AMBIENT_TRIGGERS = ("agent_step_done", "workflow_done", "node_spawned")
 
+# ─── Anti-flood backoff (SOURCE fix) ──────────────────────────────────────
+# An ambient pass cycles the router's provider chain; every signed-out /
+# timed-out provider logs one archhub.llm ERROR. With ambient DEFAULT-ON and
+# re-armed after every settle event, a machine with NO reachable model drips
+# that same error burst forever. Two guards make ambient UN-FLOODABLE while
+# staying default-ON (founder steer):
+#   1. NO-MODEL NO-OP — if the router reports zero reachable providers, the
+#      pass returns immediately WITHOUT calling the LLM (so nothing throws /
+#      logs). The single most common flood source (signed-out box) is killed
+#      before it can emit a single error.
+#   2. CONSECUTIVE-FAILURE BACKOFF — after K passes in a row that produced an
+#      error (no model, transport failure, …), ambient SKIPS further passes
+#      this session. A success resets the counter. So even an intermittent
+#      failure can at most emit K bursts before ambient goes quiet — never a
+#      steady drip. (Default-ON is preserved: the FIRST passes still run; only
+#      a sustained failure streak parks it.)
+AMBIENT_MAX_CONSECUTIVE_FAILURES = 3
+
+# Module-level session state (single process, single ambient cadence — no
+# lock needed: the bridge runs ambient on a daemon thread but never two at
+# once, and an off-by-one on this counter only changes WHEN backoff trips).
+_consecutive_failures = 0
+
+
+def _router_has_reachable_model(router: Any) -> bool:
+    """True if the router reports at least one configured/reachable provider.
+    Used to NO-OP the ambient pass on a signed-out box so it never attempts
+    the call (and therefore never throws / logs the provider-chain errors
+    that fed the Sentry flood). Conservative: any error → assume reachable
+    (let the pass run + the normal guards catch it) rather than wrongly
+    silencing a working machine."""
+    if router is None:
+        return False
+    try:
+        # Cheap, Qt-safe variant when available (no LM Studio HTTP probe).
+        fn = getattr(router, "configured_providers_cheap", None) \
+            or getattr(router, "configured_providers", None)
+        if fn is None:
+            return True
+        return bool(fn())
+    except Exception:
+        return True
+
+
+def _reset_ambient_backoff() -> None:
+    """Test hook / explicit reset — clear the consecutive-failure counter."""
+    global _consecutive_failures
+    _consecutive_failures = 0
+
+
+def ambient_backoff_tripped() -> bool:
+    """True once ambient has hit the consecutive-failure cap this session —
+    further passes are skipped until a success resets it."""
+    return _consecutive_failures >= AMBIENT_MAX_CONSECUTIVE_FAILURES
+
 
 def ambient_default_on(user_pref: Any = None) -> bool:
     """Resolve whether ambient runs, honouring USER-AGENCY: an explicit user
@@ -184,6 +239,31 @@ def run_ambient_grow(
     proposed writes. The pass is marked `ambient:true` so the JSX can label
     the queued proposals as growth (distinct from a typed-composer write).
     """
+    global _consecutive_failures
+
+    if not router:
+        # No router at all — a no-op failure, but it never CALLS anything so
+        # it cannot log/throw the provider-chain errors. Count it toward
+        # backoff so a router-less session parks ambient quickly.
+        _consecutive_failures += 1
+        return {"actions": [], "text": "no router configured",
+                "error": "missing_dep", "mode": mode, "gated": 0,
+                "ambient": True, "skipped": "no_router"}
+
+    # BACKOFF GUARD: a sustained failure streak this session parks ambient so
+    # it stops re-firing the same provider-chain errors on every settle event.
+    if ambient_backoff_tripped():
+        return {"actions": [], "text": "", "mode": mode, "gated": 0,
+                "ambient": True, "skipped": "backoff"}
+
+    # NO-MODEL NO-OP: the signed-out box. Do NOT attempt the LLM call (which
+    # would cycle the provider chain and log one archhub.llm ERROR per failing
+    # provider — the Sentry flood). Return cleanly; count toward backoff.
+    if not _router_has_reachable_model(router):
+        _consecutive_failures += 1
+        return {"actions": [], "text": "", "mode": mode, "gated": 0,
+                "ambient": True, "skipped": "no_model"}
+
     # Reuse the composer agent — import the SAME run_agent_step the composer
     # slot uses. Two package-name collisions exist (`agents` app vs repo-root),
     # so try both spellings, matching the test-suite loader convention.
@@ -192,22 +272,34 @@ def run_ambient_grow(
     except Exception:
         from composer_agent import run_agent_step  # path-loaded fallback
 
-    if not router:
-        return {"actions": [], "text": "no router configured",
-                "error": "missing_dep", "mode": mode, "gated": 0,
-                "ambient": True}
-
+    # CONTAIN OWN EXCEPTIONS: the ambient pass NEVER re-raises to the caller
+    # (and therefore never to any excepthook). A transport/agent failure is
+    # logged locally as an ambient skip + counted toward backoff, not bubbled.
     msg = ambient_prompt(last_turn=last_turn, brain_facts=brain_facts)
-    result = run_agent_step(
-        user_msg=msg,
-        graph=graph if isinstance(graph, dict) else {},
-        focused_node_id=focused_node_id or "",
-        router=router,
-        mode=mode or "plan",
-    )
+    try:
+        result = run_agent_step(
+            user_msg=msg,
+            graph=graph if isinstance(graph, dict) else {},
+            focused_node_id=focused_node_id or "",
+            router=router,
+            mode=mode or "plan",
+        )
+    except Exception as ex:
+        _consecutive_failures += 1
+        return {"actions": [], "text": "", "error": str(ex)[:300],
+                "mode": mode, "gated": 0, "ambient": True,
+                "skipped": "agent_error"}
     if not isinstance(result, dict):
+        _consecutive_failures += 1
         return {"actions": [], "text": "", "error": "bad_result",
                 "mode": mode, "gated": 0, "ambient": True}
+
+    # A pass that completed AND did not carry a provider error is a success —
+    # reset the streak so transient blips don't accumulate toward backoff.
+    if not result.get("error"):
+        _consecutive_failures = 0
+    else:
+        _consecutive_failures += 1
 
     # Cap the proposals (runaway guard) + tag every surviving action + the
     # envelope as ambient so the JSX surfaces them as GHOST growth proposals.

@@ -374,21 +374,112 @@ def _serve_free_default(*, user: dict, body: dict) -> StreamingResponse:
                               })
 
 
+def _embedded_error_in_chunk(raw: bytes) -> Optional[dict]:
+    """Detect an OpenRouter/OpenAI-style error carried INSIDE a 200 stream
+    body, and return the parsed error dict if found (else None).
+
+    The class this catches (live curl, 2026-06-23): a model that is no longer
+    free is returned by OpenRouter as a 200 response whose SSE body is a single
+    JSON object {"error":{"code":404,"message":"...unavailable for free..."}}
+    — the HTTP status is 200, so a status-only rotation never fires and the
+    client gets the error as if it were content.
+
+    We scan the chunk's `data:` SSE lines (and the bare body, for non-SSE error
+    responses) for a top-level `error` object OR an embedded `code` >= 400.
+    Returns the error dict on a hit so the caller can rotate to the next free
+    candidate. A normal content delta (choices/delta/content) never matches."""
+    if not raw:
+        return None
+
+    def _check_obj(d: object) -> Optional[dict]:
+        if not isinstance(d, dict):
+            return None
+        # OpenAI/OpenRouter error shape: {"error": {"code": .., "message": ..}}
+        err = d.get("error")
+        if isinstance(err, dict):
+            return err
+        if isinstance(err, str) and err:
+            return {"message": err}
+        # An embedded non-2xx status code at the top level (some gateways put
+        # {"code": 404, "message": "..."} without an "error" wrapper).
+        code = d.get("code")
+        try:
+            if code is not None and int(code) >= 400:
+                return {"code": int(code),
+                        "message": d.get("message") or "upstream error"}
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    # Try each SSE `data:` payload first, then the whole chunk as a fallback
+    # (covers a non-SSE JSON error body returned under a 200).
+    candidates_text: list[bytes] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith(b"data:"):
+            payload = line[5:].strip()
+            if payload and payload != b"[DONE]":
+                candidates_text.append(payload)
+    candidates_text.append(raw.strip())
+    for payload in candidates_text:
+        try:
+            d = json.loads(payload)
+        except Exception:
+            continue
+        hit = _check_obj(d)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _chunk_has_content(raw: bytes) -> bool:
+    """True iff a chunk carries a real content delta/choice (so it is safe to
+    commit to streaming this candidate). Used to confirm a candidate is
+    actually producing output before we stream it through."""
+    if not raw:
+        return False
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith(b"data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == b"[DONE]":
+            continue
+        try:
+            d = json.loads(payload)
+        except Exception:
+            # Non-JSON SSE data we can't classify — treat as content (the
+            # upstream is talking; don't discard it).
+            return True
+        if isinstance(d, dict) and (d.get("choices") or d.get("delta")
+                                    or d.get("content")):
+            return True
+    return False
+
+
 async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
     """Forward to the SELECTED free OpenAI-compatible provider, ROTATING
-    across the free pool on a rate-limit / 4xx.
+    across the free pool on a rate-limit / 4xx OR an IN-BODY error.
 
     ONE-SYSTEM (#64): the candidate list comes from the shared
     config.free_model_rotation() — its HEAD is exactly select_free_model()
     (OpenRouter when the founder's key is set, else NVIDIA / Gemini), and for
-    OpenRouter its TAIL is the rest of the curated `:free` pool on the SAME
-    key/base. We try candidates in order: the FIRST one whose upstream returns
-    a non-4xx status is streamed through; a 429 / 4xx (model throttled, free
-    quota hit, model unavailable) falls through to the next so one throttled
-    free model never breaks serving. The server-side key is read from config
-    only and is NEVER logged. If every candidate 4xxes, the LAST upstream
-    response is streamed through so the client still gets an honest error body.
-    """
+    OpenRouter its TAIL is the rest of the CURRENT `:free` pool (live-enumerated
+    pricing==0) on the SAME key/base.
+
+    Rotation fires on EITHER signal:
+      1. HTTP 4xx status (throttled, quota, model unavailable) — the legacy path.
+      2. An IN-BODY error (2026-06-23 fix): OpenRouter returns a no-longer-free
+         model as a 200 whose SSE body is {"error":{"code":404,...}}. We PEEK
+         each candidate's first chunk(s) BEFORE streaming it to the client; if
+         the peeked body carries an error object (or an embedded code >= 400),
+         the candidate is treated as FAILED and we rotate to the next. Only the
+         FIRST candidate that yields a real content delta is streamed through
+         (its peeked chunks are replayed first so nothing is lost).
+
+    If EVERY candidate fails, the LAST candidate's body is streamed through so
+    the client gets an honest error instead of silence. The server-side key is
+    read from config only and is NEVER logged."""
     candidates = config.free_model_rotation()
     if not candidates:
         # Nothing reachable via the selector — preserve the legacy single-shot
@@ -400,7 +491,11 @@ async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
             "key":      config.free_provider_key(),
         }]
 
-    last_resp = None
+    # How many leading chunks to peek for an in-body error before committing.
+    # The error body is the FIRST (usually only) chunk; a couple covers a slow
+    # provider that prefixes a role-only delta. Kept small so latency is unhurt.
+    _PEEK_CHUNKS = 4
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
         for idx, cand in enumerate(candidates):
             cand_model = cand.get("model") or model
@@ -419,25 +514,51 @@ async def _stream_free(model: str, body: dict) -> AsyncIterator[bytes]:
             async with client.stream(
                 "POST", url, headers=headers, json=out_body,
             ) as resp:
-                # Rotate on a rate-limit / 4xx (throttled free model, free
-                # quota hit, model not available) — UNLESS this is the last
-                # candidate, in which case stream its (error) body through so
-                # the client sees an honest response instead of silence.
+                # (1) HTTP-status rotation (legacy) — drain + try next unless last.
                 status_code = getattr(resp, "status_code", 200)
                 if 400 <= status_code < 500 and not is_last:
-                    last_resp = resp.status_code
-                    # Drain so the connection is released cleanly before retry.
                     try:
                         await resp.aread()
                     except Exception:
                         pass
                     continue
-                async for chunk in resp.aiter_bytes():
+
+                # (2) IN-BODY error peek. Buffer the leading chunks and inspect
+                # them for an embedded error object / code>=400 BEFORE streaming
+                # anything to the client. We hold a SINGLE iterator over the
+                # response body (httpx raises StreamConsumed if aiter_bytes is
+                # restarted) and continue from it once we commit.
+                body_iter = resp.aiter_bytes().__aiter__()
+                peeked: list[bytes] = []
+                in_body_error = False
+                async for chunk in body_iter:
+                    peeked.append(chunk)
+                    if _embedded_error_in_chunk(chunk) is not None:
+                        in_body_error = True
+                        break
+                    if _chunk_has_content(chunk):
+                        break
+                    if len(peeked) >= _PEEK_CHUNKS:
+                        break
+
+                if in_body_error and not is_last:
+                    # This candidate carried an error in its 200 body — treat as
+                    # failed and rotate. Drain the rest so the conn releases.
+                    try:
+                        await resp.aread()
+                    except Exception:
+                        pass
+                    continue
+
+                # Commit to this candidate: replay the peeked chunks, then the
+                # REMAINDER of the SAME iterator (never a fresh aiter_bytes()).
+                # For the LAST candidate we stream its body even if it errored —
+                # an honest error body beats silence.
+                for c in peeked:
+                    yield c
+                async for chunk in body_iter:
                     yield chunk
                 return
-    # Unreachable in practice (the last candidate always yields), but keep the
-    # function honest if the loop somehow exits without streaming.
-    _ = last_resp
 
 
 # ---------------------------------------------------------------------------

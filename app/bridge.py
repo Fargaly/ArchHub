@@ -7175,6 +7175,55 @@ class ArchHubBridge(QObject):
             return _safe_json({"error": str(ex)})
 
     @pyqtSlot(str, result=str)
+    def delete_sessions(self, ids_json: str) -> str:
+        """Bulk-delete N sessions in ONE atomic call — the multi-select
+        path. ids_json is a JSON array of session ids (slugs) or absolute
+        paths, same id shape `delete_session` accepts. Reuses the SAME
+        unlink machinery (SESSIONS_DIR resolution + per-file unlink) so
+        there is ONE delete path, not a parallel one — this is the bulk
+        wrapper LIBRARY-FIRST/ONE-SYSTEM allows. Emits sessions_changed
+        EXACTLY ONCE (not N times) so the list re-hydrates a single time.
+
+        Idempotent: a missing id is counted, never an error — re-deleting
+        an already-gone session is a no-op success. Returns
+        {ok, deleted, missing, total}.
+        """
+        try:
+            from pathlib import Path
+            from session_io import SESSIONS_DIR
+            try:
+                ids = json.loads(ids_json or "[]")
+            except Exception:
+                return _safe_json({"error": "ids must be a JSON array"})
+            if not isinstance(ids, list):
+                return _safe_json({"error": "ids must be a JSON array"})
+            deleted, missing, errors = 0, 0, []
+            for raw in ids:
+                sid = (str(raw) if raw is not None else "").strip()
+                if not sid:
+                    continue
+                p = Path(sid)
+                if not p.exists():
+                    p = SESSIONS_DIR / f"{sid}.archhub-session.json"
+                if not p.exists():
+                    missing += 1            # idempotent: already gone
+                    continue
+                try:
+                    p.unlink()
+                    deleted += 1
+                except Exception as ex:
+                    errors.append({"id": sid, "error": str(ex)})
+            try: self.sessions_changed.emit()
+            except Exception: pass  # audit: deliberate-fail-soft — fire-and-forget UI signal; no receiver / teardown must not crash the backend
+            out = {"ok": True, "deleted": deleted, "missing": missing,
+                   "total": deleted + missing}
+            if errors:
+                out["errors"] = errors
+            return _safe_json(out)
+        except Exception as ex:
+            return _safe_json({"error": str(ex)})
+
+    @pyqtSlot(str, result=str)
     def duplicate_session(self, session_id: str) -> str:
         """Duplicate a session in place — identical content under a
         fresh slug, titled '<name> (copy)'. A distinct slot so the JSX

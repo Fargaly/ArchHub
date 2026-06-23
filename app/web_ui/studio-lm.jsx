@@ -960,6 +960,35 @@ async function runSessionAction(action, sid, opts) {
   if (opts.afterChange) opts.afterChange();
 }
 
+// Bulk-delete N sessions in ONE call + ONE confirm (never N prompts).
+// Reuses the existing delete path via the delete_sessions bridge slot,
+// which itself reuses the same SESSIONS_DIR unlink machinery as
+// delete_session — ONE-SYSTEM. Returns the bridge result (or null on
+// cancel / no-op). The list re-hydrates once via refreshSessions.
+async function bulkDeleteSessions(ids, opts) {
+  opts = opts || {};
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return null;
+  const n = list.length;
+  const msg = n === 1
+    ? 'Delete this session? This can\'t be undone.'
+    : 'Delete ' + n + ' sessions? This can\'t be undone.';
+  if (!window.confirm(msg)) return null;          // ONE confirm for the batch
+  const r = await bridgeAsync('delete_sessions', JSON.stringify(list));
+  if (!r || r.error) {
+    _lmToast('Delete failed: ' + ((r && r.error) || 'no response'));
+    return r || null;
+  }
+  await refreshSessions();
+  // If the currently-open session was in the batch, fall back to the
+  // newest remaining session (mirror of runSessionAction's delete arm).
+  if (opts.openId && list.indexOf(opts.openId) !== -1 && opts.onOpen) {
+    opts.onOpen((LM_SESSIONS[0] || {}).id || null);
+  }
+  if (opts.afterChange) opts.afterChange();
+  return r;
+}
+
 const currentSid = () => window.__archhub_session_id || 'default';
 
 // AgDR-0015 Phase + Hat 3 audit Fix #12 — Perf HUD. Toggle via
@@ -6245,6 +6274,13 @@ const kbd = () => ({
 const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => {
   const [title, setTitle] = React.useState('');
   const [filter, setFilter] = React.useState('all');
+  // Multi-select / bulk-delete (founder 2026-06-23: "65 sessions, mostly
+  // junk, can't bulk-delete"). selectMode toggles the per-card checkboxes
+  // + selection toolbar; selected is a Set of session ids; lastSelected
+  // anchors shift-click range selection.
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selected, setSelected] = React.useState(() => new Set());
+  const lastSelectedRef = React.useRef(null);
   // Founder demand 2026-05-15: composer parity. Home composer accepts
   // files / images / voice / paste / drag-drop just like the canvas one.
   const [attachments, setAttachments] = React.useState([]);
@@ -6319,7 +6355,7 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   // Defensive: fetch sessions on every Home mount so the list is fresh
   // even if the index.html hydration race lost. Splice in-place so
   // every consumer sees the same reference.
-  const [, _setBump] = React.useState(0);
+  const [_bumpN, _setBump] = React.useState(0);
   React.useEffect(() => {
     let cancel = false;
     // bridgeJson is sync but QWebChannel slots are async — use bridgeAsync.
@@ -6413,23 +6449,113 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
   //   workflows → graphs with 3+ nodes (peeks at .graph or .node_count)
   //   (the dead "scheduled" chip was removed 2026-06-02 — roadmap #P2; no
   //    session-schedule model exists, so it filtered to nothing.)
-  const sessions = React.useMemo(() => {
-    if (filter === 'all') return allSessions;
-    if (filter === 'mine') {
-      const withAuthor = allSessions.filter(s => s.author);
+  //
+  // Pure, reference-free filter over the LIVE session array. Kept as a
+  // standalone fn (not a closure over `sessions`) so select-all / range
+  // ops can recompute the visible set FRESH at call time — LM_SESSIONS is
+  // mutated in place via .splice (lines ~902, ~6365), so its reference
+  // never changes and any memo keyed on it goes stale. Computing fresh
+  // from the live array + the active filter is the robust source of truth.
+  const filterSessions = React.useCallback((src, f) => {
+    const list = src || [];
+    if (f === 'mine') {
+      const withAuthor = list.filter(s => s.author);
       // If no authors are tracked anywhere, treat "mine" as "all" (single-user app).
-      if (withAuthor.length === 0) return allSessions;
+      if (withAuthor.length === 0) return list;
       return withAuthor.filter(s => s.author === 'me' || s.author === (window.__archhub_user || 'me'));
     }
-    if (filter === 'workflows') {
-      return allSessions.filter(s => {
+    if (f === 'workflows') {
+      return list.filter(s => {
         const n = (s.graph && Array.isArray(s.graph.nodes) ? s.graph.nodes.length : null)
                || s.node_count || 0;
         return n >= 3;
       });
     }
-    return allSessions;
-  }, [filter, allSessions.length]);
+    return list;            // 'all' (and any unknown filter) → no filter
+  }, []);
+  const sessions = React.useMemo(
+    () => filterSessions(allSessions, filter),
+    // `_bumpN` (the value half of _setBump's state) is included so the memo
+    // recomputes after an in-place LM_SESSIONS splice even when the array
+    // reference AND its length are unchanged (e.g. a same-count refresh).
+    [filter, allSessions.length, _bumpN, filterSessions]);
+  // ── Multi-select wiring ──────────────────────────────────────────
+  // The ids visible under the current filter — select-all / range ops
+  // operate over THIS list, not the full LM_SESSIONS, so "select all"
+  // never silently selects hidden (filtered-out) sessions.
+  //
+  // Always recompute live (not from a memo keyed on the splice-mutated
+  // array) so it is never stale. This is the value used by render-time
+  // derivations (allVisibleSelected); the handlers below ALSO recompute
+  // fresh at click time via currentVisibleIds() as a belt-and-braces
+  // guard against any reference-staleness.
+  const currentVisibleIds = React.useCallback(
+    () => filterSessions(LM_SESSIONS || [], filter).map(s => s.id).filter(Boolean),
+    [filter, filterSessions]);
+  const visibleIds = React.useMemo(
+    currentVisibleIds,
+    [currentVisibleIds, allSessions.length, _bumpN]);
+  const selectedCount = selected.size;
+  const allVisibleSelected = visibleIds.length > 0
+    && visibleIds.every(id => selected.has(id));
+  const clearSelection = React.useCallback(() => {
+    setSelected(new Set()); lastSelectedRef.current = null;
+  }, []);
+  const exitSelectMode = React.useCallback(() => {
+    setSelectMode(false); clearSelection();
+  }, [clearSelection]);
+  // Toggle one card. Shift-click selects the contiguous range from the
+  // last-clicked anchor to this card (over the visible, filtered order).
+  const toggleSelect = React.useCallback((id, shiftKey) => {
+    // Recompute the visible/filtered order FRESH at click time — the memo'd
+    // visibleIds can be stale because LM_SESSIONS is spliced in place.
+    const vis = currentVisibleIds();
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (shiftKey && lastSelectedRef.current
+          && lastSelectedRef.current !== id) {
+        const a = vis.indexOf(lastSelectedRef.current);
+        const b = vis.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          // Range follows the anchor card's resulting state.
+          const turnOn = !prev.has(id);
+          for (let i = lo; i <= hi; i++) {
+            if (turnOn) next.add(vis[i]);
+            else next.delete(vis[i]);
+          }
+          lastSelectedRef.current = id;
+          return next;
+        }
+      }
+      if (next.has(id)) next.delete(id); else next.add(id);
+      lastSelectedRef.current = id;
+      return next;
+    });
+  }, [currentVisibleIds]);
+  const toggleSelectAll = React.useCallback(() => {
+    // Source of truth = the LIVE filtered ids, computed at click time. This
+    // is the actual fix for "select-all selects nothing": the previous code
+    // read a memo keyed on the splice-mutated LM_SESSIONS reference, which
+    // never recomputed, so the id set was empty.
+    const vis = currentVisibleIds();
+    setSelected(prev => {
+      if (vis.length > 0 && vis.every(id => prev.has(id))) {
+        return new Set();            // all selected → clear
+      }
+      return new Set(vis);           // else select EVERY visible card
+    });
+    lastSelectedRef.current = null;
+  }, [currentVisibleIds]);
+  const deleteSelected = React.useCallback(async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    const r = await bulkDeleteSessions(ids, {
+      onOpen: onOpen, openId: currentSid(),
+      afterChange: () => _setBump(b => b + 1),
+    });
+    if (r && !r.error) exitSelectMode();   // Cancel/confirm clears selection
+  }, [selected, onOpen, exitSelectMode]);
   return (
     <main className="ah-scroll" style={{
       // Home renders in column 2 of the parent grid (column 1 is the
@@ -6465,8 +6591,49 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
         {['all','mine','workflows'].map(k => (
           <button key={k} onClick={() => setFilter(k)} style={chipBtn(filter === k)}>{k}</button>
         ))}
+        {/* Multi-select toggle — enters/exits select mode (per-card
+            checkboxes + the selection toolbar). */}
+        <button data-testid="session-select-toggle"
+          onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true); }}
+          style={chipBtn(selectMode)}>{selectMode ? 'done' : 'select'}</button>
         <button onClick={() => onCreateSession && onCreateSession('untitled')} style={chipBtn(true)}>+ new canvas</button>
       </div>
+      {/* Selection toolbar — only while in select mode. Shows live
+          "N selected" + Select-all/Clear + Delete + Cancel. */}
+      {selectMode && (
+        <div data-testid="session-select-toolbar" style={{
+          display:'flex', alignItems:'center', gap:10, marginBottom:12,
+          padding:'8px 12px', background:LM.bgPanel,
+          border:`1px solid ${selectedCount ? LM.accent+'66' : LM.line}`,
+          borderRadius:7,
+        }}>
+          <button data-testid="session-select-all" onClick={toggleSelectAll}
+            style={chipBtn(allVisibleSelected)}>
+            {allVisibleSelected ? 'clear all' : 'select all'}
+          </button>
+          <span data-testid="session-select-count" style={{
+            fontFamily:LM.mono, fontSize:11, color:selectedCount ? LM.ink : LM.inkMuted,
+            letterSpacing:'0.04em',
+          }}>
+            {selectedCount} selected
+          </span>
+          <div style={S_FLEX1}/>
+          <button data-testid="session-delete-selected" onClick={deleteSelected}
+            disabled={!selectedCount}
+            style={{
+              padding:'4px 13px', borderRadius:5,
+              background: selectedCount ? LM.err+'22' : 'transparent',
+              border:`1px solid ${selectedCount ? LM.err : LM.line}`,
+              color: selectedCount ? LM.err : LM.inkMuted,
+              fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.06em',
+              cursor: selectedCount ? 'pointer' : 'not-allowed',
+            }}>
+            Delete{selectedCount ? ' ' + selectedCount : ''}
+          </button>
+          <button data-testid="session-select-cancel" onClick={exitSelectMode}
+            style={chipBtn(false)}>Cancel</button>
+        </div>
+      )}
       {sessions.length === 0 ? (
         <div style={{
           padding:'48px 24px', textAlign:'center', color:LM.inkMuted, fontFamily:LM.serif,
@@ -6486,7 +6653,10 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
           gap:10,
         }}>
           {sessions.map(s => <SessionCard key={s.id} s={s} onOpen={onOpen}
-            onChanged={() => _setBump(b => b + 1)}/>)}
+            onChanged={() => _setBump(b => b + 1)}
+            selectMode={selectMode}
+            isSelected={selected.has(s.id)}
+            onToggleSelect={toggleSelect}/>)}
         </div>
       )}
       {/* Composer pinned bottom-center — full attach parity with the
@@ -6606,7 +6776,8 @@ const chipBtn = (active) => ({
 // but no onClick and zero render sites — removed (dead code). `chipBtn` above is
 // a different, used helper and is retained.
 
-const SessionCard = ({ s, onOpen, onChanged }) => {
+const SessionCard = ({ s, onOpen, onChanged, selectMode, isSelected,
+                       onToggleSelect }) => {
   const [menu, setMenu] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const sm = stateMeta(s.state);
@@ -6620,29 +6791,61 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
     runSessionAction(a, s.id, { onOpen: onOpen, afterChange: onChanged,
                                 openAfterCreate: false });
   };
+  // In select mode the WHOLE card toggles selection (and shift-click
+  // extends the range) instead of opening — so junk is a click to mark,
+  // not a click to enter.
+  const onCardClick = (e) => {
+    if (selectMode) {
+      e.preventDefault(); e.stopPropagation();
+      onToggleSelect && onToggleSelect(s.id, e.shiftKey);
+      return;
+    }
+    onOpen(s.id);
+  };
   return (
     // role="button" (not a real <button>) so the rename/delete control
     // can be a nested <button> — nested interactive elements are
     // invalid HTML and break keyboard nav.
     <div role="button" tabIndex={0}
-      onClick={() => onOpen(s.id)}
+      aria-pressed={selectMode ? !!isSelected : undefined}
+      onClick={onCardClick}
       onKeyDown={e => {
         if ((e.key === 'Enter' || e.key === ' ')
             && e.target === e.currentTarget) {
-          e.preventDefault(); onOpen(s.id);
+          e.preventDefault();
+          if (selectMode) onToggleSelect && onToggleSelect(s.id, e.shiftKey);
+          else onOpen(s.id);
         }
       }}
       style={{
-      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7,
+      background:LM.bgPanel,
+      border:`1px solid ${selectMode && isSelected ? LM.accent : LM.line}`,
+      borderRadius:7,
       padding:'9px 11px', display:'flex', flexDirection:'column', gap:6,
       cursor:'pointer', textAlign:'left', color:LM.ink, fontFamily:LM.sans,
       transition:'border-color .12s, transform .12s',
       minHeight:0, position:'relative',
+      boxShadow: selectMode && isSelected ? `0 0 0 1px ${LM.accent}` : 'none',
     }}
-    onMouseEnter={e => { setHover(true); e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.transform='translateY(-1px)'; }}
-    onMouseLeave={e => { setHover(false); e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.transform='none'; }}>
+    onMouseEnter={e => { setHover(true); if (!(selectMode && isSelected)) e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.transform='translateY(-1px)'; }}
+    onMouseLeave={e => { setHover(false); e.currentTarget.style.borderColor = (selectMode && isSelected) ? LM.accent : LM.line; e.currentTarget.style.transform='none'; }}>
+      {/* Multi-select checkbox — only in select mode. Stops propagation
+          so toggling the box doesn't double-fire the card click. */}
+      {selectMode && (
+        <input type="checkbox"
+          data-testid={'session-select-' + s.id}
+          aria-label={'Select session ' + (s.title || s.id)}
+          checked={!!isSelected}
+          onClick={e => e.stopPropagation()}
+          onChange={e => { e.stopPropagation();
+            onToggleSelect && onToggleSelect(s.id, e.nativeEvent && e.nativeEvent.shiftKey); }}
+          style={{ position:'absolute', top:7, right:7, width:16, height:16,
+                    accentColor:LM.accent, cursor:'pointer', zIndex:2 }}/>
+      )}
       {/* Session actions — rename / fork / duplicate / delete. Hidden
-          until card hover so the grid stays calm. */}
+          until card hover so the grid stays calm. Suppressed in select
+          mode so the checkbox owns the top-right corner. */}
+      {!selectMode && (
       <button title="Session actions" aria-label="Session actions"
         onClick={e => { e.stopPropagation(); setMenu(m => !m); }}
         style={{
@@ -6655,7 +6858,8 @@ const SessionCard = ({ s, onOpen, onChanged }) => {
         }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
       </button>
-      {menu && <ChatItemMenu onClose={() => setMenu(false)} onAction={act}/>}
+      )}
+      {menu && !selectMode && <ChatItemMenu onClose={() => setMenu(false)} onAction={act}/>}
       {/* Top row: state dot + when */}
       <div style={{ display:'flex', alignItems:'center', gap:6, paddingRight:24 }}>
         <span style={{ width:5, height:5, borderRadius:'50%', background: sm.col,

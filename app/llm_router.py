@@ -27,6 +27,14 @@ from tool_engine import ToolEngine, ToolInvocation
 
 ROUTE_AUTO = "auto"
 
+# The NVIDIA NIM model id that is KNOWN-CALLABLE on the default/free key (the
+# exact model the ArchHub Cloud proxy serves successfully). Used whenever a
+# `nvidia:` pick names NO specific model (a bare `nvidia` or `nvidia:auto`) so
+# the desktop never resolves to an un-callable catalog entry like
+# `nvidia/llama-3.1-nemotron-ultra-253b-v1`, which 404s
+# "Function-not-found-for-account" on accounts that don't have it provisioned.
+NVIDIA_DEFAULT_MODEL = "meta/llama-3.3-70b-instruct"
+
 
 def _looks_like_auth_or_quota(ex: Exception) -> bool:
     """True if the exception message smells like 'no credits / bad key /
@@ -69,6 +77,41 @@ def _looks_like_auth_or_quota(ex: Exception) -> bool:
         "quota_exhausted",
     )
     return any(n in s for n in needles)
+
+
+def _looks_like_uncallable_model(ex: Exception) -> bool:
+    """True when the exception means THIS MODEL is not callable on this
+    account — a 404 'function not found' / 'model does not exist' / 'unknown
+    model'. Distinct from an AUTH failure (the key itself is fine) and from a
+    transient blip (retrying the same model won't help). The fix is to mark
+    the specific model bad + route onward, NOT to block the whole provider or
+    re-try the identical 404 (founder archhub.log:
+    `[nvidia] NotFoundError 404 Function-not-found-for-account on model
+    nvidia/llama-3.1-nemotron-ultra-253b-v1`).
+    """
+    s = (str(ex) or "").lower()
+    cls = type(ex).__name__.lower()
+    # NVIDIA NIM phrasing + the generic OpenAI/SDK 'model not found' family.
+    needles = (
+        "function-not-found",
+        "function not found",
+        "model does not exist",
+        "model not found",
+        "does not exist or you do not have access",
+        "no such model",
+        "unknown model",
+        "model_not_found",
+        "the model `",          # openai 'The model `x` does not exist'
+        "invalid model",
+    )
+    if any(n in s for n in needles):
+        return True
+    # A bare 404 from a NotFoundError is a model/route problem (not auth/quota,
+    # which carry 401/403/402). Only treat 404 as uncallable-model — never a
+    # generic match that could swallow real network 404s without the class.
+    if "notfounderror" in cls and "404" in s:
+        return True
+    return False
 
 
 def _claude_cli_is_auth(ex: Exception) -> bool:
@@ -508,11 +551,21 @@ KNOWN_MODELS: list[tuple[str, str]] = [
     # NVIDIA NIM (build.nvidia.com) — OpenAI-compatible cloud endpoint; ONE
     # NVIDIA_API_KEY covers every catalog model below the nvidia prefix
     # (founder 2026-06-10 "can we utilize NVIDIA models?").
-    ("nvidia:nvidia/llama-3.3-nemotron-super-49b-v1",   "Nemotron Super 49B (NV)"),
-    ("nvidia:nvidia/llama-3.1-nemotron-ultra-253b-v1",  "Nemotron Ultra 253B (NV)"),
+    #
+    # ORDER MATTERS: the FIRST nvidia row is the default the picker shows and
+    # the model `nvidia:` resolves to when no specific model is named. It MUST
+    # be a known-CALLABLE model. `meta/llama-3.3-70b-instruct` is the exact id
+    # the ArchHub Cloud proxy serves successfully (NVIDIA_DEFAULT_MODEL below),
+    # so it leads. The big `nemotron-ultra-253b` row stays in the catalog for
+    # accounts that DO have it provisioned, but it 404s
+    # "Function-not-found-for-account" on the default free key — so it is no
+    # longer the head row that an empty `nvidia:` pick would land on (founder
+    # archhub.log: repeated `[nvidia] NotFoundError 404 Function-not-found`).
     ("nvidia:meta/llama-3.3-70b-instruct",              "Llama 3.3 70B (NV)"),
+    ("nvidia:nvidia/llama-3.3-nemotron-super-49b-v1",   "Nemotron Super 49B (NV)"),
     ("nvidia:deepseek-ai/deepseek-r1",                  "DeepSeek R1 (NV)"),
     ("nvidia:qwen/qwen2.5-coder-32b-instruct",          "Qwen 2.5 Coder 32B (NV)"),
+    ("nvidia:nvidia/llama-3.1-nemotron-ultra-253b-v1",  "Nemotron Ultra 253B (NV)"),
     ("relay:auto",                                      "Firm relay"),
 ]
 
@@ -641,6 +694,21 @@ class LLMRouter:
         # working cloud model. Cloud-first-when-signed-in is the safe default;
         # a proven CLI stays first for the user whose CLI actually works.
         self._proven_ok: set[str] = set()
+        # Providers that ERRORED at least once this process (any failure —
+        # auth/quota/404/timeout/blocked). The cloud-first guard uses this to
+        # prefer the working signed-in cloud over a keyed/CLI provider that has
+        # already shown it is broken this session, WITHOUT demoting a fresh BYO
+        # key that simply hasn't been exercised yet (founder #241 extended from
+        # the CLIs to the keyed providers: broken anthropic/nvidia are not
+        # re-tried ahead of cloud; a valid never-failed BYO key still leads).
+        self._attempted_failed: set[str] = set()
+        # MODELS proven uncallable this process — keyed by "provider:model".
+        # A 404 'function not found / model does not exist' marks the SPECIFIC
+        # model bad (not the whole provider — the key is fine, other models on
+        # it still work). _route skips a bad model + substitutes the provider's
+        # known-callable default, so the identical 404 is never repeated
+        # (founder archhub.log: nvidia nemotron-253b NotFoundError loop).
+        self._bad_models: set[str] = set()
         # REAL provider-reported token usage, accumulated across every
         # completion this process has run. Replaces the old client-side
         # chars/4 ESTIMATE the footer ServerStrip showed. Populated by
@@ -781,6 +849,21 @@ class LLMRouter:
                   f"primary until it re-authenticates: {reason[:120]}",
                   flush=True)
 
+    def _mark_attempted_failed(self, provider: str) -> None:
+        """Record that `provider` failed at least once this process. Used by
+        the cloud-first guard to prefer the working cloud over a keyed/CLI
+        provider that has already proven broken — never over a fresh BYO key."""
+        if not provider:
+            return
+        try:
+            self._attempted_failed.add(provider)
+        except AttributeError:
+            self._attempted_failed = {provider}
+
+    def has_provider_failed(self, provider: str) -> bool:
+        """True iff `provider` errored at least once this process."""
+        return provider in getattr(self, "_attempted_failed", ())
+
     def _clear_signed_out(self, provider: str) -> None:
         """A SUCCESSFUL completion on `provider` proves it authenticated —
         clear any sticky signed-out flag so it returns to the primary set
@@ -799,6 +882,26 @@ class LLMRouter:
     def is_provider_proven_ok(self, provider: str) -> bool:
         """True iff `provider` returned a successful completion this process."""
         return provider in getattr(self, "_proven_ok", ())
+
+    def _mark_model_bad(self, provider: str, model_name: str,
+                        reason: str = "") -> None:
+        """Mark a SPECIFIC model uncallable for the rest of the process. The
+        provider stays usable (its key is fine) — only this model is skipped
+        from now on, so the same 404 'function not found' is never repeated."""
+        key = f"{provider}:{model_name}"
+        try:
+            bad = self._bad_models
+        except AttributeError:
+            bad = self._bad_models = set()
+        if key not in bad:
+            bad.add(key)
+            print(f"[llm-router] model {key} UNCALLABLE — skipped for this "
+                  f"session: {reason[:120]}", flush=True)
+
+    def is_model_bad(self, provider: str, model_name: str) -> bool:
+        """True iff this exact provider:model was proven uncallable (404
+        function-not-found / model-does-not-exist) this process."""
+        return f"{provider}:{model_name}" in getattr(self, "_bad_models", ())
 
     def is_provider_signed_out(self, provider: str) -> bool:
         # getattr-guarded: configured_providers() is reached from many entry
@@ -1231,6 +1334,19 @@ class LLMRouter:
                 # cloud-fallback chain (and its honest error) takes over
                 # rather than dead-ending on the proven-dead explicit pick.
             else:
+                # NVIDIA MODEL RESOLUTION (founder archhub.log 404 loop): a
+                # `nvidia:` pick with no model, an `auto`, OR a model already
+                # proven uncallable this session (404 function-not-found) is
+                # substituted with the known-callable default so the desktop
+                # never (re-)issues the identical 404. A normal nvidia pick of
+                # a good model is honoured verbatim.
+                if provider == "nvidia":
+                    if (not model or model == ROUTE_AUTO
+                            or self.is_model_bad(provider, model)):
+                        note = ("nvidia default" if (not model
+                                or model == ROUTE_AUTO)
+                                else f"nvidia {model} uncallable → default")
+                        return (provider, NVIDIA_DEFAULT_MODEL, note)
                 return provider, model, ""
 
         # Auto-routing heuristics
@@ -1302,6 +1418,25 @@ class LLMRouter:
                 and not _cli_proven):
             return ("archhub_cloud", "auto",
                     "auto: ArchHub Cloud · signed-in · free model")
+        # ── #241 EXTENDED TO KEYED PROVIDERS (founder archhub.log: broken
+        # anthropic 401 + nvidia 404 re-tried ahead of the working cloud).
+        # When signed in to cloud + auto + every NON-cloud provider that the
+        # heuristics below would otherwise pick first has ALREADY FAILED this
+        # session and is NOT proven-working, prefer archhub_cloud rather than
+        # churning a known-broken keyed/CLI/local provider again. A keyed
+        # provider that simply hasn't been exercised yet (a fresh BYO key) is
+        # NOT demoted — `has_provider_failed` is False for it, so it still
+        # leads via the priority lists below (test C BYO/local-beats-cloud
+        # stays green). A provider proven-working this session also leads.
+        if "archhub_cloud" in configured:
+            _non_cloud = [p for p in configured if p != "archhub_cloud"]
+            if _non_cloud and all(
+                    (self.has_provider_failed(p)
+                     and not self.is_provider_proven_ok(p))
+                    for p in _non_cloud):
+                return ("archhub_cloud", "auto",
+                        "auto: ArchHub Cloud · signed-in · free model "
+                        "(local providers broken this session)")
         # Free local subscriptions first — claude_cli preferred (it is
         # tool-capable via the ArchHub MCP server), codex_cli next.
         # Either one missing from `configured` means it's blocked after
@@ -1578,10 +1713,14 @@ class LLMRouter:
         # openrouter / archhub_cloud / relay / ollama.
         for fallback_round in range(7):
             provider, model_name, note = self._route(history, model)
-            if provider in attempts:
-                # Same provider re-picked because nothing else available.
+            # Dedup by provider:model — re-picking the SAME provider with a
+            # DIFFERENT model is allowed (the nvidia 404-then-default retry),
+            # but the identical provider:model is never tried twice (no loop).
+            _attempt_key = f"{provider}:{model_name}"
+            if _attempt_key in attempts:
+                # Same provider+model re-picked because nothing else available.
                 break
-            attempts.append(provider)
+            attempts.append(_attempt_key)
             try:
                 client = self._get_client(provider)
                 # Single transient-retry wrapper. Same provider, same
@@ -1694,16 +1833,71 @@ class LLMRouter:
                 return response
             except Exception as ex:
                 last_error = ex
+                # Record that this provider errored — the cloud-first guard
+                # (#241 extended) prefers the working cloud over a keyed/CLI
+                # provider that has broken this session.
+                self._mark_attempted_failed(provider)
+                # UNCALLABLE MODEL (404 function-not-found / model-does-not-
+                # exist): the KEY is fine, only this model is wrong for the
+                # account. Mark THE MODEL bad (not the provider) and re-route
+                # so the identical 404 is never repeated. For nvidia, _route
+                # then substitutes the known-callable default; for any other
+                # provider the chain moves onward. (founder archhub.log:
+                # nvidia nemotron-253b NotFoundError 404 loop.)
+                _uncallable = _looks_like_uncallable_model(ex)
                 try:
-                    # AgDR-0047 §B2: route through central logger
-                    # (handler registered in app/logging_config.py).
+                    # AgDR-0047 §B2: route through central logger (handler
+                    # registered in app/logging_config.py). EXPECTED provider
+                    # failures — auth (401/403), 404 not-found / uncallable
+                    # model, payment/quota (402), CLI timeout, signed-out /
+                    # blocked — are NORMAL fallback signals, not bugs, so they
+                    # log at WARNING. Only genuinely-unexpected exceptions stay
+                    # at ERROR (founder archhub.log: 401/404 spam at error
+                    # level made a working fallback look like a crash loop).
                     import logging as _logging
-                    _logging.getLogger("archhub.llm").error(
+                    _expected = (
+                        _looks_like_auth_or_quota(ex)
+                        or _uncallable
+                        or _looks_like_transient_network(ex)
+                        or self._is_auth_error(provider, ex)
+                        or (provider in ("claude_cli", "codex_cli")
+                            and (_claude_cli_is_auth(ex)
+                                 or "timeout" in (str(ex) or "").lower()
+                                 or "timed out" in (str(ex) or "").lower()))
+                    )
+                    _lvl = _logging.WARNING if _expected else _logging.ERROR
+                    _logging.getLogger("archhub.llm").log(
+                        _lvl,
                         f"[{provider}] EXCEPTION "
                         f"{type(ex).__name__}: {str(ex)[:600]}"
                     )
                 except Exception:
                     pass
+                if _uncallable:
+                    try: on_attempt_reset(provider)
+                    except Exception: pass
+                    self._mark_model_bad(provider, model_name, reason=str(ex)[:200])
+                    on_status(
+                        f"{provider}: model {model_name} unavailable — "
+                        f"switching…"
+                    )
+                    # NVIDIA: retry the SAME provider with its known-callable
+                    # default model (a DIFFERENT model — allowed by the
+                    # provider:model attempts dedupe), UNLESS the default is
+                    # what just failed. Re-issuing an explicit `nvidia:default`
+                    # pick re-enters _route's nvidia branch, which (because the
+                    # bad model is now flagged) substitutes the default. Any
+                    # other provider, or nvidia's default itself failing, routes
+                    # onward via auto so the chain reaches a working provider.
+                    if (provider == "nvidia"
+                            and model_name != NVIDIA_DEFAULT_MODEL
+                            and not self.is_model_bad(
+                                "nvidia", NVIDIA_DEFAULT_MODEL)):
+                        model = f"nvidia:{NVIDIA_DEFAULT_MODEL}"
+                    else:
+                        model = ROUTE_AUTO
+                    last_error = ex
+                    continue
                 # Local CLI providers (claude_cli / codex_cli) failing —
                 # CLI missing, not logged in, timeout, crash — is a SOFT
                 # failure: block briefly + re-route down the chain

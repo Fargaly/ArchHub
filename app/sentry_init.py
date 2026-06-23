@@ -29,6 +29,15 @@ from telemetry import consent_state, distinct_id
 _DSN_KEY = "sentry_dsn"
 _initialised = False
 
+
+def _dsn() -> str | None:
+    return (
+        load_setting(_DSN_KEY)
+        or os.environ.get("ARCHHUB_SENTRY_DSN")
+        or None
+    )
+
+
 # ─── Anti-flood rate limiter (the CLASS fix) ──────────────────────────────
 # A single recurring error (e.g. the ambient self-extend pass cycling a
 # signed-out provider chain and logging one archhub.llm ERROR per failing

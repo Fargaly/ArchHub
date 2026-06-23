@@ -155,3 +155,40 @@ def test_global_window_cap_limits_burst():
         if out is not None:
             kept += 1
     assert kept == sentry_init._MAX_PER_WINDOW
+
+
+# ─── (5) CONSENT preserved — init() still honours telemetry + DSN ──────────
+# Regression guard: the flood fix rewrote the top of sentry_init; init() must
+# still resolve the DSN (the `_dsn` helper) and gate on consent. A NameError /
+# missing helper here would silently disable crash reporting = consent broken.
+
+def test_dsn_helper_exists_and_resolves(monkeypatch):
+    assert hasattr(sentry_init, "_dsn"), "init() depends on _dsn(); it must exist"
+    monkeypatch.setenv("ARCHHUB_SENTRY_DSN", "https://k@o1.ingest.sentry.io/1")
+    monkeypatch.setattr(sentry_init, "load_setting", lambda *_a, **_k: None)
+    assert sentry_init._dsn() == "https://k@o1.ingest.sentry.io/1"
+
+
+def test_init_refuses_when_consent_off(monkeypatch):
+    sentry_init._initialised = False
+    monkeypatch.setattr(sentry_init, "consent_state", lambda: False)
+    assert sentry_init.init(release="x") is False
+
+
+def test_init_brings_sentry_up_with_consent_and_dsn(monkeypatch):
+    import types
+    sentry_init._initialised = False
+    monkeypatch.setattr(sentry_init, "consent_state", lambda: True)
+    monkeypatch.setenv("ARCHHUB_SENTRY_DSN", "https://k@o1.ingest.sentry.io/1")
+    monkeypatch.setattr(sentry_init, "load_setting", lambda *_a, **_k: None)
+    captured = {}
+    fake = types.ModuleType("sentry_sdk")
+    fake.init = lambda **kw: captured.update(kw)
+    fake.set_user = lambda *_a, **_k: None
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    try:
+        assert sentry_init.init(release="1.0") is True
+        # before_send must be wired so the flood guard + redaction run live.
+        assert captured.get("before_send") is sentry_init._before_send
+    finally:
+        sentry_init._initialised = False

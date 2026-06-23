@@ -52,8 +52,19 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 # Hard ceiling on a single headless call. Claude Code has ~5s startup
 # overhead, plus the MCP server spawn; a real answer rarely exceeds a
-# minute. 300s is generous so a slow tool turn isn't killed mid-stream.
-_TIMEOUT_S = 300
+# minute.
+#
+# 2026-06-23 — DEAD/HUNG CLI MUST NEVER BLOCK THE USER. The founder has the
+# `claude` binary installed but SIGNED OUT. A 401 returns fast, but a hung
+# subprocess (network stall, stuck MCP spawn, half-broken auth) must NOT hold
+# the user for minutes before the router reaches the working archhub_cloud free
+# model. So the ceiling is bounded to ~12 s: a hung/dead CLI fails within ~12 s
+# and the router's 7-round fallback chain routes onward to the next provider in
+# the SAME call. A clean conversational answer returns well under 12 s; the
+# tool-loop work that benefited from the old 300 s ceiling is the rare case and
+# is better served by a metered provider than by stalling the user behind a CLI
+# that may never return.
+_TIMEOUT_S = 12
 
 # ArchHub MCP server — app/archhub_mcp_server.py (sibling of this
 # package's parent). Exposes the connector ops as MCP tools.

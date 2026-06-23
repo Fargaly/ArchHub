@@ -171,17 +171,20 @@ class TestAutoPrefersLocalOverManagedCloud:
 
 
 class TestEndToEndLocalFirst:
-    def test_no_key_cloud_402_routes_to_local_and_returns_reply(self):
-        """The headline scenario: explicit/auto turn, the only cloud is
-        archhub_cloud (which would 402), but claude_cli is installed. The
-        turn must return the LOCAL provider's real reply — not a 402, not
-        an empty bubble."""
+    def test_signed_in_cloud_then_dead_cli_returns_cloud_reply(self):
+        """The headline scenario, post-2026-06-23 (signed-in cloud goes
+        FIRST): cloud is signed in AND a (signed-out / hung) claude_cli is
+        installed. The first AI call must hit the working cloud free model
+        and return its reply — NOT stall behind the dead CLI.
+
+        This is the inverse of the old local-first ordering: the founder has
+        claude/codex installed but signed out, so the CLI must be the
+        FALLBACK, not the primary. cloud first = fast + clean."""
         r = _router(schemas=[])
         local = _FakeClient([{"type": "final",
                               "text": "real reply from local Claude Code"}])
-        cloud = _FakeClient([
-            Exception("Error code: 402 - {'error': {'message': "
-                      "'byo_key_required'}}")])
+        cloud = _FakeClient([{"type": "final",
+                              "text": "reply from ArchHub Cloud free model"}])
 
         def fake_get_client(provider):
             if provider == "claude_cli":
@@ -191,14 +194,44 @@ class TestEndToEndLocalFirst:
             raise RuntimeError(f"no client for {provider}")
 
         r._get_client = fake_get_client
-        # Both are 'configured'; the REAL _route runs (local-first), so it
-        # should never even reach the cloud.
+        # Both are 'configured'; the REAL _route runs (cloud-first when
+        # signed in + no CLI proven this session), so cloud answers and the
+        # dead CLI is never reached.
         r.configured_providers = lambda **k: ["archhub_cloud", "claude_cli"]
 
         resp = r.complete(history=[{"role": "user", "content": "hi"}],
                           model="auto")
-        assert resp.text == "real reply from local Claude Code"
-        assert cloud.calls == 0   # cloud was never hit — no 402 round-trip
+        assert resp.text == "reply from ArchHub Cloud free model"
+        assert local.calls == 0   # the (dead) CLI was never reached
+
+    def test_proven_cli_stays_ahead_of_cloud(self):
+        """No regression for a user whose CLI ACTUALLY works: once claude_cli
+        has returned a successful completion this session it is proven-ok, so
+        a later auto turn keeps routing to the CLI even though cloud is signed
+        in. cloud-first is only the default for an UNPROVEN CLI."""
+        r = _router(schemas=[])
+        local = _FakeClient([
+            {"type": "final", "text": "first CLI reply"},
+            {"type": "final", "text": "second CLI reply"},
+        ])
+        cloud = _FakeClient([{"type": "final", "text": "cloud reply"}])
+
+        def fake_get_client(provider):
+            if provider == "claude_cli":
+                return local
+            if provider == "archhub_cloud":
+                return cloud
+            raise RuntimeError(f"no client for {provider}")
+
+        r._get_client = fake_get_client
+        r.configured_providers = lambda **k: ["archhub_cloud", "claude_cli"]
+        # Simulate the CLI having already proven it works this session.
+        r._clear_signed_out("claude_cli")
+        assert r.is_provider_proven_ok("claude_cli") is True
+
+        prov, model, _note = r._route(
+            [{"role": "user", "content": "hi"}], "auto")
+        assert prov == "claude_cli"   # proven CLI keeps priority over cloud
 
     def test_cloud_402_then_local_fallback_when_cloud_picked_first(self):
         """Belt-and-braces: if cloud IS reached first (e.g. an explicit

@@ -34,11 +34,20 @@ _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 # whole answer lands at once when it finishes). For INTERACTIVE CHAT a long
 # ceiling means the user stares at nothing for minutes, then a dump — the
 # founder's "every time I write I get nothing" on tool-ish prompts (2026-06-20:
-# "summarize my notion notes" sat for 5 min). Bound it to 60 s: a normal
-# conversational codex answer returns well under that, and a slow/stuck turn
+# "summarize my notion notes" sat for 5 min). Bound it tightly: a normal
+# conversational codex answer returns well under this, and a slow/stuck turn
 # trips the router's SOFT timeout → fast-provider fallback → the no-empty
-# guarantee streams a real answer within ~a minute instead of up to 5.
-_TIMEOUT_S = 60
+# guarantee streams a real answer instead of stalling.
+#
+# 2026-06-23 — DEAD/HUNG CLI MUST NEVER BLOCK THE USER. The founder has codex
+# installed but SIGNED OUT: `codex exec` does NOT fail fast — it HANGS, burning
+# the whole ceiling before the router can reach the working archhub_cloud free
+# model. So the ceiling is bounded to ~12 s: a hung/dead CLI now fails within
+# ~12 s and the router's 7-round fallback chain routes onward to the next
+# provider in the SAME call. A legitimate codex answer (no-tool conversational
+# turn) lands well under 12 s; tool-heavy work is not codex_cli's job here
+# (read-only sandbox, no ArchHub tools bridged).
+_TIMEOUT_S = 12
 
 
 def codex_cli_path() -> Optional[str]:

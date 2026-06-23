@@ -466,6 +466,11 @@ def google_callback(code: str = "", state: str = "",
         raise HTTPException(status_code=503,
                             detail={"error": "google_login_unconfigured"})
     except google_auth.GoogleAuthError as ex:
+        # Log the FULL reason server-side (carries Google's error from
+        # _exchange_code_for_tokens); the client gets ONLY the opaque code.
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            "google_callback failed: %s (code=%s)", ex, ex.code)
         raise HTTPException(status_code=ex.status,
                             detail={"error": ex.code})
     return RedirectResponse(url=return_url, status_code=302)

@@ -53,6 +53,7 @@ def _user(email: str, plan: str = "trial"):
 
 def _reset_free_env(monkeypatch):
     """Clean slate: free ON, every provider key cleared, committed defaults."""
+    import config
     monkeypatch.setattr("config.FREE_DEFAULT_ENABLED", True)
     monkeypatch.setattr("config.FREE_PROVIDER", "nvidia")
     monkeypatch.setattr("config.FREE_PROVIDER_API_KEY", "")
@@ -70,11 +71,21 @@ def _reset_free_env(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_MODEL",
                         "meta-llama/llama-3.3-70b-instruct:free")
     monkeypatch.setattr("config.OPENROUTER_FREE_MODELS", (
-        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-small-3.2-24b-instruct:free",
         "deepseek/deepseek-chat-v3-0324:free",
         "qwen/qwen-2.5-72b-instruct:free",
     ))
     monkeypatch.setattr("config.FREE_DAILY_CAP_PER_USER", 200)
+    # Pin the CURRENT free pool to the curated static list so selector/rotation/
+    # stream tests are deterministic (no live OpenRouter /api/v1/models
+    # enumeration over the network). The live-enumeration path has its own
+    # dedicated tests that stub config.httpx.get and restore the real function
+    # via _real_openrouter_free_models().
+    monkeypatch.setattr(
+        "config.openrouter_free_models",
+        lambda key="", base_url="", **kw: config.OPENROUTER_FREE_MODELS)
+
+
 
 
 def _call(user, body=None):
@@ -103,12 +114,12 @@ def test_select_openrouter_when_only_openrouter_key(monkeypatch):
     assert sel is not None
     assert sel["provider"] == "openrouter"
     assert sel["base_url"] == "https://openrouter.ai/api/v1"
-    assert sel["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+    assert sel["model"] == "mistralai/mistral-small-3.2-24b-instruct:free"
     assert sel["key"] == "or-founder-key"
     assert config.free_default_available() is True
     assert config.free_provider_key() == "or-founder-key"
     assert config.free_selected_model() == (
-        "meta-llama/llama-3.3-70b-instruct:free")
+        "mistralai/mistral-small-3.2-24b-instruct:free")
 
 
 def test_openrouter_preferred_over_nvidia_and_gemini(monkeypatch):
@@ -147,7 +158,7 @@ def test_free_model_rotation_lists_openrouter_pool_in_order(monkeypatch):
     rot = config.free_model_rotation()
     models = [c["model"] for c in rot]
     assert models == [
-        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-small-3.2-24b-instruct:free",
         "deepseek/deepseek-chat-v3-0324:free",
         "qwen/qwen-2.5-72b-instruct:free",
     ]
@@ -227,7 +238,7 @@ def test_stream_free_rotates_to_next_pool_model_on_429(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
 
     sink = []
-    status = {"meta-llama/llama-3.3-70b-instruct:free": 429}
+    status = {"mistralai/mistral-small-3.2-24b-instruct:free": 429}
     monkeypatch.setattr(
         proxy.httpx, "AsyncClient",
         _fake_client_factory(status, sink))
@@ -236,7 +247,7 @@ def test_stream_free_rotates_to_next_pool_model_on_429(monkeypatch):
     chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     body = b"".join(chunks).decode()
     # The throttled head was drained, the SECOND pool model was streamed.
-    assert ("drained", "meta-llama/llama-3.3-70b-instruct:free") in sink
+    assert ("drained", "mistralai/mistral-small-3.2-24b-instruct:free") in sink
     assert ("streamed", "deepseek/deepseek-chat-v3-0324:free") in sink
     assert "deepseek/deepseek-chat-v3-0324:free" in body
     # Server-side key carried every attempt.
@@ -256,7 +267,7 @@ def test_stream_free_first_model_streams_when_ok(monkeypatch):
     head = config.free_selected_model()
     asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
     streamed = [s[1] for s in sink if s[0] == "streamed"]
-    assert streamed == ["meta-llama/llama-3.3-70b-instruct:free"]
+    assert streamed[0] == "mistralai/mistral-small-3.2-24b-instruct:free"
 
 
 def test_stream_free_last_candidate_streams_error_body(monkeypatch):
@@ -268,7 +279,7 @@ def test_stream_free_last_candidate_streams_error_body(monkeypatch):
     monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
     sink = []
     status = {
-        "meta-llama/llama-3.3-70b-instruct:free": 429,
+        "mistralai/mistral-small-3.2-24b-instruct:free": 429,
         "deepseek/deepseek-chat-v3-0324:free": 429,
         "qwen/qwen-2.5-72b-instruct:free": 429,
     }
@@ -287,6 +298,224 @@ async def _collect(agen):
     return out
 
 
+# ── IN-BODY error detection (the 2026-06-23 bug: 404 inside a 200 body) ──
+
+class _FakeInBodyCtx:
+    """A 200 response whose SSE body carries either an error object or real
+    content — models OpenRouter returning a no-longer-free model as a 200 whose
+    body is {"error":{"code":404,...}} (the exact live-curl failure)."""
+
+    def __init__(self, body_bytes, model, sink, status_code=200):
+        self.status_code = status_code
+        self._body = body_bytes
+        self._model = model
+        self._sink = sink
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def aiter_bytes(self):
+        self._sink.append(("streamed", self._model))
+        yield self._body
+
+    async def aread(self):
+        self._sink.append(("drained", self._model))
+        return b""
+
+
+def _fake_inbody_factory(body_by_model, sink):
+    """body_by_model: {model_id: raw SSE bytes}. A model not in the map returns
+    a normal content delta (200, real content)."""
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None, json=None):
+            model = (json or {}).get("model")
+            sink.append(("request", model, url,
+                         (headers or {}).get("Authorization")))
+            body = body_by_model.get(model)
+            if body is None:
+                body = (
+                    'data: {"choices":[{"delta":{"content":"%s"}}]}\n\n'
+                    % model).encode()
+            return _FakeInBodyCtx(body, model, sink)
+
+    return _FakeClient
+
+
+_OR_404_BODY = (
+    b'data: {"error":{"code":404,"message":"No endpoints found for '
+    b'meta-llama/llama-3.3-70b-instruct:free. unavailable for free, use '
+    b'mistralai/mistral-small-3.2-24b-instruct"}}\n\n')
+
+
+def test_inbody_404_under_200_rotates_to_content(monkeypatch):
+    """THE bug: head free model returns an in-body {"error":{"code":404}} under
+    HTTP 200. Status-only rotation never fires → before the fix the client got
+    the error. Now: the in-body error is detected, the candidate is treated as
+    FAILED, rotation moves to the next pool model which returns real content, and
+    the CLIENT RECEIVES THE CONTENT (not the 404)."""
+    import config
+    import proxy
+    _reset_free_env(monkeypatch)
+    monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
+    sink = []
+    head = "mistralai/mistral-small-3.2-24b-instruct:free"
+    # The head returns the in-body 404; the next pool model returns content.
+    monkeypatch.setattr(
+        proxy.httpx, "AsyncClient",
+        _fake_inbody_factory({head: _OR_404_BODY}, sink))
+    chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
+    body = b"".join(chunks).decode()
+    # The client got REAL content from the 2nd pool model, NOT the 404 error.
+    assert "deepseek/deepseek-chat-v3-0324:free" in body
+    assert '"code":404' not in body
+    assert "error" not in body
+    # The head with the in-body error was drained (rotated past), 2nd streamed.
+    assert ("drained", head) in sink
+    assert ("streamed", "deepseek/deepseek-chat-v3-0324:free") in sink
+
+
+def test_inbody_error_all_fail_streams_last_error(monkeypatch):
+    """Every candidate carries an in-body error → the LAST candidate's error
+    body is streamed through so the client gets an honest error, never silence."""
+    import config
+    import proxy
+    _reset_free_env(monkeypatch)
+    monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
+    sink = []
+    err = lambda code: (
+        b'data: {"error":{"code":%d,"message":"nope"}}\n\n' % code)
+    bodies = {
+        "mistralai/mistral-small-3.2-24b-instruct:free": err(404),
+        "deepseek/deepseek-chat-v3-0324:free": err(429),
+        "qwen/qwen-2.5-72b-instruct:free": err(503),
+    }
+    monkeypatch.setattr(
+        proxy.httpx, "AsyncClient", _fake_inbody_factory(bodies, sink))
+    head = config.free_selected_model()
+    chunks = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
+    body = b"".join(chunks).decode()
+    # The LAST candidate's (error) body IS streamed — honest error over silence.
+    assert ("streamed", "qwen/qwen-2.5-72b-instruct:free") in sink
+    assert '"code":503' in body
+
+
+def test_inbody_openai_style_error_object_rotates(monkeypatch):
+    """An OpenAI-style {"error":{"message":..,"type":..}} with no numeric code
+    under 200 also triggers rotation (not just code>=400)."""
+    import config
+    import proxy
+    _reset_free_env(monkeypatch)
+    monkeypatch.setattr("config.OPENROUTER_API_KEY", "or-key")
+    sink = []
+    head = "mistralai/mistral-small-3.2-24b-instruct:free"
+    body = (b'data: {"error":{"message":"model is not available for free",'
+            b'"type":"invalid_request_error"}}\n\n')
+    monkeypatch.setattr(
+        proxy.httpx, "AsyncClient",
+        _fake_inbody_factory({head: body}, sink))
+    out = asyncio.run(_collect(proxy._stream_free(head, {"model": head})))
+    out_s = b"".join(out).decode()
+    assert "deepseek/deepseek-chat-v3-0324:free" in out_s
+    assert ("drained", head) in sink
+
+
+# ── _embedded_error_in_chunk unit coverage ──────────────────────────────
+
+def test_embedded_error_detects_openrouter_404():
+    import proxy
+    err = proxy._embedded_error_in_chunk(_OR_404_BODY)
+    assert err is not None
+    assert err.get("code") == 404
+
+
+def test_embedded_error_none_on_real_content():
+    import proxy
+    good = b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+    assert proxy._embedded_error_in_chunk(good) is None
+    assert proxy._chunk_has_content(good) is True
+
+
+def test_embedded_error_ignores_done_sentinel():
+    import proxy
+    assert proxy._embedded_error_in_chunk(b'data: [DONE]\n\n') is None
+
+
+# ── enumeration filters to pricing == 0 ──────────────────────────────────
+
+def test_openrouter_free_models_enumeration_filters_pricing_zero(monkeypatch):
+    """config.openrouter_free_models() enumerates OpenRouter /api/v1/models and
+    keeps ONLY slugs with pricing.prompt==0 AND pricing.completion==0."""
+    import config
+    real_enum = config.openrouter_free_models  # genuine impl, before the pin
+    _reset_free_env(monkeypatch)
+    monkeypatch.setattr("config.openrouter_free_models", real_enum)
+    # Reset module cache so the fake enumeration is actually consulted.
+    monkeypatch.setattr("config._OPENROUTER_FREE_CACHE", {"at": 0.0, "models": ()})
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"data": [
+                {"id": "free/alpha:free",
+                 "pricing": {"prompt": "0", "completion": "0"}},
+                {"id": "paid/beta",
+                 "pricing": {"prompt": "0.0000007", "completion": "0.000002"}},
+                {"id": "free/gamma:free",
+                 "pricing": {"prompt": "0.0", "completion": "0"}},
+                {"id": "half/delta",  # prompt free but completion paid → NOT free
+                 "pricing": {"prompt": "0", "completion": "0.0000005"}},
+                {"id": "nopricing/eps"},  # missing pricing → NOT free
+            ]}
+
+    monkeypatch.setattr(config.httpx, "get", lambda *a, **k: _Resp())
+    pool = config.openrouter_free_models("or-key", "https://openrouter.ai/api/v1",
+                                         force_refresh=True)
+    assert "free/alpha:free" in pool
+    assert "free/gamma:free" in pool
+    assert "paid/beta" not in pool
+    assert "half/delta" not in pool
+    assert "nopricing/eps" not in pool
+
+
+def test_openrouter_free_models_falls_back_on_enumeration_failure(monkeypatch):
+    """When enumeration fails (network down / non-200), the hardcoded curated
+    list is returned so free serving never breaks."""
+    import config
+    real_enum = config.openrouter_free_models  # genuine impl, before the pin
+    _reset_free_env(monkeypatch)
+    monkeypatch.setattr("config.openrouter_free_models", real_enum)
+    monkeypatch.setattr("config._OPENROUTER_FREE_CACHE", {"at": 0.0, "models": ()})
+
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(config.httpx, "get", _boom)
+    pool = config.openrouter_free_models("or-key", force_refresh=True)
+    assert pool == config.OPENROUTER_FREE_MODELS
+
+
+def test_openrouter_free_models_drops_dead_llama_head(monkeypatch):
+    """Regression guard: the dead meta-llama/llama-3.3-70b-instruct:free is NO
+    LONGER the head of the curated fallback pool."""
+    import config
+    assert config.OPENROUTER_FREE_MODELS[0] != (
+        "meta-llama/llama-3.3-70b-instruct:free")
+    assert config.OPENROUTER_FREE_MODELS[0].endswith(":free")
+
+
 # ── user-facing: served free + /v1/models advertises OpenRouter ──────
 
 def test_no_key_user_served_openrouter_free_not_402(monkeypatch):
@@ -300,7 +529,7 @@ def test_no_key_user_served_openrouter_free_not_402(monkeypatch):
     assert isinstance(resp, StreamingResponse)
     assert resp.headers.get("X-ArchHub-Tier") == "free-default"
     assert resp.headers.get("X-ArchHub-Model") == (
-        "meta-llama/llama-3.3-70b-instruct:free")
+        "mistralai/mistral-small-3.2-24b-instruct:free")
 
 
 def test_models_advertises_openrouter_free_default(monkeypatch):
@@ -311,9 +540,9 @@ def test_models_advertises_openrouter_free_default(monkeypatch):
     out = proxy.list_models(user=_user("orm@example.com", "trial"))
     assert out["archhub_free_default"] is True
     assert out["archhub_default_model"] == (
-        "meta-llama/llama-3.3-70b-instruct:free")
+        "mistralai/mistral-small-3.2-24b-instruct:free")
     ids = [m["id"] for m in out["data"]]
-    assert "meta-llama/llama-3.3-70b-instruct:free" in ids
+    assert "mistralai/mistral-small-3.2-24b-instruct:free" in ids
 
 
 def test_free_path_consumes_no_hosted_credit(monkeypatch):

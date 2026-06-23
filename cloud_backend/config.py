@@ -46,6 +46,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import httpx  # used by openrouter_free_models() runtime enumeration
+
 try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -140,18 +142,27 @@ OPENROUTER_API_KEY  = _req("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = _req(
     "OPENROUTER_BASE_URL",
     "https://openrouter.ai/api/v1").strip().rstrip("/")
-# A small CURATED list of strong, currently-available OpenRouter `:free`
-# models, tried in order on rate-limit / 4xx so a throttled model falls
-# through to the next instead of failing the user. The first entry is the
-# high-quality free default (a Llama-3.3-70B :free). Override per-deploy with
-# OPENROUTER_FREE_MODELS (comma-separated). ARCHHUB_FREE_MODEL still wins as
-# the single explicit default when FREE_PROVIDER=openrouter.
+# A small CURATED list of strong, PRESENTLY-FREE OpenRouter `:free` models,
+# tried in order on rate-limit / 4xx / IN-BODY error so a throttled or
+# no-longer-free model falls through to the next instead of failing the user.
+# Override per-deploy with OPENROUTER_FREE_MODELS (comma-separated).
+# ARCHHUB_FREE_MODEL still wins as the single explicit default when
+# FREE_PROVIDER=openrouter.
+#
+# 2026-06-23: the prior head `meta-llama/llama-3.3-70b-instruct:free` went
+# NO-LONGER-FREE on OpenRouter — a live curl proved it returns an in-body
+# {"error":{"code":404,"message":"...unavailable for free, use
+# mistralai/mistral-small-3.2-24b-instruct"}} embedded in a 200 SSE stream.
+# It is DROPPED as the head; the head is now a presently-free slug. This
+# hardcoded list is only the FALLBACK — config.openrouter_free_models()
+# enumerates OpenRouter's /api/v1/models at runtime (pricing==0) so the pool
+# tracks reality, with this list as the offline default.
 _OPENROUTER_FREE_MODELS_DEFAULT = (
-    "meta-llama/llama-3.3-70b-instruct:free",
+    "mistralai/mistral-small-3.2-24b-instruct:free",
     "deepseek/deepseek-chat-v3-0324:free",
     "qwen/qwen-2.5-72b-instruct:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
     "google/gemini-2.0-flash-exp:free",
-    "mistralai/mistral-small-3.2-24b-instruct:free",
 )
 
 
@@ -174,6 +185,100 @@ OPENROUTER_FREE_MODELS: tuple[str, ...] = _csv_tuple(
 # the head of the curated pool unless explicitly overridden.
 OPENROUTER_MODEL = _req(
     "OPENROUTER_MODEL", OPENROUTER_FREE_MODELS[0]).strip()
+
+# ── CURRENT free pool — enumerate OpenRouter at runtime (founder, 2026-06-23) ──
+# The hardcoded list above is only a FALLBACK. The TRUTH of "which OpenRouter
+# slugs are actually free RIGHT NOW" lives on OpenRouter: GET /api/v1/models
+# returns every model with a `pricing` block; a model is free iff
+# pricing.prompt == "0" AND pricing.completion == "0". We enumerate that at
+# runtime and cache it ~1h so the pool tracks reality (the dead
+# llama-3.3-70b:free head taught us a static list rots). On any failure
+# (network down, unkeyed, parse error) we fall back to the hardcoded list, so
+# a missing enumeration never breaks free serving.
+OPENROUTER_MODELS_CACHE_TTL = int(_req("OPENROUTER_MODELS_CACHE_TTL", "3600"))
+# {"at": epoch_seconds, "models": tuple[str, ...]} — module-level cache.
+_OPENROUTER_FREE_CACHE: dict = {"at": 0.0, "models": ()}
+
+
+def _enumerate_openrouter_free(key: str, base_url: str) -> tuple[str, ...]:
+    """Live-enumerate OpenRouter's presently-free slugs (pricing == 0).
+
+    Calls GET {base}/models, keeps only models whose pricing.prompt AND
+    pricing.completion are both zero. Returns an ordered de-duped tuple, or
+    () on any failure (caller falls back to the hardcoded list). The key is
+    sent as a Bearer (OpenRouter allows /models unauthenticated too, but the
+    founder's key keeps us consistent). NEVER logs the key."""
+    try:
+        headers = {"Accept": "application/json"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        url = f"{(base_url or OPENROUTER_BASE_URL).rstrip('/')}/models"
+        resp = httpx.get(url, headers=headers, timeout=10.0)
+        if resp.status_code != 200:
+            return ()
+        data = resp.json()
+    except Exception:
+        return ()
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return ()
+    out: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        slug = row.get("id") or ""
+        pricing = row.get("pricing") or {}
+        if not slug or not isinstance(pricing, dict):
+            continue
+        # A model is free iff BOTH prompt + completion cost are exactly zero.
+        # OpenRouter expresses prices as strings ("0", "0.0000007", …) — treat
+        # any value that parses to 0.0 as free, and a missing field as non-free.
+        def _is_zero(v) -> bool:
+            try:
+                return float(v) == 0.0
+            except (TypeError, ValueError):
+                return False
+        if _is_zero(pricing.get("prompt")) and _is_zero(pricing.get("completion")):
+            if slug not in out:
+                out.append(slug)
+    return tuple(out)
+
+
+def openrouter_free_models(key: str = "", base_url: str = "",
+                           *, force_refresh: bool = False) -> tuple[str, ...]:
+    """The CURRENT OpenRouter free pool — live-enumerated (pricing==0), cached
+    ~1h, falling back to OPENROUTER_FREE_MODELS when enumeration is unavailable.
+
+    The returned pool is ORDERED so the curated head models (those that are
+    still free) lead, then any other freshly-discovered free slugs follow — a
+    presently-free model is always tried first. Never raises; on any failure
+    returns the hardcoded fallback so free serving never breaks."""
+    import time as _time
+    now = _time.time()
+    cached = _OPENROUTER_FREE_CACHE.get("models") or ()
+    fresh = (now - float(_OPENROUTER_FREE_CACHE.get("at") or 0.0)
+             ) < OPENROUTER_MODELS_CACHE_TTL
+    if cached and fresh and not force_refresh:
+        return cached
+    enumerated = _enumerate_openrouter_free(key, base_url)
+    if not enumerated:
+        # Enumeration failed — serve the hardcoded fallback, but DON'T poison
+        # the cache (so a transient failure re-tries on the next call).
+        return OPENROUTER_FREE_MODELS
+    enum_set = set(enumerated)
+    ordered: list[str] = []
+    # Curated heads that are STILL free lead (preserve our quality ordering).
+    for m in OPENROUTER_FREE_MODELS:
+        if m in enum_set and m not in ordered:
+            ordered.append(m)
+    # Then every other freshly-discovered free slug.
+    for m in enumerated:
+        if m not in ordered:
+            ordered.append(m)
+    result = tuple(ordered)
+    _OPENROUTER_FREE_CACHE["at"] = now
+    _OPENROUTER_FREE_CACHE["models"] = result
+    return result
 
 RESEND_API_KEY = _req("RESEND_API_KEY", "")
 # PUBLIC_URL defaults to the Fly.io subdomain so the backend works
@@ -625,7 +730,9 @@ FREE_PROVIDER = _req("FREE_PROVIDER", "nvidia").strip().lower()
 _FREE_MODEL_DEFAULTS = {
     "nvidia":     "meta/llama-3.3-70b-instruct",
     "groq":       "llama-3.3-70b-versatile",
-    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    # 2026-06-23: was meta-llama/llama-3.3-70b-instruct:free — that slug is no
+    # longer free on OpenRouter (in-body 404). Point at a presently-free slug.
+    "openrouter": "mistralai/mistral-small-3.2-24b-instruct:free",
     "google":     "gemini-2.5-flash",
     "custom":     "llama-3.3-70b-versatile",
 }
@@ -868,10 +975,19 @@ def select_free_model() -> dict | None:
         base = (FREE_PROVIDER_BASE_URL
                 if FREE_PROVIDER == "openrouter" and FREE_PROVIDER_BASE_URL
                 else OPENROUTER_BASE_URL)
-        model = (ARCHHUB_FREE_MODEL if FREE_PROVIDER == "openrouter"
-                 else OPENROUTER_MODEL)
+        base = (base or OPENROUTER_BASE_URL).rstrip("/")
+        # The head model = the FIRST presently-free slug from the CURRENT pool
+        # (live-enumerated, pricing==0, cached ~1h; falls back to the curated
+        # list). This drops the dead llama-3.3-70b:free head automatically.
+        # An explicit operator pin (FREE_PROVIDER=openrouter + ARCHHUB_FREE_MODEL)
+        # still wins.
+        if FREE_PROVIDER == "openrouter":
+            model = ARCHHUB_FREE_MODEL
+        else:
+            pool = openrouter_free_models(openrouter_key, base)
+            model = pool[0] if pool else OPENROUTER_MODEL
         return {"provider": "openrouter",
-                "base_url": (base or OPENROUTER_BASE_URL).rstrip("/"),
+                "base_url": base,
                 "model":    model,
                 "key":      openrouter_key}
     # 3) NVIDIA preferred (the #64 default). Explicit FREE_PROVIDER_API_KEY (when
@@ -925,7 +1041,11 @@ def free_model_rotation() -> list[dict]:
     out: list[dict] = [dict(sel)]
     if sel["provider"] == "openrouter":
         seen = {sel["model"]}
-        for m in OPENROUTER_FREE_MODELS:
+        # CURRENT pool (live-enumerated pricing==0, cached ~1h; falls back to
+        # the curated list) — so the tail is presently-free slugs, not stale
+        # ones. Same key/base as the head; this is the SAME selection, only
+        # appending the provider's own free pool as alternates (ONE-SYSTEM).
+        for m in openrouter_free_models(sel["key"], sel["base_url"]):
             if m in seen:
                 continue
             seen.add(m)

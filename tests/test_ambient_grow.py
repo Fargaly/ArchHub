@@ -171,7 +171,89 @@ def test_yolo_mode_proposals_are_not_gated():
 
 # ── Defensive: no router → safe envelope, no crash ──────────────────────────
 def test_no_router_returns_safe_envelope():
+    _AG._reset_ambient_backoff()
     out = _AG.run_ambient_grow(graph=_graph(), router=None, mode="plan")
     assert out["actions"] == []
     assert out["ambient"] is True
     assert out.get("error") == "missing_dep"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SOURCE FIX — un-floodable ambient (Sentry-flood root): no-model no-op, own-
+# exception containment, consecutive-failure backoff. All without a live model.
+# ════════════════════════════════════════════════════════════════════════════
+
+class _NoModelRouter(_ProposerRouter):
+    """Router that reports ZERO reachable providers — the signed-out box that
+    fed the flood. configured_providers_cheap() == [] so ambient must NO-OP
+    (never call complete → never cycle the chain → never log/throw)."""
+    def configured_providers_cheap(self):
+        return []
+    def configured_providers(self, **kw):
+        return []
+
+
+class _ReachableRouter(_ProposerRouter):
+    def configured_providers_cheap(self):
+        return ["claude_cli"]
+
+
+class _RaisingRouter(_ProposerRouter):
+    """Has a reachable provider but the agent turn THROWS — proves ambient
+    contains its own exception (never re-raises to an excepthook)."""
+    def configured_providers_cheap(self):
+        return ["anthropic"]
+    def complete(self, *, history, model, on_chunk=None,
+                 on_tool_invocation=None, **kwargs):
+        raise RuntimeError("claude CLI error: 401 Invalid authentication")
+
+
+def test_no_model_noops_without_calling_the_llm():
+    _AG._reset_ambient_backoff()
+    r = _NoModelRouter(n=2)
+    out = _AG.run_ambient_grow(graph=_graph(), router=r, mode="plan")
+    # The single most common flood source: signed-out box. Must NOT call.
+    assert r.calls == [], "ambient must NOT call the LLM with no reachable model"
+    assert out["actions"] == []
+    assert out.get("skipped") == "no_model"
+    assert out["ambient"] is True
+
+
+def test_ambient_contains_its_own_exception_never_reraises():
+    _AG._reset_ambient_backoff()
+    r = _RaisingRouter(n=1)
+    # Must NOT raise — a contained ambient error never reaches any excepthook.
+    # The failure surfaces in the envelope (either run_agent_step returned an
+    # error envelope, or run_ambient_grow caught the raise) — never a raise.
+    out = _AG.run_ambient_grow(graph=_graph(), router=r, mode="plan")
+    assert out["actions"] == []
+    assert out["ambient"] is True
+    assert out.get("error"), "the failure must be reported in-envelope, not raised"
+    assert "401" in (out.get("error") or "")
+    # …and it counts toward backoff so a sustained failure streak parks ambient.
+    assert _AG._consecutive_failures >= 1
+
+
+def test_consecutive_failure_backoff_parks_ambient():
+    _AG._reset_ambient_backoff()
+    r = _NoModelRouter(n=1)
+    k = _AG.AMBIENT_MAX_CONSECUTIVE_FAILURES
+    # The first K passes run (and fail cleanly); after that ambient parks.
+    for _ in range(k):
+        out = _AG.run_ambient_grow(graph=_graph(), router=r, mode="plan")
+        assert out.get("skipped") == "no_model"
+    assert _AG.ambient_backoff_tripped() is True
+    parked = _AG.run_ambient_grow(graph=_graph(), router=r, mode="plan")
+    assert parked.get("skipped") == "backoff"
+
+
+def test_success_resets_the_backoff_streak():
+    _AG._reset_ambient_backoff()
+    # Two no-model failures, then a reachable success → counter back to zero.
+    nm = _NoModelRouter(n=1)
+    _AG.run_ambient_grow(graph=_graph(), router=nm, mode="plan")
+    _AG.run_ambient_grow(graph=_graph(), router=nm, mode="plan")
+    ok = _ReachableRouter(n=1)
+    out = _AG.run_ambient_grow(graph=_graph(), router=ok, mode="yolo")
+    assert not out.get("skipped"), "a reachable pass should actually run"
+    assert _AG.ambient_backoff_tripped() is False

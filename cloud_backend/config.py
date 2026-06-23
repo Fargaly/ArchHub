@@ -70,6 +70,16 @@ def _req(name: str, default = _SENTINEL) -> str:
     "no default supplied" from "explicit empty default".
     """
     v = os.environ.get(name)
+    if v is not None:
+        # Tolerate a leading UTF-8 BOM + stray edge whitespace/newlines in
+        # the value. `fly secrets set` via a piped/imported value can
+        # prepend a BOM (this repo hit exactly that 2026-06-22 with an API
+        # key), which silently corrupts an otherwise-correct secret — e.g.
+        # a BOM on GOOGLE_OAUTH_CLIENT_SECRET makes Google reject the token
+        # exchange with invalid_client. OAuth/API secrets, ids, URLs and
+        # price ids never carry meaningful edge whitespace, so stripping is
+        # purely corrective and fixes the whole class at the source.
+        v = v.lstrip("﻿").strip()
     if v is None or v == "":
         if default is not _SENTINEL:
             return default  # type: ignore[return-value]

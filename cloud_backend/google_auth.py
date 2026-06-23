@@ -309,9 +309,24 @@ def _exchange_code_for_tokens(code: str) -> dict:
         raise GoogleAuthError(f"token endpoint unreachable: {ex}",
                               status=502, code="google_unreachable")
     if resp.status_code != 200:
-        # Don't echo Google's raw body to the client — log-friendly msg.
+        # Capture Google's MACHINE error (error / error_description) into the
+        # exception MESSAGE for SERVER-SIDE diagnosis only — main.py logs the
+        # message but returns ONLY the opaque code to the caller, so Google's
+        # body + our secret never reach the client (asserted by
+        # test_secret_not_in_callback_error_bodies). Without this the reason
+        # (invalid_client / invalid_grant / redirect_uri_mismatch) is lost and
+        # the failure is undiagnosable from the logs.
+        reason = ""
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                err = str(body.get("error") or "").strip()
+                desc = str(body.get("error_description") or "").strip()
+                reason = f"{err}: {desc}".strip(": ").strip() if (err or desc) else ""
+        except Exception:
+            reason = ""
         raise GoogleAuthError(
-            f"token exchange failed ({resp.status_code})",
+            f"token exchange failed ({resp.status_code}) {reason}".strip(),
             status=400, code="token_exchange_failed")
     try:
         payload = resp.json()

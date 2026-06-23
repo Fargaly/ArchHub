@@ -166,6 +166,94 @@ def test_delete_session_missing_returns_error(tmp_appdata, bridge_inst):
 
 
 # ---------------------------------------------------------------------
+# delete_sessions (bulk / multi-select) — the founder 2026-06-23
+# "65 sessions, mostly junk, can't bulk-delete" path. ONE call, ONE
+# confirm on the JSX side; reuses the SAME SESSIONS_DIR unlink machinery
+# as delete_session.
+# ---------------------------------------------------------------------
+
+def test_delete_sessions_removes_n_and_list_shrinks_by_n(tmp_appdata,
+                                                          bridge_inst):
+    """Delete N → list_sessions_rich shrinks by exactly N and the disk
+    entries are gone."""
+    import session_io as _sio
+    for slug in ("a", "b", "c", "d", "e"):
+        _write_session(tmp_appdata["sessions"], slug)
+    before = len(_sio.list_sessions_rich(include_empty=True))
+    assert before == 5
+    out = json.loads(bridge_inst.delete_sessions(json.dumps(["a", "b", "c"])))
+    assert out["ok"] is True
+    assert out["deleted"] == 3
+    assert out["missing"] == 0
+    after = len(_sio.list_sessions_rich(include_empty=True))
+    assert after == before - 3 == 2
+    # The exact files we asked to delete are gone; the others remain.
+    for slug in ("a", "b", "c"):
+        assert not (tmp_appdata["sessions"]
+                    / f"{slug}.archhub-session.json").exists()
+    for slug in ("d", "e"):
+        assert (tmp_appdata["sessions"]
+                / f"{slug}.archhub-session.json").exists()
+
+
+def test_delete_sessions_accepts_absolute_paths(tmp_appdata, bridge_inst):
+    p = _write_session(tmp_appdata["sessions"], "alpha")
+    out = json.loads(bridge_inst.delete_sessions(json.dumps([str(p)])))
+    assert out["ok"] is True
+    assert out["deleted"] == 1
+    assert not p.exists()
+
+
+def test_delete_sessions_idempotent_on_missing_id(tmp_appdata, bridge_inst):
+    """A missing id is COUNTED (not an error) — re-deleting an already
+    gone session is a no-op success. Mixed batch: 1 real + 2 ghosts."""
+    p = _write_session(tmp_appdata["sessions"], "real")
+    out = json.loads(bridge_inst.delete_sessions(
+        json.dumps(["real", "ghost1", "ghost2"])))
+    assert out["ok"] is True
+    assert out["deleted"] == 1
+    assert out["missing"] == 2
+    assert out["total"] == 3
+    assert not p.exists()
+    # Second call with the SAME ids → fully idempotent, zero deleted.
+    out2 = json.loads(bridge_inst.delete_sessions(
+        json.dumps(["real", "ghost1", "ghost2"])))
+    assert out2["ok"] is True
+    assert out2["deleted"] == 0
+    assert out2["missing"] == 3
+
+
+def test_delete_sessions_empty_list_is_noop(tmp_appdata, bridge_inst):
+    out = json.loads(bridge_inst.delete_sessions(json.dumps([])))
+    assert out["ok"] is True
+    assert out["deleted"] == 0
+    assert out["missing"] == 0
+
+
+def test_delete_sessions_rejects_non_array(tmp_appdata, bridge_inst):
+    out = json.loads(bridge_inst.delete_sessions('{"not":"an array"}'))
+    assert "error" in out
+    out2 = json.loads(bridge_inst.delete_sessions("not json at all"))
+    assert "error" in out2
+
+
+def test_delete_sessions_persists_no_return_on_reload(tmp_appdata,
+                                                       bridge_inst):
+    """Deleted sessions do NOT come back on a fresh re-scan (disk-backed,
+    not an in-memory hide). Mirrors the founder's reload check."""
+    import session_io as _sio
+    for slug in ("x", "y", "z"):
+        _write_session(tmp_appdata["sessions"], slug)
+    json.loads(bridge_inst.delete_sessions(json.dumps(["x", "y"])))
+    # Fresh scan straight off disk — the deleted ones are gone for good.
+    remaining = {r["name"] for r in _sio.list_sessions_rich(include_empty=True)}
+    survivors = {p.stem.replace(".archhub-session", "")
+                 for p in tmp_appdata["sessions"].glob("*.archhub-session.json")}
+    assert survivors == {"z"}
+    assert len(remaining) == 1
+
+
+# ---------------------------------------------------------------------
 # set_theme / get_theme
 # ---------------------------------------------------------------------
 
@@ -372,7 +460,7 @@ def test_get_provider_stats_no_router_returns_zeros():
 # ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("name", [
-    "rename_session", "fork_session", "delete_session",
+    "rename_session", "fork_session", "delete_session", "delete_sessions",
     "set_theme", "get_theme", "get_storage_stats", "export_all",
     "clear_model_cache", "forget_all_memory", "delete_all_sessions",
     "open_folder", "get_session_stats", "get_provider_stats",

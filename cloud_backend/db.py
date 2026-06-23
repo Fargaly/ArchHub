@@ -1369,6 +1369,30 @@ def log_usage(user_id: str, *, model: str, input_toks: int,
         )
 
 
+def free_messages_today(user_id: str, *, now: Optional[int] = None) -> int:
+    """Count FREE-tier turns this user has used since 00:00 UTC today.
+
+    The free path logs each served turn as a usage_log row with model
+    `free:<id>` (see proxy._serve_free_default). This counts exactly those
+    rows for the current UTC day — the basis for the per-user daily free cap
+    that protects the shared founder key budget. Hosted / BYO turns (model
+    without the `free:` prefix) are NOT counted, so the cap meters only free."""
+    import datetime as _dt
+    t = int(now if now is not None else time.time())
+    day_start = int(
+        _dt.datetime.fromtimestamp(t, _dt.timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+    )
+    with connect() as con:
+        row = con.execute(
+            "SELECT COUNT(*) AS n FROM usage_log"
+            " WHERE user_id = ? AND ts >= ? AND model LIKE 'free:%'",
+            (user_id, day_start),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 # ---------------------------------------------------------------------------
 # Memory / training samples (v1.3.3)
 # ---------------------------------------------------------------------------

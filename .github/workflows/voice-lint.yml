@@ -99,7 +99,7 @@ jobs:
           exit "$rc"
 
       - name: Upload lint report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: voice-lint-report
           path: voice_lint_report.txt

@@ -122,11 +122,21 @@ def _pid_alive(pid: Optional[int]) -> Optional[bool]:
             try:
                 os.kill(int(pid), 0)
                 return True
+            except OverflowError:
+                # pid too large for pid_t (e.g. a recorded 4e9 value) -> it
+                # cannot name a running process -> DEFINITELY dead, not unknown.
+                # Returning None here would fall through to the PING check and a
+                # recycled foreign listener could keep a dead lock alive,
+                # refusing to start. (POSIX-only; Windows OpenProcess -> err 87.)
+                return False
             except OSError as ex:  # noqa: PERF203
                 if ex.errno == errno.ESRCH:
                     return False
                 if ex.errno == errno.EPERM:
                     return True
+                if ex.errno == errno.EINVAL:
+                    # invalid/out-of-range pid value -> not a live process
+                    return False
                 return None
     except Exception:
         return None

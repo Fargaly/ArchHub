@@ -122,8 +122,15 @@ def _pid_alive(pid: Optional[int]) -> Optional[bool]:
             try:
                 os.kill(int(pid), 0)
                 return True
+            except OverflowError:
+                # PID exceeds the OS pid_t (e.g. a corrupt/sentinel value like
+                # 4_000_000_000): it cannot name a live process -> definitely gone.
+                return False
             except OSError as ex:  # noqa: PERF203
                 if ex.errno == errno.ESRCH:
+                    return False
+                if ex.errno == errno.EINVAL:
+                    # invalid pid value -> not a live process.
                     return False
                 if ex.errno == errno.EPERM:
                     return True

@@ -26,6 +26,35 @@ MODE_YOLO = "yolo"
 _VALID_MODES = (MODE_PLAN, MODE_AUTO, MODE_YOLO)
 _DEFAULT_MODE = MODE_PLAN   # default-gated, matching the chip + mandate
 
+# ── TURN DEADLINE (root-fix for "I write in the composer and get nothing
+# back") ───────────────────────────────────────────────────────────────
+# Founder bug (live-observed 2026-06-22): a composer submit fired
+# `agent_step` → the bridge started its ArchHubAgentStep thread → but
+# `agent_step_done` NEVER fired (85s+). The bridge runner emits on BOTH
+# success and exception, so the only explanation is that `run_agent_step`
+# was BLOCKING with no return — `router.complete()` makes a provider/LLM
+# socket call (and a tool-loop) with NO enforced wall-clock bound: a
+# half-open provider port, a stalled streaming read, or a hanging tool
+# invocation can block forever, and NOTHING in llm_router.complete bounds
+# the TOTAL turn time (it only does per-provider transient retries).
+#
+# ONE-SYSTEM: this is NOT a new parallel watchdog. `run_agent_step`
+# already owns the turn's failure contract — every error path returns a
+# result dict (never raises). `complete()` already returns a neutral
+# LLMResponse instead of hanging when no provider is configured. We
+# EXTEND that same "always return a result, never block the caller"
+# contract with a wall-clock deadline: the provider round-trip runs on a
+# worker thread joined for at most COMPOSER_TURN_DEADLINE_SECONDS; on
+# overrun we return the honest timed_out fallback so the turn ALWAYS
+# completes and the UI ALWAYS gets `agent_step_done`.
+#
+# Per-call vs overall: a single LLM call should finish well within ~60s;
+# the whole turn (incl. the tool-loop + one transient retry) within ~90s.
+# We bound the OVERALL turn here (it strictly contains the per-call cost);
+# the bridge runner adds a strictly-larger last-resort ceiling so even a
+# hung deadline-thread can't keep the UI spinning.
+COMPOSER_TURN_DEADLINE_SECONDS = 90.0
+
 # The canvas primitives that MUTATE host / canvas state — these are the
 # "writes" the Plan/Auto modes gate. `run_node` / `run_workflow` cook
 # nodes (which call connector WRITE ops + mutate outputs); `set_node_param`
@@ -539,7 +568,24 @@ def run_agent_step(
         if piece:
             text_buf.append(piece)
 
-    try:
+    # ── Wall-clock turn deadline ───────────────────────────────────────
+    # The provider round-trip (LLM socket + tool-loop) is the ONLY place
+    # the turn can block unbounded. Run it on a worker thread and join for
+    # at most COMPOSER_TURN_DEADLINE_SECONDS. On overrun we abandon the
+    # (daemon) worker and return the honest timed_out fallback — the turn
+    # ALWAYS returns, so the bridge ALWAYS emits agent_step_done. Reads
+    # already collected into `actions` via _on_inv are preserved.
+    import threading as _threading
+
+    _box: dict = {}
+
+    def _do_complete() -> None:
+        try:
+            _box["response"] = _provider_round_trip()
+        except BaseException as _ex:   # noqa: BLE001 — record, never raise out
+            _box["exc"] = _ex
+
+    def _provider_round_trip() -> str:
         # Hand the canvas primitives to the router as CLIENT-SIDE tools.
         # `extra_tools` merges TOOL_SCHEMA into the provider tool surface
         # for this call, so the LLM ACTUALLY SEES spawn_node / run_node /
@@ -553,51 +599,63 @@ def run_agent_step(
         # → the tool-LESS fallback below → the LLM never saw the tools and
         # the whole orchestration path was dead. The router now supports
         # the kwarg natively; `tool_schemas` is still accepted as an
-        # alias.)
-        response = router.complete(
-            history=history,
-            model=model or "auto",
-            on_chunk=_on_chunk,
-            on_tool_invocation=_on_inv,
-            extra_tools=TOOL_SCHEMA,
-        )
-        text = (
-            getattr(response, "text", "") or "".join(text_buf)
-        ).strip()
-    except TypeError:
-        # Defensive only: a STALE router build whose complete() predates
-        # the extra_tools/tool_schemas kwarg. The supported router accepts
-        # it (see app/llm_router.complete), so this path should never run
-        # in a current tree — but if the composer is wired to an older
-        # duck-typed client we degrade to a tool-LESS chat reply rather
-        # than crashing the compose turn. The canvas won't mutate on this
-        # path; the reply still streams.
+        # alias.) Returns the final assistant text; raises on hard error.
         try:
             response = router.complete(
                 history=history,
                 model=model or "auto",
                 on_chunk=_on_chunk,
                 on_tool_invocation=_on_inv,
+                extra_tools=TOOL_SCHEMA,
             )
-            text = (
-                getattr(response, "text", "") or "".join(text_buf)
-            ).strip()
-        except Exception as ex:
-            return {
-                "actions": [],
-                "text": "",
-                "error": f"{type(ex).__name__}: {ex}",
-                "mode": mode,
-                "gated": gated_count[0],
-            }
-    except Exception as ex:
+        except TypeError:
+            # Defensive only: a STALE router build whose complete() predates
+            # the extra_tools/tool_schemas kwarg. The supported router accepts
+            # it (see app/llm_router.complete), so this path should never run
+            # in a current tree — but if the composer is wired to an older
+            # duck-typed client we degrade to a tool-LESS chat reply rather
+            # than crashing the compose turn. The canvas won't mutate on this
+            # path; the reply still streams.
+            response = router.complete(
+                history=history,
+                model="auto",
+                on_chunk=_on_chunk,
+                on_tool_invocation=_on_inv,
+            )
+        return (getattr(response, "text", "") or "".join(text_buf)).strip()
+
+    _worker = _threading.Thread(target=_do_complete, daemon=True,
+                                name="ComposerTurn")
+    _worker.start()
+    _worker.join(COMPOSER_TURN_DEADLINE_SECONDS)
+
+    if _worker.is_alive():
+        # The provider round-trip blew the wall-clock budget — the exact
+        # "I write and get nothing back" hang. Abandon the (daemon) worker
+        # and return the honest timed_out fallback. The turn ALWAYS returns
+        # so the bridge ALWAYS emits agent_step_done. Any reads the model
+        # managed to drive before stalling are preserved in `actions`.
         return {
-            "actions": [],
-            "text": "",
-            "error": f"{type(ex).__name__}: {ex}",
+            "actions": actions,
+            "text": ("<provider timed out / unreachable — try again or "
+                     "check your LLM provider>"),
+            "error": "turn_timeout",
+            "timed_out": True,
             "mode": mode,
             "gated": gated_count[0],
         }
+
+    _exc = _box.get("exc")
+    if _exc is not None:
+        return {
+            "actions": [],
+            "text": "",
+            "error": f"{type(_exc).__name__}: {_exc}",
+            "mode": mode,
+            "gated": gated_count[0],
+        }
+
+    text = _box.get("response") or ""
 
     # THE DRIVE (AgDR-0054): the composer may not return a turn that defers /
     # partials its own answer. Reuse the ONE shared no-later detector.

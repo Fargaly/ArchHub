@@ -132,11 +132,11 @@ def _pid_alive(pid: Optional[int]) -> Optional[bool]:
             except OSError as ex:  # noqa: PERF203
                 if ex.errno == errno.ESRCH:
                     return False
+                if ex.errno == errno.EINVAL:
+                    # invalid/out-of-range pid value -> not a live process.
+                    return False
                 if ex.errno == errno.EPERM:
                     return True
-                if ex.errno == errno.EINVAL:
-                    # invalid/out-of-range pid value -> not a live process
-                    return False
                 return None
     except Exception:
         return None

@@ -53,20 +53,21 @@ CODE_MARKERS = (
 # false-blocks the rulebook on every turn, one marker per stop, forever.
 # This exemption applies ONLY to the marker scan; every other (code/work)
 # file is still scanned in full.
-#
-# The SAME reasoning covers the policy SOURCE itself: `diligence.py` DEFINES the
-# banned markers as string literals in CODE_MARKERS (and `anti_laziness_gate.py`
-# is the gate that carries them), so editing the rulebook would self-block the
-# stop on every turn — a false positive on the very file that enforces the rule.
-# These policy sources are the rulebook, not stray-marker work-product, so the
-# marker scan skips them too (marker scan ONLY — all other checks still apply).
 _MANDATE_DOC_BASENAMES = frozenset({
     "claude.md", "agents.md", "failure_log.md",
-    # policy sources + their tests DEFINE/exercise the marker literals as data,
-    # so the marker scan skips them (else editing the rulebook or its tests
-    # self-blocks the stop). Marker scan ONLY — all other checks still apply.
-    "diligence.py", "anti_laziness_gate.py", "test_diligence.py",
 })
+
+# The policy SOURCE files DEFINE/exercise the banned markers as string data
+# (diligence.py's CODE_MARKERS, the gate itself, and the policy test), so the
+# marker scan skips them — else editing the rulebook self-blocks the stop.
+# Matched by PATH SUFFIX, NOT basename, so an unrelated file that merely shares
+# the name (e.g. `app/diligence.py`) is NOT exempted and the scan still catches
+# real markers there. Marker scan ONLY; every other check still applies.
+_POLICY_SOURCE_SUFFIXES = (
+    "personal_brain/diligence.py",
+    "tools/anti_laziness_gate.py",
+    "tests/test_diligence.py",
+)
 
 
 def _is_mandate_doc(path: Any) -> bool:
@@ -83,6 +84,10 @@ def _is_mandate_doc(path: Any) -> bool:
     if basename in _MANDATE_DOC_BASENAMES:
         return True
     if "/docs/agdr/" in norm or norm.startswith("docs/agdr/"):
+        return True
+    # policy sources — matched by PATH SUFFIX (not basename) so a stray file
+    # that merely shares the name (app/diligence.py) is NOT exempted.
+    if any(norm.endswith(sfx) for sfx in _POLICY_SOURCE_SUFFIXES):
         return True
     return False
 

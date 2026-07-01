@@ -118,11 +118,17 @@ def test_is_mandate_doc_exempts_governance_docs():
     assert _is_mandate_doc("C:\\repo\\AGENTS.md")          # windows backslashes
     assert _is_mandate_doc("docs/agdr/AgDR-0001-foo.md")
     assert _is_mandate_doc("C:\\repo\\docs\\agdr\\x.md")   # windows agdr path
-    # v2: the policy SOURCE files are ALSO exempt — they DEFINE the marker
-    # literals (CODE_MARKERS), so scanning them would self-block every edit.
+    # v2: the policy SOURCE files are exempt — matched by PATH SUFFIX (not
+    # basename) — they DEFINE the marker literals, so scanning them self-blocks.
     assert _is_mandate_doc("src/personal_brain/diligence.py")
+    assert _is_mandate_doc("C:/repo/personal-brain-mcp/src/personal_brain/diligence.py")
     assert _is_mandate_doc("tools/anti_laziness_gate.py")
-    # …but real code/work files are NOT exempt.
+    assert _is_mandate_doc("personal-brain-mcp/tests/test_diligence.py")
+    # …suffix-match, so a similarly-NAMED non-policy file is NOT exempt — this
+    # guards against widening the exemption surface (Copilot review on #261):
+    assert not _is_mandate_doc("app/diligence.py")
+    assert not _is_mandate_doc("src/app/anti_laziness_gate.py")
+    # …and real code/work files are NOT exempt.
     assert not _is_mandate_doc("app/foo.py")
     assert not _is_mandate_doc("README.md")                # not a mandate doc
     assert not _is_mandate_doc("docs/ROADMAP.md")

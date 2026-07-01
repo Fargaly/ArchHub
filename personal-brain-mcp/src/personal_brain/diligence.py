@@ -231,6 +231,7 @@ def evaluate_diligence(
     touched_files: Optional[list[str]] = None,
     file_contents: Optional[dict[str, str]] = None,
     session_signals: Optional[dict[str, Any]] = None,
+    require_limitation: bool = False,
 ) -> DiligenceVerdict:
     """Decide whether an agent has earned the right to stop.
 
@@ -275,13 +276,16 @@ def evaluate_diligence(
             severity="block",
         ))
 
-    # 1b) diligence-v2 anti-sycophancy tax: a *proven* completion claim must
-    #     also surface a limitation / "what I did not verify" (or an explicit
-    #     all-clear). Suppressing the downside to look "done" is the exact
-    #     sycophancy the protocol bans. An honest exit IS a stated limit, so
-    #     it is never taxed. Fires only when proof exists (else rule 1 covers
-    #     it) — so a genuinely-verified turn just names its one caveat.
-    if claim and proven and not has_limitation:
+    # 1b) diligence-v2 anti-sycophancy tax (OPT-IN — `require_limitation`): a
+    #     *proven* completion claim must also surface a limitation / "what I did
+    #     not verify" (or an explicit all-clear). Suppressing the downside to
+    #     look "done" is the exact sycophancy the protocol bans. An honest exit
+    #     IS a stated limit, so it is never taxed. Fires only when proof exists
+    #     (else rule 1 covers it). This is a STOP-GATE concern (an agent's final
+    #     summary) — it is default-OFF so the COURT's diligence lens and
+    #     server-side verify, which judge artifact evidence per leaf, are NOT
+    #     over-gated by it; the Stop hook opts in explicitly.
+    if require_limitation and claim and proven and not has_limitation:
         violations.append(Violation(
             code="CLAIM_WITHOUT_LIMITS",
             detail=(

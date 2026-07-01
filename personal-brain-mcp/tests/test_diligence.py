@@ -191,21 +191,35 @@ def test_code_file_with_markers_still_flagged_alongside_mandate_doc():
 # ───────────── diligence-v2: honest-exit + anti-sycophancy tax ─────────────
 
 
-def test_proven_claim_without_limitation_blocks():
-    """v2 anti-sycophancy tax: a *proven* completion claim that states NO
-    limitation / 'what I did not verify' is blocked — surface the downside."""
+def test_proven_claim_without_limitation_blocks_when_tax_opted_in():
+    """v2 anti-sycophancy tax (OPT-IN): with require_limitation=True, a *proven*
+    completion claim that states NO limitation is blocked — surface the downside.
+    This is a STOP-GATE concern; the Stop hook opts in."""
     v = evaluate_diligence(
         last_message="Done — it works now.",
         session_signals={"ran_tests": True},
+        require_limitation=True,
     )
     assert not v.ok
     assert "CLAIM_WITHOUT_LIMITS" in [x.code for x in v.violations]
 
 
-def test_proven_claim_with_limitation_allows():
+def test_proven_claim_without_limitation_allows_by_default():
+    """Default-OFF: the court's diligence lens / server verify judge artifact
+    evidence per leaf and must NOT be over-gated by the summary-level tax."""
+    v = evaluate_diligence(
+        last_message="Done — it works now.",
+        session_signals={"ran_tests": True},
+    )
+    assert v.ok, v.to_dict()
+    assert "CLAIM_WITHOUT_LIMITS" not in [x.code for x in v.violations]
+
+
+def test_proven_claim_with_limitation_allows_even_when_taxed():
     v = evaluate_diligence(
         last_message="Done and tests pass. One thing I did not verify: the restart path.",
         session_signals={"ran_tests": True},
+        require_limitation=True,
     )
     assert v.ok, v.to_dict()
     assert v.checked["has_limitation"] is True

@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
-POLICY_VERSION = "diligence-v1"
+POLICY_VERSION = "diligence-v2"
 
 # Words that assert completion. Their presence triggers the proof demand.
 COMPLETION_CLAIMS = (
@@ -57,6 +57,18 @@ _MANDATE_DOC_BASENAMES = frozenset({
     "claude.md", "agents.md", "failure_log.md",
 })
 
+# The policy SOURCE files DEFINE/exercise the banned markers as string data
+# (diligence.py's CODE_MARKERS, the gate itself, and the policy test), so the
+# marker scan skips them — else editing the rulebook self-blocks the stop.
+# Matched by PATH SUFFIX, NOT basename, so an unrelated file that merely shares
+# the name (e.g. `app/diligence.py`) is NOT exempted and the scan still catches
+# real markers there. Marker scan ONLY; every other check still applies.
+_POLICY_SOURCE_SUFFIXES = (
+    "personal_brain/diligence.py",
+    "tools/anti_laziness_gate.py",
+    "tests/test_diligence.py",
+)
+
 
 def _is_mandate_doc(path: Any) -> bool:
     """True if `path` is a mandate/governance doc that legitimately quotes the
@@ -73,6 +85,10 @@ def _is_mandate_doc(path: Any) -> bool:
         return True
     if "/docs/agdr/" in norm or norm.startswith("docs/agdr/"):
         return True
+    # policy sources — matched by PATH SUFFIX (not basename) so a stray file
+    # that merely shares the name (app/diligence.py) is NOT exempted.
+    if any(norm.endswith(sfx) for sfx in _POLICY_SOURCE_SUFFIXES):
+        return True
     return False
 
 # Evidence that real verification happened this session.
@@ -87,6 +103,63 @@ _AUDIT_HINT = re.compile(
     r"\|.*(primitive|runtime|live[- ]?verif|ui\s*✓|cross[- ]?process)",
     re.IGNORECASE,
 )
+
+# ── diligence-v2: honest-exit + anti-sycophancy limitation tax ──────────
+# The 8-rule anti-false-done protocol (30.KNOWLEDGE/strategy/anti-false-done-
+# protocol.md, web-verified against the reward-hacking / shortcut-learning /
+# Goodhart / cognitive-miser literatures) adds two machine-checkable rules on
+# top of v1's proof demand:
+#   • HONEST EXIT is first-class — an agent that truthfully says "I couldn't /
+#     didn't verify X / blocked on your sign-in" is NEVER blocked; honesty
+#     about an unfinished thing beats a fake "done" (ImpossibleBench: an
+#     explicit honest exit cut cheating 54%→9%). (protocol rule 2)
+#   • ANTI-SYCOPHANCY LIMITATION TAX — a *proven* completion claim must also
+#     surface a limitation / "what it did NOT verify" (or an explicit
+#     all-clear). Sycophancy suppresses bad news to look done; this forces it
+#     out. (protocol rules 4/6)
+# The remaining protocol rules are already v1 (proof=rule 3, deferral+markers=
+# rules 5/7) or are NOT text-checkable at stop-time (freeze-target, construct
+# validity) — those live in the COURT (brain.tree_court's independent lenses),
+# not here. This gate is deliberately conservative: honest exits pass freely
+# and any limitation/all-clear phrase satisfies the tax, so it surfaces the
+# missing downside without over-gating a genuinely-complete turn.
+
+# Honest-exit language — a truthful "not done / couldn't / needs you". A
+# POSITIVE signal: never blocked, and it satisfies the limitation tax.
+HONEST_EXIT_PHRASES = (
+    "i could not", "i couldn't", "could not verify", "couldn't verify",
+    "i was unable", "unable to verify", "blocked on", "i did not verify",
+    "i didn't verify", "did not verify", "didn't verify", "not verified",
+    "haven't verified", "have not verified", "could not confirm",
+    "cannot verify", "underspecified", "needs your", "needs founder",
+    "escalat", "honest exit", "i'm stopping here because",
+    "im stopping here because", "not yet verified", "i have not verified",
+)
+
+# A stated limitation / caveat / "what I did not check". Satisfies the tax.
+LIMITATION_MARKERS = (
+    "limitation", "caveat", "did not verify", "didn't verify",
+    "not verified", "did not test", "didn't test", "did not check",
+    "didn't check", "one thing", "one caveat", "the one thing", "note:",
+    "however,", "won't like", "wont like", "gap:", "what i did not",
+    "what i didn't", "not tested", "unverified", "honest limit",
+)
+
+# Explicit all-clear — a positive assertion that everything was verified and
+# nothing is outstanding. Also satisfies the tax.
+ALL_CLEAR_PHRASES = (
+    "verified end-to-end", "verified end to end", "nothing outstanding",
+    "no open threads", "all checks pass", "everything verified",
+    "fully verified", "zero open", "no caveats", "nothing deferred",
+)
+
+
+def _has_any(text_lower: str, needles: tuple[str, ...]) -> Optional[str]:
+    """Return the first needle found in text_lower, else None."""
+    for n in needles:
+        if n in text_lower:
+            return n
+    return None
 
 
 @dataclass
@@ -158,6 +231,7 @@ def evaluate_diligence(
     touched_files: Optional[list[str]] = None,
     file_contents: Optional[dict[str, str]] = None,
     session_signals: Optional[dict[str, Any]] = None,
+    require_limitation: bool = False,
 ) -> DiligenceVerdict:
     """Decide whether an agent has earned the right to stop.
 
@@ -180,6 +254,15 @@ def evaluate_diligence(
     has_audit = bool(_AUDIT_HINT.search(msg))
     proven = any(bool(sig.get(k)) for k in PROOF_SIGNAL_KEYS)
 
+    # diligence-v2 signals: honest exit (positive) + limitation acknowledgment.
+    honest_exit = _has_any(low, HONEST_EXIT_PHRASES)
+    has_limitation = bool(
+        honest_exit
+        or has_audit
+        or _has_any(low, LIMITATION_MARKERS)
+        or _has_any(low, ALL_CLEAR_PHRASES)
+    )
+
     # 1) Claimed completion without proof AND without an audit table.
     if claim and not proven and not has_audit:
         violations.append(Violation(
@@ -189,6 +272,28 @@ def evaluate_diligence(
                 f"artifact (no test run, curl, build, server start, file "
                 f"write, or screenshot) and no ANTI-LIE audit table. "
                 f"Tests/curl/screenshot or demote the wording."
+            ),
+            severity="block",
+        ))
+
+    # 1b) diligence-v2 anti-sycophancy tax (OPT-IN — `require_limitation`): a
+    #     *proven* completion claim must also surface a limitation / "what I did
+    #     not verify" (or an explicit all-clear). Suppressing the downside to
+    #     look "done" is the exact sycophancy the protocol bans. An honest exit
+    #     IS a stated limit, so it is never taxed. Fires only when proof exists
+    #     (else rule 1 covers it). This is a STOP-GATE concern (an agent's final
+    #     summary) — it is default-OFF so the COURT's diligence lens and
+    #     server-side verify, which judge artifact evidence per leaf, are NOT
+    #     over-gated by it; the Stop hook opts in explicitly.
+    if require_limitation and claim and proven and not has_limitation:
+        violations.append(Violation(
+            code="CLAIM_WITHOUT_LIMITS",
+            detail=(
+                f"Claimed '{claim}' with proof but stated NO limitation or "
+                f"'what I did not verify'. Anti-sycophancy: name the one "
+                f"thing you're unsure about / didn't check, or give an "
+                f"explicit all-clear (verified end-to-end, nothing "
+                f"outstanding)."
             ),
             severity="block",
         ))
@@ -235,6 +340,8 @@ def evaluate_diligence(
             "has_audit_table": has_audit,
             "proven": proven,
             "proof_signals": {k: bool(sig.get(k)) for k in PROOF_SIGNAL_KEYS},
+            "honest_exit": honest_exit,
+            "has_limitation": has_limitation,
             "touched_files": list(touched_files or []),
             "scanned_files": list((file_contents or {}).keys()),
             "exempt_mandate_docs": [

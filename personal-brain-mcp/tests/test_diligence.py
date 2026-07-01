@@ -32,8 +32,10 @@ def test_claim_without_proof_blocks():
 
 
 def test_claim_with_proof_signal_allows():
+    # v2: proof satisfies the proof-demand; the anti-sycophancy tax also needs
+    # a limitation / all-clear, so this proven claim carries an explicit one.
     v = evaluate_diligence(
-        last_message="Done — endpoint returns 200 now.",
+        last_message="Done — endpoint returns 200 now; verified end-to-end.",
         session_signals={"ran_curl": True, "wrote_files": True},
     )
     assert v.ok, v.to_dict()
@@ -95,11 +97,11 @@ def test_verdict_serialization_round_trips():
 
 def test_proof_signals_surface_in_checked():
     v = evaluate_diligence(
-        last_message="finished",
+        last_message="finished; nothing outstanding.",
         session_signals={"ran_tests": True},
     )
     assert v.checked["proof_signals"]["ran_tests"] is True
-    # ran_tests is a proof → claim is satisfied → allow
+    # v2: proof satisfies the proof-demand + an all-clear satisfies the tax → allow
     assert v.ok
 
 
@@ -116,9 +118,12 @@ def test_is_mandate_doc_exempts_governance_docs():
     assert _is_mandate_doc("C:\\repo\\AGENTS.md")          # windows backslashes
     assert _is_mandate_doc("docs/agdr/AgDR-0001-foo.md")
     assert _is_mandate_doc("C:\\repo\\docs\\agdr\\x.md")   # windows agdr path
+    # v2: the policy SOURCE files are ALSO exempt — they DEFINE the marker
+    # literals (CODE_MARKERS), so scanning them would self-block every edit.
+    assert _is_mandate_doc("src/personal_brain/diligence.py")
+    assert _is_mandate_doc("tools/anti_laziness_gate.py")
     # …but real code/work files are NOT exempt.
     assert not _is_mandate_doc("app/foo.py")
-    assert not _is_mandate_doc("src/personal_brain/diligence.py")
     assert not _is_mandate_doc("README.md")                # not a mandate doc
     assert not _is_mandate_doc("docs/ROADMAP.md")
     assert not _is_mandate_doc("")
@@ -175,3 +180,51 @@ def test_code_file_with_markers_still_flagged_alongside_mandate_doc():
     assert len(leftovers) == 1
     assert "app/foo.py" in leftovers[0].detail
     assert "CLAUDE.md" not in leftovers[0].detail
+
+
+# ───────────── diligence-v2: honest-exit + anti-sycophancy tax ─────────────
+
+
+def test_proven_claim_without_limitation_blocks():
+    """v2 anti-sycophancy tax: a *proven* completion claim that states NO
+    limitation / 'what I did not verify' is blocked — surface the downside."""
+    v = evaluate_diligence(
+        last_message="Done — it works now.",
+        session_signals={"ran_tests": True},
+    )
+    assert not v.ok
+    assert "CLAIM_WITHOUT_LIMITS" in [x.code for x in v.violations]
+
+
+def test_proven_claim_with_limitation_allows():
+    v = evaluate_diligence(
+        last_message="Done and tests pass. One thing I did not verify: the restart path.",
+        session_signals={"ran_tests": True},
+    )
+    assert v.ok, v.to_dict()
+    assert v.checked["has_limitation"] is True
+
+
+def test_honest_exit_allows_without_proof():
+    """An honest exit is never blocked — honesty about an unfinished thing
+    beats a fake 'done' (ImpossibleBench: an explicit honest exit cut
+    cheating 54%→9%)."""
+    v = evaluate_diligence(
+        last_message="I could not verify the hook firing; blocked on your /hooks reload.",
+    )
+    assert v.ok, v.to_dict()
+    assert v.checked["honest_exit"]
+
+
+def test_policy_source_marker_is_exempt():
+    """diligence.py holds the marker literals in CODE_MARKERS; editing the
+    rulebook must not self-block the stop (the real regression this fixed)."""
+    v = evaluate_diligence(
+        last_message="Extended the policy.",
+        touched_files=["src/personal_brain/diligence.py"],
+        file_contents={"src/personal_brain/diligence.py":
+                       "CODE_MARKERS = ('TODO(founder)',)  # rulebook literal\n"},
+        session_signals={"wrote_files": True},
+    )
+    assert "LEFTOVER_MARKER" not in [x.code for x in v.violations]
+    assert v.ok, v.to_dict()

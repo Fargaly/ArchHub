@@ -81,9 +81,20 @@ def make_context_payload(
         store, prompt,
         owner_user=owner_user, scope_filter=scope_filter, k=k_skills,
     )
+    # Hybrid recall lane (ARCHHUB_HYBRID_RECALL, default ON '1'). The
+    # predictor itself preserves the zero-risk default: alpha stays 1.0
+    # (pure dense, bit-identical original path) unless the query carries an
+    # exact-code token (AP_CORNICE / CW22 / 9820-style), where BM25 gets an
+    # equal say so self_extend:: loop facts actually surface. Env '0' kills
+    # the lane entirely.
+    hybrid_alpha: Optional[float] = None
+    if os.environ.get("ARCHHUB_HYBRID_RECALL", "1") != "0":
+        from .hybrid_recall import predict_alpha
+        hybrid_alpha = predict_alpha(prompt)
     facts = retrieve_facts(
         store, prompt,
         owner_user=owner_user, scope_filter=scope_filter, k=k_facts,
+        hybrid_alpha=hybrid_alpha,
     )
     wiring = store.list_wiring()
     secret_refs = store.list_secret_refs(owner_user, scope_filter=scope_filter)
@@ -92,6 +103,12 @@ def make_context_payload(
     for f in facts:
         store.log_access(owner_user, f.id, purpose="brain.context")
         store.touch_fragment(f.id, success=True)
+    # Skills are consumed too — count every skill returned in the payload.
+    # This is the read-path incrementer the federation sharing gate
+    # (derive_skill_usage_patterns, success_count >= 3) depends on; without
+    # it that gate is unsatisfiable by construction.
+    for sk in skills:
+        store.touch_skill(sk.id, success=True)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 

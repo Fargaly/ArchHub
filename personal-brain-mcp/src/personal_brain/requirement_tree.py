@@ -36,11 +36,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import BaseModel, Field
+
+# ONE definition of identity normalization + the root-token check — shared with
+# the court's independence lens (court_harness has no import back into this
+# module, so no cycle). See the 2026-07-02 forensic-audit fixes.
+from .court_harness import ROOT_TOKEN_ENV, normalize_agent, root_token_ok
 
 if TYPE_CHECKING:  # avoid a runtime import cycle; only needed for typing
     from .storage import BrainStore
@@ -49,6 +55,13 @@ if TYPE_CHECKING:  # avoid a runtime import cycle; only needed for typing
 # NEW brain_meta key — never collides with calibration_v1 / organize.clusters /
 # diligence.stats / bound_owner_* / personal_cloud_sync.* etc.
 TREE_META_KEY = "requirement_tree_v1"
+
+# Append-only audit ledger for founder/root overrides (defect 3): every
+# is_root_authority verdict lands here — a root override that leaves no trace
+# is indistinguishable from a forged one.
+ROOT_OVERRIDE_LOG_KEY = "root_override_log_v1"
+
+_log = logging.getLogger("personal_brain.requirement_tree")
 
 
 # ─────────────────────────── enums + models ────────────────────────────
@@ -77,6 +90,11 @@ class ReqNode(BaseModel):
     evidence_ref: Optional[str] = None        # pointer to court evidence
     children: list[str] = Field(default_factory=list)  # child node_ids
     claimed_by: Optional[str] = None          # executor agent id (anti-self-cert)
+    # CLAIM HISTORY (audit defect 2): every agent that EVER claimed this leaf.
+    # A red verdict clears claimed_by (the leaf re-enters the frontier) but the
+    # claimer is recorded here so it can never come back as the "independent"
+    # judge that greens its own past work (boomerang self-certification).
+    past_claimants: list[str] = Field(default_factory=list)
     gate_kind: str = "manual"                 # py_compile|pytest|cdp|anti_laziness|manual
     gate_spec: dict[str, Any] = Field(default_factory=dict)  # args for the gate
     # Who delivered the latest verdict — MUST differ from claimed_by (the
@@ -353,6 +371,24 @@ def decompose(
                 f"nodes are not re-opened (supersede via a new root instead)"
             )
 
+        # NO COSMETIC CLONES (audit defect 6, "boosting"): decompose-on-red must
+        # CHANGE the check. A child that repeats the RED parent's gate_kind AND
+        # gate_spec verbatim is a re-skin, not a split — the same gate would be
+        # retried under a new title forever.
+        if parent.state == NodeState.RED:
+            for spec in children:
+                if not (spec.get("title") or "").strip():
+                    continue
+                ck = spec.get("gate_kind") or "manual"
+                cs = spec.get("gate_spec") or {}
+                if ck == parent.gate_kind and cs == (parent.gate_spec or {}):
+                    raise ValueError(
+                        f"cosmetic clone refused: child '{spec.get('title')}' of RED "
+                        f"node '{node_id}' repeats the parent's gate verbatim "
+                        f"(gate_kind='{ck}' + identical gate_spec). Decompose-on-red "
+                        f"must differ in gate_kind OR gate_spec — split, never re-skin."
+                    )
+
         now = datetime.now(timezone.utc)
         for spec in children:
             title = (spec.get("title") or "").strip()
@@ -433,17 +469,44 @@ def claim_leaf(
             raise ValueError(f"cannot claim non-leaf '{node_id}' — only leaves are executable")
         if node.state == NodeState.GREEN:
             raise ValueError(f"leaf '{node_id}' is already GREEN — nothing to claim")
-        if node.claimed_by and node.claimed_by != agent_id:
+        # Identity comparison is NORMALIZED (strip+casefold): 'Exec-1' re-claiming
+        # as 'exec-1' is the same actor (idempotent), and a different actor can't
+        # sneak past the guard with a case-flip.
+        if node.claimed_by and normalize_agent(node.claimed_by) != normalize_agent(agent_id):
             raise ValueError(
                 f"leaf '{node_id}' already claimed by '{node.claimed_by}' "
                 f"(requested by '{agent_id}')"
             )
         node.claimed_by = agent_id
+        # Permanent claim history — survives the red round-trip that clears
+        # claimed_by, so a past claimant can never re-enter as the judge.
+        if normalize_agent(agent_id) not in {normalize_agent(p) for p in node.past_claimants}:
+            node.past_claimants.append(agent_id)
         node.state = NodeState.CLAIMED
         node.updated_at = datetime.now(timezone.utc)
         return node
 
     return ts.mutate_tree(tree_id, _fn)
+
+
+def _append_root_override_log(store: "BrainStore", entry: dict[str, Any]) -> None:
+    """Append one root-override audit entry (atomic read-modify-write on the
+    dedicated brain_meta key) AND emit it on the real logging tree. Defect 3:
+    the old docstring claimed 'it is logged' while NO logging existed."""
+    _log.warning("ROOT OVERRIDE (is_root_authority): %s", entry)
+
+    def _apply(old_raw: Optional[str]):
+        try:
+            log = json.loads(old_raw) if old_raw else []
+        except Exception:
+            log = []
+        if not isinstance(log, list):
+            log = []
+        log.append(entry)
+        raw = json.dumps(log, default=str)
+        return raw, raw
+
+    store.update_meta(ROOT_OVERRIDE_LOG_KEY, _apply)
 
 
 def set_verdict(
@@ -455,25 +518,48 @@ def set_verdict(
     judged_by: str,
     evidence_ref: Optional[str] = None,
     is_root_authority: bool = False,
+    root_token: Optional[str] = None,
 ) -> ReqNode:
     """Record the COURT's verdict on a leaf, then propagate derived greenness up.
 
     `verdict` ∈ {"green", "red", "needs_root"}.
-    `judged_by` is the court/jury identity. ANTI-SELF-CERTIFY: a "green"
-    verdict is REFUSED when `judged_by == node.claimed_by` (the executor cannot
-    pass its own leaf) UNLESS `is_root_authority` is set — the founder (YOU) is
-    the only authority that may override a tie, and even then it is logged.
+    `judged_by` is the court/jury identity, compared NORMALIZED (strip +
+    casefold — 'Exec-1' IS 'exec-1'). ANTI-SELF-CERTIFY, all fail-closed:
+
+      * a "green" on a LEAF that was never claimed → PermissionError (a verdict
+        needs a claimed executor to judge against);
+      * a "green" where judged_by == the current claimer → PermissionError;
+      * a "green" where judged_by is ANY PAST claimant of this leaf →
+        PermissionError (a red round-trip clears the claim but NOT the history
+        — the original claimer can't boomerang back as the judge).
+
+    ROOT OVERRIDE (the founder settling a tie) is AUTHENTICATED: it requires
+    env ARCHHUB_ROOT_TOKEN to be set AND a matching `root_token` argument;
+    mismatch/absent → PermissionError. Every root override is REALLY logged —
+    a logging.warning plus an append into brain_meta['root_override_log_v1']
+    (timestamp / tree / node / judged_by / verdict).
 
     GREEN flips internal ancestors GREEN when ALL their children are green
     (the loop-until-dry "full green sweep" is derived, never asserted by hand).
-    RED bumps `attempts` and clears the claim so the leaf re-enters the
-    frontier for re-work / re-decompose.
+    RED bumps `attempts`, records the claimer into `past_claimants`, and clears
+    the claim so the leaf re-enters the frontier for re-work / re-decompose.
     """
     v = (verdict or "").strip().lower()
     if v not in ("green", "red", "needs_root"):
         raise ValueError(f"verdict must be green|red|needs_root, got '{verdict}'")
     if not (judged_by or "").strip():
         raise ValueError("set_verdict requires a non-empty judged_by (the court identity)")
+
+    # Root override must AUTHENTICATE before it bypasses anything. No env token
+    # configured == the god-mode path is closed, not open.
+    if is_root_authority and not root_token_ok(root_token):
+        raise PermissionError(
+            f"root override refused: is_root_authority=True requires env "
+            f"{ROOT_TOKEN_ENV} to be set AND a matching root_token argument "
+            f"(mismatch or absent). The unauthenticated god-mode bool is gone."
+        )
+
+    judge_norm = normalize_agent(judged_by)
     ts = TreeStore(store)
 
     def _fn(tree: RequirementTree) -> ReqNode:
@@ -481,21 +567,34 @@ def set_verdict(
         if node is None:
             raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
 
-        # Anti-self-certify: the executor that CLAIMED the leaf may not green it.
-        # The claimed_by READ + this decision are inside the critical section so a
-        # concurrent claim can't slip the identity between check and write.
-        if (
-            v == "green"
-            and node.claimed_by
-            and judged_by == node.claimed_by
-            and not is_root_authority
-        ):
-            raise PermissionError(
-                f"self-certification refused: judge '{judged_by}' is the same agent "
-                f"that claimed leaf '{node_id}'. The court must be an INDEPENDENT "
-                f"identity (executor never judges its own work). Founder override "
-                f"requires is_root_authority=True."
-            )
+        # Anti-self-certify (all comparisons NORMALIZED; reads + decision inside
+        # the critical section so a concurrent claim can't slip the identity
+        # between check and write). Authenticated root authority bypasses —
+        # that is its one purpose — and is audited below.
+        if v == "green" and not is_root_authority:
+            if node.is_leaf and not (node.claimed_by or "").strip():
+                raise PermissionError(
+                    f"green refused: leaf '{node_id}' was never claimed — a "
+                    f"verdict needs a claimed executor to judge against "
+                    f"(claim the leaf first, or the founder decides via the "
+                    f"authenticated root override)."
+                )
+            if node.claimed_by and judge_norm == normalize_agent(node.claimed_by):
+                raise PermissionError(
+                    f"self-certification refused: judge '{judged_by}' is the same agent "
+                    f"that claimed leaf '{node_id}' (identities compared normalized). "
+                    f"The court must be an INDEPENDENT identity (executor never judges "
+                    f"its own work). Founder override requires is_root_authority=True "
+                    f"+ the root token."
+                )
+            past = {normalize_agent(p) for p in node.past_claimants}
+            if judge_norm in past:
+                raise PermissionError(
+                    f"self-certification refused: judge '{judged_by}' previously "
+                    f"CLAIMED leaf '{node_id}' (claim history: {node.past_claimants}). "
+                    f"A red round-trip clears the claim but not the history — a past "
+                    f"claimant cannot return as the judge."
+                )
 
         now = datetime.now(timezone.utc)
         node.judged_by = judged_by
@@ -508,6 +607,12 @@ def set_verdict(
             node.state = NodeState.RED
             node.verdict = "red"
             node.attempts += 1
+            # Record the claimer BEFORE clearing (belt for legacy trees whose
+            # claims predate the past_claimants field).
+            if node.claimed_by and normalize_agent(node.claimed_by) not in {
+                normalize_agent(p) for p in node.past_claimants
+            }:
+                node.past_claimants.append(node.claimed_by)
             node.claimed_by = None  # re-enter the frontier
         else:  # needs_root
             node.state = NodeState.NEEDS_ROOT
@@ -516,7 +621,19 @@ def set_verdict(
         _propagate_green(tree)
         return node
 
-    return ts.mutate_tree(tree_id, _fn)
+    result = ts.mutate_tree(tree_id, _fn)
+
+    # AUDIT (defect 3): every authenticated root override leaves a real trace.
+    if is_root_authority:
+        _append_root_override_log(store, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "tree_id": tree_id,
+            "node_id": node_id,
+            "judged_by": judged_by,
+            "verdict": v,
+            "evidence_ref": evidence_ref,
+        })
+    return result
 
 
 def _propagate_green(tree: RequirementTree) -> None:
@@ -824,7 +941,13 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 claimed_by=node.claimed_by,
                 judged_by=judged_by,
                 context=context or {},
-                require_diligence=require_diligence,
+                # BOOSTING guard: a leaf on its 2nd+ round (>=1 red already)
+                # must show the work — diligence becomes mandatory.
+                require_diligence=require_diligence or node.attempts >= 1,
+                # GATE-BINDING: a pre-existing artifact can't prove new work.
+                leaf_created_at=node.created_at,
+                leaf_title=node.title,
+                leaf_predicate=node.predicate,
             )
         except Exception as ex:
             return {"ok": False, "error": f"court error: {type(ex).__name__}: {ex}"}
@@ -854,12 +977,14 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         description=(
             "ROMA method — apply a verdict ('green'|'red'|'needs_root') to a "
             "LEAF directly (e.g. an out-of-band court, or the founder settling "
-            "an escalation). ANTI-SELF-CERTIFY: a 'green' is REFUSED when "
-            "judged_by == the leaf's claimer, UNLESS is_root_authority=true "
-            "(the founder/root is the only override of a tie). 'red' bumps the "
-            "re-work counter + frees the claim so the leaf re-enters the "
-            "frontier. Greens derive up the tree (full green sweep). Returns "
-            "{ok, node, sweep}."
+            "an escalation). ANTI-SELF-CERTIFY (identities normalized): a "
+            "'green' is REFUSED on a never-claimed leaf, when judged_by is the "
+            "leaf's claimer, or when judged_by EVER claimed this leaf, UNLESS "
+            "is_root_authority=true WITH a root_token matching env "
+            "ARCHHUB_ROOT_TOKEN (the authenticated founder override; every use "
+            "is audit-logged). 'red' bumps the re-work counter + frees the "
+            "claim so the leaf re-enters the frontier. Greens derive up the "
+            "tree (full green sweep). Returns {ok, node, sweep}."
         ),
     )
     def brain_tree_verdict(
@@ -869,6 +994,7 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         judged_by: str,
         evidence_ref: Optional[str] = None,
         is_root_authority: bool = False,
+        root_token: Optional[str] = None,
     ) -> dict[str, Any]:
         try:
             node = set_verdict(
@@ -879,6 +1005,7 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 judged_by=judged_by,
                 evidence_ref=evidence_ref,
                 is_root_authority=is_root_authority,
+                root_token=root_token,
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}

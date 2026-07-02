@@ -451,6 +451,7 @@ const CAT = {
   connector: { col:LM.cyan,    icon:'⚙', label:'CONNECTOR', role:'A live host operation' },
   shape:     { col:LM.warn,    icon:'◫', label:'SHAPE',     role:'Filter / join / sort / reshape data' },
   math:      { col:LM.warn,    icon:'∑', label:'MATH',      role:'Arithmetic + numbers' },
+  decision:  { col:LM.warn,    icon:'⚖', label:'DECISION',  role:'Score + rank options' },
   text:      { col:LM.inkSoft, icon:'¶', label:'TEXT',      role:'String operations' },
   code:      { col:LM.purple,  icon:'λ', label:'CODE',      role:'Expressions + scripts' },
   adapter:   { col:LM.warn,    icon:'⇄', label:'ADAPTER',   role:'Convert between hosts' },
@@ -1623,6 +1624,74 @@ const LM_CONNECTORS = window.__archhub_LM_CONNECTORS = window.__archhub_LM_CONNE
 // the node palette is built from (docs/NODE_GRAMMAR.md). The ONE
 // source — it replaced the old 80-node enumerated library entirely.
 const LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR = window.__archhub_LM_NODE_GRAMMAR || [];
+// SLICE D (forensic audit 2026-07-02): decision.topsis / decision.fuzzy are
+// REGISTERED engine types (app/workflows/nodes/decision.py) but the bridge
+// grammar never lists them — node_grammar._PREFIX_CAT has no 'decision.'
+// prefix, so _synthesized_primitives() skips the family (wired, not exposed:
+// no palette entry → the user cannot drop one). Surface them CLIENT-side as
+// grammar entries whose `kind` IS the engine type: a drop rides
+// addNodeFromLibrary's `_grammar` branch (node lands with kind stamped +
+// registry-mirrored ports), and normalize_canvas_graph's identity fallback
+// (node_grammar.py engine_type: registry-backed kind → type = kind) stamps
+// type:'decision.topsis' / 'decision.fuzzy' at cook — the SAME working path
+// the auto-surfaced render.* / host.* entries ride, NOT the dead 80-node
+// cat+id library path (those landed type-less → 'no executor').
+// Ports + config_schema mirror the registry NodeSpec VERBATIM — wire ids
+// must match engine port names (palette sources ports, never invents them).
+// `desc` carries the registry description for the palette tooltip.
+const LM_DECISION_GRAMMAR = [
+  {
+    kind: 'decision.topsis', display: 'TOPSIS Score', cat: 'decision',
+    selector: '', engine_types: { '': 'decision.topsis' }, status: 'ready',
+    note: 'client-surfaced registry type', params: [],
+    blurb: 'Rank options by TOPSIS closeness',
+    desc: 'Rank options by TOPSIS closeness coefficient. `criteria` = '
+        + '[{name, weight, direction: max|min}], `options` = [{name, '
+        + 'values: {criterion: number}}]. Wired inputs win over config. '
+        + 'Pure + deterministic.',
+    ports: {
+      in:  [{ id: 'criteria', type: 'LIST' }, { id: 'options', type: 'LIST' }],
+      out: [{ id: 'ranked', type: 'LIST' }, { id: 'best', type: 'STRING' }],
+    },
+    config_schema: {
+      criteria: { type: 'array',
+                  description: '[{name, weight>0, direction max|min}]' },
+      options:  { type: 'array',
+                  description: '[{name, values:{criterion:number}}]' },
+    },
+  },
+  {
+    kind: 'decision.fuzzy', display: 'Fuzzy Score', cat: 'decision',
+    selector: '', engine_types: { '': 'decision.fuzzy' }, status: 'ready',
+    note: 'client-surfaced registry type', params: [],
+    blurb: 'Rank options from fuzzy judgements',
+    desc: 'Rank options from linguistic multi-stakeholder judgements '
+        + '(triangular fuzzy numbers). Weights very-low..very-high, ratings '
+        + 'very-poor..very-good; stakeholders fused by fuzzy averaging, '
+        + 'defuzzified by centroid. Wired inputs win over config. '
+        + 'Pure + deterministic.',
+    ports: {
+      in:  [{ id: 'criteria', type: 'LIST' }, { id: 'options', type: 'LIST' }],
+      out: [{ id: 'ranked', type: 'LIST' }, { id: 'best', type: 'STRING' }],
+    },
+    config_schema: {
+      criteria: { type: 'array',
+                  description: '[{name, weights: [very-low..very-high per '
+                             + 'stakeholder], direction max|min}]' },
+      options:  { type: 'array',
+                  description: '[{name, ratings: {criterion: '
+                             + '[very-poor..very-good per stakeholder]}}]' },
+    },
+  },
+];
+// The palette-facing grammar: bridge grammar + the client-surfaced decision
+// entries. A bridge entry with the same kind WINS (no double-listing if the
+// Python grammar ever starts synthesizing the 'decision.' prefix itself).
+const _lmGrammarAll = () => {
+  const base = LM_NODE_GRAMMAR || [];
+  const have = new Set(base.map(p => p && p.kind));
+  return base.concat(LM_DECISION_GRAMMAR.filter(p => !have.has(p.kind)));
+};
 // User-minted custom nodes — AI-designed via Node Smith or hand-built.
 const LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES = window.__archhub_LM_CUSTOM_NODES || [];
 // Agent-authored free-form UI widgets (the UI RUNG). Each is {id,title,
@@ -1674,7 +1743,7 @@ const _configSchemaFor = (node) => {
   if (node.config_schema && typeof node.config_schema === 'object'
       && Object.keys(node.config_schema).length > 0) return node.config_schema;
   const g = (node._grammar) ||
-            (LM_NODE_GRAMMAR || []).find(p => p && p.kind === node.kind);
+            _lmGrammarAll().find(p => p && p.kind === node.kind);
   const cs = g && g.config_schema;
   return (cs && typeof cs === 'object') ? cs : {};
 };
@@ -4608,7 +4677,7 @@ const WirePromotePalette = ({ detail, onClose, onPick }) => {
   // specialisations + saved skills.
   const all = React.useMemo(() => {
     const out = [];
-    (LM_NODE_GRAMMAR || []).forEach(p => {
+    _lmGrammarAll().forEach(p => {
       if (p.kind === 'connector') {
         // Expand connector into 16 per-host entries.
         (LM_CONNECTORS || []).forEach(c => {
@@ -5955,10 +6024,10 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
           // Same mechanism will power Skills (one `skill` primitive,
           // N entries pre-locking `skill_id`).
           const prims = q
-            ? (LM_NODE_GRAMMAR || []).filter(p =>
+            ? _lmGrammarAll().filter(p =>
                 ((p.display || '') + ' ' + (p.kind || '') + ' ' + (p.note || ''))
                   .toLowerCase().includes(q.toLowerCase()))
-            : (LM_NODE_GRAMMAR || []);
+            : _lmGrammarAll();
           if (prims.length === 0) return null;
           const expand = (p) => {
             if (p.kind === 'connector' && (LM_CONNECTORS || []).length > 0) {
@@ -6006,8 +6075,8 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
           }
           // Stable section order (matches the grammar declaration order
           // in app/workflows/node_grammar.py); unknown cats fall through.
-          const order = ['input','connector','ai','logic','math','text',
-                         'shape','adapter','output','share','skill',
+          const order = ['input','connector','ai','logic','math','decision',
+                         'text','shape','adapter','output','share','skill',
                          'watch','trigger','note'];
           const sections = order
             .filter(c => grouped.has(c))
@@ -6200,7 +6269,8 @@ const NodeLibItem = ({ it, cat, onAdd, draggable = true, pinned = false, onPin =
       onDoubleClick={onAdd}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
-      title={draggable ? 'Drag onto canvas, or double-click to add' : 'Double-click to add'}
+      title={(it._grammar && it._grammar.desc)
+        || (draggable ? 'Drag onto canvas, or double-click to add' : 'Double-click to add')}
       style={{
         display:'flex', alignItems:'center', gap:8, padding:'5px 8px',
         borderRadius:4, cursor: draggable ? 'grab' : 'pointer', userSelect:'none',
@@ -6224,7 +6294,7 @@ const NodeLibItem = ({ it, cat, onAdd, draggable = true, pinned = false, onPin =
         const _sfx = ({
           input:'pure', logic:'pure', math:'pure', text:'pure',
           shape:'pure', adapter:'pure', watch:'pure', trigger:'pure',
-          note:'pure', code:'pure',
+          note:'pure', code:'pure', decision:'pure',
           ai:'network', share:'network',
           connector:'host_write', output:'host_write', skill:'host_write',
         })[c];
@@ -14634,7 +14704,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
   // uses. No second catalogue that can drift out of sync.
   const _allGroups = React.useMemo(() => {
     const byCat = {};
-    (LM_NODE_GRAMMAR || []).forEach(p => {
+    _lmGrammarAll().forEach(p => {
       const c = p.cat || 'node';
       (byCat[c] = byCat[c] || []).push({
         id: 'ng:' + p.kind, title: p.display || p.kind,
@@ -14691,7 +14761,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
       });
       return s;
     };
-    return (LM_NODE_GRAMMAR || [])
+    return _lmGrammarAll()
       .map(p => ({ p, s: score(p) }))
       .filter(x => x.s > 0)
       .sort((a, b) => b.s - a.s)
@@ -14719,7 +14789,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
             {_ranked ? `${_ranked.length} MATCHES · RANKED BY INTENT`
-                     : `${(LM_NODE_GRAMMAR || []).length} NODES · CLICK TO ADD`}
+                     : `${_lmGrammarAll().length} NODES · CLICK TO ADD`}
           </span>
           <div style={S_FLEX1}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
@@ -14877,6 +14947,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                       input:'pure', logic:'pure', math:'pure', text:'pure',
                       shape:'pure', adapter:'pure', watch:'pure',
                       trigger:'pure', note:'pure', code:'pure',
+                      decision:'pure',
                       ai:'network', share:'network',
                       connector:'host_write', output:'host_write',
                       skill:'host_write',
@@ -14884,7 +14955,8 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
                     const sfx = (meta && meta.side_effects) || _catSfx[cat] || null;
                     const stat = meta && meta.status;
                     return (
-                      <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }} style={{
+                      <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }}
+                        title={(i._grammar && i._grammar.desc) || undefined} style={{
                         background:LM.bg, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${c.col}`,
                         borderRadius:6, padding:'8px 11px', textAlign:'left', cursor:'pointer',
                         color:LM.ink, fontFamily:LM.sans,
@@ -20050,8 +20122,8 @@ const CommandPaletteInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
       { kind:'action', label:'▤ Open plan history', id:'open-plan-history',
         run:() => { try { window.dispatchEvent(new CustomEvent('lm-aiplan-history-open', { detail:{} })); } catch (e) {} } },
     );
-    // Nodes from grammar
-    (window.__archhub_LM_NODE_GRAMMAR || []).forEach(p => {
+    // Nodes from grammar (+ client-surfaced decision entries — SLICE D)
+    _lmGrammarAll().forEach(p => {
       items.push({
         kind:'node',
         label:'+ ' + (p.display || p.kind),

@@ -1,0 +1,298 @@
+{
+  "summary": "Un-rig the court (founder juror-diversity spec), make X-mode real, make learning consumed, expose decision nodes in palette",
+  "agentCount": 8,
+  "logs": [],
+  "result": {
+    "results": [
+      {
+        "build": {
+          "slice": "SLICE A — UN-RIG THE COURT (personal-brain-mcp: requirement_tree.py, court_harness.py, roma.py + tests)",
+          "files": [
+            "personal-brain-mcp/src/personal_brain/court_harness.py",
+            "personal-brain-mcp/src/personal_brain/requirement_tree.py",
+            "personal-brain-mcp/src/personal_brain/roma.py",
+            "personal-brain-mcp/tests/test_court_unrig.py",
+            "personal-brain-mcp/tests/test_roma.py",
+            "personal-brain-mcp/tests/test_dispatcher.py"
+          ],
+          "tests_run": "python -m pytest tests/test_court_unrig.py tests/test_roma.py tests/test_diligence.py -q → 58 passed in 1.15s; full brain suite python -m pytest tests -q → 809 passed, 4 skipped in 124.87s; RED-check (git stash src, rerun test_court_unrig.py) → 20 errors on the un-fixed implementation, then stash popped and trio re-confirmed 58 passed.",
+          "tests_passed": true,
+          "pytest_tail": "tests/test_court_unrig.py tests/test_roma.py tests/test_diligence.py -q\n..........................................................               [100%]\n58 passed in 1.15s\n\ntests -q (full brain suite)\n........................................................................ [ 97%]\n.....................                                                    [100%]\n809 passed, 4 skipped, 7 warnings in 124.87s (0:02:04)\n\nRED-check (source fixes stashed, tests kept):\nERROR tests/test_court_unrig.py::test_refuted_lens_is_red_regardless_of_confidence\nERROR tests/test_court_unrig.py::test_identical_gate_clone_of_red_leaf_raises\nERROR tests/test_court_unrig.py::test_run_to_dry_defaults_require_diligence_true\n20 errors in 0.34s",
+          "not_done": "WHAT I DID: (1) IDENTITY — normalize_agent (strip+casefold) defined ONCE in court_harness, used in set_verdict, claim_leaf, and lens_independence; 'Exec-1'/' exec-1 ' attacks refused. (2) UNCLAIMED/BOOMERANG — green on a never-claimed leaf raises PermissionError; ReqNode.past_claimants records every claimant (at claim AND before red clears the claim); any past claimant judging green is refused. (3) GOD-MODE — is_root_authority now requires env ARCHHUB_ROOT_TOKEN + matching root_token (hmac.compare_digest); brain.tree_verdict gained the root_token param; every override writes logging.warning + an append into brain_meta['root_override_log_v1']. (4) GATE-BINDING — convene_court gained leaf_created_at/leaf_title/leaf_predicate (roma.judge_leaf + brain.tree_court pass them); file_exists/py_compile refute when mtime < leaf_created_at - 2s grace (grace needed: measured ~0.5ms NTFS-vs-wallclock skew made honest fresh writes stat earlier); pre_existing_ok honoured only with valid root token; leaf title/predicate recorded in verdict reason. (5) JURY — LensVerdict/ProbeResult gained confidence + failure_mode; jury-of-one (only artifact applied) → needs_root; soft vote sum(conf*w)/sum(w) with weights artifact 2.0/diligence 1.0/independence 1.0, threshold 0.7, below → needs_root; refuted lens → red absolutely. (6) BOOSTING — decompose of a RED node refuses children with identical gate_kind+gate_spec (ValueError); round>=2 (attempts>=1) forces require_diligence in judge_leaf + brain.tree_court. (7) run_to_dry defaults require_diligence=True. NOT DONE / NOT LOOKED AT: (a) app/ untouched per instructions — self_extend.py builds artifacts BEFORE atomize, so its py_compile gates will now stale-refute, and its identical-gate re-decompose now raises ValueError (currently swallowed by its try/except) — the parallel app/ agent must adapt; (b) server_verify.py (off-process verifier) still mirrors the OLD aggregation — no gate-binding, jury-of-one, or soft-vote there (outside the slice's file list); (c) pytest_probe has no staleness check (spec named file_exists + py_compile only); (d) dispatcher.run_standing still defaults require_diligence=False (spec demanded the default flip only in roma.run_to_dry); (e) the RED-check shows collection-level errors (new symbols absent on old source), not per-attack assertion failures; (f) diligence.py needed no change (its policy was not defective; the fixes live in the lens/tree layers); (g) nothing committed — the shared worktree carries other agents' uncommitted edits (app/, storage.py, server.py, sync_worker.py) which I did not touch; (h) test_roma.py (3 tests) and test_dispatcher.py (fixture) were updated to write FRESH artifacts because the old tests proved leaves with the package's ancient __init__.py — exactly the attack now banned."
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "Trio (personal-brain-mcp, PYTHONPATH=src):\n$ python -m pytest tests/test_court_unrig.py tests/test_roma.py tests/test_diligence.py -q\n..........................................................               [100%]\n58 passed in 1.15s\n\nFull brain suite:\n$ python -m pytest tests -q\n809 passed, 4 skipped, 7 warnings in 88.82s (0:01:28)\n\nPost-mutation-revert re-confirmation of the trio:\n..........................................................               [100%]\n58 passed in 1.18s",
+          "attack_replay": "Replayed the ORIGINAL audit exploits in scratchpad/attack_replay_court_unrig.py (real in-memory BrainStore, no root token in env, the REAL C:/Windows/win.ini with 2022 mtime). All 7 attacks now FAIL:\n[OK] 1. win.ini garbage-leaf ('cure cancer' gated on C:/Windows/win.ini) -> verdict=red, reason 'REFUTED: [artifact/stale_artifact] pre-existing artifact refused: C:\\Windows\\win.ini was last modified BEFORE this leaf was created (mtime=1651900952...)' and the reason carries the leaf title/predicate.\n[OK] 2. Exec-1 case-flip -> PermissionError 'self-certification refused: judge Exec-1 is the same agent that claimed'.\n[OK] 2b. ' exec-1 ' trailing-space -> PermissionError.\n[OK] 3. green on never-claimed leaf -> PermissionError 'green refused: leaf ... was never claimed'.\n[OK] 4. tokenless is_root_authority=True -> PermissionError 'root override refused: requires env ARCHHUB_ROOT_TOKEN'.\n[OK] 4b. guessed root_token with no env token -> PermissionError (closed-by-default confirmed).\n[OK] 5. boomerang (red clears claim, original claimer returns case-flipped as judge 'EXEC-1') -> PermissionError with claim history ['exec-1','exec-2'].\nScript exit 0 = ALL ORIGINAL ATTACKS NOW FAIL.\n\nMUTATION TEST: removed .casefold() from normalize_agent in court_harness.py:76 -> 3 tests failed (test_case_flip_judge_refused_in_set_verdict, test_case_flip_refused_by_independence_lens, test_red_roundtrip_original_claimer_cannot_regreen; 'DID NOT RAISE PermissionError'). Reverted; git diff of court_harness.py shows only '+    return (ident or \"\").strip().casefold()' (the fixed line) and no mutated variant; trio re-ran 58 passed.",
+          "shell_smells": [
+            "None blocking. Tests assert real values: pytest.raises(PermissionError), exact verdict strings, reason substrings, JSON audit-log field-by-field, node states, and drive the real BrainStore/subprocess py_compile/real file mtimes — no mocked-out core.",
+            "Minor (non-blocking): test_run_to_dry_defaults_require_diligence_true checks the signature default via inspect (semi-tautological) but is paired with a real behavioral assertion (lazy executor -> dry=False, green_leaves=0), so it would still catch a broken implementation.",
+            "Minor (non-blocking): the weak_probe/confident_fail injected probes in the soft-vote tests are stubs, but the unit under test there IS convene_court's aggregation, so injection is the correct hermetic pattern (matches the module's injectable-probe design).",
+            "Disclosed gaps confirmed real but out-of-slice: server_verify.py still has the old aggregation (grep confirms no gate-binding/jury-of-one there); pytest_probe has no staleness check (spec named file_exists+py_compile only); dispatcher.run_standing still defaults require_diligence=False as the spec demanded.",
+            "lens_diligence fails OPEN on its own internal error (documented as the Stop-hook contract); under require_diligence=True that converts to red anyway, so it cannot silently green."
+          ],
+          "reason": "All four gates pass. (1) Fresh run: the exact trio the builder named gives 58 passed in 1.15s and the full brain suite gives 809 passed, 4 skipped — matching the builder's claimed counts. (2) The original audit exploits — win.ini garbage-leaf, Exec-1 case-flip, trailing-space flip, unclaimed-green, tokenless god-mode bool (with and without a guessed token), and the red-roundtrip boomerang — were replayed against the fixed code with no root token in the environment and every one is now refused with a typed PermissionError or a red verdict whose reason names the stale artifact AND the leaf's title/predicate (gate-binding proven on the real C:/Windows/win.ini). (3) Mutation: deleting the casefold from normalize_agent made 3 tests fail immediately; the mutation was reverted and the diff verified clean. (4) I read court_harness.py and requirement_tree.py end to end: normalize_agent is defined once and used at claim, verdict, and lens layers; past_claimants persists through the red round-trip; root override requires env token + hmac.compare_digest and writes both logging.warning and brain_meta['root_override_log_v1']; cosmetic-clone decompose raises ValueError; attempts>=1 forces require_diligence in roma.judge_leaf; jury-of-one and the 0.7 soft-vote both escalate to needs_root, and a refuted lens is red absolutely. The builder's not_done list is honest and each disclosed gap I spot-checked is genuinely out of the slice's file list."
+        }
+      },
+      {
+        "build": {
+          "slice": "B — MAKE X-MODE REAL: router-driven atomize_vision onto the proven build tools (create_connector/create_node_type/create_ui_widget) with real machine gates; hello-marker default DELETED (materializer jailed to self_extend_test_fixture dirs); run_self_extend_loop routes build leaves through build_artifact (the proven run_self_extend machinery) with per-gate extra probes; learn arm names the real artifact (capability + path); router=None → honest manual leaf → needs_root, never a fake green. Also adapted to the parallel court agent's new staleness rule via executor-side _stamp_artifact (os.utime) after reproducing both the deterministic build-before-tree refusal and a Windows ~15ms file-time-tick flake.",
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/agents/composer_agent.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/agents/self_extend.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/tests/test_xmode_real.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/tests/test_self_extend_loop.py"
+          ],
+          "tests_run": "python -m pytest tests/test_xmode_real.py tests/test_self_extend_loop.py tests/test_self_extend_ui_widget.py -q (46 tests; repeated 5x for flake check) + neighbor suites python -m pytest tests/test_self_extend_free_text_live.py tests/test_plan_mode_gate.py tests/test_composer_completion.py tests/test_composer_tool_surface.py tests/test_ambient_grow.py -q (50 tests). Also proved the 8 new tests FAIL against the pre-fix files (reverted to HEAD: 8 failed in 0.51s).",
+          "tests_passed": true,
+          "pytest_tail": "> python -m pytest tests/test_xmode_real.py tests/test_self_extend_loop.py tests/test_self_extend_ui_widget.py -q\n..............................................                           [100%]\n46 passed in 1.00s\n\n(neighbors)\n> python -m pytest tests/test_self_extend_free_text_live.py tests/test_plan_mode_gate.py tests/test_composer_completion.py tests/test_composer_tool_surface.py tests/test_ambient_grow.py -q\n..................................................                       [100%]\n50 passed in 570.68s (0:09:30)\n\n(proof the new tests bite — pre-fix files checked out from HEAD)\n> python -m pytest tests/test_xmode_real.py -q\nFAILED tests/test_xmode_real.py::test_sketchup_ask_decomposes_to_create_connector_leaf\nFAILED tests/test_xmode_real.py::test_decompose_call_uses_strict_json_tool_schema\nFAILED tests/test_xmode_real.py::test_node_type_and_widget_proposals_map_to_their_gates\nFAILED tests/test_xmode_real.py::test_garbage_plan_falls_back_to_one_manual_leaf\nFAILED tests/test_xmode_real.py::test_loop_builds_real_connector_never_the_marker\nFAILED tests/test_xmode_real.py::test_materializer_refuses_everything_but_the_test_fixture_dir\nFAILED tests/test_xmode_real.py::test_router_none_is_honest_needs_root\nFAILED tests/test_xmode_real.py::test_airtable_ask_no_router_never_writes_hello_marker\n8 failed in 0.51s",
+          "not_done": "Did NOT edit personal-brain-mcp/ (court agent's parallel slice — its new GATE-BINDING staleness rule landed mid-session and was accommodated executor-side via _stamp_artifact in my files only), did NOT edit app/bridge.py or the JSX. Did NOT run the full repo suite or the personal-brain-mcp suite — only the required command + the 5 neighbor suites importing composer_agent/self_extend. Did NOT exercise a live LLM router or the live ui_renders launch (hermetic stubs; skipped launch honestly yields needs_root). Changed assertions in tests/test_self_extend_loop.py, each documented in-file: (1) test_atomize_vision_default_decomposition renamed to test_atomize_vision_without_router_is_honest_manual (was 3 fixed hello-marker leaves → now 1 manual leaf, 'cannot decompose without a model'); (2-4) test_loop_court_gated_green_and_learns / test_loop_court_refuses_absent_artifact / test_loop_green_leaf_carries_artifact_path now pass the 3-leaf marker decomposition EXPLICITLY via a self_extend_test_fixture/proof_marker.py path (new _fixture_marker fixture) instead of relying on the deleted default; their green/refute/undo assertions are unchanged. Flag for the court agent: the staleness gate defends decomposition-time gaming, not a hostile in-process executor (any executor can utime a file); server-side re-verify remains the backstop."
+        },
+        "court": {
+          "attack_replay": "Original exploit: run_self_extend_loop('build me an Airtable connector', router=None, jailed APPDATA). AGAINST FIXED CODE: ok=False dry=False; leaf verdicts [(False,'needs_root','cannot decompose without a model...'), (True,'needs_root','self-extend: build me an Airtable connector')]; hello_marker at old default path: False; hello_marker anywhere under jailed APPDATA: []; green verdicts: 0; brain.write calls: 0 → EXPLOIT DEAD, exit=0. CONTROL — same script against PRE-FIX HEAD (git show HEAD: versions in a temp overlay, worktree untouched): ok=True dry=True; 4 GREEN verdicts (file_exists / py_compile / sentinel / terminal root); hello_marker.py WRITTEN at <jail>/ArchHub/self_extend/hello_marker.py; brain.write calls: 3 → EXPLOIT STILL ALIVE, exit=1. The attack detects the defect and the fix kills it. Bridge check: app/bridge.py:6587 passes router=self.router, so the live path gets real router decomposition; needs_root is only the honest no-model exit. MUTATION TEST (both caught, both reverted, git diff confirmed clean): (1) materializer guard reverted to old \"'self_extend' in norm\" → test_materializer_refuses_everything_but_the_test_fixture_dir FAILED (1 failed, 45 passed); (2) dropped router=router from the loop's _atomize_vision call → test_loop_builds_real_connector_never_the_marker FAILED (1 failed, 45 passed). Post-revert: 46 passed.",
+          "fresh_pytest_tail": "python -m pytest tests/test_xmode_real.py tests/test_self_extend_loop.py tests/test_self_extend_ui_widget.py -q — 5 repeats:\nRUN1: 46 passed in 1.00s | RUN2: 46 passed in 0.99s | RUN3: 46 passed in 0.96s | RUN4: 46 passed in 0.97s | RUN5: 46 passed in 1.04s\nNeighbor suites: python -m pytest tests/test_self_extend_free_text_live.py tests/test_plan_mode_gate.py tests/test_composer_completion.py tests/test_composer_tool_surface.py tests/test_ambient_grow.py -q\n..................................................                       [100%]\n50 passed in 443.47s (0:07:23)   [clean foreground run post-mutation-revert; an earlier background run also gave 50 passed in 511.15s]\nFinal post-revert confirmation: 46 passed in 0.94s",
+          "shell_smells": [
+            "NON-BLOCKING / flagged for court-unrig slice: _stamp_artifact (self_extend.py) os.utime's artifacts from inside the executor to satisfy the parallel court slice's mtime-staleness rule; it only touches files the build itself just materialized (build.ok path or the guarded fixture marker) and never a fabricated gate path, and the builder disclosed it in-file and in not_done — but any in-process executor can utime, so the staleness gate is only anti-decomposition-gaming; server-side re-verify must stay the backstop. The court-unrig verifier should rule on it.",
+            "DISCLOSED, acceptable: the LLM router is a hermetic stub (_PlanRouter) in every test; no live model or live ui_renders launch exercised. Court (roma.judge_leaf), build (real connector file on disk, asserted via conn.exists()), and brain store are real; the stub feeds the SAME on_tool_invocation/extra_tools surface the real router uses, and the plan→gate mapping asserted is done by production code, not the stub — not circular.",
+            "ACCEPTED default-behavior change: test_self_extend_loop.py's 4 changed tests alter what atomize_vision's no-router default asserts — but the old default WAS the audited defect; each change is documented in-file, matches the builder's disclosure exactly, and the green/refute/undo assertion bodies are unchanged (verified line-by-line in the diff, now driven by an explicit self_extend_test_fixture decomposition).",
+            "Trivial: _capability_of(run_result, leaf) never uses its leaf parameter."
+          ],
+          "reason": "All four gates pass. (1) Fresh runs: 46 tests green 5/5 repeats, 50 neighbor tests green twice. (2) Attack replay is decisive with a control: the literal audit exploit ('build me an Airtable connector', no router) run against pre-fix HEAD writes hello_marker.py, greens 4 leaves and learns 3 fragments; against the fixed code it yields honest needs_root, zero greens, zero markers, zero learns — same script, only the code under test changed. (3) Two independent mutations of core fix lines (materializer guard weakened; router dropped from atomize call) each broke exactly the tests built to guard them; both reverted with git diff confirming restoration. (4) No blocking smells: assertions are real-value (files on disk, WriteOp schema validation, verdicts, fragment text); the only mock is the LLM router, disclosed and non-circular; the changed legacy-test assertions are the documented removal of the defective default. The builder's not_done list is accurate (personal-brain-mcp untouched by this slice's claim, bridge/JSX untouched, live-LLM not exercised). One cross-slice flag carried forward: _stamp_artifact's interaction with the court staleness rule belongs to the court-unrig verifier's docket, not grounds to refute this slice.",
+          "verdict": "GREEN"
+        }
+      },
+      {
+        "build": {
+          "slice": "C — MAKE LEARNING CONSUMED (skills counted on read path; sync merge-max preserves reinforcement; hybrid recall lane wired into brain.context behind ARCHHUB_HYBRID_RECALL default ON)",
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/storage.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/server.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/personal_cloud_sync.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/sync_worker.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/tests/test_learning_consumed.py"
+          ],
+          "tests_run": "PYTHONPATH=src python -m pytest tests/test_learning_consumed.py tests/test_hybrid_recall.py -q (20 passed); neighbor suites test_personal_cloud_sync*.py test_server.py test_federation.py test_sync.py test_sync_worker.py test_meaning_space_retrieval.py (119 passed); full suite python -m pytest tests -q (804 passed, 5 failed — all in court/roma/dispatcher, the parallel agent's zone, proven pre-existing by re-running with my 4 source files reverted to baseline)",
+          "tests_passed": true,
+          "pytest_tail": "$ PYTHONPATH=src python -m pytest tests/test_learning_consumed.py tests/test_hybrid_recall.py -q\n....................\n20 passed in 0.16s\n\n$ PYTHONPATH=src python -m pytest tests -q\nFAILED tests/test_court_unrig.py::test_fresh_file_created_after_leaf_passes\nFAILED tests/test_court_unrig.py::test_pre_existing_ok_requires_root_token - ...\nFAILED tests/test_dispatcher.py::test_lane_stands_alone_when_no_fleet_is_present\nFAILED tests/test_roma.py::test_judge_leaf_records_verdict - AssertionError: ...\nFAILED tests/test_roma.py::test_run_to_dry_re_decomposes_red_leaf - assert Fa...\n5 failed, 804 passed, 4 skipped, 7 warnings in 91.05s (0:01:31)",
+          "not_done": "Did NOT touch requirement_tree/court_harness/diligence/roma nor hybrid_recall.py/retrieval.py (wiring done at the make_context_payload choke point in server.py; retrieval.py already carried the hybrid_alpha param on this branch). Did NOT fix the 5 full-suite failures in test_court_unrig/test_dispatcher/test_roma — they belong to the parallel agent's in-flight work: they fail identically with my 4 source files reverted to baseline, and the failing set shifts between runs as that agent edits live. Did NOT commit (no commit requested). Did NOT change cloud_backend/replica code — merge-max is enforced on the local apply paths (both workers). predict_alpha semantics untouched: the audit's literal prose query 'sketchup connector self-extended' is alpha=1.0 by the predictor's documented contract, so the surfacing test uses an exact-code query (contains SELF_EXTEND) and the prose query is covered by the ON==OFF bit-identical regression test."
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "Slice tests (tests/test_learning_consumed.py tests/test_hybrid_recall.py -q):\n....................                                                     [100%]\n20 passed in 0.15s\n\nNeighbor suites (test_personal_cloud_sync*.py test_server.py test_federation.py test_sync.py test_sync_worker.py test_meaning_space_retrieval.py -q):\n........................................................................ [ 72%]\n...........................                                              [100%]\n99 passed in 3.18s\n\nFull suite (python -m pytest tests -q):\n809 passed, 4 skipped, 7 warnings in 89.65s (0:01:29)\n\nNote: I count 99 neighbor tests vs the builder's claimed 119 (likely a file-glob difference) — zero failures either way. Full suite is now 809 passed / 0 failed: the 5 court/roma/dispatcher failures the builder attributed to the parallel agent have since resolved, so even that caveat no longer applies.",
+          "attack_replay": "Standalone replay script (scratchpad/attack_learning_consumed.py) re-running the original audit exploits against the fixed tree; each prints EXPLOIT-HOLDS if the defect survives:\n\nEXPLOIT-DEAD  | 1 skills-never-counted        | success_count=3 gate_patterns=1  (3 make_context_payload calls now increment the real sqlite skills row; derive_skill_usage_patterns gate reachable — audit said unsatisfiable by construction)\nEXPLOIT-DEAD  | 2a sync-wipes-fragment        | local success_count after apply=8 (was 8) — remote wire with 0 touches no longer zeroes local evidence\nEXPLOIT-DEAD  | 2b wire-omits-counters        | _fragment_to_wire now carries success_count/fail_count/last_used_at\nEXPLOIT-DEAD  | 2c worker-skill-overwrite     | skill success_count after stale-remote apply=5 (was 5) — SyncWorker merges max(local,remote), stale 2020 last_used_at does not rewind\nEXPLOIT-DEAD  | 3a loop-fact-buried           | self_extend::connector::sketchup surfaces at rank 0 past 10 harvest decoys with default env (was absent under pure dense)\nEXPLOIT-HOLDS | 3b prose-query                | audit's literal prose query 'sketchup connector self-extended' still buries the fact — matches builder's declared scope: predict_alpha's documented pre-existing contract keeps no-code-token queries at alpha=1.0 (zero-risk, regression-tested ON==OFF bit-identical), and the court's own replay definition for this slice is 'skill touch + sync counter round-trip', all dead.\n\nMutation test: replaced `remote_success = max(remote_success, local.success_count)` in personal_cloud_sync._apply_remote_fragment with a no-op (excluded-overwrite re-added) -> test_apply_never_lowers_local_fragment_evidence FAILED asserting the real value (got 2, expected 8): \"1 failed, 10 passed\". Reverted; `git diff | grep -i mutation` empty (exit 1); 20 passed again.",
+          "shell_smells": [
+            "None blocking. Checked: (a) no assertion-free tests — every test asserts concrete sqlite row values (success_count==1/2/3/5/7/8/10) and exact ranked id lists; (b) circularity — test_hybrid_off_equals_pure_dense compares env='0' to hybrid_alpha=1.0 which is definitional, but it ALSO asserts TARGET not in ids_off (independent behavioral fact), and test_self_extend_fact_surfaces asserts rank 0 against 10 decoys, so the identity checks are not the only teeth; (c) mocked core — SyncWorker(store, transport=object()) uses a dummy transport, but only local apply helpers are exercised and real sqlite stores back every test; network tick paths are covered by the neighbor sync suites (99 passed); (d) default behavior change — ARCHHUB_HYBRID_RECALL defaults ON and make_context_payload now touches skill rows on every read: both ARE deliberate default changes, but they are the audited fix itself (defects 1 and 3), env-killable, and the prose regression test pins ON==OFF bit-identical for non-code queries; (e) minor claim discrepancies — neighbor count 99 vs claimed 119, and full suite 809/0 vs claimed 804/5; both discrepancies are in the direction of MORE green, not less."
+          ],
+          "reason": "Could not refute. Fresh runs: slice 20/20, neighbors 99/0, full suite 809 passed 0 failed (better than the builder's claim — the 5 parallel-zone failures are gone). Independent attack replay killed all exploits within the court's definition of this slice (skill touch + sync counter round-trip) plus the exact-code loop-fact surfacing: skills are now counted on the real sqlite row making the federation gate reachable, wire dicts carry reinforcement counters, both apply paths (PersonalCloudSync and SyncWorker) merge max(local,remote) and never rewind last_used_at, and the self_extend fact surfaces at rank 0 with the default env. The one surviving exploit variant (literal prose query without a code token) is honestly declared in not_done, consistent with the pre-existing predict_alpha zero-risk contract from commit 1fcb603, and pinned by a bit-identical ON==OFF regression test rather than hidden. Mutation of the core max-merge line was caught by a real-value assertion (2 vs 8) and cleanly reverted. Diff inspection confirms the fix lives in real code paths (storage.touch_skill SQL UPDATE, wire serialization, both apply choke points, server.py make_context_payload) — no mocked-out core, no assertion-free tests, no circular-only checks."
+        }
+      },
+      {
+        "build": {
+          "slice": "D — Expose decision.topsis + decision.fuzzy in the canvas palette (studio-lm.jsx + recompiled studio-lm.compiled.js)",
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/web_ui/studio-lm.jsx",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/web_ui/studio-lm.compiled.js"
+          ],
+          "tests_run": "python -m pytest tests/test_decision_nodes.py tests/test_node_palette_drag.py tests/test_discovery_palette.py tests/test_node_grammar.py tests/test_grammar_synth.py tests/test_grammar_health.py tests/test_grammar_config_schema.py tests/test_typed_grammar_end_to_end.py tests/test_build_jsx_precompile.py tests/test_jsx_signal_wiring.py tests/test_voice_lint.py -q; plus python tools/voice_lint.py --strict (clean, 0 findings across 3 files); plus python tools/build_jsx.py --check (up to date, sha pair verified); plus a node+python end-to-end proof: real LM_DECISION_GRAMMAR extracted from the edited jsx -> exact drag payload JSON round-trip -> addNodeFromLibrary grammar-branch shape -> real normalize_canvas_graph stamped type 'decision.topsis'/'decision.fuzzy' -> real WorkflowRunner cook returned {\"status\":\"ok\",\"ranked\":[{\"name\":\"A\",\"score\":0.8639781093811525},{\"name\":\"B\",\"score\":0.13602189061884745}],\"best\":\"A\"}",
+          "tests_passed": true,
+          "pytest_tail": "........................................................................ [ 27%]\n........................................................................ [ 54%]\n........................................................................ [ 82%]\n..............................................                           [100%]\n262 passed in 4.79s",
+          "not_done": "DROP-PATH TYPE EVIDENCE (the load-bearing proof): a dropped decision node gets its engine type via the GRAMMAR path, not the broken 80-node cat+id path. Chain with file:line — (1) palette entry carries _grammar (studio-lm.jsx:6055 expand -> it={id:'ng:'+p.kind, _grammar:p}); (2) NodeLibItem drag serializes it whole (jsx:6262 setData('application/x-lm-node', JSON.stringify({...it,cat}))); (3) canvas onDrop parses and calls addNodeFromLibrary(payload) (jsx:9519-9525); (4) the grammar branch stamps kind=g.kind + engine-mirrored ports (jsx:2428, 2434, 2450: id:gid, kind:g.kind); (5) engine side, normalize_canvas_graph resolves type from kind (app/workflows/node_grammar.py:1545-1549) via engine_type's identity fallback for registry-backed kinds (node_grammar.py:994-998, registry.get('decision.topsis') exists per app/workflows/nodes/decision.py:170/330). Note the canvas node itself carries `kind` (type is stamped at cook by normalize_canvas_graph, same as every auto-surfaced render.*/host.* palette node — node.type == 'decision.topsis' exactly, proven by running the real Python normalize + WorkflowRunner on the real dragged payload; output pasted in tests_run). WHAT I DID NOT DO: (a) did NOT commit — the shared worktree has ~9 other modified files from parallel slices (composer_agent.py, self_extend.py, personal-brain-mcp/*, tests/test_self_extend_loop.py, tests/test_xmode_real.py) that are not mine; a commit would sweep them in. My change is only studio-lm.jsx + studio-lm.compiled.js, both verified (sha header 08494533050eaa9fdc5008d35e2efd32bd1a28156877a0dc0bdc30445e3bcd58 == sha256 of the edited jsx). (b) did NOT add a new pytest file asserting the palette entries (slice mandate: touch only the jsx + compiled; existing 262 neighbor tests run green instead, and the end-to-end node+python proof above fails on a broken kind/port). (c) did NOT extend two non-palette LM_NODE_GRAMMAR consumers: the composer bare-type spawn lookup (jsx:~10552) and the memory-hit -> grammar match (jsx:~14885) — decision nodes spawn from the rail palette, the Node Library modal, the wire-promote palette and the Cmd+K palette (all switched to _lmGrammarAll()), but a composer 'spawn decision.topsis' text command still resolves only if the bridge grammar lists it (Python-side _PREFIX_CAT gap, out of slice — the real fix is adding ('decision.','decision') to _PREFIX_CAT in node_grammar.py, a python file I was forbidden to touch). (d) did NOT launch the app / CDP-verify a live drag (slice explicitly says static verification, no app launch); the browser-preview hook nag is not applicable — this is the QtWebEngine app UI, not a web dev server."
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "$ python -m pytest tests/test_decision_nodes.py tests/test_node_palette_drag.py tests/test_discovery_palette.py tests/test_node_grammar.py tests/test_grammar_synth.py tests/test_grammar_health.py tests/test_grammar_config_schema.py tests/test_typed_grammar_end_to_end.py tests/test_build_jsx_precompile.py tests/test_jsx_signal_wiring.py tests/test_voice_lint.py -q\n........................................................................ [ 82%]\n..............................................                           [100%]\n262 passed in 4.73s\n$ python tools/voice_lint.py --strict\nvoice_lint: clean — 0 findings across 3 file(s).\n$ python tools/build_jsx.py --check\nup to date\n$ node court_palette_proof.mjs (real LM_DECISION_GRAMMAR extracted from edited jsx -> drag payload JSON round-trip -> grammar-branch node shape) then python court_palette_proof.py (real normalize_canvas_graph + real WorkflowRunner, independent config: cost w0.6 min / quality w0.4 max, options A{10,9} B{40,4}):\nstamped types: {'decision.topsis_test0': 'decision.topsis', 'decision.fuzzy_test1': 'decision.fuzzy'}\ncook output: {\"status\": \"ok\", \"ranked\": [{\"name\": \"A\", \"score\": 1.0}, {\"name\": \"B\", \"score\": 0.0}], \"best\": \"A\"}\nE2E PROOF OK: dropped decision node resolves type via grammar path and cooks",
+          "attack_replay": "SHA HEADER: sha256(app/web_ui/studio-lm.jsx) = 08494533050eaa9fdc5008d35e2efd32bd1a28156877a0dc0bdc30445e3bcd58 == compiled.js ARCHHUB_JSX_SRC_SHA256 header == builder's claimed value. MATCH. ORIGINAL EXPLOIT (wired-not-exposed) replayed on base: git show HEAD:studio-lm.jsx contains 0 mentions of decision.topsis (no palette entry, no drop path); Python bridge grammar_payload() returns 109 kinds with ZERO decision.* entries and _PREFIX_CAT has no 'decision.' prefix; yet registry.get('decision.topsis') and 'decision.fuzzy' are both True (app/workflows/nodes/decision.py registers them at :330/:340 region). Exploit REPRODUCES on base: engine types exist, user cannot drop one. On FIXED jsx: LM_DECISION_GRAMMAR entries (kind==engine type, ports criteria/options -> ranked/best mirror the registry NodeSpec verbatim — checked against decision.py) ride the _grammar drag path (verified at jsx 6056-6062 expand, 6262 setData, 9519-9525 onDrop, 2428-2456 grammar branch — all builder line claims accurate) and the exact serialized drag payload, round-tripped through JSON and the grammar-branch node shape, gets type stamped by the REAL normalize_canvas_graph identity fallback (node_grammar.py:993-1005, 1545-1549) and cooks through the REAL WorkflowRunner: status ok, best correct. Exploit now FAILS. compiled.js carries the grammar (3 decision.topsis mentions) so the running app gets it. MUTATION TEST: changed kind:'decision.topsis' -> 'decision.topsisMUTANT' in the jsx. E2E proof FAILED exactly as the audit's failure mode predicts (stamped type=None -> AssertionError, i.e. the no-executor drop) and build_jsx --check FAILED (STALE). Caveat: the 11 pytest files all still PASSED under the mutant (test_build_jsx_precompile rebuilds the artifact in-place rather than failing on staleness) — the catch came from the slice's other two mandated gates. Reverted the mutation: jsx byte-identical (sha 08494533... restored), rebuilt compiled.js from the restored jsx (the precompile test had overwritten it with the mutant build during the mutation phase — deterministic rebuild, diff stat identical to builder's original 100/46 +118/-28), git diff clean of MUTANT (0 hits), --check up to date, full 262 suite + proof re-run green.",
+          "shell_smells": [
+            "No pytest anywhere asserts the LM_DECISION_GRAMMAR palette entries exist or are well-formed: a future edit deleting the decision entries and recompiling would pass all 262 listed tests silently (builder disclosed this in not_done (b); proven live — under my kind-mutation every one of the 11 pytest files still passed). Non-blocking for this verdict because build_jsx --check and the e2e proof are part of the slice's mandated gate set and both caught the mutation, but the durable regression guard is weak.",
+            "tests/test_build_jsx_precompile.py is side-effecting and self-satisfying as a staleness gate: it REBUILDS app/web_ui/studio-lm.compiled.js in place during pytest (it overwrote the compiled artifact with my mutant build and reported 12 passed). Pre-existing behavior, not introduced by this slice, but it means 'precompile tests green' proves nothing about artifact freshness — only tools/build_jsx.py --check does.",
+            "The 262-test green run is overwhelmingly neighbor/engine coverage (decision node math, grammar synth, normalize) — none of it executes the new jsx lines; the only executable evidence for the UI half is the node round-trip proof, which simulates the drag/drop code shape rather than running it in the app (builder disclosed no CDP/live-drag verification, per slice mandate).",
+            "Builder's disclosed gaps confirmed real and accurately scoped: bridge grammar_payload() still emits zero decision.* (Python _PREFIX_CAT untouched, out of slice), so composer bare-type text spawn of decision.* remains unresolved — the palette/library/wire-promote/Cmd+K surfaces are the only fixed entry points."
+          ],
+          "reason": "Every builder claim independently reproduced: sha header matches the edited jsx byte-for-byte; all five file:line links in the evidence chain are accurate against actual source; fresh run of all 11 test files = 262 passed, voice_lint --strict clean (0 findings / 3 files), build_jsx --check up to date; my OWN independent end-to-end replay (real grammar extracted from the jsx via node, exact drag-payload JSON round-trip, real normalize_canvas_graph, real WorkflowRunner with my own config — not the builder's numbers) stamps node.type == kind for both decision.topsis and decision.fuzzy and cooks {\"status\":\"ok\",\"best\":\"A\"}. Original exploit reproduces on base (0 palette mentions, bridge grammar 109 kinds with zero decision.*, registry has both types) and fails on the fixed jsx. Mutation of the core kind line was caught by two of the slice's mandated gates (e2e proof asserts real stamped-type values; build_jsx --check STALE), then fully reverted — final tree byte-identical jsx, deterministic compiled rebuild, diff stat identical to the builder's, all gates green. Smells noted (no pytest palette guard, self-rebuilding precompile test) are real but disclosed or pre-existing and did not block any gate."
+        }
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Court"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:court-unrig",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a197f5fa48b4f1952",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782975422782,
+      "queuedAt": 1782975422771,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "SLICE A — UN-RIG THE COURT (personal-brain-mcp: requirement…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976653052,
+      "tokens": 232528,
+      "toolCalls": 61,
+      "durationMs": 1230270,
+      "resultPreview": "{\"slice\":\"SLICE A — UN-RIG THE COURT (personal-brain-mcp: requirement_tree.py, court_harness.py, roma.py + tests)\",\"files\":[\"personal-brain-mcp/src/personal_brain/court_harness.py\",\"personal-brain-mcp/src/personal_brain/requirement_tree.py\",\"personal-brain-mcp/src/personal_brain/roma.py\",\"personal-brain-mcp/tests/test_court_unrig.py\",\"personal-brain-mcp/tests/test_roma.py\",\"personal-brain-mcp/test…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:xmode-real",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "ad34d6ef107c40bd1",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782975422784,
+      "queuedAt": 1782975422771,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "B — MAKE X-MODE REAL: router-driven atomize_vision onto the…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782977205890,
+      "tokens": 217201,
+      "toolCalls": 52,
+      "durationMs": 1783106,
+      "resultPreview": "{\"slice\":\"B — MAKE X-MODE REAL: router-driven atomize_vision onto the proven build tools (create_connector/create_node_type/create_ui_widget) with real machine gates; hello-marker default DELETED (materializer jailed to self_extend_test_fixture dirs); run_self_extend_loop routes build leaves through build_artifact (the proven run_self_extend machinery) with per-gate extra probes; learn arm names t…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "build:learning-consumed",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "ad5213078ee044728",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782975422785,
+      "queuedAt": 1782975422771,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "C — MAKE LEARNING CONSUMED (skills counted on read path; sy…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976479678,
+      "tokens": 188043,
+      "toolCalls": 68,
+      "durationMs": 1056893,
+      "resultPreview": "{\"slice\":\"C — MAKE LEARNING CONSUMED (skills counted on read path; sync merge-max preserves reinforcement; hybrid recall lane wired into brain.context behind ARCHHUB_HYBRID_RECALL default ON)\",\"files\":[\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/storage.py\",\"C:/Users/fargaly/Ap…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "build:palette-expose",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a8a683360e40f4c27",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782975422785,
+      "queuedAt": 1782975422771,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "D — Expose decision.topsis + decision.fuzzy in the canvas p…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976064360,
+      "tokens": 165424,
+      "toolCalls": 57,
+      "durationMs": 641575,
+      "resultPreview": "{\"slice\":\"D — Expose decision.topsis + decision.fuzzy in the canvas palette (studio-lm.jsx + recompiled studio-lm.compiled.js)\",\"files\":[\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/web_ui/studio-lm.jsx\",\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/s…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "court:palette-expose",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "aad420aa247ab4990",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782976064375,
+      "queuedAt": 1782976064365,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976503174,
+      "tokens": 111221,
+      "toolCalls": 38,
+      "durationMs": 438799,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"$ python -m pytest tests/test_decision_nodes.py tests/test_node_palette_drag.py tests/test_discovery_palette.py tests/test_node_grammar.py tests/test_grammar_synth.py tests/test_grammar_health.py tests/test_grammar_config_schema.py tests/test_typed_grammar_end_to_end.py tests/test_build_jsx_precompile.py tests/test_jsx_signal_wiring.py tests/test_voice_lint.…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "court:learning-consumed",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "aabeefee8fa136bbf",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782976479680,
+      "queuedAt": 1782976479678,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976798603,
+      "tokens": 103832,
+      "toolCalls": 22,
+      "durationMs": 318923,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"Slice tests (tests/test_learning_consumed.py tests/test_hybrid_recall.py -q):\\n....................                                                     [100%]\\n20 passed in 0.15s\\n\\nNeighbor suites (test_personal_cloud_sync*.py test_server.py test_federation.py test_sync.py test_sync_worker.py test_meaning_space_retrieval.py -q):\\n...........................…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "court:court-unrig",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "a4aacbf934a10d488",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782976653054,
+      "queuedAt": 1782976653053,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782976849373,
+      "tokens": 120682,
+      "toolCalls": 18,
+      "durationMs": 196319,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"Trio (personal-brain-mcp, PYTHONPATH=src):\\n$ python -m pytest tests/test_court_unrig.py tests/test_roma.py tests/test_diligence.py -q\\n..........................................................               [100%]\\n58 passed in 1.15s\\n\\nFull brain suite:\\n$ python -m pytest tests -q\\n809 passed, 4 skipped, 7 warnings in 88.82s (0:01:28)\\n\\nPost-mutation-re…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "court:xmode-real",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "a4082e953cbb3c132",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782977205892,
+      "queuedAt": 1782977205891,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Original exploit: run_self_extend_loop('build me an Airtabl…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — git worktree on branch claude/groundup-build (4 commits ahead of origin/main; contains new decision nodes, invariants, hybrid recall). Work ONLY here. Never touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION.\nDISCIPLINE: extend existing code, follow its …",
+      "lastProgressAt": 1782978276700,
+      "tokens": 112623,
+      "toolCalls": 29,
+      "durationMs": 1070808,
+      "resultPreview": "{\"attack_replay\":\"Original exploit: run_self_extend_loop('build me an Airtable connector', router=None, jailed APPDATA). AGAINST FIXED CODE: ok=False dry=False; leaf verdicts [(False,'needs_root','cannot decompose without a model...'), (True,'needs_root','self-extend: build me an Airtable connector')]; hello_marker at old default path: False; hello_marker anywhere under jailed APPDATA: []; green v…"
+    }
+  ],
+  "totalTokens": 1251554,
+  "totalToolCalls": 345
+}

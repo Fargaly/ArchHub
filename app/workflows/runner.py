@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from typing import Any, Callable, Optional
@@ -426,9 +427,24 @@ class WorkflowRunner:
         """Thread-safe entry point — serialises a whole cook tree per
         runner (AgDR-0034 audit fix c). The RLock lets a recursive
         upstream pull on the SAME thread re-enter freely; a second
-        thread blocks until the first cook tree completes."""
+        thread blocks until the first cook tree completes.
+
+        OPT-IN court hook (SPEC §19 layer 0): when the env flag
+        ``ARCHHUB_COURT_INVARIANTS=1`` is set, every cook is followed
+        by an impossible-state scan (workflows/invariants.py) and a
+        violation RAISES ``InvariantViolation``. The default path is
+        byte-identical to before — one env read, no import, no check."""
         with self._lock:
-            return self._pull(node_id)
+            if os.environ.get("ARCHHUB_COURT_INVARIANTS", "") != "1":
+                return self._pull(node_id)
+            from . import invariants
+            snap = invariants.snapshot_frozen(self)
+            out = self._pull(node_id)
+            bad = invariants.check_impossible_states(
+                None, self, frozen_snapshot=snap)
+            if bad:
+                raise invariants.InvariantViolation(bad)
+            return out
 
     def _pull(self, node_id: str) -> dict:
         """Cook this node (if dirty) + return its outputs dict.

@@ -899,6 +899,30 @@ class BrainStore:
             ).fetchone()
         return _row_to_skill(row) if row else None
 
+    def touch_skill(self, skill_id: str, *, success: bool = True) -> None:
+        """Reinforcement — bumps last_used_at + success/fail counts on a
+        skill. Mirror of `touch_fragment` for the skills table. This is the
+        counter the federation sharing gate reads (`derive_skill_usage_patterns`
+        requires success_count >= 3): without it, no skill ever becomes
+        shareable no matter how often it is retrieved and used."""
+        with self._lock:
+            if success:
+                self._conn.execute(
+                    """UPDATE skills
+                       SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                           success_count = success_count + 1
+                       WHERE id = ?""",
+                    (skill_id,),
+                )
+            else:
+                self._conn.execute(
+                    """UPDATE skills
+                       SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                           fail_count = fail_count + 1
+                       WHERE id = ?""",
+                    (skill_id,),
+                )
+
     def list_skills(
         self,
         scope: Optional[Scope] = None,
@@ -2012,3 +2036,18 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
         return dt
     except Exception:
         return None
+
+
+def _max_dt(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
+    """Later of two optional datetimes (naive coerced to UTC). Used by the
+    sync apply paths to merge last_used_at so a remote row never rewinds
+    local reinforcement evidence."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    if a.tzinfo is None:
+        a = a.replace(tzinfo=timezone.utc)
+    if b.tzinfo is None:
+        b = b.replace(tzinfo=timezone.utc)
+    return a if a >= b else b

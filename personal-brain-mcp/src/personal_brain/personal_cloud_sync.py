@@ -64,7 +64,7 @@ from .models import (
     Visibility,
 )
 from . import redaction as _redaction
-from .storage import BrainStore
+from .storage import BrainStore, _max_dt, _parse_iso
 
 
 # ─────────────────────── brain_meta keys ────────────────────────────────
@@ -692,6 +692,11 @@ class PersonalCloudSync:
             "confidence": f.confidence.value if hasattr(f.confidence, "value") else "extracted",
             "provenance": prov,
             "extra": f.extra or {},
+            # Reinforcement evidence rides the wire — omitting these made the
+            # pull-side upsert zero the local counters (sync wiped learning).
+            "success_count": int(f.success_count or 0),
+            "fail_count": int(f.fail_count or 0),
+            "last_used_at": f.last_used_at.isoformat() if f.last_used_at else None,
             "hlc": self._frag_hlc(prov),
         }
 
@@ -860,6 +865,18 @@ class PersonalCloudSync:
             except Exception:
                 extra = {}
 
+        # Reinforcement merge — the upsert writes excluded.* verbatim, so a
+        # remote row carrying 0/0/None must NEVER lower local evidence. Take
+        # max(local, remote) per counter and the later last_used_at.
+        local = self.store.get_fragment(fid)
+        remote_success = int(raw.get("success_count") or 0)
+        remote_fail = int(raw.get("fail_count") or 0)
+        remote_used = _parse_iso(raw.get("last_used_at"))
+        if local is not None:
+            remote_success = max(remote_success, local.success_count)
+            remote_fail = max(remote_fail, local.fail_count)
+            remote_used = _max_dt(remote_used, local.last_used_at)
+
         fragment = Fragment(
             id=fid,
             kind=FragmentKind(raw.get("kind") or "fact"),
@@ -875,6 +892,9 @@ class PersonalCloudSync:
             confidence=Confidence(raw.get("confidence") or "extracted"),
             provenance=prov,
             extra=extra if isinstance(extra, dict) else {},
+            success_count=remote_success,
+            fail_count=remote_fail,
+            last_used_at=remote_used,
         )
         self.store.write_fragment(fragment)
         self._mark_applied(fid, remote_hlc)
@@ -913,6 +933,14 @@ class PersonalCloudSync:
             skill = Skill.model_validate(payload)
         except Exception:
             return False
+        # Reinforcement merge — never lower local evidence with a remote copy
+        # that has seen fewer uses. max(local, remote) per counter; later
+        # last_used_at wins.
+        local_sk = self.store.get_skill(skill.id)
+        if local_sk is not None:
+            skill.success_count = max(skill.success_count, local_sk.success_count)
+            skill.fail_count = max(skill.fail_count, local_sk.fail_count)
+            skill.last_used_at = _max_dt(skill.last_used_at, local_sk.last_used_at)
         self.store.upsert_skill(skill)
         self._mark_applied(fid, remote_hlc)
         return True

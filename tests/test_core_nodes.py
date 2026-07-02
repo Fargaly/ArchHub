@@ -167,12 +167,24 @@ class TestHostNodeRegistration:
             assert "state" in output_names
             assert "after" in output_names
 
-    def test_host_executor_returns_typed_envelope(self):
+    def test_host_executor_returns_typed_envelope(self, monkeypatch):
+        # Hermetic: neutralise the live-host probe so the envelope is
+        # deterministic regardless of which Revit (if any) is installed
+        # on the test machine. A live session's real version would
+        # otherwise win over config.version (core._host_exec:480), so
+        # a machine with Revit 2023 running fails a hardcoded "2025".
+        from workflows.nodes import core as _core
+        monkeypatch.setattr(_core, "_pick_session_by_version",
+                            lambda family, version: None)
+        monkeypatch.setattr(_core, "_broker_host_info",
+                            lambda family: {"alive": False,
+                                            "reason": "unavailable"})
         spec, executor = _registry.get("host.revit")
         out = executor({"_family": "revit", "version": "2025"},
                         {"action": "open"}, None)
         assert out["status"] == "ok"
         assert out["family"] == "revit"
+        # No live session -> version falls back to the configured value.
         assert out["version"] == "2025"
         assert "selection" in out and isinstance(out["selection"], list)
 

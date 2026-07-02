@@ -629,7 +629,8 @@ def run_agent_step(
 # daemon cannot (run_to_dry can't cross HTTP — roma.py risk note), and uses
 # run_agent_step ABOVE as the per-leaf EXECUTOR. These two pure helpers are the
 # ONLY new composer surface: `atomize_vision` turns a request into leaf specs
-# with built-in machine gates when the model returns none, and `compose_evidence`
+# with machine gates (router-decomposed onto the real build tools; honest
+# manual/needs_root when no model is available), and `compose_evidence`
 # turns a run_agent_step result into the closing-evidence dict the court's
 # diligence lens (court_harness.lens_diligence) + brain.enforce_diligence
 # consume. run_agent_step's contract is UNCHANGED — it is REUSED, not edited.
@@ -645,44 +646,271 @@ def _appdata_self_extend_dir() -> str:
     return os.path.join(base, "ArchHub", "self_extend")
 
 
+# ── X-MODE DECOMPOSITION (real, router-driven) ────────────────────────────
+# The audit (2026-07-02) proved the old default here IGNORED user_msg entirely
+# and returned a fixed 3-leaf hello_marker.py decomposition — 'add Airtable
+# support' produced hello_marker.py and the court greened a sentinel the
+# executor itself wrote. That default is DELETED. atomize_vision now asks the
+# ROUTER to decompose the user's actual request into 1-4 leaves, each mapped
+# to one of the PROVEN-REAL build tools (create_connector / create_node_type /
+# create_ui_widget — they write real artifacts the app loads at boot) with a
+# machine gate appropriate to the tool. No router / garbage plan → ONE honest
+# gate_kind='manual' leaf (the court escalates needs_root — never a fake green).
+
+# Strict JSON tool-schema the decomposition call hands the router (the SAME
+# extra_tools mechanism run_agent_step uses). The model must call this ONE
+# tool with the plan; freeform prose is treated as no-plan.
+DECOMPOSE_TOOL_SCHEMA = [
+    {
+        "name": "propose_build_plan",
+        "description": (
+            "Propose the build plan for a self-extension request: 1-4 leaves, "
+            "each naming EXACTLY ONE build tool (create_connector / "
+            "create_node_type / create_ui_widget) plus the args that tool "
+            "needs. Call this tool ONCE with the full plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "leaves": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {
+                                "type": "string",
+                                "enum": ["create_connector",
+                                         "create_node_type",
+                                         "create_ui_widget"],
+                            },
+                            "title": {"type": "string"},
+                            "args": {
+                                "type": "object",
+                                "description": (
+                                    "The build tool's own args: create_connector "
+                                    "needs {host, label?, operations?}; "
+                                    "create_node_type needs {type, description, "
+                                    "inputs?, outputs?, config_schema?}; "
+                                    "create_ui_widget needs {id, code, title?}."
+                                ),
+                            },
+                        },
+                        "required": ["tool", "args"],
+                    },
+                },
+            },
+            "required": ["leaves"],
+        },
+    },
+]
+
+_DECOMPOSE_SYSTEM = (
+    "You are ArchHub's self-extension planner. The user asked for a capability "
+    "ArchHub does not have yet. Decompose the request into 1-4 build leaves and "
+    "call the propose_build_plan tool ONCE with them. Each leaf uses exactly one "
+    "build tool: create_connector (talk to a new host/service — args {host, "
+    "label, operations:[{op_id, kind}]}), create_node_type (a new reusable "
+    "canvas node — args {type, description, inputs, outputs, config_schema}), "
+    "or create_ui_widget (a sandboxed UI panel — args {id, code, title}). "
+    "Prefer the SMALLEST plan that satisfies the ask (usually ONE leaf). "
+    "Do not invent tools; do not answer in prose."
+)
+
+
+def _safe_host_id(raw: str) -> str:
+    """Sanitize a host id the SAME way connectors.scaffold does, so the gate
+    path predicted at atomize time equals the file the build actually writes."""
+    try:
+        from connectors.scaffold import _safe_host_id as _s
+        return _s(raw)
+    except Exception:
+        import re
+        h = re.sub(r"[^a-z0-9_]", "_", (raw or "").strip().lower())
+        return re.sub(r"_+", "_", h).strip("_")
+
+
+def _safe_widget_id(raw: str) -> str:
+    """Sanitize a widget id the SAME way app/widgets.py does."""
+    try:
+        import widgets as _w
+        return _w.safe_widget_id(raw)
+    except Exception:
+        import re
+        s = re.sub(r"[^a-z0-9_]", "_", (raw or "").strip().lower())
+        return re.sub(r"_+", "_", s).strip("_") or "widget"
+
+
+def _leaf_from_proposal(item: dict) -> Optional[dict]:
+    """Map ONE router-proposed {tool, args, title} onto a ROMA leaf spec whose
+    gate matches the tool's PROVEN-REAL artifact:
+      create_connector → py_compile on app/connectors/<host>_connector.py
+      create_node_type → node_cooks on the minted type (real runner)
+      create_ui_widget → ui_renders on the registered widget (live probe)
+    The build routing (build_tool/build_args) rides inside gate_spec so the
+    loop executes the leaf through the SAME build machinery run_self_extend
+    uses. A malformed item (unknown tool / missing key arg) returns None."""
+    if not isinstance(item, dict):
+        return None
+    tool = (item.get("tool") or "").strip()
+    args = item.get("args") if isinstance(item.get("args"), dict) else {}
+    title = (item.get("title") or "").strip()
+
+    if tool == "create_connector":
+        host = _safe_host_id(args.get("host") or "")
+        if not host:
+            return None
+        path = f"app/connectors/{host}_connector.py"
+        return {
+            "title": title or f"connector '{host}' is scaffolded and compiles",
+            "predicate": f"the scaffolded connector file {path} py_compiles",
+            "gate_kind": "py_compile",
+            "gate_spec": {"path": path,
+                          "build_tool": tool, "build_args": dict(args)},
+        }
+    if tool == "create_node_type":
+        type_name = (args.get("type") or "").strip()
+        if not type_name:
+            return None
+        return {
+            "title": title or f"node type '{type_name}' cooks on the real runner",
+            "predicate": (f"the registered node type '{type_name}' cooks a real "
+                          f"typed output on the WorkflowRunner"),
+            "gate_kind": "node_cooks",
+            "gate_spec": {"type": type_name,
+                          "build_tool": tool, "build_args": dict(args)},
+        }
+    if tool == "create_ui_widget":
+        wid = _safe_widget_id(args.get("id") or args.get("widget_id") or "")
+        if not wid or not (args.get("code") or "").strip():
+            return None
+        return {
+            "title": title or f"widget '{wid}' renders in the sandboxed host",
+            "predicate": (f"the registered widget '{wid}' renders + is visible "
+                          f"without blanking the app or raising errors"),
+            "gate_kind": "ui_renders",
+            "gate_spec": {"widget_id": wid, "testid": f"agent-widget-{wid}",
+                          "build_tool": tool, "build_args": dict(args)},
+        }
+    return None
+
+
+def _parse_plan_json(raw: str) -> Optional[dict]:
+    """Parse a {'leaves': [...]} plan out of freeform router text (the fallback
+    when the model answered with JSON text instead of the tool call)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    start, end = raw.find("{"), raw.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            obj = json.loads(raw[start:end + 1])
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+def _router_decompose(user_msg: str, router: Any) -> list[dict]:
+    """Ask the router to decompose user_msg via the strict propose_build_plan
+    tool (same complete(extra_tools=...) pattern as run_agent_step). Returns
+    the mapped leaf specs, or [] when the router fails / returns garbage —
+    the caller then falls back to the honest manual leaf."""
+    proposals: list[dict] = []
+
+    def _on_inv(inv: Any) -> None:
+        try:
+            name = (getattr(inv, "tool_name", None)
+                    or getattr(inv, "name", None)
+                    or getattr(inv, "tool", None) or "")
+            if name != "propose_build_plan":
+                return
+            args = (getattr(inv, "arguments", None)
+                    or getattr(inv, "args", None) or {})
+            if isinstance(args, dict):
+                proposals.append(args)
+        except Exception:
+            pass
+
+    text_buf: list[str] = []
+    history = [
+        {"role": "system", "content": _DECOMPOSE_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    try:
+        response = router.complete(
+            history=history,
+            model="auto",
+            on_chunk=lambda piece: text_buf.append(piece or ""),
+            on_tool_invocation=_on_inv,
+            extra_tools=DECOMPOSE_TOOL_SCHEMA,
+        )
+    except Exception:
+        return []
+
+    payload = next((p for p in proposals
+                    if isinstance(p.get("leaves"), list)), None)
+    if payload is None:
+        raw = (getattr(response, "text", "") or "".join(text_buf)).strip()
+        payload = _parse_plan_json(raw)
+    if not isinstance(payload, dict):
+        return []
+    leaves = payload.get("leaves")
+    if not isinstance(leaves, list):
+        return []
+    out: list[dict] = []
+    for item in leaves[:4]:
+        spec = _leaf_from_proposal(item)
+        if spec is not None:
+            out.append(spec)
+    return out
+
+
+def _manual_leaf(user_msg: str) -> dict:
+    """The honest no-model fallback: ONE gate_kind='manual' leaf. The court
+    turns a manual (no machine gate) leaf into needs_root — root/founder
+    decides. NEVER a fabricated marker, NEVER a fake green."""
+    ask = (user_msg or "").strip()
+    return {
+        "title": f"self-extend request: {ask[:120] or '(empty request)'}",
+        "predicate": ("cannot decompose without a model — no router/LLM was "
+                      "available to plan this build; escalate to root"),
+        "gate_kind": "manual",
+        "gate_spec": {"reason": "router_unavailable_or_garbage",
+                      "request": ask[:300]},
+    }
+
+
 def atomize_vision(user_msg: str,
-                   decomposition: Optional[list[dict]] = None) -> list[dict]:
+                   decomposition: Optional[list[dict]] = None,
+                   router: Any = None) -> list[dict]:
     """Map a free-form self-extend request to a list of ROMA leaf specs, each
     carrying a machine-checkable gate (gate_kind/gate_spec).
 
     If the caller already has a decomposition (e.g. the model proposed one, or a
     test passes the ONE example), it is returned UNCHANGED so the court gates
-    exactly what was asked. Otherwise we build the DEFAULT decomposition: the
-    "hello marker" proof — a real file written into %APPDATA%/ArchHub/self_extend
-    that (1) exists, (2) compiles under py_compile, and (3) carries the proof
-    sentinel. All three gates are built-in court probes (file_exists / py_compile
-    in court_harness._BUILTIN_PROBES) — no CDP, no app, no risky host. This is the
-    `one_example` from the binding spec, made executable."""
+    exactly what was asked. Otherwise the ROUTER decomposes user_msg into 1-4
+    leaves mapped to the proven-real build tools (see _leaf_from_proposal).
+    Router unavailable or garbage → ONE manual leaf that the court escalates
+    to needs_root — an honest 'cannot decompose without a model', never the
+    old fixed hello-marker fake (deleted per the 2026-07-02 audit)."""
     if decomposition:
         return list(decomposition)
-    import os
-    marker = os.path.join(_appdata_self_extend_dir(), "hello_marker.py")
-    marker_fwd = marker.replace("\\", "/")
-    return [
-        {
-            "title": "Marker file exists on disk after the executor runs",
-            "predicate": f"the file {marker_fwd} exists",
-            "gate_kind": "file_exists",
-            "gate_spec": {"path": marker_fwd},
-        },
-        {
-            "title": "Marker file is real importable Python, not an empty shell",
-            "predicate": "the marker file compiles under py_compile",
-            "gate_kind": "py_compile",
-            "gate_spec": {"path": marker_fwd},
-        },
-        {
-            "title": "Marker file contains the proof sentinel string",
-            "predicate": "the marker file contains GREETING = 'self-extend proven'",
-            "gate_kind": "file_exists",
-            "gate_spec": {"path": marker_fwd, "contains": "self-extend proven"},
-        },
-    ]
+    leaves: list[dict] = []
+    if router is not None:
+        try:
+            leaves = _router_decompose(user_msg, router)
+        except Exception:
+            leaves = []
+    if leaves:
+        return leaves
+    return [_manual_leaf(user_msg)]
 
 
 def compose_evidence(user_msg: str, graph: dict, leaf: Any,

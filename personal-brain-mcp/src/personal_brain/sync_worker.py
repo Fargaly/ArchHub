@@ -33,7 +33,7 @@ from typing import Any, Iterable, Optional
 
 from .hlc import device_clock
 from .models import Fragment, FragmentKind, Scope, Skill
-from .storage import BrainStore
+from .storage import BrainStore, _max_dt, _parse_iso
 from .sync import (
     MergeResult,
     Transport,
@@ -363,6 +363,17 @@ class SyncWorker:
                 contributing_user=f.get("owner_user") or "remote",
             )
         try:
+            # Reinforcement merge — never let a remote row zero local
+            # counters (upsert writes excluded.* verbatim). max(local,
+            # remote) per counter; later last_used_at wins.
+            local = self.store.get_fragment(f["id"])
+            success_count = int(f.get("success_count") or 0)
+            fail_count = int(f.get("fail_count") or 0)
+            last_used_at = _parse_iso(f.get("last_used_at"))
+            if local is not None:
+                success_count = max(success_count, local.success_count)
+                fail_count = max(fail_count, local.fail_count)
+                last_used_at = _max_dt(last_used_at, local.last_used_at)
             fragment = Fragment(
                 id=f["id"],
                 kind=FragmentKind(f.get("kind") or "fact"),
@@ -378,6 +389,9 @@ class SyncWorker:
                 confidence=Confidence(f.get("confidence") or "extracted"),
                 provenance=prov,
                 extra=f.get("extra") or {},
+                success_count=success_count,
+                fail_count=fail_count,
+                last_used_at=last_used_at,
             )
             self.store.write_fragment(fragment)
         except Exception:
@@ -405,6 +419,16 @@ class SyncWorker:
                 contributing_user=s.get("owner_user") or "remote",
             )
         try:
+            # Reinforcement merge — mirror of the fragment path: a remote
+            # skill copy with fewer uses must never lower local evidence.
+            local_sk = self.store.get_skill(s["id"])
+            success_count = int(s.get("success_count") or 0)
+            fail_count = int(s.get("fail_count") or 0)
+            last_used_at = _parse_iso(s.get("last_used_at"))
+            if local_sk is not None:
+                success_count = max(success_count, local_sk.success_count)
+                fail_count = max(fail_count, local_sk.fail_count)
+                last_used_at = _max_dt(last_used_at, local_sk.last_used_at)
             skill = Skill(
                 id=s["id"],
                 name=s["name"],
@@ -419,8 +443,9 @@ class SyncWorker:
                 visibility=Visibility(s.get("visibility") or "private"),
                 owner_user=s.get("owner_user") or "remote",
                 provenance=prov,
-                success_count=int(s.get("success_count") or 0),
-                fail_count=int(s.get("fail_count") or 0),
+                success_count=success_count,
+                fail_count=fail_count,
+                last_used_at=last_used_at,
                 honed_trials=int(s.get("honed_trials") or 0),
                 honed_passed=int(s.get("honed_passed") or 0),
                 side_effects=s.get("side_effects") or "pure",

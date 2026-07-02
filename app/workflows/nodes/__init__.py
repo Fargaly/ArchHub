@@ -25,5 +25,6 @@ from . import verify        # noqa: F401  stem-rebuild Phase-0: registers verify
 from . import sense         # noqa: F401  stem-rebuild Phase-0: registers sense.extract (the PROPERTY-checker sibling of verify.assert)
 from . import fs            # noqa: F401  stem-rebuild Phase-0: registers fs.list (READ-ONLY directory listing → typed file-rows)
 from . import serialize     # noqa: F401  stem-rebuild Phase-0: registers data.json (parse or stringify)
+from . import decision      # noqa: F401  SPEC §6 decision/score family: registers decision.topsis + decision.fuzzy (crisp TOPSIS + linguistic fuzzy multi-stakeholder ranking)
 from . import normalize     # noqa: F401  stem-rebuild Phase-0 (NORMALIZATION INFRA): registers data.coalesce (config-fallback `x or default`) + data.ensure (type-guard, status:error propagated by subgraph)
 from .tools import register_tool_nodes  # noqa: F401  call manually to register tool.* nodes

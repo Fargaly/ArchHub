@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from .embeddings import Embedder, get_embedder, triple_score
+from .hybrid_recall import BM25, blend as hybrid_blend
 from .meaning_space import MeaningGraph, blend_graph_score
 from .models import Fragment, FragmentKind, Scope, Skill
 from .storage import BrainStore
@@ -146,11 +147,22 @@ def retrieve_facts(
     beta_importance: float = 0.3,
     gamma_relevance: float = 1.0,
     expand_factor: int = 4,
+    hybrid_alpha: Optional[float] = None,
 ) -> list[Fragment]:
     """Two-stage retrieve over fragments (facts / setups / spatial / etc.).
 
     Defaults to fact-like kinds (fact, setup, spatial). Set `kinds=None` to
     not filter.
+
+    `hybrid_alpha` (hybrid_recall lane, Query-Adaptive Hybrid Search):
+      * None (default) or 1.0 — EXACTLY the original pure-dense path below;
+        bit-identical behavior, the hybrid lane is never computed.
+      * < 1.0 — the cosine relevance of each candidate is blended with an
+        Okapi-BM25 lexical score over the same candidate texts:
+        `alpha·minmax(dense) + (1-alpha)·minmax(bm25)` — before entering
+        triple_score. Callers opt in explicitly, typically via
+        `hybrid_alpha=hybrid_recall.predict_alpha(query)` (0.5 for
+        exact-code queries like AP_CORNICE / CW22, else 1.0).
     """
     if kinds is None:
         kinds = [FragmentKind.FACT, FragmentKind.SETUP, FragmentKind.SPATIAL]
@@ -166,17 +178,66 @@ def retrieve_facts(
     if not candidates:
         return []
 
+    if hybrid_alpha is None:
+        hybrid_alpha = 1.0
+    else:
+        # Public-ish API: clamp to [0, 1]; non-numeric -> pure dense (1.0).
+        # An out-of-range alpha would silently produce negative / >1 blend
+        # weights and undebuggable rankings.
+        try:
+            hybrid_alpha = min(1.0, max(0.0, float(hybrid_alpha)))
+        except (TypeError, ValueError):
+            hybrid_alpha = 1.0
+
     qvec = embedder.encode(query)
-    scored: list[tuple[Fragment, float]] = []
+
+    if hybrid_alpha == 1.0:
+        # ── ORIGINAL pure-dense path — untouched (zero-risk guard) ──────
+        scored: list[tuple[Fragment, float]] = []
+        for f in candidates:
+            # Combine subject + predicate + object for better text signal
+            parts = [f.text]
+            if f.subject:
+                parts.append(f.subject)
+            if f.object:
+                parts.append(f.object)
+            ivec = embedder.encode(" ".join(parts))
+            relevance = max(0.0, embedder.cosine(qvec, ivec))
+            importance = _importance_from_counts(f.success_count, f.fail_count)
+            score = triple_score(
+                relevance=relevance,
+                importance=importance,
+                recency_seconds=_recency_seconds(f.last_used_at),
+                half_life_seconds=_half_life_seconds(f.half_life_days),
+                alpha=alpha_recency,
+                beta=beta_importance,
+                gamma=gamma_relevance,
+            )
+            scored.append((f, score))
+
+        scored.sort(key=lambda kv: kv[1], reverse=True)
+        top = [f for f, _ in scored[:k]]
+        return top
+
+    # ── hybrid path (opt-in, hybrid_alpha < 1.0) ────────────────────────
+    # Same candidate texts feed BOTH lanes so the blend is positional.
+    texts: list[str] = []
+    dense: list[float] = []
     for f in candidates:
-        # Combine subject + predicate + object for better text signal
         parts = [f.text]
         if f.subject:
             parts.append(f.subject)
         if f.object:
             parts.append(f.object)
-        ivec = embedder.encode(" ".join(parts))
-        relevance = max(0.0, embedder.cosine(qvec, ivec))
+        text = " ".join(parts)
+        texts.append(text)
+        ivec = embedder.encode(text)
+        dense.append(max(0.0, embedder.cosine(qvec, ivec)))
+
+    combined = hybrid_blend(dense, BM25(texts).scores(query), hybrid_alpha)
+
+    scored = []
+    for f, relevance in zip(candidates, combined):
         importance = _importance_from_counts(f.success_count, f.fail_count)
         score = triple_score(
             relevance=relevance,
@@ -190,8 +251,7 @@ def retrieve_facts(
         scored.append((f, score))
 
     scored.sort(key=lambda kv: kv[1], reverse=True)
-    top = [f for f, _ in scored[:k]]
-    return top
+    return [f for f, _ in scored[:k]]
 
 
 def _importance_from_counts(success: int, fail: int) -> float:

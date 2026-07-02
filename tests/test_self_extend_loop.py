@@ -285,20 +285,58 @@ def test_node_type_library_first_reuse(_clean_lib):
 
 @pytest.fixture
 def _isolated_marker(tmp_path, monkeypatch):
-    """Point %APPDATA% at a throwaway dir so the marker file + the brain store
+    """Point %APPDATA% at a throwaway dir so any appdata write + the undo jail
     land in tmp — never the founder's real brain/marker. Reversible by teardown
-    (tmp_path is auto-removed)."""
+    (tmp_path is auto-removed). Used by the UNDO tests (the jail is the appdata
+    self_extend dir)."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     marker = composer_agent._appdata_self_extend_dir()
     return Path(marker) / "hello_marker.py"
 
 
-def test_atomize_vision_default_decomposition():
-    specs = composer_agent.atomize_vision("add a hello marker file")
-    assert len(specs) == 3
-    assert [s["gate_kind"] for s in specs] == ["file_exists", "py_compile", "file_exists"]
-    # The contains-sentinel gate carries the proof string.
-    assert specs[2]["gate_spec"]["contains"] == "self-extend proven"
+@pytest.fixture
+def _fixture_marker(tmp_path, monkeypatch):
+    """An EXPLICIT test-fixture marker path — under a dir literally named
+    `self_extend_test_fixture`, the ONLY place _materialize_default_marker is
+    still allowed to write (X-mode audit fix: the marker is a test fixture, not
+    a default for real asks). APPDATA is jailed too, so we can also assert the
+    old default hello_marker.py is NEVER produced."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    return tmp_path / "self_extend_test_fixture" / "proof_marker.py"
+
+
+def _marker_decomposition(marker: Path) -> list[dict]:
+    """The EXPLICIT 3-leaf fixture decomposition (exists / py_compiles /
+    carries the sentinel). This used to be atomize_vision's built-in default;
+    after the X-mode fix a test must pass it explicitly — real asks decompose
+    via the router onto the real build tools."""
+    p = str(marker).replace("\\", "/")
+    return [
+        {"title": "Marker file exists on disk after the executor runs",
+         "predicate": f"the file {p} exists",
+         "gate_kind": "file_exists", "gate_spec": {"path": p}},
+        {"title": "Marker file is real importable Python, not an empty shell",
+         "predicate": "the marker file compiles under py_compile",
+         "gate_kind": "py_compile", "gate_spec": {"path": p}},
+        {"title": "Marker file contains the proof sentinel string",
+         "predicate": "the marker file contains GREETING = 'self-extend proven'",
+         "gate_kind": "file_exists",
+         "gate_spec": {"path": p, "contains": "self-extend proven"}},
+    ]
+
+
+def test_atomize_vision_without_router_is_honest_manual():
+    """CHANGED (X-mode audit fix): atomize_vision used to return a FIXED 3-leaf
+    hello_marker.py decomposition regardless of user_msg — a fake the court
+    then greened. Now, with no router available, it returns ONE gate_kind=
+    'manual' leaf (court → needs_root): an honest 'cannot decompose without a
+    model', never a fabricated marker plan."""
+    specs = composer_agent.atomize_vision("add Airtable support")
+    assert len(specs) == 1
+    assert specs[0]["gate_kind"] == "manual"
+    assert "cannot decompose without a model" in specs[0]["predicate"]
+    # The old fixed marker plan is gone for good.
+    assert "hello_marker" not in str(specs)
 
 
 def test_atomize_vision_passthrough():
@@ -341,8 +379,11 @@ def _validating_brain_call(captured):
     return _call
 
 
-def test_loop_court_gated_green_and_learns(_isolated_marker):
-    marker = _isolated_marker
+def test_loop_court_gated_green_and_learns(_fixture_marker):
+    # CHANGED (X-mode audit fix): the 3-leaf marker decomposition is now passed
+    # EXPLICITLY (it is a test fixture under self_extend_test_fixture/), no
+    # longer atomize_vision's silent default for every ask.
+    marker = _fixture_marker
     if marker.exists():
         marker.unlink()
     captured = []
@@ -350,6 +391,7 @@ def test_loop_court_gated_green_and_learns(_isolated_marker):
         "add a hello marker file proving self-extend works",
         graph={"nodes": [], "wires": []},
         router=None,                       # deterministic marker executor builds it
+        decomposition=_marker_decomposition(marker),
         brain_call=_validating_brain_call(captured),
         store=_store(),
     )
@@ -373,11 +415,12 @@ def test_loop_court_gated_green_and_learns(_isolated_marker):
     assert out["leaves"][-1]["verdict"] == "green"
 
 
-def test_loop_court_refuses_absent_artifact(_isolated_marker, monkeypatch):
+def test_loop_court_refuses_absent_artifact(_fixture_marker, monkeypatch):
     """The court — not the executor — is the gate: with the artifact absent AND
     the deterministic executor disabled (router=None → no LLM build), NO leaf
-    greens. Proves a green rests on the real artifact, never the agent's word."""
-    marker = _isolated_marker
+    greens. Proves a green rests on the real artifact, never the agent's word.
+    CHANGED (X-mode audit fix): the marker decomposition is passed explicitly."""
+    marker = _fixture_marker
     if marker.exists():
         marker.unlink()
     monkeypatch.setattr(self_extend, "_materialize_default_marker",
@@ -387,6 +430,7 @@ def test_loop_court_refuses_absent_artifact(_isolated_marker, monkeypatch):
         "add a hello marker file proving self-extend works",
         graph={"nodes": [], "wires": []},
         router=None,
+        decomposition=_marker_decomposition(marker),
         brain_call=lambda t, a: (captured.append((t, a)) or {"ok": True}),
         store=_store(),
     )
@@ -399,16 +443,18 @@ def test_loop_court_refuses_absent_artifact(_isolated_marker, monkeypatch):
 
 # ── REVERSIBLE — a green build is undoable; undo is path-jailed ───────────────
 
-def test_loop_green_leaf_carries_artifact_path(_isolated_marker):
+def test_loop_green_leaf_carries_artifact_path(_fixture_marker):
     """USER-AGENCY: each GREEN leaf payload names the file it applied so the UI
-    can offer an Undo. The path points at the real marker the executor wrote."""
-    marker = _isolated_marker
+    can offer an Undo. The path points at the real marker the executor wrote.
+    CHANGED (X-mode audit fix): the marker decomposition is passed explicitly."""
+    marker = _fixture_marker
     if marker.exists():
         marker.unlink()
     out = self_extend.run_self_extend_loop(
         "add a hello marker file proving self-extend works",
         graph={"nodes": [], "wires": []},
         router=None,
+        decomposition=_marker_decomposition(marker),
         brain_call=lambda t, a: {"ops_applied": 1},
         store=_store(),
     )

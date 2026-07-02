@@ -140,6 +140,34 @@ def is_build_tool(name: str) -> bool:
     return (name or "") in BUILD_TOOLS
 
 
+def _stamp_artifact(path: Any) -> None:
+    """Stamp an artifact THIS executor just materialized with the executor's
+    own clock (explicit os.utime).
+
+    GATE-BINDING (court staleness rule): the hardened court refuses an
+    artifact whose mtime PREDATES the leaf's created_at. Two honest cases
+    would otherwise flake/fail it:
+      1. Windows file times come from a coarse cached kernel tick (~15ms) — a
+         file genuinely written AFTER the leaf was created can land an mtime a
+         few ms BEFORE it (observed flake: a fresh marker write refused as
+         'pre-existing').
+      2. run_self_extend builds the artifact moments BEFORE court_verify
+         creates the one-leaf tree — the same invocation, not a pre-existing
+         file.
+    In both cases the EXECUTOR (which runs after the leaf exists) re-stamps
+    the file it materialized in this run. It never touches a file the build
+    step did not produce/validate — a fabricated gate path (no build, file
+    absent) stays untouched and the court still refutes it."""
+    if not path:
+        return
+    import time as _t
+    try:
+        now = _t.time()
+        os.utime(str(path), (now, now))
+    except OSError:
+        pass
+
+
 # ───────────────────────────── SEAM 1 — BUILD ──────────────────────────────
 
 
@@ -366,6 +394,12 @@ def court_verify(build: dict[str, Any], *, store=None,
         p = build.get("path")
         if p:
             touched.append(p)
+            # GATE-BINDING: the build wrote this file moments BEFORE this
+            # one-leaf tree existed (same invocation). Re-stamp it as this
+            # leaf's materialized artifact so the court's staleness rule
+            # (mtime must postdate leaf creation) judges the real situation,
+            # not the build-then-atomize ordering. See _stamp_artifact.
+            _stamp_artifact(p)
         return {
             "last_message": (
                 f"built {build.get('kind')} '{cap}' and wrote the real artifact "
@@ -1068,21 +1102,26 @@ def run_free_text_self_extend(
 
 
 def _materialize_default_marker(leaf_gate_spec: dict[str, Any]) -> dict[str, Any]:
-    """The DETERMINISTIC executor for the default 'hello marker' example.
+    """The DETERMINISTIC executor for EXPLICIT test-fixture marker leaves ONLY.
 
-    The binding's one_example needs a REAL file on disk for the file_exists /
-    py_compile gates to pass — written by the composer's existing write surface
-    with ZERO risky host. When the leaf's gate path is the default marker (or any
-    *.py under the self_extend dir), we write real, importable Python carrying the
-    proof sentinel. Returns a run_agent_step-shaped result so compose_evidence can
-    consume it uniformly. Idempotent (overwrites with the same content)."""
+    Audit 2026-07-02: this used to own every leaf whose gate path merely
+    contained 'self_extend' — combined with the fixed hello-marker default in
+    atomize_vision, the executor wrote the sentinel the court then greened, so
+    the router/LLM was never consulted and 'add Airtable support' produced
+    hello_marker.py. It is now GUARDED: it only writes when the gate path sits
+    under a directory literally named `self_extend_test_fixture` (a path only a
+    test constructs on purpose). Every real ask routes through the router
+    decomposition / build machinery instead. Returns a run_agent_step-shaped
+    result so compose_evidence can consume it uniformly. Idempotent."""
     path = (leaf_gate_spec or {}).get("path") or ""
     if not path:
         return {"actions": [], "text": "no path on leaf gate", "gated": 0}
     norm = path.replace("\\", "/")
-    if "self_extend" not in norm or not norm.endswith(".py"):
-        # Not a leaf this deterministic executor owns — leave it to the LLM
-        # executor / the court (which will refute an absent artifact honestly).
+    parent_dirs = [p.lower() for p in norm.split("/")[:-1]]
+    if "self_extend_test_fixture" not in parent_dirs or not norm.endswith(".py"):
+        # Not an explicit test fixture — this deterministic executor refuses.
+        # The LLM executor / build machinery owns real leaves; the court will
+        # refute an absent artifact honestly.
         return {"actions": [], "text": "", "gated": 0}
     content = (
         '"""Self-extend proof marker — written by the composer-as-executor on the\n'
@@ -1094,6 +1133,10 @@ def _materialize_default_marker(leaf_gate_spec: dict[str, Any]) -> dict[str, Any
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(content)
+        # Explicit mtime stamp: the coarse Windows file-time tick can land a
+        # fresh write a few ms BEFORE the leaf's created_at, flaking the
+        # court's staleness refusal. See _stamp_artifact.
+        _stamp_artifact(path)
     except Exception as ex:
         return {"actions": [], "text": f"marker write failed: {ex}", "gated": 0}
     return {
@@ -1105,14 +1148,30 @@ def _materialize_default_marker(leaf_gate_spec: dict[str, Any]) -> dict[str, Any
 
 
 def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
-                      owner_user: Optional[str], brain_call) -> dict[str, Any]:
+                      owner_user: Optional[str], brain_call,
+                      artifact_path: str = "",
+                      capability: str = "") -> dict[str, Any]:
     """Write a USER-scope learned fact for ONE green leaf — the ADDITIVE second
     write (the tree-state write is already done by set_verdict). Mirrors the
     server fragment shape; owner_user=None keeps it USER-scope so it passes the
-    brain ACL gate untouched. needs_root / red never reach here."""
+    brain ACL gate untouched. needs_root / red never reach here.
+
+    The fragment text describes the REAL artifact (capability + on-disk path),
+    never a marker sentinel — recall must surface what was actually built."""
     pred = getattr(leaf, "predicate", "") or getattr(leaf, "title", "")
     leaf_id = getattr(leaf, "node_id", "") or ""
     frag_id = f"self_extend_loop::{tree_id}::{leaf_id}"
+    cap = (capability or "").strip()
+    art = (artifact_path or "").strip().replace("\\", "/")
+    if cap:
+        desc = f"Self-extend GREEN: built {cap}"
+        if art:
+            desc += f" at {art}"
+        desc += f" — {pred}"
+    elif art:
+        desc = f"Self-extend GREEN: {pred} (artifact: {art})"
+    else:
+        desc = f"Self-extend GREEN: {pred}"
     op = {
         "op": "add",
         "fragment": {
@@ -1122,8 +1181,7 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
             # court-verified capability is a 'fact'; the self_extend_verified
             # predicate + extra.verdict carry the "learned" semantics.
             "kind": "fact",
-            "text": (f"Self-extend GREEN: {pred} — court failed to refute on "
-                     f"{evidence_ref}"),
+            "text": f"{desc} — court failed to refute on {evidence_ref}",
             "scope": "user",
             "visibility": "private",
             # owner_user MUST be a non-empty string (the brain rejects None);
@@ -1146,6 +1204,8 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
                 "leaf_id": leaf_id,
                 "court_version": "roma-court-v1",
                 "verdict": "green",
+                "artifact_path": art,
+                "capability": cap,
             },
         },
     }
@@ -1160,6 +1220,80 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
                 "error": f"brain.write did not persist (result={result})",
                 "write_result": result}
     return {"ok": True, "fragment_id": frag_id, "write_result": result}
+
+
+def _leaf_build_call(gate_spec: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Pull the build-tool routing off a leaf's gate_spec. atomize_vision's
+    router decomposition rides {build_tool, build_args} inside gate_spec so a
+    leaf that names a PROVEN-REAL build tool routes through the SAME machinery
+    as run_self_extend (build_artifact → scaffold/library/widgets). Returns
+    {tool, args} or None for a non-build leaf (e.g. a test-fixture marker)."""
+    gs = gate_spec if isinstance(gate_spec, dict) else {}
+    tool = (gs.get("build_tool") or "").strip()
+    if not is_build_tool(tool):
+        return None
+    args = gs.get("build_args")
+    return {"tool": tool, "args": args if isinstance(args, dict) else {}}
+
+
+def _execute_build_leaf(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """EXECUTOR for a build-tool leaf: run the REAL build organ (build_artifact
+    → connectors.scaffold / library.create_node_type / widgets.write_widget —
+    the audit-verified path that writes artifacts the app loads at boot), and
+    return a run_agent_step-shaped result so compose_evidence / the diligence
+    lens see the real file bytes. The COURT still judges the artifact through
+    the leaf's own gate — this function never flips a verdict."""
+    build = build_artifact(tool, args if isinstance(args, dict) else {})
+    actions: list[dict[str, Any]] = []
+    if build.get("ok"):
+        p = build.get("path")
+        if p:
+            # The executor runs AFTER the leaf was created; stamp the file it
+            # materialized so the court's staleness rule sees the truth (and
+            # the coarse Windows file-time tick cannot flake a fresh write
+            # into a 'pre-existing artifact' refusal). See _stamp_artifact.
+            _stamp_artifact(p)
+            actions.append({"tool": "write_file", "args": {"path": str(p)},
+                            "result": {"ok": True}})
+        actions.append({"tool": tool, "args": dict(args or {}),
+                        "result": {"ok": True, "reused": build.get("reused"),
+                                   "detail": build.get("detail", "")}})
+        text = (f"self-extend build: {build.get('detail') or build.get('kind')}"
+                + (f" (artifact: {p})" if p else ""))
+    else:
+        text = f"self-extend build FAILED: {build.get('error', 'unknown error')}"
+    return {"actions": actions, "text": text, "gated": 0, "build": build}
+
+
+def _leaf_extra_probes(gate_kind: str) -> Optional[dict[str, Any]]:
+    """The custom court probes a build leaf's gate needs (node_cooks /
+    ui_renders / registered_node are NOT built-in court probes — without the
+    binding the court would refute on 'no probe registered'). Mirrors
+    court_verify's mapping. Built-in gates (py_compile / file_exists / pytest /
+    manual) need none."""
+    try:
+        if gate_kind == "node_cooks":
+            return {"node_cooks": _make_node_cooks_probe()}
+        if gate_kind == "ui_renders":
+            return {"ui_renders": _make_ui_renders_probe()}
+        if gate_kind == "registered_node":
+            return {"registered_node": _make_registered_node_probe()}
+    except Exception:
+        return None
+    return None
+
+
+def _capability_of(run_result: dict[str, Any], leaf) -> str:
+    """A short human handle on WHAT was built ("connector 'sketchup'"), read
+    off the executor's build receipt; '' for non-build leaves (the learn text
+    then falls back to the leaf predicate + artifact path)."""
+    build = run_result.get("build") if isinstance(run_result, dict) else None
+    if isinstance(build, dict) and build.get("ok"):
+        name = (build.get("type") or build.get("host")
+                or build.get("widget_id") or "")
+        kind = build.get("kind") or "capability"
+        return f"{kind} '{name}'" if name else str(kind)
+    return ""
 
 
 def _artifact_path_of(run_result: dict[str, Any]) -> str:
@@ -1265,11 +1399,18 @@ def run_self_extend_loop(
     """Drive the unrolled ROMA loop for a free-form self-extend request.
 
     Steps (the binding's executor_adapter, made real):
-      1. atomize_vision(user_msg) → leaf specs (default = the hello-marker proof).
+      1. atomize_vision(user_msg, router=router) → leaf specs: the ROUTER
+         decomposes the actual ask onto the proven-real build tools; no router
+         → ONE honest manual leaf (court escalates needs_root, never a fake
+         green). The old fixed hello-marker default is DELETED (audit
+         2026-07-02: it ignored user_msg and greened a self-written sentinel).
       2. roma.atomize → a real requirement tree in the brain store.
       3. per claimable leaf: claim (agent='composer-executor') → EXECUTOR builds
-         the artifact (deterministic marker write, or run_agent_step in yolo when
-         a router is supplied) → compose_evidence → roma judge_leaf
+         the artifact — a build-tool leaf routes through the SAME machinery as
+         run_self_extend (build_artifact → scaffold/library/widgets); an
+         explicit test-fixture marker leaf uses the guarded deterministic
+         writer; anything else falls to run_agent_step in yolo when a router is
+         supplied → compose_evidence → roma judge_leaf
          (judged_by='roma-court' != claimed_by, require_diligence=True).
       4. emit a per-leaf payload via on_leaf(payload); on GREEN write a learned
          USER-scope fact (the court — not the executor — flipped it green).
@@ -1295,7 +1436,8 @@ def run_self_extend_loop(
         store = BrainStore.open()
         own_store = True
 
-    leaf_specs = _atomize_vision(user_msg, decomposition=decomposition)
+    leaf_specs = _atomize_vision(user_msg, decomposition=decomposition,
+                                 router=router)
     vision = f"self-extend: {user_msg.strip()[:160] or 'free-form request'}"
     tree = roma.atomize(store, vision=vision, decomposition=leaf_specs,
                         owner_user=_tree_owner(store))
@@ -1323,21 +1465,30 @@ def run_self_extend_loop(
                           agent_id="composer-executor")
 
             # EXECUTOR — actually BUILD the leaf's artifact on the real machine.
-            run_result = _materialize_default_marker(leaf.gate_spec)
-            if not run_result.get("actions") and router is not None:
-                # No deterministic owner for this leaf → let the composer build it.
-                try:
-                    run_result = _run_agent_step(
-                        user_msg=leaf.title or user_msg,
-                        graph=graph,
-                        focused_node_id=focused_node_id or "",
-                        router=router,
-                        mode="yolo",
-                        model=model or "auto",
-                    )
-                except Exception as ex:
-                    run_result = {"actions": [], "text": f"executor error: {ex}",
-                                  "gated": 0}
+            # A leaf that names a build tool routes through the SAME machinery
+            # as run_self_extend (build_artifact — the proven-real path); the
+            # guarded marker writer only owns explicit test-fixture paths.
+            build_call = _leaf_build_call(leaf.gate_spec)
+            if build_call is not None:
+                run_result = _execute_build_leaf(build_call["tool"],
+                                                 build_call["args"])
+            else:
+                run_result = _materialize_default_marker(leaf.gate_spec)
+                if not run_result.get("actions") and router is not None:
+                    # No deterministic owner → let the composer build it.
+                    try:
+                        run_result = _run_agent_step(
+                            user_msg=leaf.title or user_msg,
+                            graph=graph,
+                            focused_node_id=focused_node_id or "",
+                            router=router,
+                            mode="yolo",
+                            model=model or "auto",
+                        )
+                    except Exception as ex:
+                        run_result = {"actions": [],
+                                      "text": f"executor error: {ex}",
+                                      "gated": 0}
 
             # The artifact this leaf actually wrote — carried onto the payload so
             # a green row is REVERSIBLE (the UI Undo removes exactly this file).
@@ -1347,12 +1498,15 @@ def run_self_extend_loop(
 
             # JUDGE — the external court on the REAL artifact. The court, NOT the
             # executor, flips green; judged_by != claimed_by; show-the-work on.
+            # Non-built-in gates (node_cooks / ui_renders) get their app-bound
+            # probes injected, exactly as court_verify does.
             judged = roma.judge_leaf(
                 store, tree_id=tree_id, node_id=leaf.node_id,
                 judged_by="roma-court",
                 context={"evidence": evidence,
                          "repo_root": str(_repo_root()),
                          "cwd": str(_repo_root())},
+                extra_probes=_leaf_extra_probes(leaf.gate_kind),
                 require_diligence=True,
             )
             court = judged.get("court", {})
@@ -1369,6 +1523,8 @@ def run_self_extend_loop(
                 lr = _learn_leaf_green(
                     tree_id=tree_id, leaf=leaf, evidence_ref=evidence_ref,
                     owner_user=owner_user, brain_call=brain_call,
+                    artifact_path=artifact_path,
+                    capability=_capability_of(run_result, leaf),
                 )
                 learned = bool(lr.get("ok"))
             elif verdict == "red":

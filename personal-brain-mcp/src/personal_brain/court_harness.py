@@ -48,14 +48,59 @@ when a leaf's `gate_kind == "cdp"` and a runner is provided.
 """
 from __future__ import annotations
 
+import hmac
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 
-COURT_VERSION = "roma-court-v1"
+COURT_VERSION = "roma-court-v2"
+
+# ─────────────────────────── identity + root token ──────────────────────
+#
+# AUDIT FIX (2026-07-02 forensic audit, defect 1): judged_by / claimed_by are
+# free strings supplied by callers. Exact `==` let 'Exec-1' judge a leaf claimed
+# by 'exec-1' (case-flip self-certification) and ' exec-1 ' (trailing space).
+# EVERY identity comparison must go through this normalizer — both here and in
+# requirement_tree.set_verdict (which imports it, ONE definition, ONE system).
+
+ROOT_TOKEN_ENV = "ARCHHUB_ROOT_TOKEN"
+
+
+def normalize_agent(ident: Optional[str]) -> str:
+    """Canonical agent identity: strip + casefold. 'Exec-1' == ' exec-1 '."""
+    return (ident or "").strip().casefold()
+
+
+def root_token_ok(token: Optional[str]) -> bool:
+    """True iff the environment holds a root token AND `token` matches it
+    (constant-time compare). No env token configured → NOTHING authenticates:
+    the root-override path is closed, never open-by-default."""
+    expected = (os.environ.get(ROOT_TOKEN_ENV) or "").strip()
+    supplied = (token or "").strip()
+    if not expected or not supplied:
+        return False
+    return hmac.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
+
+
+# ─────────────────── juror weights + confidence soft-vote ───────────────
+#
+# Founder-authored spec (grand-map node selfext_juror_diversity, 2026-07-02):
+# each lens carries a confidence 0..1; green requires (a) NO refuted lens —
+# fail-closed absolute — AND (b) the confidence-weighted soft vote of the
+# applied, non-refuted lenses to clear the threshold. Below threshold the
+# court escalates (needs_root), it never guesses green.
+
+LENS_WEIGHTS: dict[str, float] = {
+    "artifact": 2.0,      # the primary evidence: the real artifact itself
+    "diligence": 1.0,
+    "independence": 1.0,
+}
+SOFT_VOTE_THRESHOLD = 0.7
 
 # A lens runner is (gate_spec, context) -> (refuted, detail, evidence_ref).
 # Injectable so the orchestrator/tests can stub the real-world probes.
@@ -69,6 +114,8 @@ class ProbeResult:
     applied: bool = True         # did this probe actually run / apply?
     detail: str = ""
     evidence_ref: Optional[str] = None  # path / DOM snippet / pytest line
+    confidence: float = 1.0      # 0..1 — how strong this evidence is
+    failure_mode: str = ""       # typed tag when the probe refutes ("" == none)
 
 
 @dataclass
@@ -78,6 +125,8 @@ class LensVerdict:
     applied: bool                # False == lens not applicable to this leaf
     detail: str = ""
     evidence_ref: Optional[str] = None
+    confidence: float = 1.0      # 0..1 — feeds the weighted soft vote
+    failure_mode: str = ""       # typed tag when refuted ("" == no failure)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +150,66 @@ class CourtVerdict:
 
 
 # ─────────────────────────── artifact probes ───────────────────────────
+#
+# AUDIT FIX (defect 4, GATE-BINDING): the artifact lens never read the leaf's
+# CLAIM — 'cure cancer' gated on C:/Windows/win.ini went green because win.ini
+# exists. Pragmatic binding: when the caller supplies `leaf_created_at`
+# (roma.judge_leaf / brain.tree_court pass the leaf's created_at), a target
+# file whose mtime PREDATES the leaf's creation REFUTES — a pre-existing
+# artifact cannot prove new work. Opt-out (`gate_spec['pre_existing_ok']=true`)
+# is honoured ONLY on the root-token path (context['root_token'] must match
+# env ARCHHUB_ROOT_TOKEN).
+
+
+# Grace window for the mtime-vs-created_at compare. Filesystem timestamps and
+# the wall clock come from different sources (FAT is 2 s granular; on NTFS the
+# cached file time can trail GetSystemTimePreciseAsFileTime by ~1 ms — measured
+# while un-rigging), so a file written a moment AFTER the leaf can stat a hair
+# BEFORE it. 2 s cannot rescue a genuinely pre-existing artifact (minutes to
+# years old) but stops the honest write-right-after-decompose path flapping red.
+STALE_GRACE_SECONDS = 2.0
+
+
+def _leaf_created_ts(context: dict[str, Any]) -> Optional[float]:
+    """The leaf's creation instant as a POSIX timestamp, or None when the
+    caller did not bind the gate to a leaf (no staleness check then)."""
+    raw = context.get("leaf_created_at")
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, datetime):
+        return raw.timestamp()
+    try:
+        return datetime.fromisoformat(str(raw)).timestamp()
+    except Exception:
+        return None
+
+
+def _stale_artifact_reason(
+    path: Path, gate_spec: dict[str, Any], context: dict[str, Any],
+) -> Optional[str]:
+    """Refutation reason when `path` pre-dates the leaf it claims to prove,
+    else None. pre_existing_ok=true is honoured only with a valid root token."""
+    ts = _leaf_created_ts(context)
+    if ts is None:
+        return None
+    if gate_spec.get("pre_existing_ok") is True and (
+        context.get("_root_token_ok") or root_token_ok(context.get("root_token"))
+    ):
+        return None
+    try:
+        mtime = path.stat().st_mtime
+    except OSError as ex:
+        return f"cannot stat artifact {path}: {ex}"
+    if mtime < ts - STALE_GRACE_SECONDS:
+        return (
+            f"pre-existing artifact refused: {path} was last modified BEFORE this "
+            f"leaf was created (mtime={mtime:.3f} < leaf_created_at={ts:.3f}) — a "
+            f"pre-existing file cannot prove new work. gate_spec.pre_existing_ok "
+            f"is honoured only with the root token (env {ROOT_TOKEN_ENV})."
+        )
+    return None
 
 
 def py_compile_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> ProbeResult:
@@ -118,6 +227,10 @@ def py_compile_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> Prob
     if not path.exists():
         return ProbeResult(passed=False, detail=f"file does not exist: {path}",
                            evidence_ref=str(path))
+    stale = _stale_artifact_reason(path, gate_spec, context)
+    if stale:
+        return ProbeResult(passed=False, detail=stale, evidence_ref=str(path),
+                           failure_mode="stale_artifact")
     proc = subprocess.run(
         [sys.executable, "-m", "py_compile", str(path)],
         capture_output=True, text=True,
@@ -144,6 +257,10 @@ def file_exists_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> Pro
             path = Path(base) / raw
     if not path.exists():
         return ProbeResult(passed=False, detail=f"missing: {path}", evidence_ref=str(path))
+    stale = _stale_artifact_reason(path, gate_spec, context)
+    if stale:
+        return ProbeResult(passed=False, detail=stale, evidence_ref=str(path),
+                           failure_mode="stale_artifact")
     contains = gate_spec.get("contains")
     regex = gate_spec.get("regex")
     if contains or regex:
@@ -211,20 +328,29 @@ def lens_artifact(
     runner = probes.get(gate_kind)
     if runner is None:
         return LensVerdict(lens="artifact", refuted=True, applied=True,
-                           detail=f"no probe registered for gate_kind '{gate_kind}'")
+                           detail=f"no probe registered for gate_kind '{gate_kind}'",
+                           failure_mode="unknown_gate")
     try:
         res = runner(gate_spec, context)
     except Exception as ex:  # a crashing probe REFUTES (fail-closed on the artifact)
         return LensVerdict(lens="artifact", refuted=True, applied=True,
-                           detail=f"probe error: {type(ex).__name__}: {ex}")
+                           detail=f"probe error: {type(ex).__name__}: {ex}",
+                           failure_mode="probe_error")
     if not res.applied:
         return LensVerdict(lens="artifact", refuted=False, applied=False, detail=res.detail)
+    conf = res.confidence
+    try:
+        conf = min(1.0, max(0.0, float(conf)))
+    except (TypeError, ValueError):
+        conf = 0.0  # an unparseable confidence is NO confidence (fail-closed)
     return LensVerdict(
         lens="artifact",
         refuted=not res.passed,
         applied=True,
         detail=res.detail,
         evidence_ref=res.evidence_ref,
+        confidence=conf,
+        failure_mode=(res.failure_mode or "artifact_refuted") if not res.passed else "",
     )
 
 
@@ -259,6 +385,7 @@ def lens_diligence(*, context: dict[str, Any]) -> LensVerdict:
         refuted=blocked,
         applied=True,
         detail=(verdict.reason_text()[:400] if blocked else "diligence: no laziness signal"),
+        failure_mode="never_reward_short" if blocked else "",
     )
 
 
@@ -270,12 +397,29 @@ def lens_independence(
 ) -> LensVerdict:
     """Lens 3 — ANTI-TAMPER. The court identity must differ from the executor
     that claimed the leaf (no self-certification), and the green must be backed
-    by a NAMED artifact (an evidence_ref), not the claimant's word alone."""
-    if claimed_by and judged_by and judged_by == claimed_by:
+    by a NAMED artifact (an evidence_ref), not the claimant's word alone.
+
+    AUDIT FIXES: identities are NORMALIZED (strip+casefold) before comparison —
+    'Exec-1' can no longer judge a leaf claimed by 'exec-1' (defect 1). An
+    UNCLAIMED leaf has no executor to be independent OF, so this lens does not
+    apply (defect 2) — convene_court's jury-of-one rule then escalates instead
+    of greening on the artifact alone, and set_verdict independently refuses
+    to green an unclaimed leaf."""
+    claimer = normalize_agent(claimed_by)
+    judge = normalize_agent(judged_by)
+    if not claimer:
+        return LensVerdict(
+            lens="independence", refuted=False, applied=False,
+            detail=("no claimed executor — independence cannot be established "
+                    "on an unclaimed leaf (never a green by itself)"),
+        )
+    if judge and judge == claimer:
         return LensVerdict(
             lens="independence", refuted=True, applied=True,
             detail=(f"self-certification: judge '{judged_by}' == executor "
-                    f"'{claimed_by}' (the court must be independent)"),
+                    f"'{claimed_by}' after normalization (the court must be "
+                    f"independent)"),
+            failure_mode="self_certification",
         )
     # The green must rest on real evidence: the artifact lens must have APPLIED
     # and produced an evidence_ref. (Diligence alone is necessary-not-sufficient.)
@@ -283,6 +427,7 @@ def lens_independence(
         return LensVerdict(
             lens="independence", refuted=True, applied=True,
             detail="no named artifact evidence_ref backing the pass (trust-me green refused)",
+            failure_mode="unnamed_evidence",
         )
     return LensVerdict(lens="independence", refuted=False, applied=True,
                        detail="independent judge + named artifact")
@@ -301,22 +446,46 @@ def convene_court(
     context: Optional[dict[str, Any]] = None,
     extra_probes: Optional[dict[str, ProbeRunner]] = None,
     require_diligence: bool = False,
+    leaf_created_at: Optional[Any] = None,
+    leaf_title: str = "",
+    leaf_predicate: str = "",
 ) -> CourtVerdict:
     """Run the three lenses over one leaf and aggregate to a CourtVerdict.
 
     Policy (the jury rule):
-      * Any APPLICABLE lens that REFUTES → verdict = "red" (re-work / re-decompose).
+      * Any APPLICABLE lens that REFUTES → verdict = "red" — fail-closed
+        ABSOLUTE, whatever the confidence numbers say.
       * NO applicable artifact lens (a manual leaf with no machine gate) →
         verdict = "needs_root" (escalate to the founder; ROMA never greens an
         unverifiable leaf). This is the decomposition-floor escape.
       * `require_diligence=True` makes the diligence lens MANDATORY: if it does
         not apply (no executor evidence), the leaf is "red" (you must show the
         work) — the strict never-reward-short setting.
-      * Otherwise (≥1 lens applied, none refuted) → "green" — failed to refute.
+      * JURY-OF-ONE (selfext_juror_diversity): on a machine-gated leaf, fewer
+        than 2 APPLIED lenses (the artifact alone) → "needs_root" — a jury of
+        one is not a jury, never green.
+      * CONFIDENCE SOFT-VOTE: green additionally requires the confidence-
+        weighted vote of the applied non-refuted lenses,
+        sum(conf*weight)/sum(weights), to reach SOFT_VOTE_THRESHOLD; below →
+        "needs_root".
+      * Otherwise → "green" — failed to refute.
+
+    GATE-BINDING: `leaf_created_at` (the leaf's creation instant — roma/tree
+    callers pass it) binds file gates to the CLAIM: a target file whose mtime
+    predates the leaf refutes (a pre-existing artifact cannot prove new work).
+    `leaf_title` / `leaf_predicate` are recorded into the verdict reason so the
+    evidence string names WHAT was allegedly proven.
 
     Returns the CourtVerdict; the orchestrator feeds (green→set_verdict green,
     red→set_verdict red, needs_root→set_verdict needs_root)."""
     ctx = dict(context or {})
+    if leaf_created_at is not None:
+        ctx["leaf_created_at"] = leaf_created_at
+    ctx["_root_token_ok"] = root_token_ok(ctx.get("root_token"))
+
+    leaf_tag = ""
+    if leaf_title or leaf_predicate:
+        leaf_tag = f" [leaf: title={leaf_title!r} predicate={leaf_predicate!r}]"
 
     art = lens_artifact(gate_kind=gate_kind, gate_spec=gate_spec, context=ctx,
                         extra_probes=extra_probes)
@@ -328,9 +497,11 @@ def convene_court(
     applied = [l for l in lenses if l.applied]
     refuters = [l for l in applied if l.refuted]
 
-    # 1) Any applicable lens refuted → RED.
+    # 1) Any applicable lens refuted → RED (absolute; confidence never rescues).
     if refuters:
-        reason = "REFUTED: " + " || ".join(f"[{l.lens}] {l.detail}" for l in refuters)
+        reason = "REFUTED: " + " || ".join(
+            f"[{l.lens}/{l.failure_mode or 'refuted'}] {l.detail}" for l in refuters
+        ) + leaf_tag
         return CourtVerdict(node_id=node_id, green=False, verdict="red",
                             lenses=lenses, judged_by=judged_by, reason=reason)
 
@@ -341,7 +512,8 @@ def convene_court(
             judged_by=judged_by,
             reason=("no machine-checkable artifact gate on this leaf — ROMA "
                     "refuses to green an unverifiable leaf; split it into "
-                    "machine-checkable children or the founder (root) decides"),
+                    "machine-checkable children or the founder (root) decides"
+                    + leaf_tag),
         )
 
     # 3) Strict never-reward-short: diligence must have actually applied.
@@ -350,16 +522,46 @@ def convene_court(
             node_id=node_id, green=False, verdict="red", lenses=lenses,
             judged_by=judged_by,
             reason=("require_diligence=True but no executor evidence to judge — "
-                    "show the work (closing claim + proof signals) before green"),
+                    "show the work (closing claim + proof signals) before green"
+                    + leaf_tag),
         )
 
-    # 4) Failed to refute, ≥1 lens applied → GREEN.
+    # 4) JURY-OF-ONE: a machine-gated leaf where only the artifact lens applied
+    #    (e.g. an unclaimed leaf with no executor evidence) is NOT a jury —
+    #    escalate, never green on a single juror.
+    if len(applied) < 2:
+        return CourtVerdict(
+            node_id=node_id, green=False, verdict="needs_root", lenses=lenses,
+            judged_by=judged_by,
+            reason=(f"jury of one: only {len(applied)} lens applied "
+                    f"({', '.join(l.lens for l in applied) or 'none'}) — the "
+                    f"artifact alone is not a jury; claim the leaf + supply "
+                    f"executor evidence, or the founder (root) decides" + leaf_tag),
+        )
+
+    # 5) CONFIDENCE SOFT-VOTE: weighted mean confidence of the applied,
+    #    non-refuted lenses must clear the threshold.
+    total_w = sum(LENS_WEIGHTS.get(l.lens, 1.0) for l in applied)
+    score = (
+        sum(l.confidence * LENS_WEIGHTS.get(l.lens, 1.0) for l in applied) / total_w
+        if total_w > 0 else 0.0
+    )
+    if score < SOFT_VOTE_THRESHOLD:
+        return CourtVerdict(
+            node_id=node_id, green=False, verdict="needs_root", lenses=lenses,
+            judged_by=judged_by,
+            reason=(f"confidence soft-vote {score:.2f} < "
+                    f"{SOFT_VOTE_THRESHOLD} — the jury is not confident enough "
+                    f"to green; escalated to the founder" + leaf_tag),
+        )
+
+    # 6) Failed to refute, real jury, confident → GREEN.
     return CourtVerdict(
         node_id=node_id, green=True, verdict="green", lenses=lenses,
         judged_by=judged_by,
-        reason="FAILED TO REFUTE on the real artifact: " + "; ".join(
-            f"[{l.lens}] {l.detail}" for l in applied
-        ),
+        reason=(f"FAILED TO REFUTE on the real artifact (soft-vote "
+                f"{score:.2f}): " + "; ".join(
+                    f"[{l.lens}] {l.detail}" for l in applied) + leaf_tag),
     )
 
 

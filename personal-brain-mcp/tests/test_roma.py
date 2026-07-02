@@ -107,7 +107,7 @@ def test_claim_requires_agent_and_refuses_nonleaf(store):
                       agent_id="")
 
 
-def test_set_verdict_self_certification_refused(store):
+def test_set_verdict_self_certification_refused(store, monkeypatch):
     tree = rt.create_root(store, title="v", owner_user="founder")
     rt.decompose(store, tree_id=tree.tree_id, node_id=tree.root_id,
                  children=[{"title": "leaf"}])
@@ -121,9 +121,12 @@ def test_set_verdict_self_certification_refused(store):
     node = rt.set_verdict(store, tree_id=tree.tree_id, node_id=leaf.node_id,
                           verdict="green", judged_by="court-X")
     assert node.state == rt.NodeState.GREEN
-    # founder root authority can override (logged)
+    # founder root authority can override — but ONLY authenticated by the root
+    # token (env + matching arg); the bare bool no longer works (audit defect 3).
+    monkeypatch.setenv("ARCHHUB_ROOT_TOKEN", "sekrit-42")
     rt.set_verdict(store, tree_id=tree.tree_id, node_id=leaf.node_id,
-                   verdict="green", judged_by="exec-A", is_root_authority=True)
+                   verdict="green", judged_by="exec-A", is_root_authority=True,
+                   root_token="sekrit-42")
 
 
 def test_green_propagates_and_sweep_dry(store):
@@ -286,10 +289,15 @@ def test_atomize_builds_nested_tree(store):
     assert leaf_titles == ["child1", "child2", "loner"]
 
 
-def test_judge_leaf_records_verdict(store):
+def test_judge_leaf_records_verdict(store, tmp_path):
+    # GATE-BINDING: the artifact must be FRESH (written after the leaf was
+    # created) — judge_leaf now refutes pre-existing files, so the test writes
+    # its artifact after atomize, mirroring real executor work.
+    artifact = tmp_path / "fresh_leaf_artifact.py"
     tree = roma.atomize(store, vision="v", owner_user="founder",
         decomposition=[{"title": "compiles", "gate_kind": "py_compile",
-                        "gate_spec": {"path": _PKG_INIT}}])
+                        "gate_spec": {"path": str(artifact)}}])
+    artifact.write_text("X = 1\n", encoding="utf-8")  # work done AFTER the leaf
     leaf = tree.leaves()[0]
     rt.claim_leaf(store, tree_id=tree.tree_id, node_id=leaf.node_id, agent_id="ex")
     out = roma.judge_leaf(store, tree_id=tree.tree_id, node_id=leaf.node_id,
@@ -298,14 +306,18 @@ def test_judge_leaf_records_verdict(store):
     assert out["node"]["state"] == "green"
 
 
-def test_run_to_dry_reaches_full_green_sweep(store):
+def test_run_to_dry_reaches_full_green_sweep(store, tmp_path):
+    # The executor WRITES the artifacts (fresh files, after the leaves were
+    # created) — a pre-existing file no longer proves a leaf (gate-binding).
+    paths = {"a": tmp_path / "leaf_a.py", "b": tmp_path / "leaf_b.py"}
     tree = roma.atomize(store, vision="two real leaves", owner_user="founder",
         decomposition=[
-            {"title": "a", "gate_kind": "py_compile", "gate_spec": {"path": _PKG_INIT}},
-            {"title": "b", "gate_kind": "py_compile", "gate_spec": {"path": _PKG_INIT}},
+            {"title": "a", "gate_kind": "py_compile", "gate_spec": {"path": str(paths["a"])}},
+            {"title": "b", "gate_kind": "py_compile", "gate_spec": {"path": str(paths["b"])}},
         ])
 
     def executor(leaf, ctx):
+        paths[leaf.title].write_text(f"# built {leaf.title}\nX = 1\n", encoding="utf-8")
         return {"last_message": f"did {leaf.title}; wrote files",
                 "session_signals": {"wrote_files": True}}
 
@@ -318,14 +330,18 @@ def test_run_to_dry_reaches_full_green_sweep(store):
     assert final["rounds_run"] >= 1
 
 
-def test_run_to_dry_re_decomposes_red_leaf(store):
+def test_run_to_dry_re_decomposes_red_leaf(store, tmp_path):
     # A leaf that always refutes (missing file), with an auto_decompose that
-    # splits it into a real (compilable) child → the tree converges.
+    # splits it into a real (compilable) child → the tree converges. The
+    # executor WRITES the child's artifact (fresh file — gate-binding).
+    fixed = tmp_path / "fixed_child.py"
     tree = roma.atomize(store, vision="recover", owner_user="founder",
         decomposition=[{"title": "bad", "gate_kind": "file_exists",
                         "gate_spec": {"path": "/missing.zzz"}}])
 
     def executor(leaf, ctx):
+        if leaf.title == "fixed-child":
+            fixed.write_text("X = 1\n", encoding="utf-8")
         return {"last_message": "attempted; wrote files",
                 "session_signals": {"wrote_files": True}}
 
@@ -333,10 +349,12 @@ def test_run_to_dry_re_decomposes_red_leaf(store):
 
     def auto_decompose(node):
         # Only split the original bad leaf, once, into a compilable child.
+        # (The child's gate DIFFERS from the parent's — identical-gate clones
+        # are refused by decompose since the boosting fix.)
         if node.title == "bad" and splits["count"] == 0:
             splits["count"] += 1
             return [{"title": "fixed-child", "gate_kind": "py_compile",
-                     "gate_spec": {"path": _PKG_INIT}}]
+                     "gate_spec": {"path": str(fixed)}}]
         return []
 
     final = roma.run_to_dry(

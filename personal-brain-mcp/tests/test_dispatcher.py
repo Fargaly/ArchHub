@@ -45,13 +45,29 @@ def store():
 
 def _tree_with_buildable_leaf(store, *, gate_kind="file_exists", gate_spec=None):
     """A 1-leaf tree whose single leaf is BUILDABLE (machine-gated). Returns
-    (tree_id, leaf_node_id)."""
+    (tree_id, leaf_node_id).
+
+    GATE-BINDING (court un-rig): the default artifact must be FRESH — written
+    AFTER the leaf exists — because the court now refutes a file whose mtime
+    predates the leaf (a pre-existing file cannot prove new work). So the
+    default gate targets a temp file written after decompose, no longer the
+    package's own (ancient) __init__.py."""
+    import tempfile
+    import uuid
     tree = rt.create_root(store, title="standing-dispatcher vision", owner_user="founder")
+    fresh = None
+    if gate_spec is None:
+        fresh = os.path.join(tempfile.gettempdir(),
+                             f"dispatcher-leaf-{uuid.uuid4().hex}.txt")
+        gate_spec = {"path": fresh}
     rt.decompose(store, tree_id=tree.tree_id, node_id=tree.root_id, children=[
         {"title": "leaf A", "predicate": "the artifact exists",
          "gate_kind": gate_kind,
-         "gate_spec": gate_spec if gate_spec is not None else {"path": _PKG_INIT}},
+         "gate_spec": gate_spec},
     ])
+    if fresh is not None:  # the "work": the artifact appears AFTER the leaf
+        with open(fresh, "w", encoding="utf-8") as fh:
+            fh.write("real artifact\n")
     leaf_id = rt._node_id(tree.tree_id, tree.root_id, "leaf A")
     return tree.tree_id, leaf_id
 

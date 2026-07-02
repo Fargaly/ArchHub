@@ -109,8 +109,13 @@ def judge_leaf(
     {court: <CourtVerdict dict>, node: <ReqNode dict>}.
 
     ANTI-SELF-CERTIFY is enforced twice: the independence lens refuses a judge
-    == executor, AND `set_verdict` itself refuses a green where judged_by ==
-    claimed_by. Belt-and-braces."""
+    == executor (normalized), AND `set_verdict` itself refuses a green where
+    judged_by is the claimer or any past claimant. Belt-and-braces.
+
+    GATE-BINDING: the leaf's created_at + title/predicate are passed to the
+    court so a pre-existing artifact (mtime before the leaf existed) REFUTES.
+    BOOSTING guard: a leaf on its 2nd+ round (attempts >= 1 — it has already
+    been refuted once) is judged with require_diligence forced on."""
     tree = rt.get_tree(store, tree_id=tree_id)
     if tree is None:
         raise KeyError(f"tree '{tree_id}' not found")
@@ -126,7 +131,10 @@ def judge_leaf(
         judged_by=judged_by,
         context=context,
         extra_probes=extra_probes,
-        require_diligence=require_diligence,
+        require_diligence=require_diligence or node.attempts >= 1,
+        leaf_created_at=node.created_at,
+        leaf_title=node.title,
+        leaf_predicate=node.predicate,
     )
 
     updated = rt.set_verdict(
@@ -222,11 +230,15 @@ def run_to_dry(
     judged_by: str = "roma-court",
     context: Optional[dict[str, Any]] = None,
     extra_probes: Optional[dict[str, ProbeRunner]] = None,
-    require_diligence: bool = False,
+    require_diligence: bool = True,
     max_rounds: int = 25,
     auto_decompose: Optional[Callable[["rt.ReqNode"], list[dict[str, Any]]]] = None,
 ) -> dict[str, Any]:
     """The loop-until-dry driver.
+
+    AUDIT FIX (defect 7): `require_diligence` now DEFAULTS TRUE — the unattended
+    loop holds every leaf to never-reward-short unless a caller explicitly
+    opts out.
 
     Each round:
       1. pull the OPEN/RED leaves (the claimable frontier),

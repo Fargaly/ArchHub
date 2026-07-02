@@ -32,12 +32,19 @@ state so the count of VERIFIED vs PLAN-LOCKED is itself machine-checkable
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 # ── repo roots so both `tools/` and the brain package import cleanly ─────────
 _REPO = Path(__file__).resolve().parents[1]
+# Pin the repo's own brain package: without this, `import personal_brain`
+# resolves to whatever stale installed copy site-packages carries, and the
+# suite's verdict depends on TEST ORDER (whichever file inserted src first).
+_BRAIN_SRC = _REPO / "personal-brain-mcp" / "src"
+if str(_BRAIN_SRC) not in sys.path:
+    sys.path.insert(0, str(_BRAIN_SRC))
 
 
 # ───────────────────────────── coverage index ───────────────────────────────
@@ -331,7 +338,7 @@ def test_acc_25_no_later_gate_rejects_untagged_passes_tagged():
 
 
 # #26 — Partial-cannot-land: a parent with any red child is not green.
-def test_acc_26_partial_parent_not_green(tmp_path):
+def test_acc_26_partial_parent_not_green(tmp_path, monkeypatch):
     from personal_brain import requirement_tree as rt
     from personal_brain.storage import BrainStore as Store
     s = Store.open(tmp_path / "rt26.db")
@@ -340,10 +347,15 @@ def test_acc_26_partial_parent_not_green(tmp_path):
                  children=[{"title": "done", "gate_kind": "manual"},
                            {"title": "notdone", "gate_kind": "manual"}])
     leaves = {n.title: n for n in rt.frontier(s, tree_id="t")}
-    # force ONE child green by founder authority; the other stays open
+    # force ONE child green by founder authority; the other stays open.
+    # Root override is authenticated (hardened court 2026-07-02): requires
+    # env ARCHHUB_ROOT_TOKEN + a matching root_token argument. The old
+    # unauthenticated is_root_authority=True was the audited god-mode hole.
+    monkeypatch.setenv("ARCHHUB_ROOT_TOKEN", "acc26-root-token")
     rt.claim_leaf(s, tree_id="t", node_id=leaves["done"].node_id, agent_id="x")
     rt.set_verdict(s, tree_id="t", node_id=leaves["done"].node_id,
-                   verdict="green", judged_by="root", is_root_authority=True)
+                   verdict="green", judged_by="root", is_root_authority=True,
+                   root_token="acc26-root-token")
     # the parent (root) must NOT be green while a sibling is unfinished
     sweep = rt.sweep(s, tree_id="t")
     assert sweep.get("dry") is False

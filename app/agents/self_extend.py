@@ -140,6 +140,18 @@ def is_build_tool(name: str) -> bool:
     return (name or "") in BUILD_TOOLS
 
 
+def _court_version() -> str:
+    """The court harness's OWN version string — never hardcoded here.
+    Learned-fact metadata must correlate with the court semantics that
+    actually judged the leaf (harness bumped v1->v2 in the un-rig; a
+    hardcoded label here mislabeled every learned fact)."""
+    try:
+        from personal_brain.court_harness import COURT_VERSION
+        return str(COURT_VERSION)
+    except Exception:
+        return "roma-court-unknown"
+
+
 def _stamp_artifact(path: Any) -> None:
     """Stamp an artifact THIS executor just materialized with the executor's
     own clock (explicit os.utime).
@@ -1202,7 +1214,7 @@ def _learn_leaf_green(*, tree_id: str, leaf, evidence_ref: str,
             "extra": {
                 "tree_id": tree_id,
                 "leaf_id": leaf_id,
-                "court_version": "roma-court-v1",
+                "court_version": _court_version(),
                 "verdict": "green",
                 "artifact_path": art,
                 "capability": cap,

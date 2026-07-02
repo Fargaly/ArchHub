@@ -180,6 +180,14 @@ def retrieve_facts(
 
     if hybrid_alpha is None:
         hybrid_alpha = 1.0
+    else:
+        # Public-ish API: clamp to [0, 1]; non-numeric -> pure dense (1.0).
+        # An out-of-range alpha would silently produce negative / >1 blend
+        # weights and undebuggable rankings.
+        try:
+            hybrid_alpha = min(1.0, max(0.0, float(hybrid_alpha)))
+        except (TypeError, ValueError):
+            hybrid_alpha = 1.0
 
     qvec = embedder.encode(query)
 

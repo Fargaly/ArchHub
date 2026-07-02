@@ -1,0 +1,9 @@
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+.....................                                                    [100%]
+4755 passed, 18 skipped, 1 deselected in 636.12s (0:10:36)
+=== BRAIN SUITE ===
+    pixels = list(im.getdata())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+778 passed, 4 skipped, 7 warnings in 87.38s (0:01:27)

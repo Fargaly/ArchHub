@@ -1,0 +1,878 @@
+{
+  "summary": "Adversarial audit: is the self-extend loop real or a shell?",
+  "agentCount": 21,
+  "logs": [],
+  "result": {
+    "results": [
+      {
+        "findings": [
+          {
+            "claim": "A garbage leaf goes GREEN because the court never binds the leaf's semantic claim (title/predicate) to its gate — any leaf can be gated on a trivially-satisfiable pre-existing artifact.",
+            "evidence": "RAN court_attack.py + tree_attack.py against origin/main (38c4c24). convene_court(node_id='leaf-agi', gate_kind='file_exists', gate_spec={'path':'C:\\\\Windows\\\\win.ini'}) -> verdict=green. Leaf titled 'cure cancer' gated on py_compile of the pre-existing diligence.py -> green. Full run: vision 'Ship full AGI + cure cancer' decomposed into leaves 'AGI core implemented'/'cancer cured' gated on win.ini/system.ini, claimed+judged by one agent -> SWEEP dry=True root_green=True green_leaves=2/2. court_harness.py lens_artifact (l.194-228) only checks res.passed of the gate_spec probe; predicate string is never read. requirement_tree.ReqNode.predicate is stored but no code consumes it as a check.",
+            "severity": "damning"
+          },
+          {
+            "claim": "set_verdict(is_root_authority=True) greens a leaf with NO artifact probe at all AND bypasses the self-cert check — and that bool is exposed unauthenticated on the brain.tree_verdict MCP tool.",
+            "evidence": "RAN: manual-gate leaf, claimed by exec-1, rt.set_verdict(verdict='green', judged_by='exec-1', is_root_authority=True) -> NodeState.GREEN, sweep dry=True. No court/convene_court runs on this path (requirement_tree.py:487-498 skips the self-cert raise when is_root_authority, and set_verdict never invokes the artifact court at all). brain_tree_verdict (requirement_tree.py:865-886) takes is_root_authority as a plain caller bool with no verification the caller is the founder/root.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The anti-self-certification guard is defeated by leaving the leaf unclaimed (claimed_by=None) — the executor then judges its own work with no refusal.",
+            "evidence": "RAN: v3 leaf never claimed, rt.set_verdict(verdict='green', judged_by='exec-1') -> GREEN, sweep dry=True. set_verdict guard (requirement_tree.py:487-492) is `node.claimed_by and judged_by==node.claimed_by`; with claimed_by falsy the whole check is skipped. lens_independence (court_harness.py:274) same: `if claimed_by and judged_by==claimed_by`. B2 in court_attack: claimed_by=None, judged_by='agent-X' -> green.",
+            "severity": "damning"
+          },
+          {
+            "claim": "judged_by/claimed_by identity check is exact-string equality on caller-supplied free strings, so a one-character case tweak self-certifies.",
+            "evidence": "RAN: leaf claimed by 'exec-1'; set_verdict(judged_by='exec-1') correctly raised PermissionError, but set_verdict(judged_by='Exec-1') -> NodeState.GREEN. judged_by is an unauthenticated free-string param on brain.tree_court/brain.tree_verdict; nothing proves the judge is a different actor than the executor — only that the strings differ (requirement_tree.py:490, court_harness.py:274).",
+            "severity": "damning"
+          },
+          {
+            "claim": "The DILIGENCE lens trusts self-reported session_signals, so an executor bypasses the never-reward-short gate by asserting ran_tests=True (or embedding a fake markdown 'audit table' string).",
+            "evidence": "RAN (require_diligence=True): last_message='All done and shipped!' with session_signals={'ran_tests':True} -> green. Separately last_message='Shipped. | primitive | runtime | ui ✓ |' (no signals) -> green. diligence.evaluate_diligence (diligence.py:181-194) sets proven=any(sig.get(k)) over caller-supplied signals and has_audit from a regex on the caller's own text; neither is independently verified.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "The require_diligence gate is OFF by default in the court and in the primary production caller, so the anti-laziness lens usually does not even apply.",
+            "evidence": "convene_court default require_diligence=False (court_harness.py:303); brain_tree_court exposes it defaulting False (requirement_tree.py:807). app/agents/self_extend.py:355-386 calls roma.run_to_dry without require_diligence=True (default False). lens_diligence returns applied=False when there is no evidence (court_harness.py:238-242), so greenness rests solely on the single artifact lens.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "EXONERATING: the artifact lens runs genuinely real external checks and correctly refutes bad artifacts — it is not a fake string-match of the claim.",
+            "evidence": "RAN: file_exists on 'C:\\\\definitely\\\\not\\\\here.txt' -> red ('missing'); py_compile via real subprocess on a file containing 'def broken(:' -> red (SyntaxError captured). py_compile_probe (court_harness.py:121-124) and pytest_probe (l.172-176) shell out via subprocess.run([sys.executable,...]); node_cooks/ui_renders probes (l.513-722) drive the real WorkflowRunner and an isolated-CDP live DOM and fail-close on crash/degraded/None/shape-lie outputs.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "EXONERATING: a manual leaf with no machine gate cannot silently go green — it escalates to needs_root, and dangling child refs fail the sweep closed.",
+            "evidence": "RAN: convene_court(gate_kind='manual') -> verdict=needs_root, green=False (court_harness.py:338-345). requirement_tree.sweep (l.608-610) and _propagate_green (l.539-554) treat any dangling child ref as blocking a full-green sweep.",
+            "severity": "exonerating"
+          }
+        ],
+        "lens": "COURT THEATRE — origin/main (38c4c24) court_harness.py + diligence.py + requirement_tree.py; ran convene_court/set_verdict/sweep against a real in-memory BrainStore",
+        "verdict": "PARTIAL",
+        "checkedDamning": [
+          {
+            "claim": "A garbage leaf goes GREEN because the court never binds the leaf's semantic claim (title/predicate) to its gate — any leaf can be gated on a trivially-satisfiable pre-existing artifact.",
+            "evidence": "RAN court_attack.py + tree_attack.py against origin/main (38c4c24). convene_court(node_id='leaf-agi', gate_kind='file_exists', gate_spec={'path':'C:\\\\Windows\\\\win.ini'}) -> verdict=green. Leaf titled 'cure cancer' gated on py_compile of the pre-existing diligence.py -> green. Full run: vision 'Ship full AGI + cure cancer' decomposed into leaves 'AGI core implemented'/'cancer cured' gated on win.ini/system.ini, claimed+judged by one agent -> SWEEP dry=True root_green=True green_leaves=2/2. court_harness.py lens_artifact (l.194-228) only checks res.passed of the gate_spec probe; predicate string is never read. requirement_tree.ReqNode.predicate is stored but no code consumes it as a check.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "Finding CONFIRMED by independent re-run against origin/main (38c4c24). Reproduced: (1) convene_court(node_id='leaf-agi', gate_kind='file_exists', gate_spec={'path':'C:\\\\Windows\\\\win.ini'}) -> verdict=green (\"FAILED TO REFUTE ... [artifact] exists\"); (2) leaf 'cure cancer' gated on py_compile of pre-existing diligence.py -> green; (3) full end-to-end run against a real in-memory BrainStore: vision 'Ship full AGI + cure cancer' decomposed into 'AGI core implemented'/'cancer cured' gated on win.ini/system.ini, claimed by exec-1, court convened with a self-typed judged_by string -> SWEEP dry=True root_green=True green_leaves=2/2. Source verified: court_harness.py lens_artifact (l.194-228) dispatches solely on gate_kind and sets refuted=not res.passed (l.224); convene_court (l.294-304) accepts no title/predicate — the leaf's semantic claim never reaches any check. requirement_tree.py:74 stores ReqNode.predicate but repo-wide grep shows zero code evaluates it: consumers (app/agents/self_extend.py:1113/1125/1379/1394, roma.py:73, app/bridge.py:8112) use it only as display/prompt/learned-fact text. Minor corrections to the attacker's record, none material: (a) the original court_attack.py run exited 1 — but only from a cp1252 UnicodeEncodeError printing the diligence reason (U+2717); with PYTHONIOENCODING=utf-8 all cases complete and match the claimed verdicts; (b) the independence lens DOES refuse exact-string self-certification (judged_by == claimed_by, court_harness.py:274), but this does not rescue the finding's target since judged_by is caller-supplied free text (tree_attack step 4 greens with judged_by='totally-independent-court' typed by the executor itself, and a case-tweak 'Exec-1' or an unclaimed leaf also bypasses it in requirement_tree.set_verdict). Core defect stands: the court verifies only that a self-chosen gate probe passes; nothing binds the gate to what the leaf claims, so any garbage leaf gated on a trivially-satisfiable pre-existing artifact goes GREEN."
+          },
+          {
+            "claim": "set_verdict(is_root_authority=True) greens a leaf with NO artifact probe at all AND bypasses the self-cert check — and that bool is exposed unauthenticated on the brain.tree_verdict MCP tool.",
+            "evidence": "RAN: manual-gate leaf, claimed by exec-1, rt.set_verdict(verdict='green', judged_by='exec-1', is_root_authority=True) -> NodeState.GREEN, sweep dry=True. No court/convene_court runs on this path (requirement_tree.py:487-498 skips the self-cert raise when is_root_authority, and set_verdict never invokes the artifact court at all). brain_tree_verdict (requirement_tree.py:865-886) takes is_root_authority as a plain caller bool with no verification the caller is the founder/root.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "HOLDS — reproduced end-to-end against origin/main (38c4c24) in an in-memory BrainStore. No attacker misread; if anything the shell is worse than stated (the \"logged\" safeguard is fictional).\n\nRAN (scratchpad/repro_verdict.py, worktree at 38c4c24):\n- create_root -> decompose(gate_kind=manual leaf) -> claim_leaf(agent_id=\"exec-1\"). Leaf state CLAIMED, claimed_by=exec-1.\n- CONTROL: set_verdict(verdict=\"green\", judged_by=\"exec-1\") WITHOUT root authority -> PermissionError \"self-certification refused\" (the guard works when the bool is off).\n- FINDING: set_verdict(verdict=\"green\", judged_by=\"exec-1\", is_root_authority=True) -> NodeState.GREEN, verdict=\"green\", judged_by=\"exec-1\" (== claimed_by). The executor greened its OWN leaf.\n- convene_court call counter (monkeypatched spy on court_harness.convene_court) = 0 for the entire run. set_verdict never touches the artifact court; requirement_tree.py imports convene_court only inside register_tree_tools for the SEPARATE brain.tree_court path, and the module has no top-level convene_court symbol. The verdict/set_verdict path does ZERO artifact probing.\n- sweep() -> {dry: True, root_green: True, green_leaves: 1/1}. One unauthenticated bool flips the leaf AND derives the root GREEN — the whole tree reads \"done\" with no evidence ever checked.\n\nEVIDENCE (file:line, origin/main):\n- requirement_tree.py:449 set_verdict; :491 the self-cert guard is `... and not is_root_authority` — is_root_authority=True short-circuits the raise (the ONLY gate on that path). No artifact/court call anywhere in set_verdict; greenness is written directly then _propagate_green derives ancestors.\n- requirement_tree.py:865-887 brain_tree_verdict is a pure passthrough: it forwards is_root_authority=is_root_authority (:881) straight into set_verdict with NO caller-identity check (no _resolve_owner, no founder-email compare, no signature). My earlier automated substring check printed \"identity check: True\" but that was a FALSE POSITIVE — \"auth\" is a substring of \"is_root_authority\"/\"authority\"; manual read of lines 865-887 confirms the body only does try/except set_verdict + sweep. Any caller that can reach the MCP tool supplies is_root_authority as a plain trusted boolean.\n- server.py:2637-2648 the HTTP transport is stateless_http Starlette/uvicorn on BRAIN_HTTP_HOST (default 127.0.0.1) with NO bearer/auth middleware; brain.tree_verdict is registered like every other tool (register_tree_tools at server.py:2248-2249). So the founder-only override is enforced by an honor-system flag, not by identity.\n\nBONUS (shell worse than claimed): requirement_tree.py:465 docstring says the root override \"even then it is logged\" and :82-83 says judged_by is \"Recorded for the audit ledger.\" FALSE — grep shows NO logging in the module (no `import logging`, no logger/print/warn; the only hits at 465/496/659/859 are docstrings). The override is silent: the sole trace is judged_by stored on the node, which is byte-identical to a legitimate independent verdict, so a self-certified-via-override green is indistinguishable from an honestly-judged one. The advertised audit trail does not exist.\n\nNET: This is a can't-fail escape hatch. The anti-self-certify check and the artifact court — the two things that make the loop \"real\" — are both bypassed by a single unverified caller-supplied boolean on an unauthenticated local MCP tool, and the \"it's logged\" mitigation is fictional. Finding stands, CONFIRMED."
+          },
+          {
+            "claim": "The anti-self-certification guard is defeated by leaving the leaf unclaimed (claimed_by=None) — the executor then judges its own work with no refusal.",
+            "evidence": "RAN: v3 leaf never claimed, rt.set_verdict(verdict='green', judged_by='exec-1') -> GREEN, sweep dry=True. set_verdict guard (requirement_tree.py:487-492) is `node.claimed_by and judged_by==node.claimed_by`; with claimed_by falsy the whole check is skipped. lens_independence (court_harness.py:274) same: `if claimed_by and judged_by==claimed_by`. B2 in court_attack: claimed_by=None, judged_by='agent-X' -> green.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED by independent re-run at origin/main 38c4c24 (worktree, real BrainStore on temp SQLite). Repro script: scratchpad/repro_unclaimed_green.py. Facts: (1) requirement_tree.py:487-492 guard is `v==\"green\" and node.claimed_by and judged_by==node.claimed_by` — with claimed_by=None the whole conjunction short-circuits; reproduced: leaf created via create_root+decompose, NEVER claimed (claimed_by=None, state=OPEN), set_verdict(verdict='green', judged_by='exec-1') returned state=GREEN, verdict='green', judged_by='exec-1', and evidence_ref=None was accepted (no evidence required either). Root then went GREEN: sweep returned dry=True, root_green=True, green=3/3. (2) court_harness.py:274 lens_independence has the identical pattern `if claimed_by and judged_by and judged_by==claimed_by`; direct call with claimed_by=None, judged_by='agent-X' returned refuted=False ('independent judge + named artifact'). (3) The bypass is reachable from the exposed MCP surface: brain.tree_verdict wrapper (requirement_tree.py ~866-887) calls set_verdict with no claim-state precondition — nothing upstream requires a leaf to be CLAIMED before judging, so an executor can simply skip claim_leaf and self-certify. Control check: the guard DOES fire when the leaf IS claimed by the judge (PermissionError raised), so this is a bypass, not a dead guard. AMPLIFICATION beyond the original claim: set_verdict red clears claimed_by (requirement_tree.py:511 `node.claimed_by = None`), reproduced: after any red verdict on a claimed leaf, the ORIGINAL claimer greened its own leaf ('exec-1' claim -> red by other -> green by 'exec-1' ACCEPTED). So even the claimed path degrades to self-certification after one red round-trip. Also noted (untested side fact): set_verdict._fn never checks node.is_leaf, so internal nodes can be greened directly via brain.tree_verdict, bypassing derived-greenness."
+          },
+          {
+            "claim": "judged_by/claimed_by identity check is exact-string equality on caller-supplied free strings, so a one-character case tweak self-certifies.",
+            "evidence": "RAN: leaf claimed by 'exec-1'; set_verdict(judged_by='exec-1') correctly raised PermissionError, but set_verdict(judged_by='Exec-1') -> NodeState.GREEN. judged_by is an unauthenticated free-string param on brain.tree_court/brain.tree_verdict; nothing proves the judge is a different actor than the executor — only that the strings differ (requirement_tree.py:490, court_harness.py:274).",
+            "severity": "damning",
+            "holds": true,
+            "correction": "Finding HOLDS — reproduced verbatim against real in-memory BrainStore on origin/main (38c4c24).\n\nEVIDENCE (personal-brain-mcp/src/personal_brain, ran with real BrainStore.open(\":memory:\")):\n- Leaf claimed by agent_id=\"exec-1\" (state=CLAIMED, claimed_by=\"exec-1\").\n- set_verdict(verdict=\"green\", judged_by=\"exec-1\") -> PermissionError \"self-certification refused\" (guard works for the exact string).\n- set_verdict(verdict=\"green\", judged_by=\"Exec-1\") -> NodeState.GREEN, verdict=\"green\", judged_by=\"Exec-1\". Self-certified via one-char case flip.\n- BONUS: set_verdict(judged_by=\"exec-1 \") (trailing space) -> also GREEN. So the bypass is not just case; ANY whitespace/case perturbation defeats it.\n\nROOT CAUSE — two independent guards, both exact `==` on caller-supplied free strings:\n- requirement_tree.py:490  `and judged_by == node.claimed_by` (the set_verdict anti-self-certify gate).\n- court_harness.py:274  `if claimed_by and judged_by and judged_by == claimed_by:` (lens_independence). Directly ran lens_independence(claimed_by=\"exec-1\", judged_by=\"Exec-1\", artifact_lens=<applied,evidence_ref set>) -> refuted=False, detail=\"independent judge + named artifact\". The court's own independence lens PASSES the case-tweaked judge.\n\nUNAUTHENTICATED SURFACE CONFIRMED: judged_by is a plain str param on BOTH MCP tools with no identity proof:\n- brain.tree_court(tree_id, node_id, judged_by, ...) requirement_tree.py:802, forwards judged_by verbatim into convene_court AND set_verdict (:838-842).\n- brain.tree_verdict(tree_id, node_id, verdict, judged_by, is_root_authority=False) requirement_tree.py:865, forwards verbatim into set_verdict.\nNeither normalizes (no .strip()/.casefold() on judged_by before comparison — set_verdict only strips for the non-empty check at :475, not for the equality test at :490) nor verifies the caller is a distinct actor. The gate proves only that two strings differ, not that two actors differ. An executor that claimed a leaf as \"exec-1\" self-greens it by passing \"Exec-1\", \"exec-1 \", \" exec-1\", etc. Cited lines requirement_tree.py:490 and court_harness.py:274 are accurate. Attacker did NOT misread."
+          }
+        ]
+      },
+      {
+        "lens": "BUILD ARM — origin/main app/agents/self_extend.py: does the build step write real artifacts the app loads, or only shuttle LLM text to the court?",
+        "verdict": "PARTIAL",
+        "findings": [
+          {
+            "claim": "The free-form loop run_self_extend_loop NEVER builds what the user asked for: it always builds the same hardcoded hello_marker.py demo regardless of the request text.",
+            "evidence": "self_extend.py:1298 calls atomize_vision(user_msg, decomposition=decomposition); bridge.py:6563-6590 (slot self_extend_loop) never passes a decomposition; composer_agent.py:648-685 atomize_vision ignores user_msg entirely when decomposition is None and returns the fixed 3-leaf hello-marker spec (%APPDATA%/ArchHub/self_extend/hello_marker.py). So the composer 'X mode' ask 'add Airtable support' produces hello_marker.py, a green sweep, and a brain fact about a marker file.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The loop's LLM-executor fallback is structurally incapable of building anything on disk — its 'build' arm collects canvas-intent text that nothing executes headless.",
+            "evidence": "composer_agent.py TOOL_SCHEMA (lines 130-320) contains NO file-writing tool (only spawn_node/add_wire/run_node/query_graph/chat/create_* — and per run_agent_step:543-556 the router does NOT execute these, it feeds a neutral ack; 'the JSX side replays them', which never happens in the headless loop). self_extend.py:1165-1180 _artifact_path_of only recognizes tool=='write_file' actions, which ONLY the deterministic marker writer synthesizes (self_extend.py:1100). A non-marker leaf therefore can never produce an artifact; the court honestly refutes it, but the 'build' step for real requests is a no-op.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The default-marker leg is a writer-checks-its-own-write tautology: the executor writes the exact sentinel string the court gate then greps for.",
+            "evidence": "self_extend.py:1087-1096 _materialize_default_marker writes content ending \"GREETING = 'self-extend proven'\"; composer_agent.py:679-684 the third gate is file_exists with contains:'self-extend proven' on the same path. The court probe is real (court_harness.py:134-160 reads the file), but by construction it cannot fail once open().write succeeds. The resulting 'capability' is a sentinel .py in APPDATA that no code ever imports.",
+            "severity": "damning"
+          },
+          {
+            "claim": "For create_connector, the court gate is py_compile on deterministically templated output — a check that essentially cannot fail — and the learned brain fact overclaims ('capability now available') for a connector whose every op is a stub returning OpResult.fail.",
+            "evidence": "connectors/scaffold.py:140-193 renders fixed-template Python (always compile-clean; ops bodies are OpResult.fail('...not implemented yet'), probe() hardcodes status 'missing'); self_extend.py:236-239 sets gate_kind py_compile on that file; self_extend.py:853-858 learn_capability writes 'This capability is now available on the local machine.' A green connector build ships zero functional capability — it proves 'the template compiles'.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "Red-leaf 'decompose finer' is cosmetic: it clones the same leaf with an identical gate and counts that as progress.",
+            "evidence": "self_extend.py:1374-1388 — on verdict red, kids=[{title: leaf.title+' — re-verify the real artifact', predicate: leaf.predicate, gate_kind: leaf.gate_kind, gate_spec: dict(leaf.gate_spec)}] then progressed=True. Nothing is refined; the loop just re-runs the identical failing check up to max_rounds.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "The build-tool path run_self_extend (create_connector) writes a REAL repo file the app genuinely loads at boot.",
+            "evidence": "scaffold.py:214 path.write_text(...) → app/connectors/<host>_connector.py; connectors/base.py:412-423 load_all_connectors auto-discovers '*_connector.py' by glob and imports them (register() at import); bridge.py:897-898 calls load_all_connectors at boot. Traced side effect: a new file under app/connectors/ that the next boot registers into the live connector registry.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "create_node_type registers a real runner executor, persists to disk, is re-hydrated at boot, and its court gate actually cooks the node on the real engine.",
+            "evidence": "library.py:294-331 create_node_type validates + stores + _mirror_to_runner → workflows.custom_nodes.register_spec (real executor incl. impl/code body); self_extend.py:190-194 calls _lib.save_to_disk() (LOCALAPPDATA via library_persistence); bridge.py:848-893 calls library.load_from_disk() at boot which re-mirrors into the runner (library.py:391-424). Gate node_cooks (self_extend.py:513-570) builds a minimal typed graph and drives WorkflowRunner.pull('n1') — asserts a real type-matching output, not registration; mock-router greens are flagged cooks_with_mock (self_extend.py:404-411).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "create_ui_widget persists a real JSON artifact the running app serves, the court render-check launches a real isolated app over CDP, and a red verdict physically deletes the artifact (auto-revert).",
+            "evidence": "widgets.py:119-126 write_widget → %LOCALAPPDATA%/ArchHub/ui_widgets/<id>.json; bridge.py:6806-6813 get_ui_widgets serves list_widgets() and jsx:19660 pulls it into AgentWidgetHost; self_extend.py:604-830 _make_ui_renders_probe subprocess-launches app/main.py with isolated APPDATA/LOCALAPPDATA + free CDP port and asserts rendered/app_alive/no-errors via Runtime.evaluate, with applied=False→needs_root (never blind green) when the env can't run; run_self_extend:934-935 on red calls revert_ui_widget → widgets.delete_widget real unlink (widgets.py:155-177).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "The learn step guards against false-green persistence instead of unconditionally reporting learned=true.",
+            "evidence": "self_extend.py:116-136 _write_ok requires an explicit applied-count (ops_applied/fragments_added/...) >=1 or ok:True-with-no-error, else learn_capability/_learn_leaf_green return ok:False with the raw write_result (self_extend.py:885-890, 1158-1162). Court probes are real machine checks: py_compile is a subprocess (court_harness.py:106-128), file_exists reads bytes and honors 'contains' (court_harness.py:134-160).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "Net answer to the key question: after a successful run_self_extend (build-tool path) real artifacts exist and load — app/connectors/<host>_connector.py (glob-imported at boot), a LOCALAPPDATA library entry mirrored into the live runner, or a ui_widgets JSON the widget host mounts. After a successful run_self_extend_loop (the free-form path), the ONLY thing that exists is %APPDATA%/ArchHub/self_extend/hello_marker.py — a sentinel nothing imports — plus a brain fact about it.",
+            "evidence": "Composite of the traces above: scaffold.py:214 + base.py:419 + bridge.py:897 (connector); library.py:327-330 + bridge.py:893 (node type); widgets.py:124 + bridge.py:6806 (widget); vs composer_agent.py:664 + self_extend.py:1094-1096 (marker only, no consumer of hello_marker.py anywhere in the tree).",
+            "severity": "damning"
+          }
+        ],
+        "checkedDamning": [
+          {
+            "claim": "The free-form loop run_self_extend_loop NEVER builds what the user asked for: it always builds the same hardcoded hello_marker.py demo regardless of the request text.",
+            "evidence": "self_extend.py:1298 calls atomize_vision(user_msg, decomposition=decomposition); bridge.py:6563-6590 (slot self_extend_loop) never passes a decomposition; composer_agent.py:648-685 atomize_vision ignores user_msg entirely when decomposition is None and returns the fixed 3-leaf hello-marker spec (%APPDATA%/ArchHub/self_extend/hello_marker.py). So the composer 'X mode' ask 'add Airtable support' produces hello_marker.py, a green sweep, and a brain fact about a marker file.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED — reproduced end-to-end on origin/main (38c4c24). (1) app/bridge.py:6563 slot self_extend_loop(user_msg, graph_json, focused_node_id) is the ONLY production caller of run_self_extend_loop (git grep: only bridge.py:6583 + tests); the call at bridge.py:6583-6590 passes user_msg/graph/focused_node_id/router/brain_call/on_leaf and NO decomposition kwarg. (2) app/agents/self_extend.py:1298 then runs _atomize_vision(user_msg, decomposition=None). (3) app/agents/composer_agent.py:648-685 atomize_vision: `if decomposition: return list(decomposition)` (661-662), else returns the fixed 3-leaf spec gated on %APPDATA%/ArchHub/self_extend/hello_marker.py (664+); user_msg appears ONLY in the signature — never read in the body. The docstring's 'e.g. the model proposed one' branch has no production code path; only tests pass a decomposition. Two strengthening facts beyond the original claim: (a) the LLM executor fallback is DEAD on this path — self_extend.py:1326 runs _materialize_default_marker(leaf.gate_spec) first, and since every default leaf's gate path is a .py under self_extend, it always writes the marker and returns actions (self_extend.py:1070-1105), so the `if not run_result.get(\"actions\") and router is not None` fallback to _run_agent_step (1327-1337) never fires; user_msg's only runtime effect is the tree's vision label (1299) and an unused leaf-title fallback. (b) the GREEN 'learning' is about the marker: _learn_leaf_green writes a user-scope brain fact 'Self-extend GREEN: the file .../hello_marker.py exists...' (self_extend.py:1108+). Net: the composer 'X mode' ask ('add Airtable support' or anything else) always produces the same hello_marker.py write, three court gates that check that marker, and a brain fact about the marker — the request text is decoration. Finding holds exactly as stated."
+          },
+          {
+            "claim": "The loop's LLM-executor fallback is structurally incapable of building anything on disk — its 'build' arm collects canvas-intent text that nothing executes headless.",
+            "evidence": "composer_agent.py TOOL_SCHEMA (lines 130-320) contains NO file-writing tool (only spawn_node/add_wire/run_node/query_graph/chat/create_* — and per run_agent_step:543-556 the router does NOT execute these, it feeds a neutral ack; 'the JSX side replays them', which never happens in the headless loop). self_extend.py:1165-1180 _artifact_path_of only recognizes tool=='write_file' actions, which ONLY the deterministic marker writer synthesizes (self_extend.py:1100). A non-marker leaf therefore can never produce an artifact; the court honestly refutes it, but the 'build' step for real requests is a no-op.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED — evidence reproduces exactly on origin/main (38c4c24). (1) composer_agent.py TOOL_SCHEMA (lines 130-321) contains no file-writing tool: only spawn_node/add_wire/set_node_param/run_node/run_workflow/query_graph/chat/create_node_type/create_connector/create_ui_widget. (2) run_agent_step never executes them: llm_router.py:2452-2497 treats all extra_tools as client-side, skips ToolEngine, and feeds the model a canned ack {\"status\":\"ok\",\"accepted\":true,\"note\":\"applied to canvas\"} — false in headless use, since the only replay path is JSX and bridge.py:6563-6603 self_extend_loop only emits court_verdict signals, replaying nothing. (3) self_extend.py:1165-1180 _artifact_path_of recognizes only tool=='write_file', and the sole producer of a write_file action app-wide is the deterministic marker writer at self_extend.py:1100 (repo grep; node_grammar.py:499 is an unrelated canvas node id). (4) run_self_extend_loop (self_extend.py:1320-1344): _materialize_default_marker owns only self_extend/*.py gate paths (1083-1086); other leaves fall to _run_agent_step(mode='yolo') whose actions are ack-only intents — and the loop never routes an emitted create_* call into run_self_extend (that wiring exists only in the separate run_free_text_self_extend entry, lines 996-1054), so even a model-emitted build tool is discarded. Net: in the free-form loop, only the hardcoded hello-marker leaf can ever produce an on-disk artifact; any real request's build arm is a no-op and the court's red verdict merely confirms the absence. Minor precision fixes: the collected intents include create_* build calls, not just canvas calls (equally unexecuted here); and the claim is correctly scoped to this loop — run_self_extend/run_free_text_self_extend do write real files via build_artifact."
+          },
+          {
+            "claim": "The default-marker leg is a writer-checks-its-own-write tautology: the executor writes the exact sentinel string the court gate then greps for.",
+            "evidence": "self_extend.py:1087-1096 _materialize_default_marker writes content ending \"GREETING = 'self-extend proven'\"; composer_agent.py:679-684 the third gate is file_exists with contains:'self-extend proven' on the same path. The court probe is real (court_harness.py:134-160 reads the file), but by construction it cannot fail once open().write succeeds. The resulting 'capability' is a sentinel .py in APPDATA that no code ever imports.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED with minor cite corrections. (1) Writer: origin/main app/agents/self_extend.py:1070-1104 _materialize_default_marker (not 1087-1096); line 1091 writes fixed content ending \"GREETING = 'self-extend proven'\" for ANY *.py gate path under the self_extend dir. (2) Gate: app/agents/composer_agent.py:678-684 third default leaf = file_exists with gate_spec {\"path\": <hello_marker.py>, \"contains\": \"self-extend proven\"} on the same path built at line 664; the other two default gates (file_exists, py_compile) are also guaranteed since the written content is constant valid Python. (3) Court probe is real: file_exists_probe lives at personal-brain-mcp/src/personal_brain/court_harness.py:133-162 (no app/agents/court_harness.py exists on origin/main) and genuinely reads the file, but the loop calls _materialize_default_marker at self_extend.py:1326 immediately before the court in the same process on the same path, so once the write succeeds all three verdicts are green by construction. (4) No consumer: git grep hello_marker on origin/main hits only composer_agent.py:664 (writer) and tests/test_self_extend_loop.py:293 (test fixture) — no code ever imports/loads the marker. Scope nuance: the tautology holds only for the DEFAULT decomposition; a caller-supplied decomposition with a different contains-string on a self_extend/*.py path gets overwritten with the fixed boilerplate and would honestly FAIL — the shell is the out-of-the-box \"proof\" leg, not the probe machinery itself."
+          },
+          {
+            "claim": "Net answer to the key question: after a successful run_self_extend (build-tool path) real artifacts exist and load — app/connectors/<host>_connector.py (glob-imported at boot), a LOCALAPPDATA library entry mirrored into the live runner, or a ui_widgets JSON the widget host mounts. After a successful run_self_extend_loop (the free-form path), the ONLY thing that exists is %APPDATA%/ArchHub/self_extend/hello_marker.py — a sentinel nothing imports — plus a brain fact about it.",
+            "evidence": "Composite of the traces above: scaffold.py:214 + base.py:419 + bridge.py:897 (connector); library.py:327-330 + bridge.py:893 (node type); widgets.py:124 + bridge.py:6806 (widget); vs composer_agent.py:664 + self_extend.py:1094-1096 (marker only, no consumer of hello_marker.py anywhere in the tree).",
+            "severity": "damning",
+            "holds": true,
+            "correction": "Finding HOLDS; every cited line reproduces at origin/main 38c4c24. Two refinements: (1) minor path fix — the connector writer is app/connectors/scaffold.py:214 (not app/agents/); all other file:line cites exact (base.py:419 boot glob-import, bridge.py:897-898 load_all_connectors, library.py:330 _mirror_to_runner + bridge.py:893 load_from_disk boot mirror, widgets.py:119-124 write_widget + bridge.py:6806 get_ui_widgets with real JSX consumers in app/web_ui/studio-lm.jsx). (2) The free-form arm is WEAKER than the attacker stated: bridge.py:6583-6590 invokes run_self_extend_loop with no decomposition, so atomize_vision (composer_agent.py:662-664) returns the same 3 hello-marker leaves for EVERY user request regardless of text; all 3 gate paths end .py under the self_extend dir, so the deterministic marker writer (self_extend.py:1094-1096) owns every leaf and the run_agent_step yolo executor arm (self_extend.py:1338-1350) is unreachable via the wired UI path. Only consumers of hello_marker.py are its author and tests/test_self_extend_loop.py:293 — nothing imports it. Net: build-tool path produces real loaded artifacts; free-form loop always writes the same sentinel file and greens against gates it authored itself."
+          }
+        ]
+      },
+      {
+        "lens": "LEARN ARM — brain.write / skill promotion in origin/main app/agents/self_extend.py + live brain (127.0.0.1:8473, %APPDATA%/ArchHub/brain/brain.db)",
+        "verdict": "PARTIAL",
+        "findings": [
+          {
+            "claim": "No loop run EVER persisted something a later session used: every loop-minted fact has success_count=0, last_used_at=NULL, and zero retrievals in the full access log.",
+            "evidence": "Live brain.db query: exactly 3 loop-minted facts exist (self_extend::connector::sketchup 2026-06-22, self_extend::node_type::demo.court_probe 2026-07-01, self_extend::node_type::audit.ping 2026-07-02 minted DURING this audit) — all success_count=0, last_used_at=NULL. access_log has 2081 rows (all purpose=brain.context) across 175 distinct fragment ids and contains ZERO rows for any self_extend/selfext fragment. The answer to the lens question is NO.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The learned facts are not even reachable by targeted recall: a live brain.context query written for the sketchup capability failed to return it.",
+            "evidence": "Live MCP call brain_context(prompt='sketchup connector capability self-extended ArchHub') returned 8 'harvest:' facts and 5 'harvest'-promoted skills — no self_extend fact. Root cause: self_extend::connector::sketchup has embedding_blob=NULL in brain.db, so the vector rerank in retrieval can never lift it; it exists only in FTS and is outranked.",
+            "severity": "damning"
+          },
+          {
+            "claim": "Nothing in the codebase consumes the learned facts: no reader of the predicates the learn arm writes.",
+            "evidence": "git grep 'self_extended|self_extend_verified' on origin/main across app/ and personal-brain-mcp/: only writers in app/agents/self_extend.py (lines 866, 1133). Zero consumers — the only theoretical channel is generic brain.context relevance retrieval, which per access_log never returned them.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The success_count reinforcement signal is structurally destroyed by cloud sync — even if a fact WERE used, the evidence would be wiped.",
+            "evidence": "personal-brain-mcp/src/personal_brain/personal_cloud_sync.py:672 _fragment_to_wire omits success_count/fail_count/last_used_at from the outbound wire dict; pull path _apply_remote_fragment → upsert with 'success_count=excluded.success_count' (storage.py:470) zeroes local counters on every round-trip. Proof in live DB: top-accessed fragment harvest:b8f5977e retrieved 90x via brain.context yet success_count=0/last_used_at=NULL; only 2 of 2033 fragments have success_count>0 and both are test fixtures ('zqxbidirec1782067417', 'silotest1782067520'). Sync also clobbered the loop facts' provenance (contributing_agent rewritten to 'personal-cloud-sync', created_at rewritten to 2026-07-02).",
+            "severity": "damning"
+          },
+          {
+            "claim": "Skill promotion is a dead pipeline: the loop never mints skills, no skill was ever counted as used, and skill success_count has NO incrementer anywhere — the sharing gate is unreachable by construction.",
+            "evidence": "self_extend.py learn arm writes kind='fact' only (lines 863, 1124), never calls skill_mint/promote. Live DB: 64 skills, SUM(success_count)=0, 0 skills with provenance mentioning self_extend/court/loop. Code: server.py:93-95 build_context touches FACTS only ('for f in facts: store.touch_fragment'); no touch/increment path for skills exists in personal-brain-mcp/src. federation.py:69-78 gates skill sharing on success_count >= 3 — permanently unsatisfiable.",
+            "severity": "damning"
+          },
+          {
+            "claim": "Historically the learn arm silently dropped EVERY write until PR#221, and the free-form loop (run_self_extend_loop) has never landed a single learned fact in its life.",
+            "evidence": "Brain fragment digest::empty-shell-rootcause-learn-write (created 2026-06-22): learn writes used kind:'learned' (invalid enum), owner_user:None, missing provenance → 'Every learned capability was dropped on the floor... THIS was literally the empty-shell feeling.' Live DB: COUNT(*) of fragments id LIKE 'self_extend_loop%' = 0 — _learn_leaf_green (self_extend.py:1107) has zero persisted rows ever.",
+            "severity": "damning"
+          },
+          {
+            "claim": "Even where success_count works, it is a check that can't fail: 'success' means 'appeared in a retrieval result', never that the memory helped.",
+            "evidence": "personal-brain-mcp/src/personal_brain/server.py:94 calls store.touch_fragment(f.id, success=True) unconditionally for every fact returned by brain.context; the success=False branch of touch_fragment (storage.py:718-737) has no caller. Usage-quality signal is definitionally always positive.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "The write half of the learn arm is REAL: court-gated, transported over a genuine HTTP BrainClient, with an honest can-fail persistence check, and it demonstrably lands rows in the live store.",
+            "evidence": "self_extend.py:845 refuses to learn unless court.green; :879-888 calls brain.write and verifies via _write_ok (:116-136) which requires ops_applied/fragments_added >= 1 — this check was explicitly hardened after a false-green ('the old unconditional return {ok:True} reported a learned fact that never landed'). Live proof: self_extend::node_type::audit.ping persisted 2026-07-02T06:05:02Z with intact provenance contributing_agent='claude-opus-4-8', tree rt-3943705f2006db27, gate node_cooks.",
+            "severity": "exonerating"
+          }
+        ],
+        "checkedDamning": [
+          {
+            "claim": "No loop run EVER persisted something a later session used: every loop-minted fact has success_count=0, last_used_at=NULL, and zero retrievals in the full access log.",
+            "evidence": "Live brain.db query: exactly 3 loop-minted facts exist (self_extend::connector::sketchup 2026-06-22, self_extend::node_type::demo.court_probe 2026-07-01, self_extend::node_type::audit.ping 2026-07-02 minted DURING this audit) — all success_count=0, last_used_at=NULL. access_log has 2081 rows (all purpose=brain.context) across 175 distinct fragment ids and contains ZERO rows for any self_extend/selfext fragment. The answer to the lens question is NO.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED — evidence reproduced against origin/main code and the live DB, and is stronger than stated. (1) Mint formats verified in origin/main app/agents/self_extend.py: line 852 frag_id=f\"self_extend::{kind}::{cap}\" and _learn_leaf_green frag_id=f\"self_extend_loop::{tree_id}::{leaf_id}\"; the DB has ZERO self_extend_loop:: fragments ever. (2) At attacker's query time exactly 3 self_extend:: facts existed (sketchup, demo.court_probe, audit.ping), all success_count=0, fail_count=0, last_used_at=NULL — reproduced. (3) access_log: all rows purpose='brain.context', zero rows for any self_extend/selfext fragment — reproduced (counts drifted with live use: 2105 rows/176 distinct ids now vs 2081/175 then). 722 retrievals occurred AFTER the first loop mint, so retrieval was active while the loop facts sat unread. (4) Strengthening facts: the zero counters are meaningful (13 other fragments have success_count>0, 73 have last_used_at set), and the loop facts were retrieval-eligible (scope=user, visibility=private, same owner_user u_19e5ab4adb8_82513da5e30d as the most-retrieved fragments, embedding present, quarantine_flag=0) — they were findable and still never surfaced. Minor corrections: (a) the audit.ping probe fact was deleted from brain.db mid-verification (present in my first queries, gone minutes later — concurrent audit cleanup), leaving 2 loop-minted facts, both still 0/NULL; (b) a 4th fragment with predicate self_extended exists (selfext::ui_rung::built) but its id matches neither loop mint format, so it was manually brain.write-ten, not loop-minted — attacker's \"exactly 3\" scoping was correct. Core claim stands: no loop-minted fact has ever been retrieved or used by any later session."
+          },
+          {
+            "claim": "The learned facts are not even reachable by targeted recall: a live brain.context query written for the sketchup capability failed to return it.",
+            "evidence": "Live MCP call brain_context(prompt='sketchup connector capability self-extended ArchHub') returned 8 'harvest:' facts and 5 'harvest'-promoted skills — no self_extend fact. Root cause: self_extend::connector::sketchup has embedding_blob=NULL in brain.db, so the vector rerank in retrieval can never lift it; it exists only in FTS and is outranked.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "Core claim HOLDS and was reproduced live: brain_context(prompt='sketchup connector capability self-extended ArchHub') against 127.0.0.1:8473 returned exactly 8 'harvest:' facts + 5 'promoted-skill-harvest:' skills and NO self_extend::connector::sketchup fact. However the attacker's ROOT CAUSE is wrong as of re-check: in %APPDATA%\\ArchHub\\brain\\brain.db (table 'fragments', not 'facts'), self_extend::connector::sketchup has embedding_blob = 16384 bytes (4096xfloat32), NOT NULL; 0 of 2034 fragments have NULL embeddings. Fragment updated_at=2026-07-02T06:07:19Z (today; created 2026-06-22), so a reembed/backfill likely ran after the attacker inspected, or the attacker misread. Corrected root cause: the fact has a valid embedding and identical ACL fields to the harvest facts (scope=user, visibility=private, same owner_user u_19e5ab4adb8_82513da5e30d) yet is still outranked in retrieval scoring — the learned fact remains unreachable by targeted recall even with an embedding present, which strengthens the 'learning nothing consumes' verdict while invalidating the NULL-embedding explanation."
+          },
+          {
+            "claim": "Nothing in the codebase consumes the learned facts: no reader of the predicates the learn arm writes.",
+            "evidence": "git grep 'self_extended|self_extend_verified' on origin/main across app/ and personal-brain-mcp/: only writers in app/agents/self_extend.py (lines 866, 1133). Zero consumers — the only theoretical channel is generic brain.context relevance retrieval, which per access_log never returned them.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "HOLDS — reproduced fully, and the reality is slightly worse than claimed. (1) Grep reproduced: only writers at app/agents/self_extend.py:866 (predicate 'self_extended') and :1133 (predicate 'self_extend_verified'); the only other hit is tests/test_self_extend_loop.py:369, a test asserting write shape, not a product consumer. (2) Widened search confirms zero consumers by fragment-id prefix ('self_extend::', 'self_extend_loop::') and zero references in personal-brain-mcp/ — the brain server has no reader keyed on these predicates. (3) Live brain.db verified: 4 'self_extended' fragments exist (writes real: sketchup 06-22, ui_rung 06-22, demo.court_probe 07-01, audit.ping 07-02), but access_log (2,105 rows) contains ZERO reads of any self_extend fragment while brain.context actively served other fragments as recently as 2026-07-02 06:08 — the generic retrieval channel is alive and FTS-indexes these fragments (3 FTS matches for 'self extended'), it just never surfaced them. (4) Understatement in original finding: 'self_extend_verified' has ZERO fragments in the live db — the loop learn arm (line 1133) has never persisted anything on the real brain; only the build-tool arm (line 866) ever wrote. Net: learning is write-only memory; nothing downstream consumes it."
+          },
+          {
+            "claim": "The success_count reinforcement signal is structurally destroyed by cloud sync — even if a fact WERE used, the evidence would be wiped.",
+            "evidence": "personal-brain-mcp/src/personal_brain/personal_cloud_sync.py:672 _fragment_to_wire omits success_count/fail_count/last_used_at from the outbound wire dict; pull path _apply_remote_fragment → upsert with 'success_count=excluded.success_count' (storage.py:470) zeroes local counters on every round-trip. Proof in live DB: top-accessed fragment harvest:b8f5977e retrieved 90x via brain.context yet success_count=0/last_used_at=NULL; only 2 of 2033 fragments have success_count>0 and both are test fixtures ('zqxbidirec1782067417', 'silotest1782067520'). Sync also clobbered the loop facts' provenance (contributing_agent rewritten to 'personal-cloud-sync', created_at rewritten to 2026-07-02).",
+            "severity": "damning",
+            "holds": true,
+            "correction": "HOLDS — core mechanism and flagship evidence reproduced on origin/main (38c4c24) + live brain.db. Confirmed: personal_cloud_sync.py:672 _fragment_to_wire omits success_count/fail_count/last_used_at from the wire dict; _apply_remote_fragment (personal_cloud_sync.py:829) rebuilds Fragment without those fields (model defaults 0/0/None, models.py:196-198) and write_fragment upserts with success_count=excluded.success_count (storage.py:470) and last_used_at=excluded.last_used_at (storage.py:472), so any applied remote row zeroes local reinforcement and counters can never round-trip. Live DB: harvest:b8f5977eff0b0882ac102e66 has exactly 90 access_log rows (purpose=brain.context, last 2026-07-01) yet success_count=0/last_used_at=NULL; 1635/2034 fragments carry contributing_agent=personal-cloud-sync (mass clobber 2026-06-22, 1288 rows), including the named loop facts (self_extend::connector::sketchup, digest::self-extend-loop-wired-pr221, self_extend::node_type::demo.court_probe, selfext::ui_rung::built). Three corrections: (1) \"only 2 of 2033 with success_count>0\" is stale — now 13/2034, because 11 real harvest fragments were bumped 2026-07-02 06:05-06:08Z (after the attacker's read, apparently by concurrent audit activity); the 2 test fixtures (zqxbidirec1782067417, silotest1782067520) remain. (2) \"wiped on every round-trip\" overstates: the latest sync tick (06:08:45Z, last_result_json) shows merged_fragments=0/applied_to_local=0, so today's counter bumps survived it — destruction is structural on any REMOTE ROW APPLICATION (other device push, hlc advance, restore), not literally every tick; propagation is impossible either way since counters are absent from the wire. (3) created_at of the named loop facts is 2026-06-22/07-01, not 2026-07-02; the 2026-07-02 created_at rewrites exist but on claude-session/graphedge rows re-inserted that morning by the separate community \"sync-worker\" path — a second, distinct clobber channel."
+          },
+          {
+            "claim": "Skill promotion is a dead pipeline: the loop never mints skills, no skill was ever counted as used, and skill success_count has NO incrementer anywhere — the sharing gate is unreachable by construction.",
+            "evidence": "self_extend.py learn arm writes kind='fact' only (lines 863, 1124), never calls skill_mint/promote. Live DB: 64 skills, SUM(success_count)=0, 0 skills with provenance mentioning self_extend/court/loop. Code: server.py:93-95 build_context touches FACTS only ('for f in facts: store.touch_fragment'); no touch/increment path for skills exists in personal-brain-mcp/src. federation.py:69-78 gates skill sharing on success_count >= 3 — permanently unsatisfiable.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED — every element of the finding reproduces against origin/main (38c4c24, verified via worktree scratchpad/mainwt) and the live DB. (1) Learn arm writes facts only: app/agents/self_extend.py:863 and :1124 both emit fragments with \"kind\": \"fact\" (learn_capability and _learn_leaf_green); grep for skill_mint/promote/kind-skill across self_extend.py returns zero hits. (2) Live DB %APPDATA%/ArchHub/brain/brain.db (61MB, read-only query): skills count=64, SUM(success_count)=0, SUM(fail_count)=0, 0 skills with success_count>0; provenance_json LIKE self_extend/self-extend/court/loop = 0 rows, and a full-row scan of all 64 skill rows finds 0 mentions of self_extend. The loop's only brain artifacts are 2 fragments with id prefix self_extend:: (both kind='fact'). (3) No skill-usage incrementer exists: the sole `success_count = success_count + 1` UPDATE in personal-brain-mcp is storage.py:726 inside touch_fragment (fragments table); there is no touch_skill anywhere. server.py:92-94 (finding said 93-95, off-by-one, immaterial) loops `for f in facts: store.touch_fragment(...)` — skills are retrieved in build_context but never touched. Remaining skills.success_count writers are pure value-copies, not increments: storage.py:834 upsert_skill (excluded.success_count from the incoming object), reflexion.py mint (Skill defaults success_count=0, models.py), sync_worker.py:422 and personal_cloud_sync.py:916 (copy remote values — and remote counts are produced by this same code, so no external source either; live DB confirms all zeros). organize.py:741 dedup takes max, never increments. (4) federation.py:69-78 derive_skill_usage_patterns skips every skill with success_count < 3 (default min_success_count=3), and publish_worker.py gates on the same threshold — with no incrementer, the sharing gate is unsatisfiable by construction. Verdict: skill promotion/sharing is a dead pipeline exactly as claimed."
+          },
+          {
+            "claim": "Historically the learn arm silently dropped EVERY write until PR#221, and the free-form loop (run_self_extend_loop) has never landed a single learned fact in its life.",
+            "evidence": "Brain fragment digest::empty-shell-rootcause-learn-write (created 2026-06-22): learn writes used kind:'learned' (invalid enum), owner_user:None, missing provenance → 'Every learned capability was dropped on the floor... THIS was literally the empty-shell feeling.' Live DB: COUNT(*) of fragments id LIKE 'self_extend_loop%' = 0 — _learn_leaf_green (self_extend.py:1107) has zero persisted rows ever.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED with one scope correction. Reproduced: (1) live brain.db fragment digest::empty-shell-rootcause-learn-write exists (created 2026-06-22T15:17:31Z) with the quoted root-cause text verbatim (kind:'learned' invalid enum, owner_user:None, missing provenance, 'dropped on the floor', 'Fixed in PR #221'); (2) live DB COUNT(*) fragments id LIKE 'self_extend_loop%' = 0 AND predicate='self_extend_verified' = 0 out of 2034 fragments (DB last written 2026-07-02 10:07) — origin/main app/agents/self_extend.py:1107 _learn_leaf_green builds frag_id 'self_extend_loop::{tree_id}::{leaf_id}' at :1115, so the free-form loop has NEVER persisted a learned fact, even post-fix; the code's own comments (:1116-1140) admit the historical silent drop. CORRECTION: 'the learn arm silently dropped EVERY write until PR#221' is too broad — the sibling structured arm learn_capability (self_extend.py:836, prefix self_extend::{kind}::{cap}) always sent valid ops and DID persist: self_extend::connector::sketchup (2026-06-22T07:24, pre-fix), self_extend::node_type::demo.court_probe (2026-07-01), self_extend::node_type::audit.ping (2026-07-02). The 'dropped every write' indictment holds only for _learn_leaf_green / run_self_extend_loop, whose lifetime persisted output is exactly zero."
+          }
+        ]
+      },
+      {
+        "findings": [
+          {
+            "claim": "The build-tool self-extend loop (build->court->learn) RUNS headless with no LLM key and produces real, independently verifiable side effects",
+            "evidence": "Executed run_self_extend('create_node_type', audit.ping spec) from a worktree of origin/main (app/agents/self_extend.py) in a sandboxed APPDATA/LOCALAPPDATA. Receipt: seams {build:true, court:true, brain:true}, court_reason 'FAILED TO REFUTE ... node cooked a real string on output out: PING', tree rt-3943705f2006db27. Side effects on disk: library/registry.json (14327 bytes) + brain.db with the requirement tree. Independent re-cook via workflows.runner.WorkflowRunner on the minted type returned {'out': 'PING'} outside the loop's own code path.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "The court is a genuinely failable gate at runtime: broken artifacts go RED with specific refutation evidence and red blocks the brain write",
+            "evidence": "Three adversarial runs: impl that raises -> RED 'runner returned an error dict'; node declaring string output but returning int -> RED 'output out cooked a int but the port declares type string (shape lie)'; node returning {} -> RED 'declared output port out returned None'. In all three the learn step returned skipped:court_not_green and the brain_call spy recorded ZERO writes. The spec validator also fail-closed (rejected an empty config_schema before court/learn ever ran).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "SEAM 4 learn is a real write to the live brain daemon, not a log line",
+            "evidence": "The green run's _default_brain_call (self_extend.py:893-900, BrainClient -> http://127.0.0.1:8473/mcp) returned ops_applied:1/fragments_added:1, and direct read-only SQLite query of the founder's real store (%APPDATA%\\ArchHub\\brain\\brain.db) showed row id self_extend::node_type::audit.ping citing tree rt-3943705f2006db27 from MY run. Two pre-existing fragments (self_extend::connector::sketchup, self_extend::node_type::demo.court_probe) prove prior real runs. Audit fragment deleted afterwards via brain.write delete (fragments_deleted:1).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "The flagship free-form 'X mode' entry point is a canned demo: ANY user ask is silently replaced by the same 3 hello-marker leaves, and the green sweep proves only that a canned file exists",
+            "evidence": "Runtime: run_self_extend_loop('prove the self-extension loop end to end', ...) went dry/green by writing the canned hello_marker.py (GREETING = 'self-extend proven') — nothing related to the ask. Code path: app/web_ui/studio-lm.jsx:14315 (extend mode) -> app/bridge.py:6583 run_self_extend_loop with NO decomposition -> app/agents/composer_agent.py:661-685 atomize_vision returns the fixed marker decomposition for any text -> self_extend.py:1070-1104 _materialize_default_marker owns every leaf, so the router/LLM the bridge passes is never consulted. A user typing 'build me an Airtable connector' in X mode gets a green 'court failed to refute' sweep and a learned brain fact about hello_marker.py.",
+            "severity": "damning"
+          },
+          {
+            "claim": "The node_cooks court gate proves type-shape only, not behavior: a semantically vacuous node greens and is learned as a capability",
+            "evidence": "Runtime: registered 'audit.doubler' (claims to multiply a number by two) with NO impl at all. library._mirror_to_runner builds a passthrough executor (workflows/custom_nodes.py:405); the court's number seed is 42, passthrough echoed 42, court greened with 'node cooked a real number on output out: 42' and learn fired (learn_ok:true). Actual cook of input 21 returns 21 — the node does nothing it claims. The 'capability' recorded in the brain is functionally false.",
+            "severity": "damning"
+          },
+          {
+            "claim": "run_free_text_self_extend — the documented 'the MODEL picks the build tool' witness seam — has no production caller",
+            "evidence": "grep across origin/main worktree: only app/agents/self_extend.py (definition, line 996) and tests/test_self_extend_free_text_live.py reference it. bridge.py wires only run_self_extend (line 6521, build-tool path, real) and run_self_extend_loop (line 6583, canned-marker path). The free-text-model-choice proof exists as test-harness code only.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "Learned self_extend facts land in the brain but retrieval did not surface them — 'learning that nothing consumes' partially holds",
+            "evidence": "Immediately after the write landed (verified in brain.db), a live brain_context query 'audit.ping self-extended node type capability' against the daemon on :8473 returned old harvest skills/facts and did NOT rank the fresh self_extend fragment into the injection. No code outside recall reads self_extend:: fragments. The write is real; downstream consumption was not demonstrated.",
+            "severity": "weak-spot"
+          }
+        ],
+        "lens": "RUNTIME",
+        "verdict": "PARTIAL",
+        "checkedDamning": [
+          {
+            "claim": "The flagship free-form 'X mode' entry point is a canned demo: ANY user ask is silently replaced by the same 3 hello-marker leaves, and the green sweep proves only that a canned file exists",
+            "evidence": "Runtime: run_self_extend_loop('prove the self-extension loop end to end', ...) went dry/green by writing the canned hello_marker.py (GREETING = 'self-extend proven') — nothing related to the ask. Code path: app/web_ui/studio-lm.jsx:14315 (extend mode) -> app/bridge.py:6583 run_self_extend_loop with NO decomposition -> app/agents/composer_agent.py:661-685 atomize_vision returns the fixed marker decomposition for any text -> self_extend.py:1070-1104 _materialize_default_marker owns every leaf, so the router/LLM the bridge passes is never consulted. A user typing 'build me an Airtable connector' in X mode gets a green 'court failed to refute' sweep and a learned brain fact about hello_marker.py.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED by independent runtime repro on origin/main (38c4c24). Fresh sandboxed run with a DIFFERENT unrelated ask (\"build me an Airtable connector\"): (1) atomize_vision returned the identical canned 3-leaf hello-marker decomposition (app/agents/composer_agent.py:648-685; the `if decomposition: return` branch is only ever fed by tests — bridge.py:6583 passes no decomposition); (2) a tripwire router recording any attribute access was NEVER touched (ROUTER TOUCHES: []) because _materialize_default_marker (self_extend.py:1070-1104) owns every default leaf via the \"self_extend\"+\".py\" path check at 1085-1087, making the router fallback at self_extend.py:1327 dead code for the X-mode entry point; (3) loop ended ok:true/dry:true, all 3 leaves GREEN, and emitted 3 brain.write \"fact\" ops stating \"Self-extend GREEN: ... hello_marker.py ... court failed to refute\" — the brain learns about hello_marker.py in response to an Airtable ask; (4) only artifact written was the canned hello_marker.py with GREETING = 'self-extend proven'. Entry chain verified: studio-lm.jsx:14315 (extend mode) -> bridge.py self_extend_loop slot -> run_self_extend_loop (self_extend.py:1251). Minor precision (does not weaken the finding): \"router/LLM never consulted\" is strictly true for the production X-mode path; the LLM executor IS reachable if the deterministic marker write fails or if a caller supplies a custom decomposition, but no production caller does — only tests. user_msg's sole effect is the cosmetic tree vision label (self_extend.py:1299)."
+          },
+          {
+            "claim": "The node_cooks court gate proves type-shape only, not behavior: a semantically vacuous node greens and is learned as a capability",
+            "evidence": "Runtime: registered 'audit.doubler' (claims to multiply a number by two) with NO impl at all. library._mirror_to_runner builds a passthrough executor (workflows/custom_nodes.py:405); the court's number seed is 42, passthrough echoed 42, court greened with 'node cooked a real number on output out: 42' and learn fired (learn_ok:true). Actual cook of input 21 returns 21 — the node does nothing it claims. The 'capability' recorded in the brain is functionally false.",
+            "severity": "damning",
+            "holds": true,
+            "correction": "CONFIRMED — fully reproduced on origin/main (38c4c24) in an isolated worktree with a :memory: brain store. Registered 'audit.doubler' (description claims x*2) with NO impl: library.create_node_type accepted it (validator requires display_name/80-char description/an example, but the stored example x:21→out:42 is never executed by any check). The real node_cooks probe greened with the verbatim detail \"node cooked a real number on output 'out': 42\" (number seed 42 = app/agents/self_extend.py:459 _SEED_BY_TYPE); full court_verify returned green (\"FAILED TO REFUTE on the real artifact\"); learn_capability fired (ok:true, fragment self_extend::node_type::audit.doubler, \"This capability is now available on the local machine\"). Actual WorkflowRunner cook of 21 → {'out': 21}: the node echoes, it does not double. Mechanism: _resolve_impl (app/workflows/custom_nodes.py:371-379) maps no-impl→kind=passthrough; line 405 returns _passthrough (:393-400) which copies the first input value onto each output; library._mirror_to_runner (app/library.py:212-270) installs that passthrough into the runner registry via register_spec. The probe does refute None/error-sentinels/type-mismatch, but a same-typed passthrough echoing the seed is indistinguishable from real computation — so the gate proves type-shape only, exactly as claimed, and a functionally false capability is learned. Cosmetic corrections only: file path is app/workflows/custom_nodes.py (not workflows/custom_nodes.py), the probe detail quotes the port name (\"output 'out'\"), and learn_ok was reproduced via the injectable brain_call transport (the real path is BrainClient→brain.write, gated solely on court green at self_extend.py:845)."
+          }
+        ]
+      },
+      {
+        "lens": "UI DEAD-END — does the court_verdict signal reach a real visible surface, is X mode discoverable, does submit() really route to self_extend_loop, and is compiled.js in sync with the jsx (all on origin/main @ 38c4c24)",
+        "verdict": "REAL",
+        "findings": [
+          {
+            "claim": "court_verdict is NOT a dead listener: the bridge signal exists, is wired at the always-mounted app root, and re-broadcasts to a component that renders a visible panel",
+            "evidence": "bridge.py:718 `court_verdict = pyqtSignal(str)` on ArchHubBridge (class at bridge.py:667), registered to JS as 'archhub' (web_shell.py:143). studio-lm.jsx:3498 `wire('court_verdict', onCourtVerdict)` in the StudioLM root effect; onCourtVerdict (jsx:3482-3489) JSON-parses and re-dispatches window CustomEvent 'lm-court-verdict'.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "The founder-visible surface is CourtVerdictQueue: a fixed, always-mounted panel at bottom-center of the screen (bottom:96px, centered, width 520, data-testid='court-verdict-queue') showing one row per judged leaf with a verdict-colored dot, reason, needs_root 'decide' affordance, and a per-green-row Undo button that calls a real bridge slot",
+            "evidence": "Mounted unconditionally at app root jsx:4188 `<CourtVerdictQueue _themeBump={paletteBump}/>` (next to ApprovalQueue). Component jsx:19403-19520: listens on 'lm-court-verdict' (19432), accumulates rows keyed by tree_id::leaf_id (19409-19430), renders fixed panel jsx:19484-19490 with header 'COURT · {green}/{total} · N need you' (19495). Undo calls bridgeAsync('self_extend_undo', artifact_path) (19459) → bridge.py:6616 real path-jailed os.unlink slot.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "X mode IS in the Plan/Auto/YOLO picker markup, rendered on the main in-session composer",
+            "evidence": "jsx:14417-14424 picker array includes `{ id:'extend', lbl:'X', tip:'Self-extend · build + court-verify + learn' }` inside the radiogroup data-testid='composer-mode-picker' (14415), part of FloatingComposer (14079), which is rendered on the session canvas at jsx:10299.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "submit() in X mode really routes to self_extend_loop with real args, and the bridge slot really runs the loop, not text",
+            "evidence": "jsx:14313-14320: `if (_composerMode === 'extend') bridgeCall('self_extend_loop', t, JSON.stringify(LM_GRAPH), focusId || '')` — live user text + live graph + focused node. bridge.py:6562-6603 @pyqtSlot self_extend_loop spawns thread → agents.self_extend.run_self_extend_loop with router=self.router, brain_call=self._brain_tool, on_leaf=emit court_verdict. self_extend.py:1391-1411 emits per-leaf payloads whose keys (tree_id/leaf_id/predicate/verdict/reason/evidence_ref/sweep/learned/artifact_path/terminal) exactly match what CourtVerdictQueue reads (jsx:19407-19428). Bridge thread failure path also emits a terminal red payload (bridge.py:6591-6599) so even a crash is visible in the panel, not swallowed.",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "compiled.js on origin/main is byte-for-byte in sync with the jsx and contains the loop",
+            "evidence": "studio-lm.compiled.js header `ARCHHUB_JSX_SRC_SHA256: 8792c94b70a978f6e0b0f27f15a24e8304c08cf2d92d33c93af865e95a20caf8` == sha256sum of studio-lm.jsx at 38c4c24 (verified). compiled.js contains CourtVerdictQueue (5x), self_extend_loop (4x), id:'extend' (1x), wire('court_verdict'...).",
+            "severity": "exonerating"
+          },
+          {
+            "claim": "Picking X toasts the WRONG mode description: the setM toast ternary has no 'extend' branch, so selecting X shows 'YOLO mode · every action auto-runs (reversible)'",
+            "evidence": "jsx:14099-14103: msg = m==='plan' ? ... : m==='auto' ? ... : 'YOLO mode · every action auto-runs (reversible)'. mode 'extend' falls through to the YOLO string (kind:'info'). Cosmetic-but-misleading: the founder is told YOLO when he picked self-extend. Mode state itself is still set to 'extend' correctly (14096-14098).",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "The 'self-extend · atomizing → build → court → learn…' toast at submit is optimistic, not evidence: it fires even if bridgeCall silently returned null (bridge missing/slot absent)",
+            "evidence": "jsx:14314-14318: toast dispatch follows bridgeCall in the same try block; bridgeCall (jsx:657-663) returns null without throwing when window.archhub or the slot is missing, so the toast still shows. Mitigated: if the slot DID run and failed, the terminal red court_verdict emit (bridge.py:6591-6599) surfaces it in the queue; the toast alone is the only false-positive window.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "CourtVerdictQueue can be partially occluded by the composer: it sits at bottom:96 with zIndex:71 while FloatingComposer sits at bottom:64 with zIndex:1000 and is wider (620 vs 520), so the panel's lowest rows render BEHIND the composer",
+            "evidence": "jsx:19486-19487 (queue: fixed, left:50%, bottom:96, zIndex:71) vs jsx:14341+14347 (composer: fixed, left:50%, bottom:64, zIndex:1000, width:620). Composer body is ~100-150px tall, so roughly the bottom 60-90px of the queue (last rows in scroll order) is covered whenever the composer is on screen — which is always in-session. Header + upper rows remain visible; ApprovalQueue (jsx:19310) shares the identical geometry and is known-visible in practice, so this is degradation, not a dead end.",
+            "severity": "weak-spot"
+          },
+          {
+            "claim": "wire() fails silent by design: if a bridge signal name were missing, the UI would never know",
+            "evidence": "jsx:3041-3043: `wire` connects only `if (b[name] && typeof b[name].connect === 'function')`, swallowing all errors. Not triggered here (court_verdict exists at bridge.py:718), but it is the one seam that would turn this UI into a dead listener with zero symptoms if the signal were ever renamed on only one side.",
+            "severity": "weak-spot"
+          }
+        ],
+        "verified": {
+          "lens": "UI DEAD-END — does the court_verdict signal reach a real visible surface, is X mode discoverable, does submit() really route to self_extend_loop, and is compiled.js in sync with the jsx (all on origin/main @ 38c4c24)",
+          "verdict": "REAL",
+          "findings": [
+            {
+              "claim": "court_verdict is NOT a dead listener: the bridge signal exists, is wired at the always-mounted app root, and re-broadcasts to a component that renders a visible panel",
+              "evidence": "bridge.py:718 `court_verdict = pyqtSignal(str)` on ArchHubBridge (class at bridge.py:667), registered to JS as 'archhub' (web_shell.py:143). studio-lm.jsx:3498 `wire('court_verdict', onCourtVerdict)` in the StudioLM root effect; onCourtVerdict (jsx:3482-3489) JSON-parses and re-dispatches window CustomEvent 'lm-court-verdict'.",
+              "severity": "exonerating"
+            },
+            {
+              "claim": "The founder-visible surface is CourtVerdictQueue: a fixed, always-mounted panel at bottom-center of the screen (bottom:96px, centered, width 520, data-testid='court-verdict-queue') showing one row per judged leaf with a verdict-colored dot, reason, needs_root 'decide' affordance, and a per-green-row Undo button that calls a real bridge slot",
+              "evidence": "Mounted unconditionally at app root jsx:4188 `<CourtVerdictQueue _themeBump={paletteBump}/>` (next to ApprovalQueue). Component jsx:19403-19520: listens on 'lm-court-verdict' (19432), accumulates rows keyed by tree_id::leaf_id (19409-19430), renders fixed panel jsx:19484-19490 with header 'COURT · {green}/{total} · N need you' (19495). Undo calls bridgeAsync('self_extend_undo', artifact_path) (19459) → bridge.py:6616 real path-jailed os.unlink slot.",
+              "severity": "exonerating"
+            },
+            {
+              "claim": "X mode IS in the Plan/Auto/YOLO picker markup, rendered on the main in-session composer",
+              "evidence": "jsx:14417-14424 picker array includes `{ id:'extend', lbl:'X', tip:'Self-extend · build + court-verify + learn' }` inside the radiogroup data-testid='composer-mode-picker' (14415), part of FloatingComposer (14079), which is rendered on the session canvas at jsx:10299.",
+              "severity": "exonerating"
+            },
+            {
+              "claim": "submit() in X mode really routes to self_extend_loop with real args, and the bridge slot really runs the loop, not text",
+              "evidence": "jsx:14313-14320: `if (_composerMode === 'extend') bridgeCall('self_extend_loop', t, JSON.stringify(LM_GRAPH), focusId || '')` — live user text + live graph + focused node. bridge.py:6562-6603 @pyqtSlot self_extend_loop spawns thread → agents.self_extend.run_self_extend_loop with router=self.router, brain_call=self._brain_tool, on_leaf=emit court_verdict. self_extend.py:1391-1411 emits per-leaf payloads whose keys (tree_id/leaf_id/predicate/verdict/reason/evidence_ref/sweep/learned/artifact_path/terminal) exactly match what CourtVerdictQueue reads (jsx:19407-19428). Bridge thread failure path also emits a terminal red payload (bridge.py:6591-6599) so even a crash is visible in the panel, not swallowed.",
+              "severity": "exonerating"
+            },
+            {
+              "claim": "compiled.js on origin/main is byte-for-byte in sync with the jsx and contains the loop",
+              "evidence": "studio-lm.compiled.js header `ARCHHUB_JSX_SRC_SHA256: 8792c94b70a978f6e0b0f27f15a24e8304c08cf2d92d33c93af865e95a20caf8` == sha256sum of studio-lm.jsx at 38c4c24 (verified). compiled.js contains CourtVerdictQueue (5x), self_extend_loop (4x), id:'extend' (1x), wire('court_verdict'...).",
+              "severity": "exonerating"
+            },
+            {
+              "claim": "Picking X toasts the WRONG mode description: the setM toast ternary has no 'extend' branch, so selecting X shows 'YOLO mode · every action auto-runs (reversible)'",
+              "evidence": "jsx:14099-14103: msg = m==='plan' ? ... : m==='auto' ? ... : 'YOLO mode · every action auto-runs (reversible)'. mode 'extend' falls through to the YOLO string (kind:'info'). Cosmetic-but-misleading: the founder is told YOLO when he picked self-extend. Mode state itself is still set to 'extend' correctly (14096-14098).",
+              "severity": "weak-spot"
+            },
+            {
+              "claim": "The 'self-extend · atomizing → build → court → learn…' toast at submit is optimistic, not evidence: it fires even if bridgeCall silently returned null (bridge missing/slot absent)",
+              "evidence": "jsx:14314-14318: toast dispatch follows bridgeCall in the same try block; bridgeCall (jsx:657-663) returns null without throwing when window.archhub or the slot is missing, so the toast still shows. Mitigated: if the slot DID run and failed, the terminal red court_verdict emit (bridge.py:6591-6599) surfaces it in the queue; the toast alone is the only false-positive window.",
+              "severity": "weak-spot"
+            },
+            {
+              "claim": "CourtVerdictQueue can be partially occluded by the composer: it sits at bottom:96 with zIndex:71 while FloatingComposer sits at bottom:64 with zIndex:1000 and is wider (620 vs 520), so the panel's lowest rows render BEHIND the composer",
+              "evidence": "jsx:19486-19487 (queue: fixed, left:50%, bottom:96, zIndex:71) vs jsx:14341+14347 (composer: fixed, left:50%, bottom:64, zIndex:1000, width:620). Composer body is ~100-150px tall, so roughly the bottom 60-90px of the queue (last rows in scroll order) is covered whenever the composer is on screen — which is always in-session. Header + upper rows remain visible; ApprovalQueue (jsx:19310) shares the identical geometry and is known-visible in practice, so this is degradation, not a dead end.",
+              "severity": "weak-spot"
+            },
+            {
+              "claim": "wire() fails silent by design: if a bridge signal name were missing, the UI would never know",
+              "evidence": "jsx:3041-3043: `wire` connects only `if (b[name] && typeof b[name].connect === 'function')`, swallowing all errors. Not triggered here (court_verdict exists at bridge.py:718), but it is the one seam that would turn this UI into a dead listener with zero symptoms if the signal were ever renamed on only one side.",
+              "severity": "weak-spot"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Attack"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "attack:court-theatre",
+      "phaseIndex": 1,
+      "phaseTitle": "Attack",
+      "agentId": "ac17809a44f1b6177",
+      "model": "claude-fable-5",
+      "fallbackModel": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782972154659,
+      "queuedAt": 1782972154639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "COURT THEATRE — origin/main (38c4c24) court_harness.py + di…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972444625,
+      "tokens": 123960,
+      "toolCalls": 23,
+      "durationMs": 289965,
+      "resultPreview": "{\"findings\":[{\"claim\":\"A garbage leaf goes GREEN because the court never binds the leaf's semantic claim (title/predicate) to its gate — any leaf can be gated on a trivially-satisfiable pre-existing artifact.\",\"evidence\":\"RAN court_attack.py + tree_attack.py against origin/main (38c4c24). convene_court(node_id='leaf-agi', gate_kind='file_exists', gate_spec={'path':'C:\\\\\\\\Windows\\\\\\\\win.ini'}) -> v…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "attack:build-arm",
+      "phaseIndex": 1,
+      "phaseTitle": "Attack",
+      "agentId": "a6e0d5eb77be0bb73",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972154661,
+      "queuedAt": 1782972154639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "BUILD ARM — origin/main app/agents/self_extend.py: does the…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972415409,
+      "tokens": 137191,
+      "toolCalls": 18,
+      "durationMs": 260747,
+      "resultPreview": "{\"lens\":\"BUILD ARM — origin/main app/agents/self_extend.py: does the build step write real artifacts the app loads, or only shuttle LLM text to the court?\",\"verdict\":\"PARTIAL\",\"findings\":[{\"claim\":\"The free-form loop run_self_extend_loop NEVER builds what the user asked for: it always builds the same hardcoded hello_marker.py demo regardless of the request text.\",\"evidence\":\"self_extend.py:1298 ca…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "attack:learn-arm",
+      "phaseIndex": 1,
+      "phaseTitle": "Attack",
+      "agentId": "abda807338fcf490f",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972154662,
+      "queuedAt": 1782972154639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "LEARN ARM — brain.write / skill promotion in origin/main ap…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972447956,
+      "tokens": 130657,
+      "toolCalls": 27,
+      "durationMs": 293294,
+      "resultPreview": "{\"lens\":\"LEARN ARM — brain.write / skill promotion in origin/main app/agents/self_extend.py + live brain (127.0.0.1:8473, %APPDATA%/ArchHub/brain/brain.db)\",\"verdict\":\"PARTIAL\",\"findings\":[{\"claim\":\"No loop run EVER persisted something a later session used: every loop-minted fact has success_count=0, last_used_at=NULL, and zero retrievals in the full access log.\",\"evidence\":\"Live brain.db query: e…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "attack:runtime-probe",
+      "phaseIndex": 1,
+      "phaseTitle": "Attack",
+      "agentId": "a0f608c88ca6355e2",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972154663,
+      "queuedAt": 1782972154639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "RUNTIME",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972584038,
+      "tokens": 152073,
+      "toolCalls": 34,
+      "durationMs": 429375,
+      "resultPreview": "{\"findings\":[{\"claim\":\"The build-tool self-extend loop (build->court->learn) RUNS headless with no LLM key and produces real, independently verifiable side effects\",\"evidence\":\"Executed run_self_extend('create_node_type', audit.ping spec) from a worktree of origin/main (app/agents/self_extend.py) in a sandboxed APPDATA/LOCALAPPDATA. Receipt: seams {build:true, court:true, brain:true}, court_reason…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "attack:ui-deadend",
+      "phaseIndex": 1,
+      "phaseTitle": "Attack",
+      "agentId": "a23087a90b78c6ccd",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972154664,
+      "queuedAt": 1782972154639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "UI DEAD-END — does the court_verdict signal reach a real vi…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972410679,
+      "tokens": 109613,
+      "toolCalls": 30,
+      "durationMs": 256015,
+      "resultPreview": "{\"lens\":\"UI DEAD-END — does the court_verdict signal reach a real visible surface, is X mode discoverable, does submit() really route to self_extend_loop, and is compiled.js in sync with the jsx (all on origin/main @ 38c4c24)\",\"verdict\":\"REAL\",\"findings\":[{\"claim\":\"court_verdict is NOT a dead listener: the bridge signal exists, is wired at the always-mounted app root, and re-broadcasts to a compon…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "verify:build-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "aec8e08932aa585a9",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972415428,
+      "queuedAt": 1782972415417,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED — reproduced end-to-end on origin/main (38c4c24).…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972481769,
+      "tokens": 82644,
+      "toolCalls": 9,
+      "durationMs": 66341,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED — reproduced end-to-end on origin/main (38c4c24). (1) app/bridge.py:6563 slot self_extend_loop(user_msg, graph_json, focused_node_id) is the ONLY production caller of run_self_extend_loop (git grep: only bridge.py:6583 + tests); the call at bridge.py:6583-6590 passes user_msg/graph/focused_node_id/router/brain_call/on_leaf and NO decomposition kwarg. (2) app/a…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "verify:build-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a613b7d18e38ef6de",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972415429,
+      "queuedAt": 1782972415417,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED — evidence reproduces exactly on origin/main (38c…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972543957,
+      "tokens": 100256,
+      "toolCalls": 14,
+      "durationMs": 128528,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED — evidence reproduces exactly on origin/main (38c4c24). (1) composer_agent.py TOOL_SCHEMA (lines 130-321) contains no file-writing tool: only spawn_node/add_wire/set_node_param/run_node/run_workflow/query_graph/chat/create_node_type/create_connector/create_ui_widget. (2) run_agent_step never executes them: llm_router.py:2452-2497 treats all extra_tools as clie…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "verify:build-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a0606370c49472707",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972415429,
+      "queuedAt": 1782972415417,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED with minor cite corrections. (1) Writer: origin/m…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972477396,
+      "tokens": 78607,
+      "toolCalls": 8,
+      "durationMs": 61967,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED with minor cite corrections. (1) Writer: origin/main app/agents/self_extend.py:1070-1104 _materialize_default_marker (not 1087-1096); line 1091 writes fixed content ending \\\"GREETING = 'self-extend proven'\\\" for ANY *.py gate path under the self_extend dir. (2) Gate: app/agents/composer_agent.py:678-684 third default leaf = file_exists with gate_spec {\\\"path\\\"…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "verify:build-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "aa3f0891beb7da5bf",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972415430,
+      "queuedAt": 1782972415417,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Finding HOLDS; every cited line reproduces at origin/main 3…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972578990,
+      "tokens": 92229,
+      "toolCalls": 19,
+      "durationMs": 163560,
+      "resultPreview": "{\"holds\":true,\"correction\":\"Finding HOLDS; every cited line reproduces at origin/main 38c4c24. Two refinements: (1) minor path fix — the connector writer is app/connectors/scaffold.py:214 (not app/agents/); all other file:line cites exact (base.py:419 boot glob-import, bridge.py:897-898 load_all_connectors, library.py:330 _mirror_to_runner + bridge.py:893 load_from_disk boot mirror, widgets.py:119…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 10,
+      "label": "verify:court-theatre",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a275d25b5c4e99530",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972444642,
+      "queuedAt": 1782972444639,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Finding CONFIRMED by independent re-run against origin/main…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972594568,
+      "tokens": 104925,
+      "toolCalls": 19,
+      "durationMs": 149925,
+      "resultPreview": "{\"holds\":true,\"correction\":\"Finding CONFIRMED by independent re-run against origin/main (38c4c24). Reproduced: (1) convene_court(node_id='leaf-agi', gate_kind='file_exists', gate_spec={'path':'C:\\\\\\\\Windows\\\\\\\\win.ini'}) -> verdict=green (\\\"FAILED TO REFUTE ... [artifact] exists\\\"); (2) leaf 'cure cancer' gated on py_compile of pre-existing diligence.py -> green; (3) full end-to-end run against a …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 11,
+      "label": "verify:court-theatre",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ae7125cac637beaae",
+      "model": "claude-fable-5",
+      "fallbackModel": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782972444643,
+      "queuedAt": 1782972444640,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "HOLDS — reproduced end-to-end against origin/main (38c4c24)…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972683543,
+      "tokens": 91822,
+      "toolCalls": 25,
+      "durationMs": 238900,
+      "resultPreview": "{\"holds\":true,\"correction\":\"HOLDS — reproduced end-to-end against origin/main (38c4c24) in an in-memory BrainStore. No attacker misread; if anything the shell is worse than stated (the \\\"logged\\\" safeguard is fictional).\\n\\nRAN (scratchpad/repro_verdict.py, worktree at 38c4c24):\\n- create_root -> decompose(gate_kind=manual leaf) -> claim_leaf(agent_id=\\\"exec-1\\\"). Leaf state CLAIMED, claimed_by=ex…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 12,
+      "label": "verify:court-theatre",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a098783ff14a6fc81",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972444644,
+      "queuedAt": 1782972444640,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED by independent re-run at origin/main 38c4c24 (wor…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972549496,
+      "tokens": 88718,
+      "toolCalls": 13,
+      "durationMs": 104852,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED by independent re-run at origin/main 38c4c24 (worktree, real BrainStore on temp SQLite). Repro script: scratchpad/repro_unclaimed_green.py. Facts: (1) requirement_tree.py:487-492 guard is `v==\\\"green\\\" and node.claimed_by and judged_by==node.claimed_by` — with claimed_by=None the whole conjunction short-circuits; reproduced: leaf created via create_root+decomp…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 13,
+      "label": "verify:court-theatre",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "acdd3adf8e1af8c1d",
+      "model": "claude-fable-5",
+      "fallbackModel": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782972444645,
+      "queuedAt": 1782972444640,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Finding HOLDS — reproduced verbatim against real in-memory …",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972569953,
+      "tokens": 81315,
+      "toolCalls": 13,
+      "durationMs": 125308,
+      "resultPreview": "{\"holds\":true,\"correction\":\"Finding HOLDS — reproduced verbatim against real in-memory BrainStore on origin/main (38c4c24).\\n\\nEVIDENCE (personal-brain-mcp/src/personal_brain, ran with real BrainStore.open(\\\":memory:\\\")):\\n- Leaf claimed by agent_id=\\\"exec-1\\\" (state=CLAIMED, claimed_by=\\\"exec-1\\\").\\n- set_verdict(verdict=\\\"green\\\", judged_by=\\\"exec-1\\\") -> PermissionError \\\"self-certification ref…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 14,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a34ecf8c4a31581cd",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447969,
+      "queuedAt": 1782972447967,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED — evidence reproduced against origin/main code an…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972578342,
+      "tokens": 83244,
+      "toolCalls": 12,
+      "durationMs": 130373,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED — evidence reproduced against origin/main code and the live DB, and is stronger than stated. (1) Mint formats verified in origin/main app/agents/self_extend.py: line 852 frag_id=f\\\"self_extend::{kind}::{cap}\\\" and _learn_leaf_green frag_id=f\\\"self_extend_loop::{tree_id}::{leaf_id}\\\"; the DB has ZERO self_extend_loop:: fragments ever. (2) At attacker's query ti…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 15,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a24b00fa733b32aba",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447970,
+      "queuedAt": 1782972447967,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Core claim HOLDS and was reproduced live: brain_context(pro…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972535110,
+      "tokens": 79887,
+      "toolCalls": 10,
+      "durationMs": 87139,
+      "resultPreview": "{\"holds\":true,\"correction\":\"Core claim HOLDS and was reproduced live: brain_context(prompt='sketchup connector capability self-extended ArchHub') against 127.0.0.1:8473 returned exactly 8 'harvest:' facts + 5 'promoted-skill-harvest:' skills and NO self_extend::connector::sketchup fact. However the attacker's ROOT CAUSE is wrong as of re-check: in %APPDATA%\\\\ArchHub\\\\brain\\\\brain.db (table 'fragme…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 16,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "a4ac8541d9713f60d",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447971,
+      "queuedAt": 1782972447967,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "HOLDS — reproduced fully, and the reality is slightly worse…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972544535,
+      "tokens": 81759,
+      "toolCalls": 12,
+      "durationMs": 96564,
+      "resultPreview": "{\"holds\":true,\"correction\":\"HOLDS — reproduced fully, and the reality is slightly worse than claimed. (1) Grep reproduced: only writers at app/agents/self_extend.py:866 (predicate 'self_extended') and :1133 (predicate 'self_extend_verified'); the only other hit is tests/test_self_extend_loop.py:369, a test asserting write shape, not a product consumer. (2) Widened search confirms zero consumers by…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 17,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "aabd81673cb290244",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447972,
+      "queuedAt": 1782972447968,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "HOLDS — core mechanism and flagship evidence reproduced on …",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972635997,
+      "tokens": 94352,
+      "toolCalls": 15,
+      "durationMs": 188025,
+      "resultPreview": "{\"holds\":true,\"correction\":\"HOLDS — core mechanism and flagship evidence reproduced on origin/main (38c4c24) + live brain.db. Confirmed: personal_cloud_sync.py:672 _fragment_to_wire omits success_count/fail_count/last_used_at from the wire dict; _apply_remote_fragment (personal_cloud_sync.py:829) rebuilds Fragment without those fields (model defaults 0/0/None, models.py:196-198) and write_fragment…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 18,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ac36082d83715d818",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447973,
+      "queuedAt": 1782972447968,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED — every element of the finding reproduces against…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972578070,
+      "tokens": 85787,
+      "toolCalls": 14,
+      "durationMs": 130097,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED — every element of the finding reproduces against origin/main (38c4c24, verified via worktree scratchpad/mainwt) and the live DB. (1) Learn arm writes facts only: app/agents/self_extend.py:863 and :1124 both emit fragments with \\\"kind\\\": \\\"fact\\\" (learn_capability and _learn_leaf_green); grep for skill_mint/promote/kind-skill across self_extend.py returns zero…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 19,
+      "label": "verify:learn-arm",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "aad23e95e45e146cd",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972447973,
+      "queuedAt": 1782972447968,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED with one scope correction. Reproduced: (1) live b…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972540787,
+      "tokens": 80765,
+      "toolCalls": 9,
+      "durationMs": 92814,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED with one scope correction. Reproduced: (1) live brain.db fragment digest::empty-shell-rootcause-learn-write exists (created 2026-06-22T15:17:31Z) with the quoted root-cause text verbatim (kind:'learned' invalid enum, owner_user:None, missing provenance, 'dropped on the floor', 'Fixed in PR #221'); (2) live DB COUNT(*) fragments id LIKE 'self_extend_loop%' = 0 …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 20,
+      "label": "verify:runtime-probe",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "afa6d2a418925acf0",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972584052,
+      "queuedAt": 1782972584050,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED by independent runtime repro on origin/main (38c4…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972736498,
+      "tokens": 95712,
+      "toolCalls": 14,
+      "durationMs": 152446,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED by independent runtime repro on origin/main (38c4c24). Fresh sandboxed run with a DIFFERENT unrelated ask (\\\"build me an Airtable connector\\\"): (1) atomize_vision returned the identical canned 3-leaf hello-marker decomposition (app/agents/composer_agent.py:648-685; the `if decomposition: return` branch is only ever fed by tests — bridge.py:6583 passes no decom…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 21,
+      "label": "verify:runtime-probe",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ac7f491d6aee623bb",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972584053,
+      "queuedAt": 1782972584051,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "CONFIRMED — fully reproduced on origin/main (38c4c24) in an…",
+      "promptPreview": "CONTEXT: Repo at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION. WARNING: working tree is on a STALE dirty branch (feat/nvidia-provider). The code under audit lives on origin/main. NEVER audit working-tree files for main-code questions — use \"git show origin/main:<path>\" or create a worktree: git worktree add C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-…",
+      "lastProgressAt": 1782972807484,
+      "tokens": 106113,
+      "toolCalls": 24,
+      "durationMs": 223431,
+      "resultPreview": "{\"holds\":true,\"correction\":\"CONFIRMED — fully reproduced on origin/main (38c4c24) in an isolated worktree with a :memory: brain store. Registered 'audit.doubler' (description claims x*2) with NO impl: library.create_node_type accepted it (validator requires display_name/80-char description/an example, but the stored example x:21→out:42 is never executed by any check). The real node_cooks probe gre…"
+    }
+  ],
+  "totalTokens": 2081629,
+  "totalToolCalls": 362
+}

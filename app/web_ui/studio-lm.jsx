@@ -441,12 +441,34 @@ function projectUiNode(nodes, id, key) {
 // data-uisurface on the root so CDP + a later swap can target it. Returns null
 // (falls back to hand JSX) if the nodes aren't present — never blanks the app.
 const UiNodeSurface = ({ rootId, surface }) => {
+  // INTERPRET-ALL-THE-WAY (SPEC §5/§11): re-read the LIVE graph on every
+  // 'lm-graph-bump' — so editing a ui-node at runtime updates this surface
+  // WITHOUT a compile. Authoring the UI = editing nodes, not recompiling.
+  const [, bump] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    window.addEventListener('lm-graph-bump', bump);
+    return () => window.removeEventListener('lm-graph-bump', bump);
+  }, []);
   const nodes = (window.__archhub_LM_GRAPH || {}).nodes || [];
   try {
     const tree = projectUiNode(nodes, rootId, 'r');
     return React.cloneElement(tree, { 'data-uisurface': surface });
   } catch (e) { return null; }
 };
+// THE WATCHER (SPEC §11): edit a ui-node's field at RUNTIME and the app changes
+// live, no compile. window.ahEditUiNode(id, field, value) mutates the node in
+// the one LM_GRAPH list + bumps -> every bound surface re-renders. This is
+// "save is just the graph changing" made real on the running app.
+if (typeof window !== 'undefined') {
+  window.ahEditUiNode = function (id, field, value) {
+    var g = window.__archhub_LM_GRAPH; if (!g) return false;
+    var n = (g.nodes || []).find(function (x) { return x && x.id === id; });
+    if (!n) return false;
+    n.data = n.data || {}; n.data[field] = value;
+    try { window.dispatchEvent(new Event('lm-graph-bump')); } catch (e) {}
+    return true;
+  };
+}
 // Seed the home masthead AS ui-nodes into LM_GRAPH (idempotent). The wordmark
 // (Arch/Hub) + status chips become ordinary nodes in the one node list.
 function ensureHomeTopUiNodes() {

@@ -412,6 +412,61 @@ const Wordmark = ({ size = 22, accent = true, color, style }) => {
   );
 };
 
+// ── SELF-HOSTING (SPEC §10/§11): render app UI FROM LM_GRAPH ui-nodes ────────
+// A ui-node is an ORDINARY LM_GRAPH node {id, type:'ui.element',
+// data:{tag,text?,cls?,bind?(node id),children?([node ids])}} — same one node
+// list workflow nodes live in (homoiconic, no second UI store). projectUiNode
+// mirrors the court-green contract in app/workflows/ui_projection.py: walk the
+// node subtree -> React elements; a `bind` resolves the bound node's live value.
+// This is the mechanism that lets an app surface BE nodes instead of hand JSX.
+const _uiFind = (nodes, id) => (nodes || []).find(n => n && n.id === id) || null;
+const _uiVal = (nodes, id) => {
+  const n = _uiFind(nodes, id);
+  return n && n.data && n.data.value != null ? n.data.value : '';
+};
+function projectUiNode(nodes, id, key) {
+  const n = _uiFind(nodes, id);
+  if (!n) throw new Error('ui node ' + id + ' not in LM_GRAPH');
+  const t = n.type || '';
+  if (t.indexOf('ui.') !== 0) throw new Error('node ' + id + ' is not a ui node');
+  const d = n.data || {};
+  let txt = d.text != null ? String(d.text) : '';
+  if (d.bind) txt += String(_uiVal(nodes, d.bind));
+  const props = { key: key, 'data-node': id };
+  if (d.cls) props.className = d.cls;
+  const kids = (d.children || []).map((cid, i) => projectUiNode(nodes, cid, i));
+  return React.createElement(d.tag || 'div', props, txt || null, ...kids);
+}
+// A live surface: renders the ui-node subtree from the LIVE LM_GRAPH; stamps
+// data-uisurface on the root so CDP + a later swap can target it. Returns null
+// (falls back to hand JSX) if the nodes aren't present — never blanks the app.
+const UiNodeSurface = ({ rootId, surface }) => {
+  const nodes = (window.__archhub_LM_GRAPH || {}).nodes || [];
+  try {
+    const tree = projectUiNode(nodes, rootId, 'r');
+    return React.cloneElement(tree, { 'data-uisurface': surface });
+  } catch (e) { return null; }
+};
+// Seed the home masthead AS ui-nodes into LM_GRAPH (idempotent). The wordmark
+// (Arch/Hub) + status chips become ordinary nodes in the one node list.
+function ensureHomeTopUiNodes() {
+  const g = window.__archhub_LM_GRAPH;
+  if (!g || !Array.isArray(g.nodes)) return null;
+  if (_uiFind(g.nodes, 'ui:home-top')) return 'ui:home-top';
+  const add = (id, tag, data) => {
+    g.nodes.push({ id: id, type: 'ui.element', data: Object.assign({ tag: tag }, data) });
+    return id;
+  };
+  add('ui:ht-arch', 'span', { text: 'Arch', cls: 'ah-uiwm-ink' });
+  add('ui:ht-hub', 'span', { text: 'Hub', cls: 'ah-uiwm-acc' });
+  add('ui:ht-logo', 'span', { cls: 'ah-uiwm', children: ['ui:ht-arch', 'ui:ht-hub'] });
+  add('ui:ht-brain', 'span', { text: 'brain · nodes', cls: 'ah-uichip' });
+  add('ui:ht-self', 'span', { text: 'this bar IS nodes', cls: 'ah-uichip' });
+  add('ui:home-top', 'div', { cls: 'ah-uisurface-top',
+    children: ['ui:ht-logo', 'ui:ht-brain', 'ui:ht-self'] });
+  return 'ui:home-top';
+}
+
 // Stable no-op with a fixed module-level identity. Used where a component
 // prop expects a function but the call site has nothing to do (e.g. the
 // Home-branch IconRail `setPanel`). A fresh `() => {}` per render would be a
@@ -6638,6 +6693,21 @@ const Home = ({ onOpen, model, setPickerOpen, onCreateSession, onSettings }) => 
       <div style={{ display:'flex', alignItems:'center', marginBottom:18 }}>
         <Wordmark size={30}/>
       </div>
+      {/* SELF-HOSTING PROOF (SPEC §10): the SAME masthead, rendered from
+          LM_GRAPH ui-nodes instead of hand JSX. Additive + fallback (returns
+          null if the nodes are absent) — the hand Wordmark above stays until
+          this reaches parity, then it is swapped out. CDP gate:
+          [data-node][data-uisurface="home-top"]. */}
+      <style>{`
+        .ah-uisurface-top{display:flex;align-items:center;gap:12px;margin:0 0 18px}
+        .ah-uiwm{font-family:${LM.arch};font-size:26px;letter-spacing:-0.025em;
+          text-transform:uppercase;line-height:1;display:inline-flex;white-space:nowrap}
+        .ah-uiwm-ink{color:${LM.ink}}
+        .ah-uiwm-acc{color:${LM.accent}}
+        .ah-uichip{background:#171a17;border:1px solid #2c3a2c;border-radius:8px;
+          padding:6px 10px;font-size:11px;color:#7ec18e}
+      `}</style>
+      <UiNodeSurface rootId={ensureHomeTopUiNodes()} surface="home-top"/>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
         <BrainChip/>

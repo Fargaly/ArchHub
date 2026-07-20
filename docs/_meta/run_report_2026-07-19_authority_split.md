@@ -6315,3 +6315,126 @@ Next action:
 - Continue the legacy WebShell host slice and decide, with courts, which of its
   remaining changes are a lawful bridge into Universal Cell and which must stay
   as non-authority evidence or be consumed later.
+
+## Run: Legacy WebShell Cell bridge fence
+
+Intent:
+
+- Consume the remaining `legacy_webshell_host_with_cell_bridge` implementation
+  slice without letting the old WebShell become product authority.
+- Keep the visible production shell as a bounded lens/bridge into Universal Cell:
+  Grand Map UI surfaces, Universal canvas projection, Universal interaction
+  forwarding, node grammar as legacy projection, and the Brain compliance deck
+  tile.
+
+Committed:
+
+- `9304bf2 Fence legacy WebShell through Cell bridge`.
+- Staged and committed:
+  - `app/bridge.py`
+  - `app/web_ui/index.html`
+  - `app/web_ui/jsx-boot.js`
+  - `app/web_ui/studio-lm.jsx`
+  - `app/web_ui/studio-lm.compiled.js`
+  - `app/web_ui/tokens.jsx`
+  - `tools/production_webshell_preview.py`
+  - `tests/test_legacy_webshell_host_boundary.py`
+  - `tests/test_production_webshell_preview.py`
+  - `tests/test_build_jsx_precompile.py`
+  - `tests/test_brain_bridge_slots.py`
+  - `tests/test_deck_state.py`
+
+Main mechanisms:
+
+- The old shell now has a QWebChannel-compatible preview/bridge boundary for
+  Grand Map UI surfaces, node grammar, and Universal Cell interactions.
+- Canvas mutations in the WebShell are routed as declared Universal
+  interactions instead of being silently treated as authority.
+- The node grammar and design tokens are explicitly labelled as legacy
+  projections, not as source of truth.
+- The Command Deck gets a compliance tile sourced from
+  `brain.compliance_report` and returns typed empty data when Brain is down.
+- `jsx-boot.js` has `?prod=1` so local HTTP QA can force the precompiled path
+  instead of accidentally falling into dev/Babel mode.
+
+Verification:
+
+- Combined projection and legacy WebShell host courts:
+  `python -m pytest tests\test_authority_wip_classify.py tests\test_baboom_cell_surface_bridge.py tests\test_universal_grand_map_surface_bridge.py ..\13.NODE-LANGUAGE\tests_replica\test_cell_legacy_webshell_host.py tests\test_legacy_webshell_host_boundary.py tests\test_production_webshell_preview.py -q -p no:cacheprovider --timeout=240`
+  - result: `69 passed, 1 warning in 26.58s`.
+- JSX/precompile court:
+  `python -m pytest tests\test_build_jsx_precompile.py -q -p no:cacheprovider --timeout=300`
+  - result: `13 passed, 1 warning in 5.67s`.
+- Bridge/deck/wire support courts:
+  `python -m pytest tests\test_brain_bridge_slots.py tests\test_deck_state.py tests\test_wire_fields.py -q -p no:cacheprovider --timeout=240`
+  - result: `76 passed, 1 warning in 70.68s`.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed.
+  - forbidden staged path scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged secret/process scan notes:
+    - token/secret hits were code/test terminology and token-handling text, not
+      credential bytes.
+    - `ThreadingHTTPServer`, `serve_forever`, and `webbrowser.open` appear only
+      in the preview harness; `webbrowser.open` is behind the explicit `--open`
+      flag and no browser/window was launched in this run.
+
+Compiled artifact note:
+
+- `app/web_ui/studio-lm.compiled.js` remains a tracked product artifact because
+  the existing boot performance court requires the committed compiled artifact
+  to match `studio-lm.jsx`. This is an existing project exception to the broad
+  workspace regenerable rule and should be resolved as a separate governance
+  contradiction if the rule is tightened globally.
+
+Commit gate evidence:
+
+- `brain-commit-gate` checked the staged product-surface files:
+  `app/bridge.py`, `app/web_ui/index.html`, `app/web_ui/jsx-boot.js`,
+  `app/web_ui/studio-lm.compiled.js`, `app/web_ui/studio-lm.jsx`,
+  `app/web_ui/tokens.jsx`.
+- Brain daemon was unreachable at `http://127.0.0.1:8473/mcp`; the gate
+  fail-opened and did not block. This is recorded as runtime evidence, not a
+  claim that Brain was live.
+
+Current WIP/live-holder evidence after `9304bf2`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `87`.
+- classified WIP entries in the authority ledger: `85`.
+- no-unclassified gate: `ok`, count `0`.
+- `legacy_webshell_host_with_cell_bridge`: consumed.
+- `legacy_webshell_host_court`: reduced from `23` to `18`.
+- classification digest:
+  `c48e3704b9bec426250d4374d7df863b779abe4938584a77860cf0806df34b06`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- The preview server existed only inside tests on random local ports and was
+  shut down by the tests.
+- No running application/session process was stopped.
+- The live copied runtime remains untouched because the holder gate is red.
+
+Current position:
+
+- The old WebShell is still legacy, but its committed bridge path is fenced:
+  it is a compatibility lens into Universal Cell rather than a claimed product
+  authority.
+- Remaining WIP is now mainly typed workflow runtime, adapter payloads, cloud
+  readiness, documentation evidence, UI/runtime evidence probes, WebShell courts,
+  runtime retirement hooks, and the live-locked copied runtime.
+
+Next action:
+
+- Continue with the highest authority-risk remaining category that can be
+  consumed without touching live sessions. The likely next target is the typed
+  workflow runtime bridge (`app/workflows/graph.py`, runner, subgraph,
+  typesystem, grammar/custom nodes) because wires, parameters, and edge-layer
+  semantics are still there and must be fenced under Universal Cell.

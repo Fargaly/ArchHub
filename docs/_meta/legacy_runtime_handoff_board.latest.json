@@ -1,0 +1,179 @@
+﻿{
+  "schema": "archhub-runtime-handoff-board/v1",
+  "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
+  "archive_allowed": false,
+  "summary": {
+    "holders": 4,
+    "application_servers": 1,
+    "blocked_endpoints": 1,
+    "runnable_endpoints": 0,
+    "unknown_endpoints": 0,
+    "passive_wait_pids": 0,
+    "long_running_test_pids": 0,
+    "low_activity_test_pids": 0,
+    "inspect_pids": 3,
+    "handoff_steps": 3,
+    "replacement_specs": 1
+  },
+  "blockers": {
+    "passive_wait_pids": [],
+    "long_running_test_pids": [],
+    "low_activity_test_pids": [],
+    "inspect_before_touch_pids": [
+      113216,
+      117712,
+      147188
+    ],
+    "blocked_endpoint_pids": [
+      52484
+    ]
+  },
+  "risk_classes": {
+    "qa_server_script_missing": 1,
+    "stdin_python_holder": 2,
+    "visible_legacy_endpoint": 1
+  },
+  "inspect_cards": [
+    {
+      "pid": 113216,
+      "holder_type": "unknown_python_holder",
+      "holder_risk_class": "qa_server_script_missing",
+      "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
+      "script_evidence": {
+        "launch_mode": "python_script",
+        "module": null,
+        "stdin_mode": false,
+        "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
+        "script_exists": false,
+        "script_size_bytes": null,
+        "script_mtime_utc": null,
+        "script_sha256": null
+      },
+      "age_seconds": 513412.1406700611,
+      "process_status": "running",
+      "cpu_total_seconds": 80.09375,
+      "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
+      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
+    },
+    {
+      "pid": 117712,
+      "holder_type": "stdin_python",
+      "holder_risk_class": "stdin_python_holder",
+      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
+      "script_evidence": {
+        "launch_mode": "python_stdin",
+        "module": null,
+        "stdin_mode": true,
+        "script_path": null,
+        "script_exists": false,
+        "script_size_bytes": null,
+        "script_mtime_utc": null,
+        "script_sha256": null
+      },
+      "age_seconds": 460321.79203248024,
+      "process_status": "running",
+      "cpu_total_seconds": 0.0,
+      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
+      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
+    },
+    {
+      "pid": 147188,
+      "holder_type": "stdin_python",
+      "holder_risk_class": "stdin_python_holder",
+      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
+      "script_evidence": {
+        "launch_mode": "python_stdin",
+        "module": null,
+        "stdin_mode": true,
+        "script_path": null,
+        "script_exists": false,
+        "script_size_bytes": null,
+        "script_mtime_utc": null,
+        "script_sha256": null
+      },
+      "age_seconds": 460321.6722431183,
+      "process_status": "running",
+      "cpu_total_seconds": 1.234375,
+      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
+      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
+    }
+  ],
+  "endpoint_cards": [
+    {
+      "pid": 52484,
+      "status": "blocked_by_this_live_holder",
+      "ports": [
+        8482,
+        8484
+      ],
+      "port_owners": {
+        "8482": [
+          52484
+        ],
+        "8484": [
+          52484
+        ]
+      },
+      "co_owner_pids": [],
+      "non_holder_port_owner_pids": [],
+      "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+      "age_seconds": 550632.2448916435,
+      "process_status": "running",
+      "cpu_total_seconds": 835.4375,
+      "holder_risk_class": "visible_legacy_endpoint",
+      "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
+      "script_evidence": {
+        "launch_mode": "python_script",
+        "module": null,
+        "stdin_mode": false,
+        "script_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\run_application_server.py",
+        "script_exists": true,
+        "script_size_bytes": 178,
+        "script_mtime_utc": 1783951608.740216,
+        "script_sha256": "7d54be373cd81420c7d83e263d45b2220acc0b5b361ebc9b5120ff491b2e636f"
+      },
+      "authority_relaunch": {
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+        "command": [
+          "python",
+          "-m",
+          "nodelang.application_server",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8482",
+          "--cloud-host",
+          "127.0.0.1",
+          "--cloud-port",
+          "8484",
+          "--state-path",
+          "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
+        ],
+        "dry_run_only": true,
+        "machine_transport": false,
+        "note": "Derived raw server relaunch command only; this planner does not execute it. This preserves parsed server flags but does not enable the Brain/Workshop machine transport."
+      },
+      "desktop_authority_handoff": {
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+        "command": [
+          "python",
+          "-m",
+          "nodelang.desktop"
+        ],
+        "dry_run_only": true,
+        "machine_transport": true,
+        "visible_url": "http://127.0.0.1:8482",
+        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+        "status": "blocked_until_visible_authority_handoff",
+        "requires_endpoint_free": true,
+        "requires_machine_descriptor_free": true,
+        "requires_browser_session_handoff": true,
+        "safe_to_execute_now": false,
+        "note": "DesktopRuntime is the intended founder-facing authority launch path, but this card is not executable evidence. A real handoff must prove the visible endpoint is free, the machine descriptor is not owned by another authority bridge, and the browser session can be transferred without falling back to a copied runtime."
+      },
+      "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
+      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
+    }
+  ],
+  "rule": "This board is read-only evidence. It may name a relaunch command, but it must not execute, kill, archive, or move any holder."
+}

@@ -1,0 +1,306 @@
+﻿{
+    "schema":  "archhub-local-application-server-cleanup/v1",
+    "source":  "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\docs\\_meta\\local_application_servers.latest.json",
+    "rule":  "only classifier safe_to_stop PIDs stopped after immediate exact command-line and TCP-client recheck",
+    "stopped_count":  25,
+    "skipped_count":  0,
+    "already_exited_count":  14,
+    "results":  [
+                    {
+                        "pid":  7712,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8547
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  14456,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8529
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  20564,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8525
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  28520,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8557
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  31024,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8543
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  38552,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  39052,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8561
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  40600,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8563
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  45960,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  56000,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8535
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  57476,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8555
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  61160,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8559
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  64232,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  66492,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  70504,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8565
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  71852,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8527
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  78744,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  80244,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8523
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  81456,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  98040,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  98956,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8533
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  110380,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8531
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  112476,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  113012,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  120880,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8553
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  121948,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8541
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  128292,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  129976,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8487,
+                                          8484
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  130264,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8567
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  132440,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  134168,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  137872,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+                                          8551
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  144512,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  147536,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  152548,
+                        "action":  "stopped",
+                        "reason":  "fresh QA scratch runtime; no active clients on immediate recheck",
+                        "listeners":  [
+
+                                      ],
+                        "established":  0
+                    },
+                    {
+                        "pid":  157668,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  162820,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  162896,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    },
+                    {
+                        "pid":  166632,
+                        "action":  "already_exited",
+                        "reason":  "process no longer exists"
+                    }
+                ]
+}

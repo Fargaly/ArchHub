@@ -450,7 +450,9 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
         or "visual" in normalized
         or "relation_" in normalized
         or "playable_interaction" in normalized
+        or normalized == "nodelang/cell_relations_view.py"
         or normalized == "nodelang/ui_runtime.py"
+        or normalized == "tests_replica/test_universal_ui_interactions.py"
     ):
         track = "visual_workspace_interaction"
         required_canonical_first_step = (

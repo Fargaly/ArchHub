@@ -3,7 +3,7 @@
   "source_schema": "archhub-runtime-copy-source-drift/v1",
   "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-  "candidate_count": 30,
+  "candidate_count": 32,
   "track_count": 7,
   "unresolved_track_count": 7,
   "all_candidates_classified": true,
@@ -94,19 +94,22 @@
         "privacy_tier": "T0 PUBLIC"
       },
       "resolution_state": "classified_unresolved",
-      "candidate_count": 9,
+      "candidate_count": 11,
       "candidate_ids": [
+        "runtime-source-drift:2eb5a79da0c47dad",
         "runtime-source-drift:34b091bba5042974",
-        "runtime-source-drift:58434e2d3b177d43",
+        "runtime-source-drift:63bb23c95981b83b",
         "runtime-source-drift:859f552165e6407b",
+        "runtime-source-drift:8b11a65c97d6be87",
         "runtime-source-drift:98d64f6a66cf5dad",
         "runtime-source-drift:b487a58dda8d826c",
-        "runtime-source-drift:bb919f27a0a24661",
+        "runtime-source-drift:c63f90da35729480",
         "runtime-source-drift:cdf848947bac8667",
         "runtime-source-drift:e056ad99a6ec58b2",
         "runtime-source-drift:f05f7888224538a1"
       ],
       "implementation_candidate_paths": [
+        "nodelang/cell_relations_view.py",
         "nodelang/ui_runtime.py"
       ],
       "court_candidate_paths": [
@@ -116,6 +119,7 @@
         "tests_replica/test_relation_junction_visual_grammar.py",
         "tests_replica/test_relation_security.py",
         "tests_replica/test_relation_topology_editor.py",
+        "tests_replica/test_universal_ui_interactions.py",
         "tests_replica/test_visual_graph_workspace.py",
         "tests_replica/test_visual_node_authority.py"
       ],

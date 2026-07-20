@@ -1,12 +1,10 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 8,
-  "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
+  "total": 1,
+  "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
   "summary": {
-    "governance_run_evidence": 2,
-    "live_locked_legacy_typed_runtime_copy": 1,
-    "ui_runtime_evidence_probe": 5
+    "live_locked_legacy_typed_runtime_copy": 1
   },
   "gate": {
     "no_unclassified": {
@@ -22,28 +20,6 @@
   },
   "entries": [
     {
-      "code": " M",
-      "path": "docs/_meta/authority_wip_classification.latest.json",
-      "category": "governance_run_evidence",
-      "disposition": "run_evidence",
-      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "personal-brain-mcp/tests/test_run_report.py"
-      ]
-    },
-    {
-      "code": " M",
-      "path": "docs/_meta/live_runtime_holders.latest.json",
-      "category": "governance_run_evidence",
-      "disposition": "run_evidence",
-      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "personal-brain-mcp/tests/test_run_report.py"
-      ]
-    },
-    {
       "code": "??",
       "path": "node_runtime/",
       "category": "live_locked_legacy_typed_runtime_copy",
@@ -54,76 +30,6 @@
         "tests/test_runtime_retirement_hook.py",
         "tests/test_legacy_runtime_drain.py",
         "tests/test_live_runtime_holders.py"
-      ]
-    },
-    {
-      "code": "??",
-      "path": "tools/verify_app_relation_right_rail_layer_edit.cjs",
-      "category": "ui_runtime_evidence_probe",
-      "disposition": "evidence_probe",
-      "required_action": "keep as evidence only; not product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_cdp_gate_enforced.py",
-        "tests/test_ui_fake_gate.py",
-        "tests/test_ui_fake_gate_selfcheck.py",
-        "tests/test_grand_map_ui_surface.py"
-      ]
-    },
-    {
-      "code": "??",
-      "path": "tools/verify_live_relation_payload_runtime.cjs",
-      "category": "ui_runtime_evidence_probe",
-      "disposition": "evidence_probe",
-      "required_action": "keep as evidence only; not product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_cdp_gate_enforced.py",
-        "tests/test_ui_fake_gate.py",
-        "tests/test_ui_fake_gate_selfcheck.py",
-        "tests/test_grand_map_ui_surface.py"
-      ]
-    },
-    {
-      "code": "??",
-      "path": "tools/verify_live_toast_relation_authority.cjs",
-      "category": "ui_runtime_evidence_probe",
-      "disposition": "evidence_probe",
-      "required_action": "keep as evidence only; not product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_cdp_gate_enforced.py",
-        "tests/test_ui_fake_gate.py",
-        "tests/test_ui_fake_gate_selfcheck.py",
-        "tests/test_grand_map_ui_surface.py"
-      ]
-    },
-    {
-      "code": "??",
-      "path": "tools/verify_rail_drawer_shell.cjs",
-      "category": "ui_runtime_evidence_probe",
-      "disposition": "evidence_probe",
-      "required_action": "keep as evidence only; not product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_cdp_gate_enforced.py",
-        "tests/test_ui_fake_gate.py",
-        "tests/test_ui_fake_gate_selfcheck.py",
-        "tests/test_grand_map_ui_surface.py"
-      ]
-    },
-    {
-      "code": "??",
-      "path": "tools/verify_ui_child_relation_authority.cjs",
-      "category": "ui_runtime_evidence_probe",
-      "disposition": "evidence_probe",
-      "required_action": "keep as evidence only; not product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_cdp_gate_enforced.py",
-        "tests/test_ui_fake_gate.py",
-        "tests/test_ui_fake_gate_selfcheck.py",
-        "tests/test_grand_map_ui_surface.py"
       ]
     }
   ],
@@ -406,54 +312,6 @@
   },
   "active_work_leaves": [
     {
-      "title": "Consume public WIP category: governance_run_evidence",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "governance_run_evidence",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "governance_run_evidence",
-        "disposition": "run_evidence",
-        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
-        "path_count": 2,
-        "paths": [
-          "docs/_meta/authority_wip_classification.latest.json",
-          "docs/_meta/live_runtime_holders.latest.json"
-        ],
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 6000
-    },
-    {
       "title": "Consume public WIP category: live_locked_legacy_typed_runtime_copy",
       "gate_kind": "pytest",
       "gate_spec": {
@@ -468,7 +326,7 @@
           "-q"
         ],
         "category": "live_locked_legacy_typed_runtime_copy",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
+        "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
         "required_courts": [
           "tests/test_legacy_runtime_drain.py",
           "tests/test_live_runtime_holders.py",
@@ -487,7 +345,7 @@
         "category": "live_locked_legacy_typed_runtime_copy",
         "disposition": "superseded_runtime_copy_with_live_process_holders",
         "required_action": "do not promote; drain or relaunch holders from 10.PRODUCT/13.NODE-LANGUAGE, then archive this copied runtime",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
+        "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
         "path_count": 1,
         "paths": [
           "node_runtime/"
@@ -505,73 +363,13 @@
         "wip-convergence"
       ],
       "priority": 9800
-    },
-    {
-      "title": "Consume public WIP category: ui_runtime_evidence_probe",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "tests/test_cdp_gate_enforced.py",
-          "tests/test_grand_map_ui_surface.py",
-          "tests/test_ui_fake_gate.py",
-          "tests/test_ui_fake_gate_selfcheck.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "ui_runtime_evidence_probe",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
-        "required_courts": [
-          "tests/test_cdp_gate_enforced.py",
-          "tests/test_grand_map_ui_surface.py",
-          "tests/test_ui_fake_gate.py",
-          "tests/test_ui_fake_gate_selfcheck.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "ui_runtime_evidence_probe",
-        "disposition": "evidence_probe",
-        "required_action": "keep as evidence only; not product authority",
-        "classification_digest": "99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b",
-        "path_count": 5,
-        "paths": [
-          "tools/verify_app_relation_right_rail_layer_edit.cjs",
-          "tools/verify_live_relation_payload_runtime.cjs",
-          "tools/verify_live_toast_relation_authority.cjs",
-          "tools/verify_rail_drawer_shell.cjs",
-          "tools/verify_ui_child_relation_authority.cjs"
-        ],
-        "required_courts": [
-          "tests/test_cdp_gate_enforced.py",
-          "tests/test_grand_map_ui_surface.py",
-          "tests/test_ui_fake_gate.py",
-          "tests/test_ui_fake_gate_selfcheck.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 5800
     }
   ],
   "live_runtime_holders": {
     "schema": "archhub-live-runtime-holders/v1",
     "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
     "exists": true,
-    "observed_at": 1784568258.211845,
+    "observed_at": 1784568858.3597999,
     "holder_count": 4,
     "archive_safe_now": false,
     "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
@@ -583,11 +381,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "match": "cwd",
         "create_time": 1784000816.2812548,
-        "age_seconds": 567441.9305901527,
+        "age_seconds": 568042.0785450935,
         "status": "running",
-        "cpu_user_seconds": 812.9375,
-        "cpu_system_seconds": 27.921875,
-        "cpu_total_seconds": 840.859375
+        "cpu_user_seconds": 813.734375,
+        "cpu_system_seconds": 28.03125,
+        "cpu_total_seconds": 841.765625
       },
       {
         "pid": 113216,
@@ -596,11 +394,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
         "match": "cwd",
         "create_time": 1784038036.3854764,
-        "age_seconds": 530221.8263685703,
+        "age_seconds": 530821.9743235111,
         "status": "running",
-        "cpu_user_seconds": 63.625,
+        "cpu_user_seconds": 63.703125,
         "cpu_system_seconds": 19.15625,
-        "cpu_total_seconds": 82.78125
+        "cpu_total_seconds": 82.859375
       },
       {
         "pid": 117712,
@@ -609,7 +407,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.734114,
-        "age_seconds": 477131.47773098946,
+        "age_seconds": 477731.62568593025,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -622,7 +420,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.8539033,
-        "age_seconds": 477131.3579416275,
+        "age_seconds": 477731.5058965683,
         "status": "running",
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
@@ -632,7 +430,7 @@
   },
   "local_application_servers": {
     "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784568282.6849003,
+    "observed_at": 1784568887.7468338,
     "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
     "process_count": 5,
     "safe_to_stop_count": 0,
@@ -665,11 +463,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784543480.5777273,
-        "age_seconds": 24802.107172966003,
+        "age_seconds": 25407.16910648346,
         "status": "running",
-        "cpu_user_seconds": 11119.046874999998,
-        "cpu_system_seconds": 37.953125,
-        "cpu_total_seconds": 11156.999999999998
+        "cpu_user_seconds": 11406.796874999998,
+        "cpu_system_seconds": 38.75,
+        "cpu_total_seconds": 11445.546874999998
       },
       {
         "pid": 52484,
@@ -690,11 +488,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784000816.2812548,
-        "age_seconds": 567466.4036455154,
+        "age_seconds": 568071.4655790329,
         "status": "running",
-        "cpu_user_seconds": 812.9375,
-        "cpu_system_seconds": 27.921875,
-        "cpu_total_seconds": 840.859375
+        "cpu_user_seconds": 813.734375,
+        "cpu_system_seconds": 28.03125,
+        "cpu_total_seconds": 841.765625
       },
       {
         "pid": 14616,
@@ -714,11 +512,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.82487,
-        "age_seconds": 335515.86003017426,
+        "age_seconds": 336120.9219636917,
         "status": "running",
-        "cpu_user_seconds": 55.515625,
-        "cpu_system_seconds": 12.640625,
-        "cpu_total_seconds": 68.15625
+        "cpu_user_seconds": 55.609375,
+        "cpu_system_seconds": 12.65625,
+        "cpu_total_seconds": 68.265625
       },
       {
         "pid": 122452,
@@ -736,7 +534,7 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.690817,
-        "age_seconds": 335515.9940831661,
+        "age_seconds": 336121.0560166836,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -760,11 +558,11 @@
         "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
         "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
         "create_time": 1784225629.9015317,
-        "age_seconds": 342652.7833685875,
+        "age_seconds": 343257.84530210495,
         "status": "running",
-        "cpu_user_seconds": 54.03125,
+        "cpu_user_seconds": 54.125,
         "cpu_system_seconds": 12.84375,
-        "cpu_total_seconds": 66.875
+        "cpu_total_seconds": 66.96875
       }
     ]
   }

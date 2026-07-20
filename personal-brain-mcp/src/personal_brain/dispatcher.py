@@ -4,14 +4,14 @@ own: court-gated, FREE, and safe to leave running on the founder's machine.
 This is the missing STANDING wrapper around the ROMA primitives. It is NOT a new
 system — it is one thin loop over the EXISTING pieces (the ONE-SYSTEM mandate):
 
-    requirement_tree  — the tree ledger (frontier / open_leaves / claim_leaf /
-                        set_verdict), persisted additively in brain_meta. NOT
+    requirement_tree  — the tree ledger (frontier / open_leaves / set_verdict),
+                        persisted as a Brain metadata projection. NOT
                         re-implemented here; imported.
-    roma.judge_leaf   — convenes the EXISTING court (court_harness.convene_court,
-                        3 lenses incl. anti-tamper independence) and records the
-                        verdict. The dispatcher routes EVERY result through it so
-                        a leaf goes GREEN only on a court-green verdict and only
-                        when judged_by != claimed_by (anti-self-certify).
+    roma.*_cell_first — syncs the tree through the Universal Cell route before
+                        updating the Brain metadata projection. The dispatcher
+                        routes EVERY result through that path so a leaf goes
+                        GREEN only on a court-green verdict and only when
+                        judged_by != claimed_by (anti-self-certify).
     proc_utils        — the shared TTL-cached process snapshot (process_names),
                         reused for "is the founder's ArchHub app in use right
                         now?" so the loop PAUSES while he is working
@@ -355,9 +355,10 @@ def run_standing(
       6. BUILD (FREE) — route to the free worker (free_fleet.run_worker or the
          injected fleet); a missing fleet no-ops (lane stands alone). The money
          firewall refuses any non-zero-cost outcome.
-      7. COURT — judge the leaf through the EXISTING court (roma.judge_leaf →
-         court_harness.convene_court + set_verdict). The leaf goes GREEN only on
-         a court-green verdict, and only because judged_by != claimed_by.
+      7. COURT — judge the leaf through the Cell-first ROMA court helper
+         (roma.judge_leaf_cell_first → court_harness.convene_court +
+         Universal Cell sync + Brain projection). The leaf goes GREEN only on a
+         court-green verdict, and only because judged_by != claimed_by.
       8. RECORD — bump counters; loop.
 
     Returns the final ``status()`` dict (cost_usd always 0.0). Updates the
@@ -446,13 +447,21 @@ def run_standing(
 
             # 5) CLAIM (executor identity; the court identity differs).
             try:
-                rt.claim_leaf(store, tree_id=tid, node_id=leaf.node_id, agent_id=agent_id)
+                roma.claim_leaf_cell_first(
+                    store, tree_id=tid, node_id=leaf.node_id, agent_id=agent_id
+                )
             except (KeyError, ValueError):
                 # Lost the race / already claimed / no longer a claimable leaf —
                 # skip to the next tick (another worker has it).
                 if on_tick:
                     on_tick(st)
                 continue
+            except Exception as ex:
+                st.paused_reason = f"claim_error: {type(ex).__name__}"
+                st.stopped_reason = "claim_error"
+                if on_tick:
+                    on_tick(st)
+                break
             st.leaves_claimed += 1
 
             # 6) BUILD on a FREE worker (no-op if no fleet → lane stands alone).
@@ -504,14 +513,14 @@ def run_standing(
 
 
 def _default_court_fn(store: "BrainStore") -> Callable[..., dict[str, Any]]:
-    """The real court path: roma.judge_leaf, which convenes
+    """The real court path: roma.judge_leaf_cell_first, which convenes
     court_harness.convene_court (3 lenses: artifact / diligence / independence)
     and records the verdict via set_verdict. This is the ONE-SYSTEM reuse — the
     dispatcher does NOT re-implement judging."""
 
     def _judge(*, tree_id: str, node_id: str, judged_by: str,
                context: dict[str, Any], require_diligence: bool) -> dict[str, Any]:
-        return roma.judge_leaf(
+        return roma.judge_leaf_cell_first(
             store, tree_id=tree_id, node_id=node_id, judged_by=judged_by,
             context=context, require_diligence=require_diligence,
         )

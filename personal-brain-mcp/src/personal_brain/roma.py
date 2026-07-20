@@ -8,10 +8,13 @@ Ties the three existing pieces named in the encode brief into one method:
     never-reward-short  →  diligence.evaluate_diligence (wired as a juror)
     YOU (founder) = root for taste/ties  →  NEEDS_ROOT escape + root authority
 
-The whole engine is store-backed (brain_meta, additive) and pure-Python. It
-exposes module-level functions AND a `register_roma_tools(mcp, store)` that
-attaches a `brain.roma_*` tool family to the FastMCP server. `build_server`
-calls it via exactly ONE added line (no existing handler touched).
+The legacy direct Python helpers remain store-backed (brain_meta, additive) for
+compatibility tests and old local callers. The governed path is Cell-first:
+`*_cell_first` helpers and mutating `brain.roma_*` handlers sync the actual
+requirement tree to the Universal Cell application route before updating the
+Brain metadata projection.
+`register_roma_tools(mcp, store)` attaches the tool family to the FastMCP
+server. `build_server` calls it via exactly ONE added line.
 
 Loop shape (mirrors the method exactly):
 
@@ -21,10 +24,11 @@ Loop shape (mirrors the method exactly):
     settle    → green | red(→re-work) | needs_root(→founder)
     loop      → repeat until sweep().dry  (full green sweep == done)
 
-SAFETY: never writes to fragments/skills; only requirement_tree's single
-brain_meta key. The court's artifact probes are injectable so this module
-itself runs the deterministic gates (py_compile/pytest/file) and only touches
-the live app via an explicitly-supplied CDP probe.
+SAFETY: never writes to fragments/skills. MCP writes require the Universal Cell
+tree sync first; `brain_meta` is a compatibility projection. The court's
+artifact probes are injectable so this module itself runs the deterministic
+gates (py_compile/pytest/file) and only touches the live app via an
+explicitly-supplied CDP probe.
 """
 from __future__ import annotations
 
@@ -45,6 +49,50 @@ if TYPE_CHECKING:
 ExecutorFn = Callable[["rt.ReqNode", dict[str, Any]], dict[str, Any]]
 
 
+def atomize_candidate(
+    *,
+    vision: str,
+    decomposition: list[dict[str, Any]],
+    owner_user: str = "founder",
+    tree_id: Optional[str] = None,
+) -> rt.RequirementTree:
+    """Build an atomized tree in memory before any compatibility projection."""
+    tree = rt.build_root_tree(
+        title=vision,
+        owner_user=owner_user,
+        tree_id=tree_id,
+    )
+
+    def _attach(parent_id: str, specs: list[dict[str, Any]]) -> None:
+        if not specs:
+            return
+        child_specs = [
+            {
+                "title": s.get("title", ""),
+                "predicate": s.get("predicate", ""),
+                "gate_kind": s.get("gate_kind", "manual"),
+                "gate_spec": s.get("gate_spec", {}),
+            }
+            for s in specs if s.get("title")
+        ]
+        if not child_specs:
+            return
+        rt._decompose_tree(
+            tree,
+            tree_id=tree.tree_id,
+            node_id=parent_id,
+            children=child_specs,
+        )
+        for s in specs:
+            title = s.get("title")
+            if title and s.get("children"):
+                cid = rt._node_id(tree.tree_id, parent_id, title)
+                _attach(cid, s["children"])
+
+    _attach(tree.root_id, decomposition)
+    return tree
+
+
 def atomize(
     store: "BrainStore",
     *,
@@ -62,36 +110,120 @@ def atomize(
     without is a LEAF and SHOULD carry a machine-checkable gate. This is the
     one-shot atomizer; `brain.roma_decompose` lets the loop split further on RED.
     """
-    tree = rt.create_root(store, title=vision, owner_user=owner_user, tree_id=tree_id)
+    tree = atomize_candidate(
+        vision=vision,
+        decomposition=decomposition or [],
+        owner_user=owner_user,
+        tree_id=tree_id,
+    )
+    rt.TreeStore(store).save(tree)
+    return tree
 
-    def _attach(parent_id: str, specs: list[dict[str, Any]]) -> None:
-        if not specs:
-            return
-        child_specs = [
-            {
-                "title": s.get("title", ""),
-                "predicate": s.get("predicate", ""),
-                "gate_kind": s.get("gate_kind", "manual"),
-                "gate_spec": s.get("gate_spec", {}),
-            }
-            for s in specs if s.get("title")
-        ]
-        if not child_specs:
-            return
-        rt.decompose(store, tree_id=tree.tree_id, node_id=parent_id, children=child_specs)
-        # Recurse for any spec that itself has children.
-        reloaded = rt.get_tree(store, tree_id=tree.tree_id)
-        assert reloaded is not None
-        for s in specs:
-            title = s.get("title")
-            if title and s.get("children"):
-                cid = rt._node_id(tree.tree_id, parent_id, title)
-                _attach(cid, s["children"])
 
-    _attach(tree.root_id, decomposition)
-    result = rt.get_tree(store, tree_id=tree.tree_id)
-    assert result is not None
-    return result
+def atomize_cell_first(
+    store: "BrainStore",
+    *,
+    vision: str,
+    decomposition: list[dict[str, Any]],
+    owner_user: str = "founder",
+    tree_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Direct atomize path that uses the Universal Cell route as authority."""
+    tree = atomize_candidate(
+        vision=vision,
+        decomposition=decomposition or [],
+        owner_user=owner_user,
+        tree_id=tree_id,
+    )
+    cell_tree = rt.sync_requirement_tree_cell_graph(
+        operation="roma.atomize_cell_first",
+        tree=tree,
+    )
+    rt.save_tree_projection_after_cell_sync(store, tree=tree)
+    return {
+        "ok": True,
+        "authority_source": "cell_route",
+        "brain_written": True,
+        "tree_id": tree.tree_id,
+        "root_id": tree.root_id,
+        "tree": tree.model_dump(mode="json"),
+        "cell_tree": cell_tree,
+        "sweep": rt.sweep_tree(tree),
+    }
+
+
+def decompose_cell_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    node_id: str,
+    children: list[dict[str, Any]],
+) -> dict[str, Any]:
+    tree, read_authority_source, _projection = rt.read_tree_authority_first(
+        store, tree_id=tree_id
+    )
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    candidate = rt.clone_tree(tree)
+    rt._decompose_tree(
+        candidate, tree_id=tree_id, node_id=node_id, children=children
+    )
+    cell_tree = rt.sync_requirement_tree_cell_graph(
+        operation="roma.decompose_cell_first",
+        tree=candidate,
+    )
+    rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+    parent = candidate.nodes[node_id]
+    return {
+        "ok": True,
+        "authority_source": "cell_route",
+        "read_authority_source": read_authority_source,
+        "brain_written": True,
+        "tree_id": tree_id,
+        "node_id": node_id,
+        "children": [
+            candidate.nodes[child].model_dump(mode="json")
+            for child in parent.children
+            if child in candidate.nodes
+        ],
+        "tree": candidate.model_dump(mode="json"),
+        "cell_tree": cell_tree,
+        "sweep": rt.sweep_tree(candidate),
+    }
+
+
+def claim_leaf_cell_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    node_id: str,
+    agent_id: str,
+) -> dict[str, Any]:
+    tree, read_authority_source, _projection = rt.read_tree_authority_first(
+        store, tree_id=tree_id
+    )
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    candidate = rt.clone_tree(tree)
+    node = rt._claim_leaf_in_tree(
+        candidate, tree_id=tree_id, node_id=node_id, agent_id=agent_id
+    )
+    cell_tree = rt.sync_requirement_tree_cell_graph(
+        operation="roma.claim_leaf_cell_first",
+        tree=candidate,
+    )
+    rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+    return {
+        "ok": True,
+        "authority_source": "cell_route",
+        "read_authority_source": read_authority_source,
+        "brain_written": True,
+        "tree_id": tree_id,
+        "node": node.model_dump(mode="json"),
+        "tree": candidate.model_dump(mode="json"),
+        "cell_tree": cell_tree,
+        "sweep": rt.sweep_tree(candidate),
+    }
 
 
 def judge_leaf(
@@ -148,6 +280,69 @@ def judge_leaf(
         ),
     )
     return {"court": verdict.to_dict(), "node": updated.model_dump(mode="json")}
+
+
+def judge_leaf_cell_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    node_id: str,
+    judged_by: str = "roma-court",
+    context: Optional[dict[str, Any]] = None,
+    extra_probes: Optional[dict[str, ProbeRunner]] = None,
+    require_diligence: bool = False,
+) -> dict[str, Any]:
+    """Convene court and write the verdict through the Cell route first."""
+    tree, read_authority_source, _projection = rt.read_tree_authority_first(
+        store, tree_id=tree_id
+    )
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    node = tree.nodes.get(node_id)
+    if node is None:
+        raise KeyError(f"node '{node_id}' not found")
+
+    verdict = convene_court(
+        node_id=node_id,
+        gate_kind=node.gate_kind,
+        gate_spec=node.gate_spec,
+        claimed_by=node.claimed_by,
+        judged_by=judged_by,
+        context=context,
+        extra_probes=extra_probes,
+        require_diligence=require_diligence or node.attempts >= 1,
+        leaf_created_at=node.created_at,
+        leaf_title=node.title,
+        leaf_predicate=node.predicate,
+    )
+    candidate = rt.clone_tree(tree)
+    updated = rt._set_verdict_in_tree(
+        candidate,
+        tree_id=tree_id,
+        node_id=node_id,
+        verdict=verdict.verdict,
+        judged_by=judged_by,
+        evidence_ref=next(
+            (lens.evidence_ref for lens in verdict.lenses if lens.evidence_ref),
+            None,
+        ),
+    )
+    cell_tree = rt.sync_requirement_tree_cell_graph(
+        operation="roma.judge_leaf_cell_first",
+        tree=candidate,
+    )
+    rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+    return {
+        "ok": True,
+        "authority_source": "cell_route",
+        "read_authority_source": read_authority_source,
+        "brain_written": True,
+        "court": verdict.to_dict(),
+        "node": updated.model_dump(mode="json"),
+        "tree": candidate.model_dump(mode="json"),
+        "cell_tree": cell_tree,
+        "sweep": rt.sweep_tree(candidate),
+    }
 
 
 def server_verify_leaf(
@@ -219,6 +414,72 @@ def server_verify_leaf(
         "node": updated.model_dump(mode="json"),
         "authentic": authentic,
         "authentic_reason": authentic_reason,
+    }
+
+
+def server_verify_leaf_cell_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    node_id: str,
+    judged_by: str = "roma-server-verifier",
+    context: Optional[dict[str, Any]] = None,
+    require_diligence: bool = False,
+    signing_key_ref: Optional[str] = None,
+) -> dict[str, Any]:
+    """Server-side verification with Cell-route-first verdict persistence."""
+    tree, read_authority_source, _projection = rt.read_tree_authority_first(
+        store, tree_id=tree_id
+    )
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    node = tree.nodes.get(node_id)
+    if node is None:
+        raise KeyError(f"node '{node_id}' not found")
+
+    att = server_side_verify(
+        node_id=node_id,
+        gate_kind=node.gate_kind,
+        gate_spec=node.gate_spec,
+        claimed_by=node.claimed_by,
+        judged_by=judged_by,
+        context=context,
+        require_diligence=require_diligence,
+        signing_key_ref=signing_key_ref,
+    )
+    authentic, authentic_reason = verify_attestation(
+        att, signing_key_ref=signing_key_ref, require_signed=False,
+    )
+    record_verdict = att.verdict
+    if att.green and not authentic:
+        record_verdict = "red"
+
+    candidate = rt.clone_tree(tree)
+    updated = rt._set_verdict_in_tree(
+        candidate,
+        tree_id=tree_id,
+        node_id=node_id,
+        verdict=record_verdict,
+        judged_by=judged_by,
+        evidence_ref=att.evidence_ref,
+    )
+    cell_tree = rt.sync_requirement_tree_cell_graph(
+        operation="roma.server_verify_leaf_cell_first",
+        tree=candidate,
+    )
+    rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+    return {
+        "ok": True,
+        "authority_source": "cell_route",
+        "read_authority_source": read_authority_source,
+        "brain_written": True,
+        "attestation": att.to_dict(),
+        "node": updated.model_dump(mode="json"),
+        "authentic": authentic,
+        "authentic_reason": authentic_reason,
+        "tree": candidate.model_dump(mode="json"),
+        "cell_tree": cell_tree,
+        "sweep": rt.sweep_tree(candidate),
     }
 
 
@@ -322,6 +583,112 @@ def run_to_dry(
 # ─────────────────────────── MCP tool surface ──────────────────────────
 
 
+def run_to_dry_cell_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    executor: ExecutorFn,
+    judged_by: str = "roma-court",
+    context: Optional[dict[str, Any]] = None,
+    extra_probes: Optional[dict[str, ProbeRunner]] = None,
+    require_diligence: bool = True,
+    max_rounds: int = 25,
+    auto_decompose: Optional[Callable[["rt.ReqNode"], list[dict[str, Any]]]] = None,
+) -> dict[str, Any]:
+    """Loop-until-dry driver whose mutations go through the Cell route first."""
+    ctx = dict(context or {})
+    rounds: list[dict[str, Any]] = []
+
+    for round_no in range(1, max_rounds + 1):
+        tree, read_authority_source, _projection = rt.read_tree_authority_first(
+            store, tree_id=tree_id
+        )
+        if tree is None:
+            raise KeyError(f"tree '{tree_id}' not found")
+        claimable = rt.open_leaves_for_tree(tree)
+        if not claimable:
+            break
+
+        progressed = False
+        round_trace: list[dict[str, Any]] = []
+        for leaf in claimable:
+            agent_id = ctx.get("executor_id") or "roma-executor"
+            if agent_id == judged_by:
+                agent_id = f"{agent_id}#executor"
+            try:
+                claim_leaf_cell_first(
+                    store, tree_id=tree_id, node_id=leaf.node_id,
+                    agent_id=agent_id,
+                )
+            except (KeyError, ValueError):
+                continue
+
+            try:
+                evidence = executor(leaf, ctx) or {}
+            except Exception as ex:
+                evidence = {
+                    "last_message": f"executor crashed: {ex}",
+                    "session_signals": {},
+                }
+            leaf_ctx = dict(ctx)
+            leaf_ctx["evidence"] = evidence
+            result = judge_leaf_cell_first(
+                store,
+                tree_id=tree_id,
+                node_id=leaf.node_id,
+                judged_by=judged_by,
+                context=leaf_ctx,
+                extra_probes=extra_probes,
+                require_diligence=require_diligence,
+            )
+            round_trace.append({
+                "node_id": leaf.node_id,
+                "title": leaf.title,
+                "verdict": result["court"]["verdict"],
+                "reason": result["court"]["reason"][:240],
+                "read_authority_source": read_authority_source,
+            })
+            verdict = result["court"]["verdict"]
+            if verdict == "green":
+                progressed = True
+            elif verdict == "red" and auto_decompose is not None:
+                latest, _source, _projection = rt.read_tree_authority_first(
+                    store, tree_id=tree_id
+                )
+                node = latest.nodes.get(leaf.node_id) if latest else None
+                if node is not None:
+                    kids = auto_decompose(node)
+                    if kids:
+                        decompose_cell_first(
+                            store, tree_id=tree_id, node_id=leaf.node_id,
+                            children=kids,
+                        )
+                        progressed = True
+
+        rounds.append({"round": round_no, "leaves": round_trace})
+        current, _source, _projection = rt.read_tree_authority_first(
+            store, tree_id=tree_id
+        )
+        if current is None:
+            raise KeyError(f"tree '{tree_id}' not found")
+        status = rt.sweep_tree(current)
+        if status["dry"]:
+            break
+        if not progressed:
+            break
+
+    final_tree, authority_source, _projection = rt.read_tree_authority_first(
+        store, tree_id=tree_id
+    )
+    if final_tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    final = rt.sweep_tree(final_tree)
+    final["authority_source"] = authority_source
+    final["rounds"] = rounds
+    final["rounds_run"] = len(rounds)
+    return final
+
+
 def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
     """Attach the additive `brain.roma_*` tool family to a FastMCP server.
 
@@ -342,8 +709,9 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
             "list of node specs [{title, predicate?, gate_kind?, gate_spec?, "
             "children?}]. A node with children is internal (split, never "
             "simplified); a leaf SHOULD carry a machine-checkable gate "
-            "(gate_kind: py_compile|pytest|file_exists|cdp). Persists the tree "
-            "additively in brain_meta (no new table). Returns the tree + sweep."
+            "(gate_kind: py_compile|pytest|file_exists|cdp). Syncs the tree to "
+            "the Universal Cell application route first, then writes the Brain "
+            "metadata compatibility projection. Returns the tree + sweep."
         ),
     )
     def roma_atomize(
@@ -353,17 +721,38 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
         tree_id: Optional[str] = None,
     ) -> dict[str, Any]:
         owner = owner_user or _default_owner(store)
-        tree = atomize(
-            store, vision=vision, decomposition=decomposition or [],
-            owner_user=owner, tree_id=tree_id,
-        )
-        return {
+        try:
+            tree = atomize_candidate(
+                vision=vision,
+                decomposition=decomposition or [],
+                owner_user=owner,
+                tree_id=tree_id,
+            )
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        try:
+            cell_tree = rt.sync_requirement_tree_cell_graph(
+                operation="brain.roma_atomize",
+                tree=tree,
+            )
+        except Exception as ex:
+            return rt.cell_tree_unavailable_response("brain.roma_atomize", ex)
+        try:
+            rt.save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return rt.attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree.tree_id,
+                "root_id": tree.root_id,
+            }, cell_tree, brain_written=False)
+        return rt.attach_cell_tree_fields({
             "ok": True,
             "tree_id": tree.tree_id,
             "root_id": tree.root_id,
-            "sweep": rt.sweep(store, tree_id=tree.tree_id),
+            "sweep": rt.sweep_tree(tree),
             "tree": tree.model_dump(mode="json"),
-        }
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.roma_decompose",
@@ -379,13 +768,39 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
         node_id: str,
         children: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        current = rt.get_tree(store, tree_id=tree_id)
+        if current is None:
+            return {"ok": False, "error": f"tree '{tree_id}' not found"}
         try:
-            tree = rt.decompose(store, tree_id=tree_id, node_id=node_id, children=children)
-        except (KeyError, ValueError) as ex:
+            tree = rt.clone_tree(current)
+            rt._decompose_tree(
+                tree, tree_id=tree_id, node_id=node_id, children=children
+            )
+        except Exception as ex:
             return {"ok": False, "error": str(ex)}
-        return {"ok": True, "tree_id": tree_id,
-                "sweep": rt.sweep(store, tree_id=tree_id),
-                "tree": tree.model_dump(mode="json")}
+        try:
+            cell_tree = rt.sync_requirement_tree_cell_graph(
+                operation="brain.roma_decompose",
+                tree=tree,
+            )
+        except Exception as ex:
+            return rt.cell_tree_unavailable_response(
+                "brain.roma_decompose", ex, tree_id=tree_id, node_id=node_id,
+            )
+        try:
+            rt.save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return rt.attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree_id,
+            }, cell_tree, brain_written=False)
+        return rt.attach_cell_tree_fields({
+            "ok": True,
+            "tree_id": tree_id,
+            "sweep": rt.sweep_tree(tree),
+            "tree": tree.model_dump(mode="json"),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.roma_claim",
@@ -397,11 +812,38 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
         ),
     )
     def roma_claim(tree_id: str, node_id: str, agent_id: str) -> dict[str, Any]:
+        current = rt.get_tree(store, tree_id=tree_id)
+        if current is None:
+            return {"ok": False, "error": f"tree '{tree_id}' not found"}
         try:
-            node = rt.claim_leaf(store, tree_id=tree_id, node_id=node_id, agent_id=agent_id)
-        except (KeyError, ValueError) as ex:
+            tree = rt.clone_tree(current)
+            node = rt._claim_leaf_in_tree(
+                tree, tree_id=tree_id, node_id=node_id, agent_id=agent_id
+            )
+        except Exception as ex:
             return {"ok": False, "error": str(ex)}
-        return {"ok": True, "node": node.model_dump(mode="json")}
+        try:
+            cell_tree = rt.sync_requirement_tree_cell_graph(
+                operation="brain.roma_claim",
+                tree=tree,
+            )
+        except Exception as ex:
+            return rt.cell_tree_unavailable_response(
+                "brain.roma_claim", ex, tree_id=tree_id, node_id=node_id,
+            )
+        try:
+            rt.save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return rt.attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree_id,
+                "node_id": node_id,
+            }, cell_tree, brain_written=False)
+        return rt.attach_cell_tree_fields({
+            "ok": True,
+            "node": node.model_dump(mode="json"),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.roma_judge",
@@ -442,12 +884,69 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
             except Exception:
                 pass
         try:
-            return {"ok": True, **judge_leaf(
-                store, tree_id=tree_id, node_id=node_id, judged_by=judged_by,
-                context=ctx, extra_probes=extra, require_diligence=require_diligence,
-            )}
+            if tree is None:
+                raise KeyError(f"tree '{tree_id}' not found")
+            if node is None:
+                raise KeyError(f"node '{node_id}' not found")
+            verdict = convene_court(
+                node_id=node_id,
+                gate_kind=node.gate_kind,
+                gate_spec=node.gate_spec,
+                claimed_by=node.claimed_by,
+                judged_by=judged_by,
+                context=ctx,
+                extra_probes=extra,
+                require_diligence=require_diligence or node.attempts >= 1,
+                leaf_created_at=node.created_at,
+                leaf_title=node.title,
+                leaf_predicate=node.predicate,
+            )
+            try:
+                candidate = rt.clone_tree(tree)
+                updated = rt._set_verdict_in_tree(
+                    candidate,
+                    tree_id=tree_id,
+                    node_id=node_id,
+                    verdict=verdict.verdict,
+                    judged_by=judged_by,
+                    evidence_ref=next(
+                        (l.evidence_ref for l in verdict.lenses if l.evidence_ref),
+                        None,
+                    ),
+                )
+            except Exception as ex:
+                return {"ok": False, "error": f"{type(ex).__name__}: {ex}",
+                        "court": verdict.to_dict()}
+            try:
+                cell_tree = rt.sync_requirement_tree_cell_graph(
+                    operation="brain.roma_judge",
+                    tree=candidate,
+                )
+            except Exception as ex:
+                return rt.cell_tree_unavailable_response(
+                    "brain.roma_judge",
+                    ex,
+                    tree_id=tree_id,
+                    node_id=node_id,
+                    court=verdict.to_dict(),
+                )
+            try:
+                rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+            except Exception as ex:
+                return rt.attach_cell_tree_fields({
+                    "ok": False,
+                    "error": f"{type(ex).__name__}: {ex}",
+                    "court": verdict.to_dict(),
+                }, cell_tree, brain_written=False)
+            return rt.attach_cell_tree_fields({
+                "ok": True,
+                "court": verdict.to_dict(),
+                "node": updated.model_dump(mode="json"),
+            }, cell_tree)
         except KeyError as ex:
             return {"ok": False, "error": str(ex)}
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.roma_server_verify",
@@ -476,13 +975,77 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
         if evidence:
             ctx["evidence"] = evidence
         try:
-            return {"ok": True, **server_verify_leaf(
-                store, tree_id=tree_id, node_id=node_id, judged_by=judged_by,
-                context=ctx, require_diligence=require_diligence,
+            tree = rt.get_tree(store, tree_id=tree_id)
+            if tree is None:
+                raise KeyError(f"tree '{tree_id}' not found")
+            node = tree.nodes.get(node_id)
+            if node is None:
+                raise KeyError(f"node '{node_id}' not found")
+            att = server_side_verify(
+                node_id=node_id,
+                gate_kind=node.gate_kind,
+                gate_spec=node.gate_spec,
+                claimed_by=node.claimed_by,
+                judged_by=judged_by,
+                context=ctx,
+                require_diligence=require_diligence,
                 signing_key_ref=signing_key_ref,
-            )}
+            )
+            authentic, authentic_reason = verify_attestation(
+                att, signing_key_ref=signing_key_ref, require_signed=False,
+            )
+            record_verdict = att.verdict
+            if att.green and not authentic:
+                record_verdict = "red"
+            try:
+                candidate = rt.clone_tree(tree)
+                updated = rt._set_verdict_in_tree(
+                    candidate,
+                    tree_id=tree_id,
+                    node_id=node_id,
+                    verdict=record_verdict,
+                    judged_by=judged_by,
+                    evidence_ref=att.evidence_ref,
+                )
+            except Exception as ex:
+                return {"ok": False, "error": f"{type(ex).__name__}: {ex}",
+                        "attestation": att.to_dict()}
+            try:
+                cell_tree = rt.sync_requirement_tree_cell_graph(
+                    operation="brain.roma_server_verify",
+                    tree=candidate,
+                )
+            except Exception as ex:
+                return rt.cell_tree_unavailable_response(
+                    "brain.roma_server_verify",
+                    ex,
+                    tree_id=tree_id,
+                    node_id=node_id,
+                    attestation=att.to_dict(),
+                    authentic=authentic,
+                    authentic_reason=authentic_reason,
+                )
+            try:
+                rt.save_tree_projection_after_cell_sync(store, tree=candidate)
+            except Exception as ex:
+                return rt.attach_cell_tree_fields({
+                    "ok": False,
+                    "error": f"{type(ex).__name__}: {ex}",
+                    "attestation": att.to_dict(),
+                    "authentic": authentic,
+                    "authentic_reason": authentic_reason,
+                }, cell_tree, brain_written=False)
+            return rt.attach_cell_tree_fields({
+                "ok": True,
+                "attestation": att.to_dict(),
+                "node": updated.model_dump(mode="json"),
+                "authentic": authentic,
+                "authentic_reason": authentic_reason,
+            }, cell_tree)
         except KeyError as ex:
             return {"ok": False, "error": str(ex)}
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.roma_sweep",
@@ -497,9 +1060,23 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
     )
     def roma_sweep(tree_id: str) -> dict[str, Any]:
         try:
-            return {"ok": True, **rt.sweep(store, tree_id=tree_id)}
+            tree, authority_source, projection = rt.read_tree_authority_first(
+                store, tree_id=tree_id
+            )
+            if tree is None:
+                return {"ok": False, "error": f"tree '{tree_id}' not found"}
+            out = {
+                "ok": True,
+                "authority_source": authority_source,
+                **rt.sweep_tree(tree),
+            }
+            if projection is not None:
+                out["cell_tree"] = projection
+            return out
         except KeyError as ex:
             return {"ok": False, "error": str(ex)}
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.roma_frontier",
@@ -512,19 +1089,44 @@ def register_roma_tools(mcp: Any, store: "BrainStore") -> None:
     )
     def roma_frontier(tree_id: str, claimable_only: bool = False) -> dict[str, Any]:
         try:
-            leaves = (rt.open_leaves(store, tree_id=tree_id) if claimable_only
-                      else rt.frontier(store, tree_id=tree_id))
+            tree, authority_source, projection = rt.read_tree_authority_first(
+                store, tree_id=tree_id
+            )
+            if tree is None:
+                return {"ok": False, "error": f"tree '{tree_id}' not found"}
+            leaves = (rt.open_leaves_for_tree(tree) if claimable_only
+                      else rt.frontier_for_tree(tree))
         except KeyError as ex:
             return {"ok": False, "error": str(ex)}
-        return {"ok": True, "tree_id": tree_id,
-                "leaves": [n.model_dump(mode="json") for n in leaves]}
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        out = {
+            "ok": True,
+            "tree_id": tree_id,
+            "authority_source": authority_source,
+            "leaves": [n.model_dump(mode="json") for n in leaves],
+        }
+        if projection is not None:
+            out["cell_tree"] = projection
+        return out
 
     @mcp.tool(
         name="brain.roma_list",
-        description="ROMA — list all requirement-tree ids held in this brain.",
+        description=(
+            "ROMA - list requirement-tree ids from the Universal Cell route "
+            "first, with Brain metadata as compatibility fallback."
+        ),
     )
     def roma_list() -> dict[str, Any]:
-        return {"ok": True, "trees": rt.list_trees(store)}
+        tree_ids, authority_source, projection = rt.list_trees_authority_first(store)
+        out = {
+            "ok": True,
+            "authority_source": authority_source,
+            "trees": tree_ids,
+        }
+        if projection is not None:
+            out["cell_tree_index"] = projection
+        return out
 
 
 def _default_owner(store: "BrainStore") -> str:

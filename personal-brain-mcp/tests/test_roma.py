@@ -1,7 +1,7 @@
 """Tests for the ROMA "method-that-finishes-everything" encode.
 
 Covers the three additive modules:
-  - requirement_tree.py  (store-backed tree ledger over brain_meta)
+  - requirement_tree.py  (Cell-route authority plus Brain metadata projection)
   - court_harness.py      (the 3-lens external jury — deterministic, real check)
   - roma.py               (atomize / claim / judge / loop-until-dry + MCP tools)
 
@@ -14,6 +14,7 @@ validate_skill_against_trace.
 from __future__ import annotations
 
 import os
+import inspect
 
 import pytest
 
@@ -38,6 +39,143 @@ def store():
 
 
 # ─────────────────────────── requirement_tree ──────────────────────────
+
+
+class _ObserveCellBridge:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.created = []
+        self.synced = []
+        self.route_trees = {}
+
+    def assembly_create(
+        self,
+        *,
+        definition_key,
+        fields,
+        idempotency_field=None,
+        x=0.0,
+        y=0.0,
+    ):
+        if self.fail:
+            raise RuntimeError("cell unavailable")
+        record = {
+            "created_root": f"assembly-instance:roma-{len(self.created) + 1}",
+            "definition_key": definition_key,
+            "fields": dict(fields or {}),
+            "idempotency_field": idempotency_field,
+        }
+        self.created.append(record)
+        return record
+
+    def roma_tree_sync(self, tree, *, source="brain.roma", **_kwargs):
+        if self.fail:
+            raise RuntimeError("cell unavailable")
+        self.route_trees[str(tree["tree_id"])] = dict(tree)
+        record = {
+            "ok": True,
+            "tree_root": f"app:roma-tree:{tree['tree_id']}",
+            "tree": dict(tree),
+            "source": source,
+            "node_count": len(tree.get("nodes", {})),
+            "edge_count": sum(
+                len(node.get("children", []))
+                for node in tree.get("nodes", {}).values()
+            ),
+        }
+        self.synced.append(record)
+        return record
+
+    def roma_tree_get(self, *, tree_id, **_kwargs):
+        if self.fail:
+            raise RuntimeError("cell unavailable")
+        try:
+            return self._project_tree(self.route_trees[str(tree_id)])
+        except KeyError as ex:
+            raise RuntimeError("cell tree not found") from ex
+
+    def roma_tree_list(self, **_kwargs):
+        if self.fail:
+            raise RuntimeError("cell unavailable")
+        trees = []
+        for tree_id, tree in sorted(self.route_trees.items()):
+            nodes = tree.get("nodes", {})
+            edge_count = sum(len(node.get("children", []))
+                             for node in nodes.values())
+            trees.append({
+                "tree_root": f"app:roma-tree:{tree_id}",
+                "tree_id": tree_id,
+                "title": tree.get("title", ""),
+                "owner": tree.get("owner_user", "founder"),
+                "node_count": len(nodes),
+                "edge_count": edge_count,
+                "frontier_count": len([
+                    node for node in nodes.values()
+                    if not node.get("children") and node.get("state") != "green"
+                ]),
+            })
+        return {
+            "ok": True,
+            "schema": "archhub-roma-requirement-tree-cell-index/v1",
+            "tree_ids": [tree["tree_id"] for tree in trees],
+            "tree_count": len(trees),
+            "trees": trees,
+        }
+
+    @staticmethod
+    def _project_tree(tree):
+        tree_id = str(tree["tree_id"])
+        nodes = tree.get("nodes", {})
+        root_for_id = {
+            node_id: f"app:roma-tree:{tree_id}:node:{node_id}"
+            for node_id in nodes
+        }
+        projected_nodes = {}
+        edges = []
+        for node_id, node in nodes.items():
+            root = root_for_id[node_id]
+            children = [root_for_id[child] for child in node.get("children", [])]
+            for child in node.get("children", []):
+                edges.append(f"app:roma-tree:{tree_id}:edge:{node_id}:{child}")
+            projected_nodes[root] = {
+                "root": root,
+                "node_id": node_id,
+                "parent": node.get("parent") or "",
+                "title": node.get("title") or "",
+                "predicate": node.get("predicate") or "",
+                "state": node.get("state") or "open",
+                "gate_kind": node.get("gate_kind") or "manual",
+                "gate_spec": dict(node.get("gate_spec") or {}),
+                "verdict": node.get("verdict") or "",
+                "evidence_ref": node.get("evidence_ref") or "",
+                "claimed_by": node.get("claimed_by") or "",
+                "past_claimants": list(node.get("past_claimants") or []),
+                "judged_by": node.get("judged_by") or "",
+                "attempts": int(node.get("attempts") or 0),
+                "created_at": node.get("created_at"),
+                "updated_at": node.get("updated_at"),
+                "children": children,
+            }
+        frontier = [
+            node for node in projected_nodes.values()
+            if not node["children"] and node["state"] != "green"
+        ]
+        return {
+            "ok": True,
+            "schema": "archhub-roma-requirement-tree-cell/v1",
+            "tree_root": f"app:roma-tree:{tree_id}",
+            "tree_id": tree_id,
+            "owner": tree.get("owner_user", "founder"),
+            "title": tree.get("title", ""),
+            "created_at": tree.get("created_at"),
+            "updated_at": tree.get("updated_at"),
+            "root_node": root_for_id[tree["root_id"]],
+            "node_count": len(projected_nodes),
+            "edge_count": len(edges),
+            "nodes": projected_nodes,
+            "edges": edges,
+            "frontier": frontier,
+        }
 
 
 def test_create_root_persists_under_brain_meta_key(store):
@@ -370,6 +508,115 @@ def test_run_to_dry_re_decomposes_red_leaf(store, tmp_path):
 # ─────────────────────────── MCP tool registration ─────────────────────
 
 
+def test_atomize_cell_first_syncs_before_brain_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+
+    bridge = _ObserveCellBridge()
+
+    def _bridge_factory():
+        assert store.get_meta(rt.TREE_META_KEY) is None
+        return bridge
+
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", _bridge_factory)
+
+    out = roma.atomize_cell_first(
+        store,
+        vision="cell first direct atomize",
+        owner_user="founder",
+        decomposition=[{"title": "leaf", "gate_kind": "manual"}],
+    )
+
+    assert out["ok"] is True
+    assert out["authority_source"] == "cell_route"
+    assert out["brain_written"] is True
+    assert bridge.synced[0]["source"] == "roma.atomize_cell_first"
+    assert bridge.synced[0]["tree"]["tree_id"] == out["tree_id"]
+    assert store.get_meta(rt.TREE_META_KEY)
+
+
+def test_judge_leaf_cell_first_syncs_verdict_to_route(store, monkeypatch, tmp_path):
+    from personal_brain import universal_runtime as ur
+
+    bridge = _ObserveCellBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    artifact = tmp_path / "cell_first_judge.py"
+    atomized = roma.atomize_cell_first(
+        store,
+        vision="cell first judge",
+        owner_user="founder",
+        decomposition=[{
+            "title": "leaf",
+            "gate_kind": "py_compile",
+            "gate_spec": {"path": str(artifact)},
+        }],
+    )
+    tree = rt.get_tree(store, tree_id=atomized["tree_id"])
+    leaf = tree.leaves()[0]
+    artifact.write_text("X = 1\n", encoding="utf-8")
+    roma.claim_leaf_cell_first(
+        store, tree_id=tree.tree_id, node_id=leaf.node_id, agent_id="exec-a"
+    )
+
+    out = roma.judge_leaf_cell_first(
+        store, tree_id=tree.tree_id, node_id=leaf.node_id, judged_by="court-a"
+    )
+
+    assert out["ok"] is True
+    assert out["authority_source"] == "cell_route"
+    assert out["court"]["verdict"] == "green"
+    projected = bridge.roma_tree_get(tree_id=tree.tree_id)
+    leaf_root = f"app:roma-tree:{tree.tree_id}:node:{leaf.node_id}"
+    assert projected["nodes"][leaf_root]["state"] == "green"
+    assert rt.get_tree(store, tree_id=tree.tree_id).nodes[
+        leaf.node_id
+    ].state == rt.NodeState.GREEN
+
+
+def test_run_to_dry_cell_first_uses_route_for_loop_writes(
+    store, monkeypatch, tmp_path,
+):
+    from personal_brain import universal_runtime as ur
+
+    bridge = _ObserveCellBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    artifact = tmp_path / "cell_first_loop.py"
+    atomized = roma.atomize_cell_first(
+        store,
+        vision="cell first loop",
+        owner_user="founder",
+        decomposition=[{
+            "title": "leaf",
+            "gate_kind": "py_compile",
+            "gate_spec": {"path": str(artifact)},
+        }],
+    )
+
+    def executor(leaf, ctx):
+        artifact.write_text("X = 1\n", encoding="utf-8")
+        return {
+            "last_message": "wrote and verified cell first loop",
+            "session_signals": {"wrote_files": True},
+        }
+
+    final = roma.run_to_dry_cell_first(
+        store,
+        tree_id=atomized["tree_id"],
+        executor=executor,
+        judged_by="court-loop",
+        context={"executor_id": "exec-loop"},
+        max_rounds=3,
+    )
+
+    assert final["dry"] is True
+    assert final["authority_source"] == "cell_route"
+    sources = [item["source"] for item in bridge.synced]
+    assert "roma.atomize_cell_first" in sources
+    assert "roma.claim_leaf_cell_first" in sources
+    assert "roma.judge_leaf_cell_first" in sources
+
+
 def test_roma_tools_register_additively(store):
     from personal_brain.server import build_server
 
@@ -385,3 +632,354 @@ def test_roma_tools_register_additively(store):
     assert expected <= names
     # existing handlers untouched
     assert {"brain.health", "brain.enforce_diligence", "brain.skill_mint"} <= names
+
+
+def test_tree_create_mcp_syncs_tree_route_before_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    bridge = _ObserveCellBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_create"].handler(title="cell rooted vision")
+
+    assert out["ok"] is True
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is True
+    assert out["cell_tree_root"] == f"app:roma-tree:{out['tree_id']}"
+    assert bridge.created == []
+    assert bridge.synced[0]["source"] == "brain.tree_create"
+    assert bridge.synced[0]["tree"]["tree_id"] == out["tree_id"]
+    assert store.get_meta(rt.TREE_META_KEY)
+
+
+def test_tree_create_mcp_cell_failure_prevents_tree_write(store, monkeypatch):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_create"].handler(title="denied vision")
+
+    assert out["ok"] is False
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is False
+    assert "cell unavailable" in out["error"]
+    assert store.get_meta(rt.TREE_META_KEY) is None
+
+
+def test_tree_decompose_mcp_cell_failure_prevents_tree_mutation(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    tree = rt.create_root(store, title="vision", owner_user="founder")
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_decompose"].handler(
+        tree_id=tree.tree_id,
+        node_id=tree.root_id,
+        children=[{"title": "leaf", "gate_kind": "manual"}],
+    )
+
+    assert out["ok"] is False
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is False
+    reloaded = rt.get_tree(store, tree_id=tree.tree_id)
+    assert reloaded.nodes[tree.root_id].children == []
+
+
+def test_tree_verdict_mcp_cell_failure_prevents_verdict_write(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    tree = rt.create_root(store, title="vision", owner_user="founder")
+    rt.decompose(store, tree_id=tree.tree_id, node_id=tree.root_id,
+                 children=[{"title": "leaf", "gate_kind": "manual"}])
+    leaf = rt.get_tree(store, tree_id=tree.tree_id).leaves()[0]
+    rt.claim_leaf(store, tree_id=tree.tree_id, node_id=leaf.node_id,
+                  agent_id="executor")
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_verdict"].handler(
+        tree_id=tree.tree_id,
+        node_id=leaf.node_id,
+        verdict="green",
+        judged_by="court",
+    )
+
+    assert out["ok"] is False
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is False
+    reloaded = rt.get_tree(store, tree_id=tree.tree_id).nodes[leaf.node_id]
+    assert reloaded.state == rt.NodeState.CLAIMED
+    assert reloaded.verdict is None
+
+
+def test_roma_atomize_mcp_cell_failure_prevents_tree_write(store, monkeypatch):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.roma_atomize"].handler(
+        vision="denied roma vision",
+        decomposition=[{"title": "leaf", "gate_kind": "manual"}],
+    )
+
+    assert out["ok"] is False
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is False
+    assert store.get_meta(rt.TREE_META_KEY) is None
+
+
+def test_roma_judge_mcp_cell_failure_prevents_verdict_write(
+    store, monkeypatch, tmp_path,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    artifact = tmp_path / "fresh_roma_leaf.py"
+    tree = roma.atomize(store, vision="v", owner_user="founder",
+        decomposition=[{"title": "leaf", "gate_kind": "py_compile",
+                        "gate_spec": {"path": str(artifact)}}])
+    artifact.write_text("X = 1\n", encoding="utf-8")
+    leaf = tree.leaves()[0]
+    rt.claim_leaf(store, tree_id=tree.tree_id, node_id=leaf.node_id,
+                  agent_id="executor")
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.roma_judge"].handler(
+        tree_id=tree.tree_id,
+        node_id=leaf.node_id,
+        judged_by="court",
+    )
+
+    assert out["ok"] is False
+    assert out["cell_first"] is True
+    assert out["cell_tree_first"] is True
+    assert out["brain_written"] is False
+    assert out["court"]["verdict"] == "green"
+    reloaded = rt.get_tree(store, tree_id=tree.tree_id).nodes[leaf.node_id]
+    assert reloaded.state == rt.NodeState.CLAIMED
+    assert reloaded.verdict is None
+
+
+def test_roma_mcp_writes_sync_actual_tree_before_brain_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    bridge = _ObserveCellBridge()
+
+    def _bridge_factory():
+        assert store.get_meta(rt.TREE_META_KEY) is None
+        return bridge
+
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", _bridge_factory)
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.roma_atomize"].handler(
+        vision="route first",
+        decomposition=[{"title": "leaf", "gate_kind": "manual"}],
+    )
+
+    assert out["ok"] is True
+    assert out["cell_tree_first"] is True
+    assert bridge.created == []
+    assert bridge.synced[0]["source"] == "brain.roma_atomize"
+    assert bridge.synced[0]["tree"]["tree_id"] == out["tree_id"]
+    assert store.get_meta(rt.TREE_META_KEY)
+
+
+def test_tree_read_mcp_prefers_cell_route_over_brain_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    brain_tree = rt.create_root(
+        store, title="brain projection title", owner_user="founder"
+    )
+    route_tree = rt.build_root_tree(
+        title="cell route title",
+        owner_user="founder",
+        tree_id=brain_tree.tree_id,
+    )
+    rt._decompose_tree(
+        route_tree,
+        tree_id=route_tree.tree_id,
+        node_id=route_tree.root_id,
+        children=[{
+            "title": "route leaf",
+            "predicate": "read tools use the Cell route",
+            "gate_kind": "manual",
+        }],
+    )
+    bridge = _ObserveCellBridge()
+    bridge.roma_tree_sync(
+        route_tree.model_dump(mode="json"), source="test.cell_route"
+    )
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    got = mcp._tools["brain.tree_get"].handler(tree_id=brain_tree.tree_id)
+    swept = mcp._tools["brain.tree_sweep"].handler(tree_id=brain_tree.tree_id)
+    frontier = mcp._tools["brain.tree_frontier"].handler(
+        tree_id=brain_tree.tree_id
+    )
+
+    assert got["ok"] is True
+    assert got["authority_source"] == "cell_route"
+    assert got["tree"]["title"] == "cell route title"
+    assert got["tree"]["root_id"] == route_tree.root_id
+    assert swept["authority_source"] == "cell_route"
+    assert swept["total_leaves"] == 1
+    assert frontier["authority_source"] == "cell_route"
+    assert frontier["frontier"][0]["title"] == "route leaf"
+
+
+def test_roma_list_prefers_cell_registry_over_brain_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    rt.create_root(store, title="brain-only tree", owner_user="founder")
+    route_tree = rt.build_root_tree(
+        title="cell-listed tree",
+        owner_user="founder",
+        tree_id="route-tree-id",
+    )
+    bridge = _ObserveCellBridge()
+    bridge.roma_tree_sync(
+        route_tree.model_dump(mode="json"), source="test.cell_registry"
+    )
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.roma_list"].handler()
+
+    assert out["ok"] is True
+    assert out["authority_source"] == "cell_route"
+    assert out["trees"] == ["route-tree-id"]
+    assert out["cell_tree_index"]["tree_count"] == 1
+
+
+def test_tree_backfill_cell_syncs_existing_brain_projection_trees(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    first = rt.create_root(store, title="first legacy tree", owner_user="founder")
+    second = rt.create_root(store, title="second legacy tree", owner_user="founder")
+    bridge = _ObserveCellBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_backfill_cell"].handler(limit=10)
+
+    assert out["ok"] is True
+    assert out["schema"] == "archhub-requirement-tree-cell-backfill/v1"
+    assert out["synced_count"] == 2
+    assert out["failed_count"] == 0
+    assert sorted(item["tree_id"] for item in out["results"]) == sorted([
+        first.tree_id,
+        second.tree_id,
+    ])
+    assert sorted(bridge.route_trees) == sorted([first.tree_id, second.tree_id])
+    assert all(item["source"] == "brain.tree_backfill_cell"
+               for item in bridge.synced)
+
+
+def test_tree_backfill_cell_reports_failure_without_deleting_projection(
+    store, monkeypatch,
+):
+    from personal_brain import universal_runtime as ur
+    from personal_brain.server import build_server
+
+    tree = rt.create_root(store, title="legacy tree", owner_user="founder")
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: _ObserveCellBridge(
+        fail=True,
+    ))
+    mcp = build_server(store=store, default_owner_user="founder")
+
+    out = mcp._tools["brain.tree_backfill_cell"].handler(tree_ids=[tree.tree_id])
+
+    assert out["ok"] is False
+    assert out["synced_count"] == 0
+    assert out["failed_count"] == 1
+    assert out["results"][0]["status"] == "cell_sync_failed"
+    assert rt.get_tree(store, tree_id=tree.tree_id) is not None
+
+
+def test_roma_mcp_handlers_do_not_call_receipt_assembly_for_tree_writes():
+    source = (
+        inspect.getsource(rt.register_tree_tools)
+        + inspect.getsource(roma.register_roma_tools)
+    )
+    assert "create_requirement_tree_cell_receipt(" not in source
+    assert "sync_requirement_tree_cell_graph(" in source
+
+
+def test_roma_mcp_read_handlers_use_authority_first_helpers():
+    source = (
+        inspect.getsource(rt.register_tree_tools)
+        + inspect.getsource(roma.register_roma_tools)
+    )
+    assert "read_tree_authority_first(" in source
+    assert "list_trees_authority_first(" in source
+    assert "rt.sweep(store" not in source
+    assert "rt.frontier(store" not in source
+    assert "rt.list_trees(store)" not in source
+
+
+def test_tree_backfill_cell_is_registered_as_additive_sync():
+    source = inspect.getsource(rt.register_tree_tools)
+    helper = inspect.getsource(rt.backfill_requirement_trees_to_cell_graph)
+    assert "brain.tree_backfill_cell" in source
+    assert "backfill_requirement_trees_to_cell_graph(" in source
+    assert "sync_requirement_tree_cell_graph(" in helper
+    assert ".delete(" not in helper
+
+
+def test_direct_cell_first_roma_helpers_sync_cell_route():
+    source = (
+        inspect.getsource(roma.atomize_cell_first)
+        + inspect.getsource(roma.decompose_cell_first)
+        + inspect.getsource(roma.claim_leaf_cell_first)
+        + inspect.getsource(roma.judge_leaf_cell_first)
+        + inspect.getsource(roma.server_verify_leaf_cell_first)
+        + inspect.getsource(roma.run_to_dry_cell_first)
+    )
+    assert source.count("sync_requirement_tree_cell_graph(") >= 5
+    assert "rt.set_verdict(" not in source
+    assert "rt.claim_leaf(store" not in source

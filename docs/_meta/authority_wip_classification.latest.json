@@ -1,11 +1,9 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 1,
-  "classification_digest": "ca7dca4f61474bb1efbf985ccbd980d03e10897abe131cdb4160020c2bc62a68",
-  "summary": {
-    "governance_run_evidence": 1
-  },
+  "total": 0,
+  "classification_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "summary": {},
   "gate": {
     "no_unclassified": {
       "ok": true,
@@ -18,19 +16,7 @@
       "items": []
     }
   },
-  "entries": [
-    {
-      "code": "??",
-      "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
-      "category": "governance_run_evidence",
-      "disposition": "run_evidence",
-      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "personal-brain-mcp/tests/test_run_report.py"
-      ]
-    }
-  ],
+  "entries": [],
   "categories": {
     "universal_cell_bridge": {
       "disposition": "runtime_authority_client",
@@ -308,53 +294,5 @@
       "required_courts": []
     }
   },
-  "active_work_leaves": [
-    {
-      "title": "Consume public WIP category: governance_run_evidence",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "governance_run_evidence",
-        "classification_digest": "ca7dca4f61474bb1efbf985ccbd980d03e10897abe131cdb4160020c2bc62a68",
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "governance_run_evidence",
-        "disposition": "run_evidence",
-        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-        "classification_digest": "ca7dca4f61474bb1efbf985ccbd980d03e10897abe131cdb4160020c2bc62a68",
-        "path_count": 1,
-        "paths": [
-          "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json"
-        ],
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 6000
-    }
-  ]
+  "active_work_leaves": []
 }

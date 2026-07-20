@@ -1,4 +1,4 @@
-﻿{
+{
   "schema": "archhub-runtime-handoff-board/v1",
   "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
   "archive_allowed": false,
@@ -13,9 +13,16 @@
     "low_activity_test_pids": 0,
     "inspect_pids": 3,
     "handoff_steps": 3,
-    "replacement_specs": 1
+    "replacement_specs": 1,
+    "source_drift_count": 27
   },
   "blockers": {
+    "source_drift": {
+      "ok": false,
+      "drift_count": 27,
+      "missing_in_authority": 13,
+      "different_from_authority": 14
+    },
     "passive_wait_pids": [],
     "long_running_test_pids": [],
     "low_activity_test_pids": [],
@@ -49,9 +56,9 @@
         "script_mtime_utc": null,
         "script_sha256": null
       },
-      "age_seconds": 513412.1406700611,
+      "age_seconds": 533193.1625659466,
       "process_status": "running",
-      "cpu_total_seconds": 80.09375,
+      "cpu_total_seconds": 84.328125,
       "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
     },
@@ -70,7 +77,7 @@
         "script_mtime_utc": null,
         "script_sha256": null
       },
-      "age_seconds": 460321.79203248024,
+      "age_seconds": 480102.8139283657,
       "process_status": "running",
       "cpu_total_seconds": 0.0,
       "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -91,7 +98,7 @@
         "script_mtime_utc": null,
         "script_sha256": null
       },
-      "age_seconds": 460321.6722431183,
+      "age_seconds": 480102.69413900375,
       "process_status": "running",
       "cpu_total_seconds": 1.234375,
       "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -117,9 +124,9 @@
       "co_owner_pids": [],
       "non_holder_port_owner_pids": [],
       "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-      "age_seconds": 550632.2448916435,
+      "age_seconds": 570413.266787529,
       "process_status": "running",
-      "cpu_total_seconds": 835.4375,
+      "cpu_total_seconds": 846.234375,
       "holder_risk_class": "visible_legacy_endpoint",
       "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
       "script_evidence": {

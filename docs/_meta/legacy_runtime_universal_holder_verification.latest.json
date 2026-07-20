@@ -1,0 +1,38 @@
+{
+  "schema": "archhub-runtime-holder-universal-verification/v1",
+  "source_schema": "archhub-legacy-runtime-drain-plan/v1",
+  "holder_count": 4,
+  "verified_count": 4,
+  "missing_count": 0,
+  "ok": true,
+  "verified": [
+    {
+      "external_key": "runtime-holder:52484:1784000816281",
+      "pid": 52484,
+      "holder_risk_class": "visible_legacy_endpoint",
+      "work_root": "assembly-instance:bdbf74dbfadc430c902450d94e58d527"
+    },
+    {
+      "external_key": "runtime-holder:113216:1784038036385",
+      "pid": 113216,
+      "holder_risk_class": "qa_server_script_missing",
+      "work_root": "assembly-instance:7b9431ced2f8444592f727730d32a017"
+    },
+    {
+      "external_key": "runtime-holder:117712:1784091126734",
+      "pid": 117712,
+      "holder_risk_class": "stdin_python_holder",
+      "work_root": "assembly-instance:f287237e91f8439d915d6438b160e312"
+    },
+    {
+      "external_key": "runtime-holder:147188:1784091126853",
+      "pid": 147188,
+      "holder_risk_class": "stdin_python_holder",
+      "work_root": "assembly-instance:79a7c28f0c3c49b98fdda82ef1a32038"
+    }
+  ],
+  "missing": [],
+  "runtime_revision": 3341,
+  "known_external_keys": 41,
+  "non_destructive": true
+}

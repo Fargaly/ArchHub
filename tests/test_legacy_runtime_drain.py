@@ -296,8 +296,15 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
         "inspect_pids": 1,
         "handoff_steps": 4,
         "replacement_specs": 1,
+        "source_drift_count": 0,
     }
     assert board["blockers"] == {
+        "source_drift": {
+            "ok": True,
+            "drift_count": 0,
+            "missing_in_authority": 0,
+            "different_from_authority": 0,
+        },
         "passive_wait_pids": [1],
         "long_running_test_pids": [1],
         "low_activity_test_pids": [1],
@@ -408,6 +415,31 @@ def test_handoff_board_exposes_non_holder_port_coowners(tmp_path, monkeypatch):
     assert card["port_owners"] == {"8505": [3], "8506": [3, 99, 100]}
     assert card["co_owner_pids"] == [99, 100]
     assert card["non_holder_port_owner_pids"] == [99, 100]
+
+
+def test_handoff_board_blocks_archive_when_runtime_source_drift_exists(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "only.py").write_text("# runtime only\n", encoding="utf-8")
+    plan = drain.build_drain_plan(
+        product_root,
+        tmp_path,
+        {"holder_report": _audit(0, [])},
+    )
+
+    board = plan["handoff_board"]
+
+    assert board["archive_allowed"] is False
+    assert board["summary"]["source_drift_count"] == 1
+    assert board["blockers"]["source_drift"] == {
+        "ok": False,
+        "drift_count": 1,
+        "missing_in_authority": 1,
+        "different_from_authority": 0,
+    }
 
 
 def test_disposable_holder_court_allows_only_missing_temp_qa_without_clients():
@@ -773,6 +805,57 @@ def test_active_authority_runtime_bridge_reports_missing_browser_handoff(
     assert "handoff is not proven" in result["reason"]
 
 
+def test_runtime_copy_source_drift_detects_missing_and_different_source(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    (runtime / "nodelang").mkdir(parents=True)
+    (runtime / "public_site" / "dist").mkdir(parents=True)
+    (runtime / "nodelang" / "__pycache__").mkdir(parents=True)
+    (authority / "nodelang").mkdir(parents=True)
+
+    (runtime / "nodelang" / "same.py").write_text("same\n", encoding="utf-8")
+    (authority / "nodelang" / "same.py").write_text("same\n", encoding="utf-8")
+    (runtime / "nodelang" / "changed.py").write_text("runtime\n", encoding="utf-8")
+    (authority / "nodelang" / "changed.py").write_text("authority\n", encoding="utf-8")
+    (runtime / "nodelang" / "runtime_only.py").write_text("new\n", encoding="utf-8")
+    (runtime / "public_site" / "dist" / "bundle.js").write_text(
+        "generated\n", encoding="utf-8"
+    )
+    (runtime / "nodelang" / "__pycache__" / "cached.pyc").write_bytes(b"cache")
+
+    result = drain.runtime_copy_source_drift(product_root, authority)
+
+    assert result["schema"] == "archhub-runtime-copy-source-drift/v1"
+    assert result["ok"] is False
+    assert result["checked_runtime_files"] == 3
+    assert result["drift_count"] == 2
+    assert [row["path"] for row in result["different_from_authority"]] == [
+        "nodelang/changed.py"
+    ]
+    assert [row["path"] for row in result["missing_in_authority"]] == [
+        "nodelang/runtime_only.py"
+    ]
+    assert all("bundle.js" not in json.dumps(row) for row in result["missing_in_authority"])
+
+
+def test_runtime_copy_source_drift_is_green_when_runtime_matches_authority(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "universal_application.py").write_text("# same\n", encoding="utf-8")
+    (authority / "universal_application.py").write_text("# same\n", encoding="utf-8")
+
+    result = drain.runtime_copy_source_drift(product_root, authority.parent)
+
+    assert result["ok"] is True
+    assert result["drift_count"] == 0
+    assert result["missing_in_authority"] == []
+    assert result["different_from_authority"] == []
+
+
 def test_retirement_gate_blocks_archive_until_all_conditions_are_green():
     holder_report = _audit(1)
     readiness = {"ok": True}
@@ -808,6 +891,22 @@ def test_retirement_gate_blocks_when_shadow_probe_was_not_run(tmp_path):
     assert gate["failures"] == ["authority_shadow_launch_proven"]
 
 
+def test_retirement_gate_blocks_when_ignored_runtime_source_drift_exists():
+    gate = drain.build_retirement_gate(
+        _audit(0, []),
+        {"ok": True},
+        {"ok": True},
+        {"ok": True},
+        {"blocked_exact_authority_launches": 0},
+        {"all_steps_non_interrupting": True},
+        {"ok": False, "drift_count": 1},
+    )
+
+    assert gate["archive_allowed"] is False
+    assert gate["checks"]["runtime_copy_source_drift_clear"] is False
+    assert gate["failures"] == ["runtime_copy_source_drift_clear"]
+
+
 def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
     holder_report = _audit(0, [])
     readiness = {"ok": True}
@@ -825,6 +924,7 @@ def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
         "archive_allowed": True,
         "checks": {
             "runtime_copy_exists": True,
+            "runtime_copy_source_drift_clear": True,
             "authority_launch_ready": True,
             "authority_shadow_launch_proven": True,
             "active_authority_runtime_bridge": True,
@@ -1136,6 +1236,49 @@ def test_cli_enforce_retirement_gate_returns_red_when_gate_blocks(tmp_path, monk
     ]
 
 
+def test_cli_enforce_retirement_gate_returns_red_for_runtime_source_drift(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "runtime_only.py").write_text("# runtime source\n", encoding="utf-8")
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+    monkeypatch.setattr(drain, "authority_launch_readiness", lambda authority: {"ok": True})
+    monkeypatch.setattr(
+        drain,
+        "authority_shadow_launch_probe",
+        lambda authority: {"ok": True, "ran": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "active_authority_runtime_bridge_status",
+        lambda product_root, workspace: {"ok": True},
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--no-write",
+        "--authority-shadow-probe",
+        "--enforce-retirement-gate",
+    ])
+
+    assert code == 2
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["runtime_copy_source_drift"]["ok"] is False
+    assert plan["runtime_copy_source_drift"]["missing_in_authority"][0]["path"] == (
+        "nodelang/runtime_only.py"
+    )
+    assert plan["retirement_gate"]["failures"] == [
+        "runtime_copy_source_drift_clear"
+    ]
+
+
 def test_cli_enforce_retirement_gate_returns_green_when_gate_allows(tmp_path, monkeypatch, capsys):
     product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
     (product_root / "node_runtime").mkdir(parents=True)
@@ -1284,6 +1427,83 @@ def test_sync_runtime_holders_to_universal_skips_existing_external_keys(tmp_path
     assert bridge.created == []
 
 
+def test_verify_runtime_holders_in_universal_is_read_only_and_reports_all_synced(tmp_path):
+    holders = [
+        {
+            "pid": 10,
+            "name": "pythonw.exe",
+            "cwd": "node_runtime",
+            "cmdline": "pythonw.exe run_application_server.py --port 8482",
+            "create_time": 100.25,
+        },
+        {
+            "pid": 20,
+            "name": "python.exe",
+            "cwd": "node_runtime",
+            "cmdline": "python.exe -",
+            "create_time": 101.5,
+        },
+    ]
+    plan = drain.build_drain_plan(
+        tmp_path / "10.PRODUCT" / "12.PRODUCTION",
+        tmp_path,
+        {"holder_report": _audit(2, holders)},
+    )
+    bridge = _HolderSyncBridge(existing=[
+        {
+            "root": "work:10",
+            "interfaces": {
+                "external-key": {"value": "runtime-holder:10:100250"},
+            },
+        },
+        {
+            "root": "work:20",
+            "interfaces": {
+                "external-key": {"value": "runtime-holder:20:101500"},
+            },
+        },
+    ])
+
+    result = drain.verify_runtime_holders_in_universal(plan, bridge=bridge)
+
+    assert result["schema"] == "archhub-runtime-holder-universal-verification/v1"
+    assert result["ok"] is True
+    assert result["holder_count"] == 2
+    assert result["verified_count"] == 2
+    assert result["missing_count"] == 0
+    assert [row["work_root"] for row in result["verified"]] == ["work:10", "work:20"]
+    assert result["missing"] == []
+    assert result["non_destructive"] is True
+    assert bridge.created == []
+
+
+def test_verify_runtime_holders_in_universal_reports_missing_without_writes(tmp_path):
+    holder = {
+        "pid": 10,
+        "name": "python.exe",
+        "cwd": "node_runtime",
+        "cmdline": "python.exe -",
+        "create_time": 100.0,
+    }
+    plan = drain.build_drain_plan(
+        tmp_path / "10.PRODUCT" / "12.PRODUCTION",
+        tmp_path,
+        {"holder_report": _audit(1, [holder])},
+    )
+    bridge = _HolderSyncBridge()
+
+    result = drain.verify_runtime_holders_in_universal(plan, bridge=bridge)
+
+    assert result["ok"] is False
+    assert result["verified"] == []
+    assert result["missing"] == [{
+        "external_key": "runtime-holder:10:100000",
+        "pid": 10,
+        "holder_risk_class": "stdin_python_holder",
+    }]
+    assert bridge.created == []
+
+
 def test_runtime_holder_sync_uses_bridge_not_cell_store():
     source = inspect.getsource(drain.sync_runtime_holders_to_universal)
 
@@ -1310,3 +1530,49 @@ def test_cli_rejects_universal_holder_sync_in_read_only_mode(tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["schema"] == "archhub-legacy-runtime-drain-error/v1"
     assert "cannot be combined with read-only flags" in out["reason"]
+
+
+def test_cli_verify_universal_holders_is_read_only_and_enforced(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    (product_root / "node_runtime").mkdir(parents=True)
+    seen = {}
+    monkeypatch.setattr(
+        drain.live_runtime_holders,
+        "audit",
+        lambda path: _audit(1, [{
+            "pid": 10,
+            "cmdline": "python.exe -",
+            "create_time": 100.0,
+        }]),
+    )
+
+    def fake_verify(plan):
+        seen["holder_count"] = plan["holder_count"]
+        return {
+            "schema": "archhub-runtime-holder-universal-verification/v1",
+            "ok": False,
+            "holder_count": 1,
+            "verified_count": 0,
+            "missing_count": 1,
+            "verified": [],
+            "missing": [{"pid": 10}],
+            "non_destructive": True,
+        }
+
+    monkeypatch.setattr(drain, "verify_runtime_holders_in_universal", fake_verify)
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--verify-universal-holders",
+    ])
+
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["schema"] == "archhub-runtime-holder-universal-verification/v1"
+    assert out["ok"] is False
+    assert seen["holder_count"] == 1

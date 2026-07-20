@@ -1,9 +1,12 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 0,
-  "classification_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-  "summary": {},
+  "total": 8,
+  "classification_digest": "14b614173d09b013276e3ab9cea991a10b7993a06b6ed656b59a4aa001dbe928",
+  "summary": {
+    "governance_brain_authority_layer": 4,
+    "governance_run_evidence": 4
+  },
   "gate": {
     "no_unclassified": {
       "ok": true,
@@ -16,7 +19,180 @@
       "items": []
     }
   },
-  "entries": [],
+  "entries": [
+    {
+      "code": " M",
+      "path": "docs/_meta/authority_wip_classification.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "docs/_meta/legacy_runtime_handoff_board.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "docs/_meta/legacy_runtime_handoff_inspection.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tests/test_authority_wip_classify.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tests/test_legacy_runtime_drain.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tools/authority_wip_classify.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tools/legacy_runtime_drain.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    },
+    {
+      "code": "??",
+      "path": "docs/_meta/legacy_runtime_universal_holder_verification.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    }
+  ],
   "categories": {
     "universal_cell_bridge": {
       "disposition": "runtime_authority_client",
@@ -294,206 +470,169 @@
       "required_courts": []
     }
   },
-  "active_work_leaves": [],
-  "live_runtime_holders": {
-    "schema": "archhub-live-runtime-holders/v1",
-    "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-    "exists": true,
-    "observed_at": 1784569993.9179332,
-    "holder_count": 4,
-    "archive_safe_now": false,
-    "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
-    "holders": [
-      {
-        "pid": 52484,
-        "name": "pythonw.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "match": "cwd",
-        "create_time": 1784000816.2812548,
-        "age_seconds": 569177.6366784573,
-        "status": "running",
-        "cpu_user_seconds": 814.09375,
-        "cpu_system_seconds": 28.203125,
-        "cpu_total_seconds": 842.296875
-      },
-      {
-        "pid": 113216,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-        "match": "cwd",
-        "create_time": 1784038036.3854764,
-        "age_seconds": 531957.5324568748,
-        "status": "running",
-        "cpu_user_seconds": 63.8125,
-        "cpu_system_seconds": 19.21875,
-        "cpu_total_seconds": 83.03125
-      },
-      {
-        "pid": 117712,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
-        "match": "cwd",
-        "create_time": 1784091126.734114,
-        "age_seconds": 478867.183819294,
-        "status": "running",
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.0
-      },
-      {
-        "pid": 147188,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
-        "match": "cwd",
-        "create_time": 1784091126.8539033,
-        "age_seconds": 478867.064029932,
-        "status": "running",
-        "cpu_user_seconds": 1.203125,
-        "cpu_system_seconds": 0.03125,
-        "cpu_total_seconds": 1.234375
-      }
-    ]
-  },
-  "local_application_servers": {
-    "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784570018.6293795,
-    "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
-    "process_count": 5,
-    "safe_to_stop_count": 0,
-    "protected_count": 5,
-    "safe_to_stop_pids": [],
-    "protected_pids": [
-      136188,
-      52484,
-      14616,
-      122452,
-      143072
-    ],
-    "rule": "read-only classification; stop only safe_to_stop PIDs after an immediate exact PID and command-line recheck",
-    "processes": [
-      {
-        "pid": 136188,
-        "name": "pythonw.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe -m nodelang.authority_bridge --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz --standalone-owner",
-        "classification": "protected_authority_bridge",
-        "drain_posture": "active authority bridge; never stop as QA cleanup",
-        "safe_to_stop": false,
-        "fresh": false,
-        "declared_port": null,
-        "declared_cloud_port": null,
-        "listening_ports": [
-          65486
+  "active_work_leaves": [
+    {
+      "title": "Consume public WIP category: governance_brain_authority_layer",
+      "gate_kind": "pytest",
+      "gate_spec": {
+        "path": "tests/test_authority_wip_classify.py",
+        "selectors": [
+          "tests/test_authority_wip_classify.py",
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
         ],
-        "established_connection_count": 0,
-        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "universal_state_path": null,
-        "create_time": 1784543480.5777273,
-        "age_seconds": 26538.05165219307,
-        "status": "running",
-        "cpu_user_seconds": 11953.484375,
-        "cpu_system_seconds": 41.09375,
-        "cpu_total_seconds": 11994.578125
-      },
-      {
-        "pid": 52484,
-        "name": "pythonw.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "classification": "protected_copied_runtime_endpoint",
-        "drain_posture": "copied runtime visible endpoint; drain through legacy runtime plan",
-        "safe_to_stop": false,
-        "fresh": false,
-        "declared_port": 8482,
-        "declared_cloud_port": 8484,
-        "listening_ports": [
-          8482,
-          8484
+        "args": [
+          "-q"
         ],
-        "established_connection_count": 0,
-        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "universal_state_path": null,
-        "create_time": 1784000816.2812548,
-        "age_seconds": 569202.3481247425,
-        "status": "running",
-        "cpu_user_seconds": 814.109375,
-        "cpu_system_seconds": 28.203125,
-        "cpu_total_seconds": 842.3125
+        "category": "governance_brain_authority_layer",
+        "classification_digest": "14b614173d09b013276e3ab9cea991a10b7993a06b6ed656b59a4aa001dbe928",
+        "required_courts": [
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
+        ]
       },
-      {
-        "pid": 14616,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m nodelang.application_server --host 127.0.0.1 --port 8507 --state-path C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json --universal-state-path C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3 --cloud-host 127.0.0.1 --cloud-port 8508",
-        "classification": "protected_non_fresh_runtime",
-        "drain_posture": "not a disposable --fresh QA runtime; inspect before handoff",
-        "safe_to_stop": false,
-        "fresh": false,
-        "declared_port": 8507,
-        "declared_cloud_port": 8508,
-        "listening_ports": [
-          8507
+      "cde_container": {
+        "container_id": "10.PRODUCT/12.PRODUCTION",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "governance_context": {
+        "schema": "archhub-public-wip-category-consumption/v1",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+        "category": "governance_brain_authority_layer",
+        "disposition": "migration_control_layer",
+        "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+        "classification_digest": "14b614173d09b013276e3ab9cea991a10b7993a06b6ed656b59a4aa001dbe928",
+        "path_count": 4,
+        "paths": [
+          "tests/test_authority_wip_classify.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tools/authority_wip_classify.py",
+          "tools/legacy_runtime_drain.py"
         ],
-        "established_connection_count": 0,
-        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
-        "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
-        "create_time": 1784232766.82487,
-        "age_seconds": 337251.8045094013,
-        "status": "running",
-        "cpu_user_seconds": 55.84375,
-        "cpu_system_seconds": 12.71875,
-        "cpu_total_seconds": 68.5625
-      },
-      {
-        "pid": 122452,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m nodelang.application_server --host 127.0.0.1 --port 8507 --state-path C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json --universal-state-path C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3 --cloud-host 127.0.0.1 --cloud-port 8508",
-        "classification": "protected_non_fresh_runtime",
-        "drain_posture": "not a disposable --fresh QA runtime; inspect before handoff",
-        "safe_to_stop": false,
-        "fresh": false,
-        "declared_port": 8507,
-        "declared_cloud_port": 8508,
-        "listening_ports": [],
-        "established_connection_count": 0,
-        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
-        "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
-        "create_time": 1784232766.690817,
-        "age_seconds": 337251.9385623932,
-        "status": "running",
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.0
-      },
-      {
-        "pid": 143072,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m nodelang.application_server --host 127.0.0.1 --port 8501 --state-path C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json --universal-state-path C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3 --cloud-host 127.0.0.1 --cloud-port 8502",
-        "classification": "protected_visible_endpoint",
-        "drain_posture": "user-visible endpoint; preserve unless explicitly relaunched",
-        "safe_to_stop": false,
-        "fresh": false,
-        "declared_port": 8501,
-        "declared_cloud_port": 8502,
-        "listening_ports": [
-          8501
+        "required_courts": [
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
         ],
-        "established_connection_count": 0,
-        "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
-        "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
-        "create_time": 1784225629.9015317,
-        "age_seconds": 344388.72784781456,
-        "status": "running",
-        "cpu_user_seconds": 54.359375,
-        "cpu_system_seconds": 12.875,
-        "cpu_total_seconds": 67.234375
-      }
-    ]
-  }
+        "promotion_allowed": false
+      },
+      "fit": [
+        "governance",
+        "universal-cell-authority",
+        "wip-convergence"
+      ],
+      "priority": 8200
+    },
+    {
+      "title": "Consume public WIP category: governance_run_evidence",
+      "gate_kind": "pytest",
+      "gate_spec": {
+        "path": "tests/test_authority_wip_classify.py",
+        "selectors": [
+          "tests/test_authority_wip_classify.py",
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "args": [
+          "-q"
+        ],
+        "category": "governance_run_evidence",
+        "classification_digest": "14b614173d09b013276e3ab9cea991a10b7993a06b6ed656b59a4aa001dbe928",
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ]
+      },
+      "cde_container": {
+        "container_id": "10.PRODUCT/12.PRODUCTION",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "governance_context": {
+        "schema": "archhub-public-wip-category-consumption/v1",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+        "category": "governance_run_evidence",
+        "disposition": "run_evidence",
+        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+        "classification_digest": "14b614173d09b013276e3ab9cea991a10b7993a06b6ed656b59a4aa001dbe928",
+        "path_count": 4,
+        "paths": [
+          "docs/_meta/authority_wip_classification.latest.json",
+          "docs/_meta/legacy_runtime_handoff_board.latest.json",
+          "docs/_meta/legacy_runtime_handoff_inspection.latest.json",
+          "docs/_meta/legacy_runtime_universal_holder_verification.latest.json"
+        ],
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "promotion_allowed": false
+      },
+      "fit": [
+        "governance",
+        "universal-cell-authority",
+        "wip-convergence"
+      ],
+      "priority": 6000
+    }
+  ]
 }

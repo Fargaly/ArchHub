@@ -626,6 +626,7 @@ def classify_path(path: str) -> str:
         p.startswith("docs/_meta/authority_wip_classification")
         or p.startswith("docs/_meta/legacy_runtime_handoff_board")
         or p.startswith("docs/_meta/legacy_runtime_handoff_inspection")
+        or p.startswith("docs/_meta/legacy_runtime_universal_holder_verification")
         or p.startswith("docs/_meta/live_runtime_holders")
         or p.startswith("docs/_meta/run_report_")
     ):

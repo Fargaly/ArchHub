@@ -25,6 +25,25 @@ TITLE = "Drain copied legacy node_runtime holders into Universal Cell authority"
 LONG_RUNNING_TEST_SECONDS = 60 * 60
 LOW_ACTIVITY_CPU_RATIO = 0.01
 ACTIVE_AUTHORITY_RUNTIME_RESPONSE_TIMEOUT_SECONDS = 15.0
+SOURCE_DRIFT_DIRS = (
+    "nodelang",
+    "tests_replica",
+    "tests_domains",
+    "packaging",
+    "public_site",
+)
+SOURCE_DRIFT_IGNORED_PARTS = {
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "dist",
+    "node_modules",
+}
+SOURCE_DRIFT_IGNORED_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".map",
+}
 
 
 def default_product_root() -> Path:
@@ -276,6 +295,77 @@ def _pytest_target(cmdline: str) -> str | None:
     return None
 
 
+def _source_drift_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    if not root.exists():
+        return files
+    for directory in SOURCE_DRIFT_DIRS:
+        base = root / directory
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if any(part in SOURCE_DRIFT_IGNORED_PARTS for part in path.parts):
+                continue
+            if path.suffix.lower() in SOURCE_DRIFT_IGNORED_SUFFIXES:
+                continue
+            files.append(path)
+    return sorted(files, key=lambda item: item.relative_to(root).as_posix())
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, Any]:
+    """Detect source hidden in ignored node_runtime that authority does not own."""
+    runtime_copy = product_root / "node_runtime"
+    missing_in_authority: list[dict[str, Any]] = []
+    different_from_authority: list[dict[str, Any]] = []
+    checked = 0
+    for runtime_file in _source_drift_files(runtime_copy):
+        checked += 1
+        rel = runtime_file.relative_to(runtime_copy).as_posix()
+        authority_file = authority / rel
+        runtime_sha = _sha256_file(runtime_file)
+        if not authority_file.exists():
+            missing_in_authority.append({
+                "path": rel,
+                "runtime_sha256": runtime_sha,
+            })
+            continue
+        authority_sha = _sha256_file(authority_file)
+        if runtime_sha != authority_sha:
+            different_from_authority.append({
+                "path": rel,
+                "runtime_sha256": runtime_sha,
+                "authority_sha256": authority_sha,
+            })
+    drift_count = len(missing_in_authority) + len(different_from_authority)
+    return {
+        "schema": "archhub-runtime-copy-source-drift/v1",
+        "runtime_copy": str(runtime_copy),
+        "authority": str(authority),
+        "source_dirs": list(SOURCE_DRIFT_DIRS),
+        "ignored_parts": sorted(SOURCE_DRIFT_IGNORED_PARTS),
+        "ignored_suffixes": sorted(SOURCE_DRIFT_IGNORED_SUFFIXES),
+        "checked_runtime_files": checked,
+        "drift_count": drift_count,
+        "ok": drift_count == 0,
+        "missing_in_authority": missing_in_authority,
+        "different_from_authority": different_from_authority,
+        "rule": (
+            "An ignored runtime copy cannot be archived while it contains source "
+            "files that are missing or different in the declared authority."
+        ),
+    }
+
+
 def build_drain_plan(
     product_root: Path,
     workspace: Path,
@@ -292,6 +382,7 @@ def build_drain_plan(
         else authority_shadow_launch_probe_not_run(authority)
     )
     active_bridge = active_authority_runtime_bridge_status(product_root, workspace)
+    source_drift = runtime_copy_source_drift(product_root, authority)
     holders = [classify_holder(holder) for holder in holder_report["holders"]]
     bridge_launch = authority_bridge_launch_spec(authority, holders)
     for holder in holders:
@@ -306,7 +397,12 @@ def build_drain_plan(
         by_type[holder["holder_type"]] = by_type.get(holder["holder_type"], 0) + 1
     duplicate_groups = duplicate_server_groups(holders)
     handoff_schedule = build_handoff_schedule(holders, duplicate_groups)
-    handoff_board = build_handoff_board(holders, replacement_summary, handoff_schedule)
+    handoff_board = build_handoff_board(
+        holders,
+        replacement_summary,
+        handoff_schedule,
+        source_drift,
+    )
     retirement_gate = build_retirement_gate(
         holder_report,
         readiness,
@@ -314,6 +410,7 @@ def build_drain_plan(
         active_bridge,
         replacement_summary,
         handoff_schedule,
+        source_drift,
     )
     return {
         "schema": "archhub-legacy-runtime-drain-plan/v1",
@@ -323,6 +420,7 @@ def build_drain_plan(
         "authority_bridge_launch": bridge_launch,
         "authority_shadow_launch_probe": shadow_probe,
         "active_authority_runtime_bridge": active_bridge,
+        "runtime_copy_source_drift": source_drift,
         "holder_count": holder_report["holder_count"],
         "archive_safe_now": holder_report["archive_safe_now"],
         "drain_complete": holder_report["holder_count"] == 0,
@@ -344,6 +442,7 @@ def build_handoff_board(
     holders: list[dict[str, Any]],
     replacement_summary: dict[str, Any],
     handoff_schedule: dict[str, Any],
+    source_drift: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a compact operator board derived from the full drain plan.
 
@@ -427,6 +526,13 @@ def build_handoff_board(
     ]
     runnable_endpoints = [card for card in endpoint_cards if card["status"] == "runnable_now"]
     unknown_endpoints = [card for card in endpoint_cards if card["status"] == "unknown"]
+    drift = source_drift or {"ok": True, "drift_count": 0}
+    source_drift_blocker = {
+        "ok": bool(drift.get("ok")),
+        "drift_count": int(drift.get("drift_count") or 0),
+        "missing_in_authority": len(drift.get("missing_in_authority") or []),
+        "different_from_authority": len(drift.get("different_from_authority") or []),
+    }
 
     return {
         "schema": "archhub-runtime-handoff-board/v1",
@@ -437,6 +543,7 @@ def build_handoff_board(
         "archive_allowed": (
             not holders
             and int(replacement_summary.get("blocked_exact_authority_launches") or 0) == 0
+            and source_drift_blocker["ok"]
         ),
         "summary": {
             "holders": len(holders),
@@ -450,8 +557,10 @@ def build_handoff_board(
             "inspect_pids": len(inspect_pids),
             "handoff_steps": int(handoff_schedule.get("step_count") or 0),
             "replacement_specs": replacement_summary.get("replacement_specs", 0),
+            "source_drift_count": source_drift_blocker["drift_count"],
         },
         "blockers": {
+            "source_drift": source_drift_blocker,
             "passive_wait_pids": passive_wait_pids,
             "long_running_test_pids": long_running_test_pids,
             "low_activity_test_pids": low_activity_test_pids,
@@ -1421,9 +1530,14 @@ def build_retirement_gate(
     active_bridge: dict[str, Any],
     replacement_summary: dict[str, Any],
     handoff_schedule: dict[str, Any],
+    source_drift: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    source_drift_clear = True
+    if source_drift is not None:
+        source_drift_clear = bool(source_drift.get("ok"))
     checks = {
         "runtime_copy_exists": bool(holder_report.get("exists")),
+        "runtime_copy_source_drift_clear": source_drift_clear,
         "authority_launch_ready": bool(readiness.get("ok")),
         "authority_shadow_launch_proven": bool(shadow_probe.get("ok")),
         "active_authority_runtime_bridge": bool(active_bridge.get("ok")),
@@ -1608,6 +1722,58 @@ def sync_runtime_holders_to_universal(
     }
 
 
+def verify_runtime_holders_in_universal(
+    plan: dict[str, Any],
+    *,
+    bridge=None,
+) -> dict[str, Any]:
+    """Read-only proof that live holder process nodes have Universal work.
+
+    This uses the same external-key contract as the sync path but never creates
+    or mutates a work item. It is the safe status check for the remaining
+    authority split.
+    """
+    runtime = bridge
+    if runtime is None:
+        sys.path.insert(0, str(default_product_root() / "personal-brain-mcp" / "src"))
+        from personal_brain.universal_runtime import (  # noqa: WPS433
+            UniversalRuntimeBridge,
+        )
+
+        runtime = UniversalRuntimeBridge()
+    runtime_state = _runtime_work_index(runtime)
+    existing = _existing_universal_external_keys(runtime_state)
+    verified: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for holder in plan.get("holders") or []:
+        if not isinstance(holder, dict):
+            continue
+        external_key = holder_external_key(holder)
+        row = {
+            "external_key": external_key,
+            "pid": holder.get("pid"),
+            "holder_risk_class": holder.get("holder_risk_class"),
+        }
+        if external_key in existing:
+            row["work_root"] = existing[external_key]
+            verified.append(row)
+        else:
+            missing.append(row)
+    return {
+        "schema": "archhub-runtime-holder-universal-verification/v1",
+        "source_schema": plan.get("schema"),
+        "holder_count": len(verified) + len(missing),
+        "verified_count": len(verified),
+        "missing_count": len(missing),
+        "ok": not missing,
+        "verified": verified,
+        "missing": missing,
+        "runtime_revision": runtime_state.get("revision"),
+        "known_external_keys": len(existing),
+        "non_destructive": True,
+    }
+
+
 def write_drain_plan(
     product_root: Path,
     workspace: Path,
@@ -1768,12 +1934,25 @@ def main(argv: list[str] | None = None) -> int:
             "touches running processes."
         ),
     )
+    parser.add_argument(
+        "--verify-universal-holders",
+        action="store_true",
+        help=(
+            "Read-only proof that current live holders already have Universal "
+            "work items. This never creates work and never touches processes."
+        ),
+    )
     args = parser.parse_args(argv)
 
     product_root = Path(args.product_root).resolve()
     workspace = Path(args.workspace).resolve() if args.workspace else default_workspace(product_root)
     out_dir = Path(args.output_dir).resolve() if args.output_dir else default_handoff_dir(workspace)
-    read_only = args.no_write or args.handoff_board or args.inspect_board_pids
+    read_only = (
+        args.no_write
+        or args.handoff_board
+        or args.inspect_board_pids
+        or args.verify_universal_holders
+    )
     if args.sync_universal_holders and read_only:
         print(json.dumps({
             "schema": "archhub-legacy-runtime-drain-error/v1",
@@ -1844,6 +2023,8 @@ def main(argv: list[str] | None = None) -> int:
                 board,
                 result["inspection"],
             )
+        elif args.verify_universal_holders:
+            result = verify_runtime_holders_in_universal(plan)
         else:
             result = plan["handoff_board"] if args.handoff_board else plan
     else:
@@ -1876,6 +2057,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.enforce_drained and not (
         result.get("archive_safe_now") or result.get("archive_allowed")
     ):
+        return 2
+    if args.verify_universal_holders and not result.get("ok"):
         return 2
     return 0
 

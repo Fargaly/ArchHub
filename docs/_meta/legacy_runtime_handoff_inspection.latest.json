@@ -1,4 +1,4 @@
-﻿{
+{
   "schema": "archhub-runtime-handoff-pid-inspection/v1",
   "handoff_board": {
     "schema": "archhub-runtime-handoff-board/v1",
@@ -15,9 +15,16 @@
       "low_activity_test_pids": 0,
       "inspect_pids": 3,
       "handoff_steps": 3,
-      "replacement_specs": 1
+      "replacement_specs": 1,
+      "source_drift_count": 27
     },
     "blockers": {
+      "source_drift": {
+        "ok": false,
+        "drift_count": 27,
+        "missing_in_authority": 13,
+        "different_from_authority": 14
+      },
       "passive_wait_pids": [],
       "long_running_test_pids": [],
       "low_activity_test_pids": [],
@@ -51,9 +58,9 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 513412.138405323,
+        "age_seconds": 533207.4130609035,
         "process_status": "running",
-        "cpu_total_seconds": 80.09375,
+        "cpu_total_seconds": 84.328125,
         "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
         "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
       },
@@ -72,7 +79,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 460321.78976774216,
+        "age_seconds": 480117.0644233227,
         "process_status": "running",
         "cpu_total_seconds": 0.0,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -93,7 +100,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 460321.6699783802,
+        "age_seconds": 480116.9446339607,
         "process_status": "running",
         "cpu_total_seconds": 1.234375,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -119,9 +126,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 550632.2426269054,
+        "age_seconds": 570427.517282486,
         "process_status": "running",
-        "cpu_total_seconds": 835.4375,
+        "cpu_total_seconds": 846.234375,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -181,7 +188,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784551466.9248521,
+    "observed_at": 1784571258.6947005,
     "available": true,
     "processes": [
       {
@@ -206,10 +213,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 550650.6435973644,
-        "cpu_user_seconds": 808.3125,
-        "cpu_system_seconds": 27.125,
-        "cpu_total_seconds": 835.4375,
+        "age_seconds": 570442.4134457111,
+        "cpu_user_seconds": 817.78125,
+        "cpu_system_seconds": 28.453125,
+        "cpu_total_seconds": 846.234375,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -222,9 +229,11 @@
             "port": 8482,
             "path": "/",
             "url": "http://127.0.0.1:8482/",
-            "ok": false,
-            "error_type": "TimeoutError",
-            "error": "timed out"
+            "ok": true,
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
           },
           {
             "port": 8482,
@@ -234,7 +243,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":130490,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":130685,\"schema_version\""
           },
           {
             "port": 8482,
@@ -321,10 +330,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py"
         ],
         "create_time": 1784038036.3854764,
-        "age_seconds": 513430.539375782,
-        "cpu_user_seconds": 61.453125,
-        "cpu_system_seconds": 18.640625,
-        "cpu_total_seconds": 80.09375,
+        "age_seconds": 533222.3092241287,
+        "cpu_user_seconds": 65.078125,
+        "cpu_system_seconds": 19.25,
+        "cpu_total_seconds": 84.328125,
         "parent_pid": null,
         "child_pids": [
           6084
@@ -353,7 +362,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n036876\",\"ui_root\":\"n038008\",\"focus\":\"n133918\",\"container\":\"n133897\",\"container_title\":\"Design option coordination\",\"node_count\":140308,\"schema_versi"
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n036876\",\"ui_root\":\"n038008\",\"focus\":\"n133918\",\"container\":\"n133897\",\"container_title\":\"Design option coordination\",\"node_count\":140503,\"schema_versi"
           },
           {
             "port": 8515,
@@ -440,7 +449,7 @@
           "-"
         ],
         "create_time": 1784091126.734114,
-        "age_seconds": 460340.19073820114,
+        "age_seconds": 480131.96058654785,
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0,
@@ -475,7 +484,7 @@
           "-"
         ],
         "create_time": 1784091126.8539033,
-        "age_seconds": 460340.0709488392,
+        "age_seconds": 480131.8407971859,
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
         "cpu_total_seconds": 1.234375,
@@ -543,7 +552,7 @@
           "0x4"
         ],
         "create_time": 1784038036.4377222,
-        "age_seconds": 513441.22935962677,
+        "age_seconds": 533231.509670496,
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0,

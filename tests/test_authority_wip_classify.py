@@ -170,6 +170,12 @@ def test_classification_keeps_universal_cell_separate_from_legacy():
         == "governance_run_evidence"
     )
     assert (
+        awc.classify_path(
+            "docs/_meta/legacy_runtime_universal_holder_verification.latest.json"
+        )
+        == "governance_run_evidence"
+    )
+    assert (
         awc.classify_path("docs/_meta/run_report_2026-07-19_authority_split.md")
         == "governance_run_evidence"
     )
@@ -560,8 +566,14 @@ def test_current_public_wip_has_no_unclassified_entries():
 
 
 def test_connector_reclassification_is_exact_not_bucket_growth():
-    repo = Path(__file__).resolve().parent.parent
-    report = awc.classify_entries(awc.current_status(repo))
+    report = awc.classify_entries([
+        {"code": " M", "path": "app/connectors/teams_connector.py"},
+        {"code": " M", "path": "tests/test_rest_connectors.py"},
+        {"code": " M", "path": "tests/test_adapter_payload_candidate.py"},
+        {"code": " M", "path": "tests/test_port_type_speckle_adapter.py"},
+        {"code": " M", "path": "payload/rhino/manifest.json"},
+        {"code": " M", "path": "payload/rhino/adapter.json"},
+    ])
     adapter_paths = {
         entry["path"] for entry in report["entries"]
         if entry["category"] == "adapter_payload_candidate"
@@ -1111,6 +1123,7 @@ def test_governance_run_evidence_leaf_gate_executes_run_report_court():
         {"code": "??", "path": "docs/_meta/live_runtime_holders.latest.json"},
         {"code": "??", "path": "docs/_meta/legacy_runtime_handoff_board.latest.json"},
         {"code": "??", "path": "docs/_meta/legacy_runtime_handoff_inspection.latest.json"},
+        {"code": "??", "path": "docs/_meta/legacy_runtime_universal_holder_verification.latest.json"},
         {"code": "??", "path": "personal-brain-mcp/src/personal_brain/run_report.py"},
         {"code": "??", "path": "personal-brain-mcp/tests/test_run_report.py"},
     ])

@@ -2,11 +2,24 @@
   "schema": "archhub-live-runtime-holders/v1",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
   "exists": true,
-  "observed_at": 1784568932.2589138,
-  "holder_count": 4,
+  "observed_at": 1784569443.253524,
+  "holder_count": 7,
   "archive_safe_now": false,
   "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
   "holders": [
+    {
+      "pid": 49960,
+      "name": "python.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784569093.6821485,
+      "age_seconds": 349.5713756084442,
+      "status": "running",
+      "cpu_user_seconds": 54.125,
+      "cpu_system_seconds": 1.65625,
+      "cpu_total_seconds": 55.78125
+    },
     {
       "pid": 52484,
       "name": "pythonw.exe",
@@ -14,11 +27,11 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "match": "cwd",
       "create_time": 1784000816.2812548,
-      "age_seconds": 568115.977658987,
+      "age_seconds": 568626.9722692966,
       "status": "running",
-      "cpu_user_seconds": 813.765625,
-      "cpu_system_seconds": 28.03125,
-      "cpu_total_seconds": 841.796875
+      "cpu_user_seconds": 813.875,
+      "cpu_system_seconds": 28.09375,
+      "cpu_total_seconds": 841.96875
     },
     {
       "pid": 113216,
@@ -27,11 +40,11 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
       "match": "cwd",
       "create_time": 1784038036.3854764,
-      "age_seconds": 530895.8734374046,
+      "age_seconds": 531406.8680477142,
       "status": "running",
-      "cpu_user_seconds": 63.71875,
-      "cpu_system_seconds": 19.15625,
-      "cpu_total_seconds": 82.875
+      "cpu_user_seconds": 63.765625,
+      "cpu_system_seconds": 19.1875,
+      "cpu_total_seconds": 82.953125
     },
     {
       "pid": 117712,
@@ -40,11 +53,24 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.734114,
-      "age_seconds": 477805.52479982376,
+      "age_seconds": 478316.51941013336,
       "status": "running",
       "cpu_user_seconds": 0.0,
       "cpu_system_seconds": 0.0,
       "cpu_total_seconds": 0.0
+    },
+    {
+      "pid": 120048,
+      "name": "python.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784569093.6276233,
+      "age_seconds": 349.62590074539185,
+      "status": "running",
+      "cpu_user_seconds": 0.0,
+      "cpu_system_seconds": 0.015625,
+      "cpu_total_seconds": 0.015625
     },
     {
       "pid": 147188,
@@ -53,11 +79,24 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.8539033,
-      "age_seconds": 477805.4050104618,
+      "age_seconds": 478316.3996207714,
       "status": "running",
       "cpu_user_seconds": 1.203125,
       "cpu_system_seconds": 0.03125,
       "cpu_total_seconds": 1.234375
+    },
+    {
+      "pid": 149512,
+      "name": "powershell.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n$env:PYTHONPATH = (Resolve-Path '.\\nodelang').Path; python -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784569093.4624615,
+      "age_seconds": 349.7910625934601,
+      "status": "running",
+      "cpu_user_seconds": 0.0,
+      "cpu_system_seconds": 0.078125,
+      "cpu_total_seconds": 0.078125
     }
   ]
 }

@@ -1,11 +1,9 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 1,
-  "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
-  "summary": {
-    "live_locked_legacy_typed_runtime_copy": 1
-  },
+  "total": 0,
+  "classification_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "summary": {},
   "gate": {
     "no_unclassified": {
       "ok": true,
@@ -18,21 +16,7 @@
       "items": []
     }
   },
-  "entries": [
-    {
-      "code": "??",
-      "path": "node_runtime/",
-      "category": "live_locked_legacy_typed_runtime_copy",
-      "disposition": "superseded_runtime_copy_with_live_process_holders",
-      "required_action": "do not promote; drain or relaunch holders from 10.PRODUCT/13.NODE-LANGUAGE, then archive this copied runtime",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "tests/test_runtime_retirement_hook.py",
-        "tests/test_legacy_runtime_drain.py",
-        "tests/test_live_runtime_holders.py"
-      ]
-    }
-  ],
+  "entries": [],
   "categories": {
     "universal_cell_bridge": {
       "disposition": "runtime_authority_client",
@@ -310,70 +294,29 @@
       "required_courts": []
     }
   },
-  "active_work_leaves": [
-    {
-      "title": "Consume public WIP category: live_locked_legacy_typed_runtime_copy",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "tests/test_legacy_runtime_drain.py",
-          "tests/test_live_runtime_holders.py",
-          "tests/test_runtime_retirement_hook.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "live_locked_legacy_typed_runtime_copy",
-        "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
-        "required_courts": [
-          "tests/test_legacy_runtime_drain.py",
-          "tests/test_live_runtime_holders.py",
-          "tests/test_runtime_retirement_hook.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "live_locked_legacy_typed_runtime_copy",
-        "disposition": "superseded_runtime_copy_with_live_process_holders",
-        "required_action": "do not promote; drain or relaunch holders from 10.PRODUCT/13.NODE-LANGUAGE, then archive this copied runtime",
-        "classification_digest": "d79ec3041419b00dc13c52b84a3dea0768a86cf7ff0b5b6ec439456b5cdcfc78",
-        "path_count": 1,
-        "paths": [
-          "node_runtime/"
-        ],
-        "required_courts": [
-          "tests/test_legacy_runtime_drain.py",
-          "tests/test_live_runtime_holders.py",
-          "tests/test_runtime_retirement_hook.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 9800
-    }
-  ],
+  "active_work_leaves": [],
   "live_runtime_holders": {
     "schema": "archhub-live-runtime-holders/v1",
     "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
     "exists": true,
-    "observed_at": 1784568858.3597999,
-    "holder_count": 4,
+    "observed_at": 1784569415.9910233,
+    "holder_count": 7,
     "archive_safe_now": false,
     "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
     "holders": [
+      {
+        "pid": 49960,
+        "name": "python.exe",
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+        "match": "cwd",
+        "create_time": 1784569093.6821485,
+        "age_seconds": 322.30887484550476,
+        "status": "running",
+        "cpu_user_seconds": 47.96875,
+        "cpu_system_seconds": 1.5625,
+        "cpu_total_seconds": 49.53125
+      },
       {
         "pid": 52484,
         "name": "pythonw.exe",
@@ -381,11 +324,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "match": "cwd",
         "create_time": 1784000816.2812548,
-        "age_seconds": 568042.0785450935,
+        "age_seconds": 568599.7097685337,
         "status": "running",
-        "cpu_user_seconds": 813.734375,
-        "cpu_system_seconds": 28.03125,
-        "cpu_total_seconds": 841.765625
+        "cpu_user_seconds": 813.875,
+        "cpu_system_seconds": 28.078125,
+        "cpu_total_seconds": 841.953125
       },
       {
         "pid": 113216,
@@ -394,11 +337,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
         "match": "cwd",
         "create_time": 1784038036.3854764,
-        "age_seconds": 530821.9743235111,
+        "age_seconds": 531379.6055469513,
         "status": "running",
-        "cpu_user_seconds": 63.703125,
-        "cpu_system_seconds": 19.15625,
-        "cpu_total_seconds": 82.859375
+        "cpu_user_seconds": 63.765625,
+        "cpu_system_seconds": 19.1875,
+        "cpu_total_seconds": 82.953125
       },
       {
         "pid": 117712,
@@ -407,11 +350,24 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.734114,
-        "age_seconds": 477731.62568593025,
+        "age_seconds": 478289.2569093704,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0
+      },
+      {
+        "pid": 120048,
+        "name": "python.exe",
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+        "match": "cwd",
+        "create_time": 1784569093.6276233,
+        "age_seconds": 322.3633999824524,
+        "status": "running",
+        "cpu_user_seconds": 0.0,
+        "cpu_system_seconds": 0.015625,
+        "cpu_total_seconds": 0.015625
       },
       {
         "pid": 147188,
@@ -420,17 +376,30 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.8539033,
-        "age_seconds": 477731.5058965683,
+        "age_seconds": 478289.13712000847,
         "status": "running",
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
         "cpu_total_seconds": 1.234375
+      },
+      {
+        "pid": 149512,
+        "name": "powershell.exe",
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+        "cmdline": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n$env:PYTHONPATH = (Resolve-Path '.\\nodelang').Path; python -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+        "match": "cwd",
+        "create_time": 1784569093.4624615,
+        "age_seconds": 322.52856183052063,
+        "status": "running",
+        "cpu_user_seconds": 0.0,
+        "cpu_system_seconds": 0.078125,
+        "cpu_total_seconds": 0.078125
       }
     ]
   },
   "local_application_servers": {
     "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784568887.7468338,
+    "observed_at": 1784569443.0320578,
     "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
     "process_count": 5,
     "safe_to_stop_count": 0,
@@ -463,11 +432,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784543480.5777273,
-        "age_seconds": 25407.16910648346,
+        "age_seconds": 25962.454330444336,
         "status": "running",
-        "cpu_user_seconds": 11406.796874999998,
-        "cpu_system_seconds": 38.75,
-        "cpu_total_seconds": 11445.546874999998
+        "cpu_user_seconds": 11689.09375,
+        "cpu_system_seconds": 39.921875,
+        "cpu_total_seconds": 11729.015625
       },
       {
         "pid": 52484,
@@ -488,11 +457,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784000816.2812548,
-        "age_seconds": 568071.4655790329,
+        "age_seconds": 568626.7508029938,
         "status": "running",
-        "cpu_user_seconds": 813.734375,
-        "cpu_system_seconds": 28.03125,
-        "cpu_total_seconds": 841.765625
+        "cpu_user_seconds": 813.875,
+        "cpu_system_seconds": 28.09375,
+        "cpu_total_seconds": 841.96875
       },
       {
         "pid": 14616,
@@ -512,11 +481,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.82487,
-        "age_seconds": 336120.9219636917,
+        "age_seconds": 336676.2071876526,
         "status": "running",
-        "cpu_user_seconds": 55.609375,
-        "cpu_system_seconds": 12.65625,
-        "cpu_total_seconds": 68.265625
+        "cpu_user_seconds": 55.71875,
+        "cpu_system_seconds": 12.703125,
+        "cpu_total_seconds": 68.421875
       },
       {
         "pid": 122452,
@@ -534,7 +503,7 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.690817,
-        "age_seconds": 336121.0560166836,
+        "age_seconds": 336676.34124064445,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -558,11 +527,11 @@
         "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
         "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
         "create_time": 1784225629.9015317,
-        "age_seconds": 343257.84530210495,
+        "age_seconds": 343813.1305260658,
         "status": "running",
-        "cpu_user_seconds": 54.125,
-        "cpu_system_seconds": 12.84375,
-        "cpu_total_seconds": 66.96875
+        "cpu_user_seconds": 54.25,
+        "cpu_system_seconds": 12.875,
+        "cpu_total_seconds": 67.125
       }
     ]
   }

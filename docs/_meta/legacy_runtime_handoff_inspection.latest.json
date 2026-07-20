@@ -21,6 +21,8 @@
     "blockers": {
       "source_drift": {
         "ok": false,
+        "archive_ready": true,
+        "readiness_state": "classified_migration_evidence_ready_for_archive",
         "drift_count": 32,
         "missing_in_authority": 8,
         "different_from_authority": 24
@@ -56,9 +58,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 587599.9710423946,
+        "age_seconds": 588370.8840479851,
         "process_status": "running",
-        "cpu_total_seconds": 867.140625,
+        "cpu_total_seconds": 874.265625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -118,7 +120,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784588446.4559693,
+    "observed_at": 1784589208.6252892,
     "available": true,
     "processes": [
       {
@@ -143,10 +145,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 587630.1747145653,
-        "cpu_user_seconds": 837.203125,
-        "cpu_system_seconds": 29.9375,
-        "cpu_total_seconds": 867.140625,
+        "age_seconds": 588392.3440344334,
+        "cpu_user_seconds": 844.125,
+        "cpu_system_seconds": 30.140625,
+        "cpu_total_seconds": 874.265625,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -173,7 +175,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131270,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131465,\"schema_version\""
           },
           {
             "port": 8482,

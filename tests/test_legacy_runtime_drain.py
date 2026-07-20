@@ -301,6 +301,8 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
     assert board["blockers"] == {
         "source_drift": {
             "ok": True,
+            "archive_ready": True,
+            "readiness_state": "clear",
             "drift_count": 0,
             "missing_in_authority": 0,
             "different_from_authority": 0,
@@ -436,9 +438,55 @@ def test_handoff_board_blocks_archive_when_runtime_source_drift_exists(tmp_path)
     assert board["summary"]["source_drift_count"] == 1
     assert board["blockers"]["source_drift"] == {
         "ok": False,
+        "archive_ready": False,
+        "readiness_state": "source_drift_requires_decision",
         "drift_count": 1,
         "missing_in_authority": 1,
         "different_from_authority": 0,
+    }
+
+
+def test_handoff_board_allows_classified_source_drift_after_drain():
+    board = drain.build_handoff_board(
+        [],
+        {"blocked_exact_authority_launches": 0},
+        {"all_steps_non_interrupting": True, "step_count": 1},
+        {
+            "ok": False,
+            "drift_count": 2,
+            "missing_in_authority": ["nodelang/authority_bridge.py"],
+            "different_from_authority": ["nodelang/cell_baboom_activity.py"],
+            "migration_candidate_count": 2,
+            "decision_summary": {
+                "all_classified": True,
+                "unmapped_paths": [],
+                "promotion_allowed": False,
+                "bulk_copy_allowed": False,
+            },
+            "migration_candidates": [
+                {
+                    "path": "nodelang/authority_bridge.py",
+                    "resolution_state": (
+                        "canonical_evidence_recorded_pending_runtime_retirement"
+                    ),
+                },
+                {
+                    "path": "nodelang/cell_baboom_activity.py",
+                    "resolution_state": "pending_canonical_root_decision",
+                },
+            ],
+        },
+    )
+
+    assert board["archive_allowed"] is True
+    assert board["summary"]["source_drift_count"] == 2
+    assert board["blockers"]["source_drift"] == {
+        "ok": False,
+        "archive_ready": True,
+        "readiness_state": "classified_migration_evidence_ready_for_archive",
+        "drift_count": 2,
+        "missing_in_authority": 1,
+        "different_from_authority": 1,
     }
 
 

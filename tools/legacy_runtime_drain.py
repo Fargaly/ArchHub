@@ -1202,8 +1202,11 @@ def build_handoff_board(
     runnable_endpoints = [card for card in endpoint_cards if card["status"] == "runnable_now"]
     unknown_endpoints = [card for card in endpoint_cards if card["status"] == "unknown"]
     drift = source_drift or {"ok": True, "drift_count": 0}
+    source_readiness = source_drift_archive_readiness(drift)
     source_drift_blocker = {
         "ok": bool(drift.get("ok")),
+        "archive_ready": bool(source_readiness.get("ok")),
+        "readiness_state": source_readiness.get("state"),
         "drift_count": int(drift.get("drift_count") or 0),
         "missing_in_authority": len(drift.get("missing_in_authority") or []),
         "different_from_authority": len(drift.get("different_from_authority") or []),
@@ -1218,7 +1221,7 @@ def build_handoff_board(
         "archive_allowed": (
             not holders
             and int(replacement_summary.get("blocked_exact_authority_launches") or 0) == 0
-            and source_drift_blocker["ok"]
+            and source_drift_blocker["archive_ready"]
         ),
         "summary": {
             "holders": len(holders),

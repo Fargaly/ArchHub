@@ -95,7 +95,7 @@
     "machine_work_items": 0,
     "machine_work_registry": "app:governed-work-registry",
     "revision": 739,
-    "server_url": "http://127.0.0.1:61966",
+    "server_url": "http://127.0.0.1:59828",
     "session_cookie_http_only": true,
     "state_path_inside_temp": true,
     "state_status": 200,
@@ -1527,6 +1527,8 @@
     "blockers": {
       "source_drift": {
         "ok": false,
+        "archive_ready": true,
+        "readiness_state": "classified_migration_evidence_ready_for_archive",
         "drift_count": 32,
         "missing_in_authority": 8,
         "different_from_authority": 24
@@ -1562,9 +1564,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 587599.974957943,
+        "age_seconds": 588370.8841269016,
         "process_status": "running",
-        "cpu_total_seconds": 867.140625,
+        "cpu_total_seconds": 874.265625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -1691,9 +1693,9 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "process_status": "running",
-      "age_seconds": 587599.974957943,
+      "age_seconds": 588370.8841269016,
       "create_time": 1784000816.2812548,
-      "cpu_total_seconds": 867.140625,
+      "cpu_total_seconds": 874.265625,
       "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
       "authority_relaunch": {

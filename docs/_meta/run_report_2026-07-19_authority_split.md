@@ -6006,3 +6006,46 @@ Next action:
 - Continue shrinking classified WIP by consuming the next Brain/Workshop control
   slice into Universal Cell authority, while keeping the live copied runtime
   untouched until the holder gate turns green.
+
+## 2026-07-20 Universal Cell workshop node courts integrated
+
+Desk/session boundary:
+
+- No Desktop files were created.
+- No workspace-root scratch files were created.
+- No visible windows, browser tabs, app windows, or new servers were launched.
+- No running sessions/processes were stopped, restarted, moved, archived, or
+  relaunched.
+- Only exact generated `.pyc` files in the node-court slice were removed.
+
+Integrated commit:
+
+- `e5e0407` - `Add Universal Cell workshop node courts`.
+  - Added the independent workshop Cell courts under
+    `personal-brain-mcp/node_courts/`.
+  - Added the pytest wrapper `tests/test_universal_cell_node_courts.py`.
+  - The courts prove the Workshop root is a relation, not a JSON blob; the
+    `done` gate requires a court and fails closed for a requirement-less phase;
+    structural references resolve; and the legacy room feed maps losslessly onto
+    Cell deliberation entries.
+
+Verification:
+
+- Universal Cell node-court wrapper:
+  `python -m pytest tests\test_universal_cell_node_courts.py -q -p no:cacheprovider --timeout=300`
+  - result: `1 passed, 1 warning in 9.05s`.
+
+Current position:
+
+- Current `git status --porcelain` count after the court commit: `157`.
+- The next candidate `cell_room.py` / `cell_room_wiring.py` adapter was not
+  committed because its real server/active-work wiring spans large pre-existing
+  WIP in `active_work.py`, `server.py`, `test_active_work_db.py`, and
+  `test_server.py`. Committing the two adapter files alone would be a hollow
+  shell.
+
+Next action:
+
+- Integrate the Brain Workshop runtime adapter only as a coherent slice:
+  adapter files plus the exact active-work/server wiring and focused courts,
+  without absorbing unrelated WIP from those large files.

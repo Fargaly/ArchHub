@@ -6438,3 +6438,124 @@ Next action:
   workflow runtime bridge (`app/workflows/graph.py`, runner, subgraph,
   typesystem, grammar/custom nodes) because wires, parameters, and edge-layer
   semantics are still there and must be fenced under Universal Cell.
+
+## Run: Typed workflow runtime fenced under Cell authority
+
+Intent:
+
+- Consume the legacy typed workflow runtime slice as a frozen compatibility
+  adapter, not a second node language.
+- Preserve the user's wire model in the old runtime while making the authority
+  boundary explicit: wires carry editable layers for type, schema, gate,
+  codec, encryption, behavior, presentation, provenance, junctions, and runtime
+  state; parameter nodes can override copied config; unknown type identifiers
+  remain lossless strings instead of forcing enum expansion.
+
+Committed:
+
+- `794b85c Fence typed workflow runtime under Cell authority`.
+- Staged and committed:
+  - `app/workflows/graph.py`
+  - `app/workflows/runner.py`
+  - `app/workflows/subgraph.py`
+  - `app/workflows/typesystem.py`
+  - `app/workflows/node_grammar.py`
+  - `app/workflows/custom_nodes.py`
+  - `app/workflows/nodes/__init__.py`
+  - `app/workflows/nodes/core.py`
+  - `app/workflows/nodes/ui.py`
+  - `docs/NODE_GRAMMAR.md`
+  - the matching workflow/grammar/wire courts.
+
+Main mechanisms:
+
+- Legacy typed modules now declare:
+  - `LEGACY_MIGRATION_ONLY = True`.
+  - `AUTHORITY_STATUS = "superseded_by_universal_cell"`.
+  - `ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"`.
+  - `PROMOTION_ALLOWED = False`.
+- `Edge` round-trips wire-layer fields instead of collapsing wires to thin
+  source/target lines.
+- The runner honors wire gates, schemas, fan-in cardinality, codecs,
+  redaction, scoped Fernet keys, `op://` secret references, and raw-key
+  rejection.
+- Canvas/runtime relations can be read from wire nodes and wire-layer nodes,
+  including junction/branch gates.
+- The typed grammar is labelled as a retired compatibility grammar, and the
+  UI node shim is explicitly compatibility-only.
+- Subgraph grouping exposes terminal inner outputs so a closed group still has
+  visible output value instead of becoming an opaque dead box.
+
+Verification:
+
+- Required typed workflow courts:
+  `python -m pytest tests\test_workflow_runner.py tests\test_wire_fields.py tests\test_subgraph.py tests\test_subgraph_tunable_cell.py tests\test_grammar_config_schema.py tests\test_node_grammar.py tests\test_typed_grammar_end_to_end.py tests\test_ui_grammar.py -q -p no:cacheprovider --timeout=300`
+  - result: `257 passed, 1 warning in 1.68s`.
+- Broader workflow-court set:
+  `python -m pytest tests\test_adapter_nodes.py tests\test_ai_plan_node.py tests\test_bridge_wire_validation.py tests\test_canvas_adapter.py tests\test_code_nodes.py tests\test_core_nodes.py tests\test_grammar_config_schema.py tests\test_node_grammar.py tests\test_node_palette_drag.py tests\test_param_promote.py tests\test_recook_param.py tests\test_self_extend_free_text_live.py tests\test_self_extend_loop.py tests\test_self_extend_ui_widget.py tests\test_subgraph.py tests\test_typed_ai_nodes.py tests\test_ui_grammar.py tests\test_wire_fields.py tests\test_workflow_runner.py -q -p no:cacheprovider --timeout=300`
+  - result: `492 passed, 1 skipped, 1 warning in 29.56s`.
+- Syntax compile:
+  `python -m py_compile app\workflows\custom_nodes.py app\workflows\graph.py app\workflows\node_grammar.py app\workflows\nodes\__init__.py app\workflows\nodes\core.py app\workflows\nodes\ui.py app\workflows\runner.py app\workflows\subgraph.py app\workflows\typesystem.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed.
+  - forbidden staged path scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged secret scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+  - staged process/eval scan: no new subprocess, process-kill, visible-window,
+    `eval(`, or `exec(` additions.
+
+Commit gate evidence:
+
+- `brain-commit-gate` checked the staged workflow product-surface files.
+- Brain daemon was unreachable at `http://127.0.0.1:8473/mcp`; the gate
+  fail-opened and did not block. This is recorded as runtime evidence, not a
+  claim that Brain was live.
+
+Current WIP/live-holder evidence after `794b85c`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `58`.
+- classified WIP entries in the authority ledger: `56`.
+- no-unclassified gate: `ok`, count `0`.
+- Consumed/eliminated categories:
+  - `legacy_core_node_runtime_bridge`.
+  - `legacy_custom_node_runtime_bridge`.
+  - `legacy_typed_grammar_frozen_adapter`.
+  - `legacy_typed_registry_frozen_adapter`.
+  - `legacy_typed_ui_node_frozen_adapter`.
+  - `legacy_workflow_composition_frozen_adapter`.
+  - `legacy_workflow_runtime_court`.
+  - `legacy_workflow_runtime_frozen_adapter`.
+  - `legacy_workflow_schema_frozen_adapter`.
+- classification digest:
+  `1381e48ea76d637184530119a59abf2df0c5566a811b8ff31fb96faf437e0c77`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The live copied runtime remains untouched because the holder gate is red.
+
+Current position:
+
+- The old typed workflow runtime is now explicitly fenced as a compatibility
+  adapter. It preserves richer wire semantics for migration, but it is not
+  product authority.
+- Remaining WIP is now concentrated in cloud readiness, adapter payloads,
+  documentation/governance evidence, UI/runtime evidence probes, WebShell UI
+  courts, runtime retirement hooks, one handbuilt projection bridge, one
+  self-extension bridge, and the live-locked copied runtime.
+
+Next action:
+
+- Continue with cloud readiness and adapter payloads, because those are the
+  next real external-boundary/security risks and they must be permissioned,
+  bounded, and recorded before anything can be considered shippable.

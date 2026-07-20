@@ -6896,3 +6896,70 @@ Next action:
 - Commit the refreshed ledgers/report for this checkpoint, then consume
   `documentation_decision_evidence` by validating the AgDR/freshness/index files
   against the documentation decision courts.
+
+## Documentation decision evidence convergence - 2026-07-20
+
+Commit:
+
+- `d3bb33b` - `Record capability and relay decisions`.
+
+Intent:
+
+- Consume the `documentation_decision_evidence` category through the
+  documentation decision courts, not by treating documents as runtime authority.
+- Record the cloud readiness, runtime ingestion, BABOOM relay, and encrypted
+  brief decisions as AgDRs with explicit open boundaries.
+- Refresh `docs/_meta/freshness.json` and `docs/_meta/index.json` so stale docs
+  are visible instead of hidden.
+
+Mechanisms recorded:
+
+- `AgDR-0056`: capability-specific `/readyz` readiness evidence.
+- `AgDR-0057`: tracked `node_runtime/` source-authority ingestion decision and
+  rollover boundary.
+- `AgDR-0058`: BABOOM metadata-only device-bound command relay.
+- `AgDR-0059`: recipient-encrypted brief transport layered over the relay.
+
+Verification:
+
+- Documentation decision courts:
+  `python -m pytest tests\test_doc_freshness_coverage.py tests\test_node_grammar.py tests\test_grammar_config_schema.py cloud_backend\tests\test_readiness.py cloud_backend\tests\test_baboom_relay.py -q -p no:cacheprovider --timeout=300`
+  - result: `143 passed, 1 skipped, 3 warnings`.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+
+Current WIP/live-holder evidence after `d3bb33b`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `29`.
+- classified WIP entries in the authority ledger: `28`.
+- no-unclassified gate: `ok`, count `0`.
+- `documentation_decision_evidence`: consumed.
+- classification digest:
+  `7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0`.
+- copied-runtime holder count: `7`.
+- copied-runtime archive safe now: `false`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The docs metadata records stale docs explicitly; it does not rewrite those
+  stale documents in this slice.
+
+Current position:
+
+- Decision evidence is now committed and tested.
+- Remaining WIP is live-holder evidence, UI/runtime evidence probes, legacy
+  WebShell host courts, one handbuilt projection bridge/court, one self-extension
+  bridge, and the live-locked copied runtime.
+
+Next action:
+
+- Commit the refreshed ledger/report checkpoint, then move into the projection
+  bridge slice (`grand_map_ui.py` and `test_grand_map_ui_surface.py`) before the
+  larger legacy WebShell court batch.

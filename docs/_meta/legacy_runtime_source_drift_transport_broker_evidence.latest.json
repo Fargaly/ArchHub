@@ -1,0 +1,90 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-21T00:56:10.1788118+04:00",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+  "public_repo": "10.PRODUCT/12.PRODUCTION",
+  "migration_track": "runtime_transport_and_broker",
+  "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+  "decision": {
+    "accepted_as_authority": true,
+    "runtime_copy_promoted": false,
+    "bulk_copy_performed": false,
+    "live_process_interruption": false,
+    "summary": "Runtime transport and broker behavior is covered by Cell-native authority courts: the signed machine descriptor is only a pointer to real application/session/workshop/work-registry Cell roots; capabilities are runtime possession handles with graph-visible grants/events but no serialized live handle; the cloud gateway admits only graph-declared routes and preserves Agent Session/device custody boundaries."
+  },
+  "authority_files": [
+    {
+      "path": "tests_replica/test_application_machine_transport.py",
+      "sha256": "e4080088c9357b455cce677cae8d8aaf46dd17d56214f928852d28c9965daf43",
+      "evidence": "Added and ran the descriptor authority court; targeted transport courts also prove authenticated runtime requests, replay denial, graph-backed Workshop admission, runtime compliance denial, device proof, device handoff, stale claim recovery, and exact Agent Session ownership."
+    },
+    {
+      "path": "tests_replica/test_universal_cell_capabilities.py",
+      "sha256": "2718cfd25bd3531185feb7ff8aef666cb7f5aaf675482fe129b5057a9ff952c3",
+      "evidence": "Capability courts prove unforgeable runtime possession, no graph serialization of live handles, immediate revocation, expiry, use budget, scope denial, bounded audit, and graph-visible grant/event facts."
+    },
+    {
+      "path": "tests_replica/test_universal_cloud_gateway.py",
+      "sha256": "e54f880de933337ad6559585908cd2b72df009418c97484f5a1340abe339e801",
+      "evidence": "Cloud gateway courts prove route allowlist, malformed-envelope fail-closed behavior, DPoP Agent Session binding, no client-side device-key provisioning, founder custody unbound-client rule, unlisted route denial, and no implicit TLS server start."
+    },
+    {
+      "path": "nodelang/application_machine_transport.py",
+      "sha256": "aa6870e5b4ed3f8a83136b1b41d44cc391665000ed4996c31cbb150336da82b9",
+      "evidence": "Signed local machine transport implementation exercised by the canonical courts."
+    },
+    {
+      "path": "nodelang/capabilities.py",
+      "sha256": "089fb6f6169d59897bb12f0d482ad0acf490943f47b429a85bed2b5f5f02352b",
+      "evidence": "Runtime capability broker implementation exercised by the canonical courts."
+    },
+    {
+      "path": "nodelang/universal_cloud_gateway.py",
+      "sha256": "571306964a110f5913dbd37ed0774f1cbd1d9e9eb3205a5be492571b4014e855",
+      "evidence": "Cloud gateway implementation exercised by the canonical courts."
+    }
+  ],
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_application_machine_transport.py -q --timeout=180 -k \"machine_descriptor_points_to_cell_authority\"",
+      "result": "1 passed, 39 deselected in 10.79s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_cell_capabilities.py -q --timeout=180",
+      "result": "8 passed in 0.09s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_cloud_gateway.py -q --timeout=180",
+      "result": "7 passed in 0.56s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_application_machine_transport.py -q --timeout=180 -k \"machine_descriptor_points_to_cell_authority or machine_transport_is_authenticated_replay_safe_and_cell_backed or machine_work_claim_fails_closed_on_red_runtime_compliance or baboom_device_proof_selects_its_catalog_body_and_fails_closed or cloud_gateway_device_binding_requires_the_same_device_as_baboom_session or founder_machine_session_binds_enrolled_device_to_baboom or device_handoff_work_is_one_graph_policy_bound_to_target_custody or machine_workshop_admission_rejects_protected_content_without_commit or stale_work_claim_recovery_requires_dead_capability\"",
+      "result": "9 passed, 31 deselected in 259.18s"
+    }
+  ],
+  "drift_after_slice": {
+    "runtime_transport_track_candidate_count_before_slice": 9,
+    "promotion_allowed": false,
+    "bulk_copy_allowed": false,
+    "live_process_interruption_allowed": false,
+    "full_machine_transport_file_result": "not accepted as gate evidence; command exceeded the 15-minute command budget and the spawned pytest process pair was stopped after identification"
+  },
+  "not_claimed": [
+    "This does not promote ignored node_runtime or BABOOM v4 code.",
+    "This does not prove every machine-transport test in the slow file in one run.",
+    "This does not start, stop, restart, or replace any live application/agent session.",
+    "This does not close visual UI/UX gaps, BABOOM cognition gaps, public site projection gaps, or remaining source-drift candidates."
+  ],
+  "next_authority_tracks": [
+    "visual_workspace_interaction",
+    "application_graph_projection",
+    "baboom_context_and_cognition",
+    "governed_work_lifecycle",
+    "revision_integrity_court",
+    "public_site_projection"
+  ]
+}

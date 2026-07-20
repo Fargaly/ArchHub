@@ -28,7 +28,6 @@
       "resolution_state": "classified_unresolved",
       "candidate_count": 9,
       "candidate_ids": [
-        "runtime-source-drift:031e913f0938b8f1",
         "runtime-source-drift:4ab445be955bee79",
         "runtime-source-drift:6f3fc854f2cfddf7",
         "runtime-source-drift:884c8e926b412d50",
@@ -36,7 +35,8 @@
         "runtime-source-drift:94ef311a1492d01e",
         "runtime-source-drift:9fca61215b884868",
         "runtime-source-drift:b940423a09df0cea",
-        "runtime-source-drift:de53ccc191841a77"
+        "runtime-source-drift:de53ccc191841a77",
+        "runtime-source-drift:f10ff227476b1956"
       ],
       "implementation_candidate_paths": [
         "nodelang/application_server.py",

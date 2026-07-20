@@ -155,7 +155,7 @@
     {
       "path": "tests_replica/test_application_machine_transport.py",
       "runtime_sha256": "6bbceda04378a6ceb6754b292eecded2075443547c83c3d6715353cfed90b4af",
-      "authority_sha256": "49bd84ee0aa7f99d10053d10a19daf7af08a78bb09364f0ced3c6ba3ea80280e"
+      "authority_sha256": "e4080088c9357b455cce677cae8d8aaf46dd17d56214f928852d28c9965daf43"
     },
     {
       "path": "tests_replica/test_application_server_governance.py",
@@ -711,7 +711,7 @@
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
     },
     {
-      "candidate_id": "runtime-source-drift:031e913f0938b8f1",
+      "candidate_id": "runtime-source-drift:f10ff227476b1956",
       "path": "tests_replica/test_application_machine_transport.py",
       "status": "different_from_authority",
       "candidate_kind": "court_candidate",
@@ -728,7 +728,7 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_application_machine_transport.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_application_machine_transport.py",
       "runtime_sha256": "6bbceda04378a6ceb6754b292eecded2075443547c83c3d6715353cfed90b4af",
-      "authority_sha256": "49bd84ee0aa7f99d10053d10a19daf7af08a78bb09364f0ced3c6ba3ea80280e",
+      "authority_sha256": "e4080088c9357b455cce677cae8d8aaf46dd17d56214f928852d28c9965daf43",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"

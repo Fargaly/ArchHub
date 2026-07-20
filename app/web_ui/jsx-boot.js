@@ -38,10 +38,15 @@
   //    fast path AND the localStorage read path are bypassed, so an in-flight
   //    .jsx edit is always recompiled fresh. (Writes still occur so the next
   //    non-dev launch warm-starts.) Triggers: ?dev=1, localStorage flag, or a
-  //    127.0.0.1/localhost host. ArchHub runs file://, so usually false.
+  //    127.0.0.1/localhost host. `?prod=1` is the explicit QA override for
+  //    testing the precompiled production boot path on the local HTTP server.
+  //    ArchHub runs file:// in the packaged app, so usually false there.
   function detectDevMode() {
     try {
       const href = (typeof location !== 'undefined' && location.href) || '';
+      if (href.indexOf('?prod=1') !== -1 || href.indexOf('&prod=1') !== -1) {
+        return false;
+      }
       if (href.indexOf('?dev=1') !== -1 || href.indexOf('&dev=1') !== -1) {
         return true;
       }

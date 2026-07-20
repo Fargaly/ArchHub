@@ -1,4 +1,4 @@
-// tokens.jsx — ARCHHUB single source of truth for design tokens.
+// tokens.jsx — legacy ArchHub design-token projection for the webshell.
 // ────────────────────────────────────────────────────────────────────────
 // Every surface (Brand Book, Studio canvas, Brain, Self-Heal, Website) derives
 // its local palette from window.AH. DO NOT hardcode surface hexes anywhere else.
@@ -8,16 +8,16 @@
 // In the Studio app this file is loaded by index.html BEFORE the bundle
 // (jsx-boot.js → studio-lm.compiled.js), so `window.AH` exists before
 // studio-lm.jsx's IIFE runs — THEMES.forge derives FROM window.AH (no
-// hand-copied hexes). It is the byte-for-byte mirror of the design handoff
-// source of truth at _handoff/archhub/project/tokens.jsx.
+// hand-copied hexes). It is the byte-for-byte mirror of the legacy design
+// handoff at _handoff/archhub/project/tokens.jsx.
 //
 // Two key conventions exist downstream:
 //   • long keys  (bgPanel, bgSoft, bgHover …) → BB, LM, DL, ST, critique-C
 //   • short keys (panel, soft, hover, deep)   → brain-model C, self-heal C
-// Both map from the SAME canonical values below.
+// Both map from the SAME shared values below.
 
 window.AH = {
-  // ── surfaces (dark canonical) ──
+  // ── surfaces (dark shared projection) ──
   bgDeep:  '#0a0a0d',
   bg:      '#0e0e11',
   bgPanel: '#15151a',

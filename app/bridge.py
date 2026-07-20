@@ -2841,12 +2841,12 @@ class ArchHubBridge(QObject):
     # ─── Node grammar (the JSX canvas palette source) ──────────
     @pyqtSlot(result=str)
     def get_node_grammar(self) -> str:
-        """The node grammar — the ~12-primitive set the JSX canvas
-        builds its node palette from. ONE source of truth
-        (`app/workflows/node_grammar.py`); the JSX side must not keep a
-        parallel node list — that parallel list (the 80-node
-        `LM_LIBRARY`) was the drift the redesign kills. See
-        `docs/NODE_GRAMMAR.md`."""
+        """Legacy node-grammar projection for the JSX canvas palette.
+
+        This is not Universal Cell product authority. It is a compatibility
+        bridge so the old webshell stops keeping a second hard-coded palette
+        while the Cell-native editor consumes the remaining typed runtime.
+        See `docs/NODE_GRAMMAR.md`."""
         try:
             from workflows.node_grammar import grammar_payload
             return _safe_json(grammar_payload())
@@ -3950,6 +3950,17 @@ class ArchHubBridge(QObject):
             })
         except Exception as ex:
             return _safe_json({"ok": False, "error": f"{type(ex).__name__}: {ex}"})
+
+    @pyqtSlot(result=str)
+    @pyqtSlot(str, result=str)
+    def brain_compliance_report(self, owner_user: str = "") -> str:
+        """Read Brain's governance/compliance report for app surfaces."""
+        args = {}
+        owner = (owner_user or "").strip()
+        if owner:
+            args["owner_user"] = owner
+        return _safe_json(
+            self._brain_tool("brain.compliance_report", args, timeout=3.0))
 
     @pyqtSlot(str, str, int, result=str)
     def brain_firm_create(self, name: str, created_by: str = "",
@@ -5291,22 +5302,19 @@ class ArchHubBridge(QObject):
     def memory_stats(self) -> str:
         """Snapshot of the brain — fact/skill counts + community grouping.
 
-        ONE-SYSTEM unify (2026-05-28, design:
-        docs/audits/brain-unify-design-2026-05-28.md). The CANONICAL store is
-        the daemon's `brain.db`, NOT `graph.sqlite`. Before unify, this slot
-        read graph.sqlite directly, so the in-app brain view showed a
-        DIFFERENT number than the daemon's `brain.health` — the two-brains
-        bug. Now `total_nodes` is the daemon's canonical fact count, so the
-        in-app brain view and the daemon report the SAME figure from the SAME
-        store. graph.sqlite is consulted only for the community grouping (the
-        topology staging table the extractors write) and as an HONEST fallback
-        when the daemon is unreachable.
+        Legacy Brain telemetry bridge (2026-05-28 design:
+        docs/audits/brain-unify-design-2026-05-28.md). This slot reads the
+        old Brain daemon (`brain.db`) and staging topology (`graph.sqlite`) as
+        legacy evidence for old UI panels. It is not Universal Cell product
+        authority, and it must not be promoted as the graph root. The Cell
+        authority consumes this history separately.
 
         Shape preserved for callers (BrainViewModal, MemoryExplorer):
           {status, total_nodes, total_edges, by_kind, communities_total,
            communities_top, source}
-        `source` is 'brain.db' (canonical / daemon) or 'graph.sqlite'
-        (fallback) so the UI can be honest about degraded mode.
+        `source` is 'brain.db' (legacy daemon telemetry) or 'graph.sqlite'
+        (fallback staging telemetry) so the UI can be honest about degraded
+        mode.
 
         AgDR-0036 follow-up — THE WORST main-thread offender. The body
         (extracted to `_compute_memory_stats`) runs SQLite (7×
@@ -5333,7 +5341,7 @@ class ArchHubBridge(QObject):
         pool (via `_cached_async`), never the Qt main thread. Does the
         SQLite reads + the (often-stalling) brain.health HTTP call."""
         # Community grouping + edge topology come from the extractor staging
-        # graph (graph.sqlite). Counts come from the CANONICAL store.
+        # graph (graph.sqlite). Counts come from legacy Brain telemetry.
         communities_total = 0
         communities_top: list = []
         graph_edges = 0
@@ -5357,9 +5365,10 @@ class ArchHubBridge(QObject):
             # Staging graph unavailable — degrade to canonical-only below.
             pass
 
-        # Canonical counts from the daemon (brain.db). This is the ONE store
-        # the daemon serves on :8473; making the in-app view read it is what
-        # retires the manual graph→brain sync (tools/brain_unify.py).
+        # Legacy counts from the daemon (brain.db). This is compatibility
+        # telemetry for old Brain panels, not Universal Cell product authority.
+        # Making the in-app view read it retired the manual graph->brain sync
+        # (tools/brain_unify.py), but it did not make the daemon the graph root.
         # We are on the background pool here, so a stall can't freeze the
         # UI — but we STILL fast-fail (1.5 s) so a dead daemon doesn't pin
         # a worker thread for the full 4 s; the staging-graph fallback
@@ -5373,8 +5382,8 @@ class ArchHubBridge(QObject):
             facts_n = health.get("facts")
             skills_n = health.get("skills")
             # by_kind keeps the graph's kind breakdown for the panel, but the
-            # canonical skill count overrides the staging value so the badge
-            # matches the daemon.
+            # daemon skill count overrides the staging value so the badge
+            # matches legacy telemetry.
             by_kind = dict(graph_by_kind)
             if isinstance(skills_n, int):
                 by_kind["skill"] = skills_n
@@ -5390,8 +5399,9 @@ class ArchHubBridge(QObject):
                 "canonical_db": health.get("db_path"),
             }
 
-        # Daemon down — HONEST fallback to the staging graph counts so the
-        # panel still shows something real, clearly labelled as non-canonical.
+        # Daemon down: honest fallback to the staging graph counts so the
+        # panel still shows something real, clearly labelled as fallback
+        # telemetry.
         if graph_nodes_total or graph_by_kind:
             return {
                 "status": "ok",
@@ -5661,10 +5671,7 @@ class ArchHubBridge(QObject):
         Safe on the Qt main thread."""
         try:
             from workflows.typesystem import can_wire as _cw
-            from workflows.graph import PortType
-            out_t = PortType(out_type) if out_type else PortType.ANY
-            in_t  = PortType(in_type)  if in_type  else PortType.ANY
-            return bool(_cw(out_t, in_t,
+            return bool(_cw(out_type or "any", in_type or "any",
                              output_is_exec=bool(out_exec),
                              input_is_exec=bool(in_exec)))
         except Exception:
@@ -8187,6 +8194,61 @@ class ArchHubBridge(QObject):
 
         return {"brain": brain, "burndown": bd}
 
+    def _deck_compliance_tile(self) -> dict:
+        """Compliance tile <- brain.compliance_report.
+
+        Runs inside _deck_collect's background fan-out. The bridge never
+        invents compliance state: a down daemon returns an unavailable typed
+        empty, and a live daemon is summarized from the report fields.
+        """
+        empty = {
+            "source": "brain.compliance_report",
+            "available": False,
+            "overall": "unknown",
+            "hook_coverage_status": "unknown",
+            "recent_events": 0,
+            "active_cde": "",
+            "last_gate": "",
+            "note": "",
+        }
+        try:
+            report = self._brain_tool("brain.compliance_report", {},
+                                      timeout=2.0)
+            if not isinstance(report, dict) or not report.get("ok"):
+                empty["note"] = (
+                    report.get("error") if isinstance(report, dict)
+                    else "brain unreachable"
+                ) or "brain unreachable"
+                return empty
+            hook = report.get("hook_coverage")
+            hook = hook if isinstance(hook, dict) else {}
+            hook_status = str(hook.get("status") or "unknown").lower()
+            history = report.get("history")
+            history = history if isinstance(history, dict) else {}
+            events = history.get("events") if isinstance(history, dict) else []
+            events = events if isinstance(events, list) else []
+            cde = report.get("active_cde")
+            cde = cde if isinstance(cde, dict) else {}
+            container = cde.get("container") if isinstance(cde.get("container"), dict) else {}
+            gate = report.get("last_gate_decision")
+            gate = gate if isinstance(gate, dict) else {}
+            overall = str(report.get("overall") or hook_status or "unknown").lower()
+            return {
+                "source": "brain.compliance_report",
+                "available": True,
+                "overall": overall,
+                "hook_coverage_status": hook_status,
+                "hook_issue_count": len(hook.get("issues") or []),
+                "recent_events": len(events),
+                "active_cde": container.get("container_id", ""),
+                "last_gate": gate.get("decision", ""),
+                "last_gate_code": gate.get("code", ""),
+                "note": "",
+            }
+        except Exception as ex:
+            empty["note"] = f"{type(ex).__name__}: {ex}"
+            return empty
+
     def _deck_inbox_tile(self) -> dict:
         """Inbox / action-items tile <- the outlook connector if reachable,
         else an HONEST empty. The outlook connector's probe() returns
@@ -8294,6 +8356,20 @@ class ArchHubBridge(QObject):
                                         "total": 0, "actionable": 0,
                                         "active": []},
                                "note": f"{type(ex).__name__}: {ex}"}
+        # Compliance report (hooks, active CDE, write gates, history).
+        try:
+            out["compliance"] = self._deck_compliance_tile()
+        except Exception as ex:
+            out["compliance"] = {
+                "source": "brain.compliance_report",
+                "available": False,
+                "overall": "unknown",
+                "hook_coverage_status": "unknown",
+                "recent_events": 0,
+                "active_cde": "",
+                "last_gate": "",
+                "note": f"{type(ex).__name__}: {ex}",
+            }
         # Code health (git).
         try:
             out["code"] = self._deck_git_probe()
@@ -8356,6 +8432,11 @@ class ArchHubBridge(QObject):
                                   "total": 0, "actionable": 0, "active": []}},
             "brain": {"source": "brain.health", "available": False,
                       "skills": None, "facts": None, "wiring": None},
+            "compliance": {"source": "brain.compliance_report",
+                           "available": False, "overall": "unknown",
+                           "hook_coverage_status": "unknown",
+                           "recent_events": 0, "active_cde": "",
+                           "last_gate": ""},
             "code": {"source": "git", "available": False, "branch": "",
                      "commit": "", "uncommitted": 0},
             "connectors": {"source": "connectors",

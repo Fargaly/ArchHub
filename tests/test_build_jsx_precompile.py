@@ -166,6 +166,13 @@ def test_loader_prefers_precompiled_with_sha_gate():
     )
 
 
+def test_loader_can_force_precompiled_mode_on_local_http_for_qa():
+    boot = _jsx_boot()
+    assert "?prod=1" in boot
+    assert "href.indexOf('?prod=1')" in boot
+    assert "return false;" in boot[boot.index("href.indexOf('?prod=1')"):boot.index("if (href.indexOf('?dev=1')")]
+
+
 def test_loader_lazy_loads_babel_only_on_fallback():
     boot = _jsx_boot()
     # Babel is injected via a lazy <script>, not assumed present.

@@ -2706,7 +2706,7 @@
     "schema": "archhub-live-runtime-holders/v1",
     "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
     "exists": true,
-    "observed_at": 1784565371.9400175,
+    "observed_at": 1784565798.352965,
     "holder_count": 4,
     "archive_safe_now": false,
     "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
@@ -2718,11 +2718,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "match": "cwd",
         "create_time": 1784000816.2812548,
-        "age_seconds": 564555.6587626934,
+        "age_seconds": 564982.0717103481,
         "status": "running",
-        "cpu_user_seconds": 812.375,
+        "cpu_user_seconds": 812.4375,
         "cpu_system_seconds": 27.84375,
-        "cpu_total_seconds": 840.21875
+        "cpu_total_seconds": 840.28125
       },
       {
         "pid": 113216,
@@ -2731,11 +2731,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
         "match": "cwd",
         "create_time": 1784038036.3854764,
-        "age_seconds": 527335.554541111,
+        "age_seconds": 527761.9674887657,
         "status": "running",
-        "cpu_user_seconds": 63.359375,
+        "cpu_user_seconds": 63.390625,
         "cpu_system_seconds": 19.015625,
-        "cpu_total_seconds": 82.375
+        "cpu_total_seconds": 82.40625
       },
       {
         "pid": 117712,
@@ -2744,7 +2744,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.734114,
-        "age_seconds": 474245.2059035301,
+        "age_seconds": 474671.61885118484,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -2757,7 +2757,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.8539033,
-        "age_seconds": 474245.08611416817,
+        "age_seconds": 474671.4990618229,
         "status": "running",
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
@@ -2767,7 +2767,7 @@
   },
   "local_application_servers": {
     "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784565399.8220725,
+    "observed_at": 1784565826.611327,
     "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
     "process_count": 5,
     "safe_to_stop_count": 0,
@@ -2800,11 +2800,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784543480.5777273,
-        "age_seconds": 21919.24434518814,
+        "age_seconds": 22346.033599615097,
         "status": "running",
-        "cpu_user_seconds": 9797.65625,
-        "cpu_system_seconds": 34.328125,
-        "cpu_total_seconds": 9831.984375
+        "cpu_user_seconds": 10003.390625,
+        "cpu_system_seconds": 34.921875,
+        "cpu_total_seconds": 10038.3125
       },
       {
         "pid": 52484,
@@ -2825,11 +2825,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784000816.2812548,
-        "age_seconds": 564583.5408177376,
+        "age_seconds": 565010.3300721645,
         "status": "running",
-        "cpu_user_seconds": 812.375,
+        "cpu_user_seconds": 812.4375,
         "cpu_system_seconds": 27.84375,
-        "cpu_total_seconds": 840.21875
+        "cpu_total_seconds": 840.28125
       },
       {
         "pid": 14616,
@@ -2849,11 +2849,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.82487,
-        "age_seconds": 332632.9972023964,
+        "age_seconds": 333059.78645682335,
         "status": "running",
-        "cpu_user_seconds": 55.140625,
+        "cpu_user_seconds": 55.21875,
         "cpu_system_seconds": 12.53125,
-        "cpu_total_seconds": 67.671875
+        "cpu_total_seconds": 67.75
       },
       {
         "pid": 122452,
@@ -2871,7 +2871,7 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.690817,
-        "age_seconds": 332633.13125538826,
+        "age_seconds": 333059.9205098152,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -2895,11 +2895,11 @@
         "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
         "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
         "create_time": 1784225629.9015317,
-        "age_seconds": 339769.92054080963,
+        "age_seconds": 340196.7097952366,
         "status": "running",
-        "cpu_user_seconds": 53.40625,
+        "cpu_user_seconds": 53.53125,
         "cpu_system_seconds": 12.765625,
-        "cpu_total_seconds": 66.171875
+        "cpu_total_seconds": 66.296875
       }
     ]
   }

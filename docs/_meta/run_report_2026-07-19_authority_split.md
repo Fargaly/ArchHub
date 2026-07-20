@@ -6243,3 +6243,75 @@ Next action:
 - Continue with `legacy_webshell_host_with_cell_bridge` because `app/bridge.py`
   still has unstaged Universal Cell related bridge edits, and the old UI shell
   is still the visible place where drift can leak into the founder experience.
+
+## Run: Universal canvas authority-label alignment
+
+Intent:
+
+- Repair the contradiction found by the `legacy_webshell_host_with_cell_bridge`
+  courts: the Universal canvas bridge returned `authority` as a runtime label
+  while the WebShell Cell contract expects the active product authority path.
+
+Committed:
+
+- `14b57ea Align Universal canvas bridge authority labels`.
+- `app/workflows/universal_grand_map_surface.py` now emits:
+  - `authority: "10.PRODUCT/13.NODE-LANGUAGE"`.
+  - `runtime_authority: "Universal Cell graph runtime"`.
+- `app/bridge.py` local Universal-interaction error envelopes now use the same
+  authority split.
+- Projection and classifier courts were updated so they test rules directly
+  instead of assuming already-consumed files remain in `git status`.
+
+Verification:
+
+- Combined projection and legacy WebShell host courts:
+  `python -m pytest tests\test_authority_wip_classify.py tests\test_baboom_cell_surface_bridge.py tests\test_universal_grand_map_surface_bridge.py ..\13.NODE-LANGUAGE\tests_replica\test_cell_legacy_webshell_host.py tests\test_legacy_webshell_host_boundary.py tests\test_production_webshell_preview.py -q -p no:cacheprovider --timeout=240`
+  - baseline result: one authority mismatch failure in
+    `test_preview_server_routes_universal_canvas_to_universal_cell_authority`.
+  - second run result after repair: `69 passed, 1 warning in 26.58s`.
+- Syntax compile:
+  `python -m py_compile app\workflows\universal_grand_map_surface.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed after partial-index whitespace cleanup.
+  - forbidden staged paths scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged secret scan: no matches.
+
+Commit gate evidence:
+
+- `brain-commit-gate` checked `app/bridge.py` and
+  `app/workflows/universal_grand_map_surface.py`.
+- Brain daemon was unreachable at `http://127.0.0.1:8473/mcp`; the gate
+  fail-opened and did not block. This is recorded as runtime evidence, not a
+  claim that Brain was live.
+
+Current WIP/live-holder evidence after `14b57ea`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `99`.
+- classified WIP entries in the authority ledger: `97`.
+- no-unclassified gate: `ok`, count `0`.
+- classification digest:
+  `4d7d23850b3acefdfb9f26755fe5c0ef242b1336bbee30f741b06b5f2f6d1f8a`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Current position:
+
+- The Universal canvas bridge now distinguishes product authority from runtime
+  transport. That removes a concrete drift vector in the legacy shell boundary.
+- The remaining `legacy_webshell_host_with_cell_bridge` WIP is still present:
+  `app/bridge.py`, `app/web_ui/index.html`, `app/web_ui/jsx-boot.js`,
+  `app/web_ui/studio-lm.compiled.js`, `app/web_ui/studio-lm.jsx`,
+  `app/web_ui/tokens.jsx`, and `tools/production_webshell_preview.py`.
+
+Next action:
+
+- Continue the legacy WebShell host slice and decide, with courts, which of its
+  remaining changes are a lawful bridge into Universal Cell and which must stay
+  as non-authority evidence or be consumed later.

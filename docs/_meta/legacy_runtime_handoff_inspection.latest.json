@@ -5,7 +5,7 @@
     "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
     "archive_allowed": false,
     "summary": {
-      "holders": 3,
+      "holders": 1,
       "application_servers": 1,
       "blocked_endpoints": 1,
       "runnable_endpoints": 0,
@@ -13,8 +13,8 @@
       "passive_wait_pids": 0,
       "long_running_test_pids": 0,
       "low_activity_test_pids": 0,
-      "inspect_pids": 2,
-      "handoff_steps": 3,
+      "inspect_pids": 0,
+      "handoff_steps": 2,
       "replacement_specs": 1,
       "source_drift_count": 32
     },
@@ -28,62 +28,15 @@
       "passive_wait_pids": [],
       "long_running_test_pids": [],
       "low_activity_test_pids": [],
-      "inspect_before_touch_pids": [
-        117712,
-        147188
-      ],
+      "inspect_before_touch_pids": [],
       "blocked_endpoint_pids": [
         52484
       ]
     },
     "risk_classes": {
-      "stdin_python_holder": 2,
       "visible_legacy_endpoint": 1
     },
-    "inspect_cards": [
-      {
-        "pid": 117712,
-        "holder_type": "stdin_python",
-        "holder_risk_class": "stdin_python_holder",
-        "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-        "script_evidence": {
-          "launch_mode": "python_stdin",
-          "module": null,
-          "stdin_mode": true,
-          "script_path": null,
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 496968.87990546227,
-        "process_status": "running",
-        "cpu_total_seconds": 0.0,
-        "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      },
-      {
-        "pid": 147188,
-        "holder_type": "stdin_python",
-        "holder_risk_class": "stdin_python_holder",
-        "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-        "script_evidence": {
-          "launch_mode": "python_stdin",
-          "module": null,
-          "stdin_mode": true,
-          "script_path": null,
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 496968.7601161003,
-        "process_status": "running",
-        "cpu_total_seconds": 1.234375,
-        "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      }
-    ],
+    "inspect_cards": [],
     "endpoint_cards": [
       {
         "pid": 52484,
@@ -103,9 +56,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 587279.3327646255,
+        "age_seconds": 587599.9710423946,
         "process_status": "running",
-        "cpu_total_seconds": 861.15625,
+        "cpu_total_seconds": 867.140625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -165,7 +118,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784588116.896975,
+    "observed_at": 1784588446.4559693,
     "available": true,
     "processes": [
       {
@@ -190,10 +143,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 587300.6157202721,
-        "cpu_user_seconds": 831.421875,
-        "cpu_system_seconds": 29.734375,
-        "cpu_total_seconds": 861.15625,
+        "age_seconds": 587630.1747145653,
+        "cpu_user_seconds": 837.203125,
+        "cpu_system_seconds": 29.9375,
+        "cpu_total_seconds": 867.140625,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -220,7 +173,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131075,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131270,\"schema_version\""
           },
           {
             "port": 8482,
@@ -294,109 +247,6 @@
         "process_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; do not stop mid-flight",
         "allowed_action": "inspect only; this function never interrupts a process"
-      },
-      {
-        "pid": 117712,
-        "exists": true,
-        "name": "python.exe",
-        "status": "running",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
-        "cmdline_argv": [
-          "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
-          "-"
-        ],
-        "create_time": 1784091126.734114,
-        "age_seconds": 496990.1628611088,
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.0,
-        "parent_pid": null,
-        "child_pids": [
-          147188
-        ],
-        "listening_ports": [],
-        "established_connection_count": 0,
-        "endpoint_fingerprints": [],
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null,
-        "process_risk_class": "stdin_python_parent",
-        "drain_posture": "stdin-launched parent with child process; inspect child before handoff",
-        "allowed_action": "inspect only; this function never interrupts a process"
-      },
-      {
-        "pid": 147188,
-        "exists": true,
-        "name": "python.exe",
-        "status": "running",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
-        "cmdline_argv": [
-          "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
-          "-"
-        ],
-        "create_time": 1784091126.8539033,
-        "age_seconds": 496990.0430717468,
-        "cpu_user_seconds": 1.203125,
-        "cpu_system_seconds": 0.03125,
-        "cpu_total_seconds": 1.234375,
-        "parent_pid": 117712,
-        "child_pids": [],
-        "listening_ports": [
-          52780
-        ],
-        "established_connection_count": 0,
-        "endpoint_fingerprints": [
-          {
-            "port": 52780,
-            "path": "/",
-            "url": "http://127.0.0.1:52780/",
-            "ok": false,
-            "error_type": "URLError",
-            "error": "<urlopen error timed out>"
-          },
-          {
-            "port": 52780,
-            "path": "/api/state",
-            "url": "http://127.0.0.1:52780/api/state",
-            "ok": false,
-            "error_type": "URLError",
-            "error": "<urlopen error timed out>"
-          },
-          {
-            "port": 52780,
-            "path": "/api/universal/health",
-            "url": "http://127.0.0.1:52780/api/universal/health",
-            "ok": false,
-            "error_type": "URLError",
-            "error": "<urlopen error timed out>"
-          },
-          {
-            "port": 52780,
-            "path": "/health",
-            "url": "http://127.0.0.1:52780/health",
-            "ok": false,
-            "error_type": "URLError",
-            "error": "<urlopen error timed out>"
-          }
-        ],
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null,
-        "process_risk_class": "stdin_python_listener_child",
-        "drain_posture": "stdin-launched listener; identify parent/source before handoff",
-        "allowed_action": "inspect only; this function never interrupts a process"
       }
     ]
   },
@@ -406,9 +256,7 @@
     "available": true,
     "cleanup_allowed_pids": [],
     "blocked_pids": [
-      52484,
-      117712,
-      147188
+      52484
     ],
     "rows": [
       {
@@ -438,57 +286,6 @@
         ],
         "established_connection_count": 0,
         "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."
-      },
-      {
-        "pid": 117712,
-        "verdict": "blocked_or_unknown_holder",
-        "cleanup_allowed": false,
-        "checks": {
-          "exists": true,
-          "is_inspect_before_touch_holder": true,
-          "not_protected_endpoint_or_coowner": true,
-          "known_disposable_shape": false,
-          "no_child_dependency": false,
-          "no_established_clients": true,
-          "known_local_qa_ports_only": false,
-          "fingerprint_matches_expected_qa_surface": false
-        },
-        "failed_checks": [
-          "known_disposable_shape",
-          "no_child_dependency",
-          "known_local_qa_ports_only",
-          "fingerprint_matches_expected_qa_surface"
-        ],
-        "risk_class": "stdin_python_parent",
-        "listening_ports": [],
-        "established_connection_count": 0,
-        "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."
-      },
-      {
-        "pid": 147188,
-        "verdict": "blocked_or_unknown_holder",
-        "cleanup_allowed": false,
-        "checks": {
-          "exists": true,
-          "is_inspect_before_touch_holder": true,
-          "not_protected_endpoint_or_coowner": true,
-          "known_disposable_shape": false,
-          "no_child_dependency": true,
-          "no_established_clients": true,
-          "known_local_qa_ports_only": false,
-          "fingerprint_matches_expected_qa_surface": false
-        },
-        "failed_checks": [
-          "known_disposable_shape",
-          "known_local_qa_ports_only",
-          "fingerprint_matches_expected_qa_surface"
-        ],
-        "risk_class": "stdin_python_listener_child",
-        "listening_ports": [
-          52780
-        ],
-        "established_connection_count": 0,
-        "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."
       }
     ],
     "rule": "A copied-runtime holder may be cleaned only when this court proves it is a non-visible disposable holder. The court itself remains read-only and never interrupts a process."
@@ -496,7 +293,7 @@
   "holder_tree_court": {
     "schema": "archhub-runtime-holder-tree-court/v1",
     "available": true,
-    "tree_count": 2,
+    "tree_count": 1,
     "trees": [
       {
         "root_pid": 52484,
@@ -514,26 +311,51 @@
         "established_connection_count": 0,
         "interrupt_allowed": false,
         "rule": "Tree grouping is evidence only; it does not stop, relaunch, move, archive, or mark a holder safe."
-      },
-      {
-        "root_pid": 117712,
-        "pids": [
-          117712,
-          147188
-        ],
-        "posture": "inspect_unknown_holder_tree",
-        "risk_classes": [
-          "stdin_python_listener_child",
-          "stdin_python_parent"
-        ],
-        "listening_ports": [
-          52780
-        ],
-        "established_connection_count": 0,
-        "interrupt_allowed": false,
-        "rule": "Tree grouping is evidence only; it does not stop, relaunch, move, archive, or mark a holder safe."
       }
     ],
     "rule": "A holder tree is one live blocker group when parent/child evidence connects its PIDs; cleanup still requires a separate disposable holder court."
+  },
+  "stale_stdin_tree_court": {
+    "schema": "archhub-stale-stdin-holder-tree-court/v1",
+    "available": true,
+    "cleanup_allowed_trees": [],
+    "blocked_trees": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ]
+      }
+    ],
+    "rows": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ],
+        "cleanup_allowed": false,
+        "checks": {
+          "tree_is_unknown_stdin": false,
+          "all_processes_present": true,
+          "only_stdin_python_risks": false,
+          "has_listener": true,
+          "no_protected_visible_ports": false,
+          "no_established_clients": true,
+          "stale_by_age": true,
+          "low_cpu_activity": true,
+          "no_http_identity": false,
+          "root_has_child": false
+        },
+        "failed_checks": [
+          "tree_is_unknown_stdin",
+          "only_stdin_python_risks",
+          "no_protected_visible_ports",
+          "no_http_identity",
+          "root_has_child"
+        ],
+        "rule": "This row is a decision court only. Cleanup still requires an immediate exact PID/command/port recheck."
+      }
+    ],
+    "rule": "Only stale stdin process trees with no clients, no protected ports, low activity, and no HTTP identity may be cleaned."
   }
 }

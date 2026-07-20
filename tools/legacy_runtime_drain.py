@@ -1253,6 +1253,7 @@ def build_handoff_board(
 
 
 DISPOSABLE_QA_PORTS = {8515, 8516}
+PROTECTED_VISIBLE_PORTS = {8482, 8484, 8501}
 
 
 def build_disposable_holder_court(
@@ -1443,6 +1444,125 @@ def build_holder_tree_court(
             "connects its PIDs; cleanup still requires a separate disposable "
             "holder court."
         ),
+    }
+
+
+def build_stale_stdin_tree_court(
+    holder_tree_court: dict[str, Any],
+    inspection: dict[str, Any],
+) -> dict[str, Any]:
+    """Decide if an unknown stdin holder tree is stale enough to clean.
+
+    This deliberately does not modify the broader disposable-holder court.  A
+    stdin tree must prove a stricter no-client/no-visible-port/low-activity
+    shape before a later exact PID cleanup can touch it.
+    """
+    if not inspection.get("available", True) or not holder_tree_court.get("available", True):
+        return {
+            "schema": "archhub-stale-stdin-holder-tree-court/v1",
+            "available": False,
+            "cleanup_allowed_trees": [],
+            "blocked_trees": [],
+            "reason": "process inspection or holder-tree grouping unavailable",
+            "rule": "No stale stdin cleanup is allowed without current inspection.",
+        }
+    process_by_pid = {
+        int(process["pid"]): process
+        for process in inspection.get("processes") or []
+        if isinstance(process, dict) and isinstance(process.get("pid"), int)
+    }
+    allowed: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for tree in holder_tree_court.get("trees") or []:
+        if not isinstance(tree, dict):
+            continue
+        pids = [int(pid) for pid in tree.get("pids") or []]
+        processes = [process_by_pid[pid] for pid in pids if pid in process_by_pid]
+        checks = _stale_stdin_tree_checks(tree, processes)
+        failed = [name for name, ok in checks.items() if not ok]
+        row = {
+            "root_pid": tree.get("root_pid"),
+            "pids": pids,
+            "cleanup_allowed": not failed,
+            "checks": checks,
+            "failed_checks": failed,
+            "rule": (
+                "This row is a decision court only. Cleanup still requires an "
+                "immediate exact PID/command/port recheck."
+            ),
+        }
+        rows.append(row)
+        (allowed if row["cleanup_allowed"] else blocked).append(row)
+    return {
+        "schema": "archhub-stale-stdin-holder-tree-court/v1",
+        "available": True,
+        "cleanup_allowed_trees": [
+            {"root_pid": row["root_pid"], "pids": row["pids"]}
+            for row in allowed
+        ],
+        "blocked_trees": [
+            {"root_pid": row["root_pid"], "pids": row["pids"]}
+            for row in blocked
+        ],
+        "rows": rows,
+        "rule": (
+            "Only stale stdin process trees with no clients, no protected ports, "
+            "low activity, and no HTTP identity may be cleaned."
+        ),
+    }
+
+
+def _stale_stdin_tree_checks(
+    tree: dict[str, Any],
+    processes: list[dict[str, Any]],
+) -> dict[str, bool]:
+    risk_classes = {
+        str(process.get("process_risk_class") or "")
+        for process in processes
+    }
+    listening_ports = {
+        int(port)
+        for process in processes
+        for port in process.get("listening_ports") or []
+    }
+    ages = [
+        float(process.get("age_seconds"))
+        for process in processes
+        if isinstance(process.get("age_seconds"), (int, float))
+    ]
+    cpu_ratios = [
+        float(process.get("cpu_total_seconds") or 0.0)
+        / max(float(process.get("age_seconds") or 1.0), 1.0)
+        for process in processes
+        if isinstance(process.get("age_seconds"), (int, float))
+    ]
+    http_identity = any(
+        bool(fingerprint.get("ok"))
+        and int(fingerprint.get("status") or 0) < 500
+        for process in processes
+        for fingerprint in process.get("endpoint_fingerprints") or []
+        if isinstance(fingerprint, dict)
+    )
+    return {
+        "tree_is_unknown_stdin": tree.get("posture") == "inspect_unknown_holder_tree",
+        "all_processes_present": bool(processes) and len(processes) == len(tree.get("pids") or []),
+        "only_stdin_python_risks": bool(risk_classes) and risk_classes.issubset({
+            "stdin_python_parent",
+            "stdin_python_listener_child",
+        }),
+        "has_listener": bool(listening_ports),
+        "no_protected_visible_ports": not listening_ports.intersection(
+            PROTECTED_VISIBLE_PORTS
+        ),
+        "no_established_clients": all(
+            int(process.get("established_connection_count") or 0) == 0
+            for process in processes
+        ),
+        "stale_by_age": bool(ages) and min(ages) >= LONG_RUNNING_TEST_SECONDS,
+        "low_cpu_activity": bool(cpu_ratios) and max(cpu_ratios) <= LOW_ACTIVITY_CPU_RATIO,
+        "no_http_identity": not http_identity,
+        "root_has_child": len(tree.get("pids") or []) > 1,
     }
 
 
@@ -2906,6 +3026,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             result["holder_tree_court"] = build_holder_tree_court(
                 board,
+                result["inspection"],
+            )
+            result["stale_stdin_tree_court"] = build_stale_stdin_tree_court(
+                result["holder_tree_court"],
                 result["inspection"],
             )
         elif args.verify_universal_holders:

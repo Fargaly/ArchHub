@@ -95,7 +95,7 @@
     "machine_work_items": 0,
     "machine_work_registry": "app:governed-work-registry",
     "revision": 739,
-    "server_url": "http://127.0.0.1:49346",
+    "server_url": "http://127.0.0.1:61966",
     "session_cookie_http_only": true,
     "state_path_inside_temp": true,
     "state_status": 200,
@@ -1420,12 +1420,11 @@
     ],
     "rule": "An ignored runtime copy cannot be archived while it contains source files that are missing or different in the declared authority."
   },
-  "holder_count": 3,
+  "holder_count": 1,
   "archive_safe_now": false,
   "drain_complete": false,
   "by_type": {
-    "application_server": 1,
-    "stdin_python": 2
+    "application_server": 1
   },
   "duplicate_server_groups": [],
   "exact_authority_replacement": {
@@ -1439,55 +1438,11 @@
   },
   "handoff_schedule": {
     "schema": "archhub-legacy-runtime-handoff-schedule/v1",
-    "step_count": 3,
+    "step_count": 2,
     "all_steps_non_interrupting": true,
     "steps": [
       {
         "sequence": 1,
-        "kind": "inspect_unknown_holder",
-        "pids": [
-          117712,
-          147188
-        ],
-        "inspect_cards": [
-          {
-            "pid": 117712,
-            "holder_type": "stdin_python",
-            "holder_risk_class": "stdin_python_holder",
-            "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-            "script_evidence": {
-              "launch_mode": "python_stdin",
-              "module": null,
-              "stdin_mode": true,
-              "script_path": null,
-              "script_exists": false,
-              "script_size_bytes": null,
-              "script_mtime_utc": null,
-              "script_sha256": null
-            }
-          },
-          {
-            "pid": 147188,
-            "holder_type": "stdin_python",
-            "holder_risk_class": "stdin_python_holder",
-            "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-            "script_evidence": {
-              "launch_mode": "python_stdin",
-              "module": null,
-              "stdin_mode": true,
-              "script_path": null,
-              "script_exists": false,
-              "script_size_bytes": null,
-              "script_mtime_utc": null,
-              "script_sha256": null
-            }
-          }
-        ],
-        "required_action": "identify owner and purpose; do not archive copied runtime while these holders reference it",
-        "may_interrupt": false
-      },
-      {
-        "sequence": 2,
         "kind": "coordinate_single_endpoint_handoff",
         "pid": 52484,
         "status": "blocked_by_this_live_holder",
@@ -1538,7 +1493,7 @@
         "may_interrupt": false
       },
       {
-        "sequence": 3,
+        "sequence": 2,
         "kind": "verify_drain_complete",
         "command": [
           "python",
@@ -1556,7 +1511,7 @@
     "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
     "archive_allowed": false,
     "summary": {
-      "holders": 3,
+      "holders": 1,
       "application_servers": 1,
       "blocked_endpoints": 1,
       "runnable_endpoints": 0,
@@ -1564,8 +1519,8 @@
       "passive_wait_pids": 0,
       "long_running_test_pids": 0,
       "low_activity_test_pids": 0,
-      "inspect_pids": 2,
-      "handoff_steps": 3,
+      "inspect_pids": 0,
+      "handoff_steps": 2,
       "replacement_specs": 1,
       "source_drift_count": 32
     },
@@ -1579,62 +1534,15 @@
       "passive_wait_pids": [],
       "long_running_test_pids": [],
       "low_activity_test_pids": [],
-      "inspect_before_touch_pids": [
-        117712,
-        147188
-      ],
+      "inspect_before_touch_pids": [],
       "blocked_endpoint_pids": [
         52484
       ]
     },
     "risk_classes": {
-      "stdin_python_holder": 2,
       "visible_legacy_endpoint": 1
     },
-    "inspect_cards": [
-      {
-        "pid": 117712,
-        "holder_type": "stdin_python",
-        "holder_risk_class": "stdin_python_holder",
-        "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-        "script_evidence": {
-          "launch_mode": "python_stdin",
-          "module": null,
-          "stdin_mode": true,
-          "script_path": null,
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 496411.8950612545,
-        "process_status": "running",
-        "cpu_total_seconds": 0.0,
-        "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      },
-      {
-        "pid": 147188,
-        "holder_type": "stdin_python",
-        "holder_risk_class": "stdin_python_holder",
-        "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-        "script_evidence": {
-          "launch_mode": "python_stdin",
-          "module": null,
-          "stdin_mode": true,
-          "script_path": null,
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 496411.77527189255,
-        "process_status": "running",
-        "cpu_total_seconds": 1.234375,
-        "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      }
-    ],
+    "inspect_cards": [],
     "endpoint_cards": [
       {
         "pid": 52484,
@@ -1654,9 +1562,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 586722.3479204178,
+        "age_seconds": 587599.974957943,
         "process_status": "running",
-        "cpu_total_seconds": 855.1875,
+        "cpu_total_seconds": 867.140625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -1783,9 +1691,9 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "process_status": "running",
-      "age_seconds": 586722.3479204178,
+      "age_seconds": 587599.974957943,
       "create_time": 1784000816.2812548,
-      "cpu_total_seconds": 855.1875,
+      "cpu_total_seconds": 867.140625,
       "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
       "authority_relaunch": {
@@ -1843,78 +1751,6 @@
           ]
         }
       }
-    },
-    {
-      "pid": 117712,
-      "name": "python.exe",
-      "holder_type": "stdin_python",
-      "runtime_args": {
-        "host": null,
-        "port": null,
-        "cloud_host": null,
-        "cloud_port": null,
-        "state_path": null,
-        "fresh": false,
-        "pytest_target": null
-      },
-      "script_evidence": {
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "holder_risk_class": "stdin_python_holder",
-      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
-      "process_status": "running",
-      "age_seconds": 496411.8950612545,
-      "create_time": 1784091126.734114,
-      "cpu_total_seconds": 0.0,
-      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
-      "authority_relaunch": null,
-      "desktop_authority_handoff": null
-    },
-    {
-      "pid": 147188,
-      "name": "python.exe",
-      "holder_type": "stdin_python",
-      "runtime_args": {
-        "host": null,
-        "port": null,
-        "cloud_host": null,
-        "cloud_port": null,
-        "state_path": null,
-        "fresh": false,
-        "pytest_target": null
-      },
-      "script_evidence": {
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "holder_risk_class": "stdin_python_holder",
-      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
-      "process_status": "running",
-      "age_seconds": 496411.77527189255,
-      "create_time": 1784091126.8539033,
-      "cpu_total_seconds": 1.234375,
-      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
-      "authority_relaunch": null,
-      "desktop_authority_handoff": null
     }
   ],
   "rule": "No holder may be interrupted by this planner. Drain by natural exit or coordinated relaunch from the Universal Cell authority."

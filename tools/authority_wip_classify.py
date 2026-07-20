@@ -628,6 +628,7 @@ def classify_path(path: str) -> str:
         or p.startswith("docs/_meta/legacy_runtime_handoff_disposable_cleanup")
         or p.startswith("docs/_meta/legacy_runtime_handoff_inspection")
         or p.startswith("docs/_meta/legacy_runtime_handoff_shadow_probe")
+        or p.startswith("docs/_meta/legacy_runtime_handoff_stale_stdin_cleanup")
         or p.startswith("docs/_meta/legacy_runtime_source_drift")
         or p.startswith("docs/_meta/legacy_runtime_universal_holder_verification")
         or p.startswith("docs/_meta/live_runtime_holders")

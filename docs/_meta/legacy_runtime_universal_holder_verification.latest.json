@@ -1,8 +1,8 @@
 {
   "schema": "archhub-runtime-holder-universal-verification/v1",
   "source_schema": "archhub-legacy-runtime-drain-plan/v1",
-  "holder_count": 3,
-  "verified_count": 3,
+  "holder_count": 1,
+  "verified_count": 1,
   "missing_count": 0,
   "ok": true,
   "verified": [
@@ -11,18 +11,6 @@
       "pid": 52484,
       "holder_risk_class": "visible_legacy_endpoint",
       "work_root": "assembly-instance:bdbf74dbfadc430c902450d94e58d527"
-    },
-    {
-      "external_key": "runtime-holder:117712:1784091126734",
-      "pid": 117712,
-      "holder_risk_class": "stdin_python_holder",
-      "work_root": "assembly-instance:f287237e91f8439d915d6438b160e312"
-    },
-    {
-      "external_key": "runtime-holder:147188:1784091126853",
-      "pid": 147188,
-      "holder_risk_class": "stdin_python_holder",
-      "work_root": "assembly-instance:79a7c28f0c3c49b98fdda82ef1a32038"
     }
   ],
   "missing": [],

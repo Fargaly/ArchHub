@@ -178,6 +178,10 @@ def test_classification_keeps_universal_cell_separate_from_legacy():
         == "governance_run_evidence"
     )
     assert (
+        awc.classify_path("docs/_meta/legacy_runtime_handoff_stale_stdin_cleanup.latest.json")
+        == "governance_run_evidence"
+    )
+    assert (
         awc.classify_path("docs/_meta/legacy_runtime_source_drift.latest.json")
         == "governance_run_evidence"
     )

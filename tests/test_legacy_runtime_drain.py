@@ -1476,6 +1476,9 @@ def test_cli_inspect_board_pids_is_read_only_and_uses_board_blockers(
     assert out["holder_tree_court"]["schema"] == (
         "archhub-runtime-holder-tree-court/v1"
     )
+    assert out["stale_stdin_tree_court"]["schema"] == (
+        "archhub-stale-stdin-holder-tree-court/v1"
+    )
     assert not out_dir.exists()
 
 
@@ -1547,6 +1550,110 @@ def test_cli_inspect_board_pids_expands_child_processes_for_court(
         "inspect_unknown_holder_tree"
     )
     assert out["holder_tree_court"]["trees"][0]["interrupt_allowed"] is False
+    assert out["stale_stdin_tree_court"]["cleanup_allowed_trees"] == []
+    assert out["stale_stdin_tree_court"]["blocked_trees"] == [
+        {"root_pid": 21, "pids": [21, 6084]}
+    ]
+
+
+def test_stale_stdin_tree_court_allows_only_quiescent_unknown_listener_tree():
+    holder_tree_court = {
+        "available": True,
+        "trees": [{
+            "root_pid": 21,
+            "pids": [21, 22],
+            "posture": "inspect_unknown_holder_tree",
+        }],
+    }
+    inspection = {
+        "available": True,
+        "processes": [
+            {
+                "pid": 21,
+                "process_risk_class": "stdin_python_parent",
+                "age_seconds": drain.LONG_RUNNING_TEST_SECONDS + 10,
+                "cpu_total_seconds": 1.0,
+                "child_pids": [22],
+                "listening_ports": [],
+                "established_connection_count": 0,
+                "endpoint_fingerprints": [],
+            },
+            {
+                "pid": 22,
+                "process_risk_class": "stdin_python_listener_child",
+                "age_seconds": drain.LONG_RUNNING_TEST_SECONDS + 10,
+                "cpu_total_seconds": 1.0,
+                "child_pids": [],
+                "listening_ports": [52780],
+                "established_connection_count": 0,
+                "endpoint_fingerprints": [{
+                    "port": 52780,
+                    "path": "/",
+                    "ok": False,
+                    "error_type": "TimeoutError",
+                }],
+            },
+        ],
+    }
+
+    court = drain.build_stale_stdin_tree_court(holder_tree_court, inspection)
+
+    assert court["schema"] == "archhub-stale-stdin-holder-tree-court/v1"
+    assert court["cleanup_allowed_trees"] == [
+        {"root_pid": 21, "pids": [21, 22]}
+    ]
+    assert court["blocked_trees"] == []
+    assert court["rows"][0]["checks"]["no_http_identity"] is True
+    assert court["rows"][0]["checks"]["no_protected_visible_ports"] is True
+
+
+def test_stale_stdin_tree_court_blocks_http_or_visible_port_identity():
+    holder_tree_court = {
+        "available": True,
+        "trees": [{
+            "root_pid": 21,
+            "pids": [21, 22],
+            "posture": "inspect_unknown_holder_tree",
+        }],
+    }
+    inspection = {
+        "available": True,
+        "processes": [
+            {
+                "pid": 21,
+                "process_risk_class": "stdin_python_parent",
+                "age_seconds": drain.LONG_RUNNING_TEST_SECONDS + 10,
+                "cpu_total_seconds": 1.0,
+                "child_pids": [22],
+                "listening_ports": [],
+                "established_connection_count": 0,
+                "endpoint_fingerprints": [],
+            },
+            {
+                "pid": 22,
+                "process_risk_class": "stdin_python_listener_child",
+                "age_seconds": drain.LONG_RUNNING_TEST_SECONDS + 10,
+                "cpu_total_seconds": 1.0,
+                "child_pids": [],
+                "listening_ports": [8482],
+                "established_connection_count": 0,
+                "endpoint_fingerprints": [{
+                    "port": 8482,
+                    "path": "/",
+                    "ok": True,
+                    "status": 200,
+                }],
+            },
+        ],
+    }
+
+    court = drain.build_stale_stdin_tree_court(holder_tree_court, inspection)
+
+    assert court["cleanup_allowed_trees"] == []
+    assert court["blocked_trees"] == [{"root_pid": 21, "pids": [21, 22]}]
+    row = court["rows"][0]
+    assert row["checks"]["no_protected_visible_ports"] is False
+    assert row["checks"]["no_http_identity"] is False
 
 
 def test_cli_inspect_board_pids_includes_non_holder_port_owners(

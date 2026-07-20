@@ -75,10 +75,6 @@
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3"
     },
     {
-      "path": "tests_replica/test_store_concurrency.py",
-      "runtime_sha256": "4c0109482f5700537ad1cc68b1e164c19d97ff07a8adcf42ac5ceeac0062eb4c"
-    },
-    {
       "path": "tests_replica/test_visual_graph_workspace.py",
       "runtime_sha256": "4b1058e0df61418157a0e9af2930fe54fbfdffddbc0440eab8c79ab995bd3e17"
     },
@@ -126,7 +122,7 @@
     {
       "path": "nodelang/universal_application.py",
       "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-      "authority_sha256": "047c4f7f50952fc3fcd180ed803f02820475c7830ab335439abc00c01d72b403"
+      "authority_sha256": "e328e905c069f747025afbbe7527a9ac1a90047a7854ac4a64d32b83b46d6bc3"
     },
     {
       "path": "nodelang/universal_cloud_gateway.py",
@@ -172,6 +168,11 @@
       "path": "tests_replica/test_relation_topology_editor.py",
       "runtime_sha256": "9b61340abd960b16222979a033c5ec40d95b2a3ea2e0cc7fc76be5f1ea6ad011",
       "authority_sha256": "3b418e8c986d3ce47957c001334199f1dfb90d40f37b386a57edc49c07e9861d"
+    },
+    {
+      "path": "tests_replica/test_store_concurrency.py",
+      "runtime_sha256": "4c0109482f5700537ad1cc68b1e164c19d97ff07a8adcf42ac5ceeac0062eb4c",
+      "authority_sha256": "6237bf57ef1e359bf4a1a385e189789dfb53430aec710cd20eea1115a9334f31"
     },
     {
       "path": "tests_replica/test_universal_application.py",
@@ -338,29 +339,6 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_relation_junction_visual_grammar.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_relation_junction_visual_grammar.py",
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3",
-      "authority_sha256": null,
-      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
-    },
-    {
-      "candidate_id": "runtime-source-drift:28bb3c7bf604594b",
-      "path": "tests_replica/test_store_concurrency.py",
-      "status": "missing_in_authority",
-      "candidate_kind": "court_candidate",
-      "migration_track": "revision_integrity_court",
-      "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
-      "promotion_allowed": false,
-      "bulk_copy_allowed": false,
-      "authority_basis": [
-        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
-        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
-      ],
-      "required_canonical_first_step": "rebuild as a canonical revision/commit court if it covers a real Cell-store invariant",
-      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_store_concurrency.py",
-      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_store_concurrency.py",
-      "runtime_sha256": "4c0109482f5700537ad1cc68b1e164c19d97ff07a8adcf42ac5ceeac0062eb4c",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
@@ -574,7 +552,7 @@
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
     },
     {
-      "candidate_id": "runtime-source-drift:1feabbdc4195049b",
+      "candidate_id": "runtime-source-drift:5ce5e57f335c25b8",
       "path": "nodelang/universal_application.py",
       "status": "different_from_authority",
       "candidate_kind": "implementation_candidate",
@@ -591,7 +569,7 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\universal_application.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\universal_application.py",
       "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-      "authority_sha256": "047c4f7f50952fc3fcd180ed803f02820475c7830ab335439abc00c01d72b403",
+      "authority_sha256": "e328e905c069f747025afbbe7527a9ac1a90047a7854ac4a64d32b83b46d6bc3",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
@@ -799,6 +777,29 @@
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_relation_topology_editor.py",
       "runtime_sha256": "9b61340abd960b16222979a033c5ec40d95b2a3ea2e0cc7fc76be5f1ea6ad011",
       "authority_sha256": "3b418e8c986d3ce47957c001334199f1dfb90d40f37b386a57edc49c07e9861d",
+      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+    },
+    {
+      "candidate_id": "runtime-source-drift:997a1a9c1e81b9f1",
+      "path": "tests_replica/test_store_concurrency.py",
+      "status": "different_from_authority",
+      "candidate_kind": "court_candidate",
+      "migration_track": "revision_integrity_court",
+      "authority_disposition": "migration_evidence_not_authority",
+      "resolution_state": "classified_unresolved",
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "authority_basis": [
+        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+      ],
+      "required_canonical_first_step": "rebuild as a canonical revision/commit court if it covers a real Cell-store invariant",
+      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_store_concurrency.py",
+      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_store_concurrency.py",
+      "runtime_sha256": "4c0109482f5700537ad1cc68b1e164c19d97ff07a8adcf42ac5ceeac0062eb4c",
+      "authority_sha256": "6237bf57ef1e359bf4a1a385e189789dfb53430aec710cd20eea1115a9334f31",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"

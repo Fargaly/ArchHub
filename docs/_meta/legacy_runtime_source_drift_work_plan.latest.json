@@ -168,8 +168,8 @@
       "resolution_state": "classified_unresolved",
       "candidate_count": 3,
       "candidate_ids": [
-        "runtime-source-drift:1feabbdc4195049b",
         "runtime-source-drift:284ac4ce029299d0",
+        "runtime-source-drift:5ce5e57f335c25b8",
         "runtime-source-drift:eab9b75ce810a640"
       ],
       "implementation_candidate_paths": [
@@ -336,7 +336,7 @@
       "resolution_state": "classified_unresolved",
       "candidate_count": 1,
       "candidate_ids": [
-        "runtime-source-drift:28bb3c7bf604594b"
+        "runtime-source-drift:997a1a9c1e81b9f1"
       ],
       "implementation_candidate_paths": [],
       "court_candidate_paths": [

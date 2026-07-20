@@ -8,8 +8,8 @@ Pins:
     returns the original topology (node ids preserved).
   * The `subgraph.user` executor cooks the inner graph via a nested
     WorkflowRunner and maps outer inputs to inner entry points.
-  * `add_wire` (the composer `/wire` path) idempotently appends a
-    canvas-shape wire dict.
+  * `add_wire` (the composer `/wire` path) idempotently births a
+    layered wire dict, not a bare line.
 """
 from __future__ import annotations
 
@@ -106,9 +106,16 @@ def test_compose_subgraph_collapses_three_connected_nodes():
     inner = cfg["inner_graph"]
     assert len(inner["nodes"]) == 3
     assert len(inner["wires"]) == 2
-    # No outer dangling ports (all source nodes were captured too).
+    # No outer dangling inputs (all source nodes were captured too), but a
+    # closed group must still expose its terminal inner value.
     assert cfg["inner_inputs"] == []
-    assert cfg["inner_outputs"] == []
+    assert cfg["inner_outputs"] == [{
+        "port": "out__adder__sum",
+        "inner_node": "adder",
+        "inner_port": "sum",
+        "type": "number",
+        "label": "adder.sum",
+    }]
 
 
 def test_compose_subgraph_lifts_dangling_ports():
@@ -254,14 +261,27 @@ def test_subgraph_user_executor_cooks_inner_graph():
 
 
 # ── add_wire (composer /wire equivalent) ────────────────────────────
-def test_add_wire_appends_canvas_shape_wire():
+def test_add_wire_births_layered_canvas_wire():
     g = _three_node_graph()
     out = subgraph.add_wire(g, "A", "value", "adder", "b")
     # Original graph not mutated.
     assert len(g["wires"]) == 2
     # New wire appended.
-    assert any(w["from"] == ["A", "value"] and w["to"] == ["adder", "b"]
-                 for w in out["wires"])
+    wire = next(w for w in out["wires"]
+                if w["from"] == ["A", "value"] and w["to"] == ["adder", "b"])
+    assert wire["id"] == "edge:A.value->adder.b"
+    assert wire["value_type"] == "number"
+    assert wire["schema_ref"] == "archhub.workflow.number"
+    assert wire["gate_policy"] == "type-compatible-and-enabled"
+    assert wire["codec"] == "none"
+    assert wire["encryption"] == "none"
+    assert wire["behavior"] == "data-flow"
+    assert wire["presentation"] == "canvas-bezier"
+    assert wire["provenance"] == "backend:subgraph.add_wire"
+    assert wire["data"]["relation"] == "data_flow"
+    assert wire["data"]["source_owner"] == "A"
+    assert wire["data"]["target_owner"] == "adder"
+    assert wire["data"]["gate_policy"] == wire["gate_policy"]
 
 
 def test_add_wire_is_idempotent():

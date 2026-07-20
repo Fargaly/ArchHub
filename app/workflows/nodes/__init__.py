@@ -1,14 +1,25 @@
-"""All built-in node types. Importing this package registers them.
+"""Legacy typed-runtime built-in node registry.
 
 Tool nodes are auto-generated from tool_engine.TOOLS via register_tool_nodes(),
 which must be called once after the tool engine is available (typically at
 app startup).
+
+This package is compatibility machinery for the old typed runtime. It is not
+Universal Cell product authority and must not be widened as a primitive
+catalogue.
 """
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 from . import io_data       # noqa: F401  registers input.parameter, output.parameter, data.constant, data.template
 from . import llm           # noqa: F401  registers llm.complete, llm.complete_with_tools, llm.classify
 from . import control       # noqa: F401  registers control.if, control.merge, control.foreach
 from . import aec           # noqa: F401  registers aec.dxf_reader, aec.ifc_reader, aec.csv_reader, aec.revit_wall, aec.column, aec.qto_pricing, aec.cost_estimate, aec.schedule_builder, aec.team_member_selector
 from . import core          # noqa: F401  ADR-003 Phase 1: registers host.* (7), conversation.chat, doc.* (8)
+from . import ui            # noqa: F401  legacy typed UI compatibility shim
 from . import connector     # noqa: F401  node-grammar slice 2: registers connector.run (the master host node)
 from . import host_typed    # noqa: F401  AgDR-0041 P1: typed host nodes (import_mesh / read_walls / export_viewport / run_script)
 from . import render_typed  # noqa: F401  Tier 2 (2026-05-24): typed render/vision/mesh/anim primitives over comfyui + dashscope connectors

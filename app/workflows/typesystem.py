@@ -1,4 +1,4 @@
-"""Type compatibility table for wires (ADR-003).
+"""Legacy typed-runtime type compatibility table for wires.
 
 Wires only connect ports whose types match OR are explicitly coercible
 under the table here. The table is intentionally **explicit, not duck
@@ -18,10 +18,20 @@ never wire into EXEC pins and vice versa.
 
 The function `can_wire(output, input)` is what the canvas calls
 before drawing the rubber-band line and committing the wire.
+
+This table is compatibility machinery for the old typed runtime. Universal Cell
+authority represents types/contracts as graph protocols, not enum dispatch.
 """
 from __future__ import annotations
 
-from .graph import PortType
+from .graph import PortType, normalize_port_type_ref, port_type_id
+
+TypeRef = PortType | str
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
 
 # Output type → set of input types it can flow into. Direction matters
 # because some coercions are one-way (e.g. WALL → SELECTION is
@@ -66,7 +76,26 @@ _COERCIONS: dict[PortType, set[PortType]] = {
 }
 
 
-def can_wire(output_port_type: PortType, input_port_type: PortType,
+def normalize_type_ref(value: TypeRef | None) -> str:
+    """Return an open type identifier without collapsing unknown types.
+
+    ``PortType`` remains a legacy convenience vocabulary. New types are plain
+    namespaced strings and require no enum or engine change.
+    """
+    return port_type_id(normalize_port_type_ref(value))
+
+
+def _matches_type_family(output_ref: str, input_ref: str) -> bool:
+    if input_ref.endswith(".*"):
+        prefix = input_ref[:-1]
+        return output_ref.startswith(prefix)
+    if input_ref.endswith("/*"):
+        prefix = input_ref[:-1]
+        return output_ref.startswith(prefix)
+    return False
+
+
+def can_wire(output_port_type: TypeRef, input_port_type: TypeRef,
               *, output_is_exec: bool = False,
               input_is_exec: bool = False) -> bool:
     """Return True if a wire can be drawn from output → input.
@@ -82,18 +111,26 @@ def can_wire(output_port_type: PortType, input_port_type: PortType,
         # Exec wires connect any exec-typed ports; the type discriminant
         # is the `exec` flag itself, not the PortType.
         return True
+    output_ref = normalize_type_ref(output_port_type)
+    input_ref = normalize_type_ref(input_port_type)
     # Data wires:
-    if output_port_type == input_port_type:
+    if output_ref == input_ref:
         return True
-    if output_port_type == PortType.ANY or input_port_type == PortType.ANY:
+    if output_ref == PortType.ANY.value or input_ref == PortType.ANY.value:
         return True
-    return input_port_type in _COERCIONS.get(output_port_type, set())
+    if _matches_type_family(output_ref, input_ref):
+        return True
+    legacy_inputs = _COERCIONS.get(output_ref, set())
+    return input_ref in {normalize_type_ref(value) for value in legacy_inputs}
 
 
-def list_compatible_inputs(output_type: PortType) -> list[PortType]:
+def list_compatible_inputs(output_type: TypeRef) -> list[TypeRef]:
     """For UI helpers — what input types accept this output?"""
-    if output_type == PortType.ANY:
+    if isinstance(output_type, PortType) and output_type == PortType.ANY:
         return list(PortType)
+    if not isinstance(output_type, PortType):
+        output_ref = normalize_type_ref(output_type)
+        return sorted({output_ref, PortType.ANY.value})
     out = {output_type}
     out |= _COERCIONS.get(output_type, set())
     out.add(PortType.ANY)

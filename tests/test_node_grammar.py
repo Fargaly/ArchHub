@@ -1,8 +1,8 @@
-"""Grounding test for the node grammar (app/workflows/node_grammar.py).
+"""Grounding test for the legacy typed node grammar.
 
-The node grammar is the canonical primitive set for the redesigned node
-system (docs/NODE_GRAMMAR.md). The OLD model — 80 enumerated LM_LIBRARY
-nodes — was decorative: 0 of 80 resolved to an engine executor.
+The active node-language authority is Universal Cell in
+`10.PRODUCT/13.NODE-LANGUAGE`. This court keeps the old typed Studio grammar
+grounded while it remains as migration/back-compatibility material.
 
 This test is the structural guarantee that history cannot repeat:
 every engine type a READY primitive can dispatch to MUST be a real,
@@ -69,6 +69,28 @@ class TestGrammarIsGrounded:
 
 
 class TestGrammarShape:
+    def test_typed_grammar_is_marked_migration_only(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "app"
+            / "workflows"
+            / "node_grammar.py"
+        ).read_text(encoding="utf-8")
+
+        assert ng.LEGACY_MIGRATION_ONLY is True
+        assert ng.AUTHORITY_STATUS == "superseded_by_universal_cell"
+        assert ng.ACTIVE_AUTHORITY == "10.PRODUCT/13.NODE-LANGUAGE"
+        assert ng.PROMOTION_ALLOWED is False
+        assert ng.AUTHORITY_METADATA == {
+            "legacy_migration_only": True,
+            "authority_status": "superseded_by_universal_cell",
+            "active_authority": "10.PRODUCT/13.NODE-LANGUAGE",
+            "promotion_allowed": False,
+        }
+        assert "not the active node-language authority" in source
+        assert "canonical primitive node set" not in source
+        assert "Single source of truth for the redesigned node system" not in source
+
     def test_founder_families_all_covered(self):
         cats = {p.cat for p in ng.PRIMITIVES}
         kinds = {p.kind for p in ng.PRIMITIVES}
@@ -80,6 +102,19 @@ class TestGrammarShape:
     def test_kinds_are_unique(self):
         kinds = [p.kind for p in ng.PRIMITIVES]
         assert len(kinds) == len(set(kinds))
+
+    def test_typed_input_value_params_keep_editor_types(self):
+        by_kind = {p.kind: p for p in ng.PRIMITIVES}
+        expected = {
+            "number": "number",
+            "text": "text",
+            "boolean": "boolean",
+            "file": "text",
+            "color": "color",
+        }
+        for kind, param_type in expected.items():
+            params = {p["k"]: p for p in by_kind[kind].params}
+            assert params["value"]["type"] == param_type
 
     def test_grammar_is_small_a_grammar_not_a_catalogue(self):
         # SLICE H + I + M1.5 SHARE: typed-node split per category +
@@ -113,7 +148,9 @@ class TestGrammarShape:
         # data.coalesce config-fallback `x or default`; `ensure` = data.ensure
         # type-guard whose on_fail:error is the status:error a subgraph
         # propagates). Two real grounded stem cells, not filler. Cap 92 → 94.
-        assert len(ng.PRIMITIVES) <= 94
+        # SPEC §10 self-hosting → +1 (`ui.element`, a real UI parent/child
+        # card node with its own registry spec). Cap 94 → 95.
+        assert len(ng.PRIMITIVES) <= 95
 
 
 class TestEngineTypeResolution:
@@ -164,7 +201,13 @@ class TestGrammarPayload:
         for entry in payload:
             assert {"kind", "display", "cat", "selector", "engine_types",
                     "status", "note", "ports", "params",
-                    "blurb"} <= entry.keys()
+                    "blurb", "legacy_migration_only",
+                    "authority_status", "active_authority",
+                    "promotion_allowed"} <= entry.keys()
+            assert entry["legacy_migration_only"] is True
+            assert entry["authority_status"] == "superseded_by_universal_cell"
+            assert entry["active_authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
+            assert entry["promotion_allowed"] is False
             assert {"in", "out"} <= entry["ports"].keys()
             assert isinstance(entry["params"], list)
             # `blurb` is the user-facing palette subtitle — short + plain,

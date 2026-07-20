@@ -58,7 +58,9 @@ def test_ai_plan_grammar_count_within_cap():
     # +1 -> 92: stem-rebuild Phase-0 `sense` (sense.extract PROPERTY-checker).
     # +2 -> 94: stem-rebuild Phase-0 NORMALIZATION INFRA cells data.coalesce +
     # data.ensure — bumped in lockstep with their node_grammar entries.
-    assert len(ng.PRIMITIVES) <= 94
+    # +1 -> 95: migration-only `ui.element`, retained for saved typed UI
+    # graphs while Universal Cell is the active node-language authority.
+    assert len(ng.PRIMITIVES) <= 95
 
 
 def test_ai_plan_carries_replay_param():

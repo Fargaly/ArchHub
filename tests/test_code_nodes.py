@@ -241,7 +241,9 @@ def test_code_grammar_count_after_slice_l():
     # +1 -> 92: stem-rebuild Phase-0 `sense` (sense.extract PROPERTY-checker).
     # +2 -> 94: stem-rebuild Phase-0 NORMALIZATION INFRA cells data.coalesce +
     # data.ensure — bumped in lockstep with their node_grammar entries.
-    assert len(ng.PRIMITIVES) <= 94
+    # +1 -> 95: migration-only `ui.element`, retained for saved typed UI
+    # graphs while Universal Cell is the active node-language authority.
+    assert len(ng.PRIMITIVES) <= 95
     payload = ng.grammar_payload()
     hardcoded = [e for e in payload if not e.get("_source")]
     # +1 → 71 (join), +1 → 72 (assert): stem-rebuild Phase-0 reconcile +
@@ -256,7 +258,8 @@ def test_code_grammar_count_after_slice_l():
     # +1 -> 83: stem-rebuild Phase-0 `sense` (visible PROPERTY-checker).
     # +2 -> 85: stem-rebuild Phase-0 NORMALIZATION INFRA cells coalesce +
     # ensure also surface in the hardcoded palette feed. Cap raised 83 -> 85.
-    assert len(hardcoded) <= 85
+    # +1 -> 86: migration-only `ui.element`.
+    assert len(hardcoded) <= 86
 
 
 # ─── 6. integration — code node cooks through runner ─────────────────

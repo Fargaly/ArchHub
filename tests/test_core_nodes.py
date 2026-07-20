@@ -14,6 +14,7 @@ or change a return key.
 """
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -26,9 +27,57 @@ sys.path.insert(0, str(APP_ROOT))
 # Importing workflows.nodes triggers registration; do it once for the
 # whole module.
 from workflows import nodes as _nodes_pkg     # noqa: F401
+from workflows import graph as graph_model
 from workflows.graph import Port, PortType
 from workflows import registry as _registry
 from workflows import typesystem
+
+
+class TestTypedGraphAuthorityBoundary:
+    def test_workflow_graph_is_marked_migration_only(self):
+        source = (
+            APP_ROOT / "workflows" / "graph.py"
+        ).read_text(encoding="utf-8")
+
+        assert graph_model.LEGACY_MIGRATION_ONLY is True
+        assert graph_model.AUTHORITY_STATUS == "superseded_by_universal_cell"
+        assert graph_model.ACTIVE_AUTHORITY == "10.PRODUCT/13.NODE-LANGUAGE"
+        assert graph_model.PROMOTION_ALLOWED is False
+        assert "not the active node-language authority" in source
+        assert "Legacy typed workflow graph data model" in source
+        assert "Graph data model for ArchHub workflows" not in source
+        assert "as a second graph language" in source
+
+    def test_changed_typed_runtime_modules_are_marked_migration_only(self):
+        paths = [
+            APP_ROOT / "agents" / "self_extend.py",
+            APP_ROOT / "workflows" / "custom_nodes.py",
+            APP_ROOT / "workflows" / "graph.py",
+            APP_ROOT / "workflows" / "node_grammar.py",
+            APP_ROOT / "workflows" / "runner.py",
+            APP_ROOT / "workflows" / "subgraph.py",
+            APP_ROOT / "workflows" / "typesystem.py",
+            APP_ROOT / "workflows" / "nodes" / "__init__.py",
+            APP_ROOT / "workflows" / "nodes" / "core.py",
+            APP_ROOT / "workflows" / "nodes" / "ui.py",
+        ]
+
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            constants = {}
+            for node in tree.body:
+                if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                    continue
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
+                    constants[target.id] = node.value.value
+
+            assert constants.get("LEGACY_MIGRATION_ONLY") is True, path
+            assert str(constants.get("AUTHORITY_STATUS")).startswith(
+                "superseded_by_universal_cell"
+            ), path
+            assert constants.get("ACTIVE_AUTHORITY") == "10.PRODUCT/13.NODE-LANGUAGE", path
+            assert constants.get("PROMOTION_ALLOWED") is False, path
 
 
 # ── PortType enum surface ──────────────────────────────────────────
@@ -144,6 +193,35 @@ class TestTypesystem:
         for t in (PortType.STRING, PortType.ELEMENT, PortType.HOST):
             assert t in typesystem.list_compatible_inputs(t)
             assert PortType.ANY in typesystem.list_compatible_inputs(t)
+
+    def test_custom_type_identity_is_open_and_exact(self):
+        facade = "founder.geometry.facade-panel"
+        assert typesystem.normalize_type_ref(facade) == facade
+        assert typesystem.can_wire(facade, facade)
+        assert not typesystem.can_wire(facade, "founder.image.material")
+        assert typesystem.list_compatible_inputs(facade) == ["any", facade]
+
+    def test_custom_type_family_port_is_explicit(self):
+        assert typesystem.can_wire(
+            "archhub.geometry.mesh", "archhub.geometry.*")
+        assert not typesystem.can_wire(
+            "archhub.image.texture", "archhub.geometry.*")
+
+    def test_known_speckle_alias_keeps_legacy_compatibility(self):
+        assert typesystem.normalize_type_ref(
+            PortType.GEOMETRY.to_speckle_type()) == "geometry"
+
+    def test_custom_node_spec_preserves_custom_port_type(self):
+        from workflows.custom_nodes import _spec_from_dict
+
+        custom = "founder.geometry.facade-panel"
+        spec = _spec_from_dict({
+            "type": "founder.custom_passthrough",
+            "inputs": [{"name": "panel", "type": custom}],
+            "outputs": [{"name": "panel", "type": custom}],
+        })
+        assert spec.inputs[0].type == custom
+        assert spec.outputs[0].type == custom
 
 
 # ── Registration of host.* family ──────────────────────────────────

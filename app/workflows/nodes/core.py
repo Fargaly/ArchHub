@@ -1,4 +1,4 @@
-"""Core node types for the graph-first architecture (ADR-003 Phase 4).
+"""Legacy typed-runtime core node registrations.
 
 Three families register here:
 
@@ -13,6 +13,9 @@ key) so unit tests + offline edits keep working.
 
 The return shapes are still pinned — Phase 4 ADD richer fields but
 NEVER drops the original envelope keys.
+
+This module is compatibility machinery for the old typed runtime, not the
+Universal Cell authority or a catalogue of product primitives.
 """
 from __future__ import annotations
 
@@ -24,6 +27,12 @@ from typing import Any
 
 from ..graph import Port, PortType
 from ..registry import NodeSpec, register
+
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
 
 
 # ===========================================================================

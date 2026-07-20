@@ -119,6 +119,18 @@ def test_build_ui_widget_rejects_empty_code():
     assert "code" in build["error"].lower()
 
 
+def test_float_widget_uses_the_compact_always_mounted_host():
+    build = self_extend.build_artifact("create_ui_widget", {
+        "id": _WID, "code": _GOOD_CODE, "placement": "float",
+    })
+    assert build["ok"] is True
+    assert widgets.get_widget(_WID)["placement"] == "float"
+    source = (_ROOT / "app" / "web_ui" / "studio-lm.jsx").read_text(encoding="utf-8")
+    assert "const AgentWidgetFloatHost" in source
+    assert "data-widget-placement=\"float\"" in source
+    assert "w.placement === 'float'" in source
+
+
 # ── COURT — ui_renders never greens blind; with launch skipped → needs_root ──
 
 

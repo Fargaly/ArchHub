@@ -1,7 +1,17 @@
 # ArchHub Node Grammar — typed-node catalogue
 
-> **Design reference — NOT the roadmap.** `docs/ROADMAP.md` is the single
-> source of truth for plans, backlog, and milestones.
+> **⚠️ OLD MODEL — this describes the SHIPPED app's typed catalogue, which the
+> node language SUPERSEDES.** The target architecture is the homoiconic
+> one-table kernel in `10.PRODUCT/13.NODE-LANGUAGE/` (SPEC §1/§2/§6): ONE node
+> primitive, no bespoke node classes; params, wires, groups, UI, sessions are
+> all the same node. The kernel engine of record is `nodelang/core.py` (closed
+> `KINDS` set + `OneTableViolation`, `tests_replica/` 73 green). A "typed node
+> per category / NodeSpec / registry" is the model being RETIRED — do not build
+> new work against this catalogue thinking it is the goal. Extend the kernel.
+>
+> **Design reference — NOT the roadmap.** `docs/ROADMAP.md` is an old planning
+> reference. Current authority flows through `10.PRODUCT/13.NODE-LANGUAGE/`
+> and the Universal Cell courts.
 >
 > Revised 2026-05-21 — replaces the category-named-as-node grammar with
 > typed nodes per category. Founder mandate: "categories hold MULTIPLE

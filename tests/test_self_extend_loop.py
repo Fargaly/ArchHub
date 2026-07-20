@@ -83,6 +83,20 @@ def test_seam1_build_tools_are_gated_writes():
 # ── SEAM 1 — build writes the REAL artifact locally ─────────────────────────
 
 
+def test_self_extend_loop_is_marked_legacy_projection_not_authority():
+    assert self_extend.LEGACY_MIGRATION_ONLY is True
+    assert self_extend.AUTHORITY_STATUS == "superseded_by_universal_cell_composer"
+    assert self_extend.ACTIVE_AUTHORITY == "10.PRODUCT/13.NODE-LANGUAGE"
+    assert self_extend.PROMOTION_ALLOWED is False
+
+    source = Path(self_extend.__file__).read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    assert "source of truth" not in source
+    assert "not Universal Cell product authority" in source
+
+
 def test_seam1_build_connector_writes_real_artifact():
     build = self_extend.build_artifact("create_connector", {
         "host": _HOST, "label": "Self-Ext Probe", "mechanism": "rest",
@@ -124,6 +138,29 @@ def test_seam23_court_greens_a_real_artifact():
     assert sweep["dry"] is True and sweep["root_green"] is True
     assert sweep["green_leaves"] == sweep["total_leaves"] == 1
     assert not sweep["needs_root"]   # no escalated leaves (empty list)
+
+
+def test_court_versions_changed_artifacts_and_reuses_exact_green_evidence():
+    build = self_extend.build_artifact("create_connector", {"host": _HOST})
+    store = _store()
+    try:
+        first = self_extend.court_verify(build, store=store)
+        repeated = self_extend.court_verify(build, store=store)
+        assert first["green"] is True
+        assert repeated["green"] is True
+        assert repeated["reused"] is True
+        assert repeated["tree_id"] == first["tree_id"]
+
+        _CONN_PATH.write_text(
+            _CONN_PATH.read_text(encoding="utf-8") + "\n# versioned court\n",
+            encoding="utf-8",
+        )
+        changed = self_extend.court_verify(build, store=store)
+        assert changed["green"] is True
+        assert changed["reused"] is False
+        assert changed["tree_id"] != first["tree_id"]
+    finally:
+        store.close()
 
 
 def test_seam23_court_refuses_a_broken_artifact():

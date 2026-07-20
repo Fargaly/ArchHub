@@ -168,8 +168,8 @@
       "resolution_state": "classified_unresolved",
       "candidate_count": 3,
       "candidate_ids": [
-        "runtime-source-drift:0e01c5a314bc3b06",
         "runtime-source-drift:1feabbdc4195049b",
+        "runtime-source-drift:284ac4ce029299d0",
         "runtime-source-drift:eab9b75ce810a640"
       ],
       "implementation_candidate_paths": [

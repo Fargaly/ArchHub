@@ -71,10 +71,6 @@
       "runtime_sha256": "6c71d76ace185011efca66d699d482b189a3a175522d9bac9dc9b9bee3d3f88c"
     },
     {
-      "path": "tests_replica/test_projection_delta.py",
-      "runtime_sha256": "21d8b7a9305bb2ddd6121bc4ae54a50d8d9aba91f477e129f2022f2f78b2afbb"
-    },
-    {
       "path": "tests_replica/test_relation_junction_visual_grammar.py",
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3"
     },
@@ -161,6 +157,11 @@
       "path": "tests_replica/test_application_server_governance.py",
       "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
       "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a"
+    },
+    {
+      "path": "tests_replica/test_projection_delta.py",
+      "runtime_sha256": "21d8b7a9305bb2ddd6121bc4ae54a50d8d9aba91f477e129f2022f2f78b2afbb",
+      "authority_sha256": "3d85251d38453ada62a8b5473bef361ff6969ce9940dd56d764e292ea93a5585"
     },
     {
       "path": "tests_replica/test_relation_security.py",
@@ -314,29 +315,6 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_playable_interaction.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_playable_interaction.py",
       "runtime_sha256": "6c71d76ace185011efca66d699d482b189a3a175522d9bac9dc9b9bee3d3f88c",
-      "authority_sha256": null,
-      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
-    },
-    {
-      "candidate_id": "runtime-source-drift:0e01c5a314bc3b06",
-      "path": "tests_replica/test_projection_delta.py",
-      "status": "missing_in_authority",
-      "candidate_kind": "court_candidate",
-      "migration_track": "application_graph_projection",
-      "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
-      "promotion_allowed": false,
-      "bulk_copy_allowed": false,
-      "authority_basis": [
-        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
-        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
-      ],
-      "required_canonical_first_step": "prove projection changes as graph-derived deltas from released roots, not copied runtime state",
-      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_projection_delta.py",
-      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_projection_delta.py",
-      "runtime_sha256": "21d8b7a9305bb2ddd6121bc4ae54a50d8d9aba91f477e129f2022f2f78b2afbb",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
@@ -752,6 +730,29 @@
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_application_server_governance.py",
       "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
       "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a",
+      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+    },
+    {
+      "candidate_id": "runtime-source-drift:284ac4ce029299d0",
+      "path": "tests_replica/test_projection_delta.py",
+      "status": "different_from_authority",
+      "candidate_kind": "court_candidate",
+      "migration_track": "application_graph_projection",
+      "authority_disposition": "migration_evidence_not_authority",
+      "resolution_state": "classified_unresolved",
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "authority_basis": [
+        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+      ],
+      "required_canonical_first_step": "prove projection changes as graph-derived deltas from released roots, not copied runtime state",
+      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_projection_delta.py",
+      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_projection_delta.py",
+      "runtime_sha256": "21d8b7a9305bb2ddd6121bc4ae54a50d8d9aba91f477e129f2022f2f78b2afbb",
+      "authority_sha256": "3d85251d38453ada62a8b5473bef361ff6969ce9940dd56d764e292ea93a5585",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"

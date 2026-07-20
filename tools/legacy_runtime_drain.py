@@ -459,7 +459,9 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
     elif (
         "authority_bridge" in normalized
         or "application_server" in normalized
+        or normalized == "nodelang/capabilities.py"
         or "cloud_gateway" in normalized
+        or "universal_cell_capabilities" in normalized
         or "machine_transport" in normalized
         or "boundary_ports" in normalized
     ):
@@ -2325,6 +2327,14 @@ def main(argv: list[str] | None = None) -> int:
             "source drift. This is read-only and never touches processes."
         ),
     )
+    parser.add_argument(
+        "--output-json",
+        default="",
+        help=(
+            "Also write the selected JSON result to this path. This records "
+            "evidence only and never interrupts processes."
+        ),
+    )
     args = parser.parse_args(argv)
 
     product_root = Path(args.product_root).resolve()
@@ -2433,7 +2443,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.sync_universal_holders:
             plan = json.loads(Path(result["drain_plan"]).read_text(encoding="utf-8"))
             result["universal_holder_sync"] = sync_runtime_holders_to_universal(plan)
-    print(json.dumps(result, indent=2))
+    text = json.dumps(result, indent=2) + "\n"
+    if args.output_json:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text, encoding="utf-8")
+    print(text, end="")
     if args.enforce_retirement_gate:
         gate = result.get("retirement_gate")
         if gate is None and args.handoff_board:

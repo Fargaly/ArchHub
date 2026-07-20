@@ -929,10 +929,12 @@ def test_known_runtime_source_drift_paths_are_classified_not_promotable():
         "tests_replica/test_relation_security.py",
         "tests_replica/test_relation_topology_editor.py",
         "tests_replica/test_store_concurrency.py",
+        "tests_replica/test_universal_cell_capabilities.py",
         "tests_replica/test_visual_graph_workspace.py",
         "tests_replica/test_visual_node_authority.py",
         "nodelang/application_server.py",
         "nodelang/authority_bridge.py",
+        "nodelang/capabilities.py",
         "nodelang/cell_baboom_connector_execution.py",
         "nodelang/cell_baboom_model_execution.py",
         "nodelang/universal_application.py",
@@ -1819,4 +1821,34 @@ def test_cli_source_drift_work_plan_is_read_only_authority_scoped(
     assert out["work_items"][0]["implementation_candidate_paths"] == [
         "nodelang/authority_bridge.py"
     ]
+    assert not out_dir.exists()
+
+
+def test_cli_can_write_selected_json_evidence_without_process_mutation(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "authority_bridge.py").write_text("# runtime\n", encoding="utf-8")
+    out_dir = tmp_path / "must-not-exist"
+    evidence = tmp_path / "evidence" / "work-plan.json"
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--source-drift-work-plan",
+        "--output-json", str(evidence),
+    ])
+
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert json.loads(evidence.read_text(encoding="utf-8")) == out
+    assert out["schema"] == "archhub-runtime-source-drift-migration-work/v1"
     assert not out_dir.exists()

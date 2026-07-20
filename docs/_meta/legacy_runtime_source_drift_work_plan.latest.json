@@ -3,7 +3,7 @@
   "source_schema": "archhub-runtime-copy-source-drift/v1",
   "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-  "candidate_count": 27,
+  "candidate_count": 29,
   "track_count": 7,
   "unresolved_track_count": 7,
   "all_candidates_classified": true,
@@ -26,25 +26,29 @@
         "privacy_tier": "T0 PUBLIC"
       },
       "resolution_state": "classified_unresolved",
-      "candidate_count": 7,
+      "candidate_count": 9,
       "candidate_ids": [
         "runtime-source-drift:031e913f0938b8f1",
         "runtime-source-drift:105875a19aa8535b",
         "runtime-source-drift:4ab445be955bee79",
+        "runtime-source-drift:6f3fc854f2cfddf7",
         "runtime-source-drift:884c8e926b412d50",
         "runtime-source-drift:90d2b62c5a5a3ab5",
         "runtime-source-drift:94ef311a1492d01e",
-        "runtime-source-drift:9fca61215b884868"
+        "runtime-source-drift:9fca61215b884868",
+        "runtime-source-drift:b940423a09df0cea"
       ],
       "implementation_candidate_paths": [
         "nodelang/application_server.py",
         "nodelang/authority_bridge.py",
+        "nodelang/capabilities.py",
         "nodelang/universal_cloud_gateway.py"
       ],
       "court_candidate_paths": [
         "tests_replica/test_application_boundary_ports.py",
         "tests_replica/test_application_machine_transport.py",
         "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_universal_cell_capabilities.py",
         "tests_replica/test_universal_cloud_gateway.py"
       ],
       "required_canonical_first_steps": [

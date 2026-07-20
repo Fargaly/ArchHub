@@ -6049,3 +6049,102 @@ Next action:
 - Integrate the Brain Workshop runtime adapter only as a coherent slice:
   adapter files plus the exact active-work/server wiring and focused courts,
   without absorbing unrelated WIP from those large files.
+
+## 2026-07-20 Brain governance Cell authority layer integrated
+
+Desk/session boundary:
+
+- No Desktop files were created.
+- No workspace-root scratch files were created.
+- No visible windows, browser tabs, app windows, or new servers were launched.
+- No running user sessions or copied-runtime holders were stopped, restarted,
+  moved, archived, or relaunched.
+- Two timed-out pytest commands leaked child processes; only those exact pytest
+  PIDs were stopped after verifying their command lines.
+
+Integrated commit:
+
+- `cbfb00c` - `Integrate Brain governance Cell authority layer`.
+  - Integrated the Brain Workshop runtime adapter coherently, including
+    `cell_room.py`, `cell_room_wiring.py`, active-work/server wiring, and
+    tests. This avoids the earlier fake-shell risk of committing the two
+    adapter files without their real call sites.
+  - Integrated the Brain control-plane Cell-first governance layer: compliance
+    history, Core Values authority, Grand Map sync, hook coverage, runtime
+    holders, governed sessions, agent OS gates, Brainwrap strict mode, safety
+    court gates, and related courts.
+  - Fixed the hook coverage monitor test so auto-repair proves the monitor calls
+    the Cell-first repair path without starting a full Universal app projection
+    inside that unit test.
+  - Fixed the installer status text so the Stop completion gate is explicitly a
+    Stop-side migration guard over the legacy Brain active-work projection, not
+    a final product authority claim.
+
+Verification:
+
+- Syntax compile:
+  `python -m py_compile personal-brain-mcp\src\personal_brain\active_work.py personal-brain-mcp\src\personal_brain\server.py personal-brain-mcp\src\personal_brain\cell_room.py personal-brain-mcp\src\personal_brain\cell_room_wiring.py`
+  - result: passed.
+- Active-work DB / Workshop authority:
+  `python -m pytest personal-brain-mcp\tests\test_active_work_db.py -q -p no:cacheprovider --timeout=300`
+  - result: `58 passed, 1 warning in 26.72s`.
+- Brain server:
+  `python -m pytest personal-brain-mcp\tests\test_server.py -q -p no:cacheprovider --timeout=300`
+  - result: `48 passed, 1 warning in 2.51s`.
+- Universal runtime bridge:
+  `python -m pytest personal-brain-mcp\tests\test_universal_runtime_bridge.py -q -p no:cacheprovider --timeout=240`
+  - result: `4 passed, 1 warning in 74.86s`.
+- Compliance / Grand Map / run report:
+  `python -m pytest personal-brain-mcp\tests\test_compliance_report.py personal-brain-mcp\tests\test_grand_map_sync.py personal-brain-mcp\tests\test_run_report.py -q -p no:cacheprovider --timeout=240`
+  - result: `19 passed, 1 warning in 40.46s`.
+- Hook coverage:
+  `python -m pytest personal-brain-mcp\tests\test_hook_coverage.py -q -p no:cacheprovider --timeout=180`
+  - result after monitor-test repair: `28 passed, 1 warning in 191.79s`.
+- Authority/classifier/source governance subset:
+  `python -m pytest tests\test_authority_wip_classify.py ..\13.NODE-LANGUAGE\tests_replica\test_cell_legacy_brain_governance.py personal-brain-mcp\tests\test_universal_session_manager.py personal-brain-mcp\tests\test_secret_resolver.py personal-brain-mcp\tests\test_run_report.py -q -p no:cacheprovider --timeout=240`
+  - result: `64 passed, 1 warning in 49.30s`.
+- Installer / hook coverage matrix:
+  `python -m pytest personal-brain-mcp\tests\test_installer.py personal-brain-mcp\tests\test_installer_coverage.py -q -p no:cacheprovider --timeout=240`
+  - result after installer wording repair: `45 passed, 1 warning in 0.60s`.
+- MCP/reflexion/ROMA/server verify:
+  `python -m pytest personal-brain-mcp\tests\test_mcp_core_http.py personal-brain-mcp\tests\test_reflexion.py personal-brain-mcp\tests\test_roma.py personal-brain-mcp\tests\test_server_verify.py -q -p no:cacheprovider --timeout=240`
+  - result: `127 passed, 1 warning in 9.32s`.
+- Agent OS / Brainwrap / governed sessions / runtime holder courts:
+  `python -m pytest tests\test_agent_os_broker.py tests\test_agent_os_gate.py tests\test_brainwrap.py tests\test_cockpit_legacy_authority_boundary.py tests\test_governed_sessions.py tests\test_legacy_runtime_drain.py tests\test_live_runtime_holders.py -q -p no:cacheprovider --timeout=240`
+  - result: `153 passed, 1 warning in 1.79s`.
+- Exact staged-path safety scan:
+  - no cache, binary, env, key, pem, or large-model paths staged.
+  - no private-key blocks or live tokens found in the staged category set.
+  - secret-looking strings are test placeholders; process-control hits are in
+    governed-session/agent-broker tools and covered by their courts.
+
+Current WIP/live-holder evidence after `cbfb00c`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- total classified WIP entries: `101`.
+- no-unclassified gate: `ok`, count `0`.
+- `governance_brain_authority_layer`: consumed.
+- `universal_cell_runtime_adapter`: consumed.
+- classification digest:
+  `57bba147eefd85c7e8bf1acc74792d647340beefc66990afaf5f19b9e2801a0e`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+
+Current position:
+
+- Brain/Workshop governance is closer to the requested one-graph authority:
+  the Brain room tools, assignment gate, hook coverage, compliance, Grand Map
+  sync, governed sessions, and strict Brainwrap paths now have tracked
+  Cell-first control-plane code and executable courts.
+- This is still control-plane convergence, not a complete product release. The
+  remaining WIP is now concentrated in application UI/runtime, legacy workflow
+  bridges, cloud readiness, adapter payloads, documentation evidence, and the
+  live-locked copied runtime.
+
+Next action:
+
+- Continue with the next WIP category that most directly removes legacy product
+  authority: likely `legacy_webshell_host_court` / `legacy_webshell_host_with_cell_bridge`
+  or `universal_cell_projection_bridge`, while keeping the four live
+  `node_runtime` holders untouched.

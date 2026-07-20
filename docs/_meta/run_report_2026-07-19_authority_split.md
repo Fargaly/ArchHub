@@ -7046,3 +7046,78 @@ Next action:
 
 - Commit the refreshed ledger/report checkpoint, then consume the
   `legacy_self_extension_runtime_bridge` slice.
+
+## Self-extension bridge convergence - 2026-07-20
+
+Commit:
+
+- `aea2d04` - `Fence legacy self-extension bridge`.
+
+Intent:
+
+- Consume the `legacy_self_extension_runtime_bridge` slice without promoting the
+  old typed self-extension path as Universal Cell authority.
+- Bind reused court results to exact artifact identity so a stale green court
+  cannot silently certify a different generated artifact.
+
+Mechanisms added:
+
+- `app/agents/self_extend.py` now declares:
+  - `LEGACY_MIGRATION_ONLY = True`,
+  - `AUTHORITY_STATUS = "superseded_by_universal_cell_composer"`,
+  - `ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"`,
+  - `PROMOTION_ALLOWED = False`.
+- `court_verify(...)` now computes an artifact digest from the build identity
+  plus the artifact bytes and includes that digest in the ROMA court root.
+- Reused green courts are returned only when the digest-bound root matches the
+  same artifact identity.
+
+Verification:
+
+- Main self-extension courts:
+  `python -m pytest tests\test_self_extend_loop.py tests\test_self_extend_ui_widget.py tests\test_self_extend_free_text_live.py tests\test_authority_wip_classify.py::test_classification_keeps_universal_cell_separate_from_legacy -q -p no:cacheprovider --timeout=300`
+  - result: `45 passed, 1 skipped, 1 warning`.
+- Cell-side/classifier bridge courts:
+  `python -m pytest tests\test_authority_wip_classify.py::test_legacy_self_extension_bridge_gate_executes_cell_effect_courts ..\13.NODE-LANGUAGE\tests_replica\test_legacy_self_extension_bridge.py -q -p no:cacheprovider --timeout=300`
+  - result: `5 passed, 1 warning`.
+- Syntax compile:
+  `python -m py_compile app\agents\self_extend.py`
+  - result: passed.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+- Brain commit gate:
+  - attempted on `app/agents/self_extend.py`.
+  - fail-opened because `http://127.0.0.1:8473/mcp` was unreachable.
+
+Current WIP/live-holder evidence after `aea2d04`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `26`.
+- classified WIP entries in the authority ledger: `25`.
+- no-unclassified gate: `ok`, count `0`.
+- `legacy_self_extension_runtime_bridge`: consumed.
+- classification digest:
+  `08fcca604581dd383e8df9b7c59e5bc17c45e064034995ee0c41f785e1638e8a`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+
+Current position:
+
+- Self-extension is fenced as a legacy bridge, not an authority root.
+- Remaining WIP is the UI/WebShell court batch, five UI runtime evidence probes,
+  refreshed live-holder evidence, and the live-locked copied runtime.
+
+Next action:
+
+- Commit the refreshed ledger/report checkpoint, then consume the
+  `legacy_webshell_host_court` batch by running the UI/WebShell courts and
+  staging only the court files that already reflect the compatibility boundary.

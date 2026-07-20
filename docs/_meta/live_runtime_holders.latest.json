@@ -2,7 +2,7 @@
   "schema": "archhub-live-runtime-holders/v1",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
   "exists": true,
-  "observed_at": 1784567685.8648007,
+  "observed_at": 1784567845.3474805,
   "holder_count": 4,
   "archive_safe_now": false,
   "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
@@ -14,11 +14,11 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "match": "cwd",
       "create_time": 1784000816.2812548,
-      "age_seconds": 566869.5835459232,
+      "age_seconds": 567029.0662257671,
       "status": "running",
-      "cpu_user_seconds": 812.78125,
+      "cpu_user_seconds": 812.8125,
       "cpu_system_seconds": 27.875,
-      "cpu_total_seconds": 840.65625
+      "cpu_total_seconds": 840.6875
     },
     {
       "pid": 113216,
@@ -27,11 +27,11 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
       "match": "cwd",
       "create_time": 1784038036.3854764,
-      "age_seconds": 529649.4793243408,
+      "age_seconds": 529808.9620041847,
       "status": "running",
       "cpu_user_seconds": 63.546875,
-      "cpu_system_seconds": 19.140625,
-      "cpu_total_seconds": 82.6875
+      "cpu_system_seconds": 19.15625,
+      "cpu_total_seconds": 82.703125
     },
     {
       "pid": 117712,
@@ -40,7 +40,7 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.734114,
-      "age_seconds": 476559.13068675995,
+      "age_seconds": 476718.61336660385,
       "status": "running",
       "cpu_user_seconds": 0.0,
       "cpu_system_seconds": 0.0,
@@ -53,7 +53,7 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.8539033,
-      "age_seconds": 476559.010897398,
+      "age_seconds": 476718.4935772419,
       "status": "running",
       "cpu_user_seconds": 1.203125,
       "cpu_system_seconds": 0.03125,

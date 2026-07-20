@@ -1,0 +1,135 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-21T01:24:28.8584146+04:00",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+  "public_repo": "10.PRODUCT/12.PRODUCTION",
+  "migration_track": "visual_workspace_interaction",
+  "slice": "cell_native_canvas_interaction_and_properties_controls",
+  "research_basis": [
+    {
+      "source": "W3C Pointer Events",
+      "url": "https://www.w3.org/TR/pointerevents/",
+      "used_for": "hardware-neutral pointer handling and pointer capture expectations"
+    },
+    {
+      "source": "W3C CSSOM View Module",
+      "url": "https://www.w3.org/TR/cssom-view-1/",
+      "used_for": "viewport, scrolling, and element geometry measurement boundaries"
+    },
+    {
+      "source": "Autodesk AutoCAD window selection behavior",
+      "url": "https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/Changing-window-selection-behavior.html",
+      "used_for": "left-to-right window selection and right-to-left crossing selection precedent for architect-facing canvas behavior"
+    }
+  ],
+  "decision": {
+    "accepted_as_authority": true,
+    "runtime_copy_promoted": false,
+    "bulk_copy_performed": false,
+    "live_process_interruption": false,
+    "summary": "Visual workspace behavior is covered by Cell-native authority courts rather than copied typed-node runtime tests. The courts prove editable graph-held interaction policy knobs, screen-coordinate marquee selection under pan/zoom/scroll, Shift/Ctrl selection rules, wheel/fit zoom constraints, visible wire hit targets and endpoint rewiring, functional graph-defined Properties tabs, add-parameter/add-interface through one revision-bound interaction endpoint, graph-authored presentation/theme color edits, stable keyed reconciliation, large-canvas performance budgets, graph-authored toolbar/catalog controls, group/ungroup, scope/open-domain navigation, and n-ary relation incidence cables. This slice fixed a real court failure in the browser probe: Add Parameter/Add Interface fixture bindings now declare submitted event-fact sources, and the icon court checks icon-bearing command controls instead of editable data fields."
+  },
+  "authority_files": [
+    {
+      "path": "tests_js/universal_interaction_probe.mjs",
+      "sha256": "f96920cb0b86f802dbecbfd125aa257bfd9348a1f4ffee0a2c5975708b843ee3",
+      "evidence": "Browser-DOM probe now declares submitted event-fact sources for relation-form submission fixtures and checks SVG icons only on controls that declare graph icon roots."
+    },
+    {
+      "path": "tests_replica/test_universal_ui_interactions.py",
+      "sha256": "cd0bc7cb6cb59ec1ce37fcda7bbc245b81362323ee58d15dc769111ad410fd6a",
+      "evidence": "Rendered-DOM court covers visible canvas selection, wires, properties, authoring, presentation, catalogue, toolbar, grouping, scope, and relation interaction behavior."
+    },
+    {
+      "path": "tests_replica/test_canvas_interaction_policy.py",
+      "sha256": "60ae5679e6a9a41bac220124e3fe8912e550972dbff0c84f635abdd7ae0c9550",
+      "evidence": "Interaction policy courts prove openable graph-held canvas knobs, browser-ready payload, editable values, invalid-value denial, policy wiring, and real application projection."
+    },
+    {
+      "path": "tests_replica/test_universal_interaction_server.py",
+      "sha256": "c6a6e527be813968b5773aee9ebcc3dadcf781af97f50c329ec25bbcd49bf51c",
+      "evidence": "Server interaction courts prove one revision-bound interaction endpoint for properties, forms, catalogue placement, openable nodes, inspector lens, deltas, toolbar controls, group/ungroup, and scope-up."
+    },
+    {
+      "path": "tests_replica/test_universal_interaction_application.py",
+      "sha256": "6fc01cb4c63ff847556e9c32d21b154d3db1d7dcfa9f260355d07d3831982c9e",
+      "evidence": "Application-level interaction court proves real Properties tabs execute through one generic graph path."
+    },
+    {
+      "path": "tests_replica/test_cell_interactions.py",
+      "sha256": "819537931e88bbeb20163c644d066403f34b9b66fd61238a7b239627814f950b",
+      "evidence": "Cell interaction protocol courts prove events, controls, leases, and event facts are graph-held."
+    },
+    {
+      "path": "tests_replica/test_cell_relations_view.py",
+      "sha256": "e6994e0cfb54612b6ecbfe9dd160f460b97f5408de78bd093c6fe395dda21dec",
+      "evidence": "Relation presenter courts prove layered readable relation groups, exact gate/option identity, containment distinction, and live application projections."
+    },
+    {
+      "path": "tests_replica/test_relation_security.py",
+      "sha256": "6260e3d5d66ee473745e214433551ace933f49175cd6c9ab9a1d0cc3d341b9bd",
+      "evidence": "Relation security courts prove exposure policy, directionality, receipts, denial, and policy tamper fail-closed behavior."
+    },
+    {
+      "path": "tests_replica/test_relation_topology_editor.py",
+      "sha256": "3b418e8c986d3ce47957c001334199f1dfb90d40f37b386a57edc49c07e9861d",
+      "evidence": "Relation topology courts prove exact incidence/interface rewiring and invisible participant rejection without partial mutation."
+    },
+    {
+      "path": "nodelang/ui_runtime.py",
+      "sha256": "60dce67e6ed4c11d9363035dec3eadb8e389f02e91860cdaceaae7c6813f11ac",
+      "evidence": "Generic browser runtime exercised by the rendered-DOM courts."
+    },
+    {
+      "path": "nodelang/cell_canvas_interaction_policy.py",
+      "sha256": "231ed311a01c1c509bb4bc13918559e8850056778cb5de2aa72b83abd26a9198",
+      "evidence": "Cell-native interaction policy implementation exercised by the policy courts."
+    }
+  ],
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_canvas_interaction_policy.py -q --timeout=180",
+      "result": "6 passed in 13.14s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_interaction_server.py -q --timeout=180 -k \"properties_tab or property_form or property_value_edit or interface_form or catalogue_placement or openable_canvas_node or inspector_lens or canvas_interaction_delta or topology_delta or semantic_toolbar or group_and_ungroup or scope_up\"",
+      "result": "13 passed in 280.83s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_interaction_application.py tests_replica\\test_cell_interactions.py tests_replica\\test_cell_relations_view.py tests_replica\\test_relation_security.py tests_replica\\test_relation_topology_editor.py -q --timeout=180",
+      "result": "31 passed in 79.56s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_ui_interactions.py -q --timeout=180 -k \"graph_authored_add_parameter_uses_the_governed_command_by_keyboard or graph_authored_add_interface_uses_exact_graph_options_by_keyboard or visible_icon_controls_project_real_cell_native_lucide_geometry\"",
+      "result": "3 passed, 66 deselected in 54.56s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_ui_interactions.py -q --timeout=180 -k \"selected_or_hovered_nodes_expose_real_source_sockets or every_visible_wire_has_one_graph_identical_wide_hit_target or click_selects_without_requesting_arrange_authority or clicking_a_socket_selects_its_exact_interface_root or fit_measures_the_projected_graph_instead_of_using_a_magic_zoom or shift_removes_and_ctrl_does_not_remove or containing_marquee_uses_canvas_screen_coordinates or marquee_origin_accounts_for_scrollable_canvas_content or marquee_origin_matches_pointer_across_zoom_and_pan or crossing_marquee_selects_intersections_from_right_to_left or pointer_cancel_restores_selection_positions_and_owner or escape_cancels_drag_without_clearing_selection or space_selects_focused_node_without_arming_a_pointer or rejected_selection_restores_previous_projection_and_reports_reason or successful_authoritative_projection_clears_an_old_rejection or rapid_queued_gestures_use_the_latest_visible_revision or wire_pointer_has_one_preview_and_releases_on_cancel or graph_defined_properties_panels_are_functional_tabs or active_history_tab_renders_plain_graph_transaction_rows or graph_held_build_lens_reprojects_canvas_authoring_interfaces or rejected_wire_is_explained_in_the_visible_status or delete_detaches_the_selected_binary_wire_and_reconciles_topology or selected_wire_endpoints_drag_to_exact_compatible_canvas_ports or graph_mutations_are_serialized_before_revision_bound_interactions or generic_browser_interaction_binding_has_no_product_dispatch or property_response_preserves_the_exact_input_dom_node or interface_value_uses_the_same_graph_interaction_boundary or collection_item_value_uses_the_same_graph_interaction_boundary or collection_structure_controls_send_only_graph_leases_and_event_facts or canvas_keyed_join_enters_and_exits_only_changed_graph_identities or topology_delta_adds_only_new_graph_identities_and_keeps_stable_ui or canvas_rejects_duplicate_projected_graph_identity_before_mutation or dense_property_response_retains_250_cards_and_500_cables or graph_authored_presentation_color_uses_value_interaction_lease or graph_authored_presentation_reset_uses_transition_interaction_lease or graph_authored_theme_preview_uses_value_interaction_lease or graph_authored_theme_restore_uses_transition_interaction_lease or graph_authored_add_parameter_uses_the_governed_command_by_keyboard or graph_authored_add_interface_uses_exact_graph_options_by_keyboard or properties_shows_and_opens_the_exact_persistent_focus_reason or relation_contract_drives_visible_roles_and_the_create_payload or universal_cell_is_draggable_only_in_the_authorized_floor_catalogue or floor_atom_uses_its_declared_property_interaction or every_catalogue_assembly_has_an_explicit_place_control or catalogue_placement_remains_collision_free_with_250_visible_nodes or visible_icon_controls_project_real_cell_native_lucide_geometry or canvas_toolbar_order_activation_and_keyboard_are_graph_authored or cell_native_history_controls_drive_keyboard_undo_and_redo or multi_selection_delta_reprojects_group_control_from_graph_state or group_toolbar_click_uses_only_its_graph_interaction or openable_card_enters_its_graph_scope_and_breadcrumb_returns or enter_activates_openable_card_and_space_remains_selection or toolbar_renderer_has_no_control_owner_or_legacy_action_dispatch or semantic_toolbar_activation_has_no_browser_product_dispatch or library_place_control_presentation_is_not_authored_in_browser_code or catalogue_sections_are_visible_graph_authored_groups or rejected_catalogue_placement_is_explained_in_the_visible_status or real_nary_relation_incidence_cables_reach_real_role_sockets or relation_role_control_submits_only_its_graph_lease_and_event_fact or incidence_socket_drag_rewires_the_exact_relation_role or role_socket_drag_appends_only_when_cardinality_has_capacity or selected_relation_exposes_real_endpoints_gates_and_presentation\"",
+      "result": "67 passed, 2 deselected in 440.31s"
+    }
+  ],
+  "drift_after_slice": {
+    "visual_workspace_track_candidate_count_before_slice": 11,
+    "promotion_allowed": false,
+    "bulk_copy_allowed": false,
+    "live_process_interruption_allowed": false
+  },
+  "not_claimed": [
+    "This does not promote ignored node_runtime visual tests or typed-node runtime code.",
+    "This does not certify subjective visual polish as final product design.",
+    "This does not prove every possible browser/device performance condition.",
+    "This does not start, stop, restart, or replace any live application or agent session."
+  ],
+  "next_authority_tracks": [
+    "application_graph_projection",
+    "baboom_context_and_cognition",
+    "governed_work_lifecycle",
+    "revision_integrity_court",
+    "public_site_projection"
+  ]
+}

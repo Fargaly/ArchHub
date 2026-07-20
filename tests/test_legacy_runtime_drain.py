@@ -557,6 +557,75 @@ def test_handoff_board_exposes_endpoint_free_authority_browser_handoff():
     }
 
 
+def test_visible_authority_handoff_package_is_dry_run_without_token():
+    plan = {
+        "authority": "C:\\repo\\10.PRODUCT\\13.NODE-LANGUAGE",
+        "runtime_copy": "C:\\repo\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+        "handoff_board": {
+            "archive_allowed": False,
+            "summary": {"visible_authority_handoff_ready": True},
+            "blockers": {
+                "blocked_endpoint_pids": [52484],
+                "source_drift": {"archive_ready": True},
+            },
+            "visible_authority_handoff": {
+                "available": True,
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "requires_endpoint_free": False,
+                "requires_process_interruption": False,
+                "protected_visible_endpoint_pids": [52484],
+            },
+        },
+        "retirement_gate": {
+            "failures": ["no_live_holders", "no_blocked_exact_replacements"]
+        },
+    }
+
+    package = drain.build_visible_authority_handoff_package(plan)
+
+    assert package["schema"] == "archhub-visible-authority-handoff-package/v1"
+    assert package["ok"] is True
+    assert package["mode"] == "dry_run_no_token_issued"
+    assert package["active_authority_server_url"] == "http://127.0.0.1:65486"
+    assert package["token_issue_route"] == "POST /api/universal/browser-handoff"
+    assert package["token_issued"] is False
+    assert package["document_url_included"] is False
+    assert "document_url" not in package
+    assert package["requires_endpoint_free"] is False
+    assert package["requires_process_interruption"] is False
+    assert package["protected_visible_endpoint_pids"] == [52484]
+    assert package["blocked_endpoint_pids"] == [52484]
+
+
+def test_visible_authority_handoff_package_rejects_interrupting_plan():
+    plan = {
+        "handoff_board": {
+            "archive_allowed": False,
+            "blockers": {
+                "blocked_endpoint_pids": [42],
+                "source_drift": {"archive_ready": True},
+            },
+            "visible_authority_handoff": {
+                "available": True,
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "requires_endpoint_free": True,
+                "requires_process_interruption": False,
+                "protected_visible_endpoint_pids": [42],
+            },
+        },
+        "retirement_gate": {"failures": ["no_live_holders"]},
+    }
+
+    package = drain.build_visible_authority_handoff_package(plan)
+
+    assert package["ok"] is False
+    assert package["token_issued"] is False
+    assert "document_url" not in package
+    assert "require endpoint freedom" in package["next_operator_action"]
+
+
 def test_disposable_holder_court_allows_only_missing_temp_qa_without_clients():
     board = {
         "blockers": {
@@ -1508,6 +1577,59 @@ def test_cli_handoff_board_prints_only_board_without_files_or_brain(tmp_path, mo
     assert board["blockers"]["blocked_endpoint_pids"] == [123]
     assert not out_dir.exists()
     assert not brain_path.exists()
+
+
+def test_cli_visible_authority_handoff_package_is_read_only(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    (product_root / "node_runtime").mkdir(parents=True)
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(
+        drain.live_runtime_holders,
+        "audit",
+        lambda path: _audit(1, [{
+            "pid": 123,
+            "cmdline": "python -m nodelang.application_server --port 8505",
+        }]),
+    )
+    monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {123}})
+    monkeypatch.setattr(
+        drain,
+        "active_authority_runtime_bridge_status",
+        lambda _product_root, _workspace: {
+            "ok": True,
+            "visible_browser_handoff_ok": True,
+            "visible_browser_handoff": {
+                "supported": True,
+                "application": "app:archhub",
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "revision": 10,
+            },
+        },
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--visible-authority-handoff-package",
+    ])
+
+    assert code == 0
+    package = json.loads(capsys.readouterr().out)
+    assert package["schema"] == "archhub-visible-authority-handoff-package/v1"
+    assert package["ok"] is True
+    assert package["token_issued"] is False
+    assert package["document_url_included"] is False
+    assert "document_url" not in package
+    assert package["requires_endpoint_free"] is False
+    assert package["requires_process_interruption"] is False
+    assert package["protected_visible_endpoint_pids"] == [123]
+    assert not out_dir.exists()
 
 
 def test_cli_handoff_board_enforce_retirement_gate_returns_red_when_blocked(

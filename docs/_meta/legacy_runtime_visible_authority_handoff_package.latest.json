@@ -1,0 +1,28 @@
+{
+  "schema": "archhub-visible-authority-handoff-package/v1",
+  "ok": true,
+  "mode": "dry_run_no_token_issued",
+  "application": "app:archhub",
+  "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+  "legacy_runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+  "active_authority_server_url": "http://127.0.0.1:65486",
+  "token_issue_route": "POST /api/universal/browser-handoff",
+  "token_issued": false,
+  "document_url_included": false,
+  "requires_endpoint_free": false,
+  "requires_process_interruption": false,
+  "protected_visible_endpoint_pids": [
+    52484
+  ],
+  "blocked_endpoint_pids": [
+    52484
+  ],
+  "source_drift_archive_ready": true,
+  "archive_allowed_before_handoff": false,
+  "retirement_gate_failures_before_handoff": [
+    "no_live_holders",
+    "no_blocked_exact_replacements"
+  ],
+  "next_operator_action": "issue the one-use browser handoff from the active authority bridge only when ready to switch the visible session; then verify the old endpoint holder has exited before archive",
+  "rule": "This package is read-only. It never issues a one-use browser token, opens a window, stops a process, relaunches an endpoint, moves a file, archives node_runtime, or hides the protected visible PID."
+}

@@ -1286,6 +1286,71 @@ def build_handoff_board(
     }
 
 
+def build_visible_authority_handoff_package(
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the explicit non-interrupting browser handoff package.
+
+    This artifact is intentionally dry-run only. The real handoff route issues a
+    one-use bootstrap URL, so this function never calls it and never emits a
+    token-like document URL.
+    """
+    board = plan.get("handoff_board") or {}
+    handoff = board.get("visible_authority_handoff") or {}
+    blocked_pids = [
+        int(pid)
+        for pid in ((board.get("blockers") or {}).get("blocked_endpoint_pids") or [])
+    ]
+    package = {
+        "schema": "archhub-visible-authority-handoff-package/v1",
+        "ok": bool(handoff.get("available")),
+        "mode": "dry_run_no_token_issued",
+        "application": "app:archhub",
+        "authority": plan.get("authority"),
+        "legacy_runtime_copy": plan.get("runtime_copy"),
+        "active_authority_server_url": handoff.get("server_url"),
+        "token_issue_route": handoff.get("one_use_route"),
+        "token_issued": False,
+        "document_url_included": False,
+        "requires_endpoint_free": handoff.get("requires_endpoint_free") is True,
+        "requires_process_interruption": (
+            handoff.get("requires_process_interruption") is True
+        ),
+        "protected_visible_endpoint_pids": (
+            handoff.get("protected_visible_endpoint_pids") or blocked_pids
+        ),
+        "blocked_endpoint_pids": blocked_pids,
+        "source_drift_archive_ready": bool(
+            ((board.get("blockers") or {}).get("source_drift") or {}).get(
+                "archive_ready"
+            )
+        ),
+        "archive_allowed_before_handoff": bool(board.get("archive_allowed")),
+        "retirement_gate_failures_before_handoff": (
+            (plan.get("retirement_gate") or {}).get("failures") or []
+        ),
+        "next_operator_action": (
+            "issue the one-use browser handoff from the active authority bridge "
+            "only when ready to switch the visible session; then verify the old "
+            "endpoint holder has exited before archive"
+            if bool(handoff.get("available"))
+            else "repair or start the active authority bridge before issuing a visible handoff"
+        ),
+        "rule": (
+            "This package is read-only. It never issues a one-use browser token, "
+            "opens a window, stops a process, relaunches an endpoint, moves a "
+            "file, archives node_runtime, or hides the protected visible PID."
+        ),
+    }
+    if package["requires_endpoint_free"] or package["requires_process_interruption"]:
+        package["ok"] = False
+        package["next_operator_action"] = (
+            "handoff package rejected because it would require endpoint freedom "
+            "or process interruption"
+        )
+    return package
+
+
 DISPOSABLE_QA_PORTS = {8515, 8516}
 PROTECTED_VISIBLE_PORTS = {8482, 8484, 8501}
 
@@ -2926,6 +2991,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--visible-authority-handoff-package",
+        action="store_true",
+        help=(
+            "Print the explicit read-only authority browser handoff package. "
+            "This never issues a one-use token, opens a window, or interrupts "
+            "a process."
+        ),
+    )
+    parser.add_argument(
         "--authority-shadow-probe",
         action="store_true",
         help=(
@@ -2984,6 +3058,7 @@ def main(argv: list[str] | None = None) -> int:
         args.no_write
         or args.handoff_board
         or args.inspect_board_pids
+        or args.visible_authority_handoff_package
         or args.verify_universal_holders
         or args.source_drift_report
         or args.source_drift_work_plan
@@ -3068,6 +3143,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.verify_universal_holders:
             result = verify_runtime_holders_in_universal(plan)
+        elif args.visible_authority_handoff_package:
+            result = build_visible_authority_handoff_package(plan)
         elif args.source_drift_report:
             result = plan["runtime_copy_source_drift"]
         elif args.source_drift_work_plan:

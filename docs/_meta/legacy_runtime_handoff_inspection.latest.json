@@ -72,9 +72,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 588957.135966301,
+        "age_seconds": 589427.0599319935,
         "process_status": "running",
-        "cpu_total_seconds": 878.1875,
+        "cpu_total_seconds": 880.5625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -134,7 +134,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784589794.8988965,
+    "observed_at": 1784590267.1893017,
     "available": true,
     "processes": [
       {
@@ -159,10 +159,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 588978.6176416874,
-        "cpu_user_seconds": 847.875,
-        "cpu_system_seconds": 30.3125,
-        "cpu_total_seconds": 878.1875,
+        "age_seconds": 589450.9080469608,
+        "cpu_user_seconds": 850.1875,
+        "cpu_system_seconds": 30.375,
+        "cpu_total_seconds": 880.5625,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -175,9 +175,11 @@
             "port": 8482,
             "path": "/",
             "url": "http://127.0.0.1:8482/",
-            "ok": false,
-            "error_type": "TimeoutError",
-            "error": "timed out"
+            "ok": true,
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
           },
           {
             "port": 8482,
@@ -187,7 +189,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131595,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131660,\"schema_version\""
           },
           {
             "port": 8482,

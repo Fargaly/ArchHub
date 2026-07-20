@@ -810,15 +810,22 @@ def test_runtime_copy_source_drift_detects_missing_and_different_source(tmp_path
     runtime = product_root / "node_runtime"
     authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
     (runtime / "nodelang").mkdir(parents=True)
+    (runtime / "tests_replica").mkdir(parents=True)
     (runtime / "public_site" / "dist").mkdir(parents=True)
     (runtime / "nodelang" / "__pycache__").mkdir(parents=True)
     (authority / "nodelang").mkdir(parents=True)
 
     (runtime / "nodelang" / "same.py").write_text("same\n", encoding="utf-8")
     (authority / "nodelang" / "same.py").write_text("same\n", encoding="utf-8")
-    (runtime / "nodelang" / "changed.py").write_text("runtime\n", encoding="utf-8")
-    (authority / "nodelang" / "changed.py").write_text("authority\n", encoding="utf-8")
-    (runtime / "nodelang" / "runtime_only.py").write_text("new\n", encoding="utf-8")
+    (runtime / "nodelang" / "authority_bridge.py").write_text(
+        "runtime\n", encoding="utf-8"
+    )
+    (authority / "nodelang" / "authority_bridge.py").write_text(
+        "authority\n", encoding="utf-8"
+    )
+    (runtime / "tests_replica" / "test_canvas_interaction_quality.py").write_text(
+        "new\n", encoding="utf-8"
+    )
     (runtime / "public_site" / "dist" / "bundle.js").write_text(
         "generated\n", encoding="utf-8"
     )
@@ -831,19 +838,58 @@ def test_runtime_copy_source_drift_detects_missing_and_different_source(tmp_path
     assert result["checked_runtime_files"] == 3
     assert result["drift_count"] == 2
     assert result["migration_candidate_count"] == 2
+    assert result["decision_summary"] == {
+        "schema": "archhub-runtime-source-drift-decision-summary/v1",
+        "candidate_count": 2,
+        "all_classified": True,
+        "unmapped_paths": [],
+        "by_track": {
+            "runtime_transport_and_broker": 1,
+            "visual_workspace_interaction": 1,
+        },
+        "by_kind": {
+            "court_candidate": 1,
+            "implementation_candidate": 1,
+        },
+        "by_resolution_state": {
+            "classified_unresolved": 2,
+        },
+        "promotion_allowed": False,
+        "bulk_copy_allowed": False,
+    }
     assert [row["path"] for row in result["different_from_authority"]] == [
-        "nodelang/changed.py"
+        "nodelang/authority_bridge.py"
     ]
     assert [row["path"] for row in result["missing_in_authority"]] == [
-        "nodelang/runtime_only.py"
+        "tests_replica/test_canvas_interaction_quality.py"
     ]
     candidates = {
         row["path"]: row
         for row in result["migration_candidates"]
     }
-    assert candidates["nodelang/runtime_only.py"]["status"] == "missing_in_authority"
-    assert candidates["nodelang/changed.py"]["status"] == "different_from_authority"
-    assert candidates["nodelang/changed.py"]["authority_sha256"]
+    assert candidates["tests_replica/test_canvas_interaction_quality.py"]["status"] == (
+        "missing_in_authority"
+    )
+    assert candidates["nodelang/authority_bridge.py"]["status"] == (
+        "different_from_authority"
+    )
+    assert candidates["tests_replica/test_canvas_interaction_quality.py"][
+        "candidate_kind"
+    ] == "court_candidate"
+    assert candidates["tests_replica/test_canvas_interaction_quality.py"][
+        "migration_track"
+    ] == (
+        "visual_workspace_interaction"
+    )
+    assert candidates["nodelang/authority_bridge.py"]["migration_track"] == (
+        "runtime_transport_and_broker"
+    )
+    assert candidates["nodelang/authority_bridge.py"]["authority_disposition"] == (
+        "migration_evidence_not_authority"
+    )
+    assert candidates["nodelang/authority_bridge.py"]["promotion_allowed"] is False
+    assert candidates["nodelang/authority_bridge.py"]["bulk_copy_allowed"] is False
+    assert candidates["nodelang/authority_bridge.py"]["authority_sha256"]
     assert all(row["candidate_id"].startswith("runtime-source-drift:") for row in candidates.values())
     assert all("bulk-copy" in row["forbidden_action"] for row in candidates.values())
     assert all("bundle.js" not in json.dumps(row) for row in result["missing_in_authority"])
@@ -863,9 +909,59 @@ def test_runtime_copy_source_drift_is_green_when_runtime_matches_authority(tmp_p
     assert result["ok"] is True
     assert result["drift_count"] == 0
     assert result["migration_candidate_count"] == 0
+    assert result["decision_summary"]["all_classified"] is True
+    assert result["decision_summary"]["candidate_count"] == 0
     assert result["missing_in_authority"] == []
     assert result["different_from_authority"] == []
     assert result["migration_candidates"] == []
+
+
+def test_known_runtime_source_drift_paths_are_classified_not_promotable():
+    paths = [
+        "nodelang/cell_baboom_activity.py",
+        "tests_replica/test_application_boundary_ports.py",
+        "tests_replica/test_canvas_interaction_quality.py",
+        "tests_replica/test_canvas_visual_grammar.py",
+        "tests_replica/test_cell_baboom_activity.py",
+        "tests_replica/test_playable_interaction.py",
+        "tests_replica/test_projection_delta.py",
+        "tests_replica/test_relation_junction_visual_grammar.py",
+        "tests_replica/test_relation_security.py",
+        "tests_replica/test_relation_topology_editor.py",
+        "tests_replica/test_store_concurrency.py",
+        "tests_replica/test_visual_graph_workspace.py",
+        "tests_replica/test_visual_node_authority.py",
+        "nodelang/application_server.py",
+        "nodelang/authority_bridge.py",
+        "nodelang/cell_baboom_connector_execution.py",
+        "nodelang/cell_baboom_model_execution.py",
+        "nodelang/universal_application.py",
+        "nodelang/universal_cloud_gateway.py",
+        "public_site/README.md",
+        "public_site/build.mjs",
+        "tests_replica/test_application_machine_transport.py",
+        "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_universal_application.py",
+        "tests_replica/test_universal_baboom_cognition_planner.py",
+        "tests_replica/test_universal_cloud_gateway.py",
+        "tests_replica/test_universal_work_completion_court.py",
+    ]
+
+    rows = [drain.classify_source_drift_candidate(path) for path in paths]
+
+    assert all(row["migration_track"] != "unmapped_runtime_candidate" for row in rows)
+    assert all(row["authority_disposition"] == "migration_evidence_not_authority" for row in rows)
+    assert all(row["promotion_allowed"] is False for row in rows)
+    assert all(row["bulk_copy_allowed"] is False for row in rows)
+    assert {
+        "application_graph_projection",
+        "baboom_context_and_cognition",
+        "governed_work_lifecycle",
+        "public_site_projection",
+        "revision_integrity_court",
+        "runtime_transport_and_broker",
+        "visual_workspace_interaction",
+    }.issubset({row["migration_track"] for row in rows})
 
 
 def test_retirement_gate_blocks_archive_until_all_conditions_are_green():
@@ -1616,6 +1712,9 @@ def test_cli_source_drift_report_is_read_only_candidate_inventory(
     assert out["schema"] == "archhub-runtime-copy-source-drift/v1"
     assert out["ok"] is False
     assert out["migration_candidate_count"] == 1
+    assert out["decision_summary"]["candidate_count"] == 1
+    assert out["decision_summary"]["all_classified"] is False
+    assert out["decision_summary"]["unmapped_paths"] == ["nodelang/candidate.py"]
     assert out["migration_candidates"][0]["path"] == "nodelang/candidate.py"
     assert out["migration_candidates"][0]["status"] == "missing_in_authority"
     assert not out_dir.exists()

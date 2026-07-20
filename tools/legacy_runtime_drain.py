@@ -44,6 +44,10 @@ SOURCE_DRIFT_IGNORED_SUFFIXES = {
     ".pyo",
     ".map",
 }
+SOURCE_DRIFT_AUTHORITY_BASIS = (
+    "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+    "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7",
+)
 
 
 def default_product_root() -> Path:
@@ -345,6 +349,7 @@ def _source_drift_candidate(
         "candidate_id": candidate_id,
         "path": path,
         "status": status,
+        **classify_source_drift_candidate(path),
         "runtime_path": str(runtime_copy / path),
         "authority_path": str(authority / path),
         "runtime_sha256": row.get("runtime_sha256"),
@@ -363,6 +368,119 @@ def _source_drift_candidate(
         ),
     }
     return candidate
+
+
+def classify_source_drift_candidate(path: str) -> dict[str, Any]:
+    """Classify an ignored-runtime source difference without accepting it."""
+    normalized = path.replace("\\", "/")
+    candidate_kind = (
+        "court_candidate"
+        if normalized.startswith("tests_replica/")
+        else "implementation_candidate"
+    )
+    if "baboom" in normalized:
+        track = "baboom_context_and_cognition"
+        required_canonical_first_step = (
+            "define/release BABOOM graph protocols and red courts in "
+            "13.NODE-LANGUAGE before implementation"
+        )
+    elif (
+        "canvas" in normalized
+        or "visual" in normalized
+        or "relation_" in normalized
+        or "playable_interaction" in normalized
+    ):
+        track = "visual_workspace_interaction"
+        required_canonical_first_step = (
+            "rebuild the interaction or visual grammar as authority courts "
+            "against the released graph protocols"
+        )
+    elif (
+        "authority_bridge" in normalized
+        or "application_server" in normalized
+        or "cloud_gateway" in normalized
+        or "machine_transport" in normalized
+        or "boundary_ports" in normalized
+    ):
+        track = "runtime_transport_and_broker"
+        required_canonical_first_step = (
+            "define graph-held broker/session/capability lifecycle courts "
+            "before accepting transport behavior"
+        )
+    elif normalized.startswith("public_site/"):
+        track = "public_site_projection"
+        required_canonical_first_step = (
+            "derive the website projection from released application roots, "
+            "not from copied runtime state"
+        )
+    elif "universal_application" in normalized:
+        track = "application_graph_projection"
+        required_canonical_first_step = (
+            "prove the application lens consumes the canonical graph root and "
+            "does not introduce duplicate product truth"
+        )
+    elif "projection_delta" in normalized:
+        track = "application_graph_projection"
+        required_canonical_first_step = (
+            "prove projection changes as graph-derived deltas from released "
+            "roots, not copied runtime state"
+        )
+    elif "work_completion" in normalized:
+        track = "governed_work_lifecycle"
+        required_canonical_first_step = (
+            "prove work completion as graph-held decision/outcome/revision "
+            "state before accepting runtime behavior"
+        )
+    elif "store_concurrency" in normalized:
+        track = "revision_integrity_court"
+        required_canonical_first_step = (
+            "rebuild as a canonical revision/commit court if it covers a "
+            "real Cell-store invariant"
+        )
+    else:
+        track = "unmapped_runtime_candidate"
+        required_canonical_first_step = (
+            "manually classify before any integration, archive, or release claim"
+        )
+    return {
+        "candidate_kind": candidate_kind,
+        "migration_track": track,
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "classified_unresolved",
+        "promotion_allowed": False,
+        "bulk_copy_allowed": False,
+        "authority_basis": list(SOURCE_DRIFT_AUTHORITY_BASIS),
+        "required_canonical_first_step": required_canonical_first_step,
+    }
+
+
+def _source_drift_decision_summary(
+    migration_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    by_track: dict[str, int] = {}
+    by_kind: dict[str, int] = {}
+    by_state: dict[str, int] = {}
+    unmapped: list[str] = []
+    for candidate in migration_candidates:
+        track = str(candidate.get("migration_track") or "unmapped_runtime_candidate")
+        kind = str(candidate.get("candidate_kind") or "unknown")
+        state = str(candidate.get("resolution_state") or "unknown")
+        by_track[track] = by_track.get(track, 0) + 1
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+        by_state[state] = by_state.get(state, 0) + 1
+        if track == "unmapped_runtime_candidate":
+            unmapped.append(str(candidate.get("path") or ""))
+    return {
+        "schema": "archhub-runtime-source-drift-decision-summary/v1",
+        "candidate_count": len(migration_candidates),
+        "all_classified": not unmapped,
+        "unmapped_paths": unmapped,
+        "by_track": dict(sorted(by_track.items())),
+        "by_kind": dict(sorted(by_kind.items())),
+        "by_resolution_state": dict(sorted(by_state.items())),
+        "promotion_allowed": False,
+        "bulk_copy_allowed": False,
+    }
 
 
 def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, Any]:
@@ -410,6 +528,7 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
             for row in different_from_authority
         ],
     ]
+    decision_summary = _source_drift_decision_summary(migration_candidates)
     return {
         "schema": "archhub-runtime-copy-source-drift/v1",
         "runtime_copy": str(runtime_copy),
@@ -420,6 +539,7 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
         "checked_runtime_files": checked,
         "drift_count": drift_count,
         "migration_candidate_count": len(migration_candidates),
+        "decision_summary": decision_summary,
         "ok": drift_count == 0,
         "missing_in_authority": missing_in_authority,
         "different_from_authority": different_from_authority,

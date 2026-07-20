@@ -5,7 +5,7 @@
     "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
     "archive_allowed": false,
     "summary": {
-      "holders": 4,
+      "holders": 3,
       "application_servers": 1,
       "blocked_endpoints": 1,
       "runnable_endpoints": 0,
@@ -13,7 +13,7 @@
       "passive_wait_pids": 0,
       "long_running_test_pids": 0,
       "low_activity_test_pids": 0,
-      "inspect_pids": 3,
+      "inspect_pids": 2,
       "handoff_steps": 3,
       "replacement_specs": 1,
       "source_drift_count": 32
@@ -29,7 +29,6 @@
       "long_running_test_pids": [],
       "low_activity_test_pids": [],
       "inspect_before_touch_pids": [
-        113216,
         117712,
         147188
       ],
@@ -38,32 +37,10 @@
       ]
     },
     "risk_classes": {
-      "qa_server_script_missing": 1,
       "stdin_python_holder": 2,
       "visible_legacy_endpoint": 1
     },
     "inspect_cards": [
-      {
-        "pid": 113216,
-        "holder_type": "unknown_python_holder",
-        "holder_risk_class": "qa_server_script_missing",
-        "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
-        "script_evidence": {
-          "launch_mode": "python_script",
-          "module": null,
-          "stdin_mode": false,
-          "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 548611.1161592007,
-        "process_status": "running",
-        "cpu_total_seconds": 86.515625,
-        "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      },
       {
         "pid": 117712,
         "holder_type": "stdin_python",
@@ -79,7 +56,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 495520.7675216198,
+        "age_seconds": 496411.6028497219,
         "process_status": "running",
         "cpu_total_seconds": 0.0,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -100,7 +77,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 495520.64773225784,
+        "age_seconds": 496411.48306035995,
         "process_status": "running",
         "cpu_total_seconds": 1.234375,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -126,9 +103,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 585831.2203807831,
+        "age_seconds": 586722.0557088852,
         "process_status": "running",
-        "cpu_total_seconds": 851.40625,
+        "cpu_total_seconds": 855.1875,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -188,7 +165,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784586664.187474,
+    "observed_at": 1784587561.0029783,
     "available": true,
     "processes": [
       {
@@ -213,10 +190,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 585847.906219244,
-        "cpu_user_seconds": 822.140625,
-        "cpu_system_seconds": 29.265625,
-        "cpu_total_seconds": 851.40625,
+        "age_seconds": 586744.7217235565,
+        "cpu_user_seconds": 825.796875,
+        "cpu_system_seconds": 29.390625,
+        "cpu_total_seconds": 855.1875,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -229,9 +206,11 @@
             "port": 8482,
             "path": "/",
             "url": "http://127.0.0.1:8482/",
-            "ok": false,
-            "error_type": "TimeoutError",
-            "error": "timed out"
+            "ok": true,
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
           },
           {
             "port": 8482,
@@ -241,7 +220,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":130750,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":130880,\"schema_version\""
           },
           {
             "port": 8482,
@@ -317,125 +296,6 @@
         "allowed_action": "inspect only; this function never interrupts a process"
       },
       {
-        "pid": 113216,
-        "exists": true,
-        "name": "python.exe",
-        "status": "running",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-        "cmdline_argv": [
-          "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
-          "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py"
-        ],
-        "create_time": 1784038036.3854764,
-        "age_seconds": 548627.8019976616,
-        "cpu_user_seconds": 66.75,
-        "cpu_system_seconds": 19.765625,
-        "cpu_total_seconds": 86.515625,
-        "parent_pid": null,
-        "child_pids": [
-          6084
-        ],
-        "listening_ports": [
-          8515,
-          8516
-        ],
-        "established_connection_count": 0,
-        "endpoint_fingerprints": [
-          {
-            "port": 8515,
-            "path": "/",
-            "url": "http://127.0.0.1:8515/",
-            "ok": true,
-            "status": 200,
-            "content_type": "text/html; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
-          },
-          {
-            "port": 8515,
-            "path": "/api/state",
-            "url": "http://127.0.0.1:8515/api/state",
-            "ok": true,
-            "status": 200,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n036876\",\"ui_root\":\"n038008\",\"focus\":\"n133918\",\"container\":\"n133897\",\"container_title\":\"Design option coordination\",\"node_count\":140568,\"schema_versi"
-          },
-          {
-            "port": 8515,
-            "path": "/api/universal/health",
-            "url": "http://127.0.0.1:8515/api/universal/health",
-            "ok": true,
-            "status": 404,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":false,\"error\":\"not found\"}"
-          },
-          {
-            "port": 8515,
-            "path": "/health",
-            "url": "http://127.0.0.1:8515/health",
-            "ok": true,
-            "status": 404,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":false,\"error\":\"not found\"}"
-          },
-          {
-            "port": 8516,
-            "path": "/",
-            "url": "http://127.0.0.1:8516/",
-            "ok": true,
-            "status": 404,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
-          },
-          {
-            "port": 8516,
-            "path": "/api/state",
-            "url": "http://127.0.0.1:8516/api/state",
-            "ok": true,
-            "status": 404,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
-          },
-          {
-            "port": 8516,
-            "path": "/api/universal/health",
-            "url": "http://127.0.0.1:8516/api/universal/health",
-            "ok": true,
-            "status": 404,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
-          },
-          {
-            "port": 8516,
-            "path": "/health",
-            "url": "http://127.0.0.1:8516/health",
-            "ok": true,
-            "status": 200,
-            "content_type": "application/json; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"adapter\":{\"evidence\":\"ThreadingHTTPServer socket bound locally\",\"host\":\"127.0.0.1\",\"observed_at\":\"2026-07-14T14:07:30.993120Z\",\"online\":true,\"port\":8516},\"external_cloud\":\"not in"
-          }
-        ],
-        "launch_mode": "python_script",
-        "module": null,
-        "stdin_mode": false,
-        "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null,
-        "process_risk_class": "qa_server_script_missing",
-        "drain_posture": "orphaned temp-script holder; inspect live process before any cleanup",
-        "allowed_action": "inspect only; this function never interrupts a process"
-      },
-      {
         "pid": 117712,
         "exists": true,
         "name": "python.exe",
@@ -447,7 +307,7 @@
           "-"
         ],
         "create_time": 1784091126.734114,
-        "age_seconds": 495537.4533600807,
+        "age_seconds": 496434.26886439323,
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0,
@@ -482,7 +342,7 @@
           "-"
         ],
         "create_time": 1784091126.8539033,
-        "age_seconds": 495537.33357071877,
+        "age_seconds": 496434.1490750313,
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
         "cpu_total_seconds": 1.234375,
@@ -537,53 +397,14 @@
         "process_risk_class": "stdin_python_listener_child",
         "drain_posture": "stdin-launched listener; identify parent/source before handoff",
         "allowed_action": "inspect only; this function never interrupts a process"
-      },
-      {
-        "pid": 6084,
-        "exists": true,
-        "name": "conhost.exe",
-        "status": "running",
-        "cwd": "C:\\Windows",
-        "cmdline": "\\??\\C:\\Windows\\system32\\conhost.exe 0x4",
-        "cmdline_argv": [
-          "\\??\\C:\\Windows\\system32\\conhost.exe",
-          "0x4"
-        ],
-        "create_time": 1784038036.4377222,
-        "age_seconds": 548638.6146893501,
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.0,
-        "parent_pid": 113216,
-        "child_pids": [],
-        "listening_ports": [],
-        "established_connection_count": 0,
-        "endpoint_fingerprints": [],
-        "launch_mode": "unknown",
-        "module": null,
-        "stdin_mode": false,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null,
-        "process_risk_class": "unclassified_process_holder",
-        "drain_posture": "inspect evidence before deciding any handoff",
-        "allowed_action": "inspect only; this function never interrupts a process"
       }
-    ],
-    "expanded_child_pids": [
-      6084
-    ],
-    "child_inspection_available": true
+    ]
   },
   "rule": "read-only inspection only; no process may be killed, moved, archived, or relaunched by this command",
   "disposable_holder_court": {
     "schema": "archhub-disposable-runtime-holder-court/v1",
     "available": true,
-    "cleanup_allowed_pids": [
-      113216
-    ],
+    "cleanup_allowed_pids": [],
     "blocked_pids": [
       52484,
       117712,
@@ -614,29 +435,6 @@
         "listening_ports": [
           8482,
           8484
-        ],
-        "established_connection_count": 0,
-        "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."
-      },
-      {
-        "pid": 113216,
-        "verdict": "disposable_cleanup_allowed",
-        "cleanup_allowed": true,
-        "checks": {
-          "exists": true,
-          "is_inspect_before_touch_holder": true,
-          "not_protected_endpoint_or_coowner": true,
-          "known_disposable_shape": true,
-          "no_child_dependency": true,
-          "no_established_clients": true,
-          "known_local_qa_ports_only": true,
-          "fingerprint_matches_expected_qa_surface": true
-        },
-        "failed_checks": [],
-        "risk_class": "qa_server_script_missing",
-        "listening_ports": [
-          8515,
-          8516
         ],
         "established_connection_count": 0,
         "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."

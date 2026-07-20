@@ -95,7 +95,7 @@
     "machine_work_items": 0,
     "machine_work_registry": "app:governed-work-registry",
     "revision": 739,
-    "server_url": "http://127.0.0.1:53777",
+    "server_url": "http://127.0.0.1:49346",
     "session_cookie_http_only": true,
     "state_path_inside_temp": true,
     "state_status": 200,
@@ -1420,12 +1420,11 @@
     ],
     "rule": "An ignored runtime copy cannot be archived while it contains source files that are missing or different in the declared authority."
   },
-  "holder_count": 4,
+  "holder_count": 3,
   "archive_safe_now": false,
   "drain_complete": false,
   "by_type": {
     "application_server": 1,
-    "unknown_python_holder": 1,
     "stdin_python": 2
   },
   "duplicate_server_groups": [],
@@ -1447,27 +1446,10 @@
         "sequence": 1,
         "kind": "inspect_unknown_holder",
         "pids": [
-          113216,
           117712,
           147188
         ],
         "inspect_cards": [
-          {
-            "pid": 113216,
-            "holder_type": "unknown_python_holder",
-            "holder_risk_class": "qa_server_script_missing",
-            "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
-            "script_evidence": {
-              "launch_mode": "python_script",
-              "module": null,
-              "stdin_mode": false,
-              "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-              "script_exists": false,
-              "script_size_bytes": null,
-              "script_mtime_utc": null,
-              "script_sha256": null
-            }
-          },
           {
             "pid": 117712,
             "holder_type": "stdin_python",
@@ -1574,7 +1556,7 @@
     "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
     "archive_allowed": false,
     "summary": {
-      "holders": 4,
+      "holders": 3,
       "application_servers": 1,
       "blocked_endpoints": 1,
       "runnable_endpoints": 0,
@@ -1582,7 +1564,7 @@
       "passive_wait_pids": 0,
       "long_running_test_pids": 0,
       "low_activity_test_pids": 0,
-      "inspect_pids": 3,
+      "inspect_pids": 2,
       "handoff_steps": 3,
       "replacement_specs": 1,
       "source_drift_count": 32
@@ -1598,7 +1580,6 @@
       "long_running_test_pids": [],
       "low_activity_test_pids": [],
       "inspect_before_touch_pids": [
-        113216,
         117712,
         147188
       ],
@@ -1607,32 +1588,10 @@
       ]
     },
     "risk_classes": {
-      "qa_server_script_missing": 1,
       "stdin_python_holder": 2,
       "visible_legacy_endpoint": 1
     },
     "inspect_cards": [
-      {
-        "pid": 113216,
-        "holder_type": "unknown_python_holder",
-        "holder_risk_class": "qa_server_script_missing",
-        "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
-        "script_evidence": {
-          "launch_mode": "python_script",
-          "module": null,
-          "stdin_mode": false,
-          "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-          "script_exists": false,
-          "script_size_bytes": null,
-          "script_mtime_utc": null,
-          "script_sha256": null
-        },
-        "age_seconds": 549114.1550588608,
-        "process_status": "running",
-        "cpu_total_seconds": 86.96875,
-        "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
-        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-      },
       {
         "pid": 117712,
         "holder_type": "stdin_python",
@@ -1648,7 +1607,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 496023.8064212799,
+        "age_seconds": 496411.8950612545,
         "process_status": "running",
         "cpu_total_seconds": 0.0,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -1669,7 +1628,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 496023.68663191795,
+        "age_seconds": 496411.77527189255,
         "process_status": "running",
         "cpu_total_seconds": 1.234375,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -1695,9 +1654,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 586334.2592804432,
+        "age_seconds": 586722.3479204178,
         "process_status": "running",
-        "cpu_total_seconds": 852.921875,
+        "cpu_total_seconds": 855.1875,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -1824,9 +1783,9 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "process_status": "running",
-      "age_seconds": 586334.2592804432,
+      "age_seconds": 586722.3479204178,
       "create_time": 1784000816.2812548,
-      "cpu_total_seconds": 852.921875,
+      "cpu_total_seconds": 855.1875,
       "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
       "authority_relaunch": {
@@ -1886,42 +1845,6 @@
       }
     },
     {
-      "pid": 113216,
-      "name": "python.exe",
-      "holder_type": "unknown_python_holder",
-      "runtime_args": {
-        "host": null,
-        "port": null,
-        "cloud_host": null,
-        "cloud_port": null,
-        "state_path": null,
-        "fresh": false,
-        "pytest_target": null
-      },
-      "script_evidence": {
-        "launch_mode": "python_script",
-        "module": null,
-        "stdin_mode": false,
-        "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "holder_risk_class": "qa_server_script_missing",
-      "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
-      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-      "process_status": "running",
-      "age_seconds": 549114.1550588608,
-      "create_time": 1784038036.3854764,
-      "cpu_total_seconds": 86.96875,
-      "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
-      "authority_relaunch": null,
-      "desktop_authority_handoff": null
-    },
-    {
       "pid": 117712,
       "name": "python.exe",
       "holder_type": "stdin_python",
@@ -1949,7 +1872,7 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
       "process_status": "running",
-      "age_seconds": 496023.8064212799,
+      "age_seconds": 496411.8950612545,
       "create_time": 1784091126.734114,
       "cpu_total_seconds": 0.0,
       "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -1985,7 +1908,7 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
       "process_status": "running",
-      "age_seconds": 496023.68663191795,
+      "age_seconds": 496411.77527189255,
       "create_time": 1784091126.8539033,
       "cpu_total_seconds": 1.234375,
       "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",

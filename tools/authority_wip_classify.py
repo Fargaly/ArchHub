@@ -625,6 +625,7 @@ def classify_path(path: str) -> str:
     if (
         p.startswith("docs/_meta/authority_wip_classification")
         or p.startswith("docs/_meta/legacy_runtime_handoff_board")
+        or p.startswith("docs/_meta/legacy_runtime_handoff_disposable_cleanup")
         or p.startswith("docs/_meta/legacy_runtime_handoff_inspection")
         or p.startswith("docs/_meta/legacy_runtime_handoff_shadow_probe")
         or p.startswith("docs/_meta/legacy_runtime_source_drift")

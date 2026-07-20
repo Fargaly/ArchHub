@@ -1,0 +1,57 @@
+{
+  "schema": "archhub-disposable-runtime-holder-cleanup/v1",
+  "generated_at": "2026-07-20T22:44:47.165125+00:00",
+  "target_pid": 113216,
+  "action": "terminate_exact_disposable_qa_holder",
+  "acted": true,
+  "ok": true,
+  "no_visible_endpoint_touched": true,
+  "checks": {
+    "exists": true,
+    "pid_matches": true,
+    "name_is_python": true,
+    "cwd_is_node_runtime": true,
+    "cmd_is_missing_nary_qa_server": true,
+    "known_qa_ports_only": true,
+    "no_established_clients": true,
+    "children_are_inert_conhost": true,
+    "not_visible_endpoint_pid": true
+  },
+  "rule": "Only the exact disposable QA holder may be terminated; visible endpoints and stdin holders are forbidden.",
+  "before": {
+    "pid": 113216,
+    "name": "python.exe",
+    "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+    "cmdline": [
+      "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py"
+    ],
+    "listening_ports": [
+      8515,
+      8516
+    ],
+    "connections": [
+      {
+        "status": "LISTEN",
+        "laddr_port": 8516
+      },
+      {
+        "status": "LISTEN",
+        "laddr_port": 8515
+      }
+    ],
+    "established_connection_count": 0,
+    "children": [
+      {
+        "pid": 6084,
+        "name": "conhost.exe",
+        "cmdline": "\\??\\C:\\Windows\\system32\\conhost.exe 0x4"
+      }
+    ]
+  },
+  "after": {
+    "exists": false,
+    "waited_seconds": 10
+  },
+  "reason": "exact disposable QA holder terminated after recheck"
+}

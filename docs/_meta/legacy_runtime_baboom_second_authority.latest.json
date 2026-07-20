@@ -1,0 +1,145 @@
+{
+  "schema": "archhub-baboom-runtime-single-authority-status/v1",
+  "ok": false,
+  "product_root": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION",
+  "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+  "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+  "scan_roots": [
+    "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang"
+  ],
+  "scanned_files": 155,
+  "violation_count": 4,
+  "authority_selector_count": 1,
+  "runtime_reference_count": 4,
+  "violations": [
+    {
+      "path": "nodelang/cell_baboom.py",
+      "markers": [
+        "build_baboom_authority",
+        "open_baboom_authority",
+        "restore_baboom_authority"
+      ],
+      "authority_selector_markers": [
+        "build_baboom_authority",
+        "open_baboom_authority",
+        "restore_baboom_authority"
+      ],
+      "contains_authority_selector": true,
+      "match_count": 9,
+      "matches": [
+        {
+          "line": 538,
+          "marker": "build_baboom_authority",
+          "text": "def build_baboom_authority(map_path: str | Path, store: CellStore | None = None) -> tuple[CellStore, BaboomAuthorityRegistry]:"
+        },
+        {
+          "line": 570,
+          "marker": "restore_baboom_authority",
+          "text": "return store, restore_baboom_authority(map_path, store)"
+        },
+        {
+          "line": 579,
+          "marker": "restore_baboom_authority",
+          "text": "def restore_baboom_authority(map_path: str | Path, store: CellStore) -> BaboomAuthorityRegistry:"
+        },
+        {
+          "line": 621,
+          "marker": "open_baboom_authority",
+          "text": "def open_baboom_authority(map_path: str | Path, database_path: str | Path) -> tuple[CellStore, BaboomAuthorityRegistry]:"
+        },
+        {
+          "line": 627,
+          "marker": "build_baboom_authority",
+          "text": "return build_baboom_authority(map_path, store)"
+        },
+        {
+          "line": 630,
+          "marker": "restore_baboom_authority",
+          "text": "return store, restore_baboom_authority(map_path, store)"
+        },
+        {
+          "line": 1270,
+          "marker": "open_baboom_authority",
+          "text": "\"VOICE_LENS_VERSION\", \"build_baboom_authority\", \"open_baboom_authority\", \"project_baboom_state\","
+        },
+        {
+          "line": 1270,
+          "marker": "build_baboom_authority",
+          "text": "\"VOICE_LENS_VERSION\", \"build_baboom_authority\", \"open_baboom_authority\", \"project_baboom_state\","
+        },
+        {
+          "line": 1276,
+          "marker": "restore_baboom_authority",
+          "text": "\"restore_baboom_authority\", \"update_baboom_presence\","
+        }
+      ]
+    },
+    {
+      "path": "nodelang/cell_legacy_core_nodes.py",
+      "markers": [
+        "cell_baboom"
+      ],
+      "authority_selector_markers": [],
+      "contains_authority_selector": false,
+      "match_count": 2,
+      "matches": [
+        {
+          "line": 22,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_connector_execution import ("
+        },
+        {
+          "line": 27,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_model_execution import ("
+        }
+      ]
+    },
+    {
+      "path": "nodelang/cell_legacy_self_extension.py",
+      "markers": [
+        "cell_baboom"
+      ],
+      "authority_selector_markers": [],
+      "contains_authority_selector": false,
+      "match_count": 1,
+      "matches": [
+        {
+          "line": 22,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_connector_execution import ("
+        }
+      ]
+    },
+    {
+      "path": "nodelang/universal_application.py",
+      "markers": [
+        "cell_baboom"
+      ],
+      "authority_selector_markers": [],
+      "contains_authority_selector": false,
+      "match_count": 3,
+      "matches": [
+        {
+          "line": 50,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_model_execution import ("
+        },
+        {
+          "line": 65,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_connector_execution import ("
+        },
+        {
+          "line": 290,
+          "marker": "cell_baboom",
+          "text": "from .cell_baboom_activity import ("
+        }
+      ]
+    }
+  ],
+  "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+  "authority_court_expected_state": "red while copied runtime BABOOM imports/selectors remain",
+  "required_action": "do not archive node_runtime, do not claim handoff complete, and do not accept BABOOM runtime selection until lawful handoff proof exists and these imports/selectors are removed or isolated",
+  "rule": "The copied runtime may not select a second BABOOM authority. This status is read-only evidence and does not remove or edit files."
+}

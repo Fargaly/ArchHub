@@ -504,6 +504,41 @@ def test_handoff_board_allows_classified_source_drift_after_drain():
     }
 
 
+def test_handoff_board_blocks_archive_for_baboom_second_authority():
+    board = drain.build_handoff_board(
+        [],
+        {"blocked_exact_authority_launches": 0},
+        {"all_steps_non_interrupting": True, "step_count": 1},
+        {"ok": True, "drift_count": 0},
+        {"ok": True},
+        {
+            "ok": False,
+            "violation_count": 3,
+            "authority_selector_count": 1,
+            "runtime_reference_count": 3,
+            "authority_court": (
+                "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/"
+                "test_baboom_single_authority.py"
+            ),
+            "required_action": "do not archive node_runtime",
+        },
+    )
+
+    assert board["archive_allowed"] is False
+    assert board["blockers"]["baboom_second_authority"] == {
+        "ok": False,
+        "violation_count": 3,
+        "authority_selector_count": 1,
+        "runtime_reference_count": 3,
+        "authority_court": (
+            "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/"
+            "test_baboom_single_authority.py"
+        ),
+        "required_action": "do not archive node_runtime",
+    }
+    assert board["baboom_runtime_single_authority"]["ok"] is False
+
+
 def test_handoff_board_exposes_endpoint_free_authority_browser_handoff():
     board = drain.build_handoff_board(
         [{
@@ -624,6 +659,48 @@ def test_visible_authority_handoff_package_rejects_interrupting_plan():
     assert package["token_issued"] is False
     assert "document_url" not in package
     assert "require endpoint freedom" in package["next_operator_action"]
+
+
+def test_visible_authority_handoff_package_rejects_baboom_second_authority():
+    plan = {
+        "handoff_board": {
+            "archive_allowed": False,
+            "blockers": {
+                "blocked_endpoint_pids": [52484],
+                "source_drift": {"archive_ready": True},
+            },
+            "visible_authority_handoff": {
+                "available": True,
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "requires_endpoint_free": False,
+                "requires_process_interruption": False,
+                "protected_visible_endpoint_pids": [52484],
+            },
+        },
+        "baboom_runtime_single_authority": {
+            "ok": False,
+            "violation_count": 2,
+            "authority_court": (
+                "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/"
+                "test_baboom_single_authority.py"
+            ),
+        },
+        "retirement_gate": {
+            "failures": ["baboom_runtime_single_authority_ready"]
+        },
+    }
+
+    package = drain.build_visible_authority_handoff_package(plan)
+
+    assert package["ok"] is False
+    assert package["token_issued"] is False
+    assert "document_url" not in package
+    assert package["baboom_runtime_single_authority_ready"] is False
+    assert package["baboom_runtime_second_authority_violations"] == 2
+    assert "BABOOM can still select copied runtime authority" in (
+        package["next_operator_action"]
+    )
 
 
 def test_disposable_holder_court_allows_only_missing_temp_qa_without_clients():
@@ -1100,6 +1177,54 @@ def test_runtime_copy_source_drift_is_green_when_runtime_matches_authority(tmp_p
     assert result["migration_candidates"] == []
 
 
+def test_baboom_runtime_single_authority_status_detects_runtime_selectors(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "cell_baboom.py").write_text(
+        "def open_baboom_authority():\n    pass\n",
+        encoding="utf-8",
+    )
+    (runtime / "universal_application.py").write_text(
+        "from .cell_baboom_activity import record\n",
+        encoding="utf-8",
+    )
+
+    result = drain.baboom_runtime_single_authority_status(product_root, authority)
+
+    assert result["schema"] == "archhub-baboom-runtime-single-authority-status/v1"
+    assert result["ok"] is False
+    assert result["violation_count"] == 2
+    assert result["authority_selector_count"] == 1
+    assert result["runtime_reference_count"] == 2
+    assert [item["path"] for item in result["violations"]] == [
+        "nodelang/cell_baboom.py",
+        "nodelang/universal_application.py",
+    ]
+    assert result["violations"][0]["contains_authority_selector"] is True
+    assert "do not archive node_runtime" in result["required_action"]
+
+
+def test_baboom_runtime_single_authority_status_is_green_without_runtime_refs(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "universal_application.py").write_text(
+        "from .cell_store import CellStore\n",
+        encoding="utf-8",
+    )
+
+    result = drain.baboom_runtime_single_authority_status(product_root, authority)
+
+    assert result["ok"] is True
+    assert result["violation_count"] == 0
+    assert result["violations"] == []
+
+
 def test_source_drift_resolution_ledger_marks_canonical_evidence_without_clearing_drift(tmp_path):
     product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
     runtime = product_root / "node_runtime" / "nodelang"
@@ -1453,6 +1578,30 @@ def test_retirement_gate_allows_classified_non_promotable_source_drift_after_dra
         "classified_migration_evidence_ready_for_archive"
     )
     assert "archive may preserve it" in gate["source_drift_archive_readiness"]["reason"]
+
+
+def test_retirement_gate_blocks_when_baboom_runtime_can_select_second_authority():
+    gate = drain.build_retirement_gate(
+        _audit(0, []),
+        {"ok": True},
+        {"ok": True},
+        {"ok": True},
+        {"blocked_exact_authority_launches": 0},
+        {"all_steps_non_interrupting": True},
+        {"ok": True, "drift_count": 0},
+        {
+            "ok": False,
+            "violation_count": 1,
+            "authority_court": (
+                "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/"
+                "test_baboom_single_authority.py"
+            ),
+        },
+    )
+
+    assert gate["archive_allowed"] is False
+    assert gate["checks"]["baboom_runtime_single_authority_ready"] is False
+    assert gate["failures"] == ["baboom_runtime_single_authority_ready"]
 
 
 def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
@@ -2301,6 +2450,32 @@ def test_cli_verify_universal_holders_is_read_only_and_enforced(
     assert out["schema"] == "archhub-runtime-holder-universal-verification/v1"
     assert out["ok"] is False
     assert seen["holder_count"] == 1
+
+
+def test_cli_baboom_authority_status_is_read_only(tmp_path, monkeypatch, capsys):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    runtime.mkdir(parents=True)
+    (runtime / "cell_baboom.py").write_text(
+        "def restore_baboom_authority():\n    pass\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--baboom-authority-status",
+    ])
+
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["schema"] == "archhub-baboom-runtime-single-authority-status/v1"
+    assert out["ok"] is False
+    assert out["violation_count"] == 1
+    assert not out_dir.exists()
 
 
 def test_cli_source_drift_report_is_read_only_candidate_inventory(

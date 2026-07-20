@@ -48,6 +48,12 @@ SOURCE_DRIFT_AUTHORITY_BASIS = (
     "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
     "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7",
 )
+BABOOM_SECOND_AUTHORITY_MARKERS = (
+    "open_baboom_authority",
+    "restore_baboom_authority",
+    "build_baboom_authority",
+    "cell_baboom",
+)
 SOURCE_DRIFT_EVIDENCE_GLOB = "legacy_runtime_source_drift_*_evidence.latest.json"
 SOURCE_DRIFT_EVIDENCE_SCHEMAS = {
     "archhub-runtime-source-drift-authority-evidence/v1",
@@ -904,6 +910,88 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
     }
 
 
+def baboom_runtime_single_authority_status(
+    product_root: Path,
+    authority: Path,
+) -> dict[str, Any]:
+    """Detect whether the copied runtime can still select BABOOM authority."""
+    runtime_root = product_root / "node_runtime"
+    scan_root = runtime_root / "nodelang"
+    violations: list[dict[str, Any]] = []
+    scanned_files = 0
+    if scan_root.is_dir():
+        for path in sorted(scan_root.rglob("*.py")):
+            scanned_files += 1
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            matches: list[dict[str, Any]] = []
+            marker_set: set[str] = set()
+            for line_number, line in enumerate(lines, start=1):
+                for marker in BABOOM_SECOND_AUTHORITY_MARKERS:
+                    if marker in line:
+                        marker_set.add(marker)
+                        matches.append({
+                            "line": line_number,
+                            "marker": marker,
+                            "text": line.strip(),
+                        })
+            if not marker_set:
+                continue
+            rel = path.relative_to(runtime_root).as_posix()
+            authority_markers = sorted(
+                marker
+                for marker in marker_set
+                if marker != "cell_baboom"
+            )
+            violations.append({
+                "path": rel,
+                "markers": sorted(marker_set),
+                "authority_selector_markers": authority_markers,
+                "contains_authority_selector": bool(authority_markers),
+                "match_count": len(matches),
+                "matches": matches[:20],
+            })
+    authority_selector_count = sum(
+        1 for item in violations if item["contains_authority_selector"]
+    )
+    ok = not violations
+    return {
+        "schema": "archhub-baboom-runtime-single-authority-status/v1",
+        "ok": ok,
+        "product_root": str(product_root),
+        "authority": str(authority),
+        "runtime_copy": str(runtime_root),
+        "scan_roots": [str(scan_root)],
+        "scanned_files": scanned_files,
+        "violation_count": len(violations),
+        "authority_selector_count": authority_selector_count,
+        "runtime_reference_count": len(violations),
+        "violations": violations,
+        "authority_court": (
+            "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/"
+            "test_baboom_single_authority.py"
+        ),
+        "authority_court_expected_state": (
+            "red while copied runtime BABOOM imports/selectors remain"
+            if not ok
+            else "green: copied runtime has no BABOOM authority selectors"
+        ),
+        "required_action": (
+            "do not archive node_runtime, do not claim handoff complete, and do "
+            "not accept BABOOM runtime selection until lawful handoff proof "
+            "exists and these imports/selectors are removed or isolated"
+            if not ok
+            else "BABOOM runtime selector scan is clear"
+        ),
+        "rule": (
+            "The copied runtime may not select a second BABOOM authority. This "
+            "status is read-only evidence and does not remove or edit files."
+        ),
+    }
+
+
 def build_source_drift_migration_work(
     source_drift: dict[str, Any],
     *,
@@ -1058,6 +1146,7 @@ def build_drain_plan(
     )
     active_bridge = active_authority_runtime_bridge_status(product_root, workspace)
     source_drift = runtime_copy_source_drift(product_root, authority)
+    baboom_authority = baboom_runtime_single_authority_status(product_root, authority)
     holders = [classify_holder(holder) for holder in holder_report["holders"]]
     bridge_launch = authority_bridge_launch_spec(authority, holders)
     for holder in holders:
@@ -1078,6 +1167,7 @@ def build_drain_plan(
         handoff_schedule,
         source_drift,
         active_bridge,
+        baboom_authority,
     )
     retirement_gate = build_retirement_gate(
         holder_report,
@@ -1087,6 +1177,7 @@ def build_drain_plan(
         replacement_summary,
         handoff_schedule,
         source_drift,
+        baboom_authority,
     )
     return {
         "schema": "archhub-legacy-runtime-drain-plan/v1",
@@ -1097,6 +1188,7 @@ def build_drain_plan(
         "authority_shadow_launch_probe": shadow_probe,
         "active_authority_runtime_bridge": active_bridge,
         "runtime_copy_source_drift": source_drift,
+        "baboom_runtime_single_authority": baboom_authority,
         "holder_count": holder_report["holder_count"],
         "archive_safe_now": holder_report["archive_safe_now"],
         "drain_complete": holder_report["holder_count"] == 0,
@@ -1120,6 +1212,7 @@ def build_handoff_board(
     handoff_schedule: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
     active_bridge: dict[str, Any] | None = None,
+    baboom_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a compact operator board derived from the full drain plan.
 
@@ -1213,6 +1306,19 @@ def build_handoff_board(
         "missing_in_authority": len(drift.get("missing_in_authority") or []),
         "different_from_authority": len(drift.get("different_from_authority") or []),
     }
+    baboom_status = baboom_authority or {"ok": True, "violation_count": 0}
+    baboom_blocker = {
+        "ok": bool(baboom_status.get("ok")),
+        "violation_count": int(baboom_status.get("violation_count") or 0),
+        "authority_selector_count": int(
+            baboom_status.get("authority_selector_count") or 0
+        ),
+        "runtime_reference_count": int(
+            baboom_status.get("runtime_reference_count") or 0
+        ),
+        "authority_court": baboom_status.get("authority_court"),
+        "required_action": baboom_status.get("required_action"),
+    }
     bridge = active_bridge or {}
     handoff = bridge.get("visible_browser_handoff") or {}
     handoff_available = (
@@ -1240,6 +1346,16 @@ def build_handoff_board(
             else "repair or start the active authority bridge before visible handoff"
         ),
     }
+    blockers = {
+        "source_drift": source_drift_blocker,
+        "passive_wait_pids": passive_wait_pids,
+        "long_running_test_pids": long_running_test_pids,
+        "low_activity_test_pids": low_activity_test_pids,
+        "inspect_before_touch_pids": inspect_pids,
+        "blocked_endpoint_pids": [card["pid"] for card in blocked_endpoints],
+    }
+    if not baboom_blocker["ok"]:
+        blockers["baboom_second_authority"] = baboom_blocker
 
     return {
         "schema": "archhub-runtime-handoff-board/v1",
@@ -1251,6 +1367,7 @@ def build_handoff_board(
             not holders
             and int(replacement_summary.get("blocked_exact_authority_launches") or 0) == 0
             and source_drift_blocker["archive_ready"]
+            and baboom_blocker["ok"]
         ),
         "summary": {
             "holders": len(holders),
@@ -1267,14 +1384,8 @@ def build_handoff_board(
             "source_drift_count": source_drift_blocker["drift_count"],
             "visible_authority_handoff_ready": handoff_available,
         },
-        "blockers": {
-            "source_drift": source_drift_blocker,
-            "passive_wait_pids": passive_wait_pids,
-            "long_running_test_pids": long_running_test_pids,
-            "low_activity_test_pids": low_activity_test_pids,
-            "inspect_before_touch_pids": inspect_pids,
-            "blocked_endpoint_pids": [card["pid"] for card in blocked_endpoints],
-        },
+        "blockers": blockers,
+        "baboom_runtime_single_authority": baboom_blocker,
         "risk_classes": dict(sorted(risk_classes.items())),
         "visible_authority_handoff": visible_authority_handoff,
         "inspect_cards": inspect_cards,
@@ -1297,13 +1408,18 @@ def build_visible_authority_handoff_package(
     """
     board = plan.get("handoff_board") or {}
     handoff = board.get("visible_authority_handoff") or {}
+    baboom_status = (
+        plan.get("baboom_runtime_single_authority")
+        or board.get("baboom_runtime_single_authority")
+        or {"ok": True}
+    )
     blocked_pids = [
         int(pid)
         for pid in ((board.get("blockers") or {}).get("blocked_endpoint_pids") or [])
     ]
     package = {
         "schema": "archhub-visible-authority-handoff-package/v1",
-        "ok": bool(handoff.get("available")),
+        "ok": bool(handoff.get("available")) and bool(baboom_status.get("ok")),
         "mode": "dry_run_no_token_issued",
         "application": "app:archhub",
         "authority": plan.get("authority"),
@@ -1325,6 +1441,11 @@ def build_visible_authority_handoff_package(
                 "archive_ready"
             )
         ),
+        "baboom_runtime_single_authority_ready": bool(baboom_status.get("ok")),
+        "baboom_runtime_second_authority_violations": int(
+            baboom_status.get("violation_count") or 0
+        ),
+        "baboom_authority_court": baboom_status.get("authority_court"),
         "archive_allowed_before_handoff": bool(board.get("archive_allowed")),
         "retirement_gate_failures_before_handoff": (
             (plan.get("retirement_gate") or {}).get("failures") or []
@@ -1347,6 +1468,13 @@ def build_visible_authority_handoff_package(
         package["next_operator_action"] = (
             "handoff package rejected because it would require endpoint freedom "
             "or process interruption"
+        )
+    if not package["baboom_runtime_single_authority_ready"]:
+        package["ok"] = False
+        package["next_operator_action"] = (
+            "handoff package rejected because BABOOM can still select copied "
+            "runtime authority; isolate or remove those imports after lawful "
+            "handoff proof exists"
         )
     return package
 
@@ -2606,6 +2734,7 @@ def build_retirement_gate(
     replacement_summary: dict[str, Any],
     handoff_schedule: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
+    baboom_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source_readiness = source_drift_archive_readiness(source_drift)
     checks = {
@@ -2622,6 +2751,10 @@ def build_retirement_gate(
             handoff_schedule.get("all_steps_non_interrupting")
         ),
     }
+    if baboom_authority is not None:
+        checks["baboom_runtime_single_authority_ready"] = bool(
+            baboom_authority.get("ok")
+        )
     failures = [name for name, ok in checks.items() if not ok]
     archive_allowed = not failures
     if archive_allowed:
@@ -3000,6 +3133,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--baboom-authority-status",
+        action="store_true",
+        help=(
+            "Print the read-only BABOOM single-authority status for the copied "
+            "runtime. This never edits, removes, or interrupts anything."
+        ),
+    )
+    parser.add_argument(
         "--authority-shadow-probe",
         action="store_true",
         help=(
@@ -3059,6 +3200,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.handoff_board
         or args.inspect_board_pids
         or args.visible_authority_handoff_package
+        or args.baboom_authority_status
         or args.verify_universal_holders
         or args.source_drift_report
         or args.source_drift_work_plan
@@ -3145,6 +3287,8 @@ def main(argv: list[str] | None = None) -> int:
             result = verify_runtime_holders_in_universal(plan)
         elif args.visible_authority_handoff_package:
             result = build_visible_authority_handoff_package(plan)
+        elif args.baboom_authority_status:
+            result = plan["baboom_runtime_single_authority"]
         elif args.source_drift_report:
             result = plan["runtime_copy_source_drift"]
         elif args.source_drift_work_plan:

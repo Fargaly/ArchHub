@@ -3,7 +3,7 @@
   "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
   "archive_allowed": false,
   "summary": {
-    "holders": 4,
+    "holders": 1,
     "application_servers": 1,
     "blocked_endpoints": 1,
     "runnable_endpoints": 0,
@@ -11,100 +11,62 @@
     "passive_wait_pids": 0,
     "long_running_test_pids": 0,
     "low_activity_test_pids": 0,
-    "inspect_pids": 3,
-    "handoff_steps": 3,
+    "inspect_pids": 0,
+    "handoff_steps": 2,
     "replacement_specs": 1,
-    "source_drift_count": 27
+    "source_drift_count": 32,
+    "visible_authority_handoff_ready": false
   },
   "blockers": {
     "source_drift": {
       "ok": false,
-      "drift_count": 27,
-      "missing_in_authority": 13,
-      "different_from_authority": 14
+      "archive_ready": true,
+      "readiness_state": "classified_migration_evidence_ready_for_archive",
+      "drift_count": 32,
+      "missing_in_authority": 8,
+      "different_from_authority": 24
     },
     "passive_wait_pids": [],
     "long_running_test_pids": [],
     "low_activity_test_pids": [],
-    "inspect_before_touch_pids": [
-      113216,
-      117712,
-      147188
-    ],
+    "inspect_before_touch_pids": [],
     "blocked_endpoint_pids": [
       52484
-    ]
+    ],
+    "baboom_second_authority": {
+      "ok": false,
+      "violation_count": 4,
+      "authority_selector_count": 1,
+      "runtime_reference_count": 4,
+      "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+      "required_action": "do not archive node_runtime, do not claim handoff complete, and do not accept BABOOM runtime selection until lawful handoff proof exists and these imports/selectors are removed or isolated"
+    }
+  },
+  "baboom_runtime_single_authority": {
+    "ok": false,
+    "violation_count": 4,
+    "authority_selector_count": 1,
+    "runtime_reference_count": 4,
+    "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+    "required_action": "do not archive node_runtime, do not claim handoff complete, and do not accept BABOOM runtime selection until lawful handoff proof exists and these imports/selectors are removed or isolated"
   },
   "risk_classes": {
-    "qa_server_script_missing": 1,
-    "stdin_python_holder": 2,
     "visible_legacy_endpoint": 1
   },
-  "inspect_cards": [
-    {
-      "pid": 113216,
-      "holder_type": "unknown_python_holder",
-      "holder_risk_class": "qa_server_script_missing",
-      "drain_posture": "orphaned temp-script holder; inspect live process before cleanup",
-      "script_evidence": {
-        "launch_mode": "python_script",
-        "module": null,
-        "stdin_mode": false,
-        "script_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "age_seconds": 533193.1625659466,
-      "process_status": "running",
-      "cpu_total_seconds": 84.328125,
-      "allowed_action": "inspect manually before any interruption; do not archive the copied runtime while this holder remains",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-    },
-    {
-      "pid": 117712,
-      "holder_type": "stdin_python",
-      "holder_risk_class": "stdin_python_holder",
-      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-      "script_evidence": {
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "age_seconds": 480102.8139283657,
-      "process_status": "running",
-      "cpu_total_seconds": 0.0,
-      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-    },
-    {
-      "pid": 147188,
-      "holder_type": "stdin_python",
-      "holder_risk_class": "stdin_python_holder",
-      "drain_posture": "stdin-launched Python holder; inspect parent/child/listener evidence",
-      "script_evidence": {
-        "launch_mode": "python_stdin",
-        "module": null,
-        "stdin_mode": true,
-        "script_path": null,
-        "script_exists": false,
-        "script_size_bytes": null,
-        "script_mtime_utc": null,
-        "script_sha256": null
-      },
-      "age_seconds": 480102.69413900375,
-      "process_status": "running",
-      "cpu_total_seconds": 1.234375,
-      "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
-      "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
-    }
-  ],
+  "visible_authority_handoff": {
+    "available": false,
+    "mode": "attach_to_active_authority_bridge",
+    "server_url": null,
+    "one_use_route": null,
+    "requires_endpoint_free": false,
+    "requires_process_interruption": false,
+    "token_issued_by_this_board": false,
+    "protected_visible_endpoint_pids": [
+      52484
+    ],
+    "allowed_action": "repair or start the active authority bridge before visible handoff"
+  },
+  "inspect_cards": [],
   "endpoint_cards": [
     {
       "pid": 52484,
@@ -124,9 +86,9 @@
       "co_owner_pids": [],
       "non_holder_port_owner_pids": [],
       "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-      "age_seconds": 570413.266787529,
+      "age_seconds": 590138.2216877937,
       "process_status": "running",
-      "cpu_total_seconds": 846.234375,
+      "cpu_total_seconds": 882.78125,
       "holder_risk_class": "visible_legacy_endpoint",
       "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
       "script_evidence": {

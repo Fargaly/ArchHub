@@ -28,7 +28,7 @@ from typing import Iterable, Optional
 import config
 
 
-# Bearer-token lifetime. Single source of truth — auth.exchange_code
+# Bearer-token lifetime. One shared constant: auth.exchange_code
 # returns this same value to the client as `expires_at`, and
 # issue_token stamps `tokens.expires_at = created_at + TOKEN_TTL_SECONDS`
 # so the client's expiry and the server's enforced expiry AGREE.
@@ -430,11 +430,11 @@ CREATE TABLE IF NOT EXISTS memory_facts (
 -- it — it reads/writes the user's replica fragments so a fact added via
 -- /v1/memory and a fragment synced via /v1/brain/sync share one table.
 --
--- `memory_fact_index` is the DERIVED index over those fragments (NOT a
--- second source of truth): it mints the global-unique INTEGER fact-id the
+-- `memory_fact_index` is the DERIVED index over those fragments, not a
+-- second content store: it mints the global-unique INTEGER fact-id the
 -- /v1/memory/facts/{id} API has always exposed, maps it to the per-user
 -- replica fragment (user_id, frag_id), and carries the optional embedding.
--- The canonical CONTENT (text/scope/visibility/confidence/valid_until/…)
+-- The fragment content (text/scope/visibility/confidence/valid_until/...)
 -- lives in the fragment; this table is the lookup + search spine only.
 CREATE TABLE IF NOT EXISTS memory_fact_index (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -592,6 +592,105 @@ CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_op_user ON memory_op_log(user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_memory_access_reader ON memory_access_log(reader_user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_collective_domain ON collective_memory(domain);
+
+-- BABOOM device command relay --------------------------------------------
+-- This is delivery transport only. The Universal Cell journal remains the
+-- command authority; no task body, prompt, executable instruction, or secret
+-- is admitted here.
+CREATE TABLE IF NOT EXISTS baboom_devices (
+    owner_user_id  TEXT NOT NULL,
+    device_id      TEXT NOT NULL,
+    public_jwk_json TEXT NOT NULL,
+    thumbprint     TEXT NOT NULL,
+    recipient_public_jwk_json TEXT,
+    recipient_thumbprint TEXT,
+    universal_device_public_jwk_json TEXT,
+    universal_device_thumbprint TEXT,
+    created_at     INTEGER NOT NULL,
+    last_seen_at   INTEGER NOT NULL,
+    revoked_at     INTEGER,
+    PRIMARY KEY (owner_user_id, device_id),
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS baboom_enrollment_challenges (
+    id               TEXT PRIMARY KEY,
+    owner_user_id    TEXT NOT NULL,
+    device_id        TEXT NOT NULL,
+    thumbprint       TEXT NOT NULL,
+    recipient_public_jwk_json TEXT,
+    recipient_thumbprint TEXT,
+    universal_device_public_jwk_json TEXT,
+    universal_device_thumbprint TEXT,
+    challenge_digest TEXT NOT NULL,
+    expires_at       INTEGER NOT NULL,
+    used_at          INTEGER,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS baboom_relay_nonces (
+    id            TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    device_id     TEXT NOT NULL,
+    nonce_digest  TEXT NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    used_at       INTEGER,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS baboom_dpop_proofs (
+    owner_user_id TEXT NOT NULL,
+    device_id     TEXT NOT NULL,
+    proof_jti     TEXT NOT NULL,
+    received_at   INTEGER NOT NULL,
+    PRIMARY KEY (owner_user_id, device_id, proof_jti),
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS baboom_commands (
+    owner_user_id    TEXT NOT NULL,
+    command_id       TEXT NOT NULL,
+    source_device_id TEXT NOT NULL,
+    target_device_id TEXT NOT NULL,
+    summary          TEXT NOT NULL,
+    payload_digest   TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    created_at       INTEGER NOT NULL,
+    expires_at       INTEGER NOT NULL,
+    claimed_at       INTEGER,
+    settled_at       INTEGER,
+    outcome_code     TEXT,
+    PRIMARY KEY (owner_user_id, command_id),
+    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+);
+
+-- Encrypted payload transport only. The plaintext brief is never admitted to
+-- cloud storage or a Cell atom; command metadata remains in baboom_commands.
+CREATE TABLE IF NOT EXISTS baboom_briefs (
+    owner_user_id        TEXT NOT NULL,
+    command_id           TEXT NOT NULL,
+    recipient_thumbprint TEXT NOT NULL,
+    ephemeral_jwk_json   TEXT NOT NULL,
+    salt                 TEXT NOT NULL,
+    nonce                TEXT NOT NULL,
+    ciphertext           TEXT NOT NULL,
+    ciphertext_digest    TEXT NOT NULL,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL,
+    revoked_at           INTEGER,
+    PRIMARY KEY (owner_user_id, command_id),
+    FOREIGN KEY (owner_user_id, command_id)
+        REFERENCES baboom_commands(owner_user_id, command_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_baboom_command_target
+    ON baboom_commands(owner_user_id, target_device_id, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_baboom_nonce_expiry
+    ON baboom_relay_nonces(expires_at);
+CREATE INDEX IF NOT EXISTS idx_baboom_challenge_expiry
+    ON baboom_enrollment_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_baboom_brief_target
+    ON baboom_briefs(owner_user_id, command_id, revoked_at);
 """
 
 
@@ -697,6 +796,19 @@ def init_schema() -> None:
             "ALTER TABLE marketplace_packs ADD COLUMN at_own_risk INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE marketplace_packs ADD COLUMN promoted_at INTEGER",
             "ALTER TABLE marketplace_packs ADD COLUMN promoted_by TEXT",
+            # BABOOM recipient encryption keys are independent from the DPoP
+            # signing identity and remain nullable for legacy metadata-only
+            # device enrollments.
+            "ALTER TABLE baboom_devices ADD COLUMN recipient_public_jwk_json TEXT",
+            "ALTER TABLE baboom_devices ADD COLUMN recipient_thumbprint TEXT",
+            # Universal Device Custody uses a distinct DPoP key.  The relay
+            # records only its public identity and proof-bound thumbprint.
+            "ALTER TABLE baboom_devices ADD COLUMN universal_device_public_jwk_json TEXT",
+            "ALTER TABLE baboom_devices ADD COLUMN universal_device_thumbprint TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN recipient_public_jwk_json TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN recipient_thumbprint TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_public_jwk_json TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_thumbprint TEXT",
         ):
             try:
                 con.execute(ddl)
@@ -1488,12 +1600,12 @@ def memory_stats(user_id: str) -> dict:
 # ---------------------------------------------------------------------------
 #
 # cloud-brain-unify (2026-05-31): a "memory fact" IS a fragment in the user's
-# replica (brain_replica.py → data/replicas/<user_id>/brain.db). The DAO
-# below reads/writes THAT canonical store so a fact added via /v1/memory and
+# replica (brain_replica.py -> data/replicas/<user_id>/brain.db). The DAO
+# below reads/writes that legacy cloud-brain store so a fact added via /v1/memory and
 # a fragment synced via /v1/brain/sync share ONE table — the two-brains
 # duplicate is gone. `memory_fact_index` mints the global-unique INTEGER
 # fact-id the /v1/memory/facts/{id} API exposes and maps it to the replica
-# fragment (+ holds the FTS/embedding index). The canonical CONTENT lives in
+# fragment (+ holds the FTS/embedding index). The content lives in
 # the fragment, never in a second per-user table.
 #
 # Mem0-style ADD/UPDATE/DELETE/NOOP operations apply through memory_writer.
@@ -1649,7 +1761,7 @@ def insert_memory_fact(*, user_id: str, text: str,
         raise ValueError("text required")
     now = int(time.time())
     replica = _open_replica(user_id)
-    # Write the fact as a fragment (the canonical store). The replica's
+    # Write the fact as a fragment in the legacy cloud-brain store. The replica's
     # secret-leak gate runs here too — /v1/memory can't smuggle a bare
     # credential past the BRAIN-FIRST contract any more than /v1/brain/sync.
     res = replica.upsert_fragment({
@@ -2146,8 +2258,8 @@ def create_company(*, name: str, owner_user_id: str,
     now = int(time.time())
     raw_slug = slug.strip() if slug else _slugify(name)
     final_slug = _unique_slug(_slugify(raw_slug))
-    # Seat + message limits both DERIVE from the plan. config is the
-    # single source of truth (config.PLAN_SEATS / config.PLAN_QUOTAS) —
+    # Seat + message limits both derive from the plan config
+    # (config.PLAN_SEATS / config.PLAN_QUOTAS);
     # never hardcode a mirror here, it drifts. config imports only
     # os+pathlib, so there is no circular import (db imports config).
     if seat_limit is None:
@@ -2884,7 +2996,7 @@ def claim_agent_task(task_id: str, claimed_by: str):
 # ---------------------------------------------------------------------------
 # Community Gallery — votes (one per user) + promotion
 # ---------------------------------------------------------------------------
-# The vote ledger (marketplace_pack_votes) is the source of truth; the
+# The vote ledger (marketplace_pack_votes) is the durable vote ledger; the
 # up_votes/down_votes columns on marketplace_packs are a denormalised cache
 # recomputed from the ledger on every write — the SAME honest-from-ledger
 # discipline as credit_balance vs credit_grants. One vote per user is the

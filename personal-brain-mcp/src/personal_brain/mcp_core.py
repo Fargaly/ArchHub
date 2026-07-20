@@ -58,6 +58,12 @@ by_alias=True, exclude_none=True)` — VERIFIED byte-identical to the shape
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
+import asyncio
 import inspect
 import json
 import typing
@@ -376,8 +382,24 @@ class InHouseMCP:
         self.name = str(name)
         self.version = str(version)
         self._tools: dict[str, _ToolEntry] = {}
+        # FastMCP-parity custom HTTP routes (path, methods, fn) — served by
+        # build_asgi_app alongside POST /mcp (e.g. the meeting-room /room page).
+        self._custom_routes: list[tuple[str, list[str], Callable[..., Any]]] = []
         # No threads, no I/O — matches FastMCP("...") + build_server purity so
         # unit tests that construct it (or call build_server) spawn nothing.
+
+    # ── custom routes (FastMCP.custom_route parity) ─────────────────────────
+    def custom_route(self, path: str, methods: Optional[list[str]] = None
+                     ) -> Callable[[Callable], Callable]:
+        """Decorator: register an async Starlette endpoint at `path` —
+        signature-parity with FastMCP.custom_route so route registrations
+        (meeting_room, future pages) survive the FastMCP→InHouseMCP cutover.
+        Routes are materialised lazily in build_asgi_app; registering here does
+        no I/O and needs no starlette import."""
+        def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            self._custom_routes.append((str(path), list(methods or ["GET"]), fn))
+            return fn
+        return _decorator
 
     # ── registry ───────────────────────────────────────────────────────────
     def tool(self, *, name: str, description: str = "") -> Callable[[Callable], Callable]:
@@ -584,7 +606,23 @@ class InHouseMCP:
         if not isinstance(arguments, dict):
             raise MCPError(ERR_INVALID_PARAMS,
                            "tools/call `arguments` must be an object")
-        return self.call_tool(name, arguments)
+        result = self.call_tool(name, arguments)
+        # WORKSHOP OBSERVER (founder 2026-07-17: participation is NOT optional)
+        # — the daemon narrates every watched tool call into the meeting room,
+        # so ALL work by ALL agents shows in the workshop even if an agent
+        # never speaks. Fail-soft: narration can never break a tool call.
+        observer = getattr(self, "_tool_observer", None)
+        if observer is not None:
+            try:
+                observer(name, arguments, result)
+            except Exception:
+                pass
+        return result
+
+    def set_tool_observer(self, fn: Callable[..., Any]) -> None:
+        """Install the workshop narrator: fn(tool_name, arguments, result),
+        called after every successful tools/call. One observer, fail-soft."""
+        self._tool_observer = fn
 
     # ── JSON-RPC framing (REUSES mcp.types, falls back to a dict) ────────────
     def _success_response(self, req_id: Any, result: dict) -> dict:
@@ -670,11 +708,13 @@ class InHouseMCP:
 
         # Batch requests (a JSON array) — render each; concatenate the blocks.
         if isinstance(message, list):
-            chunks = [self.render_sse(m) for m in message]
+            chunks = await asyncio.to_thread(
+                lambda: [self.render_sse(m) for m in message])
             await _asgi_sse(send, b"".join(c for c in chunks if c))
             return
 
-        await _asgi_sse(send, self.render_sse(message))
+        await _asgi_sse(
+            send, await asyncio.to_thread(self.render_sse, message))
 
     # ── Starlette app factory: POST /mcp (stateless) — the mountable form ────
     def build_asgi_app(self) -> "Any":
@@ -740,7 +780,8 @@ class InHouseMCP:
             # Batch (JSON array): render each block, concatenate — parity with
             # asgi_mcp. All-notifications → 202 (nothing to stream).
             if isinstance(message, list):
-                chunks = [self.render_sse(m) for m in message]
+                chunks = await asyncio.to_thread(
+                    lambda: [self.render_sse(m) for m in message])
                 body = b"".join(c for c in chunks if c)
                 if not body:
                     return Response(status_code=202)
@@ -751,7 +792,10 @@ class InHouseMCP:
                     headers=sse_headers,
                 )
 
-            body = self.render_sse(message)
+            # Handlers remain synchronous for direct callers and tests, but
+            # HTTP dispatch must not block the ASGI loop while a tool waits on
+            # a real subprocess. Health/ping stays responsive in parallel.
+            body = await asyncio.to_thread(self.render_sse, message)
             if not body:
                 # Notification(s) only — no response object. 202 Accepted, empty
                 # body: byte-true to the SDK's stateless responder.
@@ -763,7 +807,11 @@ class InHouseMCP:
                 headers=sse_headers,
             )
 
-        return Starlette(routes=[Route("/mcp", _mcp_endpoint, methods=["POST"])])
+        routes = [Route("/mcp", _mcp_endpoint, methods=["POST"])]
+        # FastMCP-parity custom routes (meeting room /room page etc.)
+        for _path, _methods, _fn in self._custom_routes:
+            routes.append(Route(_path, _fn, methods=_methods))
+        return Starlette(routes=routes)
 
     # ── run() — FastMCP-compatible transport (Phase 2: serves via uvicorn) ───
     def run(

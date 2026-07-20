@@ -22,8 +22,14 @@ Run:
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import argparse
 import hashlib
+import json
 import os
 import sys
 import time
@@ -114,6 +120,29 @@ def make_context_payload(
 
     injection = _format_injection(skills, facts, wiring, secret_refs)
 
+    # MEETING ROOM tail (founder 2026-07-17): every agent's pre-prompt hook
+    # calls brain.context each turn — appending the room's recent messages HERE
+    # is what makes the workshop real-time for all agents with zero client
+    # plumbing. Fail-soft: the room never breaks context retrieval.
+    try:
+        from .cell_room_wiring import (
+            cell_room_injection_tail, cell_room_is_wired,
+        )
+        if cell_room_is_wired():
+            _room_tail = cell_room_injection_tail()
+        else:
+            _room_tail = (
+                '<meeting_room status="blocked" '
+                'authority="application-owned Universal Cell Workshop">\n'
+                "Universal Workshop is enabled but not wired; legacy meeting_room_v1 "
+                "is not prompt authority.\n"
+                "</meeting_room>"
+            )
+        if _room_tail:
+            injection = injection + "\n" + _room_tail
+    except Exception:
+        pass
+
     return ContextResponse(
         skills=skills,
         facts=facts,
@@ -144,6 +173,7 @@ def queue_skill_mint(
     owner_user: str,
     contributing_agent: str,
     session_id: Optional[str] = None,
+    critic_policy: Optional[dict[str, Any]] = None,
 ) -> SkillMintResult:
     """Receive a trace at Stop time.
 
@@ -215,6 +245,12 @@ def queue_skill_mint(
     accept, breakdown = adaptive_decide(
         calib, novelty=novelty, success_score=success_score,
     )
+    r1_gate = {
+        "passed": bool(accept),
+        "novelty_score": novelty,
+        "success_score": success_score,
+        "breakdown": dict(breakdown),
+    }
     store.set_meta("calibration_v1", calib.to_json())
 
     # R2 — Echo Trap pre-flight: refuse if candidate too similar to an
@@ -249,6 +285,11 @@ def queue_skill_mint(
             # Embeddings unavailable — degrade silently, calibration alone gates
             diversity_reason = f"diversity check skipped: {ex}"
 
+    r2_gate = {
+        "passed": bool(accept and not diversity_blocked),
+        "reason": diversity_reason or (
+            "diversity gate passed" if accept else "R1 calibration gate did not pass"),
+    }
     will_hone = accept and not diversity_blocked
 
     # ── REAL MINT (AgDR-0044 §1 wire: skill_mint → reflect_on_trace →
@@ -288,6 +329,7 @@ def queue_skill_mint(
                 store=store,
                 owner_user=owner_user,
                 contributing_agent=contributing_agent,
+                critic_policy=critic_policy,
                 publish=True,
             )
             if result.accepted and result.skill is not None:
@@ -300,6 +342,24 @@ def queue_skill_mint(
                 # posterior leaves 1.0/1.0.
                 honed_ok = bool(result.hone.get("ok", True))
                 calib.record_outcome(retained=honed_ok)
+                minted_skill.mint_evidence = {
+                    "schema": "archhub-skill-mint-evidence/v1",
+                    "source_trace": {
+                        "trace_id": trace.get("trace_id"),
+                        "session_id": session_id or trace.get("session_id"),
+                        "contributing_agent": contributing_agent,
+                    },
+                    "r1_gate": r1_gate,
+                    "r2_gate": r2_gate,
+                    "reflexion": {
+                        "accepted": True,
+                        "hone": dict(result.hone or {}),
+                        "classification": dict(result.classification or {}),
+                        "critic_policy": dict(critic_policy or {}),
+                        "proposal": dict(result.proposal or {}),
+                    },
+                }
+                store.upsert_skill(minted_skill)
             else:
                 calib.record_outcome(retained=False)
                 will_hone = False  # reflexion declined downstream of the gates
@@ -335,6 +395,8 @@ def queue_skill_mint(
         novelty_score=novelty,
         success_score=success_score,
         will_hone=will_hone,
+        r1_gate=r1_gate,
+        r2_gate=r2_gate,
         reason=final_reason,
     )
 
@@ -385,11 +447,199 @@ def announce_wiring(
 # ─────────────────────── FastMCP server build ──────────────────────────
 
 
+def announce_wiring_cell_first(
+    *,
+    store: BrainStore,
+    req: WiringAnnounceRequest,
+    owner_user: str,
+) -> dict[str, Any]:
+    entry_summaries = [
+        {
+            "name": entry.name,
+            "kind": entry.kind,
+            "endpoint_sha256": hashlib.sha256(
+                str(entry.endpoint or "").encode("utf-8")
+            ).hexdigest(),
+            "device_id": entry.device_id or req.device_id,
+        }
+        for entry in req.entries
+    ]
+    secret_ref_hashes = [
+        hashlib.sha256(str(ref.ref).encode("utf-8")).hexdigest()
+        for ref in req.secret_refs
+    ]
+    claims = {
+        "operation": "brain.wiring_announce",
+        "owner_user": owner_user,
+        "device_id": req.device_id,
+        "entry_count": len(req.entries),
+        "entries": entry_summaries,
+        "secret_ref_count": len(req.secret_refs),
+        "secret_ref_hashes": secret_ref_hashes,
+        "cwd_sha256": hashlib.sha256(str(req.cwd or "").encode("utf-8")).hexdigest(),
+        "git_remote_sha256": hashlib.sha256(
+            str(req.git_remote or "").encode("utf-8")
+        ).hexdigest(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    basis = json.dumps(claims, sort_keys=True)
+    source = "brain-control:wiring:%s" % (
+        hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    )
+    try:
+        from .universal_runtime import UniversalRuntimeBridge
+
+        runtime = UniversalRuntimeBridge()
+        cell_record = runtime.assembly_create(
+            definition_key="knowledge-branch",
+            fields={
+                "source": source,
+                "scope": "founder/brain-control/wiring",
+                "claims": basis,
+                "provenance": "personal_brain.server:wiring_announce",
+            },
+            idempotency_field="source",
+        )
+    except Exception as cell_error:
+        return {
+            "ok": False,
+            "registered": 0,
+            "skipped": len(req.entries),
+            "cell_first": True,
+            "brain_written": False,
+            "cell_record_source": source,
+            "error": f"{type(cell_error).__name__}: {cell_error}",
+        }
+
+    resp = announce_wiring(store=store, req=req, owner_user=owner_user)
+    out = resp.model_dump(mode="json")
+    out["ok"] = True
+    out["cell_first"] = True
+    out["brain_written"] = True
+    out["cell_record"] = cell_record
+    out["cell_record_root"] = str(cell_record["created_root"])
+    out["cell_record_source"] = source
+    return out
+
+
+def queue_skill_mint_cell_first(
+    *,
+    store: BrainStore,
+    trace: dict[str, Any],
+    outcome: str,
+    owner_user: str,
+    contributing_agent: str,
+    session_id: Optional[str] = None,
+    critic_policy: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    redacted_trace = _redact_hook_value(trace)
+    trace_json = json.dumps(redacted_trace, sort_keys=True, default=str)
+    tool_calls = trace.get("tool_calls", []) or []
+    claims = {
+        "operation": "brain.skill_mint",
+        "owner_user": owner_user,
+        "contributing_agent": contributing_agent,
+        "session_id": session_id or "",
+        "trace_id": trace.get("trace_id") or "",
+        "outcome": outcome,
+        "tool_call_count": len(tool_calls),
+        "successful_tool_call_count": len([
+            call for call in tool_calls if call.get("status") == "ok"
+        ]),
+        "trace_sha256": hashlib.sha256(trace_json.encode("utf-8")).hexdigest(),
+        "trace_len": len(trace_json),
+        "critic_policy_sha256": hashlib.sha256(
+            json.dumps(critic_policy or {}, sort_keys=True, default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    basis = json.dumps(claims, sort_keys=True)
+    source = "brain-control:skill-mint:%s" % (
+        hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    )
+    try:
+        from .universal_runtime import UniversalRuntimeBridge
+
+        runtime = UniversalRuntimeBridge()
+        cell_record = runtime.assembly_create(
+            definition_key="knowledge-branch",
+            fields={
+                "source": source,
+                "scope": "founder/brain-control/skill-mint",
+                "claims": basis,
+                "provenance": "personal_brain.server:skill_mint",
+            },
+            idempotency_field="source",
+        )
+    except Exception as cell_error:
+        return {
+            "ok": False,
+            "queued": False,
+            "cell_first": True,
+            "brain_written": False,
+            "cell_record_source": source,
+            "error": f"{type(cell_error).__name__}: {cell_error}",
+        }
+
+    result = queue_skill_mint(
+        store=store,
+        trace=trace,
+        outcome=outcome,
+        owner_user=owner_user,
+        contributing_agent=contributing_agent,
+        session_id=session_id,
+        critic_policy=critic_policy,
+    )
+    out = result.model_dump(mode="json")
+    out["ok"] = True
+    out["cell_first"] = True
+    out["brain_written"] = bool(result.queued)
+    out["cell_record"] = cell_record
+    out["cell_record_root"] = str(cell_record["created_root"])
+    out["cell_record_source"] = source
+    return out
+
+
+def create_brain_control_cell_receipt(
+    *,
+    operation: str,
+    scope: str,
+    claims: dict[str, Any],
+    provenance: str,
+) -> tuple[dict[str, Any], str]:
+    """Create a Universal Cell governance receipt for a Brain control write."""
+    safe_claims = dict(claims)
+    safe_claims["operation"] = operation
+    safe_claims["recorded_at"] = datetime.now(timezone.utc).isoformat()
+    basis = json.dumps(safe_claims, sort_keys=True, default=str)
+    source = "brain-control:%s:%s" % (
+        scope,
+        hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16],
+    )
+    from .universal_runtime import UniversalRuntimeBridge
+
+    runtime = UniversalRuntimeBridge()
+    record = runtime.assembly_create(
+        definition_key="knowledge-branch",
+        fields={
+            "source": source,
+            "scope": f"founder/brain-control/{scope}",
+            "claims": basis,
+            "provenance": provenance,
+        },
+        idempotency_field="source",
+    )
+    return record, source
+
+
 def build_server(
     *,
     store: Optional[BrainStore] = None,
     db_path: Optional[str | Path] = None,
     default_owner_user: Optional[str] = None,
+    runtime_session_manager=None,
 ):
     """Build the FastMCP server with 4 tools attached.
 
@@ -465,6 +715,10 @@ def build_server(
         return "default"
 
     mcp = FastMCP("personal-brain")
+    if runtime_session_manager is None:
+        from .universal_session_manager import UniversalRuntimeSessionManager
+        runtime_session_manager = UniversalRuntimeSessionManager()
+    mcp._universal_runtime_session_manager = runtime_session_manager
 
     @mcp.tool(
         name="brain.context",
@@ -502,12 +756,12 @@ def build_server(
     @mcp.tool(
         name="brain.write",
         description=(
-            "Apply Mem0-style memory ops (ADD/UPDATE/DELETE/NOOP) with "
-            "immutable provenance attached. Wire to PostToolUse so the brain "
-            "captures every tool outcome as memory in real time. Slice 11: "
-            "every non-USER-scope write is gated by acl.can_write_to_scope; "
-            "operations that fail ACL are rejected with a typed reason — "
-            "the rest of the batch still applies."
+            "CELL-FIRST legacy Brain memory write. Accepted ADD/UPDATE/DELETE/"
+            "NOOP ops get a Universal Cell governance receipt before the legacy "
+            "Brain fragment projection is written. The Cell receipt records ids, "
+            "scopes, kinds, content hashes, and lengths, not raw arbitrary memory "
+            "text. If the Cell receipt cannot be created, the Brain write is "
+            "refused. Every non-USER-scope write is still gated by ACL."
         ),
     )
     def brain_write(ops: list[dict[str, Any]]) -> dict[str, Any]:
@@ -574,8 +828,92 @@ def build_server(
                         continue
             parsed.append(op)
 
+        cell_record = None
+        cell_record_source = ""
+        if parsed:
+            op_summaries: list[dict[str, Any]] = []
+            for op in parsed:
+                fragment = op.fragment
+                frag_text = fragment.text if fragment is not None else ""
+                frag_id = fragment.id if fragment is not None else ""
+                frag_scope = (
+                    fragment.scope.value
+                    if fragment is not None and hasattr(fragment.scope, "value")
+                    else (str(fragment.scope) if fragment is not None else "")
+                )
+                frag_kind = (
+                    fragment.kind.value
+                    if fragment is not None and hasattr(fragment.kind, "value")
+                    else (str(fragment.kind) if fragment is not None else "")
+                )
+                op_summaries.append({
+                    "op": op.op.value if hasattr(op.op, "value") else str(op.op),
+                    "fragment_id": frag_id,
+                    "scope": frag_scope,
+                    "kind": frag_kind,
+                    "text_sha256": hashlib.sha256(
+                        str(frag_text).encode("utf-8")
+                    ).hexdigest(),
+                    "text_len": len(str(frag_text)),
+                })
+            owner = resolve_default_owner()
+            batch_basis = json.dumps(
+                {
+                    "owner_user": owner,
+                    "ops": op_summaries,
+                    "denied": denied,
+                },
+                sort_keys=True,
+            )
+            batch_id = hashlib.sha256(batch_basis.encode("utf-8")).hexdigest()[:16]
+            cell_record_source = f"brain-control:write:{batch_id}"
+            try:
+                from .universal_runtime import UniversalRuntimeBridge
+
+                runtime = UniversalRuntimeBridge()
+                cell_record = runtime.assembly_create(
+                    definition_key="knowledge-branch",
+                    fields={
+                        "source": cell_record_source,
+                        "scope": "founder/brain-control/write",
+                        "claims": json.dumps(
+                            {
+                                "operation": "brain.write",
+                                "owner_user": owner,
+                                "ops": op_summaries,
+                                "acl_denied_count": len(denied),
+                                "recorded_at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(),
+                            },
+                            sort_keys=True,
+                        ),
+                        "provenance": "personal_brain.server:brain_write",
+                    },
+                    idempotency_field="source",
+                )
+            except Exception as cell_error:
+                result = {
+                    "ok": False,
+                    "ops_applied": 0,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "cell_record_source": cell_record_source,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
+                if denied:
+                    result["acl_denied"] = denied
+                    result["acl_denied_count"] = len(denied)
+                return result
+
         resp = apply_write(store=store, ops=parsed)
         result = resp.model_dump(mode="json")
+        result["cell_first"] = bool(parsed)
+        result["brain_written"] = bool(parsed)
+        if cell_record is not None:
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
         if denied:
             result["acl_denied"] = denied
             result["acl_denied_count"] = len(denied)
@@ -598,7 +936,33 @@ def build_server(
     def brain_organize_tool() -> dict[str, Any]:
         from .organize import brain_organize
         owner = resolve_default_owner()
-        return brain_organize(store, owner_user=owner)
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.organize",
+                scope="maintenance",
+                claims={
+                    "owner_user_sha256": hashlib.sha256(
+                        owner.encode("utf-8")
+                    ).hexdigest(),
+                    "fragment_count": int(store.count_fragments()),
+                },
+                provenance="personal_brain.server.brain.organize",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
+        result = brain_organize(store, owner_user=owner)
+        result["ok"] = True
+        result["cell_first"] = True
+        result["brain_written"] = True
+        result["cell_record"] = cell_record
+        result["cell_record_root"] = str(cell_record["created_root"])
+        result["cell_record_source"] = cell_record_source
+        return result
 
     @mcp.tool(
         name="brain.reembed",
@@ -613,11 +977,35 @@ def build_server(
     )
     def brain_reembed_tool() -> dict[str, Any]:
         from .organize import brain_reembed
-        return brain_reembed(store)
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.reembed",
+                scope="maintenance",
+                claims={
+                    "fragment_count": int(store.count_fragments()),
+                },
+                provenance="personal_brain.server.brain.reembed",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
+        result = brain_reembed(store)
+        result["ok"] = True
+        result["cell_first"] = True
+        result["brain_written"] = True
+        result["cell_record"] = cell_record
+        result["cell_record_root"] = str(cell_record["created_root"])
+        result["cell_record_source"] = cell_record_source
+        return result
 
     @mcp.tool(
         name="brain.promote_skills",
         description=(
+            "CELL-FIRST for live runs. "
             "Promote harvested skill-FRAGMENTS (kind=skill rows, or fact rows "
             "marked source=session-harvest with a skill_name) into PROPER "
             "`skills` rows so retrieval (brain.context / search_skills) can "
@@ -637,7 +1025,66 @@ def build_server(
     def brain_promote_skills_tool(dry_run: bool = False) -> dict[str, Any]:
         from .organize import promote_skill_fragments
         owner = resolve_default_owner()
-        return promote_skill_fragments(store, owner_user=owner, dry_run=dry_run)
+        if dry_run:
+            plan = promote_skill_fragments(
+                store, owner_user=owner, dry_run=True,
+            )
+            plan["cell_first"] = True
+            plan["brain_written"] = False
+            return plan
+
+        plan = promote_skill_fragments(store, owner_user=owner, dry_run=True)
+        plan_json = json.dumps(plan, sort_keys=True, default=str)
+        claims = {
+            "owner_user_sha256": hashlib.sha256(
+                owner.encode("utf-8")
+            ).hexdigest(),
+            "planned_promoted": int(plan.get("promoted", 0)),
+            "planned_deleted_fragments": int(
+                plan.get("deleted_fragments", 0)
+            ),
+            "planned_total_candidates": int(plan.get("total_candidates", 0)),
+            "planned_skipped_duplicate": int(
+                plan.get("skipped_duplicate", 0)
+            ),
+            "planned_errors_count": len(plan.get("errors", []) or []),
+            "planned_slug_map_count": len(plan.get("slug_map", []) or []),
+            "plan_sha256": hashlib.sha256(
+                plan_json.encode("utf-8")
+            ).hexdigest(),
+        }
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.promote_skills",
+                scope="promote-skills",
+                claims=claims,
+                provenance="personal_brain.server.brain.promote_skills",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "promoted": 0,
+                "skipped_duplicate": 0,
+                "deleted_fragments": 0,
+                "total_candidates": int(plan.get("total_candidates", 0)),
+                "slug_map": [],
+                "skipped": [],
+                "errors": [f"cell unavailable: {exc}"],
+                "dry_run": False,
+                "cell_first": True,
+                "brain_written": False,
+            }
+
+        result = promote_skill_fragments(store, owner_user=owner, dry_run=False)
+        result["ok"] = True
+        result["cell_first"] = True
+        result["brain_written"] = bool(
+            result.get("promoted") or result.get("deleted_fragments")
+        )
+        result["cell_record"] = cell_record
+        result["cell_record_root"] = str(cell_record["created_root"])
+        result["cell_record_source"] = cell_record_source
+        return result
 
     @mcp.tool(
         name="brain.browse",
@@ -666,6 +1113,7 @@ def build_server(
     @mcp.tool(
         name="brain.restore",
         description=(
+            "CELL-FIRST. "
             "Un-archive a fragment — clear its valid_until so a faded/archived "
             "note rejoins active memory. The inverse of the organize pass's "
             "stale-trace archive; powers the visual browser's 'Restore' button "
@@ -675,7 +1123,54 @@ def build_server(
     )
     def brain_restore_tool(fragment_id: str) -> dict[str, Any]:
         from .organize import brain_restore
-        return brain_restore(store, fragment_id)
+        before = store.get_fragment(fragment_id) if fragment_id else None
+        if before is not None and before.valid_until is not None:
+            try:
+                cell_record, cell_record_source = create_brain_control_cell_receipt(
+                    operation="brain.restore",
+                    scope="fact-mutation",
+                    claims={
+                        "fragment_id_sha256": hashlib.sha256(
+                            str(fragment_id).encode("utf-8")
+                        ).hexdigest(),
+                        "kind": (
+                            before.kind.value
+                            if hasattr(before.kind, "value")
+                            else str(before.kind)
+                        ),
+                        "scope": (
+                            before.scope.value
+                            if hasattr(before.scope, "value")
+                            else str(before.scope)
+                        ),
+                        "text_sha256": hashlib.sha256(
+                            str(before.text or "").encode("utf-8")
+                        ).hexdigest(),
+                        "text_len": len(str(before.text or "")),
+                        "had_valid_until": True,
+                    },
+                    provenance="personal_brain.server:restore",
+                )
+            except Exception as cell_error:
+                return {
+                    "ok": False,
+                    "restored": False,
+                    "id": fragment_id,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
+            result = brain_restore(store, fragment_id)
+            result["cell_first"] = True
+            result["brain_written"] = bool(result.get("restored"))
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
+            return result
+        result = brain_restore(store, fragment_id)
+        result["cell_first"] = False
+        result["brain_written"] = False
+        return result
 
     # ── Brain-as-folders (founder 2026-06-21): explorable + editable tree ──
     # The flat search + do-nothing graph blob are replaced by a real folder
@@ -706,6 +1201,7 @@ def build_server(
     @mcp.tool(
         name="brain.edit_fact",
         description=(
+            "CELL-FIRST. "
             "Edit a brain fact's text in place. Persists through the safe "
             "write_fragment path (never a raw sqlite write) and stales the "
             "embedding so the next organize pass re-embeds. Powers the folder "
@@ -715,11 +1211,63 @@ def build_server(
     )
     def brain_edit_fact_tool(fragment_id: str, text: str) -> dict[str, Any]:
         from .brain_facts import edit_fact
-        return edit_fact(store, fragment_id, text)
+        new_text = (text or "").strip()
+        before = store.get_fragment(fragment_id) if fragment_id else None
+        if before is not None and new_text and before.text != new_text:
+            try:
+                cell_record, cell_record_source = create_brain_control_cell_receipt(
+                    operation="brain.edit_fact",
+                    scope="fact-mutation",
+                    claims={
+                        "fragment_id_sha256": hashlib.sha256(
+                            str(fragment_id).encode("utf-8")
+                        ).hexdigest(),
+                        "kind": (
+                            before.kind.value
+                            if hasattr(before.kind, "value")
+                            else str(before.kind)
+                        ),
+                        "scope": (
+                            before.scope.value
+                            if hasattr(before.scope, "value")
+                            else str(before.scope)
+                        ),
+                        "old_text_sha256": hashlib.sha256(
+                            str(before.text or "").encode("utf-8")
+                        ).hexdigest(),
+                        "new_text_sha256": hashlib.sha256(
+                            new_text.encode("utf-8")
+                        ).hexdigest(),
+                        "old_text_len": len(str(before.text or "")),
+                        "new_text_len": len(new_text),
+                    },
+                    provenance="personal_brain.server:edit_fact",
+                )
+            except Exception as cell_error:
+                return {
+                    "ok": False,
+                    "id": fragment_id,
+                    "edited": False,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
+            result = edit_fact(store, fragment_id, text)
+            result["cell_first"] = True
+            result["brain_written"] = bool(result.get("edited"))
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
+            return result
+        result = edit_fact(store, fragment_id, text)
+        result["cell_first"] = False
+        result["brain_written"] = False
+        return result
 
     @mcp.tool(
         name="brain.delete_fact",
         description=(
+            "CELL-FIRST. "
             "Delete a brain fact. Default is a SOFT delete (set valid_until "
             "→ drops out of the active tree, recoverable via brain.restore, "
             "honouring MAKE-IT-REAL-NEVER-TRIM). Pass hard=True to remove the "
@@ -729,16 +1277,65 @@ def build_server(
     )
     def brain_delete_fact_tool(fragment_id: str, hard: bool = False) -> dict[str, Any]:
         from .brain_facts import delete_fact
-        return delete_fact(store, fragment_id, hard=hard)
+        before = store.get_fragment(fragment_id) if fragment_id else None
+        mutates = before is not None and (bool(hard) or before.valid_until is None)
+        if mutates:
+            try:
+                cell_record, cell_record_source = create_brain_control_cell_receipt(
+                    operation="brain.delete_fact",
+                    scope="fact-mutation",
+                    claims={
+                        "fragment_id_sha256": hashlib.sha256(
+                            str(fragment_id).encode("utf-8")
+                        ).hexdigest(),
+                        "kind": (
+                            before.kind.value
+                            if hasattr(before.kind, "value")
+                            else str(before.kind)
+                        ),
+                        "scope": (
+                            before.scope.value
+                            if hasattr(before.scope, "value")
+                            else str(before.scope)
+                        ),
+                        "text_sha256": hashlib.sha256(
+                            str(before.text or "").encode("utf-8")
+                        ).hexdigest(),
+                        "text_len": len(str(before.text or "")),
+                        "hard": bool(hard),
+                        "had_valid_until": before.valid_until is not None,
+                    },
+                    provenance="personal_brain.server:delete_fact",
+                )
+            except Exception as cell_error:
+                return {
+                    "ok": False,
+                    "id": fragment_id,
+                    "deleted": False,
+                    "hard": bool(hard),
+                    "cell_first": True,
+                    "brain_written": False,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
+            result = delete_fact(store, fragment_id, hard=hard)
+            result["cell_first"] = True
+            result["brain_written"] = bool(result.get("deleted"))
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
+            return result
+        result = delete_fact(store, fragment_id, hard=hard)
+        result["cell_first"] = False
+        result["brain_written"] = False
+        return result
 
     @mcp.tool(
         name="brain.skill_mint",
         description=(
-            "Receive a trace on Stop / SessionEnd. The reflexion worker "
-            "scores novelty + success and decides whether to mint a new "
-            "skill (Voyager critic + SkillWeaver hone — Slice 5). Slice 1 "
-            "queues the trace and returns a SkillMintResult describing the "
-            "decision."
+            "CELL-FIRST skill mint request. Creates a Universal Cell request "
+            "with redacted/hash trace evidence before the legacy Brain trace/"
+            "skill projection can write. Returns the SkillMintResult projection "
+            "plus Cell receipt fields."
         ),
     )
     def brain_skill_mint(
@@ -747,25 +1344,26 @@ def build_server(
         owner_user: Optional[str] = None,
         contributing_agent: str = "unknown",
         session_id: Optional[str] = None,
+        critic_policy: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         owner = owner_user or resolve_default_owner()
-        result = queue_skill_mint(
+        return queue_skill_mint_cell_first(
             store=store,
             trace=trace,
             outcome=outcome,
             owner_user=owner,
             contributing_agent=contributing_agent,
             session_id=session_id,
+            critic_policy=critic_policy,
         )
-        return result.model_dump(mode="json")
 
     @mcp.tool(
         name="brain.wiring_announce",
         description=(
-            "Announce which MCPs / CLIs / models are configured on this "
-            "device, plus which secret references are present. Wire to "
-            "SessionStart on every client. Brain uses this to filter skills "
-            "by `requires_mcps` so the model never sees a skill it can't run."
+            "CELL-FIRST wiring announcement. Creates a Universal Cell receipt "
+            "for the device/session wiring, then writes the legacy Brain wiring "
+            "projection used by context filtering. Secret references are hashed "
+            "in the Cell receipt, not copied as raw refs."
         ),
     )
     def brain_wiring_announce(
@@ -800,8 +1398,7 @@ def build_server(
             cwd=cwd,
             git_remote=git_remote,
         )
-        resp = announce_wiring(store=store, req=req, owner_user=owner)
-        return resp.model_dump(mode="json")
+        return announce_wiring_cell_first(store=store, req=req, owner_user=owner)
 
     # ───────────────── Claude Code HOOK WRAPPERS (the fix) ─────────────────
     # ROOT CAUSE (2026-06-21): Claude Code's `mcp_tool` hooks call the brain
@@ -872,14 +1469,12 @@ def build_server(
     @mcp.tool(
         name="brain.observe",
         description=(
-            "Claude Code PostToolUse hook target (wrapper). Synthesizes ONE "
-            "ADD memory op from a raw tool-call payload (tool_name + "
-            "tool_input + tool_response) with provenance "
-            "(contributing_agent='claude-code', session_id, bound owner) and "
-            "applies it through the SAME write path brain.write uses — mirroring "
-            "app/memory_gate._synthesize_fragment. This is how the brain LEARNS "
-            "after every tool call. Cheap, non-blocking, swallows errors to a "
-            "soft result. Tolerant of unexpected kwargs."
+            "CELL-FIRST Claude Code PostToolUse hook target. Synthesizes one "
+            "observed tool-call memory record, creates a Universal Cell evidence "
+            "record first, then writes the legacy Brain fragment only as a "
+            "projection receipt. If the Cell record cannot be created, the hook "
+            "soft-fails without writing Brain memory. Tolerant of unexpected "
+            "kwargs."
         ),
     )
     def brain_observe(
@@ -904,6 +1499,41 @@ def build_server(
             frag_id = _hash_id(
                 "observe", tname, (session_id or ""), text[:200]
             )
+            cell_payload = {
+                "operation": "brain.observe",
+                "fragment_id": frag_id,
+                "tool_name": tname,
+                "session_id": session_id or "",
+                "cwd": cwd or "",
+                "owner_user": owner,
+                "input_summary": input_summary,
+                "result_summary": result_summary,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            cell_record_source = f"brain-control:observe:{frag_id}"
+            try:
+                from .universal_runtime import UniversalRuntimeBridge
+
+                runtime = UniversalRuntimeBridge()
+                cell_record = runtime.assembly_create(
+                    definition_key="knowledge-branch",
+                    fields={
+                        "source": cell_record_source,
+                        "scope": "founder/brain-control/observe",
+                        "claims": json.dumps(cell_payload, sort_keys=True),
+                        "provenance": "personal_brain.server:brain_observe",
+                    },
+                    idempotency_field="source",
+                )
+            except Exception as cell_error:
+                return {
+                    "ok": False,
+                    "ops_applied": 0,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "cell_record_source": cell_record_source,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
             fragment = Fragment(
                 id=frag_id,
                 kind=FragmentKind.FACT,
@@ -921,15 +1551,37 @@ def build_server(
                     session_id=session_id,
                     created_at=datetime.now(timezone.utc),
                 ),
-                extra={"source": "hook.observe", "cwd": cwd},
+                extra={
+                    "source": "hook.observe",
+                    "cwd": cwd,
+                    "cell_record_root": str(cell_record["created_root"]),
+                    "cell_record_source": cell_record_source,
+                },
             )
             # Same typed write path brain.write delegates to — a LIST of ops.
-            resp = apply_write(
-                store=store,
-                ops=[WriteOp(op=WriteOpType.ADD, fragment=fragment)],
-            )
+            try:
+                resp = apply_write(
+                    store=store,
+                    ops=[WriteOp(op=WriteOpType.ADD, fragment=fragment)],
+                )
+            except Exception as write_error:
+                return {
+                    "ok": False,
+                    "ops_applied": 0,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "cell_record": cell_record,
+                    "cell_record_root": str(cell_record["created_root"]),
+                    "cell_record_source": cell_record_source,
+                    "error": f"{type(write_error).__name__}: {write_error}",
+                }
             result = resp.model_dump(mode="json")
             result["ok"] = True
+            result["cell_first"] = True
+            result["brain_written"] = True
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
             return result
         except Exception as ex:  # a hook must never hard-error
             return {"ok": False, "ops_applied": 0,
@@ -938,12 +1590,10 @@ def build_server(
     @mcp.tool(
         name="brain.hook_skill_mint",
         description=(
-            "Claude Code Stop hook target (wrapper). Reads the session "
-            "transcript JSONL (transcript_path), extracts tool_use / "
-            "tool_result events into a trace {trace_id, tool_calls:[{name, "
-            "status}]}, and runs the SAME skill_mint pipeline brain.skill_mint "
-            "uses (novelty + success gates → reflexion mint). No transcript → "
-            "soft no-op. Tolerant of unexpected kwargs; never hard-errors."
+            "CELL-FIRST Claude Code Stop hook target. Reads the session "
+            "transcript JSONL, extracts tool_use/tool_result events, creates a "
+            "Universal Cell skill-mint request, then runs the legacy Brain "
+            "skill-mint projection. No transcript means soft no-op."
         ),
     )
     def brain_hook_skill_mint(
@@ -963,7 +1613,7 @@ def build_server(
                     ),
                 }
             owner = resolve_default_owner()
-            result = queue_skill_mint(
+            out = queue_skill_mint_cell_first(
                 store=store,
                 trace=trace,
                 outcome="success",
@@ -971,7 +1621,6 @@ def build_server(
                 contributing_agent="claude-code",
                 session_id=session_id,
             )
-            out = result.model_dump(mode="json")
             out["ok"] = True
             return out
         except Exception as ex:  # a hook must never hard-error
@@ -981,15 +1630,16 @@ def build_server(
     @mcp.tool(
         name="brain.hook_session_start",
         description=(
-            "Claude Code SessionStart hook target (wrapper). Announces this "
-            "session's wiring (device_id=session_id, cwd) through the SAME "
-            "path brain.wiring_announce uses, so the brain has the scope hint "
-            "for the session. Tolerant of unexpected kwargs; never hard-errors."
+            "CELL-FIRST Claude Code SessionStart hook target. Records the "
+            "session wiring through the same Cell-first path brain.wiring_announce "
+            "uses, then enrolls the runtime Agent Session when available. "
+            "Tolerant of unexpected kwargs; never hard-errors."
         ),
     )
     def brain_hook_session_start(
         session_id: Optional[str] = None,
         cwd: Optional[str] = None,
+        vendor: Optional[str] = None,
         **_ignored: Any,
     ) -> dict[str, Any]:
         try:
@@ -1002,16 +1652,145 @@ def build_server(
                 cwd=cwd,
                 git_remote=None,
             )
-            resp = announce_wiring(store=store, req=req, owner_user=owner)
-            out = resp.model_dump(mode="json")
-            out["ok"] = True
+            out = announce_wiring_cell_first(
+                store=store,
+                req=req,
+                owner_user=owner,
+            )
+            if not out.get("ok"):
+                return out
+            runtime = (vendor or "unknown").strip() or "unknown"
+            if session_id:
+                try:
+                    graph_session = runtime_session_manager.enroll(
+                        runtime=runtime,
+                        external_session_id=session_id,
+                    )
+                    out["universal_runtime_connected"] = True
+                    out["universal_agent_session"] = graph_session[
+                        "agent_session"
+                    ]
+                    out["universal_agent_session_reused"] = graph_session[
+                        "reused"
+                    ]
+                except Exception as graph_error:
+                    out["universal_runtime_connected"] = False
+                    out["universal_runtime_error"] = (
+                        f"{type(graph_error).__name__}: {graph_error}"
+                    )
+            else:
+                out["universal_runtime_connected"] = False
+                out["universal_runtime_error"] = (
+                    "vendor did not provide a session identity"
+                )
             return out
         except Exception as ex:  # a hook must never hard-error
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
+        name="brain.universal_work_status",
+        description=(
+            "Read Cell-native governed work through an enrolled external "
+            "Agent Session. Brain transports the request and owns no work row."
+        ),
+    )
+    def brain_universal_work_status(
+        session_id: str,
+        vendor: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.work_status(
+            runtime=vendor, external_session_id=session_id
+        )
+
+    @mcp.tool(
+        name="brain.universal_work_next",
+        description=(
+            "Atomically claim the highest-priority open Cell-native work as "
+            "the exact enrolled Agent Session. Brain owns no copied queue."
+        ),
+    )
+    def brain_universal_work_next(
+        session_id: str,
+        vendor: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.claim_next(
+            runtime=vendor, external_session_id=session_id
+        )
+
+    @mcp.tool(
+        name="brain.universal_work_create",
+        description=(
+            "Create governed Work directly in the Universal Cell graph for an "
+            "enrolled Agent Session. Brain transports the request and does not "
+            "write a legacy work ledger."
+        ),
+    )
+    def brain_universal_work_create(
+        session_id: str,
+        vendor: str,
+        title: str,
+        external_key: str,
+        description: str = "",
+        priority: int = 0,
+        references: Optional[dict[str, str]] = None,
+        structured_references: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.create(
+            runtime=vendor,
+            external_session_id=session_id,
+            title=title,
+            description=description,
+            priority=priority,
+            external_key=external_key,
+            references=references,
+            structured_references=structured_references,
+        )
+
+    @mcp.tool(
+        name="brain.universal_work_transition",
+        description=(
+            "Claim, release, block, or submit Cell-native governed work as the "
+            "exact enrolled Agent Session. Graph policy and history decide."
+        ),
+    )
+    def brain_universal_work_transition(
+        session_id: str,
+        vendor: str,
+        work_root: str,
+        event: str,
+        evidence: str = "",
+    ) -> dict[str, Any]:
+        return runtime_session_manager.transition(
+            runtime=vendor,
+            external_session_id=session_id,
+            root_id=work_root,
+            event=event,
+            evidence=evidence,
+        )
+
+    @mcp.tool(
+        name="brain.universal_work_court",
+        description=(
+            "Request the application-owned independent court for one submitted "
+            "Cell-native work node. The court reruns the graph-declared gate; "
+            "the caller cannot choose accept or return."
+        ),
+    )
+    def brain_universal_work_court(
+        session_id: str,
+        vendor: str,
+        work_root: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.adjudicate(
+            runtime=vendor,
+            external_session_id=session_id,
+            root_id=work_root,
+        )
+
+    @mcp.tool(
         name="brain.promote",
         description=(
+            "CELL-FIRST. "
             "Promote a fragment from its current scope to a higher one "
             "(user→project→firm→community→global). Required redaction is "
             "applied automatically when target scope crosses the privacy "
@@ -1068,7 +1847,7 @@ def build_server(
         if decision.redaction_required:
             promoted_dict, report = redact_fragment(source_dict)
         else:
-            promoted_dict, report = source_dict, None
+            promoted_dict, report = dict(source_dict), None
 
         new_id = (
             "promoted-"
@@ -1089,6 +1868,65 @@ def build_server(
         elif target == AclScope.GLOBAL:
             promoted_dict["visibility"] = "canonical"
 
+        source_scope = source_dict.get("scope", "user")
+        source_text = str(source_dict.get("text", ""))
+        promoted_text = str(promoted_dict.get("text", ""))
+        claims = {
+            "fragment_id_sha256": hashlib.sha256(
+                source.id.encode("utf-8")
+            ).hexdigest(),
+            "promoted_id_sha256": hashlib.sha256(
+                new_id.encode("utf-8")
+            ).hexdigest(),
+            "source_scope": source_scope,
+            "target_scope": target.value,
+            "source_kind": source_dict.get("kind"),
+            "target_visibility": promoted_dict.get("visibility"),
+            "actor_user_sha256": hashlib.sha256(
+                actor.user_id.encode("utf-8")
+            ).hexdigest(),
+            "owner_user_sha256": hashlib.sha256(
+                str(source_dict.get("owner_user", "")).encode("utf-8")
+            ).hexdigest(),
+            "source_text_sha256": hashlib.sha256(
+                source_text.encode("utf-8")
+            ).hexdigest(),
+            "promoted_text_sha256": hashlib.sha256(
+                promoted_text.encode("utf-8")
+            ).hexdigest(),
+            "source_text_len": len(source_text),
+            "promoted_text_len": len(promoted_text),
+            "redaction_required": bool(decision.redaction_required),
+            "redaction_policy_id": report.policy_id if report else None,
+            "redaction_findings_count": len(report.findings) if report else 0,
+            "target_project_sha256": hashlib.sha256(
+                str(target_project_id or "").encode("utf-8")
+            ).hexdigest(),
+            "target_firm_sha256": hashlib.sha256(
+                str(target_firm_id or "").encode("utf-8")
+            ).hexdigest(),
+            "target_community_sha256": hashlib.sha256(
+                str(target_community_id or "").encode("utf-8")
+            ).hexdigest(),
+        }
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.promote",
+                scope="promote",
+                claims=claims,
+                provenance="personal_brain.server.brain.promote",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "promoted": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+                "source_id": source.id,
+                "target_scope": target.value,
+            }
+
         # Persist via WriteOp path (keeps Mem0-style consistency)
         from .models import Fragment as _Fragment, WriteOp, WriteOpType
         # Coerce dict → Fragment for validation
@@ -1107,7 +1945,13 @@ def build_server(
         )
 
         return {
+            "ok": True,
             "promoted": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
             "source_id": source.id,
             "promoted_id": new_id,
             "target_scope": target.value,
@@ -1128,6 +1972,7 @@ def build_server(
     @mcp.tool(
         name="brain.firm_create",
         description=(
+            "CELL-FIRST for new firm writes. "
             "Create a new firm on this device. Caller becomes the root "
             "admin. Returns the firm identity (firm_id + name + public "
             "key). The private key is held LOCAL only — other devices "
@@ -1147,12 +1992,45 @@ def build_server(
                 "ok": True, "already_exists": True,
                 "firm_id": existing.firm_id, "name": existing.name,
                 "root_pub": existing.root_pub,
+                "cell_first": False,
+                "brain_written": False,
+            }
+        actor = created_by or resolve_default_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.firm_create",
+                scope="firm",
+                claims={
+                    "name_sha256": hashlib.sha256(
+                        name.encode("utf-8")
+                    ).hexdigest(),
+                    "created_by_sha256": hashlib.sha256(
+                        actor.encode("utf-8")
+                    ).hexdigest(),
+                    "force": bool(force),
+                    "existing_firm_sha256": hashlib.sha256(
+                        str(existing.firm_id if existing else "").encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.firm_create",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
             }
         identity = create_firm(
-            store, name=name, created_by=created_by or resolve_default_owner(),
+            store, name=name, created_by=actor,
         )
         return {
             "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
             "firm_id": identity.firm_id, "name": identity.name,
             "root_pub": identity.root_pub,
             "is_admin": True,
@@ -1161,6 +2039,7 @@ def build_server(
     @mcp.tool(
         name="brain.firm_invite_create",
         description=(
+            "CELL-FIRST for invite writes. "
             "Create a signed invite token to add a teammate to the "
             "current firm. Only the firm admin (the device that holds "
             "root_priv) can issue tokens. Token is a base64url payload "
@@ -1173,19 +2052,71 @@ def build_server(
         role: str = "seat",
         ttl_hours: int = 24,
     ) -> dict[str, Any]:
-        from .firm import create_invite_token
+        from .firm import create_invite_token, current_firm, current_seat
+        firm = current_firm(store)
+        seat = current_seat(store)
+        if firm is None:
+            return {"ok": False, "error": "no firm - create_firm first"}
+        if not firm.root_priv:
+            return {
+                "ok": False,
+                "error": "this device is not the firm admin - no root_priv available",
+            }
+        if seat is None or seat.role != "admin":
+            return {"ok": False, "error": "only admin can issue invites"}
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.firm_invite_create",
+                scope="firm",
+                claims={
+                    "firm_id_sha256": hashlib.sha256(
+                        firm.firm_id.encode("utf-8")
+                    ).hexdigest(),
+                    "role": role,
+                    "ttl_hours": int(ttl_hours),
+                    "issued_by_sha256": hashlib.sha256(
+                        seat.user_id.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.firm_invite_create",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         try:
             envelope = create_invite_token(
                 store, role=role, ttl_hours=ttl_hours,
             )
-            return {"ok": True, "token": envelope, "role": role,
-                     "ttl_hours": ttl_hours}
         except RuntimeError as ex:
-            return {"ok": False, "error": str(ex)}
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "cell_record": cell_record,
+                "cell_record_root": str(cell_record["created_root"]),
+                "cell_record_source": cell_record_source,
+                "error": str(ex),
+            }
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+            "token": envelope,
+            "role": role,
+            "ttl_hours": ttl_hours,
+        }
 
     @mcp.tool(
         name="brain.firm_invite_accept",
         description=(
+            "CELL-FIRST for accepted invite writes. "
             "Accept an invite token to join a firm. Verifies signature "
             "+ expiry; on success materialises firm identity (public "
             "key only — not admin priv) and records the local seat. "
@@ -1196,17 +2127,68 @@ def build_server(
         token: str,
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        from .firm import accept_invite_token
+        from .firm import accept_invite_token, verify_invite_token
+        invite, ok, reason = verify_invite_token(token)
+        if not ok:
+            return {"ok": False, "error": f"invite token rejected: {reason}"}
+        user = user_id or resolve_default_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.firm_invite_accept",
+                scope="firm",
+                claims={
+                    "token_sha256": hashlib.sha256(
+                        token.encode("utf-8")
+                    ).hexdigest(),
+                    "firm_id_sha256": hashlib.sha256(
+                        invite.firm_id.encode("utf-8")
+                    ).hexdigest(),
+                    "firm_name_sha256": hashlib.sha256(
+                        invite.firm_name.encode("utf-8")
+                    ).hexdigest(),
+                    "role": invite.role,
+                    "issued_by_sha256": hashlib.sha256(
+                        invite.issued_by.encode("utf-8")
+                    ).hexdigest(),
+                    "user_id_sha256": hashlib.sha256(
+                        user.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.firm_invite_accept",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         try:
             seat = accept_invite_token(
-                store, envelope=token, user_id=user_id or resolve_default_owner(),
+                store, envelope=token, user_id=user,
             )
-            return {
-                "ok": True, "firm_id": seat.firm_id, "user_id": seat.user_id,
-                "role": seat.role, "invited_by": seat.invited_by,
-            }
         except RuntimeError as ex:
-            return {"ok": False, "error": str(ex)}
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "cell_record": cell_record,
+                "cell_record_root": str(cell_record["created_root"]),
+                "cell_record_source": cell_record_source,
+                "error": str(ex),
+            }
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+            "firm_id": seat.firm_id,
+            "user_id": seat.user_id,
+            "role": seat.role,
+            "invited_by": seat.invited_by,
+        }
 
     @mcp.tool(
         name="brain.firm_seats",
@@ -1233,21 +2215,56 @@ def build_server(
     @mcp.tool(
         name="brain.firm_leave",
         description=(
+            "CELL-FIRST. "
             "Leave the current firm on this device. The seat record "
             "remains visible on other seats until next sync, then gets "
             "pruned."
         ),
     )
     def brain_firm_leave() -> dict[str, Any]:
-        from .firm import leave_firm
+        from .firm import current_firm, current_seat, leave_firm
+        firm = current_firm(store)
+        seat = current_seat(store)
+        if firm is None and seat is None:
+            return {"ok": True, "cell_first": False, "brain_written": False}
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.firm_leave",
+                scope="firm",
+                claims={
+                    "firm_id_sha256": hashlib.sha256(
+                        str(firm.firm_id if firm else "").encode("utf-8")
+                    ).hexdigest(),
+                    "user_id_sha256": hashlib.sha256(
+                        str(seat.user_id if seat else "").encode("utf-8")
+                    ).hexdigest(),
+                    "role": seat.role if seat else "",
+                },
+                provenance="personal_brain.server.brain.firm_leave",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         leave_firm(store)
-        return {"ok": True}
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+        }
 
     # ─────────────────── community (Slice 14 MCP wires) ────────────────
 
     @mcp.tool(
         name="brain.community_subscribe",
         description=(
+            "CELL-FIRST. "
             "Subscribe to a peer firm's federation outbox. Records a "
             "Subscription (actor_url + display_name) in the local brain "
             "store; the CommunityPoller subsequently pulls "
@@ -1263,6 +2280,30 @@ def build_server(
     ) -> dict[str, Any]:
         from . import community as _community
         owner = owner_user or resolve_default_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_subscribe",
+                scope="community",
+                claims={
+                    "actor_url_sha256": hashlib.sha256(
+                        actor_url.encode("utf-8")
+                    ).hexdigest(),
+                    "display_name_sha256": hashlib.sha256(
+                        (display_name or "").encode("utf-8")
+                    ).hexdigest(),
+                    "owner_user_sha256": hashlib.sha256(
+                        owner.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.community_subscribe",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         sub = _community.subscribe(
             store,
             actor_url=actor_url,
@@ -1271,6 +2312,11 @@ def build_server(
         )
         return {
             "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
             "subscription": {
                 "actor_url": sub.actor_url,
                 "display_name": sub.display_name,
@@ -1281,6 +2327,7 @@ def build_server(
     @mcp.tool(
         name="brain.community_unsubscribe",
         description=(
+            "CELL-FIRST when a subscription exists. "
             "Remove a community subscription by actor_url. Returns "
             "`removed: True` when the row existed; `False` when no such "
             "subscription was registered. Previously-imported community-"
@@ -1289,8 +2336,46 @@ def build_server(
     )
     def brain_community_unsubscribe(actor_url: str) -> dict[str, Any]:
         from . import community as _community
+        before = {
+            sub.actor_url
+            for sub in _community.list_subscriptions(store)
+        }
+        if actor_url not in before:
+            return {
+                "ok": True,
+                "removed": False,
+                "cell_first": False,
+                "brain_written": False,
+            }
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_unsubscribe",
+                scope="community",
+                claims={
+                    "actor_url_sha256": hashlib.sha256(
+                        actor_url.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.community_unsubscribe",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "removed": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         removed = _community.unsubscribe(store, actor_url)
-        return {"ok": True, "removed": bool(removed)}
+        return {
+            "ok": True,
+            "removed": bool(removed),
+            "cell_first": True,
+            "brain_written": bool(removed),
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+        }
 
     @mcp.tool(
         name="brain.community_list",
@@ -1334,7 +2419,15 @@ def build_server(
         from dataclasses import asdict as _asdict
         poller = _get_or_create_community_poller(store)
         results = poller.tick()
-        return {"ok": True, "results": [_asdict(r) for r in results]}
+        payloads: list[dict[str, Any]] = []
+        for result in results:
+            payload = _asdict(result)
+            payload["cell_first"] = bool(getattr(result, "cell_first", False))
+            payload["brain_written"] = bool(getattr(result, "brain_written", False))
+            payload["cell_record_root"] = getattr(result, "cell_record_root", None)
+            payload["cell_record_source"] = getattr(result, "cell_record_source", None)
+            payloads.append(payload)
+        return {"ok": True, "results": payloads}
 
     # ───────────── multi-device community (create / join / converge) ──────
     # Distinct from the federation `community_*` subscription tools above:
@@ -1345,6 +2438,7 @@ def build_server(
     @mcp.tool(
         name="brain.community_create",
         description=(
+            "CELL-FIRST. "
             "Create a multi-device community on this device. The caller "
             "becomes the OWNER (holds the signing key locally). Writes a "
             "COMMUNITY-scope `community` fragment + an owner `community_"
@@ -1371,13 +2465,47 @@ def build_server(
             base_url=transport_base_url or "",
             note=transport_note or "",
         )
+        actor = created_by or resolve_default_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_create",
+                scope="community",
+                claims={
+                    "name_sha256": hashlib.sha256(
+                        name.encode("utf-8")
+                    ).hexdigest(),
+                    "created_by_sha256": hashlib.sha256(
+                        actor.encode("utf-8")
+                    ).hexdigest(),
+                    "transport_kind": tconf.kind,
+                    "transport_base_url_sha256": hashlib.sha256(
+                        tconf.base_url.encode("utf-8")
+                    ).hexdigest(),
+                    "transport_note_sha256": hashlib.sha256(
+                        tconf.note.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.community_create",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         community = _cg.create_community(
             store, name=name,
-            created_by=created_by or resolve_default_owner(),
+            created_by=actor,
             transport=tconf,
         )
         return {
             "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
             "community": community.to_safe_dict(),
             "is_owner": True,
         }
@@ -1414,6 +2542,7 @@ def build_server(
     @mcp.tool(
         name="brain.community_join",
         description=(
+            "CELL-FIRST for accepted joins. "
             "Join a community on THIS device using a join-code (the bare "
             "token OR the archhub://community/join?code=... URL). Verifies "
             "signature + expiry offline, materialises membership, writes a "
@@ -1428,18 +2557,66 @@ def build_server(
         member_id: Optional[str] = None,
     ) -> dict[str, Any]:
         from . import community_groups as _cg
+        code_obj, ok, reason = _cg.verify_join_code(code)
+        if not ok:
+            return {"ok": False, "error": f"join-code rejected: {reason}"}
+        member = member_id or resolve_default_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_join",
+                scope="community",
+                claims={
+                    "code_sha256": hashlib.sha256(
+                        code.encode("utf-8")
+                    ).hexdigest(),
+                    "community_id_sha256": hashlib.sha256(
+                        code_obj.community_id.encode("utf-8")
+                    ).hexdigest(),
+                    "name_sha256": hashlib.sha256(
+                        code_obj.name.encode("utf-8")
+                    ).hexdigest(),
+                    "member_id_sha256": hashlib.sha256(
+                        member.encode("utf-8")
+                    ).hexdigest(),
+                    "role": code_obj.role,
+                    "issued_by_sha256": hashlib.sha256(
+                        code_obj.issued_by.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.community_join",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         try:
             community = _cg.join_community(
                 store, envelope=code,
-                member_id=member_id or resolve_default_owner(),
+                member_id=member,
             )
-            return {
-                "ok": True,
-                "community": community.to_safe_dict(),
-                "is_owner": False,
-            }
         except RuntimeError as ex:
-            return {"ok": False, "error": str(ex)}
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "cell_record": cell_record,
+                "cell_record_root": str(cell_record["created_root"]),
+                "cell_record_source": cell_record_source,
+                "error": str(ex),
+            }
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+            "community": community.to_safe_dict(),
+            "is_owner": False,
+        }
 
     @mcp.tool(
         name="brain.community_groups",
@@ -1494,6 +2671,7 @@ def build_server(
     @mcp.tool(
         name="brain.community_set_transport",
         description=(
+            "CELL-FIRST when a community exists. "
             "Point the current community at a transport so its devices "
             "converge: 'disk' (offline JSON snapshot), 'cloud_relay' "
             "(ArchHub /v1/brain/sync), or 'speckle' (owned local Speckle "
@@ -1513,14 +2691,56 @@ def build_server(
             base_url=transport_base_url or "",
             note=transport_note or "",
         )
+        current = _cg.current_community(store)
+        if current is None:
+            return {
+                "ok": False,
+                "error": "no community on this device",
+                "cell_first": False,
+                "brain_written": False,
+            }
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_set_transport",
+                scope="community",
+                claims={
+                    "community_id_sha256": hashlib.sha256(
+                        current.community_id.encode("utf-8")
+                    ).hexdigest(),
+                    "transport_kind": tconf.kind,
+                    "transport_base_url_sha256": hashlib.sha256(
+                        tconf.base_url.encode("utf-8")
+                    ).hexdigest(),
+                    "transport_note_sha256": hashlib.sha256(
+                        tconf.note.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server.brain.community_set_transport",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         community = _cg.set_transport(store, tconf)
         if community is None:
             return {"ok": False, "error": "no community on this device"}
-        return {"ok": True, "community": community.to_safe_dict()}
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+            "community": community.to_safe_dict(),
+        }
 
     @mcp.tool(
         name="brain.community_leave",
         description=(
+            "CELL-FIRST when membership exists. "
             "Leave the current multi-device community on this device. "
             "Tombstones this device's member fragment so the roster "
             "converges on other devices after their next sync. The "
@@ -1530,8 +2750,40 @@ def build_server(
     )
     def brain_community_leave() -> dict[str, Any]:
         from . import community_groups as _cg
+        current = _cg.current_community(store)
+        if current is None:
+            return {"ok": True, "cell_first": False, "brain_written": False}
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.community_leave",
+                scope="community",
+                claims={
+                    "community_id_sha256": hashlib.sha256(
+                        current.community_id.encode("utf-8")
+                    ).hexdigest(),
+                    "created_by_sha256": hashlib.sha256(
+                        current.created_by.encode("utf-8")
+                    ).hexdigest(),
+                    "role": current.role,
+                },
+                provenance="personal_brain.server.brain.community_leave",
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"cell unavailable: {exc}",
+            }
         _cg.leave_community(store)
-        return {"ok": True}
+        return {
+            "ok": True,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+        }
 
     @mcp.tool(
         name="brain.community_owned_server",
@@ -1557,13 +2809,14 @@ def build_server(
     @mcp.tool(
         name="brain.set_owner",
         description=(
-            "Bind this local brain to a signed-in cloud account. Persists the "
+            "CELL-FIRST owner binding. Persists the "
             "cloud `user_id` (+ optional email / display_name) to brain_meta "
             "so every fragment, skill, and wiring write that falls back to the "
             "default owner is owned by that user_id — not by $USER / 'founder'. "
             "Takes effect IN-PROCESS immediately (no daemon restart) and "
             "survives restarts (persisted). Call this right after cloud "
-            "sign-in. Returns {ok, owner_user, previously}."
+            "sign-in. Refuses the Brain binding if the Universal Cell receipt "
+            "cannot be created."
         ),
     )
     def brain_set_owner(
@@ -1580,6 +2833,41 @@ def build_server(
             }
         previously = _bound_owner()  # None when this is the first bind
         now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.set_owner",
+                scope="owner-binding",
+                claims={
+                    "previous_owner_sha256": hashlib.sha256(
+                        str(previously or "").encode("utf-8")
+                    ).hexdigest(),
+                    "target_owner_sha256": hashlib.sha256(
+                        uid.encode("utf-8")
+                    ).hexdigest(),
+                    "target_owner_len": len(uid),
+                    "email_present": bool((email or "").strip()),
+                    "email_sha256": hashlib.sha256(
+                        (email or "").strip().encode("utf-8")
+                    ).hexdigest(),
+                    "display_name_present": bool((display_name or "").strip()),
+                    "display_name_sha256": hashlib.sha256(
+                        (display_name or "").strip().encode("utf-8")
+                    ).hexdigest(),
+                    "effective_fallback_sha256": hashlib.sha256(
+                        fallback_owner.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server:set_owner",
+            )
+        except Exception as cell_error:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "owner_user": resolve_default_owner(),
+                "previously": previously,
+                "error": f"{type(cell_error).__name__}: {cell_error}",
+            }
         store.set_meta(BOUND_OWNER_KEY, uid)
         store.set_meta(BOUND_EMAIL_KEY, (email or "").strip())
         store.set_meta(BOUND_NAME_KEY, (display_name or "").strip())
@@ -1592,6 +2880,11 @@ def build_server(
             "email": (email or "").strip(),
             "display_name": (display_name or "").strip(),
             "set_at": now_iso,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
         }
 
     @mcp.tool(
@@ -1620,15 +2913,42 @@ def build_server(
     @mcp.tool(
         name="brain.clear_owner",
         description=(
-            "Unbind the cloud account from this local brain (sign-out). "
+            "CELL-FIRST owner unbinding. "
             "Removes the persisted owner binding so the default owner reverts "
             "to env / OS / 'founder'. The brain DATA stays — only the binding "
             "is cleared; previously-bound fragments keep their owner_user. "
-            "Returns {ok, owner_user (new effective), previously}."
+            "Refuses the Brain clear if the Universal Cell receipt cannot be "
+            "created."
         ),
     )
     def brain_clear_owner() -> dict[str, Any]:
         previously = _bound_owner()
+        try:
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.clear_owner",
+                scope="owner-binding",
+                claims={
+                    "previous_owner_sha256": hashlib.sha256(
+                        str(previously or "").encode("utf-8")
+                    ).hexdigest(),
+                    "had_binding": previously is not None,
+                    "effective_fallback_sha256": hashlib.sha256(
+                        fallback_owner.encode("utf-8")
+                    ).hexdigest(),
+                },
+                provenance="personal_brain.server:clear_owner",
+            )
+        except Exception as cell_error:
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "owner_user": resolve_default_owner(),
+                "bound": previously is not None,
+                "previously": previously,
+                "cleared": False,
+                "error": f"{type(cell_error).__name__}: {cell_error}",
+            }
         for key in (
             BOUND_OWNER_KEY,
             BOUND_EMAIL_KEY,
@@ -1645,6 +2965,38 @@ def build_server(
             "bound": False,
             "previously": previously,
             "cleared": previously is not None,
+            "cell_first": True,
+            "brain_written": True,
+            "cell_record": cell_record,
+            "cell_record_root": str(cell_record["created_root"]),
+            "cell_record_source": cell_record_source,
+        }
+
+    @mcp.tool(
+        name="brain.liveness",
+        description="Transport-safe local liveness and server identity for supervised clients.",
+    )
+    def brain_liveness() -> dict[str, Any]:
+        """Return only transport and in-memory worker evidence.
+
+        The process supervisor and BABOOM call this endpoint while recovering
+        from a busy or locked Brain store.  Do not add persistent-store reads
+        here: counts and wiring diagnostics belong to ``brain.health``.  A
+        response proves this MCP handler is serving, while the worker snapshot
+        states whether the in-memory engine is ready.
+        """
+        engine: dict[str, Any] = {"started": False, "workers": {}}
+        try:
+            from .workers import get_supervisor
+            sup = get_supervisor(store)
+            if sup is not None:
+                engine = sup.status()
+        except Exception as ex:
+            engine = {"started": False, "error": f"{type(ex).__name__}: {ex}"}
+        return {
+            "ok": True,
+            "server_pid": os.getpid(),
+            "engine": engine,
         }
 
     @mcp.tool(
@@ -1720,6 +3072,7 @@ def build_server(
         return {
             "ok": True,
             "version": "0.1.0",
+            "server_pid": os.getpid(),
             "db_path": str(store.path),
             "skills": store.count_skills(),
             "facts": store.count_fragments(Scope.USER) + store.count_fragments(Scope.PROJECT),
@@ -1769,6 +3122,14 @@ def build_server(
                 "examples": list(sk.examples or []),
                 "contributor": sk.owner_user,
                 "firm_id": getattr(sk, "firm_id", None),
+                "provenance": sk.provenance.model_dump(mode="json"),
+                "minted_at": sk.minted_at.isoformat(),
+                "honed_trials": sk.honed_trials,
+                "honed_passed": sk.honed_passed,
+                "side_effects": sk.side_effects,
+                "success_count": sk.success_count,
+                "fail_count": sk.fail_count,
+                "mint_evidence": dict(sk.mint_evidence or {}),
             })
         return {
             "ok": True,
@@ -1849,6 +3210,7 @@ def build_server(
     @mcp.tool(
         name="brain.dataset_export",
         description=(
+            "CELL-FIRST. "
             "Brain #32 (founder ask 2026-05-26): export fragments as a "
             "HuggingFace-style training dataset. Writes JSONL primary + "
             "optional parquet (if pyarrow installed) + manifest.json. "
@@ -1887,6 +3249,37 @@ def build_server(
             except ValueError as ex:
                 return {"ok": False, "error": f"invalid kind: {ex}"}
         try:
+            owner = owner_user or resolve_default_owner()
+            scope_values = [s.value for s in scope_filter]
+            kind_values = [
+                k.value if hasattr(k, "value") else str(k)
+                for k in (kind_filter or [])
+            ]
+            claims = {
+                "out_dir_sha256": hashlib.sha256(
+                    str(out_dir).encode("utf-8")
+                ).hexdigest(),
+                "dataset_name_sha256": hashlib.sha256(
+                    str(dataset_name).encode("utf-8")
+                ).hexdigest(),
+                "scopes": scope_values,
+                "kinds": kind_values,
+                "since_sha256": hashlib.sha256(
+                    str(since or "").encode("utf-8")
+                ).hexdigest(),
+                "limit": int(limit),
+                "owner_user_sha256": hashlib.sha256(
+                    owner.encode("utf-8")
+                ).hexdigest(),
+                "respect_training_rights": bool(respect_training_rights),
+                "training_target": training_target,
+            }
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.dataset_export",
+                scope="dataset-export",
+                claims=claims,
+                provenance="personal_brain.server.brain.dataset_export",
+            )
             manifest = _de.export_fragments(
                 store,
                 _P(out_dir),
@@ -1895,13 +3288,23 @@ def build_server(
                 kinds=kind_filter,
                 since=since,
                 limit=int(limit),
-                owner_user=owner_user or resolve_default_owner(),
+                owner_user=owner,
                 respect_training_rights=respect_training_rights,
                 training_target=training_target,
             )
+            manifest["cell_first"] = True
+            manifest["brain_written"] = True
+            manifest["cell_record"] = cell_record
+            manifest["cell_record_root"] = str(cell_record["created_root"])
+            manifest["cell_record_source"] = cell_record_source
             return manifest
         except Exception as ex:
-            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"{type(ex).__name__}: {ex}",
+            }
 
     @mcp.tool(
         name="brain.fanout_export",
@@ -1994,6 +3397,7 @@ def build_server(
     @mcp.tool(
         name="brain.fanout_apply",
         description=(
+            "CELL-FIRST for inbound writes. "
             "Slice-17 cloud-fanout INBOUND merge: write FIRM/COMMUNITY "
             "fragment rows pulled from the cloud replica back into the local "
             "brain. This is the receive half of the fanout — a device pulls "
@@ -2043,7 +3447,7 @@ def build_server(
             prov = getattr(cur, "provenance", None)
             return _as_packed(getattr(prov, "hlc", None) if prov else None)
 
-        applied = 0
+        write_candidates: list[_F] = []
         skipped = 0
         refused = 0
         for f in (fragments or []):
@@ -2094,16 +3498,99 @@ def build_server(
                     provenance=prov,
                     extra=f.get("extra") or {},
                 )
+                write_candidates.append(frag)
+            except Exception:
+                refused += 1
+        if write_candidates:
+            candidate_claims: list[dict[str, Any]] = []
+            for frag in write_candidates:
+                scope_val = (
+                    frag.scope.value
+                    if hasattr(frag.scope, "value")
+                    else str(frag.scope)
+                )
+                kind_val = (
+                    frag.kind.value
+                    if hasattr(frag.kind, "value")
+                    else str(frag.kind)
+                )
+                text = frag.text or ""
+                candidate_claims.append({
+                    "fragment_id_sha256": hashlib.sha256(
+                        frag.id.encode("utf-8")
+                    ).hexdigest(),
+                    "scope": scope_val,
+                    "kind": kind_val,
+                    "text_sha256": hashlib.sha256(
+                        text.encode("utf-8")
+                    ).hexdigest(),
+                    "text_len": len(text),
+                    "owner_user_sha256": hashlib.sha256(
+                        (frag.owner_user or "").encode("utf-8")
+                    ).hexdigest(),
+                    "firm_id_sha256": hashlib.sha256(
+                        str(frag.firm_id or "").encode("utf-8")
+                    ).hexdigest(),
+                    "hlc_sha256": hashlib.sha256(
+                        str(getattr(frag.provenance, "hlc", "") or "").encode(
+                            "utf-8"
+                        )
+                    ).hexdigest(),
+                })
+            claims = {
+                "candidate_count": len(write_candidates),
+                "skipped_count": skipped,
+                "refused_count": refused,
+                "fragments": candidate_claims,
+            }
+            try:
+                cell_record, cell_record_source = (
+                    create_brain_control_cell_receipt(
+                        operation="brain.fanout_apply",
+                        scope="fanout-apply",
+                        claims=claims,
+                        provenance="personal_brain.server.brain.fanout_apply",
+                    )
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "applied": 0,
+                    "skipped": skipped,
+                    "refused": refused,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "error": f"cell unavailable: {exc}",
+                }
+        else:
+            cell_record = None
+            cell_record_source = ""
+
+        applied = 0
+        for frag in write_candidates:
+            try:
                 store.write_fragment(frag)
                 applied += 1
             except Exception:
                 refused += 1
-        return {"ok": True, "applied": applied, "skipped": skipped,
-                "refused": refused}
+        result = {
+            "ok": True,
+            "applied": applied,
+            "skipped": skipped,
+            "refused": refused,
+            "cell_first": bool(write_candidates),
+            "brain_written": bool(applied),
+        }
+        if cell_record is not None:
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
+        return result
 
     @mcp.tool(
         name="brain.cloud_archive",
         description=(
+            "CELL-FIRST for upload-capable archive requests. "
             "Brain #32 day-2: upload a local dataset directory (from "
             "brain.dataset_export) to an S3-compatible bucket the USER "
             "owns (Cloudflare R2 / AWS S3 / Hetzner / MinIO). ArchHub "
@@ -2132,8 +3619,63 @@ def build_server(
         from . import cloud_archive as _ca
 
         try:
-            return _ca.upload_dataset(
-                _P(local_dir),
+            local_path = _P(local_dir)
+            # Preserve clean local guard branches without requiring the Cell
+            # runtime when no upload can happen.
+            if (
+                not _ca._is_boto3_available()
+                or not local_path.exists()
+            ):
+                return _ca.upload_dataset(
+                    local_path,
+                    bucket=bucket,
+                    endpoint_url=endpoint_url,
+                    region=region,
+                    access_key_ref=access_key_ref,
+                    secret_key_ref=secret_key_ref,
+                    prefix=prefix,
+                    dataset_name=dataset_name,
+                    include_blobs=include_blobs,
+                    blob_store_root=(
+                        _P(blob_store_root) if blob_store_root else None
+                    ),
+                )
+            claims = {
+                "local_dir_sha256": hashlib.sha256(
+                    str(local_path).encode("utf-8")
+                ).hexdigest(),
+                "bucket_sha256": hashlib.sha256(
+                    bucket.encode("utf-8")
+                ).hexdigest(),
+                "endpoint_url_sha256": hashlib.sha256(
+                    str(endpoint_url or "").encode("utf-8")
+                ).hexdigest(),
+                "region": region,
+                "access_key_ref_sha256": hashlib.sha256(
+                    str(access_key_ref or "").encode("utf-8")
+                ).hexdigest(),
+                "secret_key_ref_sha256": hashlib.sha256(
+                    str(secret_key_ref or "").encode("utf-8")
+                ).hexdigest(),
+                "prefix_sha256": hashlib.sha256(
+                    prefix.encode("utf-8")
+                ).hexdigest(),
+                "dataset_name_sha256": hashlib.sha256(
+                    str(dataset_name or local_path.name).encode("utf-8")
+                ).hexdigest(),
+                "include_blobs": bool(include_blobs),
+                "blob_store_root_sha256": hashlib.sha256(
+                    str(blob_store_root or "").encode("utf-8")
+                ).hexdigest(),
+            }
+            cell_record, cell_record_source = create_brain_control_cell_receipt(
+                operation="brain.cloud_archive",
+                scope="cloud-archive",
+                claims=claims,
+                provenance="personal_brain.server.brain.cloud_archive",
+            )
+            archive_result = _ca.upload_dataset(
+                local_path,
                 bucket=bucket,
                 endpoint_url=endpoint_url,
                 region=region,
@@ -2144,8 +3686,22 @@ def build_server(
                 include_blobs=include_blobs,
                 blob_store_root=_P(blob_store_root) if blob_store_root else None,
             )
+            archive_result["cell_first"] = True
+            archive_result["brain_written"] = bool(
+                archive_result.get("ok")
+                and archive_result.get("uploaded_count", 0)
+            )
+            archive_result["cell_record"] = cell_record
+            archive_result["cell_record_root"] = str(cell_record["created_root"])
+            archive_result["cell_record_source"] = cell_record_source
+            return archive_result
         except Exception as ex:
-            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+            return {
+                "ok": False,
+                "cell_first": True,
+                "brain_written": False,
+                "error": f"{type(ex).__name__}: {ex}",
+            }
 
     @mcp.tool(
         name="brain.doc_links",
@@ -2170,9 +3726,11 @@ def build_server(
     @mcp.tool(
         name="brain.a11y_prefs",
         description=(
-            "Get or set per-user accessibility preferences. mode: 'get'|"
-            "'set'. prefs (set only): {font_size, contrast, reduce_motion, "
-            "screen_reader_optimised}. User-scope, syncs cross-device."
+            "READ/SET accessibility preferences. Get is read-only. Set is "
+            "CELL-FIRST: a Universal Cell governance receipt with hashed "
+            "preference evidence is created before the legacy Brain preference "
+            "projection is written. If the Cell receipt fails, preferences are "
+            "not changed."
         ),
     )
     def brain_a11y_prefs(
@@ -2182,7 +3740,85 @@ def build_server(
     ) -> dict[str, Any]:
         owner = owner_user or resolve_default_owner()
         if hasattr(store, "a11y_prefs"):
-            return store.a11y_prefs(mode=mode, prefs=prefs, owner_user=owner)
+            requested_mode = str(mode or "get").strip().lower()
+            if requested_mode != "set":
+                result = store.a11y_prefs(
+                    mode=requested_mode,
+                    prefs=prefs,
+                    owner_user=owner,
+                )
+                result["cell_first"] = False
+                result["brain_written"] = False
+                return result
+            if not isinstance(prefs, dict):
+                result = store.a11y_prefs(
+                    mode=requested_mode,
+                    prefs=prefs,
+                    owner_user=owner,
+                )
+                result["cell_first"] = False
+                result["brain_written"] = False
+                return result
+            current = store.a11y_prefs(
+                mode="get",
+                prefs=None,
+                owner_user=owner,
+            ).get("prefs", {})
+            proposed = {**dict(current or {}), **prefs}
+            try:
+                cell_record, cell_record_source = create_brain_control_cell_receipt(
+                    operation="brain.a11y_prefs.set",
+                    scope="a11y-prefs",
+                    claims={
+                        "owner_user_sha256": hashlib.sha256(
+                            owner.encode("utf-8")
+                        ).hexdigest(),
+                        "keys": sorted(str(key) for key in prefs),
+                        "patch_sha256": hashlib.sha256(
+                            json.dumps(
+                                prefs,
+                                sort_keys=True,
+                                default=str,
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        "current_sha256": hashlib.sha256(
+                            json.dumps(
+                                current,
+                                sort_keys=True,
+                                default=str,
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        "proposed_sha256": hashlib.sha256(
+                            json.dumps(
+                                proposed,
+                                sort_keys=True,
+                                default=str,
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        "scope": "user",
+                    },
+                    provenance="personal_brain.server:a11y_prefs",
+                )
+            except Exception as cell_error:
+                return {
+                    "ok": False,
+                    "mode": "set",
+                    "cell_first": True,
+                    "brain_written": False,
+                    "prefs": current,
+                    "error": f"{type(cell_error).__name__}: {cell_error}",
+                }
+            result = store.a11y_prefs(
+                mode=requested_mode,
+                prefs=prefs,
+                owner_user=owner,
+            )
+            result["cell_first"] = True
+            result["brain_written"] = bool(result.get("ok"))
+            result["cell_record"] = cell_record
+            result["cell_record_root"] = str(cell_record["created_root"])
+            result["cell_record_source"] = cell_record_source
+            return result
         return {
             "ok": True,
             "mode": mode,
@@ -2274,17 +3910,78 @@ def build_server(
         print(f"[brain] roma tools registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
-    # BRV-01: the brain-driver active-work ledger (brain.work_*). The
-    # server-authoritative, all-agents drive — every runtime pulls its next
-    # leaf from brain.work_next + reports completion to brain.work_release.
-    # ADDITIVE: one brain_meta JSON doc (key 'active_work_v1'), no new table,
-    # no schema migration, no touch of fragments/skills. Fail-soft like the
-    # families above so the core tools never depend on it building.
+    # BRV-01 compatibility registration. active_work_v1 is migration evidence;
+    # public legacy routes refuse and graph-session Work owns creation, claims,
+    # transitions, status, and courts. Fail-soft like the families above so the
+    # core tools never depend on this compatibility surface building.
     try:
         from .active_work import register_active_work_tools
         register_active_work_tools(mcp, store)
     except Exception as ex:  # pragma: no cover - never block server build
         print(f"[brain] active_work tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    # MEETING ROOM (founder, 2026-07-17): the brain as an ACTIVE communication
+    # channel — a live workshop, not a log. brain.room_say/read/presence tools
+    # + GET /room live page on this same daemon; the room's unread tail is
+    # appended to every brain.context injection (see _room_tail in the context
+    # path), so every agent HEARS the room each turn.
+    try:
+        from .cell_room_wiring import (
+            register_unavailable_cell_room_tools,
+            wire_cell_room,
+        )
+        try:
+            wire_cell_room(mcp, store)
+        except Exception as ex:
+            error = f"{type(ex).__name__}: {ex}"
+            print(
+                "[brain] runtime Workshop unavailable; "
+                f"registering fail-closed room tools: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            register_unavailable_cell_room_tools(mcp, error)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] room registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    # Brain-owned run reports. These are the per-run governance nodes agents
+    # must write before active work can be marked complete.
+    try:
+        from .run_report import register_run_report_tools
+        register_run_report_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] run_report tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    # Brain-owned client hook coverage ledger. The installer is a legacy
+    # repair path for per-client wiring; these tools audit/repair that wiring
+    # and persist hook_coverage_v1 in brain_meta so work assignment can refuse
+    # write-capable claims when a runtime's hooks are red.
+    try:
+        from .hook_coverage import register_hook_coverage_tools
+        register_hook_coverage_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] hook_coverage tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    # Grand Map -> CDE -> active_work compiler. This turns the actual plan into
+    # Brain-owned leaves so agents pull governed work instead of inventing it.
+    try:
+        from .grand_map_sync import register_grand_map_sync_tools
+        register_grand_map_sync_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] grand_map_sync tools registration skipped: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    # Single governance status surface: hook coverage + active work + active
+    # CDE state + last pre-tool gate decision.
+    try:
+        from .compliance_report import register_compliance_report_tools
+        register_compliance_report_tools(mcp, store)
+    except Exception as ex:  # pragma: no cover - never block server build
+        print(f"[brain] compliance_report tool registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
     return mcp
@@ -2305,7 +4002,7 @@ def _get_or_create_community_poller(store: BrainStore) -> Any:
     current firm identity. Cached by store id() so repeat invocations
     reuse the same driver + reputations dict.
     """
-    from .community import CommunityPoller
+    from .community import CommunityPoller, PollResult, list_subscriptions
     from .federation import FederationDriver
     from .firm import current_firm_id
 
@@ -2318,7 +4015,52 @@ def _get_or_create_community_poller(store: BrainStore) -> Any:
         actor_url="http://127.0.0.1:8474/actor",
         base_url="http://127.0.0.1:8474",
     )
-    poller = CommunityPoller(store, driver)
+    class CellFirstCommunityPoller(CommunityPoller):
+        def tick(self) -> list[Any]:
+            subs = list_subscriptions(self.store)
+            if not subs:
+                return []
+            try:
+                cell_record, cell_record_source = create_brain_control_cell_receipt(
+                    operation="brain.community_poll_now",
+                    scope="community",
+                    claims={
+                        "firm_id_sha256": hashlib.sha256(
+                            firm_id.encode("utf-8")
+                        ).hexdigest(),
+                        "subscription_count": len(subs),
+                        "actor_url_hashes": [
+                            hashlib.sha256(
+                                sub.actor_url.encode("utf-8")
+                            ).hexdigest()
+                            for sub in subs
+                        ],
+                    },
+                    provenance="personal_brain.server.brain.community_poll_now",
+                )
+            except Exception as exc:
+                results = []
+                for sub in subs:
+                    result = PollResult(
+                        actor_url=sub.actor_url,
+                        ok=False,
+                        error=f"cell unavailable: {exc}",
+                    )
+                    result.cell_first = True
+                    result.brain_written = False
+                    results.append(result)
+                self._cycle_count += 1
+                self._last_results = results
+                return results
+            results = super().tick()
+            for result in results:
+                result.cell_first = True
+                result.brain_written = bool(result.ok)
+                result.cell_record_root = str(cell_record["created_root"])
+                result.cell_record_source = cell_record_source
+            return results
+
+    poller = CellFirstCommunityPoller(store, driver)
     _COMMUNITY_POLLERS[id(store)] = poller
     return poller
 
@@ -2622,6 +4364,40 @@ def main(argv: Optional[list[str]] = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    # Provision the independent Court's signing capability before accepting
+    # work. Only the reference and availability metadata are logged; the key
+    # remains inside the OS credential store and is resolved only when signing.
+    try:
+        from .server_verify import ensure_court_signing_key
+
+        key_status = ensure_court_signing_key()
+        if key_status.get("ok"):
+            disposition = "created" if key_status.get("created") else "existing"
+            print(
+                "[brain] court signing capability READY"
+                f" - {disposition} | ref: {key_status.get('ref')}"
+                f" | backend: {key_status.get('backend')}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                "[brain] court signing capability UNAVAILABLE"
+                f" | ref: {key_status.get('ref')}"
+                f" | reason: {key_status.get('reason', 'unknown')}",
+                file=sys.stderr,
+                flush=True,
+            )
+    except Exception as ex:
+        # The daemon remains available for read-only work, while Court verdicts
+        # continue to fail closed until the capability can be provisioned.
+        print(
+            "[brain] court signing capability UNAVAILABLE"
+            f" | reason: {type(ex).__name__}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     server = build_server(db_path=args.db, default_owner_user=args.owner)
 
     # ── Turn the ENGINE ON (AgDR-0044 §1). build_server only registers
@@ -2651,6 +4427,38 @@ def main(argv: Optional[list[str]] = None) -> None:
     except Exception as ex:  # never block daemon boot on engine start
         print(f"[brain] engine start error: {type(ex).__name__}: {ex}",
               file=sys.stderr, flush=True)
+
+    # Hook coverage compliance monitor. Startup performs an immediate audit and
+    # persists hook_coverage_v1; the daemon thread keeps the report fresh so
+    # write-capable work assignment is gated by current client wiring.
+    try:
+        from .hook_coverage import (
+            hook_coverage_auto_repair_enabled,
+            hook_coverage_monitor_enabled,
+            start_hook_coverage_monitor,
+        )
+        bound_store = getattr(server, "_brain_store", None)
+        if bound_store is not None:
+            mon = start_hook_coverage_monitor(
+                bound_store,
+                owner_user=args.owner or "founder",
+                auto_repair=hook_coverage_auto_repair_enabled(),
+            )
+            if mon is not None:
+                st = mon.status()
+                last = st.get("last_report") or {}
+                print(
+                    "[brain] hook coverage monitor ON"
+                    f" — status: {last.get('status', 'unknown')}"
+                    f" | interval_s: {st.get('interval_s')}",
+                    file=sys.stderr, flush=True,
+                )
+            elif not hook_coverage_monitor_enabled():
+                print("[brain] hook coverage monitor OFF",
+                      file=sys.stderr, flush=True)
+    except Exception as ex:  # never block daemon boot on coverage audit
+        print(f"[brain] hook coverage monitor error: "
+              f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
     if args.http is not None:
         # InHouseMCP.run (mcp_core.run) serves build_asgi_app() — our

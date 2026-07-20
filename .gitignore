@@ -135,6 +135,11 @@ scripts/stripe_login_pty.py
 *.archhub-session.json
 # ad-hoc screenshots / captures named with a leading underscore
 _*.png
+# root-level agent scratch folders copied from parallel runs; evidence belongs
+# in governed proofs/ or outside the public product tree, never as source.
+/_*/
+/.lagfix_harness/
+/tmppytest-*/
 # founder message scratch dump
 founder_msgs.txt
 # zipped exports / bundles — regenerable, never source

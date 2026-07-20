@@ -50,13 +50,39 @@ def test_claude_code_fresh_install(fake_home):
     assert "UserPromptSubmit" in cfg["hooks"]
     # exact hook entry shape — UserPromptSubmit[0] is the RECALL wrapper
     # (brain.context was repointed at the hook-shaped brain.hook_context, which
-    # carries the typed `arguments` map the bare tool couldn't synthesize).
-    entry = cfg["hooks"]["UserPromptSubmit"][0]
+    # carries the typed `input` map the bare tool couldn't synthesize).
+    group = cfg["hooks"]["UserPromptSubmit"][0]
+    entry = next(h for h in group["hooks"]
+                 if h.get("tool") == "brain.hook_context")
     assert entry["server"] == "brain"
     assert entry["tool"] == "brain.hook_context"
-    # the wrapper MUST carry its arguments (a bare hook fired the tool with {}
+    # the wrapper MUST carry its input (a bare hook fired the tool with {}
     # and failed — the whole reason for the wrapper rename).
-    assert entry["arguments"]["prompt"] == "${prompt}"
+    assert entry["input"]["prompt"] == "${prompt}"
+    assert "arguments" not in entry
+    drive = next(h for h in group["hooks"]
+                 if h.get("tool") == "brain.work_assigned_block")
+    assert drive["input"] == {
+        "runtime": "claude-code",
+        "session_id": "${session_id}",
+    }
+    session_start = cfg["hooks"]["SessionStart"][0]["hooks"][0]
+    assert session_start["type"] == "command"
+    assert "brainwrap" in session_start["command"]
+    assert "session-start --vendor claude-code" in session_start["command"]
+
+
+def test_claude_code_invalid_json_is_never_overwritten(fake_home):
+    path = fake_home / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True)
+    original = b'{"hooks": {"SessionStart": ['
+    path.write_bytes(original)
+
+    result = installer.install_all(only=["claude-code"])[0]
+
+    assert "refusing to modify invalid JSON config" in result["error"]
+    assert path.read_bytes() == original
+    assert not list(path.parent.glob("settings.json.brain-bak.*"))
 
 
 def test_claude_code_idempotent(fake_home):
@@ -69,8 +95,9 @@ def test_claude_code_idempotent(fake_home):
     # brain.context) AND the DRIVE (brain.work_assigned_block) — and re-install
     # must dedupe each to exactly one (never stack).
     cfg = json.loads(installer._claude_code_path().read_text())
-    entries = cfg["hooks"]["UserPromptSubmit"]
-    tools = [e.get("tool") for e in entries if e.get("server") == "brain"]
+    groups = cfg["hooks"]["UserPromptSubmit"]
+    handlers = [h for group in groups for h in group.get("hooks", [])]
+    tools = [h.get("tool") for h in handlers if h.get("server") == "brain"]
     assert tools.count("brain.hook_context") == 1, (
         "must dedupe the brain.hook_context recall wrapper")
     assert tools.count("brain.work_assigned_block") == 1, (
@@ -96,14 +123,18 @@ def test_claude_code_preserves_existing_servers(fake_home):
     assert "existing-server" in cfg["mcpServers"]
     assert "brain" in cfg["mcpServers"]
     # existing command hook preserved
-    cmds = [e for e in cfg["hooks"]["UserPromptSubmit"]
-             if e.get("type") == "command"]
+    handlers = [
+        h
+        for group in cfg["hooks"]["UserPromptSubmit"]
+        for h in group.get("hooks", [])
+    ]
+    cmds = [h for h in handlers if h.get("type") == "command"]
     assert any(c.get("command") == "echo hi" for c in cmds)
     # brain hooks added — BOTH the recall (brain.hook_context, the hook-shaped
     # wrapper for brain.context) and the DRIVE (brain.work_assigned_block)
     # pre-prompt hooks, alongside the preserved user command hook.
-    brain_tools = [e.get("tool") for e in cfg["hooks"]["UserPromptSubmit"]
-                   if e.get("server") == "brain"]
+    brain_tools = [h.get("tool") for h in handlers
+                   if h.get("server") == "brain"]
     assert "brain.hook_context" in brain_tools
     assert "brain.work_assigned_block" in brain_tools
     assert len(brain_tools) == 2

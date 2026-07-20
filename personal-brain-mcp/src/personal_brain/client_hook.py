@@ -1,32 +1,34 @@
-"""client_hook.py — BRV-02: the shared pre-prompt driver helper.
+"""client_hook.py — BRV-02: legacy pre-prompt work-assignment helper.
 
-THE BRAIN DRIVES EVERY AGENT. This is the ONE helper every client calls at
-pre-prompt time — Claude Code, Codex, Gemini, the ArchHub composer — to ask the
-brain *"what should I work on next?"* and receive its assignment as an
-`<assigned_leaf>` context block to prepend to the turn.
+This is a Brain control-plane projection used by supported clients at
+pre-prompt time to ask for the next assigned leaf and receive an
+`<assigned_leaf>` context block to prepend to the turn. It is not Universal Cell
+product authority; Cell protocols are the target authority.
 
 It is the symmetric counterpart to `tools/brainwrap.py`'s `<brain_context>`
 pre-prompt inject: where brainwrap injects RECALL (relevant memory), this
 injects DRIVE (the next unit of work the brain hands this runtime). Together
 they are the pre-prompt the brain feeds every agent.
 
-The helper calls `active_work.next_leaf(runtime, fit)` (BRV-01) — which CLAIMS
-the leaf atomically server-side, so the brain (not the agent) decides what each
-runtime works on next, and two runtimes never grab the same leaf. It returns the
+The helper calls the Cell-first active-work compatibility route. It creates a
+Cell request/outcome record around the legacy projection before returning the
 assigned leaf + its gate formatted as a ready-to-prepend string.
 
 TWO transports, ONE contract:
-  * IN-PROCESS  — pass a `BrainStore` (the composer / a daemon-local caller):
-                  calls active_work.next_leaf directly. No network.
-  * OVER MCP    — pass nothing (an external client: Codex / Gemini / a CLI):
-                  POSTs `brain.work_next` to the daemon, mirroring
-                  brainwrap.call_tool's SSE transport. Degrades to an empty
-                  string when the daemon is unreachable (never blocks a turn).
+  * GRAPH SESSION - all callers provide a vendor session identity and POST
+                  `brain.work_assigned_block` to the daemon, mirroring
+                  brainwrap.call_tool's SSE transport. It returns no assignment
+                  when the graph is unavailable or the frontier is dry.
 
 The block is bounded by stable markers so a wrapper can refresh it on each turn
 instead of stacking duplicates (same convention as brainwrap's context block).
 """
 from __future__ import annotations
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
 
 import json
 import os
@@ -100,42 +102,37 @@ def _call_daemon(name: str, arguments: dict[str, Any],
 
 
 def format_assigned_leaf(leaf: dict[str, Any]) -> str:
-    """Render an assigned leaf (dict from next_leaf / brain.work_next) as the
-    `<assigned_leaf>` block every client prepends. Names the work, the gate the
-    leaf must pass to be DONE, and the leaf_id the client reports back to
-    `brain.work_release`. Empty input → empty string (caller prepends nothing)."""
+    """Render graph-owned Work as a session-bound `<assigned_leaf>` block."""
     if not leaf:
         return ""
-    leaf_id = leaf.get("leaf_id", "")
+    work_root = str(leaf.get("work_root") or "").strip()
+    session_id = str(leaf.get("session_id") or "").strip()
+    runtime = str(leaf.get("runtime") or "").strip()
+    if not (work_root and session_id and runtime):
+        return ""
     title = leaf.get("title", "")
     gate_kind = leaf.get("gate_kind", "manual")
     gate_spec = leaf.get("gate_spec") or {}
-    runtime = leaf.get("runtime") or ""
-    attempts = leaf.get("attempts", 0)
-    note = (leaf.get("note") or "").strip()
+    transition = (
+        "session_id=%r, vendor=%r, work_root=%r" % (
+            session_id, runtime, work_root
+        )
+    )
 
     lines = [
         "<assigned_leaf>",
-        "The brain assigns you this unit of work for this turn. Do it to "
-        "completion, then report the outcome to brain.work_release.",
-        f"  leaf_id:   {leaf_id}",
+        "The Universal Cell graph assigns this work to your exact Agent Session.",
+        f"  work_root: {work_root}",
         f"  work:      {title}",
         f"  gate:      {gate_kind}"
         + (f"  {json.dumps(gate_spec, separators=(',', ':'))}" if gate_spec else ""),
+        f"  runtime:   {runtime}",
+        f"  session:   {session_id}",
+        "  release:   brain.universal_work_transition(%s, event='release')" % transition,
+        "  blocked:   brain.universal_work_transition(%s, event='block', evidence=<reason>)" % transition,
+        "  submit:    brain.universal_work_transition(%s, event='submit', evidence=<artifact proof>)" % transition,
+        "  court:     brain.universal_work_court(%s)" % transition,
     ]
-    if runtime:
-        lines.append(f"  runtime:   {runtime}")
-    if attempts:
-        lines.append(f"  attempt:   #{attempts + 1} (prior attempts re-opened this leaf)")
-    if note:
-        lines.append(f"  last note: {note}")
-    lines.append(
-        "  on done:   brain.work_release(leaf_id, done=true, "
-        "evidence_ref=<proof the gate passed>)")
-    lines.append(
-        "  if blocked: brain.work_release(leaf_id, done=false, blocked=true, "
-        "note=<why you need the founder>)  — never silently defer; there is no "
-        "'later' state.")
     lines.append("</assigned_leaf>")
     return "\n".join(lines)
 
@@ -164,6 +161,7 @@ def _resolve_owner_inproc(store: "BrainStore") -> str:
 def next_assigned_leaf(
     *,
     runtime: str,
+    session_id: Optional[str] = None,
     fit: Optional[list[str]] = None,
     owner_user: Optional[str] = None,
     agent_id: Optional[str] = None,
@@ -172,35 +170,29 @@ def next_assigned_leaf(
     """Ask the brain for this runtime's next leaf and CLAIM it. Returns the leaf
     dict, or None when the frontier is dry / the daemon is unreachable.
 
-    `store` given → in-process (calls active_work.next_leaf directly).
-    `store` omitted → over MCP (POSTs brain.work_next to the daemon).
-
-    This is the engine behind `assigned_leaf_block` — exposed separately for
-    callers that want the structured leaf (e.g. the composer's own UI)."""
+    `store` remains a compatibility argument but is not read. The hook always
+    calls the graph-session assignment route. This is the engine behind
+    `assigned_leaf_block` for callers that need the structured graph Work."""
     if not (runtime or "").strip():
         raise ValueError("next_assigned_leaf requires a non-empty runtime")
 
-    if store is not None:
-        # in-process: import lazily so this module has no hard runtime dep on
-        # active_work unless the in-process path is used.
-        from . import active_work as aw
-        owner = owner_user or _resolve_owner_inproc(store)
-        leaf = aw.next_leaf(
-            store, runtime=runtime, fit=fit,
-            owner_user=owner, agent_id=agent_id,
-        )
-        return leaf.model_dump(mode="json") if leaf else None
-
-    # over MCP: the daemon resolves the owner when omitted.
-    args: dict[str, Any] = {"runtime": runtime}
+    identity = str(session_id or "").strip()
+    if not identity:
+        return None
+    args: dict[str, Any] = {
+        "runtime": runtime,
+        "session_id": identity,
+        "wrap": False,
+        "write": True,
+    }
     if fit is not None:
         args["fit"] = list(fit)
     if owner_user:
         args["owner_user"] = owner_user
     if agent_id:
         args["agent_id"] = agent_id
-    res = _call_daemon("brain.work_next", args)
-    if not res or not res.get("ok"):
+    res = _call_daemon("brain.work_assigned_block", args)
+    if not res or not res.get("ok") or res.get("universal") is not True:
         return None
     return res.get("leaf") or None
 
@@ -208,6 +200,7 @@ def next_assigned_leaf(
 def assigned_leaf_block(
     *,
     runtime: str,
+    session_id: Optional[str] = None,
     fit: Optional[list[str]] = None,
     owner_user: Optional[str] = None,
     agent_id: Optional[str] = None,
@@ -220,11 +213,11 @@ def assigned_leaf_block(
     turn is never blocked by the drive being idle or offline).
 
     Usage (mirrors brainwrap context inject):
-      block = assigned_leaf_block(runtime="codex", fit=["revit"])
+      block = assigned_leaf_block(runtime="codex", session_id=<vendor-session>)
       if block: prepend block to the system/context turn
     """
     leaf = next_assigned_leaf(
-        runtime=runtime, fit=fit, owner_user=owner_user,
+        runtime=runtime, session_id=session_id, fit=fit, owner_user=owner_user,
         agent_id=agent_id, store=store,
     )
     block = format_assigned_leaf(leaf) if leaf else ""

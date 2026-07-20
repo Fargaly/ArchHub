@@ -30,6 +30,7 @@ Runs under pytest AND standalone:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -45,7 +46,22 @@ _WORKER = Path(__file__).resolve().parent / "_claim_worker.py"
 import pytest  # noqa: E402
 
 from personal_brain import active_work as aw  # noqa: E402
+from personal_brain.meeting_room import room_say  # noqa: E402
 from personal_brain.storage import BrainStore  # noqa: E402
+
+
+def _seed_claim_plans(store: BrainStore, owner: str) -> None:
+    ledger = aw.get_ledger(store, owner_user=owner)
+    if ledger is None:
+        return
+    for leaf in ledger.leaves.values():
+        room_say(
+            store,
+            frm="atomicity-court",
+            kind="plan",
+            refs=[leaf.leaf_id],
+            text=f"Plan evidence for cross-process claim court {leaf.leaf_id}.",
+        )
 
 
 def _spawn_claimers(brain_db: Path, owner: str, agents: list[str],
@@ -55,11 +71,17 @@ def _spawn_claimers(brain_db: Path, owner: str, agents: list[str],
     sqlite connections = separate RLocks (the in-process lock cannot help)."""
     n = len(agents)
     procs = []
+    env = dict(os.environ)
+    # This court tests SQLite cross-process claim atomicity. Use the legacy
+    # migration Workshop projection explicitly; a runtime Cell room handle cannot
+    # cross these one-shot subprocess boundaries.
+    env["BRAIN_CELL_ROOM"] = "0"
     for a in agents:
         p = subprocess.Popen(
             [sys.executable, str(_WORKER), str(brain_db), owner, a,
              str(barrier), str(n)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=env,
         )
         procs.append((a, p))
 
@@ -105,6 +127,7 @@ def test_two_processes_one_leaf_exactly_one_winner(round_no):
 
         s = BrainStore.open(brain_db)
         aw.add_leaves(s, owner_user=owner, leaves=[{"title": "only one"}])
+        _seed_claim_plans(s, owner)
         s.close()
 
         results = _spawn_claimers(brain_db, owner, ["procA", "procB"], barrier)
@@ -141,6 +164,7 @@ def test_many_processes_many_leaves_no_dup_no_loss():
         s = BrainStore.open(brain_db)
         aw.add_leaves(s, owner_user=owner,
                       leaves=[{"title": f"leaf-{i}"} for i in range(n)])
+        _seed_claim_plans(s, owner)
         s.close()
 
         agents = [f"proc{i}" for i in range(n)]

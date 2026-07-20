@@ -48,8 +48,14 @@ when a leaf's `gate_kind == "cdp"` and a runner is provided.
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import hmac
 import os
+import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -278,21 +284,100 @@ def file_exists_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> Pro
                        evidence_ref=str(path))
 
 
+def _overlay_pytest_selector(command: Any, declared_path: Any) -> Optional[str]:
+    """Read a selector from the generated Grand Map command without running it."""
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    pytest_at = next(
+        (index + 2 for index in range(len(tokens) - 1)
+         if tokens[index:index + 2] == ["-m", "pytest"]),
+        None,
+    )
+    if pytest_at is None:
+        return None
+    raw_path = str(declared_path or "").replace("\\", "/").casefold()
+    candidates = [
+        token for token in tokens[pytest_at:]
+        if token and not token.startswith("-") and token not in {";", "&&", "||", "|"}
+    ]
+    if raw_path:
+        for candidate in candidates:
+            test_path = candidate.split("::", 1)[0].replace("\\", "/").casefold()
+            if raw_path == test_path or raw_path.endswith("/" + test_path):
+                return candidate
+        return None
+    return candidates[0] if candidates else None
+
+
+def _pytest_cwd_from_path(
+    declared_path: Any, selector: str, context: dict[str, Any],
+) -> Optional[str]:
+    raw_path = str(declared_path or "").strip()
+    selector_path = selector.split("::", 1)[0].strip()
+    if not raw_path or not selector_path:
+        return None
+    full_path = Path(raw_path)
+    if not full_path.is_absolute():
+        base = context.get("repo_root") or context.get("cwd")
+        if not base:
+            return None
+        full_path = Path(base) / full_path
+    selector_parts = Path(selector_path).parts
+    if len(full_path.parts) < len(selector_parts):
+        return None
+    if tuple(part.casefold() for part in full_path.parts[-len(selector_parts):]) != \
+            tuple(part.casefold() for part in selector_parts):
+        return None
+    cwd = full_path
+    for _ in selector_parts:
+        cwd = cwd.parent
+    return str(cwd)
+
+
 def pytest_probe(gate_spec: dict[str, Any], context: dict[str, Any]) -> ProbeResult:
     """REAL check: run a pytest selector; pass iff exit 0. gate_spec=
     {'selector': 'tests/test_x.py::test_y', 'cwd'?}. The test suite IS the
     gate — same as the ArchHub pytest gate referenced in the encode brief."""
-    selector = gate_spec.get("selector") or gate_spec.get("node_id")
-    if not selector:
+    declared = gate_spec.get("selectors")
+    if declared is not None:
+        if not isinstance(declared, (list, tuple)):
+            return ProbeResult(
+                passed=False, applied=False,
+                detail="pytest 'selectors' must be a non-empty list")
+        selectors = [str(item).strip() for item in declared
+                     if str(item).strip()]
+        if not selectors or any(item.startswith("-") for item in selectors):
+            return ProbeResult(
+                passed=False, applied=False,
+                detail="pytest 'selectors' must contain paths, not options")
+    else:
+        selector = gate_spec.get("selector") or gate_spec.get("node_id")
+        if not selector:
+            selector = _overlay_pytest_selector(
+                gate_spec.get("command"), gate_spec.get("path"),
+            )
+        if not selector and gate_spec.get("path"):
+            selector = str(gate_spec["path"])
+        selectors = [str(selector)] if selector else []
+    if not selectors:
         return ProbeResult(passed=False, applied=False, detail="no pytest 'selector'")
-    cwd = gate_spec.get("cwd") or context.get("repo_root") or context.get("cwd")
+    cwd = gate_spec.get("cwd") or _pytest_cwd_from_path(
+        gate_spec.get("path"), selectors[0], context,
+    ) or context.get("repo_root") or context.get("cwd")
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", str(selector), "-q", "-x"],
+        [sys.executable, "-m", "pytest", *selectors, "-q", "-x"],
         capture_output=True, text=True, cwd=cwd,
     )
     ok = proc.returncode == 0
     tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-3:]
-    return ProbeResult(passed=ok, detail=" | ".join(tail)[:400], evidence_ref=str(selector))
+    return ProbeResult(
+        passed=ok, detail=" | ".join(tail)[:400],
+        evidence_ref=" | ".join(selectors),
+    )
 
 
 # Registry of built-in artifact probes by gate_kind. "cdp" and any custom

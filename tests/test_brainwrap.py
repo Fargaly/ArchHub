@@ -34,6 +34,102 @@ sys.path.insert(0, str(TOOLS))
 import brainwrap  # noqa: E402
 
 
+def test_universal_agent_session_hook_receives_exact_vendor_session():
+    payload = {
+        "session_id": "codex-session-42",
+        "cwd": "C:/workspace",
+        "source": "UserPromptSubmit",
+    }
+    with patch.object(
+        brainwrap,
+        "call_tool",
+        return_value={"universal_runtime_connected": True},
+    ) as call:
+        result = brainwrap.ensure_universal_agent_session(
+            payload, vendor="codex"
+        )
+    assert result == {"universal_runtime_connected": True}
+    call.assert_called_once_with("brain.hook_session_start", {
+        "session_id": "codex-session-42",
+        "cwd": "C:/workspace",
+        "vendor": "codex",
+        "source": "UserPromptSubmit",
+    })
+
+
+def test_governed_environment_carries_one_session_identity():
+    env = brainwrap.governed_session_env(
+        cwd="C:/workspace", vendor="gemini", session_id="session-7"
+    )
+    assert env["ARCHHUB_EXTERNAL_SESSION_ID"] == "session-7"
+    assert env["ARCHHUB_AGENT_RUNTIME"] == "gemini"
+
+
+def test_active_cde_state_is_isolated_per_agent_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("ARCHHUB_ACTIVE_CDE_STATE", raising=False)
+    monkeypatch.delenv("ARCHHUB_EXTERNAL_SESSION_ID", raising=False)
+    monkeypatch.delenv("ARCHHUB_AGENT_RUNTIME", raising=False)
+    leaf = {
+        "leaf_id": "leaf-1",
+        "title": "isolated scope",
+        "cde_container": {
+            "container_id": "GM.nodes.runtime",
+            "allowed_paths": ["10.PRODUCT/13.NODE-LANGUAGE/"],
+        },
+    }
+
+    path_a = brainwrap._active_cde_state_path(
+        session_id="session-a", runtime="codex"
+    )
+    path_b = brainwrap._active_cde_state_path(
+        session_id="session-b", runtime="codex"
+    )
+    assert path_a != path_b
+
+    brainwrap._write_active_cde_state(
+        leaf, runtime="codex", session_id="session-a"
+    )
+    brainwrap._write_active_cde_state(
+        leaf, runtime="codex", session_id="session-b"
+    )
+    assert path_a.exists()
+    assert path_b.exists()
+
+    brainwrap._clear_active_cde_state(
+        runtime="codex", session_id="session-a"
+    )
+    assert not path_a.exists()
+    assert path_b.exists()
+
+
+def test_drive_refuses_to_claim_without_a_universal_agent_session():
+    with patch.object(brainwrap, "call_tool") as call:
+        assert brainwrap.fetch_drive_block(runtime="codex", session_id="") == ""
+    call.assert_not_called()
+
+
+def test_drive_refuses_a_legacy_assignment_response():
+    with patch.object(
+        brainwrap,
+        "call_tool",
+        return_value={
+            "ok": True,
+            "block": "<assigned_leaf>legacy claim</assigned_leaf>",
+        },
+    ) as call:
+        assert brainwrap.fetch_drive_block(
+            runtime="codex", session_id="codex-session-42"
+        ) == ""
+    call.assert_called_once_with("brain.work_assigned_block", {
+        "runtime": "codex",
+        "session_id": "codex-session-42",
+        "fit": None,
+        "owner_user": None,
+        "wrap": True,
+        "write": True,
+    })
+
 # ───────────────────────── helpers ─────────────────────────────────────
 
 
@@ -232,6 +328,185 @@ class TestDaemonDownGraceful:
 # ═══════════════════ 3. daemon-start command reuse ══════════════════════
 
 
+class TestGovernedLaunch:
+    def test_governed_strict_refuses_red_hook_coverage(self, tmp_path):
+        """A governed session is not advisory. If Brain reports red hook
+        coverage, the launcher must not run the child agent process."""
+        cap = _Capturing({
+            "brain.health": {"ok": True, "db_path": "/x"},
+            "brain.hook_coverage_audit_cell_first": {
+                "ok": True,
+                "status": "red",
+                "summary": {"red": 1, "green": 0},
+            },
+            "brain.compliance_report": {
+                "ok": True,
+                "overall": "red",
+            },
+        })
+        opts = _launch_opts(cwd=str(tmp_path), governed=True,
+                            governed_strict=True)
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             patch.object(brainwrap, "run_vendor", return_value=0) as run_mock:
+            code = brainwrap.cmd_launch(opts, ["codex", "--version"])
+
+        assert code == brainwrap.GOVERNANCE_BLOCK_EXIT
+        assert not run_mock.called
+        assert "brain.hook_coverage_audit_cell_first" in cap.names()
+
+    def test_governed_strict_refuses_dead_brain(self, tmp_path):
+        """Strict governed launch is fail-closed. A dead Brain cannot be
+        treated like the legacy fail-open wrapper because no audit can run."""
+        opts = _launch_opts(cwd=str(tmp_path), governed=True,
+                            governed_strict=True, skip_daemon_start=True)
+        with patch.object(brainwrap.urllib.request, "urlopen", _boom), \
+             patch.object(brainwrap, "run_vendor", return_value=0) as run_mock:
+            code = brainwrap.cmd_launch(opts, ["codex", "--version"])
+
+        assert code == brainwrap.GOVERNANCE_BLOCK_EXIT
+        assert not run_mock.called
+
+    def test_governed_launch_stamps_child_environment_when_green(
+        self, tmp_path, monkeypatch
+    ):
+        """When governance is green, the launched child inherits the markers
+        every hook/broker layer uses to know this is a governed session."""
+        monkeypatch.delenv("ARCHHUB_GOVERNED_SESSION", raising=False)
+        monkeypatch.delenv("ARCHHUB_REQUIRE_ACTIVE_CDE", raising=False)
+        monkeypatch.delenv("BRAIN_COMPLIANCE_EVENT_APPEND", raising=False)
+        monkeypatch.delenv("BRAIN_BROKER_EVENT_APPEND", raising=False)
+        monkeypatch.delenv("ARCHHUB_ACTIVE_CDE_STATE", raising=False)
+
+        cap = _Capturing({
+            "brain.health": {"ok": True, "db_path": "/x"},
+            "brain.hook_coverage_audit_cell_first": {
+                "ok": True,
+                "status": "green",
+                "summary": {"red": 0, "green": 4},
+            },
+            "brain.compliance_report": {
+                "ok": True,
+                "overall": "green",
+                "hook_coverage": {"status": "green"},
+            },
+            "brain.room_read": {"ok": True, "messages": [], "presence": []},
+            "brain.context": {"injection": ""},
+            "brain.wiring_announce": {"registered": 1, "skipped": 0},
+        })
+        seen_env = {}
+
+        def fake_run_vendor(argv, *, cwd, context_injection=None):
+            seen_env.update({
+                "ARCHHUB_GOVERNED_SESSION":
+                    brainwrap.os.environ.get("ARCHHUB_GOVERNED_SESSION"),
+                "ARCHHUB_WORKSHOP_AUTHORITY_REQUIRED":
+                    brainwrap.os.environ.get("ARCHHUB_WORKSHOP_AUTHORITY_REQUIRED"),
+                "ARCHHUB_REQUIRE_ACTIVE_CDE":
+                    brainwrap.os.environ.get("ARCHHUB_REQUIRE_ACTIVE_CDE"),
+                "BRAIN_COMPLIANCE_EVENT_APPEND":
+                    brainwrap.os.environ.get("BRAIN_COMPLIANCE_EVENT_APPEND"),
+                "BRAIN_BROKER_EVENT_APPEND":
+                    brainwrap.os.environ.get("BRAIN_BROKER_EVENT_APPEND"),
+                "BRAIN_DAEMON_URL":
+                    brainwrap.os.environ.get("BRAIN_DAEMON_URL"),
+                "ARCHHUB_ACTIVE_CDE_STATE":
+                    brainwrap.os.environ.get("ARCHHUB_ACTIVE_CDE_STATE"),
+            })
+            return 23
+
+        opts = _launch_opts(cwd=str(tmp_path), governed=True,
+                            governed_strict=True)
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             patch.object(brainwrap, "_git_remote", return_value=None), \
+             patch.object(brainwrap, "run_vendor", side_effect=fake_run_vendor), \
+             patch.object(brainwrap, "run_diligence", return_value={}):
+            code = brainwrap.cmd_launch(opts, ["codex", "run"])
+
+        assert code == 23
+        assert seen_env["ARCHHUB_GOVERNED_SESSION"] == "1"
+        assert seen_env["ARCHHUB_WORKSHOP_AUTHORITY_REQUIRED"] == "1"
+        assert seen_env["ARCHHUB_REQUIRE_ACTIVE_CDE"] == "1"
+        assert seen_env["BRAIN_COMPLIANCE_EVENT_APPEND"] == "1"
+        assert seen_env["BRAIN_BROKER_EVENT_APPEND"] == "1"
+        assert seen_env["BRAIN_DAEMON_URL"] == brainwrap.DAEMON_URL
+        assert seen_env["ARCHHUB_ACTIVE_CDE_STATE"]
+        assert "brain.hook_coverage_audit_cell_first" in cap.names()
+        assert "brain.compliance_report" in cap.names()
+        assert "brain.room_read" in cap.names()
+
+    def test_governed_strict_refuses_missing_workshop_authority(self, tmp_path):
+        """The workshop is the coordination authority, not decoration.
+        Strict governed launch must fail closed if the Brain room cannot be
+        reached, even when hook coverage and compliance are green."""
+        cap = _Capturing({
+            "brain.health": {"ok": True, "db_path": "/x"},
+            "brain.hook_coverage_audit_cell_first": {
+                "ok": True,
+                "status": "green",
+                "summary": {"red": 0, "green": 4},
+            },
+            "brain.compliance_report": {
+                "ok": True,
+                "overall": "green",
+                "hook_coverage": {"status": "green"},
+            },
+            "brain.room_read": {
+                "ok": False,
+                "error": "tool not registered",
+            },
+            "brain.context": {"injection": "<brain_context></brain_context>"},
+        })
+        opts = _launch_opts(cwd=str(tmp_path), governed=True,
+                            governed_strict=True)
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             patch.object(brainwrap, "_git_remote", return_value=None), \
+             patch.object(brainwrap, "run_vendor", return_value=0) as run_mock:
+            code = brainwrap.cmd_launch(opts, ["codex", "run"])
+
+        assert code == brainwrap.GOVERNANCE_BLOCK_EXIT
+        assert not run_mock.called
+        assert "brain.room_read" in cap.names()
+        assert "brain.context" in cap.names()
+
+    def test_governed_strict_accepts_workshop_context_injection(self, tmp_path):
+        """A live daemon may expose the workshop through brain.context before
+        the room-read tool is available in that running process. The gate still
+        requires the meeting-room block; plain context is not enough."""
+        cap = _Capturing({
+            "brain.health": {"ok": True, "db_path": "/x"},
+            "brain.hook_coverage_audit_cell_first": {
+                "ok": True,
+                "status": "green",
+                "summary": {"red": 0, "green": 4},
+            },
+            "brain.compliance_report": {
+                "ok": True,
+                "overall": "green",
+                "hook_coverage": {"status": "green"},
+            },
+            "brain.room_read": {"ok": False, "error": "tool not registered"},
+            "brain.context": {
+                "injection": (
+                    "<brain_context>\n"
+                    "<meeting_room>mandatory workshop</meeting_room>\n"
+                    "</brain_context>"
+                )
+            },
+            "brain.wiring_announce": {"registered": 1, "skipped": 0},
+        })
+        opts = _launch_opts(cwd=str(tmp_path), governed=True,
+                            governed_strict=True)
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             patch.object(brainwrap, "_git_remote", return_value=None), \
+             patch.object(brainwrap, "run_vendor", return_value=19) as run_mock, \
+             patch.object(brainwrap, "run_diligence", return_value={}):
+            code = brainwrap.cmd_launch(opts, ["codex"])
+
+        assert code == 19
+        run_mock.assert_called_once()
+        assert cap.names().count("brain.context") >= 2
+
+
 class TestDaemonStartCommand:
     def test_start_command_reuses_service_and_targets_port(self):
         # daemon_start_command must reuse personal_brain.service._brain_command
@@ -285,6 +560,19 @@ class TestExitCodePreserved:
             got = brainwrap.run_vendor(["does-not-exist"], cwd=str(tmp_path))
         assert got == 127
 
+    def test_windows_script_target_prefers_executable_cmd_peer(self, tmp_path):
+        script = tmp_path / "gemini.ps1"
+        command = tmp_path / "gemini.cmd"
+        script.write_text("", encoding="utf-8")
+        command.write_text("", encoding="utf-8")
+
+        with patch.object(brainwrap.shutil, "which", return_value=None), \
+             patch.object(brainwrap.subprocess, "call", return_value=0) as call:
+            got = brainwrap.run_vendor([str(script)], cwd=str(tmp_path))
+
+        assert got == 0
+        assert call.call_args.args[0][0] == str(command)
+
     @pytest.mark.parametrize("rc", [0, 3, 99])
     def test_cmd_launch_returns_vendor_code(self, rc, tmp_path):
         # Brain healthy; full lifecycle; the vendor's code must come back out.
@@ -301,17 +589,41 @@ class TestExitCodePreserved:
             code = brainwrap.cmd_launch(opts, ["vendor", "do"])
         assert code == rc
 
-    def test_stdin_prefix_path_preserves_code(self, tmp_path):
-        # When context is piped on stdin, run_vendor uses Popen; the wait()
-        # return code must propagate.
-        proc = MagicMock()
-        proc.stdin = io.BytesIO()
-        proc.wait.return_value = 7
-        with patch.object(brainwrap.subprocess, "Popen", return_value=proc):
-            got = brainwrap.run_vendor(["v"], cwd=str(tmp_path),
-                                       stdin_prefix="ctx\n")
+    @pytest.mark.parametrize(
+        ("vendor", "flag"),
+        (("claude.exe", "--append-system-prompt-file"),
+         ("gemini.cmd", "--prompt-interactive")),
+    )
+    def test_native_context_adapter_preserves_inherited_console(
+            self, vendor, flag, tmp_path):
+        context_path = tmp_path / "ctx.md"
+        context_path.write_text("ctx", encoding="utf-8")
+        launched = []
+
+        def fake_call(argv, **kwargs):
+            launched.append((argv, kwargs))
+            assert context_path.exists()
+            assert sum(len(part) for part in argv) < 2_048
+            return 7
+
+        with patch.object(brainwrap.shutil, "which", return_value=None), \
+             patch.object(brainwrap, "_runtime_context_file",
+                          return_value=context_path), \
+             patch.object(brainwrap.subprocess, "call", side_effect=fake_call), \
+             patch.object(brainwrap.subprocess, "Popen") as popen:
+            got = brainwrap.run_vendor(
+                [vendor],
+                cwd=str(tmp_path),
+                context_injection="ctx",
+            )
+
         assert got == 7
-        proc.wait.assert_called_once()
+        argv, kwargs = launched[0]
+        assert argv[0:2] == [vendor, flag]
+        assert str(context_path) in argv[2]
+        assert kwargs == {"cwd": str(tmp_path)}
+        popen.assert_not_called()
+        assert not context_path.exists()
 
 
 # ═══════════════════ 5. diligence parity + advisory ═════════════════════
@@ -411,6 +723,34 @@ class TestHookSubcommandsStillWork:
         out = json.loads(capsys.readouterr().out)
         assert out["continue"] is True
         assert out["user_message"] == "CTX"
+
+    def test_session_start_announces_without_process_control(self, capsys):
+        cap = _Capturing({"brain.hook_session_start": {"ok": True}})
+        payload = {
+            "session_id": "session-123",
+            "cwd": "C:/repo/x",
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+        }
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             patch.object(brainwrap.sys, "stdin",
+                          io.StringIO(json.dumps(payload))):
+            rc = brainwrap.main(
+                ["session-start", "--vendor", "claude-code"]
+            )
+
+        assert rc == 0
+        assert cap.names() == ["brain.hook_session_start"]
+        args = cap.by_name("brain.hook_session_start")["body"]["params"][
+            "arguments"
+        ]
+        assert args == {
+            "session_id": "session-123",
+            "cwd": "C:/repo/x",
+            "vendor": "claude-code",
+            "source": "startup",
+        }
+        assert capsys.readouterr().out == ""
 
     def test_bare_double_dash_routes_to_launch(self, tmp_path):
         # `brainwrap -- echo hi` (no subcommand) must default to launch.
@@ -650,18 +990,30 @@ class TestDrivePrePromptInject:
     atomically). Without it the brain drives Claude Code but not Codex/Gemini/
     Cursor — the headline court defect #5 for the foreign-vendor hook path."""
 
+    @staticmethod
+    def _universal_drive(block: str, leaf: dict | None = None) -> dict:
+        return {
+            "ok": True,
+            "universal": True,
+            "agent_session": "session:court-drive",
+            "block": block,
+            "leaf": leaf,
+        }
+
     def _stdin(self, payload: dict):
+        payload = dict(payload)
+        payload.setdefault("session_id", "court-drive-session")
         return patch.object(brainwrap.sys, "stdin",
-                            io.StringIO(json.dumps(payload)))
+                             io.StringIO(json.dumps(payload)))
 
     def test_context_hook_calls_work_assigned_block_with_runtime(self):
         """cmd_context fires brain.work_assigned_block (the DRIVE) with the
         vendor as the runtime, alongside brain.context (the RECALL)."""
         cap = _Capturing({
             "brain.context": {"injection": "RECALL"},
-            "brain.work_assigned_block": {
-                "ok": True,
-                "block": "<assigned_leaf>\nwork: do X\n</assigned_leaf>"},
+            "brain.work_assigned_block": self._universal_drive(
+                "<assigned_leaf>\nwork: do X\n</assigned_leaf>"
+            ),
         })
         with patch.object(brainwrap.urllib.request, "urlopen", cap), \
              self._stdin({"prompt": "hi"}):
@@ -672,12 +1024,14 @@ class TestDrivePrePromptInject:
         assert "brain.work_assigned_block" in cap.names()
         args = cap.by_name("brain.work_assigned_block")["body"]["params"]["arguments"]
         assert args["runtime"] == "generic"   # the vendor drives as this runtime
+        assert args["write"] is True           # write-capable work is hook-gated
 
     def test_generic_context_emits_recall_plus_drive_block(self, capsys):
         cap = _Capturing({
             "brain.context": {"injection": "RECALL-BLOCK"},
-            "brain.work_assigned_block": {
-                "ok": True, "block": "<assigned_leaf>\nwork: ship it\n</assigned_leaf>"},
+            "brain.work_assigned_block": self._universal_drive(
+                "<assigned_leaf>\nwork: ship it\n</assigned_leaf>"
+            ),
         })
         with patch.object(brainwrap.urllib.request, "urlopen", cap), \
              self._stdin({"prompt": "do the thing"}):
@@ -690,8 +1044,9 @@ class TestDrivePrePromptInject:
     def test_cursor_context_merges_recall_and_drive_into_user_message(self, capsys):
         cap = _Capturing({
             "brain.context": {"injection": "RECALL"},
-            "brain.work_assigned_block": {
-                "ok": True, "block": "<assigned_leaf>\nwork: A\n</assigned_leaf>"},
+            "brain.work_assigned_block": self._universal_drive(
+                "<assigned_leaf>\nwork: A\n</assigned_leaf>"
+            ),
         })
         with patch.object(brainwrap.urllib.request, "urlopen", cap), \
              self._stdin({"prompt": "x"}):
@@ -706,7 +1061,7 @@ class TestDrivePrePromptInject:
         # the turn is never blocked by an idle drive.
         cap = _Capturing({
             "brain.context": {"injection": "RECALL"},
-            "brain.work_assigned_block": {"ok": True, "block": ""},
+            "brain.work_assigned_block": self._universal_drive(""),
         })
         with patch.object(brainwrap.urllib.request, "urlopen", cap), \
              self._stdin({"prompt": "x"}):
@@ -719,7 +1074,7 @@ class TestDrivePrePromptInject:
         monkeypatch.setenv("BRAIN_RUNTIME_FIT", "revit, python")
         cap = _Capturing({
             "brain.context": {"injection": ""},
-            "brain.work_assigned_block": {"ok": True, "block": ""},
+            "brain.work_assigned_block": self._universal_drive(""),
         })
         with patch.object(brainwrap.urllib.request, "urlopen", cap), \
              self._stdin({"prompt": "x"}):
@@ -727,8 +1082,57 @@ class TestDrivePrePromptInject:
         args = cap.by_name("brain.work_assigned_block")["body"]["params"]["arguments"]
         assert args["fit"] == ["revit", "python"]
 
+    def test_context_hook_writes_active_cde_container_state(self, tmp_path,
+                                                           monkeypatch):
+        """When Brain assigns a leaf with CDE metadata, brainwrap persists it
+        for later PreToolUse hooks. A hook subprocess cannot mutate the parent
+        environment, so the durable handoff is a state file."""
+        state_path = tmp_path / "active-cde.json"
+        monkeypatch.setenv("ARCHHUB_ACTIVE_CDE_STATE", str(state_path))
+        cde_container = {
+            "container_id": "GM.ui.ui_home_topbar",
+            "source_requirement": "grand-map:ui_home_topbar",
+            "domain": "ui",
+            "tier": "T1",
+            "lifecycle_state": "PRODUCTION",
+            "suitability_status": "S1",
+            "revision": "P01",
+            "owner": "agent",
+            "checker": "court",
+            "allowed_paths": ["10.PRODUCT/12.PRODUCTION/app/web_ui/"],
+            "gate_kind": "cdp",
+            "gate_spec": {"selector": "[data-uisurface='home-top']"},
+            "evidence_ref": "cdp:home-top",
+        }
+        cap = _Capturing({
+            "brain.context": {"injection": ""},
+            "brain.work_assigned_block": {
+                "ok": True,
+                "universal": True,
+                "agent_session": "session:court-drive",
+                "block": "<assigned_leaf>\nwork: topbar\n</assigned_leaf>",
+                "leaf": {
+                    "leaf_id": "leaf-1",
+                    "title": "topbar",
+                    "cde_container": cde_container,
+                },
+            },
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({"prompt": "x"}):
+            brainwrap.main(["context", "--vendor", "generic"])
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["schema"] == "archhub-active-cde/v1"
+        assert state["leaf_id"] == "leaf-1"
+        assert state["container"] == cde_container
+
 
 class TestStopBrainLedgerGate:
+    @pytest.fixture(autouse=True)
+    def _legacy_cases_have_no_graph_session(self, monkeypatch):
+        monkeypatch.delenv("ARCHHUB_EXTERNAL_SESSION_ID", raising=False)
+
     """THE DRIVE's Stop consumer for foreign vendors: cmd_stop ALSO asks the
     brain ledger (over the daemon) whether this runtime still has an open/red
     leaf and BLOCKS the exit if so — the half that makes the pre-prompt pull
@@ -768,9 +1172,12 @@ class TestStopBrainLedgerGate:
             rc = brainwrap.cmd_stop("generic")
         assert rc == 0
         out = json.loads(capsys.readouterr().out or "{}")
-        assert out.get("decision") == "block", (
-            f"open red leaf must block the foreign-vendor stop; got {out!r}")
-        assert "brain:daemon" in out.get("reason", "")
+        assert out == {}
+        assert "brain.work_get" not in cap.names()
+
+    def test_stop_adapter_source_has_no_legacy_work_ledger_call(self):
+        source = Path(brainwrap.__file__).read_text(encoding="utf-8")
+        assert 'call_tool("brain.work_get"' not in source
 
     def test_done_leaf_allows_when_diligence_allows(self, tmp_path, capsys):
         """Ledger leaf DONE + diligence allow → no block (drive dry)."""
@@ -837,15 +1244,124 @@ class TestStopBrainLedgerGate:
             rc = brainwrap.cmd_stop("generic")
         assert rc == 0
         out = json.loads(capsys.readouterr().out or "{}")
-        assert out.get("decision") == "block"
-        assert "ESCALATE" in out.get("reason", "")
+        assert out == {}
+        assert "brain.work_get" not in cap.names()
 
 
 # ───────────────────────── shared opts builder ─────────────────────────
 
 
+class TestUniversalStopGate:
+    @staticmethod
+    def _state(*, claimant="session:mine", gate_kind="file_exists", gate_spec=None):
+        return {
+            "agent_session": "session:mine",
+            "items": [{
+                "root": "work:1",
+                "claimant_session": claimant,
+                "interfaces": {"title": {"value": "Finish graph work"}},
+                "operational": {
+                    "current_state_label": "claimed",
+                    "history": [{"event_label": "claim"}],
+                },
+                "resolved": {
+                    "requirements": {
+                        "gate": {
+                            "kind": gate_kind,
+                            "spec": gate_spec or {"path": "proof.flag"},
+                        }
+                    }
+                },
+            }],
+        }
+
+    def test_red_graph_gate_blocks_exact_session(self, tmp_path):
+        with patch.object(
+            brainwrap, "call_tool", return_value=self._state()
+        ) as call:
+            blocked, reason = brainwrap._completion_gate_verdict(
+                str(tmp_path), runtime="codex", session_id="vendor-session"
+            )
+        assert blocked is True
+        assert "NOT DONE" in reason
+        call.assert_called_once_with("brain.universal_work_status", {
+            "session_id": "vendor-session",
+            "vendor": "codex",
+        })
+
+    def test_green_graph_gate_is_completed_by_independent_court(self, tmp_path):
+        (tmp_path / "proof.flag").write_text("green", encoding="utf-8")
+        calls = []
+
+        def route(name, arguments, **_kwargs):
+            calls.append((name, arguments))
+            if name == "brain.universal_work_status":
+                return self._state()
+            if name == "brain.universal_work_transition":
+                return {"status": {"counts": {"review": 1}}}
+            if name == "brain.universal_work_court":
+                return {
+                    "passed": True,
+                    "status": {"counts": {"complete": 1}},
+                }
+            raise AssertionError(name)
+
+        with patch.object(brainwrap, "call_tool", side_effect=route):
+            blocked, reason = brainwrap._completion_gate_verdict(
+                str(tmp_path), runtime="codex", session_id="vendor-session"
+            )
+        assert blocked is False
+        assert reason == ""
+        transition = calls[1]
+        assert transition[0] == "brain.universal_work_transition"
+        assert transition[1]["work_root"] == "work:1"
+        assert transition[1]["event"] == "submit"
+        assert '\"verdict\":\"green\"' in transition[1]["evidence"]
+        court = calls[2]
+        assert court == ("brain.universal_work_court", {
+            "session_id": "vendor-session",
+            "vendor": "codex",
+            "work_root": "work:1",
+        })
+
+    def test_failed_independent_court_keeps_stop_blocked(self, tmp_path):
+        (tmp_path / "proof.flag").write_text("green", encoding="utf-8")
+
+        def route(name, _arguments, **_kwargs):
+            if name == "brain.universal_work_status":
+                return self._state()
+            if name == "brain.universal_work_transition":
+                return {"status": {"counts": {"review": 1}}}
+            if name == "brain.universal_work_court":
+                return {
+                    "passed": False,
+                    "status": {"counts": {"claimed": 1}},
+                }
+            raise AssertionError(name)
+
+        with patch.object(brainwrap, "call_tool", side_effect=route):
+            blocked, reason = brainwrap._completion_gate_verdict(
+                str(tmp_path), runtime="codex", session_id="vendor-session"
+            )
+        assert blocked is True
+        assert "independent work court returned" in reason
+
+    def test_another_sessions_claim_does_not_block(self, tmp_path):
+        with patch.object(
+            brainwrap,
+            "call_tool",
+            return_value=self._state(claimant="session:other"),
+        ):
+            blocked, reason = brainwrap._completion_gate_verdict(
+                str(tmp_path), runtime="codex", session_id="vendor-session"
+            )
+        assert blocked is False
+        assert reason == ""
+
+
 def _launch_opts(*, cwd: str, transcript=None, context_file=None,
-                 prompt="", skip_daemon_start=False, no_stdin_context=True):
+                 prompt="", skip_daemon_start=False, no_stdin_context=True,
+                 governed=False, governed_strict=False):
     """Build the argparse.Namespace cmd_launch expects (mirrors
     _add_launch_opts). no_stdin_context defaults True in tests so we don't
     accidentally take the Popen stdin path when asserting subprocess.call."""
@@ -858,4 +1374,80 @@ def _launch_opts(*, cwd: str, transcript=None, context_file=None,
         prompt=prompt,
         skip_daemon_start=skip_daemon_start,
         no_stdin_context=no_stdin_context,
+        governed=governed,
+        governed_strict=governed_strict,
     )
+
+
+class TestContextDeliveryBoundary:
+    def test_missing_context_file_never_writes_workspace_sidecar(self, tmp_path):
+        before = {path.name for path in tmp_path.iterdir()}
+        note = brainwrap.inject_context(
+            "<brain_context>governed</brain_context>",
+            context_file=None,
+            cwd=str(tmp_path),
+        )
+
+        assert "no workspace file written" in note
+        assert not (tmp_path / ".brainwrap_context.md").exists()
+        assert {path.name for path in tmp_path.iterdir()} == before
+
+    def test_explicit_context_file_remains_the_only_file_sink(self, tmp_path):
+        context_file = tmp_path / "vendor-instructions.md"
+        context_file.write_text("vendor rules\n", encoding="utf-8")
+
+        brainwrap.inject_context(
+            "<brain_context>governed</brain_context>",
+            context_file=str(context_file),
+            cwd=str(tmp_path),
+        )
+
+        written = context_file.read_text(encoding="utf-8")
+        assert "<brain_context>governed</brain_context>" in written
+        assert "vendor rules" in written
+        assert not (tmp_path / ".brainwrap_context.md").exists()
+
+    def test_strict_launch_blocks_when_context_has_no_delivery_channel(
+            self, tmp_path, capsys):
+        opts = _launch_opts(
+            cwd=str(tmp_path),
+            no_stdin_context=True,
+            governed_strict=True,
+        )
+
+        with patch.object(brainwrap, "ensure_daemon", return_value=(True, "ok")), \
+             patch.object(brainwrap, "governed_preflight",
+                          return_value=(True, "governance green", {})), \
+             patch.object(brainwrap, "announce_wiring"), \
+             patch.object(brainwrap, "fetch_context", return_value="CONTEXT"), \
+             patch.object(brainwrap, "run_vendor") as run_vendor:
+            rc = brainwrap.cmd_launch(opts, ["agent"])
+
+        assert rc == brainwrap.GOVERNANCE_BLOCK_EXIT
+        assert "context was not delivered" in capsys.readouterr().err
+        run_vendor.assert_not_called()
+        assert not (tmp_path / ".brainwrap_context.md").exists()
+
+    def test_strict_claude_uses_native_context_without_replacing_stdin(
+            self, tmp_path):
+        opts = _launch_opts(
+            cwd=str(tmp_path),
+            no_stdin_context=True,
+            governed_strict=True,
+        )
+
+        with patch.object(brainwrap, "ensure_daemon", return_value=(True, "ok")), \
+             patch.object(brainwrap, "governed_preflight",
+                          return_value=(True, "governance green", {})), \
+             patch.object(brainwrap, "announce_wiring"), \
+             patch.object(brainwrap, "fetch_context", return_value="CONTEXT"), \
+             patch.object(brainwrap, "run_vendor", return_value=0) as run_vendor, \
+             patch.object(brainwrap, "run_diligence", return_value={}):
+            rc = brainwrap.cmd_launch(opts, ["claude.exe"])
+
+        assert rc == 0
+        run_vendor.assert_called_once_with(
+            ["claude.exe"],
+            cwd=str(tmp_path),
+            context_injection="CONTEXT",
+        )

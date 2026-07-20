@@ -9,7 +9,7 @@ These pin the HONEST wiring contract the installer must keep:
   * Codex        → REAL hooks.json (UserPromptSubmit + Stop → brainwrap),
                    PLUS the config.toml mcp_servers.brain block — because
                    Confirm validated the hook surface verbatim
-                   (https://developers.openai.com/codex/hooks). post-tool is
+                   (https://learn.chatgpt.com/codex/hooks). post-tool is
                    enforced-per-turn-flush: the Stop hook → brainwrap writes the
                    turn's memory to brain.write ONCE per turn (no per-tool hook).
   * Gemini CLI   → REAL settings.json hooks (per-turn BeforeAgent → context,
@@ -39,6 +39,15 @@ import pytest
 from personal_brain import installer
 
 
+def test_installer_completion_gate_is_marked_migration_guard():
+    source = Path(installer.__file__).read_text(encoding="utf-8")
+    forbidden = "server-" + "authoritative"
+
+    assert "legacy Brain active-work projection" in source
+    assert "Stop-side migration" in source
+    assert forbidden not in source.lower()
+
+
 @pytest.fixture(autouse=True)
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -62,15 +71,47 @@ def test_claude_code_gets_real_hooks_for_all_three_touchpoints(fake_home):
     cfg = json.loads(installer._claude_code_path().read_text())
     hooks = cfg["hooks"]
     # pre-prompt inject — brain.context was repointed at the hook-shaped wrapper
-    # brain.hook_context (carries the typed `arguments` the bare hook lacked).
-    assert any(e.get("tool") == "brain.hook_context"
-               for e in hooks["UserPromptSubmit"])
+    # brain.hook_context (carries the typed `input` the bare hook lacked).
+    prompt_handlers = [
+        h for group in hooks["UserPromptSubmit"]
+        for h in group.get("hooks", [])
+    ]
+    post_handlers = [
+        h for group in hooks["PostToolUse"]
+        for h in group.get("hooks", [])
+    ]
+    context = next(h for h in prompt_handlers
+                   if h.get("tool") == "brain.hook_context")
+    assert context["input"]["prompt"] == "${prompt}"
+    assert "arguments" not in context
     # post-tool write — brain.write was repointed at the hook-shaped wrapper
     # brain.observe (synthesizes the ADD WriteOp the bare hook couldn't).
-    assert any(e.get("tool") == "brain.observe" for e in hooks["PostToolUse"])
-    # stop-gate: the anti_laziness command gate is present
-    stop = hooks["Stop"]
-    assert any("anti_laziness_gate" in str(e.get("command", "")) for e in stop)
+    assert any(h.get("tool") == "brain.observe" for h in post_handlers)
+    # One session-aware command owns diligence and graph-work Stop enforcement.
+    stop = [h for group in hooks["Stop"] for h in group.get("hooks", [])]
+    pretool = [h for group in hooks["PreToolUse"]
+               for h in group.get("hooks", [])]
+    assert any(
+        "brainwrap" in str(h.get("command", ""))
+        and "stop --vendor claude-code" in str(h.get("command", ""))
+        for h in stop
+    )
+    assert any(
+        "agent_scope_gate.py" in str(h.get("command", ""))
+        and "--vendor claude" in str(h.get("command", ""))
+        for h in pretool
+    )
+    drive = next(
+        h for h in prompt_handlers
+        if h.get("tool") == "brain.work_assigned_block"
+    )
+    assert drive["input"]["runtime"] == "claude-code"
+    assert drive["input"]["session_id"] == "${session_id}"
+    session_start = [h for group in hooks["SessionStart"]
+                     for h in group.get("hooks", [])]
+    assert len(session_start) == 1
+    assert session_start[0]["type"] == "command"
+    assert "session-start --vendor claude-code" in session_start[0]["command"]
     # matrix agrees: all three enforced-by-hook
     m = installer.coverage_matrix(["claude-code"])["claude-code"]
     assert all(v == installer.ENFORCED for v in m.values())
@@ -84,6 +125,38 @@ def test_claude_code_still_has_mcpservers(fake_home):
     assert "brain" in cfg["mcpServers"]
 
 
+def test_claude_pretooluse_replaces_previous_managed_group(fake_home):
+    path = fake_home / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "hooks": {"PreToolUse": [
+            {"matcher": "Write|Edit",
+             "hooks": [{"type": "command",
+                        "command": "python pretooluse_validate.py"}]},
+            {"type": "command", "command": "./my/audit.sh"},
+        ]}
+    }))
+
+    installer.install_all(only=["claude-code"])
+
+    hooks = json.loads(path.read_text())["hooks"]["PreToolUse"]
+    managed = []
+    for entry in hooks:
+        if "agent_scope_gate.py" in str(entry.get("command", "")):
+            managed.append(entry)
+        managed.extend(
+            h for h in entry.get("hooks", [])
+            if "agent_scope_gate.py" in str(h.get("command", ""))
+        )
+    assert len(managed) == 1
+    assert "--vendor claude" in managed[0]["command"]
+    assert any(
+        h.get("command") == "./my/audit.sh"
+        for group in hooks
+        for h in group.get("hooks", [])
+    )
+
+
 # ───────────────────────── Cursor = REAL hooks (Verify) ─────────────────
 
 
@@ -95,11 +168,16 @@ def test_cursor_writes_real_hooks_json(fake_home):
     hooks_cfg = json.loads(hooks_path.read_text())
     assert hooks_cfg.get("version") == 1
     hooks = hooks_cfg["hooks"]
-    # Verify-confirmed schema: beforeSubmitPrompt (pre-prompt) + stop.
+    # Verify-confirmed schema: preToolUse (scope), beforeSubmitPrompt
+    # (pre-prompt) + stop.
+    assert "preToolUse" in hooks
     assert "beforeSubmitPrompt" in hooks
     assert "stop" in hooks
+    scope_cmd = hooks["preToolUse"][0]["command"]
     pre_cmd = hooks["beforeSubmitPrompt"][0]["command"]
     stop_cmd = hooks["stop"][0]["command"]
+    assert "agent_scope_gate.py" in scope_cmd and "--vendor cursor" in scope_cmd
+    assert hooks["preToolUse"][0]["failClosed"] is True
     assert "brainwrap" in pre_cmd and "context" in pre_cmd
     assert "brainwrap" in stop_cmd and "stop" in stop_cmd
 
@@ -120,10 +198,15 @@ def test_cursor_hooks_idempotent(fake_home):
     installer.install_all(only=["cursor"])
     hooks = json.loads(installer._cursor_hooks_path().read_text())["hooks"]
     # exactly one brainwrap entry per hook, not duplicated
-    for name in ("beforeSubmitPrompt", "stop"):
-        brain_entries = [e for e in hooks[name]
-                         if "brainwrap" in str(e.get("command", ""))]
-        assert len(brain_entries) == 1
+    managed = {
+        "preToolUse": "agent_scope_gate.py",
+        "beforeSubmitPrompt": "brainwrap",
+        "stop": "brainwrap",
+    }
+    for name, marker in managed.items():
+        entries = [e for e in hooks[name]
+                   if marker in str(e.get("command", ""))]
+        assert len(entries) == 1
 
 
 def test_cursor_hooks_preserve_user_entries(fake_home):
@@ -179,7 +262,9 @@ def test_codex_writes_real_hooks_json_with_confirmed_schema(fake_home):
     stop_hook = hooks["Stop"][0]["hooks"][0]
     assert pre_hook["type"] == "command"
     assert "brainwrap" in pre_hook["command"] and "context" in pre_hook["command"]
+    assert "--vendor codex" in pre_hook["command"]
     assert "brainwrap" in stop_hook["command"] and "stop" in stop_hook["command"]
+    assert "--vendor codex" in stop_hook["command"]
     # Stop carries the 30s (SECONDS) budget like the Claude gate.
     assert stop_hook["timeout"] == 30
     # matrix: pre-prompt + stop enforced-by-hook; post-tool is now the
@@ -188,6 +273,37 @@ def test_codex_writes_real_hooks_json_with_confirmed_schema(fake_home):
     assert m["pre_prompt_inject"] == installer.ENFORCED
     assert m["stop_gate"] == installer.ENFORCED
     assert m["post_tool_write"] == installer.PER_TURN
+
+
+def test_codex_writes_pretooluse_governance_scope_gate(fake_home):
+    (fake_home / ".codex").mkdir()
+    installer.install_all(only=["codex"])
+    hooks_path = installer._codex_hooks_path()
+    cfg = json.loads(hooks_path.read_text())
+    hooks = cfg["hooks"]
+
+    assert "PreToolUse" in hooks
+    pretool_cmds = [
+        h.get("command", "")
+        for group in hooks["PreToolUse"]
+        for h in group.get("hooks", [])
+    ]
+    assert any(
+        "agent_scope_gate.py" in cmd and "--vendor codex" in cmd
+        for cmd in pretool_cmds
+    )
+    gate = next(
+        h
+        for group in hooks["PreToolUse"]
+        for h in group.get("hooks", [])
+        if "agent_scope_gate.py" in h.get("command", "")
+    )
+    assert gate["type"] == "command"
+    assert gate["timeout"] == 15
+    assert "ArchHub" in gate["statusMessage"]
+
+    m = installer.coverage_matrix(["codex"])["codex"]
+    assert m["scope_gate"] == installer.ENFORCED
 
 
 def test_codex_keeps_config_toml_mcp_block(fake_home):
@@ -265,16 +381,25 @@ def test_gemini_writes_real_hooks_with_confirmed_events(fake_home):
     cfg = json.loads(installer._gemini_path().read_text())
     assert "brain" in cfg["mcpServers"]      # mcpServers preserved
     hooks = cfg["hooks"]
+    assert "BeforeTool" in hooks             # pre-tool CDE scope gate
     assert "BeforeAgent" in hooks            # per-turn context inject
     assert "AfterAgent" in hooks             # per-turn stop (final response)
+    scope_hook = hooks["BeforeTool"][0]["hooks"][0]
     pre_hook = hooks["BeforeAgent"][0]["hooks"][0]
     stop_hook = hooks["AfterAgent"][0]["hooks"][0]
+    assert scope_hook["type"] == "command"
+    assert "agent_scope_gate.py" in scope_hook["command"]
+    assert "--vendor gemini" in scope_hook["command"]
+    assert scope_hook["name"] == "archhub-scope-gate"
     assert pre_hook["type"] == "command"
     assert "brainwrap" in pre_hook["command"] and "context" in pre_hook["command"]
+    assert "--vendor gemini-cli" in pre_hook["command"]
     assert "brainwrap" in stop_hook["command"] and "stop" in stop_hook["command"]
+    assert "--vendor gemini-cli" in stop_hook["command"]
     # matrix: pre-prompt + stop enforced-by-hook; post-tool is now the per-turn
     # flush AfterAgent → brainwrap performs (NOT docs-only, NOT per-tool).
     m = installer.coverage_matrix(["gemini-cli"])["gemini-cli"]
+    assert m["scope_gate"] == installer.ENFORCED
     assert m["pre_prompt_inject"] == installer.ENFORCED
     assert m["stop_gate"] == installer.ENFORCED
     assert m["post_tool_write"] == installer.PER_TURN
@@ -285,11 +410,16 @@ def test_gemini_hooks_idempotent(fake_home):
     installer.install_all(only=["gemini-cli"])
     installer.install_all(only=["gemini-cli"])
     hooks = json.loads(installer._gemini_path().read_text())["hooks"]
-    for event in ("BeforeAgent", "AfterAgent"):
-        brain_groups = [g for g in hooks[event]
-                        if any("brainwrap" in str(h.get("command", ""))
-                               for h in g.get("hooks", []))]
-        assert len(brain_groups) == 1, f"{event} brain hook must dedupe"
+    managed = {
+        "BeforeTool": "agent_scope_gate.py",
+        "BeforeAgent": "brainwrap",
+        "AfterAgent": "brainwrap",
+    }
+    for event, marker in managed.items():
+        groups = [g for g in hooks[event]
+                  if any(marker in str(h.get("command", ""))
+                         for h in g.get("hooks", []))]
+        assert len(groups) == 1, f"{event} managed hook must dedupe"
 
 
 def test_gemini_hooks_preserve_user_entries(fake_home):
@@ -325,6 +455,13 @@ def test_gemini_uninstall_removes_hooks_and_server(fake_home):
             for h in g.get("hooks", [])]
     assert "./my/audit.sh" in cmds
     assert not any("brainwrap" in (c or "") for c in cmds)
+    all_cmds = [
+        h.get("command")
+        for groups in cfg.get("hooks", {}).values()
+        for g in groups
+        for h in g.get("hooks", [])
+    ]
+    assert not any("agent_scope_gate.py" in (c or "") for c in all_cmds)
 
 
 # ───────────────────────── matrix invariants ────────────────────────────
@@ -348,6 +485,26 @@ def test_every_non_claude_vendor_has_mcpservers_plus_wrapper_or_hook():
             f"at least mcpServers + brainwrap wrapper")
 
 
+def test_scope_gate_is_explicit_and_hook_backed_for_supported_agents():
+    matrix = installer.coverage_matrix()
+
+    for vendor, cells in matrix.items():
+        assert "scope_gate" in cells
+        assert cells["scope_gate"] == installer.ENFORCED, (
+            f"{vendor} must have the ArchHub CDE scope gate wired through a "
+            "verified pre-tool hook")
+
+
+def test_workshop_authority_is_explicit_and_hook_backed_for_supported_agents():
+    matrix = installer.coverage_matrix()
+
+    for vendor, cells in matrix.items():
+        assert "workshop_authority" in cells
+        assert cells["workshop_authority"] == installer.ENFORCED, (
+            f"{vendor} must join the workshop authority through a verified "
+            "pre-prompt hook or governed brainwrap context path")
+
+
 def test_enforced_cells_have_doc_url():
     """Any vendor with a hook-backed cell (per-tool ENFORCED or per-turn-flush)
     must cite a real doc URL — no auto-fire claim without Confirm-backed proof.
@@ -367,7 +524,7 @@ def test_codex_and_gemini_post_tool_is_per_turn_flush_with_urls():
     is explicitly NOT upgraded to per-tool ENFORCED (that would be false parity
     with Claude Code, which writes the brain after EVERY tool call)."""
     matrix = installer.coverage_matrix()
-    for vendor, url_frag in (("codex", "developers.openai.com/codex/hooks"),
+    for vendor, url_frag in (("codex", "learn.chatgpt.com/codex/hooks"),
                              ("gemini-cli", "geminicli.com/docs/hooks")):
         cells = matrix[vendor]
         assert cells["pre_prompt_inject"] == installer.ENFORCED
@@ -425,6 +582,8 @@ def test_print_coverage_matrix_outputs_all_vendors_and_states():
     assert installer.WRAPPER in out
     assert installer.DOCS in out
     assert "pre-prompt inject" in out
+    assert "workshop authority" in out
+    assert "scope gate" in out
     assert "post-tool write" in out
     assert "stop-gate" in out
     # cites Cursor's real-hook doc URL as proof

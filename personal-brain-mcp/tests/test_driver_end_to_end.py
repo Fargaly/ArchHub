@@ -55,6 +55,148 @@ from personal_brain.active_work import LeafState  # noqa: E402
 from personal_brain.storage import BrainStore  # noqa: E402
 
 
+class _CellFirstAssignmentBridge:
+    def __init__(self):
+        self.assemblies = []
+
+    def assembly_create(
+        self,
+        *,
+        definition_key,
+        fields,
+        idempotency_field=None,
+        x=0.0,
+        y=0.0,
+    ):
+        record = {
+            "created_root": (
+                f"assembly-instance:test-assignment-{len(self.assemblies) + 1}"
+            ),
+            "membership_wire": (
+                f"relation:test-assignment-{len(self.assemblies) + 1}"
+            ),
+            "definition_key": definition_key,
+            "fields": dict(fields or {}),
+            "idempotency_field": idempotency_field,
+            "x": x,
+            "y": y,
+        }
+        self.assemblies.append(record)
+        return record
+
+
+def _install_test_cell_bridge() -> tuple[object, _CellFirstAssignmentBridge]:
+    old = aw._cell_bridge_or_default
+    bridge = _CellFirstAssignmentBridge()
+    aw._cell_bridge_or_default = lambda cell_bridge=None: (
+        cell_bridge if cell_bridge is not None else bridge
+    )
+    return old, bridge
+
+
+def _restore_test_cell_bridge(old: object) -> None:
+    aw._cell_bridge_or_default = old
+
+
+def _seed_green_hook_coverage(store: BrainStore, client: str = "claude-code") -> None:
+    from personal_brain import hook_coverage as hc
+
+    report = hc.HookCoverageReport(
+        owner_user="founder",
+        status=hc.GREEN,
+        cell_first=True,
+        cell_record_root=f"assembly-instance:test-hook-coverage-{client}",
+        cell_record_source=f"test:hook-coverage:{client}",
+        clients={
+            client: hc.ClientCoverage(
+                client=client,
+                detected=True,
+                installed=True,
+                status=hc.GREEN,
+                touchpoints={
+                    "workshop_authority": hc.TouchpointCoverage(
+                        touchpoint="workshop_authority",
+                        state=installer.ENFORCED,
+                        required=True,
+                        installed=True,
+                        evidence=[f"test:{client}:workshop_authority"],
+                    )
+                },
+            )
+        },
+    )
+    store.set_meta(hc.COVERAGE_META_KEY, report.model_dump_json())
+
+
+def _seed_core_values_authority(store: BrainStore) -> dict:
+    from personal_brain import core_values_authority as cva
+
+    report = cva.CoreValuesAuthorityReport(
+        owner_user="founder",
+        status=cva.GREEN,
+        authority_root=cva.AUTHORITY_ROOT,
+        authority_wire_root=cva.AUTHORITY_WIRE_ROOT,
+        source_digest="test-source-digest",
+        translation_digest="test-translation-digest",
+        lifecycle="WIP",
+        graph_revision=1,
+        revision_chain_digest="test-revision-chain",
+        coverage={key: cva.GREEN for key in cva.VALUE_KEYS},
+        database_identity="test-cell-database",
+    )
+    store.set_meta(cva.AUTHORITY_META_KEY, report.model_dump_json())
+    return {
+        "authority_root": report.authority_root,
+        "translation_digest": report.translation_digest,
+        "applicable_values": ["truth", "ownership", "test-ship"],
+        "risk": "low",
+        "required_evidence": ["driver end-to-end court"],
+    }
+
+
+def _room_plan_all_open(store: BrainStore, owner: str = "founder") -> None:
+    from personal_brain.meeting_room import room_say
+
+    ledger = aw.get_ledger(store, owner_user=owner)
+    if ledger is None:
+        return
+    for leaf in ledger.leaves.values():
+        if leaf.state == LeafState.OPEN:
+            room_say(
+                store,
+                frm="driver-court",
+                kind="plan",
+                refs=[leaf.leaf_id],
+                text=f"Plan evidence for driver court leaf {leaf.leaf_id}.",
+            )
+
+
+def _room_done_evidence(store: BrainStore, leaf_id: str) -> None:
+    from personal_brain.meeting_room import room_say
+
+    for kind in ("test", "doc", "court"):
+        room_say(
+            store,
+            frm="driver-court",
+            kind=kind,
+            refs=[leaf_id],
+            text=f"{kind} evidence for driver court leaf {leaf_id}.",
+        )
+
+
+def _iter_hook_entries(hooks: dict, event: str):
+    for entry in hooks.get(event, []):
+        if not isinstance(entry, dict):
+            continue
+        nested = entry.get("hooks")
+        if isinstance(nested, list):
+            for hook in nested:
+                if isinstance(hook, dict):
+                    yield hook
+        else:
+            yield entry
+
+
 # ───────────────────────── helpers ──────────────────────────────────────
 
 
@@ -70,6 +212,7 @@ def _run_gate(brain_db: Path, owner: str, cwd: Path) -> subprocess.CompletedProc
     # path (point it at a dead port). This is the ONE store, just reached
     # without a daemon — NOT the degraded file cache.
     env["BRAIN_DAEMON_URL"] = "http://127.0.0.1:1/mcp"
+    env["BRAIN_CELL_ROOM"] = "0"
     return subprocess.run(
         [sys.executable, str(_COMPLETION_GATE)],
         cwd=str(cwd), env=env, capture_output=True, text=True, timeout=120,
@@ -79,17 +222,31 @@ def _run_gate(brain_db: Path, owner: str, cwd: Path) -> subprocess.CompletedProc
 def _claude_drive_entry(hooks: dict) -> dict | None:
     """The UserPromptSubmit entry that injects the <assigned_leaf> DRIVE block
     (brain.work_assigned_block). None on the un-wired base."""
-    for e in hooks.get("UserPromptSubmit", []):
+    for e in _iter_hook_entries(hooks, "UserPromptSubmit"):
         if isinstance(e, dict) and e.get("tool") == "brain.work_assigned_block":
             return e
     return None
 
 
+def _is_brainwrap_stop_command(command: str) -> bool:
+    return "brainwrap.py" in command and " stop " in f" {command} "
+
+
+def _is_stop_completion_gate(e: dict) -> bool:
+    command = str(e.get("command", ""))
+    return "completion_gate" in command or _is_brainwrap_stop_command(command)
+
+
+def _is_stop_diligence_gate(e: dict) -> bool:
+    command = str(e.get("command", ""))
+    return "anti_laziness_gate" in command or _is_brainwrap_stop_command(command)
+
+
 def _stop_completion_gate_entry(hooks: dict) -> dict | None:
     """The Stop entry that runs the brain-reading completion_gate.py. None on
     the un-wired base (which only wired anti_laziness_gate)."""
-    for e in hooks.get("Stop", []):
-        if isinstance(e, dict) and "completion_gate" in str(e.get("command", "")):
+    for e in _iter_hook_entries(hooks, "Stop"):
+        if isinstance(e, dict) and _is_stop_completion_gate(e):
             return e
     return None
 
@@ -134,15 +291,17 @@ def test_installer_wires_drive_and_completion_gate_into_claude_code(
     # (brain.context with the typed `arguments` map) — the DRIVE + gate wiring
     # this test pins is ORTHOGONAL to that rename and must survive it.
     assert any(e.get("tool") == "brain.hook_context"
-               for e in hooks["UserPromptSubmit"]), "brain.hook_context recall lost"
-    assert any("anti_laziness_gate" in str(e.get("command", ""))
-               for e in hooks["Stop"]), "anti_laziness_gate lost"
+               for e in _iter_hook_entries(hooks, "UserPromptSubmit")), \
+        "brain.hook_context recall lost"
+    assert any(_is_stop_diligence_gate(e)
+               for e in _iter_hook_entries(hooks, "Stop")), \
+        "anti_laziness_gate lost"
 
     # ORDER: the completion gate runs before skill_mint (a blocking gate must
     # fire before the trace is minted), mirroring the anti_laziness gate.
-    stop_cmds = hooks["Stop"]
+    stop_cmds = list(_iter_hook_entries(hooks, "Stop"))
     gate_idx = next(i for i, e in enumerate(stop_cmds)
-                    if "completion_gate" in str(e.get("command", "")))
+                    if _is_stop_completion_gate(e))
     # skill_mint was repointed at the hook-shaped wrapper brain.hook_skill_mint.
     mint_idx = next((i for i, e in enumerate(stop_cmds)
                      if e.get("tool") == "brain.hook_skill_mint"), len(stop_cmds))
@@ -152,73 +311,35 @@ def test_installer_wires_drive_and_completion_gate_into_claude_code(
 # ───────────────────── 2+3. PULL → CLAIM → STOP-GATE (RED on base) ───────
 
 
-def test_agent_pulls_leaf_then_completion_gate_blocks_then_allows():
-    """The headline end-to-end flow on a REAL brain.db:
-
-      pre-prompt: an agent PULLS + CLAIMS a leaf (gets the <assigned_leaf>).
-      stop:       completion_gate.py reads the BRAIN ledger and BLOCKS while
-                  the leaf is open/claimed.
-      release:    the leaf goes DONE.
-      stop again: completion_gate.py now ALLOWS (drive is dry).
-
-    This exercises the SAME drive call the wired UserPromptSubmit hook makes
-    (brain.work_assigned_block → client_hook) and the SAME gate process the
-    wired Stop hook runs (tools/completion_gate.py)."""
+def test_legacy_driver_is_denied_without_a_universal_session():
+    """A legacy Brain leaf cannot be claimed through the public drive tool."""
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         brain_db = root / "brain.db"
         owner = "founder"
 
-        # PRODUCE: enqueue one gated leaf whose done-gate is a real file that
-        # does NOT exist yet (so the gate is RED until the agent makes it).
+        # Seed legacy evidence so the public drive boundary has something it
+        # would have claimed before the session requirement.
         s = BrainStore.open(brain_db)
+        governance_context = _seed_core_values_authority(s)
+        _seed_green_hook_coverage(s, "claude-code")
         aw.add_leaves(s, owner_user=owner, leaves=[
             {"title": "create artifact.py", "gate_kind": "file_exists",
-             "gate_spec": {"path": "artifact.py"}, "priority": 5},
+             "gate_spec": {"path": "artifact.py"}, "priority": 5,
+             "governance_context": governance_context},
         ])
+        _room_plan_all_open(s, owner)
 
-        # PRE-PROMPT PULL: the brain hands the runtime its next leaf via the
-        # daemon-served drive block (the SAME handler the wired UserPromptSubmit
-        # hook calls). The agent receives the <assigned_leaf> AND the leaf is
-        # CLAIMED atomically server-side.
+        # The session-less public call must not touch the legacy ledger.
         from personal_brain.server import build_server
         mcp = build_server(store=s, default_owner_user=owner)
         drive = mcp._tools["brain.work_assigned_block"].handler
         res = drive(runtime="claude_code", owner_user=owner)
-        assert res["ok"] and "<assigned_leaf>" in res["block"]
-        assert "create artifact.py" in res["block"]
-        st = aw.status(s, owner_user=owner)
-        assert st["counts"]["claimed"] == 1, "the brain did not claim the leaf"
-        s.close()   # close so the subprocess opens the same file cleanly (WAL)
-
-        # STOP (leaf still open/claimed, artifact absent): the gate must BLOCK.
-        proc = _run_gate(brain_db, owner, cwd=root)
-        assert proc.returncode == 0, proc.stderr
-        out = (proc.stdout or "").strip()
-        assert out, ("completion_gate produced no verdict — it did not read the "
-                     f"brain ledger. stderr={proc.stderr!r}")
-        verdict = json.loads(out)
-        assert verdict.get("decision") == "block", (
-            f"gate must BLOCK while the leaf is open; got {verdict!r}")
-        # PROOF it read the BRAIN (not a forked file): the source is brain:*.
-        assert str(verdict.get("source", "")).startswith("brain:"), (
-            f"gate must read the brain ledger, not a fork; source={verdict.get('source')!r}")
-
-        # RELEASE the leaf DONE (the agent finished + the gate's predicate is met).
-        s2 = BrainStore.open(brain_db)
-        leaf = next(iter(aw.get_ledger(s2, owner_user=owner).leaves.values()))
-        assert leaf.state == LeafState.CLAIMED
-        aw.release(s2, leaf_id=leaf.leaf_id, done=True, owner_user=owner,
-                   evidence_ref="artifact.py written")
-        assert aw.status(s2, owner_user=owner)["dry"] is True
-        s2.close()
-
-        # STOP again (drive dry): the gate must ALLOW (no block printed).
-        proc2 = _run_gate(brain_db, owner, cwd=root)
-        assert proc2.returncode == 0, proc2.stderr
-        out2 = (proc2.stdout or "").strip()
-        assert out2 == "", (
-            f"gate must ALLOW once the drive is dry; got block/escalate: {out2!r}")
+        assert res["ok"] is False
+        assert res["code"] == "universal_session_required"
+        assert res["leaf"] is None
+        assert aw.status(s, owner_user=owner)["counts"]["claimed"] == 0
+        s.close()
 
 
 def test_completion_gate_blocks_on_open_leaf_via_real_brain_db():
@@ -226,6 +347,8 @@ def test_completion_gate_blocks_on_open_leaf_via_real_brain_db():
     failing file_exists gate makes the brain-reading completion_gate BLOCK; once
     the file exists AND the leaf is DONE, it ALLOWS. Proves the gate's pending
     list is DERIVED from the brain's actionable leaves on the real artifact."""
+    mp = pytest.MonkeyPatch()
+    mp.setenv("BRAIN_CELL_ROOM", "0")
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         brain_db = root / "brain.db"
@@ -246,12 +369,14 @@ def test_completion_gate_blocks_on_open_leaf_via_real_brain_db():
         (root / "done.flag").write_text("ok", encoding="utf-8")
         s2 = BrainStore.open(brain_db)
         lid = next(iter(aw.get_ledger(s2, owner_user=owner).leaves))
+        _room_done_evidence(s2, lid)
         aw.release(s2, leaf_id=lid, done=True, owner_user=owner)
         s2.close()
 
         p2 = _run_gate(brain_db, owner, cwd=root)
         assert (p2.stdout or "").strip() == "", (
             f"expected ALLOW, got {p2.stdout!r} / {p2.stderr!r}")
+    mp.undo()
 
 
 # ───────────────────── standalone runner (no pytest required) ────────────

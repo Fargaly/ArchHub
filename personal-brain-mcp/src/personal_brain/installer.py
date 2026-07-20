@@ -22,8 +22,16 @@ Behaviour:
   - merge-not-clobber: existing keys preserved; conflicting keys reported.
   - founder consent: prints diff before writing (skipped via --yes).
   - reversible: each write creates a `.brain-bak.<ts>` snapshot.
+  - Stop-side migration: the completion gate protects the
+    legacy Brain active-work projection until the Universal Cell authority owns
+    assignment, evidence, court, and release state.
 """
 from __future__ import annotations
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
 
 import argparse
 import json
@@ -129,19 +137,8 @@ def _gate_command() -> str:
 
 
 def _completion_gate_command() -> str:
-    """Command string for the BRAIN-READING Stop gate (THE DRIVE's consumer).
-
-    The gate lives at <repo>/tools/completion_gate.py. It reads the brain's
-    server-authoritative active-work ledger and BLOCKS a premature turn-exit
-    while any claimed/open leaf's done-gate is still red (escalating to the
-    founder for human-only leaves, never an infinite grind). This is the Stop-
-    side half of the drive: pre-prompt PULLS a leaf, Stop REFUSES to exit until
-    that leaf's gate is green. Runs as a `command` hook alongside the existing
-    anti_laziness gate. Forward slashes work for Python on Windows.
-    """
-    gate = _repo_root() / "tools" / "completion_gate.py"
-    py = sys.executable or "python"
-    return f'"{py}" "{gate.as_posix()}"'
+    """Compatibility alias for the session-aware graph Work stop adapter."""
+    return _brainwrap_command("stop", "claude-code")
 
 
 def _brainwrap_path() -> Path:
@@ -161,18 +158,40 @@ def _brainwrap_command(subcmd: str, vendor: str) -> str:
             f'{subcmd} --vendor {vendor}')
 
 
+def _workspace_root() -> Path:
+    env_root = os.environ.get("ARCHHUB_WORKSPACE_ROOT", "").strip()
+    if env_root:
+        return Path(env_root)
+    repo = _repo_root()
+    for candidate in (repo, *repo.parents):
+        if (candidate / "00.GOVERNANCE" / "hooks" / "pretooluse_validate.py").exists():
+            return candidate
+    return repo
+
+
+def _pretooluse_validate_command() -> str:
+    hook = _workspace_root() / "00.GOVERNANCE" / "hooks" / "pretooluse_validate.py"
+    py = sys.executable or "python"
+    return f'"{py}" "{hook.as_posix()}"'
+
+
+def _agent_scope_gate_command(vendor: str) -> str:
+    hook = _workspace_root() / "00.GOVERNANCE" / "hooks" / "agent_scope_gate.py"
+    py = sys.executable or "python"
+    return f'"{py}" "{hook.as_posix()}" --vendor {vendor}'
+
+
 # Documentation URLs proving each vendor's hook surface is REAL. A vendor
 # only gets a real hook written if it appears here with a verified URL.
 HOOK_DOC_URLS: dict[str, str] = {
-    "claude-code": "https://docs.claude.com/en/docs/claude-code/hooks",
+    "claude-code": "https://code.claude.com/docs/en/hooks",
     "cursor": "https://cursor.com/docs/hooks",
-    # Codex CLI exposes a real hook surface: a hooks.json (or inline [hooks]
-    # tables in config.toml) with UserPromptSubmit + Stop events that run
-    # `command` hooks over stdin/stdout. Confirmed verbatim from the page.
-    "codex": "https://developers.openai.com/codex/hooks",
-    # Gemini CLI exposes settings.json `hooks` with per-turn BeforeAgent
-    # (injects context via hookSpecificOutput.additionalContext) + per-turn
-    # AfterAgent (fires after the model's final response). Confirmed verbatim.
+    # Codex CLI exposes hooks.json and inline [hooks] tables next to active
+    # config layers. This is the current official Hooks reference.
+    "codex": "https://learn.chatgpt.com/codex/hooks",
+    # Gemini CLI exposes settings.json `hooks` with BeforeTool (scope gate),
+    # BeforeAgent (context injection), and AfterAgent (final response hook).
+    # Confirmed from the hook reference.
     "gemini-cli": "https://geminicli.com/docs/hooks/reference/",
 }
 
@@ -181,17 +200,67 @@ def _is_gate_entry(e: Any) -> bool:
     """True for EITHER brain Stop command-gate (so install dedupes + uninstall
     removes both): the anti-laziness gate AND the brain-reading completion gate
     (THE DRIVE's Stop consumer)."""
-    if not (isinstance(e, dict) and e.get("type") == "command"):
+    if not isinstance(e, dict):
         return False
-    cmd = str(e.get("command", ""))
-    return ("anti_laziness_gate" in cmd) or ("completion_gate" in cmd)
+    commands = [str(e.get("command", ""))]
+    commands.extend(
+        str(h.get("command", ""))
+        for h in e.get("hooks", [])
+        if isinstance(h, dict)
+    )
+    markers = (
+        "anti_laziness_gate",
+        "completion_gate",
+        "pretooluse_validate.py",
+        "agent_scope_gate.py",
+    )
+    return any(any(marker in cmd for marker in markers) for cmd in commands)
+
+
+def _is_managed_claude_handler(entry: Any) -> bool:
+    """Whether one handler, not its containing group, is ArchHub-managed."""
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("server") == "brain":
+        return True
+    command = str(entry.get("command", ""))
+    return any(marker in command for marker in (
+        "anti_laziness_gate",
+        "completion_gate",
+        "pretooluse_validate.py",
+        "agent_scope_gate.py",
+    ))
+
+
+def _without_managed_claude_handlers(entry: Any) -> tuple[Any | None, bool]:
+    """Strip managed handlers from current groups and legacy flat entries."""
+    if not isinstance(entry, dict):
+        return entry, False
+    inner = entry.get("hooks")
+    if isinstance(inner, list):
+        kept = [h for h in inner if not _is_managed_claude_handler(h)]
+        changed = len(kept) != len(inner)
+        if changed and not kept:
+            return None, True
+        if changed:
+            out = dict(entry)
+            out["hooks"] = kept
+            return out, True
+        return entry, False
+    if _is_managed_claude_handler(entry):
+        return None, True
+    if isinstance(entry.get("type"), str):
+        # Preserve old flat user handlers by lifting them into the required
+        # matcher-group level. Omitted matcher means all events.
+        return {"hooks": [entry]}, True
+    return entry, False
 
 
 def _brain_hooks() -> dict[str, Any]:
     # Each mcp_tool hook points at a HOOK-SHAPED WRAPPER tool (server.py
-    # brain.hook_*/brain.observe) and carries an `arguments` map built from
-    # the hook event's scalar fields. WHY wrappers + arguments: Claude Code
-    # calls the hook tool with this `arguments` object; the canonical tools
+    # brain.hook_*/brain.observe) and carries an `input` map built from
+    # the hook event's scalar fields. WHY wrappers + input: Claude Code
+    # calls the hook tool with this `input` object; the canonical tools
     # (brain.context / brain.write / brain.skill_mint / brain.wiring_announce)
     # need a TYPED positional (prompt / ops:LIST / trace:dict / device_id)
     # that `${...}` interpolation can't synthesize from scalar fields — so a
@@ -211,73 +280,82 @@ def _brain_hooks() -> dict[str, Any]:
     # court defect #5, proven by test_driver_end_to_end.py) — they keep their
     # own names and are preserved here, NOT collapsed by the wrapper change.
     return {
-        "SessionStart": [
-            {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.hook_session_start",
-              "arguments": {
-                  "session_id": "${session_id}",
-                  "cwd": "${cwd}",
-              }}
-        ],
-        # UserPromptSubmit fires BOTH halves of the pre-prompt the brain feeds
-        # every agent: RECALL (brain.hook_context — wraps brain.context to build
-        # the typed payload) AND the DRIVE (brain.work_assigned_block — the next
-        # unit of work the brain hands this runtime, claimed atomically +
-        # rendered as the <assigned_leaf> block). Without the DRIVE entry the
-        # brain drives no agent at runtime (court defect #5: the ledger was
-        # consumable but wired into nothing).
-        "UserPromptSubmit": [
-            {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.hook_context",
-              "arguments": {
-                  "prompt": "${prompt}",
-                  "session_id": "${session_id}",
-                  "cwd": "${cwd}",
-              }},
-            {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.work_assigned_block",
-              # brain.work_assigned_block(runtime, fit, owner_user, agent_id,
-              # wrap) REQUIRES `runtime` and accepts no session_id/cwd — so the
-              # arguments map carries ONLY the runtime tag (a bare {} call would
-              # raise on the missing positional). The brain resolves the owner +
-              # claims the next leaf server-side.
-              "arguments": {
-                  "runtime": "claude_code",
-              }},
-        ],
-        "PostToolUse": [
-            {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.observe",
-              "arguments": {
-                  "tool_name": "${tool_name}",
-                  "tool_input": "${tool_input}",
-                  "tool_response": "${tool_response}",
-                  "session_id": "${session_id}",
-                  "cwd": "${cwd}",
-              }}
-        ],
-        # Stop: TWO command gates run FIRST (either can BLOCK and force the agent
-        # to keep working), THEN skill_mint records the trace:
-        #   1. completion_gate — reads the BRAIN ledger and refuses to exit while
-        #      a claimed/open leaf's done-gate is still red (THE DRIVE's Stop
-        #      consumer; the half that makes the pre-prompt pull binding).
-        #   2. anti_laziness_gate — the never-reward-short diligence gate over
-        #      the turn's closing evidence.
-        # completion_gate runs BEFORE anti_laziness so the ledger-derived
-        # "you still have open work" verdict is checked first; both run before
-        # skill_mint (a blocking gate must fire before the trace is minted).
-        "Stop": [
-            {"type": "command", "command": _completion_gate_command(),
-              "timeout": 30},
-            {"type": "command", "command": _gate_command(), "timeout": 30},
-            {"type": "mcp_tool", "server": "brain",
-              "tool": "brain.hook_skill_mint",
-              "arguments": {
-                  "session_id": "${session_id}",
-                  "transcript_path": "${transcript_path}",
-                  "cwd": "${cwd}",
-              }},
-        ],
+        "PreToolUse": [{
+            "matcher": (
+                "Write|Edit|MultiEdit|NotebookEdit|Update|apply_patch|"
+                "write_file|edit_file|replace_file|create_file"
+            ),
+            "hooks": [{
+                "type": "command",
+                "command": _agent_scope_gate_command("claude"),
+                "timeout": 15,
+            }],
+        }],
+        # SessionStart has no MCP client context in Claude Code 2.1.169, so a
+        # schema-valid mcp_tool handler is skipped at runtime. The command
+        # adapter calls the same wrapper over Brain's daemon without owning or
+        # restarting the Claude process.
+        "SessionStart": [{
+            "hooks": [{
+                "type": "command",
+                "command": _brainwrap_command(
+                    "session-start", "claude-code"
+                ),
+                "timeout": 15,
+            }],
+        }],
+        # UserPromptSubmit fires BOTH halves of the graph-backed pre-prompt:
+        # RECALL (brain.hook_context) and DRIVE (brain.work_assigned_block). The
+        # latter receives Claude's session_id and may claim only through that
+        # exact Universal Agent Session; it cannot read or mutate active_work_v1.
+        "UserPromptSubmit": [{
+            "hooks": [
+                {"type": "mcp_tool", "server": "brain",
+                 "tool": "brain.hook_context",
+                 "input": {
+                     "prompt": "${prompt}",
+                     "session_id": "${session_id}",
+                     "cwd": "${cwd}",
+                 }},
+                {"type": "mcp_tool", "server": "brain",
+                 "tool": "brain.work_assigned_block",
+               # The graph session identity is required. A missing or unknown
+               # session fails closed before any Work or legacy evidence changes.
+                 "input": {
+                     "runtime": "claude-code",
+                     "session_id": "${session_id}",
+                 }},
+            ],
+        }],
+        "PostToolUse": [{
+            "hooks": [{
+                "type": "mcp_tool", "server": "brain",
+                "tool": "brain.observe",
+                "input": {
+                    "tool_name": "${tool_name}",
+                    "tool_input": "${tool_input}",
+                    "tool_response": "${tool_response}",
+                    "session_id": "${session_id}",
+                    "cwd": "${cwd}",
+                },
+            }],
+        }],
+        # Stop runs the graph-session-aware brainwrap gate first, followed by
+        # skill minting. A missing session cannot fall back to the legacy ledger.
+        "Stop": [{
+            "hooks": [
+                {"type": "command",
+                 "command": _brainwrap_command("stop", "claude-code"),
+                 "timeout": 30},
+                {"type": "mcp_tool", "server": "brain",
+                 "tool": "brain.hook_skill_mint",
+                 "input": {
+                     "session_id": "${session_id}",
+                     "transcript_path": "${transcript_path}",
+                     "cwd": "${cwd}",
+                 }},
+            ],
+        }],
     }
 
 
@@ -285,9 +363,17 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"refusing to modify invalid JSON config {path} "
+            f"(line {exc.lineno}, column {exc.colno})"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"refusing to modify non-object JSON config {path}"
+        )
+    return value
 
 
 def _save_json(path: Path, data: dict[str, Any]) -> None:
@@ -316,12 +402,14 @@ def _merge_brain_into(
             existing = list(hooks.get(hook_name) or [])
             # Drop any brain entry already present (idempotent) — both the
             # mcp_tool entries (server == "brain") and our command gate.
-            filtered = [
-                e for e in existing
-                if not (isinstance(e, dict) and e.get("server") == "brain")
-                and not _is_gate_entry(e)
-            ]
-            if len(filtered) != len(existing):
+            filtered = []
+            removed = False
+            for entry in existing:
+                kept, changed = _without_managed_claude_handlers(entry)
+                removed = removed or changed
+                if kept is not None:
+                    filtered.append(kept)
+            if removed:
                 notes.append(
                     f"hooks.{hook_name} had previous brain entries — replaced"
                 )
@@ -347,12 +435,14 @@ def _remove_brain_from(
         hooks = dict(out.get("hooks") or {})
         for hook_name in list(hooks.keys()):
             entries = hooks.get(hook_name) or []
-            filtered = [
-                e for e in entries
-                if not (isinstance(e, dict) and e.get("server") == "brain")
-                and not _is_gate_entry(e)
-            ]
-            if len(filtered) != len(entries):
+            filtered = []
+            removed = False
+            for entry in entries:
+                kept, changed = _without_managed_claude_handlers(entry)
+                removed = removed or changed
+                if kept is not None:
+                    filtered.append(kept)
+            if removed:
                 notes.append(f"removed brain entries from hooks.{hook_name}")
             if filtered:
                 hooks[hook_name] = filtered
@@ -441,6 +531,11 @@ def _cursor_hooks_block() -> dict[str, Any]:
       pre-prompt → brain.context     stop → brain.enforce_diligence
     """
     return {
+        "preToolUse": [
+            {"command": _agent_scope_gate_command("cursor"),
+             "timeout": 15,
+             "failClosed": True}
+        ],
         "beforeSubmitPrompt": [
             {"command": _brainwrap_command("context", "cursor")}
         ],
@@ -448,6 +543,17 @@ def _cursor_hooks_block() -> dict[str, Any]:
             {"command": _brainwrap_command("stop", "cursor")}
         ],
     }
+
+
+def _cursor_hook_is_managed(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    command = str(entry.get("command", ""))
+    return (
+        "brainwrap" in command
+        or "agent_scope_gate.py" in command
+        or "pretooluse_validate.py" in command
+    )
 
 
 def _merge_cursor_hooks(
@@ -461,14 +567,10 @@ def _merge_cursor_hooks(
     hooks = dict(out.get("hooks") or {})
     for hook_name, entries in _cursor_hooks_block().items():
         existing = list(hooks.get(hook_name) or [])
-        filtered = [
-            e for e in existing
-            if not (isinstance(e, dict)
-                    and "brainwrap" in str(e.get("command", "")))
-        ]
+        filtered = [e for e in existing if not _cursor_hook_is_managed(e)]
         if len(filtered) != len(existing):
             notes.append(
-                f"hooks.{hook_name} had a previous brainwrap entry — replaced")
+                f"hooks.{hook_name} had a previous managed entry — replaced")
         filtered.extend(entries)
         hooks[hook_name] = filtered
     out["hooks"] = hooks
@@ -483,13 +585,9 @@ def _remove_cursor_hooks(
     hooks = dict(out.get("hooks") or {})
     for hook_name in list(hooks.keys()):
         entries = hooks.get(hook_name) or []
-        filtered = [
-            e for e in entries
-            if not (isinstance(e, dict)
-                    and "brainwrap" in str(e.get("command", "")))
-        ]
+        filtered = [e for e in entries if not _cursor_hook_is_managed(e)]
         if len(filtered) != len(entries):
-            notes.append(f"removed brainwrap entry from hooks.{hook_name}")
+            notes.append(f"removed managed entry from hooks.{hook_name}")
         if filtered:
             hooks[hook_name] = filtered
         else:
@@ -530,8 +628,8 @@ def _install_cursor(dry_run: bool) -> dict[str, Any]:
     # a separate hooks.json — written below — not merged into mcp.json.
     after, notes = _merge_brain_into(before, with_hooks=False)
 
-    # Cursor shipped Agent Hooks in v1.7 (Oct 2025). beforeSubmitPrompt + stop
-    # are VERIFIED real (https://cursor.com/docs/hooks) → write them.
+    # Cursor Agent Hooks are VERIFIED real (https://cursor.com/docs/hooks):
+    # preToolUse gates writes; beforeSubmitPrompt + stop wire the Brain.
     hooks_path = _cursor_hooks_path()
     hooks_before = _load_json(hooks_path)
     hooks_after, hook_notes = _merge_cursor_hooks(hooks_before)
@@ -548,7 +646,7 @@ def _install_cursor(dry_run: bool) -> dict[str, Any]:
                 "hooks_path": str(hooks_path), "rules_path": str(rules_path),
                 "would_change": mcp_change or hooks_change or not rules_exists,
                 "notes": notes
-                + (["would write hooks.json (beforeSubmitPrompt + stop)"]
+                + (["would write hooks.json (preToolUse + beforeSubmitPrompt + stop)"]
                    if hooks_change else [])
                 + (["would write rules file"] if not rules_exists else [])}
 
@@ -558,7 +656,7 @@ def _install_cursor(dry_run: bool) -> dict[str, Any]:
     if hooks_change:
         _backup(hooks_path)
         _save_json(hooks_path, hooks_after)
-        notes.append("wrote hooks.json (beforeSubmitPrompt + stop → brainwrap)")
+        notes.append("wrote hooks.json (preToolUse scope gate + beforeSubmitPrompt/stop brainwrap)")
     if not rules_exists:
         rules_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write(rules_path, _CURSOR_RULES_BODY)
@@ -658,28 +756,39 @@ def _codex_hooks_block() -> dict[str, Any]:
       UserPromptSubmit → brainwrap context     Stop → brainwrap stop
     """
     return {
+        "PreToolUse": [
+            {"hooks": [
+                {"type": "command",
+                 "command": _agent_scope_gate_command("codex"),
+                 "timeout": 15,
+                 "statusMessage": "ArchHub CDE/placement scope gate"}
+            ]}
+        ],
         "UserPromptSubmit": [
             {"hooks": [
                 {"type": "command",
-                 "command": _brainwrap_command("context", "generic")}
+                 "command": _brainwrap_command("context", "codex")}
             ]}
         ],
         "Stop": [
             {"hooks": [
                 {"type": "command",
-                 "command": _brainwrap_command("stop", "generic"),
+                 "command": _brainwrap_command("stop", "codex"),
                  "timeout": 30}
             ]}
         ],
     }
 
 
-def _codex_hook_is_brain(entry: Any) -> bool:
-    """A Codex hook *group* entry that contains a brainwrap command hook."""
+def _codex_hook_is_managed(entry: Any) -> bool:
+    """A Codex hook group entry managed by this installer."""
     if not isinstance(entry, dict):
         return False
     for h in entry.get("hooks") or []:
-        if isinstance(h, dict) and "brainwrap" in str(h.get("command", "")):
+        if not isinstance(h, dict):
+            continue
+        command = str(h.get("command", ""))
+        if "brainwrap" in command or "pretooluse_validate.py" in command:
             return True
     return False
 
@@ -694,10 +803,10 @@ def _merge_codex_hooks(
     hooks = dict(out.get("hooks") or {})
     for event, groups in _codex_hooks_block().items():
         existing = list(hooks.get(event) or [])
-        filtered = [g for g in existing if not _codex_hook_is_brain(g)]
+        filtered = [g for g in existing if not _codex_hook_is_managed(g)]
         if len(filtered) != len(existing):
             notes.append(
-                f"hooks.{event} had a previous brainwrap entry — replaced")
+                f"hooks.{event} had a previous managed entry — replaced")
         filtered.extend(groups)
         hooks[event] = filtered
     out["hooks"] = hooks
@@ -712,9 +821,9 @@ def _remove_codex_hooks(
     hooks = dict(out.get("hooks") or {})
     for event in list(hooks.keys()):
         groups = hooks.get(event) or []
-        filtered = [g for g in groups if not _codex_hook_is_brain(g)]
+        filtered = [g for g in groups if not _codex_hook_is_managed(g)]
         if len(filtered) != len(groups):
-            notes.append(f"removed brainwrap entry from hooks.{event}")
+            notes.append(f"removed managed entry from hooks.{event}")
         if filtered:
             hooks[event] = filtered
         else:
@@ -751,7 +860,7 @@ def _install_codex(dry_run: bool) -> dict[str, Any]:
                 "would_change": (not mcp_present) or hooks_change,
                 "notes": (notes or [])
                 + (["would append brain block"] if not mcp_present else [])
-                + (["would write hooks.json (UserPromptSubmit + Stop)"]
+                + (["would write hooks.json (PreToolUse + UserPromptSubmit + Stop)"]
                    if hooks_change else ["hooks.json already up to date"])}
 
     if not mcp_present:
@@ -761,7 +870,7 @@ def _install_codex(dry_run: bool) -> dict[str, Any]:
     if hooks_change:
         _backup(hooks_path)
         _save_json(hooks_path, hooks_after)
-        notes.append("wrote hooks.json (UserPromptSubmit + Stop → brainwrap)")
+        notes.append("wrote hooks.json (PreToolUse scope gate + UserPromptSubmit/Stop brainwrap)")
     changed = (not mcp_present) or hooks_change
     return {"client": "codex", "path": str(path),
             "hooks_path": str(hooks_path), "changed": changed,
@@ -819,23 +928,31 @@ def _detect_gemini() -> bool:
 
 # Gemini CLI DOES expose a real hook surface (Confirmed verbatim from
 # https://geminicli.com/docs/hooks/reference/): settings.json `hooks` with a
-# PER-TURN `BeforeAgent` event (fires after a prompt is submitted, before the
-# agent plans, and INJECTS context via `hookSpecificOutput.additionalContext`)
-# and a PER-TURN `AfterAgent` event (fires after the model's final response).
+# `BeforeTool` gates file writes before execution; `BeforeAgent` injects
+# context before planning; `AfterAgent` fires after the model's final response.
 # Each event maps to an array of groups `{matcher, hooks:[{type:"command",
-# command, timeout}]}` (timeout in MILLISECONDS, default 60000). We point both
-# at the EXISTING brainwrap launcher — no SessionEnd fallback needed since the
-# per-turn AfterAgent is the real Stop equivalent:
-#   BeforeAgent → brainwrap context     AfterAgent → brainwrap stop
+# command, timeout}]}` (timeout in MILLISECONDS, default 60000). The scope
+# hook points at agent_scope_gate; the Brain hooks point at brainwrap:
+#   BeforeTool -> scope gate     BeforeAgent -> brainwrap context
+#   AfterAgent -> brainwrap stop
 
 
 def _gemini_hooks_block() -> dict[str, Any]:
     return {
+        "BeforeTool": [
+            {"matcher": ".*",
+             "hooks": [
+                 {"type": "command",
+                  "command": _agent_scope_gate_command("gemini"),
+                  "name": "archhub-scope-gate",
+                  "timeout": 30000}
+             ]}
+        ],
         "BeforeAgent": [
             {"matcher": ".*",
              "hooks": [
                  {"type": "command",
-                  "command": _brainwrap_command("context", "generic"),
+                  "command": _brainwrap_command("context", "gemini-cli"),
                   "name": "brain-context",
                   "timeout": 30000}
              ]}
@@ -844,7 +961,7 @@ def _gemini_hooks_block() -> dict[str, Any]:
             {"matcher": ".*",
              "hooks": [
                  {"type": "command",
-                  "command": _brainwrap_command("stop", "generic"),
+                  "command": _brainwrap_command("stop", "gemini-cli"),
                   "name": "brain-stop-gate",
                   "timeout": 30000}
              ]}
@@ -856,7 +973,14 @@ def _gemini_hook_is_brain(entry: Any) -> bool:
     if not isinstance(entry, dict):
         return False
     for h in entry.get("hooks") or []:
-        if isinstance(h, dict) and "brainwrap" in str(h.get("command", "")):
+        if not isinstance(h, dict):
+            continue
+        command = str(h.get("command", ""))
+        if (
+            "brainwrap" in command
+            or "agent_scope_gate.py" in command
+            or "pretooluse_validate.py" in command
+        ):
             return True
     return False
 
@@ -874,7 +998,7 @@ def _merge_gemini_hooks(
         filtered = [g for g in existing if not _gemini_hook_is_brain(g)]
         if len(filtered) != len(existing):
             notes.append(
-                f"hooks.{event} had a previous brainwrap entry — replaced")
+                f"hooks.{event} had a previous managed entry — replaced")
         filtered.extend(groups)
         hooks[event] = filtered
     out["hooks"] = hooks
@@ -891,7 +1015,7 @@ def _remove_gemini_hooks(
         groups = hooks.get(event) or []
         filtered = [g for g in groups if not _gemini_hook_is_brain(g)]
         if len(filtered) != len(groups):
-            notes.append(f"removed brainwrap entry from hooks.{event}")
+            notes.append(f"removed managed entry from hooks.{event}")
         if filtered:
             hooks[event] = filtered
         else:
@@ -913,7 +1037,8 @@ def _install_gemini(dry_run: bool) -> dict[str, Any]:
         notes.append("brain already registered — replaced")
     servers["brain"] = _brain_command()
     after["mcpServers"] = servers
-    # Real hooks (Confirmed): BeforeAgent (context inject) + AfterAgent (stop).
+    # Real hooks (Confirmed): BeforeTool (scope gate), BeforeAgent (context
+    # inject), and AfterAgent (stop).
     after, hook_notes = _merge_gemini_hooks(after)
     notes += hook_notes
     if dry_run:
@@ -924,7 +1049,7 @@ def _install_gemini(dry_run: bool) -> dict[str, Any]:
         _save_json(path, after)
         return {"client": "gemini-cli", "path": str(path), "changed": True,
                 "notes": notes
-                + ["wrote hooks (BeforeAgent + AfterAgent → brainwrap)"]}
+                + ["wrote hooks (BeforeTool scope gate + BeforeAgent/AfterAgent brainwrap)"]}
     return {"client": "gemini-cli", "path": str(path), "changed": False,
             "notes": notes or ["already up to date"]}
 
@@ -1010,7 +1135,8 @@ ALL_PLANS: dict[str, ClientPlan] = {
 #   docs-only               — only a rules/prompt nudge asks the agent to do
 #                            it; no executable is wired at all.
 #
-# The FOUR touchpoints:
+# The FIVE touchpoints:
+#   scope_gate         -> CDE/placement scope gate before file-writing tools
 #   pre_prompt_inject  → brain.context             (RECALL: relevant memory)
 #   drive_inject       → brain.work_assigned_block (DRIVE: the next leaf the
 #                        brain hands this runtime, claimed atomically — THE
@@ -1030,47 +1156,62 @@ PER_TURN = "enforced-per-turn-flush"
 WRAPPER = "covered-by-brainwrap"
 DOCS = "docs-only"
 
-TOUCHPOINTS = ("pre_prompt_inject", "drive_inject", "post_tool_write", "stop_gate")
+TOUCHPOINTS = (
+    "scope_gate",
+    "pre_prompt_inject",
+    "workshop_authority",
+    "drive_inject",
+    "post_tool_write",
+    "stop_gate",
+)
 
 COVERAGE_MATRIX: dict[str, dict[str, str]] = {
-    # Claude Code: native mcp_tool hooks for all four (with_hooks=True). The
-    # DRIVE is UserPromptSubmit → brain.work_assigned_block (claims the next leaf
-    # atomically); the Stop gate also runs completion_gate over the ledger.
+    # Claude Code: native MCP hooks plus session-aware command hooks. The DRIVE
+    # is UserPromptSubmit → brain.work_assigned_block over the exact graph session;
+    # Stop checks graph Work through brainwrap.
     "claude-code": {
+        "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brain.context
+        "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # UserPromptSubmit → brain.work_assigned_block
         "post_tool_write": ENFORCED,     # PostToolUse → brain.write
-        "stop_gate": ENFORCED,           # Stop → completion_gate + anti_laziness + skill_mint
+        "stop_gate": ENFORCED,           # Stop → graph-session brainwrap + skill_mint
     },
     # Cursor: REAL Agent Hooks (https://cursor.com/docs/hooks) auto-fire
     # brainwrap pre-prompt + stop. The pre-prompt brainwrap ALSO injects the
-    # DRIVE block (brain.work_assigned_block) and the stop brainwrap ALSO runs
-    # the brain-reading completion gate. Cursor exposes NO per-tool hook, so the
-    # brain can't learn per-tool — but the `stop` hook → brainwrap flushes the
-    # turn's memory to brain.write ONCE per turn (PER_TURN, not per-tool).
+    # DRIVE block (brain.work_assigned_block) and the stop brainwrap ALSO checks
+    # graph Work. Cursor preToolUse gates writes, but
+    # brain.write still is not per-tool: the stop hook -> brainwrap flushes the
+    # turn's memory ONCE per turn.
     "cursor": {
+        "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # beforeSubmitPrompt → brainwrap context
+        "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # beforeSubmitPrompt → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # stop → brainwrap flush (1×/turn)
         "stop_gate": ENFORCED,           # stop → brainwrap (completion gate + diligence)
     },
     # Codex CLI: REAL hooks.json (Confirmed: developers.openai.com/codex/hooks)
     # auto-fires brainwrap on UserPromptSubmit (context + DRIVE) + Stop (gate).
-    # No per-tool hook exists — but the Stop hook → brainwrap flushes the turn's
-    # memory to brain.write ONCE per turn (PER_TURN, not per-tool).
+    # PreToolUse gates writes, but brain.write still is not per-tool: the Stop
+    # hook -> brainwrap flushes the turn's memory ONCE per turn.
     "codex": {
+        "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brainwrap context
+        "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # UserPromptSubmit → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # Stop → brainwrap flush (1×/turn)
         "stop_gate": ENFORCED,           # Stop → brainwrap stop (completion gate + diligence)
     },
     # Gemini CLI: REAL settings.json hooks (Confirmed: geminicli.com/docs/
-    # hooks/reference). Per-turn BeforeAgent injects context + DRIVE + per-turn
-    # AfterAgent fires after the final response → both brainwrap. No per-tool
-    # hook exists — but AfterAgent → brainwrap flushes the turn's memory to
-    # brain.write ONCE per turn (PER_TURN, not per-tool).
+    # hooks/reference). BeforeTool gates writes; per-turn BeforeAgent injects
+    # context + DRIVE; per-turn AfterAgent fires after the final response.
+    # brain.write still is not per-tool: AfterAgent -> brainwrap flushes the
+    # turn's memory ONCE per turn.
     "gemini-cli": {
+        "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # BeforeAgent → brainwrap context
+        "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # BeforeAgent → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # AfterAgent → brainwrap flush (1×/turn)
         "stop_gate": ENFORCED,           # AfterAgent → brainwrap stop (completion gate + diligence)
@@ -1111,8 +1252,8 @@ def print_coverage_matrix(
     out = stream or sys.stdout
     matrix = coverage_matrix(only)
     # headers MUST align 1:1 with TOUCHPOINTS order.
-    headers = ("pre-prompt inject", "drive inject", "post-tool write",
-               "stop-gate")
+    headers = ("scope gate", "pre-prompt inject", "workshop authority",
+               "drive inject", "post-tool write", "stop-gate")
     name_w = max([len("vendor")] + [len(n) for n in matrix]) if matrix else 6
     col_w = max(len(WRAPPER), len(ENFORCED), len(PER_TURN), len(DOCS),
                 *(len(h) for h in headers))
@@ -1132,10 +1273,10 @@ def print_coverage_matrix(
     # per-turn flush for Claude's per-tool write.
     out.write("\n  legend:\n")
     out.write(f"    {ENFORCED:<{lbl_w}}= a verified vendor hook auto-fires it, "
-              "PER TOOL CALL (Claude Code's brain.write)\n")
+              "with the cadence of that hook event\n")
     out.write(f"    {PER_TURN:<{lbl_w}}= a verified vendor hook auto-fires it, "
               "but ONCE PER TURN on the stop hook (brainwrap flush) —\n")
-    out.write(f"    {'':<{lbl_w}}  coarser than per-tool; foreign vendors "
+    out.write(f"    {'':<{lbl_w}}  coarser than per tool; foreign vendors "
               "(Codex/Gemini/Cursor) learn the turn's gist, not every step\n")
     out.write(f"    {WRAPPER:<{lbl_w}}= brainwrap launcher; agent/script must "
               "invoke\n")

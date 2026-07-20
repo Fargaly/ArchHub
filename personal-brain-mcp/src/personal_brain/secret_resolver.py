@@ -8,10 +8,16 @@ Returns None when unresolvable (caller decides whether that's fatal).
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import os
+import secrets
 import shutil
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 
 # 1Password CLI calls get a short timeout so a hung/uninstalled `op`
 # can never block a tool call.
@@ -87,6 +93,24 @@ def _try_keyring(vault: str, item: str, field: str) -> Optional[str]:
     return value or None
 
 
+def _store_keyring(vault: str, item: str, field: str, value: str) -> bool:
+    """Store a secret in the OS credential backend without exposing it.
+
+    The lazy import keeps read-only/dev environments usable when ``keyring``
+    is absent. Callers receive only success/failure; key material is never
+    returned or included in an exception string.
+    """
+    try:
+        import keyring  # type: ignore
+    except Exception:
+        return False
+    try:
+        keyring.set_password(f"{vault}/{item}", field, value)
+    except Exception:
+        return False
+    return True
+
+
 def resolve_secret(ref: str) -> Optional[str]:
     """Resolve a secret reference into its value.
 
@@ -122,3 +146,60 @@ def resolve_secret(ref: str) -> Optional[str]:
         return env_val
 
     return None
+
+
+def ensure_secret(ref: str) -> dict[str, Any]:
+    """Ensure an ``op://`` capability exists in the OS credential store.
+
+    This is the write-side companion to :func:`resolve_secret`. Existing
+    values from 1Password, the OS keyring, or the environment are preserved.
+    When no value resolves, a cryptographically random value is generated and
+    written to the OS keyring. The return value is deliberately safe metadata;
+    the generated or resolved secret never leaves this function.
+    """
+    parsed = parse_op_ref(ref)
+    if parsed is None or ref != f"op://{'/'.join(parsed)}":
+        return {
+            "ok": False,
+            "created": False,
+            "ref": ref,
+            "backend": "none",
+            "reason": "a canonical op://vault/item/field reference is required",
+        }
+
+    if resolve_secret(ref) is not None:
+        return {
+            "ok": True,
+            "created": False,
+            "ref": ref,
+            "backend": "existing",
+        }
+
+    vault, item, field = parsed
+    generated = secrets.token_urlsafe(48)
+    if not _store_keyring(vault, item, field, generated):
+        return {
+            "ok": False,
+            "created": False,
+            "ref": ref,
+            "backend": "none",
+            "reason": "OS credential storage is unavailable",
+        }
+
+    # Read back through the same backend before claiming the capability ready.
+    # The value comparison stays local and neither value is returned.
+    stored = _try_keyring(vault, item, field)
+    if stored is None or not secrets.compare_digest(stored, generated):
+        return {
+            "ok": False,
+            "created": False,
+            "ref": ref,
+            "backend": "none",
+            "reason": "OS credential storage could not be verified",
+        }
+    return {
+        "ok": True,
+        "created": True,
+        "ref": ref,
+        "backend": "os_keyring",
+    }

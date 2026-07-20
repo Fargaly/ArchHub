@@ -6148,3 +6148,98 @@ Next action:
   authority: likely `legacy_webshell_host_court` / `legacy_webshell_host_with_cell_bridge`
   or `universal_cell_projection_bridge`, while keeping the four live
   `node_runtime` holders untouched.
+
+## Run: Universal Cell projection bridge
+
+Intent:
+
+- Reduce the WIP/authority split without interrupting running sessions or
+  moving the live copied runtime.
+- Consume the `universal_cell_projection_bridge` category as a bounded bridge:
+  the legacy app shell may ask the application-owned Universal Cell runtime for
+  a canvas/workshop projection, but the bridge does not become authority and
+  does not open a side store.
+
+Committed:
+
+- `b9fb43a Integrate Universal Cell projection bridge`.
+- Added `app/workflows/universal_grand_map_surface.py`.
+- Added `app/workflows/baboom_cell_surface.py`.
+- Added bridge slots in `app/bridge.py` for:
+  - `get_grand_map_ui_surface("universal-*")`.
+  - `submit_universal_interaction(payload_json)`.
+  - `get_baboom_cell_state()`.
+- Added courts:
+  - `tests/test_universal_grand_map_surface_bridge.py`.
+  - `tests/test_baboom_cell_surface_bridge.py`.
+- Fixed `tests/test_authority_wip_classify.py` so the Brain room adapter court
+  tests a synthetic classification entry instead of assuming `cell_room.py`
+  remains uncommitted after the previous slice consumed it.
+
+Verification:
+
+- Projection/classifier courts:
+  `python -m pytest tests\test_authority_wip_classify.py tests\test_baboom_cell_surface_bridge.py tests\test_universal_grand_map_surface_bridge.py -q -p no:cacheprovider --timeout=240`
+  - initial result: one stale classifier-court failure because
+    `personal-brain-mcp/src/personal_brain/cell_room.py` had already been
+    committed.
+  - final result after court repair: `51 passed, 1 warning in 15.22s`.
+- Syntax compile:
+  `python -m py_compile app\workflows\baboom_cell_surface.py app\workflows\universal_grand_map_surface.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed after cleaning the staged blank-line
+    whitespace from the partial bridge hunk.
+  - forbidden staged paths scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged secret scan: only matched the import name `cell_secret_keys`; no
+    secret bytes, key blocks, or token patterns staged.
+
+Commit gate evidence:
+
+- `brain-commit-gate` checked the product-surface files:
+  `app/bridge.py`, `app/workflows/baboom_cell_surface.py`,
+  `app/workflows/universal_grand_map_surface.py`.
+- Brain daemon was unreachable at `http://127.0.0.1:8473/mcp`; the gate
+  fail-opened and did not block. This is recorded as runtime evidence, not a
+  claim that Brain was live.
+
+Current WIP/live-holder evidence after `b9fb43a`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `99`.
+- classified WIP entries in the authority ledger: `97`.
+- no-unclassified gate: `ok`, count `0`.
+- `universal_cell_projection_bridge`: consumed.
+- classification digest:
+  `4d7d23850b3acefdfb9f26755fe5c0ef242b1336bbee30f741b06b5f2f6d1f8a`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The live copied runtime at
+  `10.PRODUCT/12.PRODUCTION/node_runtime` remains untouched because the holder
+  gate is red.
+
+Current position:
+
+- The old app shell now has a bounded route into the Universal Cell runtime for
+  the Universal canvas and BABOOM/workshop state.
+- This is a bridge, not final product authority. It reads/forwards to the
+  application-owned runtime and fails closed for unknown `universal-*` surfaces.
+- Remaining WIP is still concentrated in old UI/webshell host work, typed
+  workflow runtime adapters/courts, cloud readiness, adapter payloads,
+  documentation evidence, and the live-locked copied runtime.
+
+Next action:
+
+- Continue with `legacy_webshell_host_with_cell_bridge` because `app/bridge.py`
+  still has unstaged Universal Cell related bridge edits, and the old UI shell
+  is still the visible place where drift can leak into the founder experience.

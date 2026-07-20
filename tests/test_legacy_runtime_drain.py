@@ -916,6 +916,93 @@ def test_runtime_copy_source_drift_is_green_when_runtime_matches_authority(tmp_p
     assert result["migration_candidates"] == []
 
 
+def test_source_drift_resolution_ledger_marks_canonical_evidence_without_clearing_drift(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "authority_bridge.py").write_text("runtime\n", encoding="utf-8")
+    (authority / "authority_bridge.py").write_text("authority\n", encoding="utf-8")
+    evidence_dir = product_root / "docs" / "_meta"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "legacy_runtime_source_drift_transport_evidence.latest.json").write_text(
+        json.dumps({
+            "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+            "migration_track": "runtime_transport_and_broker",
+            "decision": {
+                "accepted_as_authority": True,
+                "runtime_copy_promoted": False,
+                "bulk_copy_performed": False,
+                "live_process_interruption": False,
+            },
+            "authority_files": [
+                {"path": "nodelang/authority_bridge.py", "sha256": "authority"}
+            ],
+            "commands": [{"command": "pytest", "result": "1 passed"}],
+        }),
+        encoding="utf-8",
+    )
+
+    result = drain.runtime_copy_source_drift(product_root, authority.parent)
+
+    assert result["ok"] is False
+    assert result["drift_count"] == 1
+    assert result["resolution_ledger"]["evidence_file_count"] == 1
+    assert result["decision_summary"]["by_resolution_state"] == {
+        "canonical_evidence_recorded_pending_runtime_retirement": 1,
+    }
+    candidate = result["migration_candidates"][0]
+    assert candidate["resolution_state"] == (
+        "canonical_evidence_recorded_pending_runtime_retirement"
+    )
+    assert candidate["promotion_allowed"] is False
+    assert candidate["bulk_copy_allowed"] is False
+    assert "safely retired" in candidate["allowed_next_action"]
+
+
+def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "cell_baboom_activity.py").write_text("runtime\n", encoding="utf-8")
+    evidence_dir = product_root / "docs" / "_meta"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "legacy_runtime_source_drift_baboom_evidence.latest.json").write_text(
+        json.dumps({
+            "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+            "migration_track": "baboom_context_and_cognition",
+            "decision": {
+                "accepted_canonical_behavior": ["proposal-only cognition"],
+                "pending_not_ported": [
+                    "ignored nodelang/cell_baboom_activity.py foreground activity"
+                ],
+                "runtime_copy_promoted": False,
+                "bulk_copy_performed": False,
+                "live_process_interruption": False,
+            },
+            "canonical_files": {
+                "tests_replica/test_universal_baboom_cognition_planner.py": "sha"
+            },
+            "runtime_evidence_read_only": {
+                "nodelang/cell_baboom_activity.py": "runtime-sha"
+            },
+            "commands": [{"command": "pytest", "result": "1 passed"}],
+        }),
+        encoding="utf-8",
+    )
+
+    result = drain.runtime_copy_source_drift(product_root, authority)
+
+    assert result["ok"] is False
+    candidate = result["migration_candidates"][0]
+    assert candidate["path"] == "nodelang/cell_baboom_activity.py"
+    assert candidate["resolution_state"] == "pending_canonical_root_decision"
+    assert "do not port by bulk copy" in candidate["allowed_next_action"]
+
+
 def test_known_runtime_source_drift_paths_are_classified_not_promotable():
     paths = [
         "nodelang/cell_baboom_activity.py",
@@ -1009,6 +1096,7 @@ def test_source_drift_migration_work_groups_candidates_by_authority_track(tmp_pa
     assert result["candidate_count"] == 3
     assert result["track_count"] == 2
     assert result["unresolved_track_count"] == 2
+    assert result["evidence_covered_track_count"] == 0
     assert result["all_candidates_classified"] is True
     assert result["all_work_authority_scoped"] is True
     assert result["all_non_promoting"] is True
@@ -1026,6 +1114,9 @@ def test_source_drift_migration_work_groups_candidates_by_authority_track(tmp_pa
     assert by_track["visual_workspace_interaction"]["promotion_allowed"] is False
     assert by_track["visual_workspace_interaction"]["bulk_copy_allowed"] is False
     assert by_track["visual_workspace_interaction"]["live_process_interruption_allowed"] is False
+    assert by_track["visual_workspace_interaction"]["candidate_resolution_states"] == [
+        "classified_unresolved"
+    ]
     assert by_track["visual_workspace_interaction"]["cde_container"] == {
         "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
         "authority": "10.PRODUCT/13.NODE-LANGUAGE",

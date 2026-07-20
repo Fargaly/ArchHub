@@ -48,6 +48,13 @@ SOURCE_DRIFT_AUTHORITY_BASIS = (
     "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
     "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7",
 )
+SOURCE_DRIFT_EVIDENCE_GLOB = "legacy_runtime_source_drift_*_evidence.latest.json"
+SOURCE_DRIFT_EVIDENCE_SCHEMAS = {
+    "archhub-runtime-source-drift-authority-evidence/v1",
+    "archhub-runtime-source-drift-authority-slice-evidence/v1",
+    "legacy_runtime_source_drift_visual_evidence_v1",
+    "legacy_runtime_source_drift_relation_security_evidence_v1",
+}
 MIGRATION_TRACK_METADATA = {
     "application_graph_projection": {
         "title": "Resolve application graph projection drift",
@@ -387,12 +394,250 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _evidence_track(payload: dict[str, Any]) -> str | None:
+    track = payload.get("migration_track") or payload.get("scope")
+    if not track:
+        return None
+    return str(track).replace("\\", "/").split("/", 1)[0]
+
+
+def _evidence_tracks(payload: dict[str, Any]) -> list[str]:
+    tracks: list[str] = []
+    slices = payload.get("slices")
+    if isinstance(slices, list):
+        for item in slices:
+            track = str(item).replace("\\", "/").split("/", 1)[0]
+            if track in MIGRATION_TRACK_METADATA and track not in tracks:
+                tracks.append(track)
+    primary = _evidence_track(payload)
+    if primary and primary in MIGRATION_TRACK_METADATA and primary not in tracks:
+        tracks.append(primary)
+    if not tracks and primary:
+        tracks.append(primary)
+    return tracks
+
+
+def _evidence_authority_files(payload: dict[str, Any]) -> list[str]:
+    files = payload.get("authority_files") or payload.get("canonical_files") or []
+    if isinstance(files, dict):
+        return sorted(str(path).replace("\\", "/") for path in files)
+    if isinstance(files, list):
+        paths: list[str] = []
+        for item in files:
+            if isinstance(item, dict) and item.get("path"):
+                paths.append(str(item["path"]).replace("\\", "/"))
+            elif isinstance(item, str):
+                paths.append(item.replace("\\", "/"))
+        return sorted(paths)
+    return []
+
+
+def _evidence_commands(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    commands = (
+        payload.get("commands")
+        or payload.get("courts")
+        or payload.get("tests")
+        or []
+    )
+    if not isinstance(commands, list):
+        return []
+    return [item for item in commands if isinstance(item, dict)]
+
+
+def _evidence_decision(payload: dict[str, Any]) -> dict[str, Any]:
+    decision = payload.get("decision")
+    return decision if isinstance(decision, dict) else {}
+
+
+def _evidence_non_promoting(payload: dict[str, Any]) -> bool:
+    decision = _evidence_decision(payload)
+    explicit_false_keys = (
+        "runtime_copy_promoted",
+        "bulk_copy_performed",
+        "bulk_copy_used",
+        "runtime_copy_used_as_authority",
+        "live_process_interruption",
+    )
+    for key in explicit_false_keys:
+        if key in payload and bool(payload[key]) is True:
+            return False
+        if key in decision and bool(decision[key]) is True:
+            return False
+    non_interruption = payload.get("non_interruption")
+    if isinstance(non_interruption, dict):
+        if bool(non_interruption.get("no_running_sessions_restarted")) is False:
+            return False
+        if bool(non_interruption.get("no_processes_terminated")) is False:
+            return False
+    if "non_interrupting" in payload and bool(payload["non_interrupting"]) is False:
+        return False
+    return True
+
+
+def _evidence_is_usable(payload: dict[str, Any]) -> bool:
+    if payload.get("schema") not in SOURCE_DRIFT_EVIDENCE_SCHEMAS:
+        return False
+    if not _evidence_track(payload):
+        return False
+    if not _evidence_non_promoting(payload):
+        return False
+    if not _evidence_authority_files(payload):
+        return False
+    commands = _evidence_commands(payload)
+    if not commands:
+        return False
+    return any(
+        "passed" in str(command.get("result") or "").lower()
+        for command in commands
+    )
+
+
+def source_drift_resolution_ledger(product_root: Path) -> dict[str, Any]:
+    """Read committed drift evidence without making it product authority."""
+    evidence_dir = product_root / "docs" / "_meta"
+    evidence_files: list[dict[str, Any]] = []
+    by_track: dict[str, list[dict[str, Any]]] = {}
+    by_path: dict[str, list[dict[str, Any]]] = {}
+    if evidence_dir.exists():
+        for path in sorted(evidence_dir.glob(SOURCE_DRIFT_EVIDENCE_GLOB)):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict) or not _evidence_is_usable(payload):
+                continue
+            tracks = _evidence_tracks(payload)
+            if not tracks:
+                continue
+            record = {
+                "path": path.relative_to(product_root).as_posix(),
+                "schema": payload.get("schema"),
+                "migration_track": tracks[0],
+                "migration_tracks": tracks,
+                "slice": payload.get("slice") or payload.get("scope") or "",
+                "authority_files": _evidence_authority_files(payload),
+                "command_count": len(_evidence_commands(payload)),
+                "runtime_copy_promoted": False,
+                "bulk_copy_performed": False,
+                "live_process_interruption": False,
+            }
+            evidence_files.append(record)
+            for track in tracks:
+                by_track.setdefault(track, []).append(record)
+
+            decision = _evidence_decision(payload)
+            pending_text = json.dumps(
+                decision.get("pending_not_ported") or [], sort_keys=True
+            ).replace("\\", "/")
+            for authority_file in record["authority_files"]:
+                by_path.setdefault(authority_file, []).append(record)
+            runtime_candidate = payload.get("runtime_candidate")
+            if isinstance(runtime_candidate, dict) and runtime_candidate.get("path"):
+                candidate_path = str(runtime_candidate["path"]).replace("\\", "/")
+                by_path.setdefault(candidate_path, []).append(record)
+            runtime_read_only = payload.get("runtime_evidence_read_only")
+            if isinstance(runtime_read_only, dict):
+                for candidate_path in runtime_read_only:
+                    by_path.setdefault(
+                        str(candidate_path).replace("\\", "/"),
+                        [],
+                    ).append({
+                        **record,
+                        "pending_canonical_root_decision": True,
+                    })
+            pending_path_pattern = (
+                r"(?:nodelang|tests_replica|tests_domains|packaging|public_site)"
+                r"/[A-Za-z0-9_./-]+"
+            )
+            for raw_path in re.findall(pending_path_pattern, pending_text):
+                by_path.setdefault(raw_path.replace("\\", "/"), []).append({
+                    **record,
+                    "pending_canonical_root_decision": True,
+                })
+    return {
+        "schema": "archhub-runtime-source-drift-resolution-ledger/v1",
+        "evidence_glob": SOURCE_DRIFT_EVIDENCE_GLOB,
+        "evidence_file_count": len(evidence_files),
+        "evidence_files": evidence_files,
+        "by_track": {key: rows for key, rows in sorted(by_track.items())},
+        "by_path": {key: rows for key, rows in sorted(by_path.items())},
+        "rule": (
+            "Evidence can classify the canonical decision status, but it does "
+            "not clear physical source drift or authorize runtime interruption."
+        ),
+    }
+
+
+def apply_source_drift_resolution_evidence(
+    candidate: dict[str, Any],
+    ledger: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_path = str(candidate.get("path") or "").replace("\\", "/")
+    track = str(candidate.get("migration_track") or "")
+    by_path = ledger.get("by_path") if isinstance(ledger, dict) else {}
+    by_track = ledger.get("by_track") if isinstance(ledger, dict) else {}
+    path_records = by_path.get(normalized_path, []) if isinstance(by_path, dict) else []
+    track_records = by_track.get(track, []) if isinstance(by_track, dict) else []
+    records = path_records or track_records
+    if not records:
+        return candidate
+    deduped_records: list[dict[str, Any]] = []
+    seen_records: set[tuple[Any, Any, Any]] = set()
+    for record in records:
+        key = (
+            record.get("path"),
+            record.get("slice"),
+            bool(record.get("pending_canonical_root_decision")),
+        )
+        if key in seen_records:
+            continue
+        seen_records.add(key)
+        deduped_records.append(record)
+    records = deduped_records
+    pending = any(record.get("pending_canonical_root_decision") for record in records)
+    if pending:
+        state = "pending_canonical_root_decision"
+        action = (
+            "preserve as read-only migration evidence until the canonical "
+            "root/form decision is made; do not port by bulk copy"
+        )
+    elif path_records:
+        state = "canonical_evidence_recorded_pending_runtime_retirement"
+        action = (
+            "canonical authority evidence exists for this relative path; keep "
+            "the copied runtime file as migration evidence until the runtime "
+            "copy is safely retired"
+        )
+    else:
+        state = "track_evidence_recorded_pending_candidate_decision"
+        action = (
+            "track-level canonical evidence exists, but this relative path "
+            "still needs an explicit reconstruct/reject/preserve decision"
+        )
+    candidate = {**candidate}
+    candidate.update({
+        "resolution_state": state,
+        "resolution_evidence": [
+            {
+                "path": record.get("path"),
+                "slice": record.get("slice"),
+                "migration_track": record.get("migration_track"),
+                "command_count": record.get("command_count"),
+            }
+            for record in records
+        ],
+        "allowed_next_action": action,
+    })
+    return candidate
+
+
 def _source_drift_candidate(
     *,
     status: str,
     row: dict[str, Any],
     runtime_copy: Path,
     authority: Path,
+    resolution_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     path = str(row["path"])
     digest_body = {
@@ -428,6 +673,8 @@ def _source_drift_candidate(
             "delivered authority"
         ),
     }
+    if resolution_ledger:
+        candidate = apply_source_drift_resolution_evidence(candidate, resolution_ledger)
     return candidate
 
 
@@ -552,6 +799,7 @@ def _source_drift_decision_summary(
 def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, Any]:
     """Detect source hidden in ignored node_runtime that authority does not own."""
     runtime_copy = product_root / "node_runtime"
+    resolution_ledger = source_drift_resolution_ledger(product_root)
     missing_in_authority: list[dict[str, Any]] = []
     different_from_authority: list[dict[str, Any]] = []
     checked = 0
@@ -581,6 +829,7 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
                 row=row,
                 runtime_copy=runtime_copy,
                 authority=authority,
+                resolution_ledger=resolution_ledger,
             )
             for row in missing_in_authority
         ],
@@ -590,6 +839,7 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
                 row=row,
                 runtime_copy=runtime_copy,
                 authority=authority,
+                resolution_ledger=resolution_ledger,
             )
             for row in different_from_authority
         ],
@@ -605,6 +855,12 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
         "checked_runtime_files": checked,
         "drift_count": drift_count,
         "migration_candidate_count": len(migration_candidates),
+        "resolution_ledger": {
+            "schema": resolution_ledger["schema"],
+            "evidence_file_count": resolution_ledger["evidence_file_count"],
+            "tracks_with_evidence": sorted(resolution_ledger["by_track"]),
+            "rule": resolution_ledger["rule"],
+        },
         "decision_summary": decision_summary,
         "ok": drift_count == 0,
         "missing_in_authority": missing_in_authority,
@@ -660,6 +916,14 @@ def build_source_drift_migration_work(
             for candidate in candidates
             if candidate.get("required_canonical_first_step")
         })
+        candidate_states = sorted({
+            str(candidate.get("resolution_state") or "classified_unresolved")
+            for candidate in candidates
+        })
+        if len(candidate_states) == 1:
+            resolution_state = candidate_states[0]
+        else:
+            resolution_state = "mixed_resolution_states"
         work_id = "runtime-source-drift-track:%s" % track
         work_items.append({
             "work_id": work_id,
@@ -674,7 +938,8 @@ def build_source_drift_migration_work(
                 "lifecycle": "WIP",
                 "privacy_tier": "T0 PUBLIC",
             },
-            "resolution_state": "classified_unresolved",
+            "resolution_state": resolution_state,
+            "candidate_resolution_states": candidate_states,
             "candidate_count": len(candidates),
             "candidate_ids": candidate_ids,
             "implementation_candidate_paths": implementation_paths,
@@ -709,6 +974,12 @@ def build_source_drift_migration_work(
     unresolved_count = sum(
         1 for item in work_items if item.get("resolution_state") != "resolved"
     )
+    evidence_covered_count = sum(
+        1
+        for item in work_items
+        if item.get("resolution_state")
+        not in {"classified_unresolved", "resolved"}
+    )
     return {
         "schema": "archhub-runtime-source-drift-migration-work/v1",
         "source_schema": source_drift.get("schema"),
@@ -717,6 +988,7 @@ def build_source_drift_migration_work(
         "candidate_count": int(source_drift.get("migration_candidate_count") or 0),
         "track_count": len(work_items),
         "unresolved_track_count": unresolved_count,
+        "evidence_covered_track_count": evidence_covered_count,
         "all_candidates_classified": bool(
             (source_drift.get("decision_summary") or {}).get("all_classified")
         ),

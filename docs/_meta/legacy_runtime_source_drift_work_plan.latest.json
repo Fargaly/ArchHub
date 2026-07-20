@@ -6,6 +6,7 @@
   "candidate_count": 32,
   "track_count": 7,
   "unresolved_track_count": 7,
+  "evidence_covered_track_count": 7,
   "all_candidates_classified": true,
   "all_work_authority_scoped": true,
   "all_non_promoting": true,
@@ -25,7 +26,11 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "mixed_resolution_states",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "track_evidence_recorded_pending_candidate_decision"
+      ],
       "candidate_count": 9,
       "candidate_ids": [
         "runtime-source-drift:4ab445be955bee79",
@@ -93,7 +98,11 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "mixed_resolution_states",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "track_evidence_recorded_pending_candidate_decision"
+      ],
       "candidate_count": 11,
       "candidate_ids": [
         "runtime-source-drift:2eb5a79da0c47dad",
@@ -165,7 +174,10 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
       "candidate_count": 3,
       "candidate_ids": [
         "runtime-source-drift:284ac4ce029299d0",
@@ -222,7 +234,11 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "mixed_resolution_states",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "pending_canonical_root_decision"
+      ],
       "candidate_count": 5,
       "candidate_ids": [
         "runtime-source-drift:318f16b4daf77c72",
@@ -282,7 +298,10 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
       "candidate_count": 1,
       "candidate_ids": [
         "runtime-source-drift:6a242f251cdc7811"
@@ -333,7 +352,10 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
       "candidate_count": 1,
       "candidate_ids": [
         "runtime-source-drift:997a1a9c1e81b9f1"
@@ -384,7 +406,10 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
       "candidate_count": 2,
       "candidate_ids": [
         "runtime-source-drift:052d967789d28023",

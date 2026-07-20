@@ -24,6 +24,20 @@
   "checked_runtime_files": 347,
   "drift_count": 32,
   "migration_candidate_count": 32,
+  "resolution_ledger": {
+    "schema": "archhub-runtime-source-drift-resolution-ledger/v1",
+    "evidence_file_count": 10,
+    "tracks_with_evidence": [
+      "application_graph_projection",
+      "baboom_context_and_cognition",
+      "governed_work_lifecycle",
+      "public_site_projection",
+      "revision_integrity_court",
+      "runtime_transport_and_broker",
+      "visual_workspace_interaction"
+    ],
+    "rule": "Evidence can classify the canonical decision status, but it does not clear physical source drift or authorize runtime interruption."
+  },
   "decision_summary": {
     "schema": "archhub-runtime-source-drift-decision-summary/v1",
     "candidate_count": 32,
@@ -43,7 +57,9 @@
       "implementation_candidate": 12
     },
     "by_resolution_state": {
-      "classified_unresolved": 32
+      "canonical_evidence_recorded_pending_runtime_retirement": 23,
+      "pending_canonical_root_decision": 2,
+      "track_evidence_recorded_pending_candidate_decision": 7
     },
     "promotion_allowed": false,
     "bulk_copy_allowed": false
@@ -213,7 +229,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "baboom_context_and_cognition",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "pending_canonical_root_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -226,8 +242,16 @@
       "runtime_sha256": "81d3fdcfae8e78497bb9d312223082a809b6508e8a1647b661ee1368260f6a3e",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:cdf848947bac8667",
@@ -236,7 +260,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -249,8 +273,34 @@
       "runtime_sha256": "a5ca9e96ee560b4465c0fc1f6db67cf1858ce31c03d8ff2bbbe4a07b2f6506e7",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:b487a58dda8d826c",
@@ -259,7 +309,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -272,8 +322,34 @@
       "runtime_sha256": "c8cf5b0b89fc8c38bea63f19a707966a74e6688c6207bea27004ed2083e798a2",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:cbf46ea3e96a097b",
@@ -282,7 +358,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "baboom_context_and_cognition",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "pending_canonical_root_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -295,8 +371,16 @@
       "runtime_sha256": "949dcbd771b1688dd98fc7603ecd4c38bba3ef45653fdf4c65a0d8ba829bf629",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:e056ad99a6ec58b2",
@@ -305,7 +389,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -318,8 +402,34 @@
       "runtime_sha256": "6c71d76ace185011efca66d699d482b189a3a175522d9bac9dc9b9bee3d3f88c",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:34b091bba5042974",
@@ -328,7 +438,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -341,8 +451,34 @@
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:859f552165e6407b",
@@ -351,7 +487,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -364,8 +500,34 @@
       "runtime_sha256": "4b1058e0df61418157a0e9af2930fe54fbfdffddbc0440eab8c79ab995bd3e17",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:98d64f6a66cf5dad",
@@ -374,7 +536,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -387,8 +549,34 @@
       "runtime_sha256": "19f4f80d11bfcf351ffd6ddc8be2f37f90d038a80ee8cc2f895df0e9e29c4f18",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:884c8e926b412d50",
@@ -397,7 +585,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -410,8 +598,16 @@
       "runtime_sha256": "68cef0ecfc8ca842928a4ff588d01ee9a22d06226288e7dead8bd911bf5a75e0",
       "authority_sha256": "d1fb44cfd949087799866c7afd18e27a234c7c24a2f7b263c3532968d4048121",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
+          "slice": "cell_native_application_projection_delta_and_root_identity",
+          "migration_track": "application_graph_projection",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:9fca61215b884868",
@@ -420,7 +616,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -433,8 +629,28 @@
       "runtime_sha256": "d457fc3ff39df3fb4c45de4e6c9a44c521069bb1ccf0cd54f42fc487ac4ce052",
       "authority_sha256": "b0cc1b4ead11808034ecdf2f5b371b8220481060d00fab81815b34d68e0d4d9a",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_boundary_ports_evidence.latest.json",
+          "slice": "application_boundary_ports_as_cell_interfaces",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_capability_evidence.latest.json",
+          "slice": "",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:b940423a09df0cea",
@@ -443,7 +659,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -456,8 +672,22 @@
       "runtime_sha256": "a22d6b91e8279bf4db7b71730b23c522718dc306c4d7a9aa652568433cf739db",
       "authority_sha256": "089fb6f6169d59897bb12f0d482ad0acf490943f47b429a85bed2b5f5f02352b",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_capability_evidence.latest.json",
+          "slice": "",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:ea08b16f219ef94f",
@@ -466,7 +696,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "baboom_context_and_cognition",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -479,8 +709,16 @@
       "runtime_sha256": "bc94a673c2809cefb3f8eb17d79a958636179fad2caad311c6c108b3b43a7b3e",
       "authority_sha256": "448a18c379da8e91cc47b3bbbc0206eabf0050da93432aa0d9ca6f2850d41cdd",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:318f16b4daf77c72",
@@ -489,7 +727,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "baboom_context_and_cognition",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -502,8 +740,16 @@
       "runtime_sha256": "97d234ec93c7b66ff680e8d19ccd6d08c6b97e9f48e294da38948d52a14c70b8",
       "authority_sha256": "4f3fd40834356c4da62a46eea4e8d4c7a9d66316d48dccd01dfc00be04bee68e",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:63bb23c95981b83b",
@@ -512,7 +758,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -525,8 +771,16 @@
       "runtime_sha256": "be96d3e1ed7d89af48737368160951f5493f0320d7b4c62647af0ce5d5427ff1",
       "authority_sha256": "55c9b40c7b607c9299af19007f4854a3cf999c3c5f113012c99326ae0751afae",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:2eb5a79da0c47dad",
@@ -535,7 +789,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -548,8 +802,28 @@
       "runtime_sha256": "eafc1ab36f45a7ce6e5c80d29b375b7acdc3bfbe7d6cfb63b029ef108b810b2c",
       "authority_sha256": "60dce67e6ed4c11d9363035dec3eadb8e389f02e91860cdaceaae7c6813f11ac",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:5ce5e57f335c25b8",
@@ -558,7 +832,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "application_graph_projection",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -571,8 +845,28 @@
       "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
       "authority_sha256": "e328e905c069f747025afbbe7527a9ac1a90047a7854ac4a64d32b83b46d6bc3",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
+          "slice": "cell_native_application_projection_delta_and_root_identity",
+          "migration_track": "application_graph_projection",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_lifecycle_revision_site_evidence.latest.json",
+          "slice": "",
+          "migration_track": "governed_work_lifecycle",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
+          "slice": "visual_workspace_interaction",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:90d2b62c5a5a3ab5",
@@ -581,7 +875,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -594,8 +888,16 @@
       "runtime_sha256": "1ee037fafd3c7df743f5ddbd40ba0a6b785d7f1e72e2f4d5cb3f193f5f746470",
       "authority_sha256": "571306964a110f5913dbd37ed0774f1cbd1d9e9eb3205a5be492571b4014e855",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:9460f648e0242113",
@@ -604,7 +906,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "public_site_projection",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -617,8 +919,16 @@
       "runtime_sha256": "7acf9326bbea3442afc25ffed121d51f2f58d2d5cf536feba836d6c7f7f28a94",
       "authority_sha256": "0022c6cf81949bef73725c6ee4b7458cbcb4727ce54bd547154a3c45750a9f67",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_lifecycle_revision_site_evidence.latest.json",
+          "slice": "",
+          "migration_track": "governed_work_lifecycle",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:052d967789d28023",
@@ -627,7 +937,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "public_site_projection",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -640,8 +950,16 @@
       "runtime_sha256": "4a1e58eed9255b026763cdc9bbf504b2eb919c1f4649d7929af37a8346091dd0",
       "authority_sha256": "67b92ca203457b81b66619f0e73d4ccfd047a5d512ff48530799e0acfdf73450",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_lifecycle_revision_site_evidence.latest.json",
+          "slice": "",
+          "migration_track": "governed_work_lifecycle",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:de53ccc191841a77",
@@ -650,7 +968,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -663,8 +981,16 @@
       "runtime_sha256": "5e2062fe1bf82fee0a1fc6c3fcbe855fd46f758e305eb101106593a372a6e914",
       "authority_sha256": "c1771edea46e0f05e8a7f2ce4b451e7520f39b2706993cfd64db9c39e89a85b8",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_boundary_ports_evidence.latest.json",
+          "slice": "application_boundary_ports_as_cell_interfaces",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 2
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:f10ff227476b1956",
@@ -673,7 +999,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -686,8 +1012,22 @@
       "runtime_sha256": "6bbceda04378a6ceb6754b292eecded2075443547c83c3d6715353cfed90b4af",
       "authority_sha256": "e4080088c9357b455cce677cae8d8aaf46dd17d56214f928852d28c9965daf43",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:94ef311a1492d01e",
@@ -696,7 +1036,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -709,8 +1049,16 @@
       "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
       "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:284ac4ce029299d0",
@@ -719,7 +1067,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "application_graph_projection",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -732,8 +1080,16 @@
       "runtime_sha256": "21d8b7a9305bb2ddd6121bc4ae54a50d8d9aba91f477e129f2022f2f78b2afbb",
       "authority_sha256": "3d85251d38453ada62a8b5473bef361ff6969ce9940dd56d764e292ea93a5585",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
+          "slice": "cell_native_application_projection_delta_and_root_identity",
+          "migration_track": "application_graph_projection",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:f05f7888224538a1",
@@ -742,7 +1098,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -755,8 +1111,22 @@
       "runtime_sha256": "19538505f92754d663050dff1e9eb2637fb8324ac1983acdbfe73b663df290a3",
       "authority_sha256": "6260e3d5d66ee473745e214433551ace933f49175cd6c9ab9a1d0cc3d341b9bd",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
+          "slice": "visual_workspace_interaction/relation_security",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 2
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:8b11a65c97d6be87",
@@ -765,7 +1135,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -778,8 +1148,22 @@
       "runtime_sha256": "9b61340abd960b16222979a033c5ec40d95b2a3ea2e0cc7fc76be5f1ea6ad011",
       "authority_sha256": "3b418e8c986d3ce47957c001334199f1dfb90d40f37b386a57edc49c07e9861d",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:997a1a9c1e81b9f1",
@@ -788,7 +1172,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "revision_integrity_court",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -801,8 +1185,16 @@
       "runtime_sha256": "4c0109482f5700537ad1cc68b1e164c19d97ff07a8adcf42ac5ceeac0062eb4c",
       "authority_sha256": "6237bf57ef1e359bf4a1a385e189789dfb53430aec710cd20eea1115a9334f31",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_lifecycle_revision_site_evidence.latest.json",
+          "slice": "",
+          "migration_track": "governed_work_lifecycle",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:eab9b75ce810a640",
@@ -811,7 +1203,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "application_graph_projection",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -824,8 +1216,16 @@
       "runtime_sha256": "78d7944645b13f83b269e3f3f980b135731f1eb3b4e376aab44cc48d0233474c",
       "authority_sha256": "2f690dc278ce8c9851bffc4770b24423cbb29b3c2069e95a8f8af91d8d869ff8",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
+          "slice": "cell_native_application_projection_delta_and_root_identity",
+          "migration_track": "application_graph_projection",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:8f89a5711e36bf4e",
@@ -834,7 +1234,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "baboom_context_and_cognition",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -847,8 +1247,16 @@
       "runtime_sha256": "47f412877017e061812cc4fc6897934a0080f608ebf5fc6dd78d975ededd4708",
       "authority_sha256": "fe5fffc49f75eb6efbe0f812f429d642bcef72e428c267c6115e65c205805e65",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+          "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+          "migration_track": "baboom_context_and_cognition",
+          "command_count": 3
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:6f3fc854f2cfddf7",
@@ -857,7 +1265,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -870,8 +1278,22 @@
       "runtime_sha256": "288f1cb3c2bba428df3b1156b81d2ecdf05084589e34ae3b85eb2813e4c30510",
       "authority_sha256": "2718cfd25bd3531185feb7ff8aef666cb7f5aaf675482fe129b5057a9ff952c3",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_capability_evidence.latest.json",
+          "slice": "",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:4ab445be955bee79",
@@ -880,7 +1302,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -893,8 +1315,16 @@
       "runtime_sha256": "338abac62f3ff887f3f8343c9e21d0b88b0264cb49ab5deaf7450617e1b115b6",
       "authority_sha256": "e54f880de933337ad6559585908cd2b72df009418c97484f5a1340abe339e801",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
+          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
+          "migration_track": "runtime_transport_and_broker",
+          "command_count": 4
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:c63f90da35729480",
@@ -903,7 +1333,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -916,8 +1346,28 @@
       "runtime_sha256": "234d0704f92f7ebd9a94d7edfe3d16c54c28f32dd7f4ad38ff4d4de6bd8c5605",
       "authority_sha256": "cd0bc7cb6cb59ec1ce37fcda7bbc245b81362323ee58d15dc769111ad410fd6a",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_application_projection_evidence.latest.json",
+          "slice": "cell_native_application_projection_delta_and_root_identity",
+          "migration_track": "application_graph_projection",
+          "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
+          "slice": "relation_topology_exact_interface_rewire",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
+          "slice": "cell_native_canvas_interaction_and_properties_controls",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 5
+        }
+      ]
     },
     {
       "candidate_id": "runtime-source-drift:6a242f251cdc7811",
@@ -926,7 +1376,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "governed_work_lifecycle",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -939,8 +1389,16 @@
       "runtime_sha256": "42ac54c06ea17f1c4d49f70bea4daf9dae51adb44bd31a9c5ba06e90133f7ccc",
       "authority_sha256": "7a53edcee6be7f66b8cee73ead6652a303148674ae9f0c5f28c52c7a14632c30",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+      "resolution_evidence": [
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_lifecycle_revision_site_evidence.latest.json",
+          "slice": "",
+          "migration_track": "governed_work_lifecycle",
+          "command_count": 3
+        }
+      ]
     }
   ],
   "rule": "An ignored runtime copy cannot be archived while it contains source files that are missing or different in the declared authority."

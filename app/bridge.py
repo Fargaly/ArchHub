@@ -1694,6 +1694,64 @@ class ArchHubBridge(QObject):
 
     # ─── Sessions ───────────────────────────────────────────────
     @pyqtSlot(result=str)
+    @pyqtSlot(str, result=str)
+    def get_grand_map_ui_surface(self, surface: str = "home-top") -> str:
+        """Return a production LM_GRAPH UI surface sourced from the Grand Map."""
+        try:
+            requested_surface = (surface or "home-top").strip() or "home-top"
+            if requested_surface.startswith("universal-"):
+                from workflows.universal_grand_map_surface import (
+                    universal_grand_map_surface,
+                )
+                return _safe_json(universal_grand_map_surface(requested_surface))
+            from workflows.grand_map_ui import grand_map_ui_surface
+            return _safe_json(grand_map_ui_surface(requested_surface))
+        except Exception as ex:
+            return _safe_json({
+                "ok": False,
+                "surface": surface or "home-top",
+                "error": f"{type(ex).__name__}: {ex}",
+            })
+
+    @pyqtSlot(result=str)
+    def get_baboom_cell_state(self) -> str:
+        """Return the read-only Workshop projection of BABOOM's Cell authority."""
+        try:
+            from workflows.baboom_cell_surface import baboom_cell_state
+            return _safe_json(baboom_cell_state())
+        except Exception as ex:
+            return _safe_json({
+                "ok": False,
+                "cell_native": False,
+                "mode": "unavailable",
+                "error": f"{type(ex).__name__}: {ex}",
+            })
+
+    @pyqtSlot(str, result=str)
+    def submit_universal_interaction(self, payload_json: str) -> str:
+        """Forward a Universal Cell interaction to the authority runtime."""
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+            if type(payload) is not dict:
+                return _safe_json({
+                    "ok": False,
+                    "authority": "Universal Cell graph runtime",
+                    "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+                    "error": "universal interaction payload must be a JSON object",
+                })
+            from workflows.universal_grand_map_surface import (
+                universal_canvas_interaction,
+            )
+            return _safe_json(universal_canvas_interaction(payload))
+        except Exception as ex:
+            return _safe_json({
+                "ok": False,
+                "authority": "Universal Cell graph runtime",
+                "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+                "error": f"{type(ex).__name__}: {ex}",
+            })
+
+    @pyqtSlot(result=str)
     def get_sessions(self) -> str:
         try:
             from session_io import list_sessions_rich

@@ -661,7 +661,9 @@ def test_brain_control_migration_uses_runtime_bridge_not_runtime_ownership():
 
 def test_brain_room_adapter_consumes_runtime_not_side_store():
     repo = Path(__file__).resolve().parent.parent
-    report = awc.classify_entries(awc.current_status(repo))
+    report = awc.classify_entries([
+        {"code": "??", "path": "personal-brain-mcp/src/personal_brain/cell_room.py"},
+    ])
     by_path = {entry["path"]: entry for entry in report["entries"]}
     path = "personal-brain-mcp/src/personal_brain/cell_room.py"
     entry = by_path[path]

@@ -83,10 +83,6 @@
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3"
     },
     {
-      "path": "tests_replica/test_relation_security.py",
-      "runtime_sha256": "19538505f92754d663050dff1e9eb2637fb8324ac1983acdbfe73b663df290a3"
-    },
-    {
       "path": "tests_replica/test_relation_topology_editor.py",
       "runtime_sha256": "9b61340abd960b16222979a033c5ec40d95b2a3ea2e0cc7fc76be5f1ea6ad011"
     },
@@ -163,6 +159,11 @@
       "path": "tests_replica/test_application_server_governance.py",
       "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
       "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a"
+    },
+    {
+      "path": "tests_replica/test_relation_security.py",
+      "runtime_sha256": "19538505f92754d663050dff1e9eb2637fb8324ac1983acdbfe73b663df290a3",
+      "authority_sha256": "6260e3d5d66ee473745e214433551ace933f49175cd6c9ab9a1d0cc3d341b9bd"
     },
     {
       "path": "tests_replica/test_universal_application.py",
@@ -370,29 +371,6 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_relation_junction_visual_grammar.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_relation_junction_visual_grammar.py",
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3",
-      "authority_sha256": null,
-      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
-      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
-    },
-    {
-      "candidate_id": "runtime-source-drift:99a549ff48ce39c2",
-      "path": "tests_replica/test_relation_security.py",
-      "status": "missing_in_authority",
-      "candidate_kind": "court_candidate",
-      "migration_track": "visual_workspace_interaction",
-      "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "classified_unresolved",
-      "promotion_allowed": false,
-      "bulk_copy_allowed": false,
-      "authority_basis": [
-        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
-        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
-      ],
-      "required_canonical_first_step": "rebuild the interaction or visual grammar as authority courts against the released graph protocols",
-      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_relation_security.py",
-      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_relation_security.py",
-      "runtime_sha256": "19538505f92754d663050dff1e9eb2637fb8324ac1983acdbfe73b663df290a3",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
@@ -762,6 +740,29 @@
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_application_server_governance.py",
       "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
       "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a",
+      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+    },
+    {
+      "candidate_id": "runtime-source-drift:f05f7888224538a1",
+      "path": "tests_replica/test_relation_security.py",
+      "status": "different_from_authority",
+      "candidate_kind": "court_candidate",
+      "migration_track": "visual_workspace_interaction",
+      "authority_disposition": "migration_evidence_not_authority",
+      "resolution_state": "classified_unresolved",
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "authority_basis": [
+        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+      ],
+      "required_canonical_first_step": "rebuild the interaction or visual grammar as authority courts against the released graph protocols",
+      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_relation_security.py",
+      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_relation_security.py",
+      "runtime_sha256": "19538505f92754d663050dff1e9eb2637fb8324ac1983acdbfe73b663df290a3",
+      "authority_sha256": "6260e3d5d66ee473745e214433551ace933f49175cd6c9ab9a1d0cc3d341b9bd",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"

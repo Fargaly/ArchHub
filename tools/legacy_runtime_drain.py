@@ -1077,6 +1077,7 @@ def build_drain_plan(
         replacement_summary,
         handoff_schedule,
         source_drift,
+        active_bridge,
     )
     retirement_gate = build_retirement_gate(
         holder_report,
@@ -1118,6 +1119,7 @@ def build_handoff_board(
     replacement_summary: dict[str, Any],
     handoff_schedule: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
+    active_bridge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a compact operator board derived from the full drain plan.
 
@@ -1211,6 +1213,33 @@ def build_handoff_board(
         "missing_in_authority": len(drift.get("missing_in_authority") or []),
         "different_from_authority": len(drift.get("different_from_authority") or []),
     }
+    bridge = active_bridge or {}
+    handoff = bridge.get("visible_browser_handoff") or {}
+    handoff_available = (
+        bool(bridge.get("ok"))
+        and bool(bridge.get("visible_browser_handoff_ok"))
+        and handoff.get("supported") is True
+        and handoff.get("application") == "app:archhub"
+        and handoff.get("one_use_route") == "POST /api/universal/browser-handoff"
+        and type(handoff.get("server_url")) is str
+        and str(handoff.get("server_url")).startswith("http://127.0.0.1:")
+    )
+    visible_authority_handoff = {
+        "available": handoff_available,
+        "mode": "attach_to_active_authority_bridge",
+        "server_url": handoff.get("server_url"),
+        "one_use_route": handoff.get("one_use_route"),
+        "requires_endpoint_free": False,
+        "requires_process_interruption": False,
+        "token_issued_by_this_board": False,
+        "protected_visible_endpoint_pids": [card["pid"] for card in blocked_endpoints],
+        "allowed_action": (
+            "operator may initiate browser handoff from the active authority bridge "
+            "when ready; this board remains read-only and never issues the token"
+            if handoff_available
+            else "repair or start the active authority bridge before visible handoff"
+        ),
+    }
 
     return {
         "schema": "archhub-runtime-handoff-board/v1",
@@ -1236,6 +1265,7 @@ def build_handoff_board(
             "handoff_steps": int(handoff_schedule.get("step_count") or 0),
             "replacement_specs": replacement_summary.get("replacement_specs", 0),
             "source_drift_count": source_drift_blocker["drift_count"],
+            "visible_authority_handoff_ready": handoff_available,
         },
         "blockers": {
             "source_drift": source_drift_blocker,
@@ -1246,6 +1276,7 @@ def build_handoff_board(
             "blocked_endpoint_pids": [card["pid"] for card in blocked_endpoints],
         },
         "risk_classes": dict(sorted(risk_classes.items())),
+        "visible_authority_handoff": visible_authority_handoff,
         "inspect_cards": inspect_cards,
         "endpoint_cards": endpoint_cards,
         "rule": (

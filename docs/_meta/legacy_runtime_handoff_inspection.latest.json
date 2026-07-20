@@ -16,7 +16,8 @@
       "inspect_pids": 0,
       "handoff_steps": 2,
       "replacement_specs": 1,
-      "source_drift_count": 32
+      "source_drift_count": 32,
+      "visible_authority_handoff_ready": true
     },
     "blockers": {
       "source_drift": {
@@ -38,6 +39,19 @@
     "risk_classes": {
       "visible_legacy_endpoint": 1
     },
+    "visible_authority_handoff": {
+      "available": true,
+      "mode": "attach_to_active_authority_bridge",
+      "server_url": "http://127.0.0.1:65486",
+      "one_use_route": "POST /api/universal/browser-handoff",
+      "requires_endpoint_free": false,
+      "requires_process_interruption": false,
+      "token_issued_by_this_board": false,
+      "protected_visible_endpoint_pids": [
+        52484
+      ],
+      "allowed_action": "operator may initiate browser handoff from the active authority bridge when ready; this board remains read-only and never issues the token"
+    },
     "inspect_cards": [],
     "endpoint_cards": [
       {
@@ -58,9 +72,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 588370.8840479851,
+        "age_seconds": 588957.135966301,
         "process_status": "running",
-        "cpu_total_seconds": 874.265625,
+        "cpu_total_seconds": 878.1875,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -120,7 +134,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784589208.6252892,
+    "observed_at": 1784589794.8988965,
     "available": true,
     "processes": [
       {
@@ -145,10 +159,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 588392.3440344334,
-        "cpu_user_seconds": 844.125,
-        "cpu_system_seconds": 30.140625,
-        "cpu_total_seconds": 874.265625,
+        "age_seconds": 588978.6176416874,
+        "cpu_user_seconds": 847.875,
+        "cpu_system_seconds": 30.3125,
+        "cpu_total_seconds": 878.1875,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -161,11 +175,9 @@
             "port": 8482,
             "path": "/",
             "url": "http://127.0.0.1:8482/",
-            "ok": true,
-            "status": 200,
-            "content_type": "text/html; charset=utf-8",
-            "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
+            "ok": false,
+            "error_type": "TimeoutError",
+            "error": "timed out"
           },
           {
             "port": 8482,
@@ -175,7 +187,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131465,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131595,\"schema_version\""
           },
           {
             "port": 8482,

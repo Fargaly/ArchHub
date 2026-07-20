@@ -95,7 +95,7 @@
     "machine_work_items": 0,
     "machine_work_registry": "app:governed-work-registry",
     "revision": 739,
-    "server_url": "http://127.0.0.1:59828",
+    "server_url": "http://127.0.0.1:59863",
     "session_cookie_http_only": true,
     "state_path_inside_temp": true,
     "state_status": 200,
@@ -1522,7 +1522,8 @@
       "inspect_pids": 0,
       "handoff_steps": 2,
       "replacement_specs": 1,
-      "source_drift_count": 32
+      "source_drift_count": 32,
+      "visible_authority_handoff_ready": true
     },
     "blockers": {
       "source_drift": {
@@ -1544,6 +1545,19 @@
     "risk_classes": {
       "visible_legacy_endpoint": 1
     },
+    "visible_authority_handoff": {
+      "available": true,
+      "mode": "attach_to_active_authority_bridge",
+      "server_url": "http://127.0.0.1:65486",
+      "one_use_route": "POST /api/universal/browser-handoff",
+      "requires_endpoint_free": false,
+      "requires_process_interruption": false,
+      "token_issued_by_this_board": false,
+      "protected_visible_endpoint_pids": [
+        52484
+      ],
+      "allowed_action": "operator may initiate browser handoff from the active authority bridge when ready; this board remains read-only and never issues the token"
+    },
     "inspect_cards": [],
     "endpoint_cards": [
       {
@@ -1564,9 +1578,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 588370.8841269016,
+        "age_seconds": 588957.1469597816,
         "process_status": "running",
-        "cpu_total_seconds": 874.265625,
+        "cpu_total_seconds": 878.1875,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -1693,9 +1707,9 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "process_status": "running",
-      "age_seconds": 588370.8841269016,
+      "age_seconds": 588957.1469597816,
       "create_time": 1784000816.2812548,
-      "cpu_total_seconds": 874.265625,
+      "cpu_total_seconds": 878.1875,
       "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
       "authority_relaunch": {

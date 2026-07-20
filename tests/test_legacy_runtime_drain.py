@@ -297,6 +297,7 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
         "handoff_steps": 4,
         "replacement_specs": 1,
         "source_drift_count": 0,
+        "visible_authority_handoff_ready": False,
     }
     assert board["blockers"] == {
         "source_drift": {
@@ -342,6 +343,19 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
         "forbidden_action": plan["holders"][2]["forbidden_action"],
     }]
     assert "read-only evidence" in board["rule"]
+    assert board["visible_authority_handoff"] == {
+        "available": False,
+        "mode": "attach_to_active_authority_bridge",
+        "server_url": None,
+        "one_use_route": None,
+        "requires_endpoint_free": False,
+        "requires_process_interruption": False,
+        "token_issued_by_this_board": False,
+        "protected_visible_endpoint_pids": [3],
+        "allowed_action": (
+            "repair or start the active authority bridge before visible handoff"
+        ),
+    }
 
 
 def test_drain_plan_exposes_holder_risk_and_script_evidence(tmp_path):
@@ -487,6 +501,59 @@ def test_handoff_board_allows_classified_source_drift_after_drain():
         "drift_count": 2,
         "missing_in_authority": 1,
         "different_from_authority": 1,
+    }
+
+
+def test_handoff_board_exposes_endpoint_free_authority_browser_handoff():
+    board = drain.build_handoff_board(
+        [{
+            "pid": 42,
+            "holder_type": "application_server",
+            "runtime_args": {"state_path": "C:\\Temp\\state.json"},
+            "authority_replacement_status": {
+                "status": "blocked_by_this_live_holder",
+                "ports": [8482],
+                "port_owners": {"8482": [42]},
+            },
+            "holder_risk_class": "visible_legacy_endpoint",
+            "drain_posture": "coordinate visible endpoint handoff",
+            "script_evidence": {"launch_mode": "python_script"},
+            "authority_relaunch": {"dry_run_only": True},
+            "desktop_authority_handoff": {"dry_run_only": True},
+            "allowed_action": "keep running",
+            "forbidden_action": "do not kill",
+        }],
+        {"blocked_exact_authority_launches": 1, "replacement_specs": 1},
+        {"all_steps_non_interrupting": True, "step_count": 2},
+        {"ok": True, "drift_count": 0},
+        {
+            "ok": True,
+            "visible_browser_handoff_ok": True,
+            "visible_browser_handoff": {
+                "supported": True,
+                "application": "app:archhub",
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "revision": 12,
+            },
+        },
+    )
+
+    assert board["archive_allowed"] is False
+    assert board["summary"]["visible_authority_handoff_ready"] is True
+    assert board["visible_authority_handoff"] == {
+        "available": True,
+        "mode": "attach_to_active_authority_bridge",
+        "server_url": "http://127.0.0.1:65486",
+        "one_use_route": "POST /api/universal/browser-handoff",
+        "requires_endpoint_free": False,
+        "requires_process_interruption": False,
+        "token_issued_by_this_board": False,
+        "protected_visible_endpoint_pids": [42],
+        "allowed_action": (
+            "operator may initiate browser handoff from the active authority bridge "
+            "when ready; this board remains read-only and never issues the token"
+        ),
     }
 
 

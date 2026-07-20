@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1021,6 +1022,29 @@ def test_live_locked_runtime_copy_leaf_gate_executes_drain_courts():
         == "live_locked_legacy_typed_runtime_copy"
     assert leaf["gate_spec"]["selectors"] == [
         "tests/test_authority_wip_classify.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py",
+        "tests/test_runtime_retirement_hook.py",
+    ]
+
+
+def test_live_node_runtime_copy_is_ignored_as_source_but_still_auditable():
+    repo = Path(__file__).resolve().parent.parent
+    ignored = subprocess.run(
+        ["git", "check-ignore", "node_runtime/SPEC.md"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert ignored.returncode == 0
+    assert ignored.stdout.strip().replace("\\", "/") == "node_runtime/SPEC.md"
+    report = awc.classify_entries([
+        {"code": "??", "path": "node_runtime/SPEC.md"},
+    ])
+    assert report["summary"] == {"live_locked_legacy_typed_runtime_copy": 1}
+    assert report["active_work_leaves"][0]["gate_spec"]["required_courts"] == [
         "tests/test_legacy_runtime_drain.py",
         "tests/test_live_runtime_holders.py",
         "tests/test_runtime_retirement_hook.py",

@@ -81,6 +81,12 @@ payload/_generated/
 app/skills/*.archhub-skill.json
 **/*.archhub-session.json
 
+# ==== Legacy runtime handoff state ====
+# Root node_runtime/ is a live copied runtime, not product source. It remains
+# audited by tools/live_runtime_holders.py and the retirement gate before any
+# archive or handoff.
+/node_runtime/
+
 # ==== Claude Code per-machine state ====
 # IDE settings + transcripts written by Claude Code; never commit.
 .claude/

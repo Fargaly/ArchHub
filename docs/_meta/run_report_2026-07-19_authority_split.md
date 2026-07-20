@@ -6661,3 +6661,81 @@ Next action:
 - Continue with `adapter_payload_candidate`: Teams connector and Rhino payload
   scripts must be permissioned, classified, and court-proven before they can be
   treated as safe external adapters.
+
+## Adapter payload convergence - 2026-07-20
+
+Commit:
+
+- `c466800` - `Bound external adapter payloads with courts`.
+
+Intent:
+
+- Consume the `adapter_payload_candidate` category without turning adapters into
+  hidden product authority.
+- Keep external adapters bounded: Teams connector behavior is test-visible, Rhino
+  payload scripts are user-scoped and path-relative, and no local founder path is
+  hardcoded into public tests or payload scripts.
+- Preserve running sessions. No holder process was stopped, relaunched, or moved.
+
+Mechanisms added or repaired:
+
+- Teams calendar ordering is now explicit and court-proven.
+- Rhino payload scripts now resolve from `%APPDATA%` and `$PSScriptRoot` instead
+  of embedding `C:\Users\fargaly`.
+- Adapter payload courts reject founder-local path leakage and keep the Rhino
+  helper bounded to the expected hidden, user-scoped payload behavior.
+
+Verification:
+
+- Adapter courts:
+  `python -m pytest tests\test_rest_connectors.py tests\test_adapter_payload_candidate.py tests\test_port_type_speckle_adapter.py tests\test_adapter_nodes.py tests\test_capability_nodes.py tests\test_revit_speckle_ops.py tests\test_speckle_wire.py -q -p no:cacheprovider --timeout=300`
+  - result: `218 passed, 1 warning`.
+- Syntax compile:
+  `python -m py_compile app\connectors\teams_connector.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed.
+  - forbidden staged path scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+  - process/eval scan: expected Rhino payload hits only: hidden
+    `Start-Process`, focus/clipboard helper usage, and stray scheduled-task
+    unregistration. These scripts were inspected as payload text; they were not
+    executed by this run.
+
+Current WIP/live-holder evidence after `c466800`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `44`.
+- classified WIP entries in the authority ledger: `42`.
+- no-unclassified gate: `ok`, count `0`.
+- `adapter_payload_candidate`: consumed.
+- classification digest:
+  `a7b2725145240aac874bf5cc813b7811dfb847e5912641ae25841919da7b9bd6`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The live copied runtime remains untouched because the holder gate is red.
+
+Current position:
+
+- Cloud and adapter candidates are now consumed by bounded Cell-authority
+  evidence slices.
+- Remaining WIP is documentation/governance evidence, UI/runtime evidence probes
+  and courts, one handbuilt projection bridge, one self-extension bridge,
+  runtime retirement hooks, and the live-locked copied runtime.
+
+Next action:
+
+- Continue with `runtime_retirement_gate_hook` and the run-report court so the
+  remaining live-runtime boundary is governed without interrupting the current
+  sessions.

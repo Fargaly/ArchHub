@@ -6559,3 +6559,105 @@ Next action:
 - Continue with cloud readiness and adapter payloads, because those are the
   next real external-boundary/security risks and they must be permissioned,
   bounded, and recorded before anything can be considered shippable.
+
+## Run: Cloud capability readiness and BABOOM relay evidence
+
+Intent:
+
+- Consume `cloud_capability_readiness_evidence` as bounded, non-sensitive
+  readiness/reporting and device relay evidence.
+- Keep cloud as transport/capability evidence, not command authority. The
+  Universal Cell journal remains the command authority.
+
+Committed:
+
+- `e6b2b8b Add cloud capability readiness and BABOOM relay evidence`.
+- Staged and committed:
+  - `cloud_backend/readiness.py`
+  - `cloud_backend/baboom_relay.py`
+  - `cloud_backend/baboom_relay_protocol.py`
+  - `cloud_backend/db.py`
+  - `cloud_backend/main.py`
+  - `cloud_backend/tests/conftest.py`
+  - `cloud_backend/tests/test_readiness.py`
+  - `cloud_backend/tests/test_baboom_relay.py`
+
+Research checked:
+
+- RFC 9449 DPoP: sender-constraining OAuth tokens and replay detection.
+- RFC 6750 bearer-token usage: bearer tokens require transport security and are
+  unsafe if possession alone is accepted.
+- OWASP API Security 2023 API1/BOLA: object-level authorization must be checked
+  on endpoints that operate on object IDs.
+
+Main mechanisms:
+
+- `/readyz` returns non-sensitive capability evidence only: database,
+  persistent storage, billing, email, and website publication. It does not
+  leak paths or secret values and does not claim product completion.
+- BABOOM enrollment uses P-256 public JWKs, challenge signatures, independent
+  recipient encryption key identity, nonce-bound DPoP proofs, bearer-token hash
+  binding, proof replay rejection, and object ownership checks.
+- Command relay stores metadata, digests, lifecycle, receipts, and optional
+  encrypted brief envelopes only. It rejects bearer-only requests, secret-like
+  summaries, wrong-device claims, replayed proofs, invalid target URIs, raw
+  private JWK material, and cross-user command access.
+- The public tests no longer hardcode a private `50.TOOLING` path. The companion
+  client integration test is optional through `ARCHHUB_BABOOM_TOOLING_ROOT`.
+
+Verification:
+
+- Cloud readiness and relay courts:
+  `python -m pytest cloud_backend\tests\test_readiness.py cloud_backend\tests\test_baboom_relay.py -q -p no:cacheprovider --timeout=300`
+  - initial local result before private-path repair: `8 passed, 3 warnings`.
+  - final public-safe result after private-path repair:
+    `7 passed, 1 skipped, 3 warnings in 4.24s`.
+- Syntax compile:
+  `python -m py_compile cloud_backend\db.py cloud_backend\main.py cloud_backend\readiness.py cloud_backend\baboom_relay.py cloud_backend\baboom_relay_protocol.py cloud_backend\tests\conftest.py cloud_backend\tests\test_readiness.py cloud_backend\tests\test_baboom_relay.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed.
+  - forbidden staged path scan: no cache, pyc, node_modules, build, dist,
+    env, key, pem, model, drawing, or scene paths staged.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+  - staged process/eval scan: no subprocess, process-kill, visible-window,
+    `eval(`, or `exec(` additions.
+
+Current WIP/live-holder evidence after `e6b2b8b`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `50`.
+- classified WIP entries in the authority ledger: `48`.
+- no-unclassified gate: `ok`, count `0`.
+- `cloud_capability_readiness_evidence`: consumed.
+- classification digest:
+  `cfa69040f98535be4c31f70c50911387d47e5ea337a28d4bbe1aaca0633bd55c`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `113216`, `117712`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The live copied runtime remains untouched because the holder gate is red.
+
+Current position:
+
+- Cloud is now represented as readiness evidence plus a bounded metadata relay.
+  It is not product authority and does not move full command bodies through the
+  cloud.
+- Remaining WIP is now adapter payloads, documentation/governance evidence,
+  UI/runtime evidence probes and courts, one handbuilt projection bridge, one
+  self-extension bridge, runtime retirement hooks, and the live-locked copied
+  runtime.
+
+Next action:
+
+- Continue with `adapter_payload_candidate`: Teams connector and Rhino payload
+  scripts must be permissioned, classified, and court-proven before they can be
+  treated as safe external adapters.

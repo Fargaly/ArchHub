@@ -3,7 +3,7 @@
   "source_schema": "archhub-runtime-copy-source-drift/v1",
   "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-  "candidate_count": 29,
+  "candidate_count": 30,
   "track_count": 7,
   "unresolved_track_count": 7,
   "all_candidates_classified": true,
@@ -94,9 +94,10 @@
         "privacy_tier": "T0 PUBLIC"
       },
       "resolution_state": "classified_unresolved",
-      "candidate_count": 8,
+      "candidate_count": 9,
       "candidate_ids": [
         "runtime-source-drift:34b091bba5042974",
+        "runtime-source-drift:58434e2d3b177d43",
         "runtime-source-drift:859f552165e6407b",
         "runtime-source-drift:98d64f6a66cf5dad",
         "runtime-source-drift:99a549ff48ce39c2",
@@ -105,7 +106,9 @@
         "runtime-source-drift:cdf848947bac8667",
         "runtime-source-drift:e056ad99a6ec58b2"
       ],
-      "implementation_candidate_paths": [],
+      "implementation_candidate_paths": [
+        "nodelang/ui_runtime.py"
+      ],
       "court_candidate_paths": [
         "tests_replica/test_canvas_interaction_quality.py",
         "tests_replica/test_canvas_visual_grammar.py",
@@ -162,7 +165,7 @@
       "candidate_count": 3,
       "candidate_ids": [
         "runtime-source-drift:0e01c5a314bc3b06",
-        "runtime-source-drift:a583ab8bd5e75fc5",
+        "runtime-source-drift:1feabbdc4195049b",
         "runtime-source-drift:eab9b75ce810a640"
       ],
       "implementation_candidate_paths": [

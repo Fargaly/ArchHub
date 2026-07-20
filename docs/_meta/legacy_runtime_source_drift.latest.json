@@ -22,11 +22,11 @@
     ".pyo"
   ],
   "checked_runtime_files": 347,
-  "drift_count": 29,
-  "migration_candidate_count": 29,
+  "drift_count": 30,
+  "migration_candidate_count": 30,
   "decision_summary": {
     "schema": "archhub-runtime-source-drift-decision-summary/v1",
-    "candidate_count": 29,
+    "candidate_count": 30,
     "all_classified": true,
     "unmapped_paths": [],
     "by_track": {
@@ -36,14 +36,14 @@
       "public_site_projection": 2,
       "revision_integrity_court": 1,
       "runtime_transport_and_broker": 9,
-      "visual_workspace_interaction": 8
+      "visual_workspace_interaction": 9
     },
     "by_kind": {
       "court_candidate": 19,
-      "implementation_candidate": 10
+      "implementation_candidate": 11
     },
     "by_resolution_state": {
-      "classified_unresolved": 29
+      "classified_unresolved": 30
     },
     "promotion_allowed": false,
     "bulk_copy_allowed": false
@@ -130,9 +130,14 @@
       "authority_sha256": "4f3fd40834356c4da62a46eea4e8d4c7a9d66316d48dccd01dfc00be04bee68e"
     },
     {
+      "path": "nodelang/ui_runtime.py",
+      "runtime_sha256": "eafc1ab36f45a7ce6e5c80d29b375b7acdc3bfbe7d6cfb63b029ef108b810b2c",
+      "authority_sha256": "abfc56a29b7855a637d1490341d7c2c7cba10e32319b3473781208552a08a7cf"
+    },
+    {
       "path": "nodelang/universal_application.py",
       "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-      "authority_sha256": "edd2f89dcd9311d3fade6cfd80bbb7cde624e949afec2d552b1d597bf0c17ec5"
+      "authority_sha256": "047c4f7f50952fc3fcd180ed803f02820475c7830ab335439abc00c01d72b403"
     },
     {
       "path": "nodelang/universal_cloud_gateway.py",
@@ -601,7 +606,30 @@
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
     },
     {
-      "candidate_id": "runtime-source-drift:a583ab8bd5e75fc5",
+      "candidate_id": "runtime-source-drift:58434e2d3b177d43",
+      "path": "nodelang/ui_runtime.py",
+      "status": "different_from_authority",
+      "candidate_kind": "implementation_candidate",
+      "migration_track": "visual_workspace_interaction",
+      "authority_disposition": "migration_evidence_not_authority",
+      "resolution_state": "classified_unresolved",
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "authority_basis": [
+        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+      ],
+      "required_canonical_first_step": "rebuild the interaction or visual grammar as authority courts against the released graph protocols",
+      "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\ui_runtime.py",
+      "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\ui_runtime.py",
+      "runtime_sha256": "eafc1ab36f45a7ce6e5c80d29b375b7acdc3bfbe7d6cfb63b029ef108b810b2c",
+      "authority_sha256": "abfc56a29b7855a637d1490341d7c2c7cba10e32319b3473781208552a08a7cf",
+      "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+      "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
+      "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"
+    },
+    {
+      "candidate_id": "runtime-source-drift:1feabbdc4195049b",
       "path": "nodelang/universal_application.py",
       "status": "different_from_authority",
       "candidate_kind": "implementation_candidate",
@@ -618,7 +646,7 @@
       "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\universal_application.py",
       "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\universal_application.py",
       "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-      "authority_sha256": "edd2f89dcd9311d3fade6cfd80bbb7cde624e949afec2d552b1d597bf0c17ec5",
+      "authority_sha256": "047c4f7f50952fc3fcd180ed803f02820475c7830ab335439abc00c01d72b403",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
       "allowed_next_action": "read and compare as evidence; if accepted, rebuild through 10.PRODUCT/13.NODE-LANGUAGE with red courts first",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority"

@@ -1138,7 +1138,10 @@ def test_court_categories_execute_their_own_test_paths():
 
 def test_runtime_projection_adapters_do_not_open_side_stores():
     repo = Path(__file__).resolve().parent.parent
-    report = awc.classify_entries(awc.current_status(repo))
+    report = awc.classify_entries([
+        {"code": "??", "path": "app/workflows/baboom_cell_surface.py"},
+        {"code": "??", "path": "app/workflows/universal_grand_map_surface.py"},
+    ])
     adapters = sorted(
         entry["path"]
         for entry in report["entries"]

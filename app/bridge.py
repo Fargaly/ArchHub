@@ -1735,7 +1735,8 @@ class ArchHubBridge(QObject):
             if type(payload) is not dict:
                 return _safe_json({
                     "ok": False,
-                    "authority": "Universal Cell graph runtime",
+                    "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+                    "runtime_authority": "Universal Cell graph runtime",
                     "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
                     "error": "universal interaction payload must be a JSON object",
                 })
@@ -1746,7 +1747,8 @@ class ArchHubBridge(QObject):
         except Exception as ex:
             return _safe_json({
                 "ok": False,
-                "authority": "Universal Cell graph runtime",
+                "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+                "runtime_authority": "Universal Cell graph runtime",
                 "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
                 "error": f"{type(ex).__name__}: {ex}",
             })

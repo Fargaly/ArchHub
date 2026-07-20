@@ -111,7 +111,8 @@ def test_universal_canvas_surface_is_sourced_from_universal_cell_authority():
     assert payload["ok"] is True
     assert payload["surface"] == "universal-canvas"
     assert client.calls == [("GET", "/api/universal/canvas", None, 45.0)]
-    assert payload["authority"] == "Universal Cell graph runtime"
+    assert payload["authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
+    assert payload["runtime_authority"] == "Universal Cell graph runtime"
     assert payload["transport_source"] == "10.PRODUCT/12.PRODUCTION/node_runtime"
     assert payload["authority_projection_keys"] == sorted(
         _runtime_canvas_projection().keys()
@@ -223,7 +224,8 @@ def test_bridge_slot_can_serve_universal_canvas_without_legacy_surface_provider(
     payload = json.loads(raw)
     assert payload["ok"] is True
     assert payload["surface"] == "universal-canvas"
-    assert payload["authority"] == "Universal Cell graph runtime"
+    assert payload["authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
+    assert payload["runtime_authority"] == "Universal Cell graph runtime"
     assert payload["transport_source"] == "10.PRODUCT/12.PRODUCTION/node_runtime"
     assert payload["source"] == "active-universal-runtime"
     assert payload["nodes"]
@@ -278,7 +280,8 @@ def test_bridge_slot_rejects_unknown_universal_surface_without_legacy_fallback()
         "ok": False,
         "surface": "universal-future-surface",
         "source": "active-universal-runtime",
-        "authority": "Universal Cell graph runtime",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "runtime_authority": "Universal Cell graph runtime",
         "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
         "error": "unknown Universal Cell surface",
     }

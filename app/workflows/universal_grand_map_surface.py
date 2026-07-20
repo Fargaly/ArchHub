@@ -13,6 +13,8 @@ from typing import Any, Protocol
 
 
 RUNTIME_PROJECTION_TIMEOUT_SECONDS = 45.0
+ACTIVE_CELL_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+RUNTIME_AUTHORITY_LABEL = "Universal Cell graph runtime"
 AUTHORITY_PASSTHROUGH_FIELDS = (
     "agent_session",
     "application",
@@ -100,7 +102,8 @@ def universal_canvas_interaction(
     if type(payload) is not dict:
         return {
             "ok": False,
-            "authority": "Universal Cell graph runtime",
+            "authority": ACTIVE_CELL_AUTHORITY,
+            "runtime_authority": RUNTIME_AUTHORITY_LABEL,
             "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
             "error": "universal interaction payload must be a JSON object",
         }
@@ -125,7 +128,8 @@ def universal_grand_map_surface(
             "ok": False,
             "surface": requested_surface,
             "source": "active-universal-runtime",
-            "authority": "Universal Cell graph runtime",
+            "authority": ACTIVE_CELL_AUTHORITY,
+            "runtime_authority": RUNTIME_AUTHORITY_LABEL,
             "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
             "error": "unknown Universal Cell surface",
         }
@@ -174,7 +178,8 @@ def universal_grand_map_surface(
         "ok": True,
         "surface": requested_surface,
         "source": "active-universal-runtime",
-        "authority": "Universal Cell graph runtime",
+        "authority": ACTIVE_CELL_AUTHORITY,
+        "runtime_authority": RUNTIME_AUTHORITY_LABEL,
         "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
         "authority_projection_keys": sorted(str(key) for key in projection.keys()),
         "root_id": projection["canvas_root"],

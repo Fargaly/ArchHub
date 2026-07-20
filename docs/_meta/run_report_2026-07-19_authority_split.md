@@ -6818,3 +6818,81 @@ Next action:
 - Consume `governance_run_evidence` and `documentation_decision_evidence` by
   binding their evidence files into courts/ledgers or committing the completed
   records without widening the live-runtime surface.
+
+## Governance run evidence convergence - 2026-07-20
+
+Commit:
+
+- `b8d36e8` - `Record governance run evidence`.
+
+Intent:
+
+- Consume the governance evidence slice without launching, stopping, or moving
+  any running session.
+- Add the Brain run-report projection as migration-only, with the legacy append
+  route retired and the cell-first append route exposed.
+- Preserve compact local runtime evidence as convergence evidence, not product
+  authority.
+
+Mechanisms added:
+
+- `personal-brain-mcp/src/personal_brain/run_report.py`:
+  - records required run-report sections,
+  - caps the ledger,
+  - appends a compliance event,
+  - exposes `brain.run_report_append_cell_first`,
+  - keeps `brain.run_report_append` as a retired compatibility route that does
+    not write.
+- `personal-brain-mcp/tests/test_run_report.py` proves the ledger, retired
+  legacy route, cell-first alternative disclosure, and server tool registration.
+- Committed the existing runtime handoff/local-server evidence JSONs as internal
+  convergence evidence.
+
+Verification:
+
+- Governance run evidence courts:
+  `python -m pytest personal-brain-mcp\tests\test_run_report.py tests\test_authority_wip_classify.py::test_governance_run_evidence_leaf_gate_executes_run_report_court tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q -p no:cacheprovider --timeout=180`
+  - result: `5 passed, 1 warning`.
+- Syntax compile:
+  `python -m py_compile personal-brain-mcp\src\personal_brain\run_report.py personal-brain-mcp\tests\test_run_report.py`
+  - result: passed.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+
+Current WIP/live-holder evidence after `b8d36e8`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `35`.
+- classified WIP entries in the authority ledger: `34`.
+- no-unclassified gate: `ok`, count `0`.
+- `governance_run_evidence`: down to the refreshed holder ledger only.
+- classification digest:
+  `02e546c0eccd46bbe1c931521b590770ff56449f030bca8ec5660d0595cb5675`.
+- copied-runtime holder count: `7`.
+- copied-runtime archive safe now: `false`.
+- copied-runtime holder PIDs recorded by the ledger:
+  `52484`, `69388`, `107604`, `113216`, `117712`, `122984`, `147188`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The holder count increased because the read-only audit found more current
+  holders; those holders were left untouched.
+
+Current position:
+
+- Run reporting is now a Brain migration control surface that forces cell-first
+  reporting instead of allowing a separate legacy append path.
+- The live runtime gate is red with 7 holders, so `node_runtime/` remains
+  live-locked.
+
+Next action:
+
+- Commit the refreshed ledgers/report for this checkpoint, then consume
+  `documentation_decision_evidence` by validating the AgDR/freshness/index files
+  against the documentation decision courts.

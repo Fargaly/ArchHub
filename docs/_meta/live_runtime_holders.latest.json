@@ -2,8 +2,8 @@
   "schema": "archhub-live-runtime-holders/v1",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
   "exists": true,
-  "observed_at": 1784567110.000562,
-  "holder_count": 4,
+  "observed_at": 1784567320.889967,
+  "holder_count": 7,
   "archive_safe_now": false,
   "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
   "holders": [
@@ -14,11 +14,37 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "match": "cwd",
       "create_time": 1784000816.2812548,
-      "age_seconds": 566293.7193071842,
+      "age_seconds": 566504.6087121964,
       "status": "running",
-      "cpu_user_seconds": 812.640625,
-      "cpu_system_seconds": 27.859375,
-      "cpu_total_seconds": 840.5
+      "cpu_user_seconds": 812.703125,
+      "cpu_system_seconds": 27.875,
+      "cpu_total_seconds": 840.578125
+    },
+    {
+      "pid": 69388,
+      "name": "powershell.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n$env:PYTHONPATH = (Resolve-Path '.\\nodelang').Path; python -m pytest tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784567218.7591932,
+      "age_seconds": 102.1307737827301,
+      "status": "running",
+      "cpu_user_seconds": 0.015625,
+      "cpu_system_seconds": 0.0,
+      "cpu_total_seconds": 0.015625
+    },
+    {
+      "pid": 107604,
+      "name": "python.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m pytest tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784567218.9510357,
+      "age_seconds": 101.93893122673035,
+      "status": "running",
+      "cpu_user_seconds": 0.0,
+      "cpu_system_seconds": 0.0,
+      "cpu_total_seconds": 0.0
     },
     {
       "pid": 113216,
@@ -27,11 +53,11 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
       "match": "cwd",
       "create_time": 1784038036.3854764,
-      "age_seconds": 529073.6150856018,
+      "age_seconds": 529284.5044906139,
       "status": "running",
-      "cpu_user_seconds": 63.453125,
-      "cpu_system_seconds": 19.09375,
-      "cpu_total_seconds": 82.546875
+      "cpu_user_seconds": 63.53125,
+      "cpu_system_seconds": 19.125,
+      "cpu_total_seconds": 82.65625
     },
     {
       "pid": 117712,
@@ -40,11 +66,24 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.734114,
-      "age_seconds": 475983.26644802094,
+      "age_seconds": 476194.15585303307,
       "status": "running",
       "cpu_user_seconds": 0.0,
       "cpu_system_seconds": 0.0,
       "cpu_total_seconds": 0.0
+    },
+    {
+      "pid": 122984,
+      "name": "python.exe",
+      "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m pytest tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
+      "match": "cwd",
+      "create_time": 1784567219.01379,
+      "age_seconds": 101.87617707252502,
+      "status": "running",
+      "cpu_user_seconds": 13.828125,
+      "cpu_system_seconds": 0.65625,
+      "cpu_total_seconds": 14.484375
     },
     {
       "pid": 147188,
@@ -53,7 +92,7 @@
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
       "match": "cwd",
       "create_time": 1784091126.8539033,
-      "age_seconds": 475983.146658659,
+      "age_seconds": 476194.0360636711,
       "status": "running",
       "cpu_user_seconds": 1.203125,
       "cpu_system_seconds": 0.03125,

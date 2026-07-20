@@ -61,13 +61,13 @@ def test_substrate_renders_nodes_from_LM_GRAPH():
     maps each to a NodeRenderer — i.e. nodes actually paint, derived from real
     graph state, not a static scaffold."""
     src = _src()
-    # allNodes = demo graph + user nodes, recomputed on graphBump.
+    # graphNodes = authority graph + user nodes, recomputed on graphBump.
     assert re.search(
-        r"const\s+allNodes\s*=\s*React\.useMemo\(\s*\(\)\s*=>\s*\[\s*\.\.\.\(LM_GRAPH\.nodes",
+        r"const\s+graphNodes\s*=\s*React\.useMemo\(\s*\(\)\s*=>\s*\{[\s\S]*?\(LM_GRAPH\.nodes\s*\|\|\s*\[\]\)",
         src,
-    ), "allNodes must merge LM_GRAPH.nodes (the live graph) for rendering"
-    # Each node is rendered via NodeRenderer in a map over allNodes.
-    assert re.search(r"\(allNodes\s*\|\|\s*\[\]\)\.map\(\s*n\s*=>", src), (
+    ), "graphNodes must merge LM_GRAPH.nodes (the live graph) for rendering"
+    # Each visible canvas node is rendered via NodeRenderer.
+    assert re.search(r"visibleNodesSrc\.map\(\s*n\s*=>[\s\S]*?<NodeRenderer", src), (
         "the substrate must map allNodes → node elements"
     )
     assert "<NodeRenderer" in src, "nodes render through the NodeRenderer component"
@@ -93,27 +93,26 @@ def test_substrate_has_pan_zoom_state():
 
 
 def test_graphbump_counter_drives_node_recompute():
-    """allNodes recomputes on the `graphBump` COUNTER (not the stable bumpGraph
+    """graphNodes recomputes on the `graphBump` COUNTER (not the stable bumpGraph
     callback). This is the real founder bug fix ("ping outlook did nothing"):
     new nodes appear because the memo depends on the changing counter."""
     src = _src()
-    # Grab the whole allNodes useMemo statement up to its closing `)`. The body
-    # is a single array-spread expression `[...(LM_GRAPH.nodes||[]), ...]`, so
-    # the dep array is the LAST `[ ... ]` before the closing paren on that line.
-    m = re.search(r"const\s+allNodes\s*=\s*React\.useMemo\((.+?)\)\s*;", src)
-    assert m, "allNodes useMemo must exist"
-    stmt = m.group(1)
-    deps_m = re.search(r",\s*\[([^\]]*)\]\s*$", stmt)
-    assert deps_m, f"could not find allNodes dep array in: {stmt!r}"
+    start = src.find("const graphNodes = React.useMemo")
+    assert start >= 0, "graphNodes useMemo must exist"
+    end = src.find("const selectedWireAnatomyNodes", start)
+    assert end > start, "could not bound graphNodes useMemo"
+    block = src[start:end]
+    deps_m = re.search(r"\},\s*\[([^\]]*)\]\s*\);", block)
+    assert deps_m, f"could not find graphNodes dep array in: {block!r}"
     deps = deps_m.group(1)
     assert "graphBump" in deps, (
-        "allNodes must depend on the graphBump counter so a graph mutation "
+        "graphNodes must depend on the graphBump counter so a graph mutation "
         "re-renders the canvas (the 'ping outlook did nothing' fix)"
     )
     # The dep array must not contain the stable bumpGraph CALLBACK (depending on
     # it was the original bug — the memo never re-ran). Allow `graphBump`.
     assert not re.search(r"\bbumpGraph\b", deps), (
-        "allNodes must NOT depend on the stable bumpGraph callback (that was "
+        "graphNodes must NOT depend on the stable bumpGraph callback (that was "
         "the bug — the memo never re-ran)"
     )
 

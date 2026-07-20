@@ -1,10 +1,10 @@
-"""DESIGN-SYSTEM lane — the app wears the canonical ArchHub design (RED->GREEN).
+﻿"""DESIGN-SYSTEM lane: the app wears the committed ArchHub design (RED->GREEN).
 
-PROTOTYPE-IS-CONTRACT: the signed design source of truth lives in
+PROTOTYPE-IS-CONTRACT: the signed design handoff lives in
 `_handoff/archhub/project/` (tokens.jsx = window.AH, the Brand Book, bb-core's
 BBWord wordmark). This brings it INTO the app:
 
-  (1) tokens are the LITERAL SoT — `app/web_ui/tokens.jsx` ships window.AH, is
+  (1) tokens are the legacy projection: `app/web_ui/tokens.jsx` ships window.AH, is
       loaded by index.html BEFORE the bundle, and studio-lm's THEMES.forge is
       DERIVED from window.AH (no hand-copied hexes).
   (2) a Wordmark (ARCH in ink + HUB in accent, Architects Daughter, uppercase,
@@ -34,14 +34,15 @@ TOKENS = WEB / "tokens.jsx"
 INDEX = WEB / "index.html"
 JSX = WEB / "studio-lm.jsx"
 HANDOFF_TOKENS = REPO / "_handoff" / "archhub" / "project" / "tokens.jsx"
+GRAND_MAP_UI = REPO / "app" / "workflows" / "grand_map_ui.py"
 
-# Canonical token values — these are the SoT (window.AH) values; the app must
-# DERIVE from them, never re-hardcode a divergent copy.
+# Shared token values: these are the window.AH projection values; the app must
+# derive from them, never re-hardcode a divergent copy.
 ACCENT = "#d97757"   # terracotta — the only emotional accent
 INK = "#ece8e0"
 LINE_SOFT = "#1e1e24"
 
-# The 12 canonical type-scale steps (Brand Book full scale).
+# The 12 shared type-scale steps (Brand Book full scale).
 FS_STEPS = [
     "d0", "d1", "d2", "h1", "h2", "h3",
     "bodyLg", "body", "bodySm", "mono", "monoSm", "cap",
@@ -53,31 +54,31 @@ def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
 
-# ── (1) tokens are the LITERAL SoT ──────────────────────────────────────────
+# ── (1) tokens are the committed legacy projection ──────────────────────────────────────────
 
 def test_tokens_jsx_exists_and_defines_window_AH():
-    """app/web_ui/tokens.jsx ships and assigns the window.AH SoT object."""
+    """app/web_ui/tokens.jsx ships and assigns the window.AH projection."""
     src = _read(TOKENS)
     assert re.search(r"window\.AH\s*=\s*\{", src), (
-        "tokens.jsx must define window.AH (the design source of truth)."
+        "tokens.jsx must define window.AH (the design-token projection)."
     )
-    # The canonical accent + ink live in the SoT.
+    # The shared accent + ink live in the projection.
     assert ACCENT in src, "tokens.jsx (window.AH) must carry the terracotta accent."
-    assert INK in src, "tokens.jsx (window.AH) must carry the canonical ink."
+    assert INK in src, "tokens.jsx (window.AH) must carry the shared ink."
 
 
 def test_tokens_jsx_exposes_short_projection():
     """The short-key projection (window.AHShort) ships for the brain/self-heal
-    surfaces, mapping from the SAME canonical values."""
+    surfaces, mapping from the SAME shared values."""
     src = _read(TOKENS)
     assert re.search(r"window\.AHShort\s*=", src), (
         "tokens.jsx must expose window.AHShort (short-key projection)."
     )
 
 
-def test_tokens_jsx_matches_signed_handoff_sot():
+def test_tokens_jsx_matches_signed_handoff_projection():
     """The in-app tokens.jsx is the byte-for-byte mirror of the signed handoff
-    SoT (PROTOTYPE-IS-CONTRACT) — the window.AH + window.AHShort blocks are
+    projection (PROTOTYPE-IS-CONTRACT): the window.AH + window.AHShort blocks are
     identical, so the app cannot silently drift from the design source."""
     if not HANDOFF_TOKENS.exists():
         # The handoff tree may not ship with the repo in every checkout; the
@@ -93,13 +94,13 @@ def test_tokens_jsx_matches_signed_handoff_sot():
         return s[i:].strip()
 
     assert _block(app_src) == _block(_read(HANDOFF_TOKENS)), (
-        "app tokens.jsx has drifted from the signed handoff SoT — they must be "
+        "app tokens.jsx has drifted from the signed handoff projection; they must be "
         "the same window.AH / window.AHShort definition."
     )
 
 
 def test_index_loads_tokens_before_the_bundle():
-    """index.html loads tokens.jsx (window.AH) BEFORE jsx-boot.js, so the SoT
+    """index.html loads tokens.jsx (window.AH) BEFORE jsx-boot.js, so the projection
     exists when studio-lm's IIFE evaluates THEMES.forge. Compares the actual
     <script src=...> tags (not comment mentions)."""
     html = _read(INDEX)
@@ -115,7 +116,7 @@ def test_index_loads_tokens_before_the_bundle():
 
 def test_forge_is_derived_from_window_AH_not_hardcoded():
     """THEMES.forge is built FROM window.AH — there is no hand-copied forge hex
-    block any more. The forge value reads each token off the SoT projection."""
+    block any more. The forge value reads each token off the design projection."""
     src = _read(JSX)
     # The derivation projector exists and forge uses it.
     assert re.search(r"_forgeFromAH\s*=\s*\(", src), (
@@ -123,11 +124,11 @@ def test_forge_is_derived_from_window_AH_not_hardcoded():
         "from window.AH."
     )
     assert re.search(r"forge:\s*_forgeFromAH\(", src), (
-        "THEMES.forge must be `_forgeFromAH(...)` — derived from the SoT, not a "
+        "THEMES.forge must be `_forgeFromAH(...)` derived from window.AH, not a "
         "literal hex object."
     )
     # window.AH is read into the module.
-    assert "window.AH" in src, "studio-lm.jsx must read window.AH (the SoT)."
+    assert "window.AH" in src, "studio-lm.jsx must read window.AH."
     # The OLD hand-copied THEMES.forge object was a `forge: {` block carrying a
     # literal `bg:'#0e0e11'` surface hex. That MUST be gone (the projector reads
     # A.bg instead). Note: a `forge: {` key DOES legitimately survive in
@@ -183,20 +184,23 @@ def test_wordmark_renders_arch_in_ink_and_hub_in_accent():
 
 
 def test_wordmark_is_used_in_header_home_and_signin():
-    """The wordmark is actually MOUNTED in the workspace header, the Home
-    masthead, and the sign-in / first-run screen (not just defined)."""
+    """The wordmark is mounted through node surfaces where those surfaces are
+    node-native, and through a React slot in the first-run screen."""
     src = _read(JSX)
-    uses = len(re.findall(r"<Wordmark\b", src))
-    assert uses >= 3, (
-        f"Wordmark must be used in >=3 surfaces (header / Home / sign-in); "
-        f"found {uses}."
-    )
+    grand_map_ui = _read(GRAND_MAP_UI)
+
+    assert "<Wordmark size={34}/>" in src
+    assert "slot:first-run-wordmark" in src
+    assert "ui:ht-logo" in src
+    assert "ui:ht-arch" in src and "ui:ht-hub" in src
+    assert "ui:grandmap:canvas-home-wordmark" in grand_map_ui
+    assert "canvas-home-wordmark" in grand_map_ui
 
 
 # ── (3) full 12-step type scale LM.fs ───────────────────────────────────────
 
 def test_LM_fs_has_twelve_steps_with_sz_ln_fam_role():
-    """LM.fs is the canonical 12-step scale; each step carries sz/ln/fam/role.
+    """LM.fs is the shared 12-step scale; each step carries sz/ln/fam/role.
     The legacy 6-step `font` map is KEPT alongside it (not replaced)."""
     src = _read(JSX)
     assert re.search(r"\bfs:\s*\(", src), "studio-lm.jsx must define LM.fs."
@@ -221,18 +225,18 @@ def test_LM_fs_has_twelve_steps_with_sz_ln_fam_role():
 
 
 def test_LM_fs_derives_from_window_AH():
-    """LM.fs reads window.AH.fs (the SoT type scale), not a divergent copy."""
+    """LM.fs reads window.AH.fs, not a divergent copy."""
     src = _read(JSX)
     fs = re.search(r"fs:\s*\(\(\)\s*=>\s*\{(.+?)\}\)\(\),", src, re.S)
     assert fs, "could not isolate the LM.fs IIFE"
     assert "window.AH" in fs.group(1) and ".fs" in fs.group(1), (
-        "LM.fs must derive from window.AH.fs (the SoT)."
+        "LM.fs must derive from window.AH.fs."
     )
 
 
 def test_arch_font_token_added():
     """LM.arch (the Architects Daughter face) is a real typography token,
-    derived from the SoT `arch` key."""
+    derived from the `arch` key."""
     src = _read(JSX)
     assert re.search(r"\barch:\s*_AH\.arch", src), (
         "LM.arch must be defined and derived from window.AH.arch."

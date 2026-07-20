@@ -36,6 +36,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 _JSX_SRC = (APP_ROOT / "web_ui" / "studio-lm.jsx").read_text(encoding="utf-8")
+_GM_UI_SRC = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(encoding="utf-8")
 _COMPILED = (APP_ROOT / "web_ui" / "studio-lm.compiled.js").read_text(
     encoding="utf-8")
 # Comment-stripped + whitespace-flat views (a match can't be satisfied by a
@@ -80,8 +81,10 @@ class TestRailWiring:
         """In-session the rail must ALSO switch the docked sidebar panel
         (existing behaviour preserved), so the rail and sidebar stay in sync."""
         block = _flat("const IconRailInner = (", size=6000)
-        assert "setPanel(it.id)" in block, (
-            "in a session the rail must still drive the sidebar panel switch")
+        assert "registerUiHostCapability('rail.search.open'" in block
+        assert "setPanel('search')" in block, (
+            "in a session the Search rail node must still drive the sidebar "
+            "panel switch")
 
     def test_rail_deck_removed_from_rail(self):
         # Founder 2026-06-20 ("what the fuck is this command deck for" + "strip
@@ -107,13 +110,14 @@ class TestRailWiring:
         block = _flat("const IconRailInner = (", size=6000)
         # Stripped rail (founder 2026-06-20): Home, Search, Share, Settings only.
         for tid in ("rail-home", "rail-share-icon"):
-            assert tid in block, f"rail item must carry data-testid {tid!r}"
+            assert f'test_id="{tid}"' in _GM_UI_SRC, (
+                f"rail authority must carry data-testid {tid!r}")
         # DECK / NODES / SKILLS are NO LONGER rail icons (redundant with the
         # graph library / Cmd-K). Locks the strip against a silent re-add.
         assert "rail-deck" not in block, "DECK must not be a rail icon"
-        # Search stays as a per-id rail item ('rail-' + it.id => rail-search).
-        assert "'rail-' + it.id" in block, (
-            "the rail's Search item must carry a per-id testid")
+        # Search stays as a rail item, but its test id now lives in the node authority.
+        assert 'test_id="rail-search"' in _GM_UI_SRC, (
+            "the rail's Search item must carry a testid in the app-rail graph")
 
     def test_rail_drawer_host_mounts_real_panels(self):
         """The drawer host renders the REAL panels — not stubs — so opening
@@ -173,9 +177,10 @@ class TestSharePanelJsx:
         assert "rail-share-sessions-empty" in block
 
     def test_share_panel_rows_have_testids(self):
-        block = _jsx_window("const SharePanel = (", size=10000)
-        assert "rail-share-skill-row" in block
-        assert "rail-share-session-row" in block
+        block = _jsx_window("const SharePanel = (", size=16000)
+        assert "<SharePanelRowSurface" in block
+        assert "rail-share-skill-row" in _JSX_CODE
+        assert "rail-share-session-row" in _JSX_CODE
 
 
 @pytest.fixture
@@ -258,20 +263,20 @@ class TestBrainFolderTreeJsx:
             "BrainFolderTree must exist (PART 2 — the founder wants folders)")
 
     def test_folder_tree_sourced_from_browse_payload(self):
-        block = _jsx_window("const BrainFolderTree = (", size=6500)
+        block = _jsx_window("const BrainFolderTree = (", size=14000)
         # The tree reads the SAME brain.browse payload fields the cards use —
         # totals (scope folder counts) + projects (sub-folder census).
         assert "view.totals" in block
         assert "view.projects" in block
 
     def test_folder_tree_three_levels_scope_project_leaf(self):
-        block = _jsx_window("const BrainFolderTree = (", size=8000)
-        assert 'data-folder-kind="scope"' in block
-        assert 'data-folder-kind="project"' in block
-        assert 'data-folder-kind="leaf"' in block
+        block = _jsx_window("const BrainFolderTree = (", size=14000)
+        assert '"data-folder-kind":"scope"' in block
+        assert '"data-folder-kind":"project"' in block
+        assert '"data-folder-kind":"leaf"' in block
 
     def test_folder_tree_leaf_opens_fact_detail(self):
-        block = _jsx_window("const BrainFolderTree = (", size=8000)
+        block = _jsx_window("const BrainFolderTree = (", size=14000)
         # Clicking a leaf opens the SAME BrainCard the cards view uses.
         assert "brain-folder-leaf" in block
         assert "brain-folder-leaf-detail" in block
@@ -279,9 +284,9 @@ class TestBrainFolderTreeJsx:
             "a leaf must drill to the fact's real card detail")
 
     def test_folder_tree_testids(self):
-        block = _jsx_window("const BrainFolderTree = (", size=8000)
+        block = _jsx_window("const BrainFolderTree = (", size=14000)
         assert "brain-folder-tree" in block
-        assert 'data-testid="brain-folder"' in block
+        assert 'testId="brain-folder"' in block
 
     def test_browser_has_cards_folders_toggle(self):
         block = _jsx_window("const BrainBrowser = (", size=20000)

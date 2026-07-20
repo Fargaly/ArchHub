@@ -68,6 +68,7 @@ primitive.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -266,7 +267,7 @@ class _CDP:
     # (this build does that intermittently) a FRESH-id resend gets it faster
     # than waiting longer on the lost one. So: short budget, more resends —
     # bounded worst case ≈ _CMD_TOTAL * (_CMD_RETRIES+1) ≈ 48s per command, and
-    # typically 2-10s. This keeps the whole 5-test module inside a CI timeout
+    # typically 2-10s. This keeps the whole live-smoke module inside a CI timeout
     # instead of one command stalling on a single 45s wait.
     _CMD_TOTAL = float(os.environ.get("CDP_CMD_TOTAL", "12"))
     _CMD_RETRIES = int(os.environ.get("CDP_CMD_RETRIES", "3"))
@@ -274,7 +275,7 @@ class _CDP:
     # talking to a degraded endpoint, further commands raise immediately so the
     # module can SKIP (see the assertions' guard) rather than approach a CI
     # timeout. Set when the fixture connects.
-    _SESSION_BUDGET = float(os.environ.get("CDP_SESSION_BUDGET", "150"))
+    _SESSION_BUDGET = float(os.environ.get("CDP_SESSION_BUDGET", "240"))
     _deadline = None  # class-level wall-clock deadline (epoch secs)
 
     def __init__(self, ws):
@@ -399,7 +400,13 @@ def cdp():
     # proofs/2026-06-01/cdp_single_session.json (ws 101 + 6*7=42 + DOM read).
     try:
         client.cmd("Runtime.enable")
-        graph_type = client.eval("typeof window.__archhub_LM_GRAPH")
+        graph_type = None
+        graph_deadline = time.time() + float(os.environ.get("CDP_GRAPH_READY_TIMEOUT", "12"))
+        while time.time() < graph_deadline:
+            graph_type = client.eval("typeof window.__archhub_LM_GRAPH")
+            if graph_type == "object":
+                break
+            time.sleep(0.5)
     except (TimeoutError, OSError) as ex:
         ws.close()
         _terminate(proc)
@@ -612,3 +619,935 @@ def test_param_edit_recooks_output(cdp):
         f"(seed cooked={seed}, after-drive cooked={cooked!r}). A slider/param "
         f"drag must change the downstream cooked value, not just save+repaint."
     )
+
+
+def test_node_native_right_rail_edits_param_wire_and_layer(cdp):
+    """Node-native contract for the existing production UI.
+
+    The canvas can no longer regress to "wire as a drawn line" or "right rail
+    as a detached form." This drives the running app, creates a real workflow
+    wire, lets the app materialize it as a wire node plus layer nodes, then
+    edits:
+
+      * a normal node parameter,
+      * the wire node's gate policy,
+      * the gate layer node's value.
+
+    Green means the visible right rail is backed by graph nodes and param nodes:
+    the edited values land on the owner node, its first-class parameter node,
+    the wire node, the wire layer node, and their own parameter nodes.
+    """
+    def _maybe_json(value):
+        if isinstance(value, str) and value[:1] in "{[":
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+        return value
+
+    def _wait_js(expr, *, timeout=25, interval=0.5):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            last = _maybe_json(cdp.eval(expr))
+            if last:
+                return last
+            time.sleep(interval)
+        return last
+
+    before_session = _maybe_json(cdp.eval("""
+(function(){
+  return {
+    sessionId: window.__archhub_session_id || null,
+    openId: window.__archhub_open_id || null,
+  };
+})()
+"""))
+    before_session_id = before_session.get("sessionId") if isinstance(before_session, dict) else None
+    cdp.eval("window.dispatchEvent(new CustomEvent('lm-action-new-canvas'))")
+    session_created = _wait_js("""
+(function(){
+  const sid = window.__archhub_session_id || null;
+  return sid &&
+    sid !== __BEFORE_SESSION_ID__ &&
+    window.__archhub_open_id === sid &&
+    !!window.__archhub_has_session &&
+    (!!document.querySelector('.ah-canvas-shell-node') || !!window.__archhub_cull)
+    ? {
+      sessionId: sid,
+      openId: window.__archhub_open_id || null,
+      hasSession: !!window.__archhub_has_session,
+    }
+    : null;
+})()
+""".replace("__BEFORE_SESSION_ID__", json.dumps(before_session_id)), timeout=30)
+    assert session_created, _maybe_json(cdp.eval("""
+(function(){
+  return {
+    sessionId: window.__archhub_session_id || null,
+    openId: window.__archhub_open_id || null,
+    hasSession: !!window.__archhub_has_session,
+    sessionIds: window.__archhub_session_ids || [],
+    launchError: window.__archhub_session_launch_error || null,
+    body: (document.body && document.body.innerText || '').slice(0, 240),
+  };
+})()
+"""))
+    session_id_json = json.dumps(session_created["sessionId"])
+    cdp.eval(
+        "window.dispatchEvent(new CustomEvent('lm-open-session', "
+        f"{{ detail: {{ id: {session_id_json} }} }}))"
+    )
+    workspace_opened = _wait_js("""
+(function(){
+  return !!window.__archhub_session_id &&
+    !!window.__archhub_has_session &&
+    (!!document.querySelector('.ah-canvas-shell-node') || !!window.__archhub_cull)
+    ? {
+      sessionId: window.__archhub_session_id,
+      openId: window.__archhub_open_id || null,
+      hasSession: !!window.__archhub_has_session,
+      cull: window.__archhub_cull || null,
+    }
+    : null;
+})()
+""", timeout=30)
+    assert workspace_opened, _maybe_json(cdp.eval("""
+(function(){
+      return {
+        sessionId: window.__archhub_session_id || null,
+        openId: window.__archhub_open_id || null,
+        hasSession: !!window.__archhub_has_session,
+        sessionIds: window.__archhub_session_ids || [],
+        launchError: window.__archhub_session_launch_error || null,
+        body: (document.body && document.body.innerText || '').slice(0, 240),
+        cull: window.__archhub_cull || null,
+      };
+})()
+"""))
+
+    created = _maybe_json(cdp.eval(
+        r"""
+(async () => {
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const graph = () => window.__archhub_LM_GRAPH || {};
+  const bump = () => {
+    if (typeof window.__archhubBumpGraph === 'function') window.__archhubBumpGraph();
+    else window.dispatchEvent(new CustomEvent('lm-graph-bump'));
+  };
+
+  if (!graph() || typeof graph() !== 'object') return { ok: false, err: 'LM_GRAPH missing' };
+  if (typeof window.__archhubBumpGraph !== 'function') return { ok: false, err: 'bumpGraph missing' };
+  if (!Array.isArray(graph().nodes)) graph().nodes = [];
+  if (!Array.isArray(graph().wires)) graph().wires = [];
+
+  const stamp = Date.now().toString(36);
+  const sourceId = 'cdp-node-native:wf-source:' + stamp;
+  const targetId = 'cdp-node-native:wf-target:' + stamp;
+  const edgeId = 'cdp-node-native:wf-edge:' + stamp;
+  const sourceNode = {
+    id: sourceId,
+    type: 'data.constant',
+    cat: 'input',
+    title: 'Proof WF Source',
+    sub: 'node-native CDP source',
+    x: 140,
+    y: 160,
+    data: { role: 'workflow_node', accent: '#112233' },
+    config: { accent: '#112233' },
+    params: [{ k: 'accent', label: 'accent', type: 'text', v: '#112233' }],
+    ins: [],
+    outs: [
+      { id: 'out', label: 'out', t: 'string' },
+      { id: 'alt', label: 'alt', t: 'string' },
+    ],
+  };
+  const targetNode = {
+    id: targetId,
+    type: 'output.parameter',
+    cat: 'output',
+    title: 'Proof WF Target',
+    sub: 'node-native CDP target',
+    x: 420,
+    y: 160,
+    data: { role: 'workflow_node' },
+    config: {},
+    params: [],
+    ins: [{ id: 'in', label: 'in', t: 'string' }],
+    outs: [],
+  };
+  const workflowWire = {
+    id: edgeId,
+    from: [sourceId, 'out'],
+    to: [targetId, 'in'],
+    value_type: 'string',
+    schema_ref: 'archhub.workflow.string',
+    src_field: '',
+    dst_field: '',
+    gate_policy: 'allow-if-target-exists',
+    codec: 'plain-text',
+    encryption: 'none',
+    behavior: 'data-flow',
+    presentation: 'canvas-bezier',
+    provenance: 'cdp:node-native-right-rail',
+    data: {
+      relation: 'data_flow',
+      value_type: 'string',
+      schema_ref: 'archhub.workflow.string',
+      src_field: '',
+      dst_field: '',
+      gate_policy: 'allow-if-target-exists',
+      codec: 'plain-text',
+      encryption: 'none',
+      behavior: 'data-flow',
+      presentation: 'canvas-bezier',
+      provenance: 'cdp:node-native-right-rail',
+    },
+  };
+  graph().nodes.push(sourceNode, targetNode);
+  graph().wires.push(workflowWire);
+  try {
+    if (typeof window.materializeWorkflowWireNodes === 'function') {
+      window.materializeWorkflowWireNodes(graph());
+    } else if (typeof materializeWorkflowWireNodes === 'function') {
+      materializeWorkflowWireNodes(graph());
+    }
+  } catch (_e) {}
+  bump();
+  return { ok: true, sourceId, targetId, edgeId };
+})()
+        """,
+        await_promise=True,
+    ))
+    assert created and created.get("ok") is True, created
+
+    source_id = json.dumps(created["sourceId"])
+    edge_id = json.dumps(created["edgeId"])
+
+    materialized = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wires = Array.isArray(g.wires) ? g.wires : [];
+  const edge = wires.find((wire) => wire && wire.id === {edge_id});
+  const wireNodeId = edge && edge.data && edge.data.relation_node;
+  const wireNode = wireNodeId && nodes.find((node) => node && node.id === wireNodeId);
+  const gateLayerId = wireNode && wireNode.data && wireNode.data.layer_nodes && wireNode.data.layer_nodes.gate;
+  const sourcePortLayerId = wireNode && wireNode.data && wireNode.data.layer_nodes && wireNode.data.layer_nodes.source_port;
+  const targetPortLayerId = wireNode && wireNode.data && wireNode.data.layer_nodes && wireNode.data.layer_nodes.target_port;
+  const sourceFieldLayerId = wireNode && wireNode.data && wireNode.data.layer_nodes && wireNode.data.layer_nodes.source_field;
+  const targetFieldLayerId = wireNode && wireNode.data && wireNode.data.layer_nodes && wireNode.data.layer_nodes.target_field;
+  const gateLayerNode = gateLayerId && nodes.find((node) => node && node.id === gateLayerId);
+  const sourcePortLayerNode = sourcePortLayerId && nodes.find((node) => node && node.id === sourcePortLayerId);
+  const targetPortLayerNode = targetPortLayerId && nodes.find((node) => node && node.id === targetPortLayerId);
+  const sourceFieldLayerNode = sourceFieldLayerId && nodes.find((node) => node && node.id === sourceFieldLayerId);
+  const targetFieldLayerNode = targetFieldLayerId && nodes.find((node) => node && node.id === targetFieldLayerId);
+  return wireNode && gateLayerNode && sourcePortLayerNode && targetPortLayerNode && sourceFieldLayerNode && targetFieldLayerNode ? {{
+    wireNodeId,
+    gateLayerId,
+    sourcePortLayerId,
+    targetPortLayerId,
+    sourceFieldLayerId,
+    targetFieldLayerId,
+    layerSpecs: (wireNode.data.wire_layers || []).slice(),
+  }} : null;
+}})()
+""")
+    assert materialized, f"workflow wire did not materialize: {created}"
+    wire_node_id = json.dumps(materialized["wireNodeId"])
+    gate_layer_id = json.dumps(materialized["gateLayerId"])
+    source_port_layer_id = json.dumps(materialized["sourcePortLayerId"])
+    source_field_layer_id = json.dumps(materialized["sourceFieldLayerId"])
+
+    assert set(materialized["layerSpecs"]) >= {
+        "ports",
+        "source_port",
+        "target_port",
+        "source_field",
+        "target_field",
+        "type",
+        "gate",
+        "codec",
+        "encryption",
+        "behavior",
+        "presentation",
+        "provenance",
+    }
+
+    def _focus(node_id_json, needle):
+        needle_json = json.dumps(needle)
+        cdp.eval(
+            "window.dispatchEvent(new CustomEvent('lm-focus-node', "
+            f"{{ detail: {{ node_id: {node_id_json} }} }}))"
+        )
+        return _wait_js(f"""
+(function(){{
+  const rail = document.querySelector('.ah-node-rail-shell-node');
+  const props = document.querySelector('.ah-node-properties-panel-node');
+  const text = rail && rail.innerText ? rail.innerText : '';
+  const propText = props && props.innerText ? props.innerText : '';
+  return window.__archhub_focus_id === {node_id_json} &&
+    text.indexOf({needle_json}) >= 0 &&
+    (propText.indexOf('PROPERTIES') >= 0 || propText.indexOf('PARAMETERS') >= 0);
+}})()
+""")
+
+    def _click_wire_layer_row_focus(layer_id_json, needle):
+        needle_json = json.dumps(needle)
+        clicked = _maybe_json(cdp.eval(f"""
+(function(){{
+  const layerId = {layer_id_json};
+  const rows = Array.from(document.querySelectorAll('[data-wire-layer-node]'));
+  const row = rows.find((el) => el && el.getAttribute('data-wire-layer-node') === layerId);
+  const action = row && (row.matches('[data-action="node.param.focus"]')
+    ? row
+    : row.querySelector('[data-action="node.param.focus"]'));
+  if (!action) return {{ clicked: false, rowCount: rows.length }};
+  action.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
+  return {{ clicked: true, rowCount: rows.length, text: row.innerText || '' }};
+}})()
+"""))
+        if not (clicked and clicked.get("clicked")):
+            return clicked
+        return _wait_js(f"""
+(function(){{
+  const rail = document.querySelector('.ah-node-rail-shell-node');
+  const props = document.querySelector('.ah-node-properties-panel-node');
+  const text = rail && rail.innerText ? rail.innerText : '';
+  const propText = props && props.innerText ? props.innerText : '';
+  return window.__archhub_focus_id === {layer_id_json} &&
+    text.indexOf({needle_json}) >= 0 &&
+    (propText.indexOf('PROPERTIES') >= 0 || propText.indexOf('PARAMETERS') >= 0)
+    ? {{ focused: window.__archhub_focus_id, railText: text.slice(0, 120) }}
+    : null;
+}})()
+""")
+
+    def _update_param(node_id_json, key, value):
+        key_json = json.dumps(key)
+        value_json = json.dumps(value)
+        cdp.eval(f"""
+window.dispatchEvent(new CustomEvent('lm-ui-node-action', {{
+  detail: {{
+    node_id: {node_id_json},
+    action: 'node.param.update',
+    args: {{ node_id: {node_id_json}, key: {key_json}, value: {value_json} }},
+  }},
+}}))
+""")
+
+    source_focused = _focus(source_id, "Proof WF Source")
+    source_focus_diag = _maybe_json(cdp.eval(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const node = nodes.find((item) => item && item.id === {source_id});
+  const rail = document.querySelector('.ah-node-rail-shell-node');
+  const props = document.querySelector('.ah-node-properties-panel-node');
+  return {{
+    focusId: window.__archhub_focus_id || null,
+    nodeExists: !!node,
+    nodeTitle: node && node.title || '',
+    graphNodeCount: nodes.length,
+    railText: (rail && rail.innerText || '').slice(0, 240),
+    propText: (props && props.innerText || '').slice(0, 160),
+    domNodeIds: Array.from(document.querySelectorAll('.lm-node[data-node-id]')).map((el) => el.getAttribute('data-node-id')).slice(0, 20),
+    cull: window.__archhub_cull || null,
+  }};
+}})()
+"""))
+    assert source_focused, f"source node did not focus into right rail: {source_focus_diag}"
+    _update_param(source_id, "accent", "#445566")
+    source_synced = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const sourceId = {source_id};
+  const n = nodes.find((node) => node && node.id === sourceId);
+  const p = nodes.find((node) => node && node.id === 'param:' + sourceId + ':' + safeKey('accent'));
+  return n && p && n.config && n.config.accent === '#445566' && p.data && p.data.value === '#445566'
+    ? {{ sourceConfigValue: n.config.accent, sourceParamValue: p.data.value }}
+    : null;
+}})()
+""")
+    assert source_synced == {
+        "sourceConfigValue": "#445566",
+        "sourceParamValue": "#445566",
+    }
+
+    assert _focus(wire_node_id, "connection node"), "wire node did not focus into right rail"
+    anatomy_visible = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wireId = {wire_node_id};
+  const gateLayerId = {gate_layer_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const sourcePortNodeId = wire && wire.data && wire.data.from_port_node;
+  const targetPortNodeId = wire && wire.data && wire.data.to_port_node;
+  const gateParamId = 'param:' + gateLayerId + ':value';
+  const domIds = Array.from(document.querySelectorAll('.lm-node[data-node-id]'))
+    .map((el) => el.getAttribute('data-node-id'));
+  const hasLayerWire = Array.from(document.querySelectorAll('g[data-wire-from][data-wire-to]'))
+    .some((el) => el.getAttribute('data-wire-from') === wireId &&
+      el.getAttribute('data-wire-to') === gateLayerId);
+  return wire && sourcePortNodeId && targetPortNodeId &&
+    domIds.includes(wireId) &&
+    domIds.includes(sourcePortNodeId) &&
+    domIds.includes(targetPortNodeId) &&
+    domIds.includes(gateLayerId) &&
+    domIds.includes(gateParamId) &&
+    hasLayerWire
+    ? {{ wireId, sourcePortNodeId, targetPortNodeId, gateLayerId, gateParamId, hasLayerWire }}
+    : null;
+}})()
+""", timeout=35)
+    anatomy_diag = _maybe_json(cdp.eval("""
+(function(){
+  const s = window.__archhub_wire_anatomy_state || {};
+  return {
+    focusId: s.focusId || window.__archhub_focus_id || null,
+    graphNodeCount: s.graphNodeCount || 0,
+    focusGraphNode: s.focusGraphNode || null,
+    anatomyNodeIds: (s.anatomyNodeIds || []).slice(0, 30),
+    visibleNodeIds: (s.visibleNodeIds || []).slice(0, 60),
+    visibleWirePairs: (s.visibleWirePairs || []).slice(0, 30),
+    cull: window.__archhub_cull || null,
+    errorText: (document.body && document.body.innerText || '').slice(0, 240),
+  };
+})()
+"""))
+    assert anatomy_visible, f"focused wire did not expose its internal node anatomy on the canvas: {anatomy_diag}"
+    _update_param(wire_node_id, "gate_policy", "deny-unscoped")
+    wire_synced = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const wireId = {wire_node_id};
+  const layerId = {gate_layer_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const layer = nodes.find((node) => node && node.id === layerId);
+  const wireParam = nodes.find((node) => node && node.id === 'param:' + wireId + ':' + safeKey('gate_policy'));
+  const layerParam = nodes.find((node) => node && node.id === 'param:' + layerId + ':' + safeKey('value'));
+  return wire && layer && wireParam && layerParam &&
+    wire.data && wire.data.gate_policy === 'deny-unscoped' &&
+    layer.data && layer.data.value === 'deny-unscoped' &&
+    wireParam.data && wireParam.data.value === 'deny-unscoped' &&
+    layerParam.data && layerParam.data.value === 'deny-unscoped'
+    ? {{ wireGate: wire.data.gate_policy, layerValue: layer.data.value,
+         wireParam: wireParam.data.value, layerParam: layerParam.data.value }}
+    : null;
+}})()
+""")
+    assert wire_synced == {
+        "wireGate": "deny-unscoped",
+        "layerValue": "deny-unscoped",
+        "wireParam": "deny-unscoped",
+        "layerParam": "deny-unscoped",
+    }
+
+    _update_param(wire_node_id, "presentation", "straight")
+    presentation_synced = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wireId = {wire_node_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const presentationLayerId = wire && wire.data && wire.data.layer_nodes && wire.data.layer_nodes.presentation;
+  const layer = presentationLayerId && nodes.find((node) => node && node.id === presentationLayerId);
+  const groups = Array.from(document.querySelectorAll('[data-wire-presentation="straight"]'));
+  const group = groups.find((el) => el && el.getAttribute('data-wire-from') === {source_id});
+  const visiblePath = group && Array.from(group.querySelectorAll('path'))
+    .find((path) => path && path.getAttribute('stroke') !== 'transparent');
+  const d = visiblePath && visiblePath.getAttribute('d');
+  return wire && layer && group && d &&
+    wire.data && wire.data.presentation === 'straight' &&
+    layer.data && layer.data.value === 'straight' &&
+    d.indexOf(' L') >= 0 && d.indexOf(' C') < 0
+    ? {{ presentation: wire.data.presentation, layerValue: layer.data.value, d }}
+    : null;
+}})()
+""", timeout=35)
+    assert presentation_synced, "presentation layer did not redraw the visible wire as a straight path"
+
+    clicked_gate_layer_focus = _click_wire_layer_row_focus(gate_layer_id, "wire layer node")
+    assert clicked_gate_layer_focus, f"gate layer row did not focus through visible right rail control: {clicked_gate_layer_focus}"
+    _update_param(gate_layer_id, "value", "allow-reviewed")
+    final = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wires = Array.isArray(g.wires) ? g.wires : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const wireId = {wire_node_id};
+  const layerId = {gate_layer_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const layer = nodes.find((node) => node && node.id === layerId);
+  const wireParam = nodes.find((node) => node && node.id === 'param:' + wireId + ':' + safeKey('gate_policy'));
+  const layerParam = nodes.find((node) => node && node.id === 'param:' + layerId + ':' + safeKey('value'));
+  return wire && layer && wireParam && layerParam &&
+    wire.data && wire.data.gate_policy === 'allow-reviewed' &&
+    layer.data && layer.data.value === 'allow-reviewed' &&
+    wireParam.data && wireParam.data.value === 'allow-reviewed' &&
+    layerParam.data && layerParam.data.value === 'allow-reviewed'
+    ? {{
+        wireGate: wire.data.gate_policy,
+        layerValue: layer.data.value,
+        wireParam: wireParam.data.value,
+        layerParam: layerParam.data.value,
+        graphNodeCount: nodes.length,
+        graphWireCount: wires.length,
+        trivial: 2 + 2,
+      }}
+    : null;
+}})()
+""")
+    assert final, "layer edit did not sync parent wire and param nodes"
+    assert final["wireGate"] == "allow-reviewed"
+    assert final["layerValue"] == "allow-reviewed"
+    assert final["wireParam"] == "allow-reviewed"
+    assert final["layerParam"] == "allow-reviewed"
+    assert final["trivial"] == 4
+
+    assert _focus(source_field_layer_id, "Source field layer"), "source field layer did not focus into right rail"
+    _update_param(source_field_layer_id, "value", "messages[-1].content")
+    field_final = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wires = Array.isArray(g.wires) ? g.wires : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const wireId = {wire_node_id};
+  const layerId = {source_field_layer_id};
+  const edgeId = {edge_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const layer = nodes.find((node) => node && node.id === layerId);
+  const edge = wires.find((item) => item && item.id === edgeId);
+  const wireParam = nodes.find((node) => node && node.id === 'param:' + wireId + ':' + safeKey('src_field'));
+  const layerParam = nodes.find((node) => node && node.id === 'param:' + layerId + ':' + safeKey('value'));
+  return wire && layer && edge && wireParam && layerParam &&
+    wire.data && wire.data.src_field === 'messages[-1].content' &&
+    layer.data && layer.data.value === 'messages[-1].content' &&
+    edge.src_field === 'messages[-1].content' &&
+    edge.data && edge.data.src_field === 'messages[-1].content' &&
+    wireParam.data && wireParam.data.value === 'messages[-1].content' &&
+    layerParam.data && layerParam.data.value === 'messages[-1].content'
+    ? {{
+        wireSourceField: wire.data.src_field,
+        layerValue: layer.data.value,
+        edgeSourceField: edge.src_field,
+        wireParam: wireParam.data.value,
+        layerParam: layerParam.data.value,
+      }}
+    : null;
+}})()
+""")
+    assert field_final == {
+        "wireSourceField": "messages[-1].content",
+        "layerValue": "messages[-1].content",
+        "edgeSourceField": "messages[-1].content",
+        "wireParam": "messages[-1].content",
+        "layerParam": "messages[-1].content",
+    }
+
+    assert _focus(source_port_layer_id, "Source port layer"), "source port layer did not focus into right rail"
+    _update_param(source_port_layer_id, "value", "alt")
+    port_final = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wires = Array.isArray(g.wires) ? g.wires : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const wireId = {wire_node_id};
+  const layerId = {source_port_layer_id};
+  const edgeId = {edge_id};
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const layer = nodes.find((node) => node && node.id === layerId);
+  const edge = wires.find((item) => item && item.id === edgeId);
+  const wireParam = nodes.find((node) => node && node.id === 'param:' + wireId + ':' + safeKey('from_port'));
+  const layerParam = nodes.find((node) => node && node.id === 'param:' + layerId + ':' + safeKey('value'));
+  const rawFromPort = Array.isArray(edge && edge.from)
+    ? edge.from[1]
+    : (edge && edge.from && edge.from.port);
+  return wire && layer && edge && wireParam && layerParam &&
+    wire.data && wire.data.from_port === 'alt' &&
+    layer.data && layer.data.value === 'alt' &&
+    rawFromPort === 'alt' &&
+    edge.data && edge.data.from_port === 'alt' &&
+    wireParam.data && wireParam.data.value === 'alt' &&
+    layerParam.data && layerParam.data.value === 'alt'
+    ? {{
+        wireSourcePort: wire.data.from_port,
+        layerValue: layer.data.value,
+        edgeSourcePort: rawFromPort,
+        wireParam: wireParam.data.value,
+        layerParam: layerParam.data.value,
+      }}
+    : null;
+}})()
+""")
+    assert port_final == {
+        "wireSourcePort": "alt",
+        "layerValue": "alt",
+        "edgeSourcePort": "alt",
+        "wireParam": "alt",
+        "layerParam": "alt",
+    }
+
+    app_relation = _maybe_json(cdp.eval(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  if (!Array.isArray(g.nodes)) g.nodes = [];
+  if (!Array.isArray(g.wires)) g.wires = [];
+  const stamp = Date.now().toString(36);
+  const targetId = {source_id};
+  const appId = 'app:archhub';
+  const appNode = g.nodes.find((node) => node && node.id === appId) || {{
+    id: appId,
+    type: 'stem.node',
+    kind: 'group',
+    cat: 'app',
+    title: 'ArchHub Application',
+    data: {{ role: 'application' }},
+    config: {{}},
+    params: [],
+    ins: [],
+    outs: [{{ id: 'surface', label: 'surface', t: 'ui' }}],
+  }};
+  if (!g.nodes.find((node) => node && node.id === appId)) g.nodes.push(appNode);
+  const sourcePortA = 'param:app-relation-proof:' + stamp + ':source-a';
+  const sourcePortB = 'param:app-relation-proof:' + stamp + ':source-b';
+  const targetPort = 'param:app-relation-proof:' + stamp + ':target';
+  const wireId = 'wire:app-relation-proof:' + stamp;
+  const layerId = wireId + ':layer:source-port';
+  const fromEndpointId = 'w:app-relation-proof:' + stamp + ':from';
+  const toEndpointId = 'w:app-relation-proof:' + stamp + ':to';
+  const makePort = (id, owner, direction) => ({{
+    id,
+    type: 'stem.node',
+    kind: 'param',
+    cat: 'param',
+    title: id,
+    sub: 'port parameter node',
+    data: {{
+      role: 'parameter',
+      param_family: 'port',
+      port_node: true,
+      owner,
+      key: direction + ':proof',
+      value: id,
+      port_id: id,
+      port_direction: direction,
+          relation_wire_family: 'app_relation_proof',
+    }},
+    config: {{ owner, value: id }},
+    params: [{{ k: 'value', label: 'value', type: 'text', v: id }}],
+    ins: [{{ id: 'owner', label: 'owner', t: 'node' }}],
+    outs: [{{ id: 'value', label: 'value', t: 'ui' }}],
+  }});
+  [makePort(sourcePortA, appId, 'out'), makePort(sourcePortB, appId, 'out'), makePort(targetPort, targetId, 'in')].forEach((node) => {{
+    if (!g.nodes.find((existing) => existing && existing.id === node.id)) g.nodes.push(node);
+  }});
+  g.nodes.push({{
+    id: wireId,
+    type: 'stem.node',
+    kind: 'wire',
+    cat: 'wire',
+    title: 'app relation proof wire',
+    sub: 'application relation wire node',
+    data: {{
+      role: 'wire',
+      wire_family: 'app_relation_proof',
+      wire_id: 'app-relation-proof:' + stamp,
+      relation: 'active_focus',
+      source_owner: appId,
+      target_owner: targetId,
+      from_port_node: sourcePortA,
+      to_port_node: targetPort,
+      from_port: 'value',
+      to_port: 'focused_by',
+      port_binding: sourcePortA + ' -> ' + targetPort,
+      layer_nodes: {{ source_port: layerId }},
+      wire_layers: ['source_port'],
+      presentation: 'focus-relation',
+    }},
+    config: {{
+      from_port_node: sourcePortA,
+      to_port_node: targetPort,
+      port_binding: sourcePortA + ' -> ' + targetPort,
+    }},
+    params: [
+      {{ k: 'from_port_node', label: 'Source port layer', type: 'text', v: sourcePortA, wire_layer: 'source_port', wire_layer_node_id: layerId }},
+      {{ k: 'port_binding', label: 'Ports layer', type: 'text', v: sourcePortA + ' -> ' + targetPort }},
+    ],
+    ins: [{{ id: 'from', label: 'from', t: 'node' }}],
+    outs: [{{ id: 'to', label: 'to', t: 'node' }}, {{ id: 'layer', label: 'layers', t: 'node' }}],
+  }});
+  g.nodes.push({{
+    id: layerId,
+    type: 'stem.node',
+    kind: 'group',
+    cat: 'wire',
+    title: 'Source port layer',
+    sub: 'app relation wire layer node',
+    data: {{
+      role: 'wire_layer',
+      wire_family: 'app_relation_proof',
+      owner: wireId,
+      parent: wireId,
+      layer: 'source_port',
+      value_key: 'from_port_node',
+      value: sourcePortA,
+      enabled: true,
+      capabilities: ['select_output_port_node', 'port_parameter', 'external_port_binding'],
+      relation: 'contains_layer',
+    }},
+    config: {{ owner: wireId, value_key: 'from_port_node', value: sourcePortA }},
+    params: [
+      {{ k: 'owner', label: 'owner', type: 'text', v: wireId }},
+      {{ k: 'layer', label: 'layer', type: 'text', v: 'source_port' }},
+      {{ k: 'value_key', label: 'value key', type: 'text', v: 'from_port_node' }},
+      {{ k: 'value', label: 'value', type: 'text', v: sourcePortA }},
+    ],
+    ins: [{{ id: 'owner', label: 'owner', t: 'node' }}],
+    outs: [{{ id: 'value', label: 'value', t: 'any' }}, {{ id: 'presentation', label: 'presentation', t: 'ui' }}],
+  }});
+  g.wires.push({{
+    id: fromEndpointId,
+    from: {{ node: sourcePortA, port: 'value' }},
+    to: {{ node: wireId, port: 'from' }},
+    data: {{
+      role: 'wire_endpoint',
+      wire_family: 'app_relation_proof',
+      endpoint: 'from',
+      relation_node: wireId,
+      from_port_node: sourcePortA,
+      to_port_node: targetPort,
+    }},
+  }});
+  g.wires.push({{
+    id: toEndpointId,
+    from: {{ node: wireId, port: 'to' }},
+    to: {{ node: targetPort, port: 'focused_by' }},
+    data: {{
+      role: 'wire_endpoint',
+      wire_family: 'app_relation_proof',
+      endpoint: 'to',
+      relation_node: wireId,
+      from_port_node: sourcePortA,
+      to_port_node: targetPort,
+    }},
+  }});
+  if (typeof window.__archhubBumpGraph === 'function') window.__archhubBumpGraph();
+  return {{ wireId, layerId, sourcePortA, sourcePortB, fromEndpointId, toEndpointId }};
+}})()
+"""))
+    assert app_relation and app_relation.get("wireId"), app_relation
+    app_layer_id = json.dumps(app_relation["layerId"])
+    app_wire_id = json.dumps(app_relation["wireId"])
+    app_source_port_b = json.dumps(app_relation["sourcePortB"])
+    app_from_endpoint_id = json.dumps(app_relation["fromEndpointId"])
+    app_to_endpoint_id = json.dumps(app_relation["toEndpointId"])
+
+    assert _focus(app_layer_id, "Source port layer"), "app relation source port layer did not focus into right rail"
+    _update_param(app_layer_id, "value", app_relation["sourcePortB"])
+    app_relation_final = _wait_js(f"""
+(function(){{
+  const g = window.__archhub_LM_GRAPH || {{}};
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const wires = Array.isArray(g.wires) ? g.wires : [];
+  const safeKey = (key) => String(key || 'value').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'value';
+  const wireId = {app_wire_id};
+  const layerId = {app_layer_id};
+  const sourcePortB = {app_source_port_b};
+  const fromEndpoint = wires.find((wire) => wire && wire.id === {app_from_endpoint_id});
+  const toEndpoint = wires.find((wire) => wire && wire.id === {app_to_endpoint_id});
+  const wire = nodes.find((node) => node && node.id === wireId);
+  const layer = nodes.find((node) => node && node.id === layerId);
+  const wireParam = nodes.find((node) => node && node.id === 'param:' + wireId + ':' + safeKey('from_port_node'));
+  const layerParam = nodes.find((node) => node && node.id === 'param:' + layerId + ':' + safeKey('value'));
+  return wire && layer && fromEndpoint && toEndpoint && wireParam && layerParam &&
+    wire.data && wire.data.from_port_node === sourcePortB &&
+    wire.data.port_binding && wire.data.port_binding.indexOf(sourcePortB) === 0 &&
+    layer.data && layer.data.value === sourcePortB &&
+    fromEndpoint.from && fromEndpoint.from.node === sourcePortB &&
+    fromEndpoint.data && fromEndpoint.data.from_port_node === sourcePortB &&
+    toEndpoint.data && toEndpoint.data.from_port_node === sourcePortB &&
+    wireParam.data && wireParam.data.value === sourcePortB &&
+    layerParam.data && layerParam.data.value === sourcePortB
+    ? {{
+        wireSourcePortNode: wire.data.from_port_node,
+        layerValue: layer.data.value,
+        endpointSourceNode: fromEndpoint.from.node,
+        wireParam: wireParam.data.value,
+        layerParam: layerParam.data.value,
+      }}
+    : null;
+}})()
+""")
+    assert app_relation_final == {
+        "wireSourcePortNode": app_relation["sourcePortB"],
+        "layerValue": app_relation["sourcePortB"],
+        "endpointSourceNode": app_relation["sourcePortB"],
+        "wireParam": app_relation["sourcePortB"],
+        "layerParam": app_relation["sourcePortB"],
+    }
+
+    screenshot_path = (
+        Path(os.environ.get("TEMP") or os.environ.get("TMP") or str(Path.home()))
+        / "archhub-node-native-app-relation-port-layer-proof.png"
+    )
+    try:
+        cdp.cmd("Emulation.setDeviceMetricsOverride", {
+            "width": 1440,
+            "height": 980,
+            "deviceScaleFactor": 1,
+            "mobile": False,
+        })
+        cdp.eval("window.dispatchEvent(new Event('resize'))")
+    except Exception:
+        pass
+    shot = cdp.cmd("Page.captureScreenshot", {"format": "png", "fromSurface": True})
+    payload = shot.get("result", {}).get("data")
+    assert payload, "CDP did not return screenshot data"
+    screenshot_path.write_bytes(base64.b64decode(payload))
+    assert screenshot_path.stat().st_size > 10_000, screenshot_path
+
+
+def test_output_body_uses_typed_image_preview_surface(cdp):
+    """The output preview must not flatten every typed value into text.
+
+    This creates a real output node with a cooked image value, toggles preview
+    through the same node-output action the UI button emits, and proves the
+    preview render slot hosts an image preview node surface.
+    """
+    def _maybe_json(value):
+        if isinstance(value, str) and value[:1] in "{[":
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+        return value
+
+    def _wait_js(expr, *, timeout=25, interval=0.5):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            last = _maybe_json(cdp.eval(expr))
+            if last:
+                return last
+            time.sleep(interval)
+        return last
+
+    created = _maybe_json(cdp.eval(
+        r"""
+(async () => {
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const graph = () => window.__archhub_LM_GRAPH || {};
+  if (!Array.isArray(graph().nodes)) graph().nodes = [];
+  if (!Array.isArray(graph().wires)) graph().wires = [];
+  window.dispatchEvent(new CustomEvent('lm-action-new-canvas'));
+  await delay(1200);
+  if (!Array.isArray(graph().nodes)) graph().nodes = [];
+  if (!Array.isArray(graph().wires)) graph().wires = [];
+  const stamp = Date.now().toString(36);
+  const nodeId = 'cdp-node-native:typed-output:' + stamp;
+  const img = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjE2IiBmaWxsPSIjZDk3NzU3Ii8+PC9zdmc+';
+  graph().nodes.push({
+    id: nodeId,
+    type: 'output.parameter',
+    cat: 'output',
+    title: 'Typed Image Output Proof',
+    sub: 'node-native typed preview',
+    x: 160,
+    y: 140,
+    data: { role: 'workflow_node' },
+    config: { as: 'image' },
+    params: [{ k: 'as', label: 'as', type: 'text', v: 'image' }],
+    ins: [{ id: 'value', label: 'value', t: 'image' }],
+    outs: [],
+    cooked: { value: { image: img }, value_type: 'image' },
+  });
+  if (typeof window.__archhubBumpGraph === 'function') window.__archhubBumpGraph();
+  return { ok: true, nodeId, img };
+})()
+        """,
+        await_promise=True,
+    ))
+    assert created and created.get("ok") is True, created
+    node_id = json.dumps(created["nodeId"])
+
+    assert _wait_js(f"""
+(function(){{
+  const text = document.body && document.body.innerText ? document.body.innerText : '';
+  const body = document.querySelector('.ah-node-output-body-node');
+  return text.indexOf('Typed Image Output Proof') >= 0 && !!body;
+}})()
+"""), "typed output body surface did not render"
+
+    cdp.eval(f"""
+window.dispatchEvent(new CustomEvent('lm-ui-node-action', {{
+  detail: {{
+    node_id: {node_id},
+    action: 'node-output.preview.toggle',
+    args: {{ node_id: {node_id} }},
+  }},
+}}))
+""")
+    rendered = _wait_js(f"""
+(function(){{
+  const render = document.querySelector('.ah-node-output-preview-render-node[data-hidden="false"]');
+  const img = document.querySelector('.ah-node-image-preview-img-node');
+  const textPreview = document.querySelector('.ah-node-output-preview-node[data-hidden="false"]');
+  const textPreviewVisible = !!(textPreview && getComputedStyle(textPreview).display !== 'none' && !textPreview.hidden);
+  return render && img && !textPreviewVisible ? {{
+    renderVisible: render.getAttribute('data-hidden'),
+    imgSrc: img.getAttribute('src') || '',
+    textPreviewVisible,
+    }} : null;
+}})()
+""")
+    if not rendered:
+        rendered = _maybe_json(cdp.eval(r"""
+(function(){
+  return JSON.stringify({
+    renders:[...document.querySelectorAll('.ah-node-output-preview-render-node')].map(e=>({
+      hidden:e.hidden, data:e.getAttribute('data-hidden'), html:e.outerHTML.slice(0, 500)
+    })),
+    textPreviews:[...document.querySelectorAll('.ah-node-output-preview-node')].map(e=>({
+      hidden:e.hidden, data:e.getAttribute('data-hidden'), text:e.innerText, html:e.outerHTML.slice(0, 500)
+    })),
+    images:[...document.querySelectorAll('.ah-node-image-preview-img-node')].map(e=>({
+      src:e.getAttribute('src'), html:e.outerHTML.slice(0, 300)
+    })),
+    graphPreviewNodes:(window.__archhub_LM_GRAPH.nodes||[])
+      .filter(n=>String(n.id||'').indexOf('node-output-preview') >= 0)
+      .map(n=>({id:n.id, cls:n.data&&n.data.cls, hidden_bind:n.data&&n.data.hidden_bind, render_slot:n.data&&n.data.render_slot, value:n.data&&n.data.value})),
+  });
+})()
+"""))
+    assert rendered and rendered.get("renderVisible") == "false", rendered
+    assert rendered["imgSrc"].startswith("data:image/svg+xml;base64,"), rendered
+    assert rendered["textPreviewVisible"] is False
+
+    screenshot_path = (
+        Path(os.environ.get("TEMP") or os.environ.get("TMP") or str(Path.home()))
+        / "archhub-node-native-output-image-preview-proof.png"
+    )
+    try:
+        cdp.cmd("Emulation.setDeviceMetricsOverride", {
+            "width": 1440,
+            "height": 980,
+            "deviceScaleFactor": 1,
+            "mobile": False,
+        })
+        cdp.eval("window.dispatchEvent(new Event('resize'))")
+    except Exception:
+        pass
+    shot = cdp.cmd("Page.captureScreenshot", {"format": "png", "fromSurface": True})
+    payload = shot.get("result", {}).get("data")
+    assert payload, "CDP did not return screenshot data"
+    screenshot_path.write_bytes(base64.b64decode(payload))
+    assert screenshot_path.stat().st_size > 10_000, screenshot_path

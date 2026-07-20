@@ -36,6 +36,8 @@ _JSX_SRC = (_WEB / "studio-lm.jsx").read_text(encoding="utf-8")
 # Comment-stripped view — an assertion can't be satisfied by a `//` comment.
 _JSX_CODE = re.sub(r"//[^\n]*", "", _JSX_SRC)
 _COMPILED = (_WEB / "studio-lm.compiled.js").read_text(encoding="utf-8")
+_GRAPH_AUTHORITY = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(
+    encoding="utf-8")
 # The compiled bundle keeps comments; strip `//` there too so the bundle guard
 # reflects only emitted code/strings, not the lane's explanatory comments.
 _COMPILED_CODE = re.sub(r"//[^\n]*", "", _COMPILED)
@@ -58,12 +60,16 @@ class TestFooterVersionReal:
     def test_footer_renders_real_version_via_get_version(self):
         """ServerStrip fetches the real version through bridgeAsync('get_version')
         and renders it — the footer is no longer a frozen constant."""
-        comp = _window(_JSX_CODE, "const ServerStrip = (", size=5000)
+        comp = _window(_JSX_CODE, "const ServerStrip = (", size=8200)
         assert "bridgeAsync('get_version')" in comp, (
             "ServerStrip must fetch the real version via get_version()")
-        # The rendered pill uses the fetched `ver` state (v<semver>), not a literal.
-        assert "`v${ver}`" in comp, (
-            "footer must render the live version state, not a hardcoded string")
+        # The graph-owned status strip receives the fetched `ver` state
+        # (v<semver>), not a literal.
+        assert "ensureGrandMapStatusStripNodes({" in comp
+        assert "version: ver ? `v${ver}` : 'ArchHub'" in comp, (
+            "footer must feed the live version state into the graph status strip")
+        assert '"ui:grandmap:status-version"' in _GRAPH_AUTHORITY
+        assert 'bind="slot:status-version"' in _GRAPH_AUTHORITY
         # The fetch is gated on archhubReady — ServerStrip can mount before the
         # bridge connects; a bare mount-time call would stick on the fallback.
         assert "archhubReady" in comp, (

@@ -291,10 +291,17 @@ def test_inspector_mounted_at_root_and_reachable():
     # open to the graph-health detail, which is where the self-heal entry lives.)
     chip = _jsx_window("home-graph-health-chip", 1400)
     assert "lm-graph-health-open" in chip
-    # Both graph-health panels expose a self-heal entry button.
-    assert 'data-testid="graph-health-self-heal"' in _JSX_CODE
-    assert 'data-testid="health-strip-self-heal"' in _JSX_CODE
-    # And the wiring is in the COMPILED bundle.
+    authority = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(encoding="utf-8")
+    # Both graph-health panels expose graph-owned self-heal entry buttons.
+    assert '"ui:grandmap:graph-health-self-heal"' in authority
+    assert 'test_id="graph-health-self-heal"' in authority
+    assert 'action="graph-health.self-heal"' in authority
+    assert '"ui:grandmap:health-strip-self-heal"' in authority
+    assert 'test_id="health-strip-self-heal"' in authority
+    assert 'action="health-strip.self-heal"' in authority
+    assert "registerUiHostCapability('graph-health.self-heal'" in _JSX_CODE
+    assert "registerUiHostCapability('health-strip.self-heal'" in _JSX_CODE
+    # And the open wiring is in the COMPILED bundle.
     assert "lm-self-heal-inspector-open" in _COMPILED
 
 

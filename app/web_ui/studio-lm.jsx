@@ -26780,6 +26780,10 @@ const submitUniversalInteraction = (payload) => {
 };
 if (typeof window !== 'undefined') {
   window.__archhubSubmitUniversalInteraction = submitUniversalInteraction;
+  window.addEventListener('archhub-universal-interaction-result', event => {
+    window.__archhub_last_universal_interaction_result =
+      event && event.detail ? event.detail : null;
+  });
   registerUiHostCapability('universal.interaction.submit', detail => {
     const payload = universalInteractionPayloadFromAction(detail || {});
     submitUniversalInteraction(payload).catch(() => {});

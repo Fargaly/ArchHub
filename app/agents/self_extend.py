@@ -2,7 +2,7 @@
 a real, court-verified, brain-learned capability WITHOUT a human stitching the
 organs (SEAM 1→4 of the universal-self-extension vision).
 
-The loop (mandate: project_universal-self-extension-vision):
+Legacy loop (mandate: project_universal-self-extension-vision):
 
     ask        — the composer agent calls a BUILD tool (`create_node_type` /
                  `create_connector`) it now has in TOOL_SCHEMA (SEAM 1).
@@ -18,8 +18,9 @@ The loop (mandate: project_universal-self-extension-vision):
                  recording the new capability (op 'add', owner_user + full
                  provenance).                                              (SEAM 4)
 
-ONE-SYSTEM (ONE-SYSTEM-PLAN-BEFORE-BUILD): every step reuses an organ that
-already exists — no parallel engine:
+LEGACY BOUNDARY: every step below is an old typed-runtime control/projection
+path. It is not Universal Cell product authority and must be consumed by the
+Cell-native composer instead of being promoted as the graph root:
   * build    → library.create_node_type (app/library.py) / connectors.scaffold
   * court    → personal_brain.roma + court_harness + requirement_tree (in-proc,
                deterministic gates) — the SAME court the proof-run used.
@@ -38,6 +39,8 @@ SAFETY:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -54,6 +57,37 @@ DEFAULT_OWNER_USER = "u_19e5ab4adb8_82513da5e30d"
 # create_ui_widget is the UI RUNG (free-form agent UI + court/auto-revert guards).
 BUILD_TOOLS = frozenset({"create_node_type", "create_connector",
                          "create_ui_widget"})
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell_composer"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
+
+def _court_artifact_digest(build: dict[str, Any]) -> str:
+    """Bind a court root to the exact artifact and gate it verified."""
+    path_value = str(build.get("path") or "").strip()
+    artifact_digest = ""
+    if path_value:
+        try:
+            hasher = hashlib.sha256()
+            with Path(path_value).open("rb") as stream:
+                for block in iter(lambda: stream.read(65_536), b""):
+                    hasher.update(block)
+            artifact_digest = hasher.hexdigest()
+        except OSError:
+            artifact_digest = "missing"
+    identity = {
+        "kind": str(build.get("kind") or ""),
+        "type": str(build.get("type") or ""),
+        "host": str(build.get("host") or ""),
+        "widget_id": str(build.get("widget_id") or ""),
+        "gate_kind": str(build.get("gate_kind") or "manual"),
+        "gate_spec": build.get("gate_spec") or {},
+        "artifact_digest": artifact_digest,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _repo_root() -> Path:
@@ -384,13 +418,38 @@ def court_verify(build: dict[str, Any], *, store=None,
         court_gate_kind = "ui_renders"
         extra["ui_renders"] = _make_ui_renders_probe()
 
-    vision = f"self-extend: build + verify capability '{cap}'"
+    artifact_digest = _court_artifact_digest(build)
+    vision = (
+        f"self-extend: build + verify capability '{cap}' "
+        f"[{artifact_digest[:16]}]"
+    )
     decomposition = [{
         "title": f"artifact for '{cap}' satisfies its gate",
         "predicate": build.get("detail", ""),
         "gate_kind": court_gate_kind,
         "gate_spec": gate_spec,
     }]
+    tree = rt.create_root(store, title=vision, owner_user=owner_user)
+    root = tree.nodes[tree.root_id]
+    if root.state == rt.NodeState.GREEN:
+        final = rt.sweep(store, tree_id=tree.tree_id)
+        if own_store:
+            try:
+                store.close()
+            except Exception:
+                pass
+        return {
+            "ok": bool(final.get("dry") and final.get("root_green")),
+            "green": bool(final.get("dry") and final.get("root_green")),
+            "verdict": "green",
+            "cooks_with_mock": False,
+            "tree_id": tree.tree_id,
+            "gate_kind": court_gate_kind,
+            "court_reason": "reused exact artifact court result",
+            "sweep": final,
+            "artifact_digest": artifact_digest,
+            "reused": True,
+        }
     tree = roma.atomize(store, vision=vision, decomposition=decomposition,
                         owner_user=owner_user)
 
@@ -456,11 +515,13 @@ def court_verify(build: dict[str, Any], *, store=None,
         "verdict": verdict,
         "cooks_with_mock": cooks_with_mock,
         "tree_id": tree.tree_id,
-        "gate_kind": gate_kind,
+        "gate_kind": court_gate_kind,
         "court_reason": reason,
         "sweep": {k: final.get(k) for k in
                   ("dry", "root_green", "needs_root", "total_leaves",
                    "green_leaves", "actionable_leaves", "rounds_run")},
+        "artifact_digest": artifact_digest,
+        "reused": False,
     }
 
 
@@ -513,9 +574,9 @@ _SEED_BY_TYPE: dict[str, Any] = {
 
 def _declared_ports(type_name: str) -> tuple[list[dict], list[dict]]:
     """(inputs, outputs) as [{name, port_type}] from the REAL library spec.
-    The library is the source of truth for the DECLARED typed contract (the
-    runner coerces minted ports to ANY, so we read the library, not the
-    runner)."""
+    The old library carries the declared typed contract for this legacy
+    projection (the runner coerces minted ports to ANY, so we read the library,
+    not the runner). It is not Universal Cell product authority."""
     app_dir = str(_repo_root() / "app")
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)

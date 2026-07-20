@@ -964,6 +964,72 @@ def test_known_runtime_source_drift_paths_are_classified_not_promotable():
     }.issubset({row["migration_track"] for row in rows})
 
 
+def test_source_drift_migration_work_groups_candidates_by_authority_track(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    source_drift = {
+        "schema": "archhub-runtime-copy-source-drift/v1",
+        "migration_candidate_count": 3,
+        "decision_summary": {"all_classified": True},
+        "migration_candidates": [
+            {
+                "candidate_id": "runtime-source-drift:a",
+                "path": "nodelang/authority_bridge.py",
+                "candidate_kind": "implementation_candidate",
+                "migration_track": "runtime_transport_and_broker",
+                "required_canonical_first_step": "broker court first",
+            },
+            {
+                "candidate_id": "runtime-source-drift:b",
+                "path": "tests_replica/test_canvas_interaction_quality.py",
+                "candidate_kind": "court_candidate",
+                "migration_track": "visual_workspace_interaction",
+                "required_canonical_first_step": "visual court first",
+            },
+            {
+                "candidate_id": "runtime-source-drift:c",
+                "path": "tests_replica/test_visual_graph_workspace.py",
+                "candidate_kind": "court_candidate",
+                "migration_track": "visual_workspace_interaction",
+                "required_canonical_first_step": "visual court first",
+            },
+        ],
+    }
+
+    result = drain.build_source_drift_migration_work(
+        source_drift,
+        product_root=product_root,
+        workspace=tmp_path,
+    )
+
+    assert result["schema"] == "archhub-runtime-source-drift-migration-work/v1"
+    assert result["candidate_count"] == 3
+    assert result["track_count"] == 2
+    assert result["unresolved_track_count"] == 2
+    assert result["all_candidates_classified"] is True
+    assert result["all_work_authority_scoped"] is True
+    assert result["all_non_promoting"] is True
+    assert result["all_bulk_copy_forbidden"] is True
+    assert result["all_non_interrupting"] is True
+    by_track = {item["migration_track"]: item for item in result["work_items"]}
+    assert by_track["runtime_transport_and_broker"]["implementation_candidate_paths"] == [
+        "nodelang/authority_bridge.py"
+    ]
+    assert by_track["runtime_transport_and_broker"]["court_candidate_paths"] == []
+    assert by_track["visual_workspace_interaction"]["court_candidate_paths"] == [
+        "tests_replica/test_canvas_interaction_quality.py",
+        "tests_replica/test_visual_graph_workspace.py",
+    ]
+    assert by_track["visual_workspace_interaction"]["promotion_allowed"] is False
+    assert by_track["visual_workspace_interaction"]["bulk_copy_allowed"] is False
+    assert by_track["visual_workspace_interaction"]["live_process_interruption_allowed"] is False
+    assert by_track["visual_workspace_interaction"]["cde_container"] == {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC",
+    }
+
+
 def test_retirement_gate_blocks_archive_until_all_conditions_are_green():
     holder_report = _audit(1)
     readiness = {"ok": True}
@@ -1717,4 +1783,40 @@ def test_cli_source_drift_report_is_read_only_candidate_inventory(
     assert out["decision_summary"]["unmapped_paths"] == ["nodelang/candidate.py"]
     assert out["migration_candidates"][0]["path"] == "nodelang/candidate.py"
     assert out["migration_candidates"][0]["status"] == "missing_in_authority"
+    assert not out_dir.exists()
+
+
+def test_cli_source_drift_work_plan_is_read_only_authority_scoped(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "authority_bridge.py").write_text("# runtime\n", encoding="utf-8")
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--source-drift-work-plan",
+    ])
+
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["schema"] == "archhub-runtime-source-drift-migration-work/v1"
+    assert out["track_count"] == 1
+    assert out["all_work_authority_scoped"] is True
+    assert out["all_non_promoting"] is True
+    assert out["all_bulk_copy_forbidden"] is True
+    assert out["all_non_interrupting"] is True
+    assert out["work_items"][0]["migration_track"] == "runtime_transport_and_broker"
+    assert out["work_items"][0]["implementation_candidate_paths"] == [
+        "nodelang/authority_bridge.py"
+    ]
     assert not out_dir.exists()

@@ -48,6 +48,67 @@ SOURCE_DRIFT_AUTHORITY_BASIS = (
     "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
     "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7",
 )
+MIGRATION_TRACK_METADATA = {
+    "application_graph_projection": {
+        "title": "Resolve application graph projection drift",
+        "priority": 9100,
+        "required_outcome": (
+            "application lenses consume canonical graph roots without duplicate "
+            "truth or copied runtime state"
+        ),
+    },
+    "baboom_context_and_cognition": {
+        "title": "Resolve BABOOM context and cognition drift",
+        "priority": 9000,
+        "required_outcome": (
+            "BABOOM identity, context, presence, and cognition are released "
+            "Cell protocols before behavior is accepted"
+        ),
+    },
+    "governed_work_lifecycle": {
+        "title": "Resolve governed work lifecycle drift",
+        "priority": 8950,
+        "required_outcome": (
+            "work completion is graph-held decision/outcome/revision state"
+        ),
+    },
+    "public_site_projection": {
+        "title": "Resolve public site projection drift",
+        "priority": 7600,
+        "required_outcome": (
+            "public site output is a projection of released application roots"
+        ),
+    },
+    "revision_integrity_court": {
+        "title": "Resolve revision integrity court drift",
+        "priority": 8800,
+        "required_outcome": (
+            "any accepted concurrency invariant is proven against the canonical "
+            "Cell revision/commit protocol"
+        ),
+    },
+    "runtime_transport_and_broker": {
+        "title": "Resolve runtime transport and broker drift",
+        "priority": 9300,
+        "required_outcome": (
+            "runtime transport and broker behavior derive from graph-held "
+            "session, capability, grant, outcome, and revocation roots"
+        ),
+    },
+    "visual_workspace_interaction": {
+        "title": "Resolve visual workspace interaction drift",
+        "priority": 9200,
+        "required_outcome": (
+            "visual interaction courts prove the graph workspace semantics in "
+            "the canonical authority"
+        ),
+    },
+    "unmapped_runtime_candidate": {
+        "title": "Classify unmapped runtime drift",
+        "priority": 7000,
+        "required_outcome": "candidate is classified before any integration claim",
+    },
+}
 
 
 def default_product_root() -> Path:
@@ -547,6 +608,127 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
         "rule": (
             "An ignored runtime copy cannot be archived while it contains source "
             "files that are missing or different in the declared authority."
+        ),
+    }
+
+
+def build_source_drift_migration_work(
+    source_drift: dict[str, Any],
+    *,
+    product_root: Path,
+    workspace: Path,
+) -> dict[str, Any]:
+    """Group ignored-runtime drift candidates into canonical migration work."""
+    authority = workspace / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in source_drift.get("migration_candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        track = str(candidate.get("migration_track") or "unmapped_runtime_candidate")
+        grouped.setdefault(track, []).append(candidate)
+
+    work_items: list[dict[str, Any]] = []
+    for track, candidates in sorted(
+        grouped.items(),
+        key=lambda item: (
+            -int(MIGRATION_TRACK_METADATA.get(item[0], {}).get("priority", 0)),
+            item[0],
+        ),
+    ):
+        metadata = MIGRATION_TRACK_METADATA.get(
+            track,
+            MIGRATION_TRACK_METADATA["unmapped_runtime_candidate"],
+        )
+        implementation_paths = sorted(
+            str(candidate["path"])
+            for candidate in candidates
+            if candidate.get("candidate_kind") == "implementation_candidate"
+        )
+        court_paths = sorted(
+            str(candidate["path"])
+            for candidate in candidates
+            if candidate.get("candidate_kind") == "court_candidate"
+        )
+        candidate_ids = sorted(str(candidate["candidate_id"]) for candidate in candidates)
+        required_steps = sorted({
+            str(candidate.get("required_canonical_first_step") or "")
+            for candidate in candidates
+            if candidate.get("required_canonical_first_step")
+        })
+        work_id = "runtime-source-drift-track:%s" % track
+        work_items.append({
+            "work_id": work_id,
+            "title": metadata["title"],
+            "migration_track": track,
+            "priority": int(metadata["priority"]),
+            "authority": str(authority),
+            "runtime_copy": str(product_root / "node_runtime"),
+            "cde_container": {
+                "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+                "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+                "lifecycle": "WIP",
+                "privacy_tier": "T0 PUBLIC",
+            },
+            "resolution_state": "classified_unresolved",
+            "candidate_count": len(candidates),
+            "candidate_ids": candidate_ids,
+            "implementation_candidate_paths": implementation_paths,
+            "court_candidate_paths": court_paths,
+            "required_canonical_first_steps": required_steps,
+            "required_outcome": metadata["required_outcome"],
+            "required_decisions": [
+                "reconstruct_in_canonical_authority",
+                "reject_as_experiment",
+                "preserve_as_migration_evidence",
+            ],
+            "completion_gate": {
+                "kind": "canonical_resolution_required",
+                "must_prove": [
+                    "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+                    "red courts exist before accepted behavior changes",
+                    "rejected candidates have recorded rejection rationale",
+                    "preserved candidates are marked migration evidence only",
+                    "no copied-runtime file is bulk-copied as authority",
+                    "runtime drain gate no longer reports this track as source drift",
+                ],
+            },
+            "promotion_allowed": False,
+            "bulk_copy_allowed": False,
+            "live_process_interruption_allowed": False,
+            "forbidden_actions": [
+                "bulk-copy ignored node_runtime source into authority",
+                "cite ignored runtime code as delivered product authority",
+                "interrupt, stop, or restart live holders from this work plan",
+            ],
+        })
+    unresolved_count = sum(
+        1 for item in work_items if item.get("resolution_state") != "resolved"
+    )
+    return {
+        "schema": "archhub-runtime-source-drift-migration-work/v1",
+        "source_schema": source_drift.get("schema"),
+        "authority": str(authority),
+        "runtime_copy": str(product_root / "node_runtime"),
+        "candidate_count": int(source_drift.get("migration_candidate_count") or 0),
+        "track_count": len(work_items),
+        "unresolved_track_count": unresolved_count,
+        "all_candidates_classified": bool(
+            (source_drift.get("decision_summary") or {}).get("all_classified")
+        ),
+        "all_work_authority_scoped": all(
+            str(item["authority"]).endswith("10.PRODUCT\\13.NODE-LANGUAGE")
+            or str(item["authority"]).endswith("10.PRODUCT/13.NODE-LANGUAGE")
+            for item in work_items
+        ),
+        "all_non_promoting": all(not item["promotion_allowed"] for item in work_items),
+        "all_bulk_copy_forbidden": all(not item["bulk_copy_allowed"] for item in work_items),
+        "all_non_interrupting": all(
+            not item["live_process_interruption_allowed"] for item in work_items
+        ),
+        "work_items": work_items,
+        "rule": (
+            "This is a migration-control plan. It does not accept copied runtime "
+            "source as authority and does not authorize live process interruption."
         ),
     }
 
@@ -2135,6 +2317,14 @@ def main(argv: list[str] | None = None) -> int:
             "candidates. This is read-only and never touches processes."
         ),
     )
+    parser.add_argument(
+        "--source-drift-work-plan",
+        action="store_true",
+        help=(
+            "Print authority-scoped work items for resolving ignored runtime "
+            "source drift. This is read-only and never touches processes."
+        ),
+    )
     args = parser.parse_args(argv)
 
     product_root = Path(args.product_root).resolve()
@@ -2146,6 +2336,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.inspect_board_pids
         or args.verify_universal_holders
         or args.source_drift_report
+        or args.source_drift_work_plan
     )
     if args.sync_universal_holders and read_only:
         print(json.dumps({
@@ -2221,6 +2412,12 @@ def main(argv: list[str] | None = None) -> int:
             result = verify_runtime_holders_in_universal(plan)
         elif args.source_drift_report:
             result = plan["runtime_copy_source_drift"]
+        elif args.source_drift_work_plan:
+            result = build_source_drift_migration_work(
+                plan["runtime_copy_source_drift"],
+                product_root=product_root,
+                workspace=workspace,
+            )
         else:
             result = plan["handoff_board"] if args.handoff_board else plan
     else:

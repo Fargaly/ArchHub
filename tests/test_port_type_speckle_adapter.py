@@ -122,6 +122,52 @@ def test_round_trip_through_to_dict_and_from_dict():
         assert back.type is pt, f"{pt} lost identity through dict round-trip"
 
 
+def test_custom_port_type_round_trip_is_lossless():
+    custom = "founder.geometry.facade-panel"
+    encoded = Port(name="panel", type=custom).to_dict()
+    assert encoded["type"] == custom
+    assert encoded["speckle_type"] == custom
+    assert Port.from_dict(encoded).type == custom
+
+
+def test_custom_protocol_type_without_legacy_hint_is_preserved():
+    custom = "Objects.Geometry.FounderFacadePanel"
+    assert Port.from_dict({"name": "panel", "speckle_type": custom}).type == custom
+
+
+def test_workflow_validation_accepts_matching_custom_port_types():
+    from workflows.graph import Edge, Node, Workflow
+
+    custom = "founder.geometry.facade-panel"
+    wf = Workflow.new("custom types")
+    wf.add_node(Node(id="a", type="x", outputs=[Port("out", custom)]))
+    wf.add_node(Node(id="b", type="y", inputs=[Port("in", custom)]))
+    wf.add_edge(Edge(id="e", src_node="a", src_port="out",
+                     dst_node="b", dst_port="in"))
+
+    assert not [issue for issue in wf.validate_v2()
+                if issue.get("code") == "type_mismatch"]
+
+
+def test_workflow_validation_reports_custom_type_mismatch_losslessly():
+    from workflows.graph import Edge, Node, Workflow
+
+    wf = Workflow.new("custom mismatch")
+    wf.add_node(Node(
+        id="a", type="x",
+        outputs=[Port("out", "founder.geometry.facade-panel")]))
+    wf.add_node(Node(
+        id="b", type="y",
+        inputs=[Port("in", "founder.image.material")]))
+    wf.add_edge(Edge(id="e", src_node="a", src_port="out",
+                     dst_node="b", dst_port="in"))
+
+    issue = next(issue for issue in wf.validate_v2()
+                 if issue.get("code") == "type_mismatch")
+    assert "founder.geometry.facade-panel" in issue["msg"]
+    assert "founder.image.material" in issue["msg"]
+
+
 # ── Stage 3: wire metadata enrichment ───────────────────────────────
 
 def test_workflow_to_dict_enriches_edges_with_speckle_type():

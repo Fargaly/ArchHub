@@ -1048,6 +1048,22 @@ class TestTeamsOps:
         assert evt["is_online_meeting"] is True
         assert evt["join_url"].startswith("https://teams.microsoft.com/")
 
+    def test_list_meetings_requests_the_soonest_event_first(self):
+        calls = []
+
+        def paginate(path, *, token, query, cap):
+            calls.append((path, token, query, cap))
+            return {"value": []}
+
+        with patch.object(teams_connector, "_load_token", return_value="tok"), \
+             patch.object(teams_connector, "_paginate", side_effect=paginate):
+            r = self._run("teams.list_meetings", limit=3)
+
+        assert r.ok is True
+        assert calls[0][0] == "me/events"
+        assert calls[0][2]["$orderby"] == "start/dateTime asc"
+        assert calls[0][3] == 3
+
     def test_post_message_writes(self):
         with patch.object(teams_connector, "_load_token",
                           return_value="tok"), \

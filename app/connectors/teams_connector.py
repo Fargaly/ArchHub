@@ -351,7 +351,7 @@ def _op_list_meetings(limit: int = 20, **_: Any) -> OpResult:
     r = _paginate("me/events", token=token,
                   query={"$select": "id,subject,start,end,organizer,"
                                     "isOnlineMeeting,onlineMeeting,webLink",
-                         "$orderby": "start/dateTime desc",
+                         "$orderby": "start/dateTime asc",
                          "$top": min(cap, 50)},
                   cap=cap)
     if "_err" in r:

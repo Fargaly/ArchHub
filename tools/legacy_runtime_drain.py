@@ -322,6 +322,49 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_drift_candidate(
+    *,
+    status: str,
+    row: dict[str, Any],
+    runtime_copy: Path,
+    authority: Path,
+) -> dict[str, Any]:
+    path = str(row["path"])
+    digest_body = {
+        "status": status,
+        "path": path,
+        "runtime_sha256": row.get("runtime_sha256"),
+        "authority_sha256": row.get("authority_sha256"),
+    }
+    candidate_id = "runtime-source-drift:%s" % hashlib.sha256(
+        json.dumps(digest_body, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()[:16]
+    candidate = {
+        "candidate_id": candidate_id,
+        "path": path,
+        "status": status,
+        "runtime_path": str(runtime_copy / path),
+        "authority_path": str(authority / path),
+        "runtime_sha256": row.get("runtime_sha256"),
+        "authority_sha256": row.get("authority_sha256"),
+        "required_decision": (
+            "reconstruct_in_canonical_authority, reject_as_experiment, or "
+            "preserve_as_migration_evidence"
+        ),
+        "allowed_next_action": (
+            "read and compare as evidence; if accepted, rebuild through "
+            "10.PRODUCT/13.NODE-LANGUAGE with red courts first"
+        ),
+        "forbidden_action": (
+            "bulk-copy ignored runtime source or cite this candidate as "
+            "delivered authority"
+        ),
+    }
+    return candidate
+
+
 def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, Any]:
     """Detect source hidden in ignored node_runtime that authority does not own."""
     runtime_copy = product_root / "node_runtime"
@@ -347,6 +390,26 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
                 "authority_sha256": authority_sha,
             })
     drift_count = len(missing_in_authority) + len(different_from_authority)
+    migration_candidates = [
+        *[
+            _source_drift_candidate(
+                status="missing_in_authority",
+                row=row,
+                runtime_copy=runtime_copy,
+                authority=authority,
+            )
+            for row in missing_in_authority
+        ],
+        *[
+            _source_drift_candidate(
+                status="different_from_authority",
+                row=row,
+                runtime_copy=runtime_copy,
+                authority=authority,
+            )
+            for row in different_from_authority
+        ],
+    ]
     return {
         "schema": "archhub-runtime-copy-source-drift/v1",
         "runtime_copy": str(runtime_copy),
@@ -356,9 +419,11 @@ def runtime_copy_source_drift(product_root: Path, authority: Path) -> dict[str, 
         "ignored_suffixes": sorted(SOURCE_DRIFT_IGNORED_SUFFIXES),
         "checked_runtime_files": checked,
         "drift_count": drift_count,
+        "migration_candidate_count": len(migration_candidates),
         "ok": drift_count == 0,
         "missing_in_authority": missing_in_authority,
         "different_from_authority": different_from_authority,
+        "migration_candidates": migration_candidates,
         "rule": (
             "An ignored runtime copy cannot be archived while it contains source "
             "files that are missing or different in the declared authority."
@@ -1942,6 +2007,14 @@ def main(argv: list[str] | None = None) -> int:
             "work items. This never creates work and never touches processes."
         ),
     )
+    parser.add_argument(
+        "--source-drift-report",
+        action="store_true",
+        help=(
+            "Print the ignored runtime source-drift inventory and migration "
+            "candidates. This is read-only and never touches processes."
+        ),
+    )
     args = parser.parse_args(argv)
 
     product_root = Path(args.product_root).resolve()
@@ -1952,6 +2025,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.handoff_board
         or args.inspect_board_pids
         or args.verify_universal_holders
+        or args.source_drift_report
     )
     if args.sync_universal_holders and read_only:
         print(json.dumps({
@@ -2025,6 +2099,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.verify_universal_holders:
             result = verify_runtime_holders_in_universal(plan)
+        elif args.source_drift_report:
+            result = plan["runtime_copy_source_drift"]
         else:
             result = plan["handoff_board"] if args.handoff_board else plan
     else:

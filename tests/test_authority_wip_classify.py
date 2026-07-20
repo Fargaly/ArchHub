@@ -170,6 +170,10 @@ def test_classification_keeps_universal_cell_separate_from_legacy():
         == "governance_run_evidence"
     )
     assert (
+        awc.classify_path("docs/_meta/legacy_runtime_source_drift.latest.json")
+        == "governance_run_evidence"
+    )
+    assert (
         awc.classify_path(
             "docs/_meta/legacy_runtime_universal_holder_verification.latest.json"
         )
@@ -1123,6 +1127,7 @@ def test_governance_run_evidence_leaf_gate_executes_run_report_court():
         {"code": "??", "path": "docs/_meta/live_runtime_holders.latest.json"},
         {"code": "??", "path": "docs/_meta/legacy_runtime_handoff_board.latest.json"},
         {"code": "??", "path": "docs/_meta/legacy_runtime_handoff_inspection.latest.json"},
+        {"code": "??", "path": "docs/_meta/legacy_runtime_source_drift.latest.json"},
         {"code": "??", "path": "docs/_meta/legacy_runtime_universal_holder_verification.latest.json"},
         {"code": "??", "path": "personal-brain-mcp/src/personal_brain/run_report.py"},
         {"code": "??", "path": "personal-brain-mcp/tests/test_run_report.py"},

@@ -830,12 +830,22 @@ def test_runtime_copy_source_drift_detects_missing_and_different_source(tmp_path
     assert result["ok"] is False
     assert result["checked_runtime_files"] == 3
     assert result["drift_count"] == 2
+    assert result["migration_candidate_count"] == 2
     assert [row["path"] for row in result["different_from_authority"]] == [
         "nodelang/changed.py"
     ]
     assert [row["path"] for row in result["missing_in_authority"]] == [
         "nodelang/runtime_only.py"
     ]
+    candidates = {
+        row["path"]: row
+        for row in result["migration_candidates"]
+    }
+    assert candidates["nodelang/runtime_only.py"]["status"] == "missing_in_authority"
+    assert candidates["nodelang/changed.py"]["status"] == "different_from_authority"
+    assert candidates["nodelang/changed.py"]["authority_sha256"]
+    assert all(row["candidate_id"].startswith("runtime-source-drift:") for row in candidates.values())
+    assert all("bulk-copy" in row["forbidden_action"] for row in candidates.values())
     assert all("bundle.js" not in json.dumps(row) for row in result["missing_in_authority"])
 
 
@@ -852,8 +862,10 @@ def test_runtime_copy_source_drift_is_green_when_runtime_matches_authority(tmp_p
 
     assert result["ok"] is True
     assert result["drift_count"] == 0
+    assert result["migration_candidate_count"] == 0
     assert result["missing_in_authority"] == []
     assert result["different_from_authority"] == []
+    assert result["migration_candidates"] == []
 
 
 def test_retirement_gate_blocks_archive_until_all_conditions_are_green():
@@ -1576,3 +1588,34 @@ def test_cli_verify_universal_holders_is_read_only_and_enforced(
     assert out["schema"] == "archhub-runtime-holder-universal-verification/v1"
     assert out["ok"] is False
     assert seen["holder_count"] == 1
+
+
+def test_cli_source_drift_report_is_read_only_candidate_inventory(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "nodelang"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE" / "nodelang"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "candidate.py").write_text("# runtime candidate\n", encoding="utf-8")
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--source-drift-report",
+    ])
+
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["schema"] == "archhub-runtime-copy-source-drift/v1"
+    assert out["ok"] is False
+    assert out["migration_candidate_count"] == 1
+    assert out["migration_candidates"][0]["path"] == "nodelang/candidate.py"
+    assert out["migration_candidates"][0]["status"] == "missing_in_authority"
+    assert not out_dir.exists()

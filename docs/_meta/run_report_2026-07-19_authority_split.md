@@ -7121,3 +7121,91 @@ Next action:
 - Commit the refreshed ledger/report checkpoint, then consume the
   `legacy_webshell_host_court` batch by running the UI/WebShell courts and
   staging only the court files that already reflect the compatibility boundary.
+
+## WebShell court convergence - 2026-07-20
+
+Commit:
+
+- `40fdf75` - `Bind WebShell court batch to Cell bridge`.
+
+Intent:
+
+- Consume the `legacy_webshell_host_court` batch and the temporary
+  `legacy_webshell_host_with_cell_bridge` source change without calling the old
+  WebShell product authority.
+- Keep the production WebShell fenced as a compatibility host for Universal Cell
+  bridge evidence.
+- Fix a real dead-event bug found by the court instead of weakening the court.
+
+Mechanisms added or repaired:
+
+- `app/web_ui/studio-lm.jsx` now registers a real listener for
+  `archhub-universal-interaction-result` and records the last result at
+  `window.__archhub_last_universal_interaction_result`.
+- `app/web_ui/studio-lm.compiled.js` was rebuilt with `python tools/build_jsx.py`.
+- The 18 WebShell/static/JSDOM courts now assert graph-surface bridge behavior,
+  relation-backed UI, compiled-bundle freshness, and no dead app-namespaced
+  events.
+
+Verification:
+
+- Initial WebShell court run:
+  - result: `1 failed, 317 passed, 9 skipped, 2 warnings`.
+  - failure: `archhub-universal-interaction-result` was dispatched without a
+    listener.
+- Dead-event fix gate:
+  `python -m pytest tests\test_ui_fake_gate.py::test_no_dead_event_dispatches -q -p no:cacheprovider --timeout=120`
+  - result after fix: `1 passed, 1 warning`.
+- Full WebShell court batch:
+  `python -m pytest tests\test_a11y_phase_4_dropdown_nav.py tests\test_a11y_phase_4_modals.py tests\test_canvas_ux_fin.py tests\test_design_system_tokens.py tests\test_final_shells_graph.py tests\test_gpu_resilience.py tests\test_host_node_v2_s1.py tests\test_jswire_visibility.py tests\test_jsx_signal_wiring.py tests\test_new_bridge_slots.py tests\test_reactflow_p2a_groundwork.py tests\test_realify_surfaces_wiring.py tests\test_self_heal_inspector.py tests\test_skill_json_split_view.py tests\test_skills_search_panels_wiring.py tests\test_ui_cdp_smoke.py tests\test_ui_fake_gate.py tests\test_version_footer_real.py -q -p no:cacheprovider --timeout=300`
+  - result after fix: `318 passed, 9 skipped, 2 warnings`.
+- Precompile/compiled-bundle courts:
+  `python -m pytest tests\test_build_jsx_precompile.py tests\test_a11y_apply.py -q -p no:cacheprovider --timeout=300`
+  - result: `16 passed, 1 warning`.
+- WebShell bridge boundary courts:
+  `python -m pytest ..\13.NODE-LANGUAGE\tests_replica\test_cell_legacy_webshell_host.py tests\test_legacy_webshell_host_boundary.py tests\test_production_webshell_preview.py tests\test_build_jsx_precompile.py tests\test_a11y_apply.py -q -p no:cacheprovider --timeout=300`
+  - result: `34 passed, 1 warning`.
+- Syntax compile:
+  - all 18 Python court files compiled successfully.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+- Brain commit gate:
+  - attempted on `app/web_ui/studio-lm.jsx` and
+    `app/web_ui/studio-lm.compiled.js`.
+  - fail-opened because `http://127.0.0.1:8473/mcp` was unreachable.
+
+Current WIP/live-holder evidence after `40fdf75`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `8`.
+- classified WIP entries in the authority ledger: `8`.
+- no-unclassified gate: `ok`, count `0`.
+- `legacy_webshell_host_court`: consumed.
+- `legacy_webshell_host_with_cell_bridge`: consumed.
+- classification digest:
+  `99bfbf1e887ce6e4f462c608439ff8b5b3c714598358275d4f3efc6c5bf2089b`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- `tools/build_jsx.py` refreshed an existing committed compiled artifact only.
+
+Current position:
+
+- The legacy WebShell court batch is committed and caught one real issue, which
+  is fixed.
+- Remaining WIP is five UI runtime evidence probes, the refreshed ledgers, and
+  the live-locked copied runtime.
+
+Next action:
+
+- Commit the refreshed ledger/report checkpoint, then validate and commit the
+  `ui_runtime_evidence_probe` scripts. These may use hidden/headless browser
+  checks only; no visible browser window should be opened.

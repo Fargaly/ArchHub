@@ -535,6 +535,18 @@ def source_drift_resolution_ledger(product_root: Path) -> dict[str, Any]:
             if isinstance(runtime_candidate, dict) and runtime_candidate.get("path"):
                 candidate_path = str(runtime_candidate["path"]).replace("\\", "/")
                 by_path.setdefault(candidate_path, []).append(record)
+            candidate_decisions = payload.get("runtime_candidate_decisions")
+            if isinstance(candidate_decisions, list):
+                for decision_row in candidate_decisions:
+                    if not isinstance(decision_row, dict) or not decision_row.get("path"):
+                        continue
+                    candidate_path = str(decision_row["path"]).replace("\\", "/")
+                    by_path.setdefault(candidate_path, []).append({
+                        **record,
+                        "explicit_candidate_decision": True,
+                        "candidate_decision": decision_row.get("decision"),
+                        "resolution_state": decision_row.get("resolution_state"),
+                    })
             runtime_read_only = payload.get("runtime_evidence_read_only")
             if isinstance(runtime_read_only, dict):
                 for candidate_path in runtime_read_only:
@@ -594,8 +606,27 @@ def apply_source_drift_resolution_evidence(
         seen_records.add(key)
         deduped_records.append(record)
     records = deduped_records
+    explicit = [record for record in records if record.get("explicit_candidate_decision")]
     pending = any(record.get("pending_canonical_root_decision") for record in records)
-    if pending:
+    if explicit:
+        state = str(
+            explicit[0].get("resolution_state")
+            or "explicit_candidate_decision_pending_runtime_retirement"
+        )
+        decision = str(explicit[0].get("candidate_decision") or "recorded")
+        if decision == "preserve_as_migration_evidence":
+            action = (
+                "explicit decision records this copied-runtime candidate as "
+                "migration evidence only; do not promote it and keep it only "
+                "until the runtime copy is safely retired"
+            )
+        else:
+            action = (
+                "explicit decision records the canonical authority path for "
+                "this candidate; keep the copied runtime file only until the "
+                "runtime copy is safely retired"
+            )
+    elif pending:
         state = "pending_canonical_root_decision"
         action = (
             "preserve as read-only migration evidence until the canonical "

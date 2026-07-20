@@ -26,7 +26,7 @@
   "migration_candidate_count": 32,
   "resolution_ledger": {
     "schema": "archhub-runtime-source-drift-resolution-ledger/v1",
-    "evidence_file_count": 10,
+    "evidence_file_count": 11,
     "tracks_with_evidence": [
       "application_graph_projection",
       "baboom_context_and_cognition",
@@ -57,9 +57,9 @@
       "implementation_candidate": 12
     },
     "by_resolution_state": {
-      "canonical_evidence_recorded_pending_runtime_retirement": 23,
+      "canonical_evidence_recorded_pending_runtime_retirement": 24,
       "pending_canonical_root_decision": 2,
-      "track_evidence_recorded_pending_candidate_decision": 7
+      "preserved_as_migration_evidence_pending_runtime_retirement": 6
     },
     "promotion_allowed": false,
     "bulk_copy_allowed": false
@@ -260,7 +260,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -273,32 +273,14 @@
       "runtime_sha256": "a5ca9e96ee560b4465c0fc1f6db67cf1858ce31c03d8ff2bbbe4a07b2f6506e7",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -309,7 +291,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -322,32 +304,14 @@
       "runtime_sha256": "c8cf5b0b89fc8c38bea63f19a707966a74e6688c6207bea27004ed2083e798a2",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -389,7 +353,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -402,32 +366,14 @@
       "runtime_sha256": "6c71d76ace185011efca66d699d482b189a3a175522d9bac9dc9b9bee3d3f88c",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -438,7 +384,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -451,32 +397,14 @@
       "runtime_sha256": "9b25a238bb829f6392cefa01c6b00d3b08d83de4d41b4b8cf01399b7af7a76c3",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -487,7 +415,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -500,32 +428,14 @@
       "runtime_sha256": "4b1058e0df61418157a0e9af2930fe54fbfdffddbc0440eab8c79ab995bd3e17",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -536,7 +446,7 @@
       "candidate_kind": "court_candidate",
       "migration_track": "visual_workspace_interaction",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -549,32 +459,14 @@
       "runtime_sha256": "19f4f80d11bfcf351ffd6ddc8be2f37f90d038a80ee8cc2f895df0e9e29c4f18",
       "authority_sha256": null,
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "explicit decision records this copied-runtime candidate as migration evidence only; do not promote it and keep it only until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_security_evidence.latest.json",
-          "slice": "visual_workspace_interaction/relation_security",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
           "migration_track": "visual_workspace_interaction",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",
-          "slice": "relation_topology_exact_interface_rewire",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_evidence.latest.json",
-          "slice": "visual_workspace_interaction",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_visual_interaction_evidence.latest.json",
-          "slice": "cell_native_canvas_interaction_and_properties_controls",
-          "migration_track": "visual_workspace_interaction",
-          "command_count": 5
+          "command_count": 4
         }
       ]
     },
@@ -616,7 +508,7 @@
       "candidate_kind": "implementation_candidate",
       "migration_track": "runtime_transport_and_broker",
       "authority_disposition": "migration_evidence_not_authority",
-      "resolution_state": "track_evidence_recorded_pending_candidate_decision",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "promotion_allowed": false,
       "bulk_copy_allowed": false,
       "authority_basis": [
@@ -629,25 +521,13 @@
       "runtime_sha256": "d457fc3ff39df3fb4c45de4e6c9a44c521069bb1ccf0cd54f42fc487ac4ce052",
       "authority_sha256": "b0cc1b4ead11808034ecdf2f5b371b8220481060d00fab81815b34d68e0d4d9a",
       "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-      "allowed_next_action": "track-level canonical evidence exists, but this relative path still needs an explicit reconstruct/reject/preserve decision",
+      "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
       "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
       "resolution_evidence": [
         {
-          "path": "docs/_meta/legacy_runtime_source_drift_boundary_ports_evidence.latest.json",
-          "slice": "application_boundary_ports_as_cell_interfaces",
-          "migration_track": "runtime_transport_and_broker",
-          "command_count": 2
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_capability_evidence.latest.json",
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
           "slice": "",
-          "migration_track": "runtime_transport_and_broker",
-          "command_count": 3
-        },
-        {
-          "path": "docs/_meta/legacy_runtime_source_drift_transport_broker_evidence.latest.json",
-          "slice": "machine_transport_descriptor_capability_and_cloud_gateway",
-          "migration_track": "runtime_transport_and_broker",
+          "migration_track": "visual_workspace_interaction",
           "command_count": 4
         }
       ]
@@ -1354,6 +1234,12 @@
           "slice": "cell_native_application_projection_delta_and_root_identity",
           "migration_track": "application_graph_projection",
           "command_count": 3
+        },
+        {
+          "path": "docs/_meta/legacy_runtime_source_drift_candidate_decisions_evidence.latest.json",
+          "slice": "",
+          "migration_track": "visual_workspace_interaction",
+          "command_count": 4
         },
         {
           "path": "docs/_meta/legacy_runtime_source_drift_relation_topology_evidence.latest.json",

@@ -1003,6 +1003,55 @@ def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(t
     assert "do not port by bulk copy" in candidate["allowed_next_action"]
 
 
+def test_source_drift_resolution_ledger_reads_explicit_candidate_decisions(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime" / "tests_replica"
+    authority = tmp_path / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    runtime.mkdir(parents=True)
+    authority.mkdir(parents=True)
+    (runtime / "test_canvas_visual_grammar.py").write_text(
+        "runtime\n", encoding="utf-8"
+    )
+    evidence_dir = product_root / "docs" / "_meta"
+    evidence_dir.mkdir(parents=True)
+    (
+        evidence_dir
+        / "legacy_runtime_source_drift_candidate_decisions_evidence.latest.json"
+    ).write_text(
+        json.dumps({
+            "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+            "migration_track": "visual_workspace_interaction",
+            "decision": {
+                "runtime_copy_promoted": False,
+                "bulk_copy_performed": False,
+                "live_process_interruption": False,
+            },
+            "authority_files": {
+                "tests_replica/test_universal_ui_interactions.py": "sha"
+            },
+            "runtime_candidate_decisions": [
+                {
+                    "path": "tests_replica/test_canvas_visual_grammar.py",
+                    "decision": "preserve_as_migration_evidence",
+                    "resolution_state": (
+                        "preserved_as_migration_evidence_pending_runtime_retirement"
+                    ),
+                }
+            ],
+            "commands": [{"command": "pytest", "result": "1 passed"}],
+        }),
+        encoding="utf-8",
+    )
+
+    result = drain.runtime_copy_source_drift(product_root, authority)
+
+    candidate = result["migration_candidates"][0]
+    assert candidate["resolution_state"] == (
+        "preserved_as_migration_evidence_pending_runtime_retirement"
+    )
+    assert "migration evidence only" in candidate["allowed_next_action"]
+
+
 def test_known_runtime_source_drift_paths_are_classified_not_promotable():
     paths = [
         "nodelang/cell_baboom_activity.py",

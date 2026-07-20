@@ -1,0 +1,96 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-21T02:16:57.1534150+04:00",
+  "migration_track": "visual_workspace_interaction",
+  "slices": [
+    "visual_workspace_interaction",
+    "runtime_transport_and_broker"
+  ],
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "decision": {
+    "summary": "Explicit candidate decisions for ignored-runtime source drift that previously had only track-level evidence. These decisions do not promote copied runtime files. They bind each old candidate to canonical Cell authority evidence or preserve it as migration evidence until node_runtime is retired.",
+    "runtime_copy_promoted": false,
+    "bulk_copy_performed": false,
+    "live_process_interruption": false
+  },
+  "authority_files": {
+    "nodelang/authority_bridge.py": "b0cc1b4ead11808034ecdf2f5b371b8220481060d00fab81815b34d68e0d4d9a",
+    "tests_replica/test_authority_bridge.py": "93d9f099d3f1f7ae6254c4cf889610cff6fbe4874eab00b2ed2f77b5681bf745",
+    "tests_replica/test_canvas_interaction_policy.py": "60ae5679e6a9a41bac220124e3fe8912e550972dbff0c84f635abdd7ae0c9550",
+    "tests_replica/test_universal_ui_interactions.py": "cd0bc7cb6cb59ec1ce37fcda7bbc245b81362323ee58d15dc769111ad410fd6a",
+    "tests_replica/test_inspector_descriptor.py": "2b7f6ead4f9d1bec90ab8abf9ad9501ff1a743940a4d833b870a846c8296c1d5"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "nodelang/authority_bridge.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical authority bridge is proven as Universal Cell-only fallback with explicit probe/ownership behavior; ignored copy stays migration evidence only."
+    },
+    {
+      "path": "tests_replica/test_canvas_interaction_quality.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime canvas quality assertions are superseded by canonical Cell canvas interaction policy and rendered Universal UI interaction courts."
+    },
+    {
+      "path": "tests_replica/test_canvas_visual_grammar.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime visual grammar assertions are superseded by canonical Cell canvas interaction policy, Universal UI interaction, and inspector descriptor courts."
+    },
+    {
+      "path": "tests_replica/test_playable_interaction.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime playability assertions are superseded by canonical Cell interaction policy and Universal UI interaction courts that prove bounded deltas and viewport/marquee behavior."
+    },
+    {
+      "path": "tests_replica/test_relation_junction_visual_grammar.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime n-ary relation visual grammar assertions are superseded by canonical Universal UI relation incidence and topology courts."
+    },
+    {
+      "path": "tests_replica/test_visual_graph_workspace.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime one-level workspace assertions are superseded by canonical Universal UI, application projection, and inspector descriptor courts."
+    },
+    {
+      "path": "tests_replica/test_visual_node_authority.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Old typed-runtime node-library authority assertions are superseded by canonical Cell inspector descriptor and Universal UI courts."
+    }
+  ],
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_authority_bridge.py -q --timeout=180",
+      "result": "8 passed in 95.59s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_canvas_interaction_policy.py -q --timeout=180",
+      "result": "6 passed in 16.81s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_ui_interactions.py -q --timeout=180 -k \"fit_measures or marquee or real_nary_relation_incidence_cables_reach_real_role_sockets or relation_role_control_submits_only_its_graph_lease_and_event_fact or incidence_socket_drag_rewires_the_exact_relation_role or selected_relation_exposes_real_endpoints_gates_and_presentation\"",
+      "result": "14 passed, 55 deselected in 78.46s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_inspector_descriptor.py -q --timeout=180 -k \"node_library_shell\"",
+      "result": "1 passed, 19 deselected in 16.32s"
+    }
+  ],
+  "not_claimed": [
+    "This does not promote ignored node_runtime files.",
+    "This does not make the copied runtime physically safe to archive.",
+    "This does not port the pending BABOOM foreground activity/context capsule.",
+    "This did not stop, restart, or mutate running sessions."
+  ]
+}

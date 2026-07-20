@@ -26,10 +26,9 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "mixed_resolution_states",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
       "candidate_resolution_states": [
-        "canonical_evidence_recorded_pending_runtime_retirement",
-        "track_evidence_recorded_pending_candidate_decision"
+        "canonical_evidence_recorded_pending_runtime_retirement"
       ],
       "candidate_count": 9,
       "candidate_ids": [
@@ -101,7 +100,7 @@
       "resolution_state": "mixed_resolution_states",
       "candidate_resolution_states": [
         "canonical_evidence_recorded_pending_runtime_retirement",
-        "track_evidence_recorded_pending_candidate_decision"
+        "preserved_as_migration_evidence_pending_runtime_retirement"
       ],
       "candidate_count": 11,
       "candidate_ids": [

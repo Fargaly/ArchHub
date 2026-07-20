@@ -6963,3 +6963,86 @@ Next action:
 - Commit the refreshed ledger/report checkpoint, then move into the projection
   bridge slice (`grand_map_ui.py` and `test_grand_map_ui_surface.py`) before the
   larger legacy WebShell court batch.
+
+## Grand Map UI projection bridge convergence - 2026-07-20
+
+Commit:
+
+- `03fa9aa` - `Fence Grand Map UI projection bridge`.
+
+Intent:
+
+- Consume the handbuilt Grand Map UI projection slice without pretending it is
+  the new Universal Cell UI authority.
+- Keep the old named WebShell surfaces available only as a frozen,
+  non-authoritative compatibility bridge while Cell-native surfaces replace
+  them.
+
+Mechanisms added:
+
+- `app/workflows/grand_map_ui.py`:
+  - marks itself as migration evidence,
+  - labels payload authority as `legacy-handbuilt-grand-map-ui-projection`,
+  - sets `authority_status` to `superseded_migration_evidence`,
+  - denies promotion,
+  - points `superseded_by` to the Universal Cell authority.
+- `tests/test_grand_map_ui_surface.py`:
+  - freezes the legacy surface registry at 198 names,
+  - digest-checks the registry,
+  - proves unknown new legacy surfaces fail closed,
+  - proves the production WebShell consumes these surfaces as compatibility
+    payloads.
+
+Verification:
+
+- Full Grand Map UI surface court:
+  `python -m pytest tests\test_grand_map_ui_surface.py -q -p no:cacheprovider --timeout=300`
+  - result: `444 passed, 1 warning`.
+- Cell-side legacy surface catalog court:
+  `python -m pytest ..\13.NODE-LANGUAGE\tests_replica\test_cell_legacy_surface_catalog.py tests\test_grand_map_ui_surface.py::test_legacy_grand_map_surface_registry_is_frozen_until_cell_consumption tests\test_grand_map_ui_surface.py::test_legacy_grand_map_projection_module_does_not_claim_authority -q -p no:cacheprovider --timeout=300`
+  - result: `7 passed, 1 warning`.
+- Syntax compile:
+  `python -m py_compile app\workflows\grand_map_ui.py tests\test_grand_map_ui_surface.py`
+  - result: passed.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - staged credential scan: no private-key blocks, live token patterns, GitHub
+    tokens, Slack tokens, or AWS key patterns found.
+- Brain commit gate:
+  - attempted on `app/workflows/grand_map_ui.py`.
+  - fail-opened because `http://127.0.0.1:8473/mcp` was unreachable.
+
+Current WIP/live-holder evidence after `03fa9aa`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `27`.
+- classified WIP entries in the authority ledger: `26`.
+- no-unclassified gate: `ok`, count `0`.
+- `legacy_handbuilt_projection_cell_catalog_bridge`: consumed.
+- `legacy_handbuilt_projection_court`: consumed.
+- classification digest:
+  `973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The commit is large because it contains the frozen legacy UI-surface registry
+  and its court. It is source evidence, not temp output.
+
+Current position:
+
+- The handbuilt Grand Map projection is fenced as compatibility evidence and is
+  no longer an unclassified side authority.
+- Remaining WIP is live-holder evidence, UI/runtime evidence probes, legacy
+  WebShell host courts, one self-extension bridge, and the live-locked copied
+  runtime.
+
+Next action:
+
+- Commit the refreshed ledger/report checkpoint, then consume the
+  `legacy_self_extension_runtime_bridge` slice.

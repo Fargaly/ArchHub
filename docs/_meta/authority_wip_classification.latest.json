@@ -1,12 +1,10 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 28,
-  "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+  "total": 26,
+  "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
   "summary": {
     "governance_run_evidence": 1,
-    "legacy_handbuilt_projection_cell_catalog_bridge": 1,
-    "legacy_handbuilt_projection_court": 1,
     "legacy_self_extension_runtime_bridge": 1,
     "legacy_webshell_host_court": 18,
     "live_locked_legacy_typed_runtime_copy": 1,
@@ -215,18 +213,6 @@
     },
     {
       "code": "??",
-      "path": "app/workflows/grand_map_ui.py",
-      "category": "legacy_handbuilt_projection_cell_catalog_bridge",
-      "disposition": "legacy_frozen_projection_with_cell_catalog",
-      "required_action": "keep only as a frozen, non-authoritative compatibility adapter; its named surface registry must be mirrored as a digest-checked Universal Cell catalogue until every surface is consumed by the single application graph",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_surface_catalog.py",
-        "tests/test_grand_map_ui_surface.py"
-      ]
-    },
-    {
-      "code": "??",
       "path": "node_runtime/",
       "category": "live_locked_legacy_typed_runtime_copy",
       "disposition": "superseded_runtime_copy_with_live_process_holders",
@@ -237,15 +223,6 @@
         "tests/test_legacy_runtime_drain.py",
         "tests/test_live_runtime_holders.py"
       ]
-    },
-    {
-      "code": "??",
-      "path": "tests/test_grand_map_ui_surface.py",
-      "category": "legacy_handbuilt_projection_court",
-      "disposition": "active_court",
-      "required_action": "prove hand-built projections remain non-authority until Cell-native replacement",
-      "promotion_allowed": "false",
-      "required_courts": []
     },
     {
       "code": "??",
@@ -609,7 +586,7 @@
           "-q"
         ],
         "category": "governance_run_evidence",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "required_courts": [
           "personal-brain-mcp/tests/test_run_report.py"
         ]
@@ -626,7 +603,7 @@
         "category": "governance_run_evidence",
         "disposition": "run_evidence",
         "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "path_count": 1,
         "paths": [
           "docs/_meta/live_runtime_holders.latest.json"
@@ -642,103 +619,6 @@
         "wip-convergence"
       ],
       "priority": 6000
-    },
-    {
-      "title": "Consume public WIP category: legacy_handbuilt_projection_cell_catalog_bridge",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_surface_catalog.py",
-          "tests/test_grand_map_ui_surface.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "legacy_handbuilt_projection_cell_catalog_bridge",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
-        "required_courts": [
-          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_surface_catalog.py",
-          "tests/test_grand_map_ui_surface.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "legacy_handbuilt_projection_cell_catalog_bridge",
-        "disposition": "legacy_frozen_projection_with_cell_catalog",
-        "required_action": "keep only as a frozen, non-authoritative compatibility adapter; its named surface registry must be mirrored as a digest-checked Universal Cell catalogue until every surface is consumed by the single application graph",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
-        "path_count": 1,
-        "paths": [
-          "app/workflows/grand_map_ui.py"
-        ],
-        "required_courts": [
-          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_surface_catalog.py",
-          "tests/test_grand_map_ui_surface.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 7451
-    },
-    {
-      "title": "Consume public WIP category: legacy_handbuilt_projection_court",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "tests/test_grand_map_ui_surface.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "legacy_handbuilt_projection_court",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
-        "required_courts": [
-          "tests/test_grand_map_ui_surface.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "legacy_handbuilt_projection_court",
-        "disposition": "active_court",
-        "required_action": "prove hand-built projections remain non-authority until Cell-native replacement",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
-        "path_count": 1,
-        "paths": [
-          "tests/test_grand_map_ui_surface.py"
-        ],
-        "required_courts": [
-          "tests/test_grand_map_ui_surface.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 7200
     },
     {
       "title": "Consume public WIP category: legacy_self_extension_runtime_bridge",
@@ -757,7 +637,7 @@
           "-q"
         ],
         "category": "legacy_self_extension_runtime_bridge",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "required_courts": [
           "../13.NODE-LANGUAGE/tests_replica/test_cell_baboom_connector_execution.py",
           "../13.NODE-LANGUAGE/tests_replica/test_legacy_self_extension_bridge.py",
@@ -778,7 +658,7 @@
         "category": "legacy_self_extension_runtime_bridge",
         "disposition": "legacy_self_extension_permission_bridge",
         "required_action": "keep only as a superseded typed self-extension compatibility path; build, court, and learn effects must be mirrored as exact Universal Cell connector delegations and redacted receipts before promotion",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "path_count": 1,
         "paths": [
           "app/agents/self_extend.py"
@@ -829,7 +709,7 @@
           "-q"
         ],
         "category": "legacy_webshell_host_court",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "required_courts": [
           "tests/test_a11y_phase_4_dropdown_nav.py",
           "tests/test_a11y_phase_4_modals.py",
@@ -863,7 +743,7 @@
         "category": "legacy_webshell_host_court",
         "disposition": "active_court",
         "required_action": "use as regression court for the legacy host boundary until graph-native courts supersede it",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "path_count": 18,
         "paths": [
           "tests/test_a11y_phase_4_dropdown_nav.py",
@@ -929,7 +809,7 @@
           "-q"
         ],
         "category": "live_locked_legacy_typed_runtime_copy",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "required_courts": [
           "tests/test_legacy_runtime_drain.py",
           "tests/test_live_runtime_holders.py",
@@ -948,7 +828,7 @@
         "category": "live_locked_legacy_typed_runtime_copy",
         "disposition": "superseded_runtime_copy_with_live_process_holders",
         "required_action": "do not promote; drain or relaunch holders from 10.PRODUCT/13.NODE-LANGUAGE, then archive this copied runtime",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "path_count": 1,
         "paths": [
           "node_runtime/"
@@ -983,7 +863,7 @@
           "-q"
         ],
         "category": "ui_runtime_evidence_probe",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "required_courts": [
           "tests/test_cdp_gate_enforced.py",
           "tests/test_grand_map_ui_surface.py",
@@ -1003,7 +883,7 @@
         "category": "ui_runtime_evidence_probe",
         "disposition": "evidence_probe",
         "required_action": "keep as evidence only; not product authority",
-        "classification_digest": "7a67d93d6b737f21d839ac534e80e4203d53a5f5a3b0734a980dd6f0b5c800a0",
+        "classification_digest": "973b5b8328caa59d741e92a905a4189baa948ae7c8a8bdba4c882356c3dcecfa",
         "path_count": 5,
         "paths": [
           "tools/verify_app_relation_right_rail_layer_edit.cjs",
@@ -1032,8 +912,8 @@
     "schema": "archhub-live-runtime-holders/v1",
     "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
     "exists": true,
-    "observed_at": 1784567549.149493,
-    "holder_count": 7,
+    "observed_at": 1784567699.225008,
+    "holder_count": 4,
     "archive_safe_now": false,
     "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
     "holders": [
@@ -1044,50 +924,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "match": "cwd",
         "create_time": 1784000816.2812548,
-        "age_seconds": 566732.8682382107,
+        "age_seconds": 566882.9437532425,
         "status": "running",
-        "cpu_user_seconds": 812.734375,
+        "cpu_user_seconds": 812.78125,
         "cpu_system_seconds": 27.875,
-        "cpu_total_seconds": 840.609375
-      },
-      {
-        "pid": 54836,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m pytest tests_replica\\test_application_machine_transport.py -q -k cloud_gateway_device_binding_requires_the_same_device_as_baboom_session or baboom_execution_reconnects_to_its_exact_session_after_transport_loss or baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim or device_handoff_work_is_one_graph_policy_bound_to_target_custody",
-        "match": "cwd",
-        "create_time": 1784567487.97396,
-        "age_seconds": 61.175533056259155,
-        "status": "running",
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.0
-      },
-      {
-        "pid": 77796,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m pytest tests_replica\\test_application_machine_transport.py -q -k cloud_gateway_device_binding_requires_the_same_device_as_baboom_session or baboom_execution_reconnects_to_its_exact_session_after_transport_loss or baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim or device_handoff_work_is_one_graph_policy_bound_to_target_custody",
-        "match": "cwd",
-        "create_time": 1784567488.040266,
-        "age_seconds": 61.10922694206238,
-        "status": "running",
-        "cpu_user_seconds": 15.109375,
-        "cpu_system_seconds": 0.65625,
-        "cpu_total_seconds": 15.765625
-      },
-      {
-        "pid": 101760,
-        "name": "powershell.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n$env:PYTHONPATH = (Resolve-Path '.\\nodelang').Path; python -m pytest tests_replica\\test_application_machine_transport.py -q -k 'cloud_gateway_device_binding_requires_the_same_device_as_baboom_session or baboom_execution_reconnects_to_its_exact_session_after_transport_loss or baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim or device_handoff_work_is_one_graph_policy_bound_to_target_custody'",
-        "match": "cwd",
-        "create_time": 1784567487.791588,
-        "age_seconds": 61.35790491104126,
-        "status": "running",
-        "cpu_user_seconds": 0.03125,
-        "cpu_system_seconds": 0.0,
-        "cpu_total_seconds": 0.03125
+        "cpu_total_seconds": 840.65625
       },
       {
         "pid": 113216,
@@ -1096,11 +937,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
         "match": "cwd",
         "create_time": 1784038036.3854764,
-        "age_seconds": 529512.7640166283,
+        "age_seconds": 529662.8395316601,
         "status": "running",
         "cpu_user_seconds": 63.546875,
-        "cpu_system_seconds": 19.125,
-        "cpu_total_seconds": 82.671875
+        "cpu_system_seconds": 19.140625,
+        "cpu_total_seconds": 82.6875
       },
       {
         "pid": 117712,
@@ -1109,7 +950,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.734114,
-        "age_seconds": 476422.4153790474,
+        "age_seconds": 476572.4908940792,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -1122,7 +963,7 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.8539033,
-        "age_seconds": 476422.29558968544,
+        "age_seconds": 476572.37110471725,
         "status": "running",
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
@@ -1132,7 +973,7 @@
   },
   "local_application_servers": {
     "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784567573.6941717,
+    "observed_at": 1784567721.7779863,
     "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
     "process_count": 5,
     "safe_to_stop_count": 0,
@@ -1165,11 +1006,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784543480.5777273,
-        "age_seconds": 24093.11644434929,
+        "age_seconds": 24241.20025897026,
         "status": "running",
-        "cpu_user_seconds": 10751.437499999998,
-        "cpu_system_seconds": 36.90625,
-        "cpu_total_seconds": 10788.343749999998
+        "cpu_user_seconds": 10825.218749999998,
+        "cpu_system_seconds": 37.171875,
+        "cpu_total_seconds": 10862.390624999998
       },
       {
         "pid": 52484,
@@ -1190,11 +1031,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784000816.2812548,
-        "age_seconds": 566757.4129168987,
+        "age_seconds": 566905.4967315197,
         "status": "running",
-        "cpu_user_seconds": 812.765625,
+        "cpu_user_seconds": 812.78125,
         "cpu_system_seconds": 27.875,
-        "cpu_total_seconds": 840.640625
+        "cpu_total_seconds": 840.65625
       },
       {
         "pid": 14616,
@@ -1214,11 +1055,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.82487,
-        "age_seconds": 334806.86930155754,
+        "age_seconds": 334954.9531161785,
         "status": "running",
         "cpu_user_seconds": 55.40625,
-        "cpu_system_seconds": 12.59375,
-        "cpu_total_seconds": 68.0
+        "cpu_system_seconds": 12.609375,
+        "cpu_total_seconds": 68.015625
       },
       {
         "pid": 122452,
@@ -1236,7 +1077,7 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.690817,
-        "age_seconds": 334807.0033545494,
+        "age_seconds": 334955.0871691704,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -1260,11 +1101,11 @@
         "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
         "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
         "create_time": 1784225629.9015317,
-        "age_seconds": 341943.7926399708,
+        "age_seconds": 342091.87645459175,
         "status": "running",
-        "cpu_user_seconds": 53.859375,
+        "cpu_user_seconds": 53.921875,
         "cpu_system_seconds": 12.828125,
-        "cpu_total_seconds": 66.6875
+        "cpu_total_seconds": 66.75
       }
     ]
   }

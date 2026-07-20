@@ -148,9 +148,11 @@ provider-name-to-root map. Label-only requests are denied before delegation.
 ## 2026-07-20 Active BABOOM Surface Purity
 
 The active BABOOM desktop sensor, headless Steward, and rule engine no longer
-read the device-local Codex activity/session journal. Their proactive Work,
-Workshop, Attention, capability, runtime-presence, and device reports derive
-from the bounded, same-revision Universal graph briefing. A compact UI arrow
+read the device-local Codex activity/session journal. The rule engine also no
+longer turns local Brain, repository, foreground, idle, or supervisor readings
+into an active message. Its proactive Work, Workshop, Attention, capability,
+runtime-presence, device, and foreground-activity reports derive from the
+bounded, same-revision Universal graph briefing. A compact UI arrow
 may expose only the matching graph suggestion; its Work claim still requires
 the existing founder confirmation and bound Agent Session.
 
@@ -160,9 +162,11 @@ BABOOM semantic authority and cannot create a report, suggestion, Work, claim,
 or effect. Focused UI, Steward, rule, and authority-boundary courts passed;
 the running desktop and graph owner were not reloaded.
 
-The graph lens is now `app:baboom-context:v2`. Its active runtime count and
-runtime-label histogram derive from signed, unexpired Universal presence leases
-across approved devices, not the local server's transient request-session map.
-The local server contributes only its bounded current-device-proof bit to the
-separate device projection. The full BABOOM suite passed 179 courts after this
-change; the running desktop and runtime were not reloaded.
+The runtime-visible graph lens remains `app:baboom-context:v1`; the current
+runtime constant and replica courts still assert that value. Runtime presence
+is projected from graph-held presence leases plus the local runtime's bounded
+current-device proof. Foreground-app observations are admitted only as
+content-free cognition capsules; no served BABOOM context histogram is
+versioned in this repo yet. A v2/v3 context-lens promotion remains open until
+the route, graph projection, and courts change together. The running desktop
+and runtime were not reloaded.

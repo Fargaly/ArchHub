@@ -299,24 +299,11 @@
     "schema": "archhub-live-runtime-holders/v1",
     "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
     "exists": true,
-    "observed_at": 1784569415.9910233,
-    "holder_count": 7,
+    "observed_at": 1784569993.9179332,
+    "holder_count": 4,
     "archive_safe_now": false,
     "required_action": "do not archive or move while holders exist; drain or relaunch from 10.PRODUCT/13.NODE-LANGUAGE first",
     "holders": [
-      {
-        "pid": 49960,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
-        "match": "cwd",
-        "create_time": 1784569093.6821485,
-        "age_seconds": 322.30887484550476,
-        "status": "running",
-        "cpu_user_seconds": 47.96875,
-        "cpu_system_seconds": 1.5625,
-        "cpu_total_seconds": 49.53125
-      },
       {
         "pid": 52484,
         "name": "pythonw.exe",
@@ -324,11 +311,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "match": "cwd",
         "create_time": 1784000816.2812548,
-        "age_seconds": 568599.7097685337,
+        "age_seconds": 569177.6366784573,
         "status": "running",
-        "cpu_user_seconds": 813.875,
-        "cpu_system_seconds": 28.078125,
-        "cpu_total_seconds": 841.953125
+        "cpu_user_seconds": 814.09375,
+        "cpu_system_seconds": 28.203125,
+        "cpu_total_seconds": 842.296875
       },
       {
         "pid": 113216,
@@ -337,11 +324,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub_nary_qa_server.py",
         "match": "cwd",
         "create_time": 1784038036.3854764,
-        "age_seconds": 531379.6055469513,
+        "age_seconds": 531957.5324568748,
         "status": "running",
-        "cpu_user_seconds": 63.765625,
-        "cpu_system_seconds": 19.1875,
-        "cpu_total_seconds": 82.953125
+        "cpu_user_seconds": 63.8125,
+        "cpu_system_seconds": 19.21875,
+        "cpu_total_seconds": 83.03125
       },
       {
         "pid": 117712,
@@ -350,24 +337,11 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.734114,
-        "age_seconds": 478289.2569093704,
+        "age_seconds": 478867.183819294,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0
-      },
-      {
-        "pid": 120048,
-        "name": "python.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
-        "match": "cwd",
-        "create_time": 1784569093.6276233,
-        "age_seconds": 322.3633999824524,
-        "status": "running",
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.015625,
-        "cpu_total_seconds": 0.015625
       },
       {
         "pid": 147188,
@@ -376,30 +350,17 @@
         "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -",
         "match": "cwd",
         "create_time": 1784091126.8539033,
-        "age_seconds": 478289.13712000847,
+        "age_seconds": 478867.064029932,
         "status": "running",
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
         "cpu_total_seconds": 1.234375
-      },
-      {
-        "pid": 149512,
-        "name": "powershell.exe",
-        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-        "cmdline": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n$env:PYTHONPATH = (Resolve-Path '.\\nodelang').Path; python -m pytest tests_replica\\test_cell_baboom_activity.py tests_replica\\test_application_machine_transport.py tests_replica\\test_universal_cloud_gateway.py -q",
-        "match": "cwd",
-        "create_time": 1784569093.4624615,
-        "age_seconds": 322.52856183052063,
-        "status": "running",
-        "cpu_user_seconds": 0.0,
-        "cpu_system_seconds": 0.078125,
-        "cpu_total_seconds": 0.078125
       }
     ]
   },
   "local_application_servers": {
     "schema": "archhub-local-application-server-processes/v1",
-    "observed_at": 1784569443.0320578,
+    "observed_at": 1784570018.6293795,
     "workspace_root": "C:\\Users\\fargaly\\00.ARCHUB",
     "process_count": 5,
     "safe_to_stop_count": 0,
@@ -432,11 +393,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784543480.5777273,
-        "age_seconds": 25962.454330444336,
+        "age_seconds": 26538.05165219307,
         "status": "running",
-        "cpu_user_seconds": 11689.09375,
-        "cpu_system_seconds": 39.921875,
-        "cpu_total_seconds": 11729.015625
+        "cpu_user_seconds": 11953.484375,
+        "cpu_system_seconds": 41.09375,
+        "cpu_total_seconds": 11994.578125
       },
       {
         "pid": 52484,
@@ -457,11 +418,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
         "universal_state_path": null,
         "create_time": 1784000816.2812548,
-        "age_seconds": 568626.7508029938,
+        "age_seconds": 569202.3481247425,
         "status": "running",
-        "cpu_user_seconds": 813.875,
-        "cpu_system_seconds": 28.09375,
-        "cpu_total_seconds": 841.96875
+        "cpu_user_seconds": 814.109375,
+        "cpu_system_seconds": 28.203125,
+        "cpu_total_seconds": 842.3125
       },
       {
         "pid": 14616,
@@ -481,11 +442,11 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.82487,
-        "age_seconds": 336676.2071876526,
+        "age_seconds": 337251.8045094013,
         "status": "running",
-        "cpu_user_seconds": 55.71875,
-        "cpu_system_seconds": 12.703125,
-        "cpu_total_seconds": 68.421875
+        "cpu_user_seconds": 55.84375,
+        "cpu_system_seconds": 12.71875,
+        "cpu_total_seconds": 68.5625
       },
       {
         "pid": 122452,
@@ -503,7 +464,7 @@
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-legacy-8507-agent-body-candidate.json",
         "universal_state_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\archhub-universal-8503-agent-body-candidate.sqlite3",
         "create_time": 1784232766.690817,
-        "age_seconds": 336676.34124064445,
+        "age_seconds": 337251.9385623932,
         "status": "running",
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
@@ -527,11 +488,11 @@
         "state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-legacy-8501-v51.json",
         "universal_state_path": "C:/Users/fargaly/AppData/Local/Temp/archhub-universal-8501-v41.sqlite3",
         "create_time": 1784225629.9015317,
-        "age_seconds": 343813.1305260658,
+        "age_seconds": 344388.72784781456,
         "status": "running",
-        "cpu_user_seconds": 54.25,
+        "cpu_user_seconds": 54.359375,
         "cpu_system_seconds": 12.875,
-        "cpu_total_seconds": 67.125
+        "cpu_total_seconds": 67.234375
       }
     ]
   }

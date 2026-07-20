@@ -1,9 +1,12 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 0,
-  "classification_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-  "summary": {},
+  "total": 4,
+  "classification_digest": "a6927f5f64d926584d68d7d218e28ccef41ab4243f0d8f83ce6df2febd67e67f",
+  "summary": {
+    "governance_brain_authority_layer": 2,
+    "governance_run_evidence": 2
+  },
   "gate": {
     "no_unclassified": {
       "ok": true,
@@ -16,7 +19,94 @@
       "items": []
     }
   },
-  "entries": [],
+  "entries": [
+    {
+      "code": " M",
+      "path": "docs/_meta/authority_wip_classification.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "docs/_meta/legacy_runtime_handoff_shadow_probe.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tests/test_legacy_runtime_drain.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    },
+    {
+      "code": " M",
+      "path": "tools/legacy_runtime_drain.py",
+      "category": "governance_brain_authority_layer",
+      "disposition": "migration_control_layer",
+      "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+        "personal-brain-mcp/tests/test_hook_coverage.py",
+        "personal-brain-mcp/tests/test_active_work_db.py",
+        "personal-brain-mcp/tests/test_compliance_report.py",
+        "personal-brain-mcp/tests/test_grand_map_sync.py",
+        "personal-brain-mcp/tests/test_installer.py",
+        "personal-brain-mcp/tests/test_installer_coverage.py",
+        "personal-brain-mcp/tests/test_mcp_core_http.py",
+        "personal-brain-mcp/tests/test_reflexion.py",
+        "personal-brain-mcp/tests/test_roma.py",
+        "personal-brain-mcp/tests/test_run_report.py",
+        "personal-brain-mcp/tests/test_secret_resolver.py",
+        "personal-brain-mcp/tests/test_server.py",
+        "personal-brain-mcp/tests/test_server_verify.py",
+        "personal-brain-mcp/tests/test_universal_session_manager.py",
+        "tests/test_agent_os_broker.py",
+        "tests/test_agent_os_gate.py",
+        "tests/test_brainwrap.py",
+        "tests/test_cockpit_legacy_authority_boundary.py",
+        "tests/test_governed_sessions.py",
+        "tests/test_legacy_runtime_drain.py",
+        "tests/test_live_runtime_holders.py"
+      ]
+    }
+  ],
   "categories": {
     "universal_cell_bridge": {
       "disposition": "runtime_authority_client",
@@ -294,5 +384,165 @@
       "required_courts": []
     }
   },
-  "active_work_leaves": []
+  "active_work_leaves": [
+    {
+      "title": "Consume public WIP category: governance_brain_authority_layer",
+      "gate_kind": "pytest",
+      "gate_spec": {
+        "path": "tests/test_authority_wip_classify.py",
+        "selectors": [
+          "tests/test_authority_wip_classify.py",
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
+        ],
+        "args": [
+          "-q"
+        ],
+        "category": "governance_brain_authority_layer",
+        "classification_digest": "a6927f5f64d926584d68d7d218e28ccef41ab4243f0d8f83ce6df2febd67e67f",
+        "required_courts": [
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
+        ]
+      },
+      "cde_container": {
+        "container_id": "10.PRODUCT/12.PRODUCTION",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "governance_context": {
+        "schema": "archhub-public-wip-category-consumption/v1",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+        "category": "governance_brain_authority_layer",
+        "disposition": "migration_control_layer",
+        "required_action": "keep as enforcement/migration control only when the Brain governance boundary is graph-contracted, non-promotable, and admitted by the Universal Cell authority until fully consumed",
+        "classification_digest": "a6927f5f64d926584d68d7d218e28ccef41ab4243f0d8f83ce6df2febd67e67f",
+        "path_count": 2,
+        "paths": [
+          "tests/test_legacy_runtime_drain.py",
+          "tools/legacy_runtime_drain.py"
+        ],
+        "required_courts": [
+          "../13.NODE-LANGUAGE/tests_replica/test_cell_legacy_brain_governance.py",
+          "personal-brain-mcp/tests/test_active_work_db.py",
+          "personal-brain-mcp/tests/test_compliance_report.py",
+          "personal-brain-mcp/tests/test_grand_map_sync.py",
+          "personal-brain-mcp/tests/test_hook_coverage.py",
+          "personal-brain-mcp/tests/test_installer.py",
+          "personal-brain-mcp/tests/test_installer_coverage.py",
+          "personal-brain-mcp/tests/test_mcp_core_http.py",
+          "personal-brain-mcp/tests/test_reflexion.py",
+          "personal-brain-mcp/tests/test_roma.py",
+          "personal-brain-mcp/tests/test_run_report.py",
+          "personal-brain-mcp/tests/test_secret_resolver.py",
+          "personal-brain-mcp/tests/test_server.py",
+          "personal-brain-mcp/tests/test_server_verify.py",
+          "personal-brain-mcp/tests/test_universal_session_manager.py",
+          "tests/test_agent_os_broker.py",
+          "tests/test_agent_os_gate.py",
+          "tests/test_brainwrap.py",
+          "tests/test_cockpit_legacy_authority_boundary.py",
+          "tests/test_governed_sessions.py",
+          "tests/test_legacy_runtime_drain.py",
+          "tests/test_live_runtime_holders.py"
+        ],
+        "promotion_allowed": false
+      },
+      "fit": [
+        "governance",
+        "universal-cell-authority",
+        "wip-convergence"
+      ],
+      "priority": 8200
+    },
+    {
+      "title": "Consume public WIP category: governance_run_evidence",
+      "gate_kind": "pytest",
+      "gate_spec": {
+        "path": "tests/test_authority_wip_classify.py",
+        "selectors": [
+          "tests/test_authority_wip_classify.py",
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "args": [
+          "-q"
+        ],
+        "category": "governance_run_evidence",
+        "classification_digest": "a6927f5f64d926584d68d7d218e28ccef41ab4243f0d8f83ce6df2febd67e67f",
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ]
+      },
+      "cde_container": {
+        "container_id": "10.PRODUCT/12.PRODUCTION",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "governance_context": {
+        "schema": "archhub-public-wip-category-consumption/v1",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+        "category": "governance_run_evidence",
+        "disposition": "run_evidence",
+        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+        "classification_digest": "a6927f5f64d926584d68d7d218e28ccef41ab4243f0d8f83ce6df2febd67e67f",
+        "path_count": 2,
+        "paths": [
+          "docs/_meta/authority_wip_classification.latest.json",
+          "docs/_meta/legacy_runtime_handoff_shadow_probe.latest.json"
+        ],
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "promotion_allowed": false
+      },
+      "fit": [
+        "governance",
+        "universal-cell-authority",
+        "wip-convergence"
+      ],
+      "priority": 6000
+    }
+  ]
 }

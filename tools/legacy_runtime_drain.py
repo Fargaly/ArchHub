@@ -2198,6 +2198,82 @@ def build_handoff_schedule(
     }
 
 
+def source_drift_archive_readiness(
+    source_drift: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if source_drift is None:
+        return {
+            "ok": True,
+            "state": "not_checked",
+            "reason": "no source drift report was supplied to this gate",
+        }
+    if bool(source_drift.get("ok")):
+        return {
+            "ok": True,
+            "state": "clear",
+            "drift_count": int(source_drift.get("drift_count") or 0),
+            "reason": "runtime copy has no source drift against authority",
+        }
+    decision = source_drift.get("decision_summary")
+    if not isinstance(decision, dict):
+        return {
+            "ok": False,
+            "state": "unclassified_source_drift",
+            "drift_count": int(source_drift.get("drift_count") or 0),
+            "reason": (
+                "runtime source drift exists without a decision summary; "
+                "classify before any archive"
+            ),
+        }
+    candidates = [
+        candidate
+        for candidate in source_drift.get("migration_candidates") or []
+        if isinstance(candidate, dict)
+    ]
+    states = {
+        str(candidate.get("resolution_state") or "classified_unresolved")
+        for candidate in candidates
+    }
+    allowed_states = {
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "preserved_as_migration_evidence_pending_runtime_retirement",
+        "pending_canonical_root_decision",
+    }
+    unmapped_paths = decision.get("unmapped_paths") or []
+    disallowed_states = sorted(states - allowed_states)
+    ok = (
+        bool(decision.get("all_classified"))
+        and not unmapped_paths
+        and bool(decision.get("promotion_allowed")) is False
+        and bool(decision.get("bulk_copy_allowed")) is False
+        and not disallowed_states
+        and len(candidates) == int(source_drift.get("migration_candidate_count") or 0)
+    )
+    return {
+        "ok": ok,
+        "state": (
+            "classified_migration_evidence_ready_for_archive"
+            if ok
+            else "source_drift_requires_decision"
+        ),
+        "drift_count": int(source_drift.get("drift_count") or 0),
+        "candidate_count": len(candidates),
+        "allowed_resolution_states": sorted(allowed_states),
+        "seen_resolution_states": sorted(states),
+        "disallowed_resolution_states": disallowed_states,
+        "unmapped_paths": unmapped_paths,
+        "promotion_allowed": bool(decision.get("promotion_allowed")),
+        "bulk_copy_allowed": bool(decision.get("bulk_copy_allowed")),
+        "reason": (
+            "runtime source drift is physically present but fully classified as "
+            "non-promotable migration evidence; archive may preserve it only "
+            "after live holders are gone"
+            if ok
+            else "runtime source drift still has unclassified, promotable, or unresolved candidates"
+        ),
+    }
+
+
 def build_retirement_gate(
     holder_report: dict[str, Any],
     readiness: dict[str, Any],
@@ -2207,12 +2283,10 @@ def build_retirement_gate(
     handoff_schedule: dict[str, Any],
     source_drift: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    source_drift_clear = True
-    if source_drift is not None:
-        source_drift_clear = bool(source_drift.get("ok"))
+    source_readiness = source_drift_archive_readiness(source_drift)
     checks = {
         "runtime_copy_exists": bool(holder_report.get("exists")),
-        "runtime_copy_source_drift_clear": source_drift_clear,
+        "runtime_copy_source_drift_archive_ready": bool(source_readiness.get("ok")),
         "authority_launch_ready": bool(readiness.get("ok")),
         "authority_shadow_launch_proven": bool(shadow_probe.get("ok")),
         "active_authority_runtime_bridge": bool(active_bridge.get("ok")),
@@ -2240,6 +2314,7 @@ def build_retirement_gate(
         "schema": "archhub-runtime-copy-retirement-gate/v1",
         "archive_allowed": archive_allowed,
         "checks": checks,
+        "source_drift_archive_readiness": source_readiness,
         "failures": failures,
         "required_action": required_action,
     }

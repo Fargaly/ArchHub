@@ -1209,7 +1209,7 @@ def test_retirement_gate_blocks_when_shadow_probe_was_not_run(tmp_path):
     assert gate["failures"] == ["authority_shadow_launch_proven"]
 
 
-def test_retirement_gate_blocks_when_ignored_runtime_source_drift_exists():
+def test_retirement_gate_blocks_when_ignored_runtime_source_drift_is_unclassified():
     gate = drain.build_retirement_gate(
         _audit(0, []),
         {"ok": True},
@@ -1221,8 +1221,54 @@ def test_retirement_gate_blocks_when_ignored_runtime_source_drift_exists():
     )
 
     assert gate["archive_allowed"] is False
-    assert gate["checks"]["runtime_copy_source_drift_clear"] is False
-    assert gate["failures"] == ["runtime_copy_source_drift_clear"]
+    assert gate["checks"]["runtime_copy_source_drift_archive_ready"] is False
+    assert gate["source_drift_archive_readiness"]["state"] == (
+        "unclassified_source_drift"
+    )
+    assert gate["failures"] == ["runtime_copy_source_drift_archive_ready"]
+
+
+def test_retirement_gate_allows_classified_non_promotable_source_drift_after_drain():
+    source_drift = {
+        "ok": False,
+        "drift_count": 2,
+        "migration_candidate_count": 2,
+        "decision_summary": {
+            "all_classified": True,
+            "unmapped_paths": [],
+            "promotion_allowed": False,
+            "bulk_copy_allowed": False,
+        },
+        "migration_candidates": [
+            {
+                "path": "nodelang/authority_bridge.py",
+                "resolution_state": (
+                    "canonical_evidence_recorded_pending_runtime_retirement"
+                ),
+            },
+            {
+                "path": "nodelang/cell_baboom_activity.py",
+                "resolution_state": "pending_canonical_root_decision",
+            },
+        ],
+    }
+
+    gate = drain.build_retirement_gate(
+        _audit(0, []),
+        {"ok": True},
+        {"ok": True},
+        {"ok": True},
+        {"blocked_exact_authority_launches": 0},
+        {"all_steps_non_interrupting": True},
+        source_drift,
+    )
+
+    assert gate["archive_allowed"] is True
+    assert gate["checks"]["runtime_copy_source_drift_archive_ready"] is True
+    assert gate["source_drift_archive_readiness"]["state"] == (
+        "classified_migration_evidence_ready_for_archive"
+    )
+    assert "archive may preserve it" in gate["source_drift_archive_readiness"]["reason"]
 
 
 def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
@@ -1242,13 +1288,18 @@ def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
         "archive_allowed": True,
         "checks": {
             "runtime_copy_exists": True,
-            "runtime_copy_source_drift_clear": True,
+            "runtime_copy_source_drift_archive_ready": True,
             "authority_launch_ready": True,
             "authority_shadow_launch_proven": True,
             "active_authority_runtime_bridge": True,
             "no_live_holders": True,
             "no_blocked_exact_replacements": True,
             "handoff_schedule_non_interrupting": True,
+        },
+        "source_drift_archive_readiness": {
+            "ok": True,
+            "state": "not_checked",
+            "reason": "no source drift report was supplied to this gate",
         },
         "failures": [],
         "required_action": (
@@ -1593,7 +1644,7 @@ def test_cli_enforce_retirement_gate_returns_red_for_runtime_source_drift(
         "nodelang/runtime_only.py"
     )
     assert plan["retirement_gate"]["failures"] == [
-        "runtime_copy_source_drift_clear"
+        "runtime_copy_source_drift_archive_ready"
     ]
 
 

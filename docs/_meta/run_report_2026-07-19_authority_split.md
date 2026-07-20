@@ -6739,3 +6739,82 @@ Next action:
 - Continue with `runtime_retirement_gate_hook` and the run-report court so the
   remaining live-runtime boundary is governed without interrupting the current
   sessions.
+
+## Runtime retirement hook convergence - 2026-07-20
+
+Commit:
+
+- `db7d646` - `Gate legacy runtime retirement`.
+
+Intent:
+
+- Consume the `runtime_retirement_gate_hook` category without interrupting the
+  running copied-runtime holders.
+- Add a local commit/push hard stop for any staged or pushed change touching
+  `node_runtime/` while the machine-readable retirement gate is red.
+- Keep ordinary unrelated commits unblocked.
+
+Mechanisms added:
+
+- `.githooks/pre-commit` now checks staged `node_runtime/` paths and runs:
+  `python tools/legacy_runtime_drain.py --no-write --enforce-retirement-gate`.
+- `.githooks/pre-push` now checks introduced pushed commits for `node_runtime/`
+  changes and runs the same retirement gate.
+- `tests/test_runtime_retirement_hook.py` proves:
+  - pre-commit is wired to the gate,
+  - pre-push is wired to the gate,
+  - staged `node_runtime/` changes are blocked when the gate is red,
+  - unrelated staged changes still pass,
+  - pushed `node_runtime/` commits are blocked when the gate is red.
+
+Verification:
+
+- Hook and drain courts:
+  `python -m pytest tests\test_runtime_retirement_hook.py tests\test_legacy_runtime_drain.py tests\test_live_runtime_holders.py -q -p no:cacheprovider --timeout=300`
+  - result: `49 passed, 1 warning`.
+- Read-only retirement gate:
+  `python tools\legacy_runtime_drain.py --no-write --enforce-retirement-gate`
+  - result: exited red as expected.
+  - failures: `authority_shadow_launch_proven`, `no_live_holders`,
+    `no_blocked_exact_replacements`.
+  - holder count: `4`.
+  - archive safe now: `false`.
+- Syntax compile:
+  `python -m py_compile tests\test_runtime_retirement_hook.py tools\legacy_runtime_drain.py`
+  - result: passed.
+- Staged diff hygiene:
+  - `git diff --cached --check`: passed.
+
+Current WIP/live-holder evidence after `db7d646`:
+
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- Refreshed `docs/_meta/live_runtime_holders.latest.json`.
+- git porcelain entries visible in the worktree: `41`.
+- classified WIP entries in the authority ledger: `40`.
+- no-unclassified gate: `ok`, count `0`.
+- `runtime_retirement_gate_hook`: consumed.
+- classification digest:
+  `6d3a6876b095a09fbf5eb0c8613b41f4c0ecf5f1027b3469ecf45c4dfc5301b2`.
+- copied-runtime holder count: `4`.
+- copied-runtime archive safe now: `false`.
+
+Desk-space/live-session impact:
+
+- No Desktop files, root scratch files, visible browser windows, or visible
+  terminals were created by this run.
+- No running application/session process was stopped.
+- The hook blocks unsafe future `node_runtime/` retirement but does not kill,
+  move, or relaunch anything.
+
+Current position:
+
+- Runtime retirement is now a mechanical gate instead of a reminder.
+- Remaining WIP is documentation/governance evidence, UI/runtime evidence probes
+  and courts, one handbuilt projection bridge, one self-extension bridge, legacy
+  WebShell host courts, and the live-locked copied runtime.
+
+Next action:
+
+- Consume `governance_run_evidence` and `documentation_decision_evidence` by
+  binding their evidence files into courts/ledgers or committing the completed
+  records without widening the live-runtime surface.

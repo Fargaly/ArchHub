@@ -1341,6 +1341,111 @@ def build_disposable_holder_court(
     }
 
 
+def build_holder_tree_court(
+    handoff_board: dict[str, Any],
+    inspection: dict[str, Any],
+) -> dict[str, Any]:
+    """Group inspected holder PIDs by parent/child evidence.
+
+    This is visual/control evidence only.  A process tree is still live if any
+    PID in it is live; grouping prevents the operator from reading a parent and
+    its child as unrelated blockers.
+    """
+    if not inspection.get("available", True):
+        return {
+            "schema": "archhub-runtime-holder-tree-court/v1",
+            "available": False,
+            "tree_count": 0,
+            "trees": [],
+            "reason": inspection.get("reason") or "process inspection unavailable",
+            "rule": "No tree grouping is trusted when process inspection is unavailable.",
+        }
+    processes = [
+        process
+        for process in inspection.get("processes") or []
+        if isinstance(process, dict) and isinstance(process.get("pid"), int)
+    ]
+    process_by_pid = {int(process["pid"]): process for process in processes}
+    pids = set(process_by_pid)
+    roots = sorted(
+        pid
+        for pid, process in process_by_pid.items()
+        if int(process.get("parent_pid") or -1) not in pids
+    )
+    endpoint_pids = {
+        int(pid)
+        for pid in (handoff_board.get("blockers") or {}).get("blocked_endpoint_pids") or []
+    }
+    inspect_pids = {
+        int(pid)
+        for pid in (handoff_board.get("blockers") or {}).get("inspect_before_touch_pids") or []
+    }
+
+    def collect_tree(root: int) -> list[int]:
+        ordered: list[int] = []
+        stack = [root]
+        while stack:
+            pid = stack.pop(0)
+            if pid in ordered or pid not in process_by_pid:
+                continue
+            ordered.append(pid)
+            children = [
+                int(child)
+                for child in process_by_pid[pid].get("child_pids") or []
+                if int(child) in process_by_pid
+            ]
+            stack.extend(sorted(children))
+        return ordered
+
+    trees: list[dict[str, Any]] = []
+    for root in roots:
+        tree_pids = collect_tree(root)
+        tree_processes = [process_by_pid[pid] for pid in tree_pids]
+        risk_classes = sorted({
+            str(process.get("process_risk_class") or "unclassified")
+            for process in tree_processes
+        })
+        listening_ports = sorted({
+            int(port)
+            for process in tree_processes
+            for port in process.get("listening_ports") or []
+        })
+        established = sum(
+            int(process.get("established_connection_count") or 0)
+            for process in tree_processes
+        )
+        if endpoint_pids.intersection(tree_pids):
+            posture = "coordinate_visible_endpoint_handoff"
+        elif inspect_pids.intersection(tree_pids):
+            posture = "inspect_unknown_holder_tree"
+        else:
+            posture = "observed_child_dependency"
+        trees.append({
+            "root_pid": root,
+            "pids": tree_pids,
+            "posture": posture,
+            "risk_classes": risk_classes,
+            "listening_ports": listening_ports,
+            "established_connection_count": established,
+            "interrupt_allowed": False,
+            "rule": (
+                "Tree grouping is evidence only; it does not stop, relaunch, "
+                "move, archive, or mark a holder safe."
+            ),
+        })
+    return {
+        "schema": "archhub-runtime-holder-tree-court/v1",
+        "available": True,
+        "tree_count": len(trees),
+        "trees": trees,
+        "rule": (
+            "A holder tree is one live blocker group when parent/child evidence "
+            "connects its PIDs; cleanup still requires a separate disposable "
+            "holder court."
+        ),
+    }
+
+
 def _protected_handoff_pids(handoff_board: dict[str, Any]) -> set[int]:
     protected: set[int] = set()
     blockers = handoff_board.get("blockers") or {}
@@ -2796,6 +2901,10 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
             result["disposable_holder_court"] = build_disposable_holder_court(
+                board,
+                result["inspection"],
+            )
+            result["holder_tree_court"] = build_holder_tree_court(
                 board,
                 result["inspection"],
             )

@@ -1473,6 +1473,9 @@ def test_cli_inspect_board_pids_is_read_only_and_uses_board_blockers(
     assert out["disposable_holder_court"]["schema"] == (
         "archhub-disposable-runtime-holder-court/v1"
     )
+    assert out["holder_tree_court"]["schema"] == (
+        "archhub-runtime-holder-tree-court/v1"
+    )
     assert not out_dir.exists()
 
 
@@ -1500,6 +1503,7 @@ def test_cli_inspect_board_pids_expands_child_processes_for_court(
                     "pid": 21,
                     "exists": True,
                     "process_risk_class": "stdin_python_parent",
+                    "parent_pid": None,
                     "child_pids": [6084],
                     "listening_ports": [],
                     "established_connection_count": 0,
@@ -1513,6 +1517,7 @@ def test_cli_inspect_board_pids_expands_child_processes_for_court(
                 "exists": True,
                 "name": "conhost.exe",
                 "cmdline": "\\??\\C:\\Windows\\system32\\conhost.exe 0x4",
+                "parent_pid": 21,
                 "child_pids": [],
                 "listening_ports": [],
                 "established_connection_count": 0,
@@ -1535,6 +1540,13 @@ def test_cli_inspect_board_pids_expands_child_processes_for_court(
         21,
         6084,
     ]
+    assert out["holder_tree_court"]["tree_count"] == 1
+    assert out["holder_tree_court"]["trees"][0]["root_pid"] == 21
+    assert out["holder_tree_court"]["trees"][0]["pids"] == [21, 6084]
+    assert out["holder_tree_court"]["trees"][0]["posture"] == (
+        "inspect_unknown_holder_tree"
+    )
+    assert out["holder_tree_court"]["trees"][0]["interrupt_allowed"] is False
 
 
 def test_cli_inspect_board_pids_includes_non_holder_port_owners(

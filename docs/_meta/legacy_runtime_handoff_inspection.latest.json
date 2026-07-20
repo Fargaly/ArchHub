@@ -56,7 +56,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 496411.6028497219,
+        "age_seconds": 496968.87990546227,
         "process_status": "running",
         "cpu_total_seconds": 0.0,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -77,7 +77,7 @@
           "script_mtime_utc": null,
           "script_sha256": null
         },
-        "age_seconds": 496411.48306035995,
+        "age_seconds": 496968.7601161003,
         "process_status": "running",
         "cpu_total_seconds": 1.234375,
         "allowed_action": "inspect owner before interruption; if disposable, let it exit; if needed, relaunch its script from 10.PRODUCT/13.NODE-LANGUAGE",
@@ -103,9 +103,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 586722.0557088852,
+        "age_seconds": 587279.3327646255,
         "process_status": "running",
-        "cpu_total_seconds": 855.1875,
+        "cpu_total_seconds": 861.15625,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -165,7 +165,7 @@
   },
   "inspection": {
     "schema": "archhub-live-runtime-pid-inspection/v1",
-    "observed_at": 1784587561.0029783,
+    "observed_at": 1784588116.896975,
     "available": true,
     "processes": [
       {
@@ -190,10 +190,10 @@
           "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
         ],
         "create_time": 1784000816.2812548,
-        "age_seconds": 586744.7217235565,
-        "cpu_user_seconds": 825.796875,
-        "cpu_system_seconds": 29.390625,
-        "cpu_total_seconds": 855.1875,
+        "age_seconds": 587300.6157202721,
+        "cpu_user_seconds": 831.421875,
+        "cpu_system_seconds": 29.734375,
+        "cpu_total_seconds": 861.15625,
         "parent_pid": null,
         "child_pids": [],
         "listening_ports": [
@@ -220,7 +220,7 @@
             "status": 200,
             "content_type": "application/json; charset=utf-8",
             "server": "BaseHTTP/0.6 Python/3.14.3",
-            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":130880,\"schema_version\""
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131075,\"schema_version\""
           },
           {
             "port": 8482,
@@ -307,7 +307,7 @@
           "-"
         ],
         "create_time": 1784091126.734114,
-        "age_seconds": 496434.26886439323,
+        "age_seconds": 496990.1628611088,
         "cpu_user_seconds": 0.0,
         "cpu_system_seconds": 0.0,
         "cpu_total_seconds": 0.0,
@@ -342,7 +342,7 @@
           "-"
         ],
         "create_time": 1784091126.8539033,
-        "age_seconds": 496434.1490750313,
+        "age_seconds": 496990.0430717468,
         "cpu_user_seconds": 1.203125,
         "cpu_system_seconds": 0.03125,
         "cpu_total_seconds": 1.234375,
@@ -492,5 +492,48 @@
       }
     ],
     "rule": "A copied-runtime holder may be cleaned only when this court proves it is a non-visible disposable holder. The court itself remains read-only and never interrupts a process."
+  },
+  "holder_tree_court": {
+    "schema": "archhub-runtime-holder-tree-court/v1",
+    "available": true,
+    "tree_count": 2,
+    "trees": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ],
+        "posture": "coordinate_visible_endpoint_handoff",
+        "risk_classes": [
+          "visible_legacy_endpoint"
+        ],
+        "listening_ports": [
+          8482,
+          8484
+        ],
+        "established_connection_count": 0,
+        "interrupt_allowed": false,
+        "rule": "Tree grouping is evidence only; it does not stop, relaunch, move, archive, or mark a holder safe."
+      },
+      {
+        "root_pid": 117712,
+        "pids": [
+          117712,
+          147188
+        ],
+        "posture": "inspect_unknown_holder_tree",
+        "risk_classes": [
+          "stdin_python_listener_child",
+          "stdin_python_parent"
+        ],
+        "listening_ports": [
+          52780
+        ],
+        "established_connection_count": 0,
+        "interrupt_allowed": false,
+        "rule": "Tree grouping is evidence only; it does not stop, relaunch, move, archive, or mark a holder safe."
+      }
+    ],
+    "rule": "A holder tree is one live blocker group when parent/child evidence connects its PIDs; cleanup still requires a separate disposable holder court."
   }
 }

@@ -1659,6 +1659,73 @@ def test_retirement_gate_allows_archive_only_after_drain_and_ready_authority():
     }
 
 
+def test_runtime_copy_archive_plan_refuses_while_retirement_gate_is_red(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    workspace = tmp_path
+    plan = {
+        "retirement_gate": {
+            "archive_allowed": False,
+            "failures": ["no_live_holders"],
+        },
+        "handoff_board": {
+            "blockers": {"blocked_endpoint_pids": [52484]},
+        },
+    }
+
+    archive = drain.build_runtime_copy_archive_plan(
+        plan,
+        product_root=product_root,
+        workspace=workspace,
+        timestamp="20260721-041500",
+    )
+
+    assert archive["schema"] == "archhub-runtime-copy-archive-plan/v1"
+    assert archive["ok"] is False
+    assert archive["dry_run_only"] is True
+    assert archive["retirement_gate_failures"] == ["no_live_holders"]
+    assert archive["protected_visible_endpoint_pids"] == [52484]
+    assert archive["target"] == str(
+        workspace / "90.ARCHIVE" / "10.PRODUCT" / "12.PRODUCTION"
+        / "copied-node-runtime" / "node_runtime-20260721-041500"
+    )
+    assert "do not move" in archive["required_action"]
+    assert "operations" not in archive
+
+
+def test_runtime_copy_archive_plan_is_dry_run_when_retirement_gate_is_green(tmp_path):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    workspace = tmp_path
+    plan = {
+        "retirement_gate": {
+            "archive_allowed": True,
+            "failures": [],
+        },
+        "handoff_board": {"blockers": {}},
+    }
+
+    archive = drain.build_runtime_copy_archive_plan(
+        plan,
+        product_root=product_root,
+        workspace=workspace,
+        timestamp="20260721-041500",
+    )
+
+    assert archive["ok"] is True
+    assert archive["dry_run_only"] is True
+    assert archive["archive_parent"] == str(
+        workspace / "90.ARCHIVE" / "10.PRODUCT" / "12.PRODUCTION"
+        / "copied-node-runtime"
+    )
+    assert [op["kind"] for op in archive["operations"]] == [
+        "create_manifest",
+        "move_tree",
+        "rerun_courts",
+    ]
+    assert archive["operations"][1]["source"] == str(product_root / "node_runtime")
+    assert archive["operations"][1]["requires_existing_target_absent"] is True
+    assert "never moves files" in archive["rule"]
+
+
 def test_cli_enforce_drained_returns_red_when_holder_remains(tmp_path, monkeypatch, capsys):
     product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
     (product_root / "node_runtime").mkdir(parents=True)
@@ -1900,6 +1967,61 @@ def test_cli_retirement_gate_report_is_compact_and_can_include_shadow_probe(
     assert gate["archive_allowed"] is False
     assert gate["failures"] == ["no_live_holders", "no_blocked_exact_replacements"]
     assert "holder_report" not in gate
+    assert not out_dir.exists()
+
+
+def test_cli_runtime_copy_archive_plan_refuses_and_is_read_only(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    runtime = product_root / "node_runtime"
+    runtime.mkdir(parents=True)
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(
+        drain.live_runtime_holders,
+        "audit",
+        lambda path: _audit(1, [{
+            "pid": 123,
+            "cmdline": "python -m nodelang.application_server --port 8505",
+        }]),
+    )
+    monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {123}})
+    monkeypatch.setattr(
+        drain,
+        "authority_launch_readiness",
+        lambda authority: {"ok": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "authority_shadow_launch_probe",
+        lambda authority: {"ok": True, "ran": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "active_authority_runtime_bridge_status",
+        lambda product_root, workspace: {"ok": True},
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--timestamp", "20260721-041500",
+        "--runtime-copy-archive-plan",
+    ])
+
+    assert code == 0
+    archive = json.loads(capsys.readouterr().out)
+    assert archive["schema"] == "archhub-runtime-copy-archive-plan/v1"
+    assert archive["ok"] is False
+    assert archive["retirement_gate_failures"] == [
+        "no_live_holders",
+        "no_blocked_exact_replacements",
+    ]
+    assert archive["protected_visible_endpoint_pids"] == [123]
+    assert runtime.exists()
     assert not out_dir.exists()
 
 

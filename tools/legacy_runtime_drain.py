@@ -2797,6 +2797,94 @@ def build_retirement_gate(
     }
 
 
+def build_runtime_copy_archive_plan(
+    plan: dict[str, Any],
+    product_root: Path,
+    workspace: Path,
+    *,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Build a non-executing archive plan for the copied runtime.
+
+    This is intentionally a plan, not an executor. It turns green only when the
+    same retirement gate that protects live sessions is green.
+    """
+    runtime_copy = product_root / "node_runtime"
+    archive_root = (
+        workspace / "90.ARCHIVE" / "10.PRODUCT" / "12.PRODUCTION"
+        / "copied-node-runtime"
+    )
+    archive_id = timestamp or _timestamp()
+    target = archive_root / f"node_runtime-{archive_id}"
+    manifest = target.with_suffix(".manifest.json")
+    gate = plan.get("retirement_gate") or {}
+    board = plan.get("handoff_board") or {}
+    blockers = board.get("blockers") or {}
+    failures = list(gate.get("failures") or [])
+    ok = bool(gate.get("archive_allowed"))
+    if not ok:
+        return {
+            "schema": "archhub-runtime-copy-archive-plan/v1",
+            "ok": False,
+            "dry_run_only": True,
+            "runtime_copy": str(runtime_copy),
+            "target": str(target),
+            "manifest": str(manifest),
+            "retirement_gate_archive_allowed": False,
+            "retirement_gate_failures": failures,
+            "protected_visible_endpoint_pids": (
+                blockers.get("blocked_endpoint_pids") or []
+            ),
+            "required_action": (
+                "do not move, delete, archive, or rename node_runtime until "
+                "the retirement gate reports archive_allowed true"
+            ),
+            "rule": (
+                "archive planning is read-only; this result is a refusal while "
+                "any live holder or exact replacement blocker remains"
+            ),
+        }
+    return {
+        "schema": "archhub-runtime-copy-archive-plan/v1",
+        "ok": True,
+        "dry_run_only": True,
+        "runtime_copy": str(runtime_copy),
+        "target": str(target),
+        "manifest": str(manifest),
+        "retirement_gate_archive_allowed": True,
+        "retirement_gate_failures": [],
+        "archive_parent": str(archive_root),
+        "operations": [
+            {
+                "kind": "create_manifest",
+                "path": str(manifest),
+                "content_schema": "archhub-archived-runtime-copy-manifest/v1",
+            },
+            {
+                "kind": "move_tree",
+                "source": str(runtime_copy),
+                "target": str(target),
+                "requires_existing_target_absent": True,
+            },
+            {
+                "kind": "rerun_courts",
+                "commands": [
+                    "python tools\\authority_wip_classify.py --output docs\\_meta\\authority_wip_classification.latest.json --enforce-no-unclassified",
+                    "python -m pytest tests\\test_legacy_runtime_drain.py tests\\test_authority_wip_classify.py -q --timeout=180",
+                ],
+            },
+        ],
+        "required_action": (
+            "operator may execute this archive plan only after rechecking the "
+            "same green retirement gate in the same maintenance window"
+        ),
+        "rule": (
+            "this command never moves files; it only records the exact governed "
+            "archive shape that becomes lawful after live holders are gone"
+        ),
+    }
+
+
 def _existing_universal_external_keys(runtime_state: dict[str, Any]) -> dict[str, str]:
     existing: dict[str, str] = {}
     for item in runtime_state.get("items") or ():
@@ -3145,6 +3233,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--runtime-copy-archive-plan",
+        action="store_true",
+        help=(
+            "Print a dry-run governed archive plan for node_runtime. The plan "
+            "refuses while the retirement gate is red and never moves files."
+        ),
+    )
+    parser.add_argument(
         "--inspect-board-pids",
         action="store_true",
         help=(
@@ -3237,6 +3333,7 @@ def main(argv: list[str] | None = None) -> int:
         args.no_write
         or args.handoff_board
         or args.retirement_gate_report
+        or args.runtime_copy_archive_plan
         or args.inspect_board_pids
         or args.visible_authority_handoff_package
         or args.baboom_authority_status
@@ -3264,6 +3361,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.authority_shadow_probe
                 or args.authority_shadow_probe_report
                 or args.retirement_gate_report
+                or args.runtime_copy_archive_plan
                 or args.visible_authority_handoff_package
             ),
         )
@@ -3334,6 +3432,13 @@ def main(argv: list[str] | None = None) -> int:
             result = build_visible_authority_handoff_package(plan)
         elif args.retirement_gate_report:
             result = plan["retirement_gate"]
+        elif args.runtime_copy_archive_plan:
+            result = build_runtime_copy_archive_plan(
+                plan,
+                product_root=product_root,
+                workspace=workspace,
+                timestamp=args.timestamp or None,
+            )
         elif args.baboom_authority_status:
             result = plan["baboom_runtime_single_authority"]
         elif args.authority_shadow_probe_report:

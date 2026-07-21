@@ -3139,9 +3139,9 @@ def main(argv: list[str] | None = None) -> int:
         "--retirement-gate-report",
         action="store_true",
         help=(
-            "Print only the copied-runtime retirement gate. Pair with "
-            "--authority-shadow-probe to include fresh shadow-launch evidence. "
-            "This is read-only and never writes handoff registrations."
+            "Run the non-interrupting shadow probe and print only the "
+            "copied-runtime retirement gate. This is read-only and never "
+            "writes handoff registrations."
         ),
     )
     parser.add_argument(
@@ -3263,6 +3263,8 @@ def main(argv: list[str] | None = None) -> int:
             run_shadow_probe=(
                 args.authority_shadow_probe
                 or args.authority_shadow_probe_report
+                or args.retirement_gate_report
+                or args.visible_authority_handoff_package
             ),
         )
         if args.inspect_board_pids:

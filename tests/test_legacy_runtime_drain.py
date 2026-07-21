@@ -1764,6 +1764,16 @@ def test_cli_visible_authority_handoff_package_is_read_only(
     monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {123}})
     monkeypatch.setattr(
         drain,
+        "authority_launch_readiness",
+        lambda authority: {"ok": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "authority_shadow_launch_probe",
+        lambda authority: {"ok": True, "ran": True},
+    )
+    monkeypatch.setattr(
+        drain,
         "active_authority_runtime_bridge_status",
         lambda _product_root, _workspace: {
             "ok": True,
@@ -1795,6 +1805,10 @@ def test_cli_visible_authority_handoff_package_is_read_only(
     assert package["requires_endpoint_free"] is False
     assert package["requires_process_interruption"] is False
     assert package["protected_visible_endpoint_pids"] == [123]
+    assert package["retirement_gate_failures_before_handoff"] == [
+        "no_live_holders",
+        "no_blocked_exact_replacements",
+    ]
     assert not out_dir.exists()
 
 
@@ -1876,7 +1890,6 @@ def test_cli_retirement_gate_report_is_compact_and_can_include_shadow_probe(
         "--product-root", str(product_root),
         "--workspace", str(tmp_path),
         "--output-dir", str(out_dir),
-        "--authority-shadow-probe",
         "--retirement-gate-report",
     ])
 

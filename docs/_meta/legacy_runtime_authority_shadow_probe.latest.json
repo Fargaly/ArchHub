@@ -23,7 +23,7 @@
   "machine_work_items": 0,
   "machine_work_registry": "app:governed-work-registry",
   "revision": 739,
-  "server_url": "http://127.0.0.1:56876",
+  "server_url": "http://127.0.0.1:49955",
   "session_cookie_http_only": true,
   "state_path_inside_temp": true,
   "state_status": 200,

@@ -23,7 +23,6 @@
   "baboom_authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
   "archive_allowed_before_handoff": false,
   "retirement_gate_failures_before_handoff": [
-    "authority_shadow_launch_proven",
     "no_live_holders",
     "no_blocked_exact_replacements"
   ],

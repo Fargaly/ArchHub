@@ -1417,8 +1417,60 @@ def build_handoff_board(
     }
 
 
+def runtime_holder_universal_verification_status(plan: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return verify_runtime_holders_in_universal(plan)
+    except Exception as exc:
+        return {
+            "schema": "archhub-runtime-holder-universal-verification/v1",
+            "source_schema": plan.get("schema"),
+            "holder_count": len([
+                holder for holder in plan.get("holders") or []
+                if isinstance(holder, dict)
+            ]),
+            "verified_count": 0,
+            "missing_count": None,
+            "ok": False,
+            "verified": [],
+            "missing": [],
+            "non_destructive": True,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+
+def _holder_verification_summary(
+    verification: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if verification is None:
+        return {
+            "available": False,
+            "ok": None,
+            "holder_count": None,
+            "verified_count": None,
+            "missing_count": None,
+            "missing_pids": [],
+            "runtime_revision": None,
+        }
+    return {
+        "available": True,
+        "ok": bool(verification.get("ok")),
+        "holder_count": verification.get("holder_count"),
+        "verified_count": verification.get("verified_count"),
+        "missing_count": verification.get("missing_count"),
+        "missing_pids": [
+            item.get("pid")
+            for item in verification.get("missing") or []
+            if isinstance(item, dict)
+        ],
+        "runtime_revision": verification.get("runtime_revision"),
+    }
+
+
 def build_visible_authority_handoff_package(
     plan: dict[str, Any],
+    *,
+    universal_holder_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the explicit non-interrupting browser handoff package.
 
@@ -1437,6 +1489,7 @@ def build_visible_authority_handoff_package(
         int(pid)
         for pid in ((board.get("blockers") or {}).get("blocked_endpoint_pids") or [])
     ]
+    holder_summary = _holder_verification_summary(universal_holder_verification)
     package = {
         "schema": "archhub-visible-authority-handoff-package/v1",
         "ok": bool(handoff.get("available")) and bool(baboom_status.get("ok")),
@@ -1466,6 +1519,7 @@ def build_visible_authority_handoff_package(
             baboom_status.get("violation_count") or 0
         ),
         "baboom_authority_court": baboom_status.get("authority_court"),
+        "universal_holder_verification": holder_summary,
         "archive_allowed_before_handoff": bool(board.get("archive_allowed")),
         "retirement_gate_failures_before_handoff": (
             (plan.get("retirement_gate") or {}).get("failures") or []
@@ -1495,6 +1549,12 @@ def build_visible_authority_handoff_package(
             "handoff package rejected because BABOOM can still select copied "
             "runtime authority; isolate or remove those imports after lawful "
             "handoff proof exists"
+        )
+    if holder_summary["available"] and not holder_summary["ok"]:
+        package["ok"] = False
+        package["next_operator_action"] = (
+            "handoff package rejected because one or more live runtime holders "
+            "are not represented in the Universal graph"
         )
     return package
 
@@ -3429,7 +3489,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.verify_universal_holders:
             result = verify_runtime_holders_in_universal(plan)
         elif args.visible_authority_handoff_package:
-            result = build_visible_authority_handoff_package(plan)
+            result = build_visible_authority_handoff_package(
+                plan,
+                universal_holder_verification=(
+                    runtime_holder_universal_verification_status(plan)
+                ),
+            )
         elif args.retirement_gate_report:
             result = plan["retirement_gate"]
         elif args.runtime_copy_archive_plan:

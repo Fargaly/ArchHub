@@ -617,7 +617,17 @@ def test_visible_authority_handoff_package_is_dry_run_without_token():
         },
     }
 
-    package = drain.build_visible_authority_handoff_package(plan)
+    package = drain.build_visible_authority_handoff_package(
+        plan,
+        universal_holder_verification={
+            "ok": True,
+            "holder_count": 1,
+            "verified_count": 1,
+            "missing_count": 0,
+            "missing": [],
+            "runtime_revision": 3341,
+        },
+    )
 
     assert package["schema"] == "archhub-visible-authority-handoff-package/v1"
     assert package["ok"] is True
@@ -631,6 +641,62 @@ def test_visible_authority_handoff_package_is_dry_run_without_token():
     assert package["requires_process_interruption"] is False
     assert package["protected_visible_endpoint_pids"] == [52484]
     assert package["blocked_endpoint_pids"] == [52484]
+    assert package["universal_holder_verification"] == {
+        "available": True,
+        "ok": True,
+        "holder_count": 1,
+        "verified_count": 1,
+        "missing_count": 0,
+        "missing_pids": [],
+        "runtime_revision": 3341,
+    }
+
+
+def test_visible_authority_handoff_package_rejects_missing_universal_holders():
+    plan = {
+        "handoff_board": {
+            "archive_allowed": False,
+            "blockers": {
+                "blocked_endpoint_pids": [52484],
+                "source_drift": {"archive_ready": True},
+            },
+            "visible_authority_handoff": {
+                "available": True,
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "requires_endpoint_free": False,
+                "requires_process_interruption": False,
+                "protected_visible_endpoint_pids": [52484],
+            },
+        },
+        "retirement_gate": {
+            "failures": ["no_live_holders", "no_blocked_exact_replacements"]
+        },
+    }
+
+    package = drain.build_visible_authority_handoff_package(
+        plan,
+        universal_holder_verification={
+            "ok": False,
+            "holder_count": 1,
+            "verified_count": 0,
+            "missing_count": 1,
+            "missing": [{"pid": 52484}],
+            "runtime_revision": 3342,
+        },
+    )
+
+    assert package["ok"] is False
+    assert package["universal_holder_verification"] == {
+        "available": True,
+        "ok": False,
+        "holder_count": 1,
+        "verified_count": 0,
+        "missing_count": 1,
+        "missing_pids": [52484],
+        "runtime_revision": 3342,
+    }
+    assert "not represented in the Universal graph" in package["next_operator_action"]
 
 
 def test_visible_authority_handoff_package_rejects_interrupting_plan():
@@ -1854,6 +1920,18 @@ def test_cli_visible_authority_handoff_package_is_read_only(
             },
         },
     )
+    monkeypatch.setattr(
+        drain,
+        "runtime_holder_universal_verification_status",
+        lambda plan: {
+            "ok": True,
+            "holder_count": 1,
+            "verified_count": 1,
+            "missing_count": 0,
+            "missing": [],
+            "runtime_revision": 3341,
+        },
+    )
 
     code = drain.main([
         "--product-root", str(product_root),
@@ -1876,6 +1954,8 @@ def test_cli_visible_authority_handoff_package_is_read_only(
         "no_live_holders",
         "no_blocked_exact_replacements",
     ]
+    assert package["universal_holder_verification"]["ok"] is True
+    assert package["universal_holder_verification"]["verified_count"] == 1
     assert not out_dir.exists()
 
 

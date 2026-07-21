@@ -21,6 +21,15 @@
   "baboom_runtime_single_authority_ready": true,
   "baboom_runtime_second_authority_violations": 0,
   "baboom_authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+  "universal_holder_verification": {
+    "available": true,
+    "ok": true,
+    "holder_count": 1,
+    "verified_count": 1,
+    "missing_count": 0,
+    "missing_pids": [],
+    "runtime_revision": 3341
+  },
   "archive_allowed_before_handoff": false,
   "retirement_gate_failures_before_handoff": [
     "no_live_holders",

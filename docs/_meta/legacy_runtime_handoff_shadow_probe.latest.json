@@ -95,7 +95,7 @@
     "machine_work_items": 0,
     "machine_work_registry": "app:governed-work-registry",
     "revision": 739,
-    "server_url": "http://127.0.0.1:51572",
+    "server_url": "http://127.0.0.1:58809",
     "session_cookie_http_only": true,
     "state_path_inside_temp": true,
     "state_status": 200,
@@ -152,9 +152,9 @@
       ".pyc",
       ".pyo"
     ],
-    "checked_runtime_files": 347,
-    "drift_count": 32,
-    "migration_candidate_count": 32,
+    "checked_runtime_files": 350,
+    "drift_count": 43,
+    "migration_candidate_count": 43,
     "resolution_ledger": {
       "schema": "archhub-runtime-source-drift-resolution-ledger/v1",
       "evidence_file_count": 11,
@@ -171,25 +171,25 @@
     },
     "decision_summary": {
       "schema": "archhub-runtime-source-drift-decision-summary/v1",
-      "candidate_count": 32,
+      "candidate_count": 43,
       "all_classified": true,
       "unmapped_paths": [],
       "by_track": {
         "application_graph_projection": 3,
-        "baboom_context_and_cognition": 5,
+        "baboom_context_and_cognition": 14,
         "governed_work_lifecycle": 1,
         "public_site_projection": 2,
         "revision_integrity_court": 1,
-        "runtime_transport_and_broker": 9,
+        "runtime_transport_and_broker": 11,
         "visual_workspace_interaction": 11
       },
       "by_kind": {
-        "court_candidate": 20,
-        "implementation_candidate": 12
+        "court_candidate": 28,
+        "implementation_candidate": 15
       },
       "by_resolution_state": {
-        "canonical_evidence_recorded_pending_runtime_retirement": 24,
-        "pending_canonical_root_decision": 2,
+        "canonical_evidence_recorded_pending_runtime_retirement": 20,
+        "pending_canonical_root_decision": 17,
         "preserved_as_migration_evidence_pending_runtime_retirement": 6
       },
       "promotion_allowed": false,
@@ -198,8 +198,12 @@
     "ok": false,
     "missing_in_authority": [
       {
-        "path": "nodelang/cell_baboom_activity.py",
+        "path": "nodelang/cell_activity.py",
         "runtime_sha256": "81d3fdcfae8e78497bb9d312223082a809b6508e8a1647b661ee1368260f6a3e"
+      },
+      {
+        "path": "nodelang/cell_baboom_activity.py",
+        "runtime_sha256": "904421e7b73133ce4c2588936017f5e32aa1de4121b0de4c3f3b83ec027b1ab0"
       },
       {
         "path": "tests_replica/test_canvas_interaction_quality.py",
@@ -211,7 +215,7 @@
       },
       {
         "path": "tests_replica/test_cell_baboom_activity.py",
-        "runtime_sha256": "949dcbd771b1688dd98fc7603ecd4c38bba3ef45653fdf4c65a0d8ba829bf629"
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366"
       },
       {
         "path": "tests_replica/test_playable_interaction.py",
@@ -247,14 +251,24 @@
         "authority_sha256": "089fb6f6169d59897bb12f0d482ad0acf490943f47b429a85bed2b5f5f02352b"
       },
       {
+        "path": "nodelang/cell_baboom.py",
+        "runtime_sha256": "ec31545eb1cd156459e43c2ecb1e11397320786e18b29cd579d0bd0b781e80ed",
+        "authority_sha256": "f616961f083bf40ce0b167beacbd9839b3543e3b4c3d5b1df797ec49e6e45de8"
+      },
+      {
         "path": "nodelang/cell_baboom_connector_execution.py",
-        "runtime_sha256": "bc94a673c2809cefb3f8eb17d79a958636179fad2caad311c6c108b3b43a7b3e",
+        "runtime_sha256": "200ae28cf1153affc4a14a61724d89502ffc858556e1e2e7f3b3b67327dcb85f",
         "authority_sha256": "448a18c379da8e91cc47b3bbbc0206eabf0050da93432aa0d9ca6f2850d41cdd"
       },
       {
         "path": "nodelang/cell_baboom_model_execution.py",
-        "runtime_sha256": "97d234ec93c7b66ff680e8d19ccd6d08c6b97e9f48e294da38948d52a14c70b8",
+        "runtime_sha256": "c2d213a44719ad1e7683b575b7b9dc0b201c562847a802cf18e9893d6e32c103",
         "authority_sha256": "4f3fd40834356c4da62a46eea4e8d4c7a9d66316d48dccd01dfc00be04bee68e"
+      },
+      {
+        "path": "nodelang/cell_baboom_steward.py",
+        "runtime_sha256": "64a2378a2f0a7b067f2a2c76de9ca3501038ed254770a486e64d7f4747bce9aa",
+        "authority_sha256": "a4398ee86de6cc980186ca316ac460de3e504d423a591e285db326a170697e52"
       },
       {
         "path": "nodelang/cell_relations_view.py",
@@ -268,8 +282,8 @@
       },
       {
         "path": "nodelang/universal_application.py",
-        "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-        "authority_sha256": "e328e905c069f747025afbbe7527a9ac1a90047a7854ac4a64d32b83b46d6bc3"
+        "runtime_sha256": "64b27750bd02434d09a1cef7655849a122881053cfed0e6834a349a7cf5cbf11",
+        "authority_sha256": "391d199874ad8ead1a35f8349b9dd15f9556961e53a3ce05dbddc8388e4cf543"
       },
       {
         "path": "nodelang/universal_cloud_gateway.py",
@@ -298,8 +312,48 @@
       },
       {
         "path": "tests_replica/test_application_server_governance.py",
-        "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
         "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "ed51f9282f3186f6b21a3df3bb6f1b39cc734d89732f5cf3fa876bce0f76e916"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom_commands.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "a1e3856546ef47b3692b08ffff6e3ec3944f6584fe0db48663d18ae94af6bd1a"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom_connector_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "4b81d390322ffcec05e87b01a4f1f764926c6de2383e61f9eac4ac264c1a7d7c"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "74258aecb458e4c19871b8a6d7f099919fa7215ade504e60b57b954908653525"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom_model_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "0cee985ad904f1c63ce89d9971452c7d981678b18ef5ecf0c5c876fa0616ab1a"
+      },
+      {
+        "path": "tests_replica/test_cell_baboom_steward.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "23fa50a0883156e4d655d6656e833c68694279cc1ddc8f98bfaca0547e4ccc53"
+      },
+      {
+        "path": "tests_replica/test_legacy_core_node_bridge.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "6dc423e6042f8f5ee89156e9dad0b4212e67eec07c0ee72f2774a7d6d154c126"
+      },
+      {
+        "path": "tests_replica/test_legacy_self_extension_bridge.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "ad8122a61e52537b5e6940a148b9da232338aed5b53e985818e1ac5f8ba1dfaa"
       },
       {
         "path": "tests_replica/test_projection_delta.py",
@@ -328,7 +382,7 @@
       },
       {
         "path": "tests_replica/test_universal_baboom_cognition_planner.py",
-        "runtime_sha256": "47f412877017e061812cc4fc6897934a0080f608ebf5fc6dd78d975ededd4708",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
         "authority_sha256": "fe5fffc49f75eb6efbe0f812f429d642bcef72e428c267c6115e65c205805e65"
       },
       {
@@ -354,7 +408,38 @@
     ],
     "migration_candidates": [
       {
-        "candidate_id": "runtime-source-drift:a9406f49db0d7241",
+        "candidate_id": "runtime-source-drift:5d4811c85e3d48cf",
+        "path": "nodelang/cell_activity.py",
+        "status": "missing_in_authority",
+        "candidate_kind": "implementation_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_activity.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_activity.py",
+        "runtime_sha256": "81d3fdcfae8e78497bb9d312223082a809b6508e8a1647b661ee1368260f6a3e",
+        "authority_sha256": null,
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:22d90da63bf141e0",
         "path": "nodelang/cell_baboom_activity.py",
         "status": "missing_in_authority",
         "candidate_kind": "implementation_candidate",
@@ -370,7 +455,7 @@
         "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom_activity.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom_activity.py",
-        "runtime_sha256": "81d3fdcfae8e78497bb9d312223082a809b6508e8a1647b661ee1368260f6a3e",
+        "runtime_sha256": "904421e7b73133ce4c2588936017f5e32aa1de4121b0de4c3f3b83ec027b1ab0",
         "authority_sha256": null,
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
         "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
@@ -447,7 +532,7 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:cbf46ea3e96a097b",
+        "candidate_id": "runtime-source-drift:259301140dd882f8",
         "path": "tests_replica/test_cell_baboom_activity.py",
         "status": "missing_in_authority",
         "candidate_kind": "court_candidate",
@@ -463,7 +548,7 @@
         "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_activity.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_activity.py",
-        "runtime_sha256": "949dcbd771b1688dd98fc7603ecd4c38bba3ef45653fdf4c65a0d8ba829bf629",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
         "authority_sha256": null,
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
         "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
@@ -701,13 +786,13 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:ea08b16f219ef94f",
-        "path": "nodelang/cell_baboom_connector_execution.py",
+        "candidate_id": "runtime-source-drift:d2758203e8443fba",
+        "path": "nodelang/cell_baboom.py",
         "status": "different_from_authority",
         "candidate_kind": "implementation_candidate",
         "migration_track": "baboom_context_and_cognition",
         "authority_disposition": "migration_evidence_not_authority",
-        "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+        "resolution_state": "pending_canonical_root_decision",
         "promotion_allowed": false,
         "bulk_copy_allowed": false,
         "authority_basis": [
@@ -715,12 +800,12 @@
           "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
         ],
         "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
-        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom_connector_execution.py",
-        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom_connector_execution.py",
-        "runtime_sha256": "bc94a673c2809cefb3f8eb17d79a958636179fad2caad311c6c108b3b43a7b3e",
-        "authority_sha256": "448a18c379da8e91cc47b3bbbc0206eabf0050da93432aa0d9ca6f2850d41cdd",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom.py",
+        "runtime_sha256": "ec31545eb1cd156459e43c2ecb1e11397320786e18b29cd579d0bd0b781e80ed",
+        "authority_sha256": "f616961f083bf40ce0b167beacbd9839b3543e3b4c3d5b1df797ec49e6e45de8",
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-        "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
         "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
         "resolution_evidence": [
           {
@@ -732,13 +817,50 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:318f16b4daf77c72",
+        "candidate_id": "runtime-source-drift:e45fdba8c8a114ef",
+        "path": "nodelang/cell_baboom_connector_execution.py",
+        "status": "different_from_authority",
+        "candidate_kind": "implementation_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom_connector_execution.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom_connector_execution.py",
+        "runtime_sha256": "200ae28cf1153affc4a14a61724d89502ffc858556e1e2e7f3b3b67327dcb85f",
+        "authority_sha256": "448a18c379da8e91cc47b3bbbc0206eabf0050da93432aa0d9ca6f2850d41cdd",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          },
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:ddd06159d892d016",
         "path": "nodelang/cell_baboom_model_execution.py",
         "status": "different_from_authority",
         "candidate_kind": "implementation_candidate",
         "migration_track": "baboom_context_and_cognition",
         "authority_disposition": "migration_evidence_not_authority",
-        "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+        "resolution_state": "pending_canonical_root_decision",
         "promotion_allowed": false,
         "bulk_copy_allowed": false,
         "authority_basis": [
@@ -748,10 +870,47 @@
         "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom_model_execution.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom_model_execution.py",
-        "runtime_sha256": "97d234ec93c7b66ff680e8d19ccd6d08c6b97e9f48e294da38948d52a14c70b8",
+        "runtime_sha256": "c2d213a44719ad1e7683b575b7b9dc0b201c562847a802cf18e9893d6e32c103",
         "authority_sha256": "4f3fd40834356c4da62a46eea4e8d4c7a9d66316d48dccd01dfc00be04bee68e",
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-        "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          },
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:22ffad23ac7294ac",
+        "path": "nodelang/cell_baboom_steward.py",
+        "status": "different_from_authority",
+        "candidate_kind": "implementation_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\cell_baboom_steward.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\cell_baboom_steward.py",
+        "runtime_sha256": "64a2378a2f0a7b067f2a2c76de9ca3501038ed254770a486e64d7f4747bce9aa",
+        "authority_sha256": "a4398ee86de6cc980186ca316ac460de3e504d423a591e285db326a170697e52",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
         "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
         "resolution_evidence": [
           {
@@ -837,7 +996,7 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:5ce5e57f335c25b8",
+        "candidate_id": "runtime-source-drift:62b6fa78c85cba41",
         "path": "nodelang/universal_application.py",
         "status": "different_from_authority",
         "candidate_kind": "implementation_candidate",
@@ -853,8 +1012,8 @@
         "required_canonical_first_step": "prove the application lens consumes the canonical graph root and does not introduce duplicate product truth",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang\\universal_application.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\universal_application.py",
-        "runtime_sha256": "9e20f8aa482909e3ffa93ea55875f2a344f5bac37b6f83c66296d43f0648aea3",
-        "authority_sha256": "e328e905c069f747025afbbe7527a9ac1a90047a7854ac4a64d32b83b46d6bc3",
+        "runtime_sha256": "64b27750bd02434d09a1cef7655849a122881053cfed0e6834a349a7cf5cbf11",
+        "authority_sha256": "391d199874ad8ead1a35f8349b9dd15f9556961e53a3ce05dbddc8388e4cf543",
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
         "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
         "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
@@ -1041,13 +1200,13 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:94ef311a1492d01e",
+        "candidate_id": "runtime-source-drift:90c92cad5723ab03",
         "path": "tests_replica/test_application_server_governance.py",
         "status": "different_from_authority",
         "candidate_kind": "court_candidate",
         "migration_track": "runtime_transport_and_broker",
         "authority_disposition": "migration_evidence_not_authority",
-        "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+        "resolution_state": "pending_canonical_root_decision",
         "promotion_allowed": false,
         "bulk_copy_allowed": false,
         "authority_basis": [
@@ -1057,10 +1216,264 @@
         "required_canonical_first_step": "define graph-held broker/session/capability lifecycle courts before accepting transport behavior",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_application_server_governance.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_application_server_governance.py",
-        "runtime_sha256": "6bff6cfdeb53c9f5b32c8bf586f65a285005975396cd73bc8e852f746279e70f",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
         "authority_sha256": "303eb1ad44c56c0d8d8616e641d4705d946cf8054facb8cce4a2b265902cfb5a",
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-        "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          },
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:a02922eb93d1df8d",
+        "path": "tests_replica/test_cell_baboom.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "ed51f9282f3186f6b21a3df3bb6f1b39cc734d89732f5cf3fa876bce0f76e916",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:82679268b082a5f2",
+        "path": "tests_replica/test_cell_baboom_commands.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_commands.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_commands.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "a1e3856546ef47b3692b08ffff6e3ec3944f6584fe0db48663d18ae94af6bd1a",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:874189525f64df67",
+        "path": "tests_replica/test_cell_baboom_connector_execution.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_connector_execution.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_connector_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "4b81d390322ffcec05e87b01a4f1f764926c6de2383e61f9eac4ac264c1a7d7c",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:c4bc74aa53e85bf9",
+        "path": "tests_replica/test_cell_baboom_execution.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_execution.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "74258aecb458e4c19871b8a6d7f099919fa7215ade504e60b57b954908653525",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:6b2a3f614a15b40d",
+        "path": "tests_replica/test_cell_baboom_model_execution.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_model_execution.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_model_execution.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "0cee985ad904f1c63ce89d9971452c7d981678b18ef5ecf0c5c876fa0616ab1a",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:b862f73ff77f24e0",
+        "path": "tests_replica/test_cell_baboom_steward.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "baboom_context_and_cognition",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_cell_baboom_steward.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_cell_baboom_steward.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "23fa50a0883156e4d655d6656e833c68694279cc1ddc8f98bfaca0547e4ccc53",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:c6ab56d65a554979",
+        "path": "tests_replica/test_legacy_core_node_bridge.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "runtime_transport_and_broker",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "prove host, document, and model effects as Universal Cell connector/model delegations before accepting bridge behavior",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_legacy_core_node_bridge.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_legacy_core_node_bridge.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "6dc423e6042f8f5ee89156e9dad0b4212e67eec07c0ee72f2774a7d6d154c126",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
+        "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
+        "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          }
+        ]
+      },
+      {
+        "candidate_id": "runtime-source-drift:e8fd27c992c32586",
+        "path": "tests_replica/test_legacy_self_extension_bridge.py",
+        "status": "different_from_authority",
+        "candidate_kind": "court_candidate",
+        "migration_track": "runtime_transport_and_broker",
+        "authority_disposition": "migration_evidence_not_authority",
+        "resolution_state": "pending_canonical_root_decision",
+        "promotion_allowed": false,
+        "bulk_copy_allowed": false,
+        "authority_basis": [
+          "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md precedence table",
+          "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md sections 1, 4.1, 4.5, 6, 7"
+        ],
+        "required_canonical_first_step": "prove self-extension build/court/learn effects as Universal Cell connector delegations before accepting bridge behavior",
+        "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_legacy_self_extension_bridge.py",
+        "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_legacy_self_extension_bridge.py",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+        "authority_sha256": "ad8122a61e52537b5e6940a148b9da232338aed5b53e985818e1ac5f8ba1dfaa",
+        "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
         "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
         "resolution_evidence": [
           {
@@ -1239,13 +1652,13 @@
         ]
       },
       {
-        "candidate_id": "runtime-source-drift:8f89a5711e36bf4e",
+        "candidate_id": "runtime-source-drift:c31e615aa63bff27",
         "path": "tests_replica/test_universal_baboom_cognition_planner.py",
         "status": "different_from_authority",
         "candidate_kind": "court_candidate",
         "migration_track": "baboom_context_and_cognition",
         "authority_disposition": "migration_evidence_not_authority",
-        "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+        "resolution_state": "pending_canonical_root_decision",
         "promotion_allowed": false,
         "bulk_copy_allowed": false,
         "authority_basis": [
@@ -1255,12 +1668,18 @@
         "required_canonical_first_step": "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation",
         "runtime_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\tests_replica\\test_universal_baboom_cognition_planner.py",
         "authority_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\tests_replica\\test_universal_baboom_cognition_planner.py",
-        "runtime_sha256": "47f412877017e061812cc4fc6897934a0080f608ebf5fc6dd78d975ededd4708",
+        "runtime_sha256": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
         "authority_sha256": "fe5fffc49f75eb6efbe0f812f429d642bcef72e428c267c6115e65c205805e65",
         "required_decision": "reconstruct_in_canonical_authority, reject_as_experiment, or preserve_as_migration_evidence",
-        "allowed_next_action": "canonical authority evidence exists for this relative path; keep the copied runtime file as migration evidence until the runtime copy is safely retired",
+        "allowed_next_action": "preserve as read-only migration evidence until the canonical root/form decision is made; do not port by bulk copy",
         "forbidden_action": "bulk-copy ignored runtime source or cite this candidate as delivered authority",
         "resolution_evidence": [
+          {
+            "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
+            "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
+            "migration_track": "baboom_context_and_cognition",
+            "command_count": 3
+          },
           {
             "path": "docs/_meta/legacy_runtime_source_drift_baboom_context_evidence.latest.json",
             "slice": "canonical_baboom_cognition_execution_and_pending_activity_root",
@@ -1420,6 +1839,25 @@
     ],
     "rule": "An ignored runtime copy cannot be archived while it contains source files that are missing or different in the declared authority."
   },
+  "baboom_runtime_single_authority": {
+    "schema": "archhub-baboom-runtime-single-authority-status/v1",
+    "ok": true,
+    "product_root": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION",
+    "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+    "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+    "scan_roots": [
+      "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang"
+    ],
+    "scanned_files": 158,
+    "violation_count": 0,
+    "authority_selector_count": 0,
+    "runtime_reference_count": 0,
+    "violations": [],
+    "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+    "authority_court_expected_state": "green: copied runtime has no BABOOM authority selectors",
+    "required_action": "BABOOM runtime selector scan is clear",
+    "rule": "The copied runtime may not select a second BABOOM authority. This status is read-only evidence and does not remove or edit files."
+  },
   "holder_count": 1,
   "archive_safe_now": false,
   "drain_complete": false,
@@ -1522,7 +1960,7 @@
       "inspect_pids": 0,
       "handoff_steps": 2,
       "replacement_specs": 1,
-      "source_drift_count": 32,
+      "source_drift_count": 43,
       "visible_authority_handoff_ready": true
     },
     "blockers": {
@@ -1530,9 +1968,9 @@
         "ok": false,
         "archive_ready": true,
         "readiness_state": "classified_migration_evidence_ready_for_archive",
-        "drift_count": 32,
-        "missing_in_authority": 8,
-        "different_from_authority": 24
+        "drift_count": 43,
+        "missing_in_authority": 9,
+        "different_from_authority": 34
       },
       "passive_wait_pids": [],
       "long_running_test_pids": [],
@@ -1541,6 +1979,14 @@
       "blocked_endpoint_pids": [
         52484
       ]
+    },
+    "baboom_runtime_single_authority": {
+      "ok": true,
+      "violation_count": 0,
+      "authority_selector_count": 0,
+      "runtime_reference_count": 0,
+      "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+      "required_action": "BABOOM runtime selector scan is clear"
     },
     "risk_classes": {
       "visible_legacy_endpoint": 1
@@ -1578,9 +2024,9 @@
         "co_owner_pids": [],
         "non_holder_port_owner_pids": [],
         "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-        "age_seconds": 589427.0667817593,
+        "age_seconds": 594566.6422867775,
         "process_status": "running",
-        "cpu_total_seconds": 880.5625,
+        "cpu_total_seconds": 886.75,
         "holder_risk_class": "visible_legacy_endpoint",
         "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
         "script_evidence": {
@@ -1649,13 +2095,14 @@
       "active_authority_runtime_bridge": true,
       "no_live_holders": false,
       "no_blocked_exact_replacements": false,
-      "handoff_schedule_non_interrupting": true
+      "handoff_schedule_non_interrupting": true,
+      "baboom_runtime_single_authority_ready": true
     },
     "source_drift_archive_readiness": {
       "ok": true,
       "state": "classified_migration_evidence_ready_for_archive",
-      "drift_count": 32,
-      "candidate_count": 32,
+      "drift_count": 43,
+      "candidate_count": 43,
       "allowed_resolution_states": [
         "canonical_evidence_recorded_pending_runtime_retirement",
         "pending_canonical_root_decision",
@@ -1707,9 +2154,9 @@
       "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
       "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
       "process_status": "running",
-      "age_seconds": 589427.0667817593,
+      "age_seconds": 594566.6422867775,
       "create_time": 1784000816.2812548,
-      "cpu_total_seconds": 880.5625,
+      "cpu_total_seconds": 886.75,
       "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
       "forbidden_action": "kill, move, or archive as an uncoordinated cleanup",
       "authority_relaunch": {

@@ -15,8 +15,8 @@
   "source_drift_archive_readiness": {
     "ok": true,
     "state": "classified_migration_evidence_ready_for_archive",
-    "drift_count": 42,
-    "candidate_count": 42,
+    "drift_count": 43,
+    "candidate_count": 43,
     "allowed_resolution_states": [
       "canonical_evidence_recorded_pending_runtime_retirement",
       "pending_canonical_root_decision",

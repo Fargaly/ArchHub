@@ -14,7 +14,7 @@
     "inspect_pids": 0,
     "handoff_steps": 2,
     "replacement_specs": 1,
-    "source_drift_count": 42,
+    "source_drift_count": 43,
     "visible_authority_handoff_ready": true
   },
   "blockers": {
@@ -22,9 +22,9 @@
       "ok": false,
       "archive_ready": true,
       "readiness_state": "classified_migration_evidence_ready_for_archive",
-      "drift_count": 42,
+      "drift_count": 43,
       "missing_in_authority": 9,
-      "different_from_authority": 33
+      "different_from_authority": 34
     },
     "passive_wait_pids": [],
     "long_running_test_pids": [],
@@ -78,9 +78,9 @@
       "co_owner_pids": [],
       "non_holder_port_owner_pids": [],
       "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
-      "age_seconds": 591210.3989565372,
+      "age_seconds": 593838.44404912,
       "process_status": "running",
-      "cpu_total_seconds": 883.609375,
+      "cpu_total_seconds": 886.265625,
       "holder_risk_class": "visible_legacy_endpoint",
       "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
       "script_evidence": {

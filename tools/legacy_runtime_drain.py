@@ -3136,6 +3136,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--retirement-gate-report",
+        action="store_true",
+        help=(
+            "Print only the copied-runtime retirement gate. Pair with "
+            "--authority-shadow-probe to include fresh shadow-launch evidence. "
+            "This is read-only and never writes handoff registrations."
+        ),
+    )
+    parser.add_argument(
         "--inspect-board-pids",
         action="store_true",
         help=(
@@ -3167,6 +3176,15 @@ def main(argv: list[str] | None = None) -> int:
             "Start 10.PRODUCT/13.NODE-LANGUAGE on temporary ports, authenticate "
             "through the browser bootstrap path, prove state/health, and close "
             "it. This never touches live ports."
+        ),
+    )
+    parser.add_argument(
+        "--authority-shadow-probe-report",
+        action="store_true",
+        help=(
+            "Run the non-interrupting authority shadow probe and print only "
+            "that compact proof. This is read-only and never writes handoff "
+            "registrations."
         ),
     )
     parser.add_argument(
@@ -3218,9 +3236,11 @@ def main(argv: list[str] | None = None) -> int:
     read_only = (
         args.no_write
         or args.handoff_board
+        or args.retirement_gate_report
         or args.inspect_board_pids
         or args.visible_authority_handoff_package
         or args.baboom_authority_status
+        or args.authority_shadow_probe_report
         or args.verify_universal_holders
         or args.source_drift_report
         or args.source_drift_work_plan
@@ -3240,7 +3260,10 @@ def main(argv: list[str] | None = None) -> int:
             product_root,
             workspace,
             build_holder_payload(product_root, workspace),
-            run_shadow_probe=args.authority_shadow_probe,
+            run_shadow_probe=(
+                args.authority_shadow_probe
+                or args.authority_shadow_probe_report
+            ),
         )
         if args.inspect_board_pids:
             board = plan["handoff_board"]
@@ -3307,8 +3330,12 @@ def main(argv: list[str] | None = None) -> int:
             result = verify_runtime_holders_in_universal(plan)
         elif args.visible_authority_handoff_package:
             result = build_visible_authority_handoff_package(plan)
+        elif args.retirement_gate_report:
+            result = plan["retirement_gate"]
         elif args.baboom_authority_status:
             result = plan["baboom_runtime_single_authority"]
+        elif args.authority_shadow_probe_report:
+            result = plan["authority_shadow_launch_probe"]
         elif args.source_drift_report:
             result = plan["runtime_copy_source_drift"]
         elif args.source_drift_work_plan:

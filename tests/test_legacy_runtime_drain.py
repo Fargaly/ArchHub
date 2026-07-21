@@ -1798,6 +1798,98 @@ def test_cli_visible_authority_handoff_package_is_read_only(
     assert not out_dir.exists()
 
 
+def test_cli_authority_shadow_probe_report_is_compact_and_read_only(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    (product_root / "node_runtime").mkdir(parents=True)
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(drain.live_runtime_holders, "audit", lambda path: _audit(0, []))
+    monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {})
+    monkeypatch.setattr(
+        drain,
+        "authority_shadow_launch_probe",
+        lambda authority: {
+            "schema": "archhub-authority-shadow-launch-probe/v1",
+            "ok": True,
+            "ran": True,
+            "server_url": "http://127.0.0.1:65487",
+            "reason": "authority shadow launch started on temporary ports",
+        },
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--authority-shadow-probe-report",
+    ])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "schema": "archhub-authority-shadow-launch-probe/v1",
+        "ok": True,
+        "ran": True,
+        "server_url": "http://127.0.0.1:65487",
+        "reason": "authority shadow launch started on temporary ports",
+    }
+    assert not out_dir.exists()
+
+
+def test_cli_retirement_gate_report_is_compact_and_can_include_shadow_probe(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    (product_root / "node_runtime").mkdir(parents=True)
+    out_dir = tmp_path / "must-not-exist"
+    monkeypatch.setattr(
+        drain.live_runtime_holders,
+        "audit",
+        lambda path: _audit(1, [{
+            "pid": 123,
+            "cmdline": "python -m nodelang.application_server --port 8505",
+        }]),
+    )
+    monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {123}})
+    monkeypatch.setattr(
+        drain,
+        "authority_launch_readiness",
+        lambda authority: {"ok": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "authority_shadow_launch_probe",
+        lambda authority: {"ok": True, "ran": True},
+    )
+    monkeypatch.setattr(
+        drain,
+        "active_authority_runtime_bridge_status",
+        lambda product_root, workspace: {"ok": True},
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--output-dir", str(out_dir),
+        "--authority-shadow-probe",
+        "--retirement-gate-report",
+    ])
+
+    assert code == 0
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["schema"] == "archhub-runtime-copy-retirement-gate/v1"
+    assert gate["checks"]["authority_shadow_launch_proven"] is True
+    assert gate["archive_allowed"] is False
+    assert gate["failures"] == ["no_live_holders", "no_blocked_exact_replacements"]
+    assert "holder_report" not in gate
+    assert not out_dir.exists()
+
+
 def test_cli_handoff_board_enforce_retirement_gate_returns_red_when_blocked(
     tmp_path,
     monkeypatch,

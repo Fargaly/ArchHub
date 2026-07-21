@@ -1,0 +1,32 @@
+{
+  "schema": "archhub-authority-shadow-launch-probe/v1",
+  "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+  "module": "nodelang.application_server",
+  "module_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE\\nodelang\\application_server.py",
+  "module_exists": true,
+  "command": [
+    "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-c",
+    "<authority-shadow-launch-probe>"
+  ],
+  "ok": true,
+  "ran": true,
+  "returncode": 0,
+  "stderr_tail": "",
+  "bootstrap_status": 200,
+  "cells": 158113,
+  "csrf_meta_present": true,
+  "health_ok": true,
+  "health_status": 200,
+  "machine_transport_descriptor": true,
+  "machine_work_application": "app:archhub",
+  "machine_work_items": 0,
+  "machine_work_registry": "app:governed-work-registry",
+  "revision": 739,
+  "server_url": "http://127.0.0.1:56876",
+  "session_cookie_http_only": true,
+  "state_path_inside_temp": true,
+  "state_status": 200,
+  "state_valid": true,
+  "reason": "authority shadow launch started on temporary ports and served authenticated state/health plus machine work transport"
+}

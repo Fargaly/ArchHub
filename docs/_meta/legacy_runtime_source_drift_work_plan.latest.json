@@ -3,7 +3,7 @@
   "source_schema": "archhub-runtime-copy-source-drift/v1",
   "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
   "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
-  "candidate_count": 32,
+  "candidate_count": 43,
   "track_count": 7,
   "unresolved_track_count": 7,
   "evidence_covered_track_count": 7,
@@ -26,20 +26,23 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "resolution_state": "mixed_resolution_states",
       "candidate_resolution_states": [
-        "canonical_evidence_recorded_pending_runtime_retirement"
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "pending_canonical_root_decision"
       ],
-      "candidate_count": 9,
+      "candidate_count": 11,
       "candidate_ids": [
         "runtime-source-drift:4ab445be955bee79",
         "runtime-source-drift:6f3fc854f2cfddf7",
         "runtime-source-drift:884c8e926b412d50",
+        "runtime-source-drift:90c92cad5723ab03",
         "runtime-source-drift:90d2b62c5a5a3ab5",
-        "runtime-source-drift:94ef311a1492d01e",
         "runtime-source-drift:9fca61215b884868",
         "runtime-source-drift:b940423a09df0cea",
+        "runtime-source-drift:c6ab56d65a554979",
         "runtime-source-drift:de53ccc191841a77",
+        "runtime-source-drift:e8fd27c992c32586",
         "runtime-source-drift:f10ff227476b1956"
       ],
       "implementation_candidate_paths": [
@@ -52,11 +55,15 @@
         "tests_replica/test_application_boundary_ports.py",
         "tests_replica/test_application_machine_transport.py",
         "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_legacy_core_node_bridge.py",
+        "tests_replica/test_legacy_self_extension_bridge.py",
         "tests_replica/test_universal_cell_capabilities.py",
         "tests_replica/test_universal_cloud_gateway.py"
       ],
       "required_canonical_first_steps": [
-        "define graph-held broker/session/capability lifecycle courts before accepting transport behavior"
+        "define graph-held broker/session/capability lifecycle courts before accepting transport behavior",
+        "prove host, document, and model effects as Universal Cell connector/model delegations before accepting bridge behavior",
+        "prove self-extension build/court/learn effects as Universal Cell connector delegations before accepting bridge behavior"
       ],
       "required_outcome": "runtime transport and broker behavior derive from graph-held session, capability, grant, outcome, and revocation roots",
       "required_decisions": [
@@ -180,7 +187,7 @@
       "candidate_count": 3,
       "candidate_ids": [
         "runtime-source-drift:284ac4ce029299d0",
-        "runtime-source-drift:5ce5e57f335c25b8",
+        "runtime-source-drift:62b6fa78c85cba41",
         "runtime-source-drift:eab9b75ce810a640"
       ],
       "implementation_candidate_paths": [
@@ -233,26 +240,43 @@
         "lifecycle": "WIP",
         "privacy_tier": "T0 PUBLIC"
       },
-      "resolution_state": "mixed_resolution_states",
+      "resolution_state": "pending_canonical_root_decision",
       "candidate_resolution_states": [
-        "canonical_evidence_recorded_pending_runtime_retirement",
         "pending_canonical_root_decision"
       ],
-      "candidate_count": 5,
+      "candidate_count": 14,
       "candidate_ids": [
-        "runtime-source-drift:318f16b4daf77c72",
-        "runtime-source-drift:8f89a5711e36bf4e",
-        "runtime-source-drift:a9406f49db0d7241",
-        "runtime-source-drift:cbf46ea3e96a097b",
-        "runtime-source-drift:ea08b16f219ef94f"
+        "runtime-source-drift:22d90da63bf141e0",
+        "runtime-source-drift:22ffad23ac7294ac",
+        "runtime-source-drift:259301140dd882f8",
+        "runtime-source-drift:5d4811c85e3d48cf",
+        "runtime-source-drift:6b2a3f614a15b40d",
+        "runtime-source-drift:82679268b082a5f2",
+        "runtime-source-drift:874189525f64df67",
+        "runtime-source-drift:a02922eb93d1df8d",
+        "runtime-source-drift:b862f73ff77f24e0",
+        "runtime-source-drift:c31e615aa63bff27",
+        "runtime-source-drift:c4bc74aa53e85bf9",
+        "runtime-source-drift:d2758203e8443fba",
+        "runtime-source-drift:ddd06159d892d016",
+        "runtime-source-drift:e45fdba8c8a114ef"
       ],
       "implementation_candidate_paths": [
+        "nodelang/cell_activity.py",
+        "nodelang/cell_baboom.py",
         "nodelang/cell_baboom_activity.py",
         "nodelang/cell_baboom_connector_execution.py",
-        "nodelang/cell_baboom_model_execution.py"
+        "nodelang/cell_baboom_model_execution.py",
+        "nodelang/cell_baboom_steward.py"
       ],
       "court_candidate_paths": [
+        "tests_replica/test_cell_baboom.py",
         "tests_replica/test_cell_baboom_activity.py",
+        "tests_replica/test_cell_baboom_commands.py",
+        "tests_replica/test_cell_baboom_connector_execution.py",
+        "tests_replica/test_cell_baboom_execution.py",
+        "tests_replica/test_cell_baboom_model_execution.py",
+        "tests_replica/test_cell_baboom_steward.py",
         "tests_replica/test_universal_baboom_cognition_planner.py"
       ],
       "required_canonical_first_steps": [

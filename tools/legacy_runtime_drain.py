@@ -723,11 +723,31 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
         if normalized.startswith("tests_replica/")
         else "implementation_candidate"
     )
-    if "baboom" in normalized:
+    if (
+        "baboom" in normalized
+        or normalized
+        in {
+            "nodelang/cell_activity.py",
+            "nodelang/cell_connector_execution.py",
+            "nodelang/cell_model_execution.py",
+        }
+    ):
         track = "baboom_context_and_cognition"
         required_canonical_first_step = (
             "define/release BABOOM graph protocols and red courts in "
             "13.NODE-LANGUAGE before implementation"
+        )
+    elif normalized == "tests_replica/test_legacy_core_node_bridge.py":
+        track = "runtime_transport_and_broker"
+        required_canonical_first_step = (
+            "prove host, document, and model effects as Universal Cell "
+            "connector/model delegations before accepting bridge behavior"
+        )
+    elif normalized == "tests_replica/test_legacy_self_extension_bridge.py":
+        track = "runtime_transport_and_broker"
+        required_canonical_first_step = (
+            "prove self-extension build/court/learn effects as Universal Cell "
+            "connector delegations before accepting bridge behavior"
         )
     elif (
         "canvas" in normalized

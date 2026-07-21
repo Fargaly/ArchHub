@@ -1277,6 +1277,7 @@ def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(t
     runtime.mkdir(parents=True)
     authority.mkdir(parents=True)
     (runtime / "cell_baboom_activity.py").write_text("runtime\n", encoding="utf-8")
+    (runtime / "cell_activity.py").write_text("runtime\n", encoding="utf-8")
     evidence_dir = product_root / "docs" / "_meta"
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "legacy_runtime_source_drift_baboom_evidence.latest.json").write_text(
@@ -1286,7 +1287,8 @@ def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(t
             "decision": {
                 "accepted_canonical_behavior": ["proposal-only cognition"],
                 "pending_not_ported": [
-                    "ignored nodelang/cell_baboom_activity.py foreground activity"
+                    "ignored nodelang/cell_baboom_activity.py foreground activity",
+                    "ignored nodelang/cell_activity.py isolation shim",
                 ],
                 "runtime_copy_promoted": False,
                 "bulk_copy_performed": False,
@@ -1296,7 +1298,8 @@ def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(t
                 "tests_replica/test_universal_baboom_cognition_planner.py": "sha"
             },
             "runtime_evidence_read_only": {
-                "nodelang/cell_baboom_activity.py": "runtime-sha"
+                "nodelang/cell_baboom_activity.py": "runtime-sha",
+                "nodelang/cell_activity.py": "runtime-sha",
             },
             "commands": [{"command": "pytest", "result": "1 passed"}],
         }),
@@ -1306,10 +1309,19 @@ def test_source_drift_resolution_ledger_preserves_baboom_pending_root_decision(t
     result = drain.runtime_copy_source_drift(product_root, authority)
 
     assert result["ok"] is False
-    candidate = result["migration_candidates"][0]
-    assert candidate["path"] == "nodelang/cell_baboom_activity.py"
-    assert candidate["resolution_state"] == "pending_canonical_root_decision"
-    assert "do not port by bulk copy" in candidate["allowed_next_action"]
+    candidates = {
+        candidate["path"]: candidate
+        for candidate in result["migration_candidates"]
+    }
+    assert candidates["nodelang/cell_baboom_activity.py"]["resolution_state"] == (
+        "pending_canonical_root_decision"
+    )
+    assert candidates["nodelang/cell_activity.py"]["resolution_state"] == (
+        "pending_canonical_root_decision"
+    )
+    assert "do not port by bulk copy" in (
+        candidates["nodelang/cell_activity.py"]["allowed_next_action"]
+    )
 
 
 def test_source_drift_resolution_ledger_reads_explicit_candidate_decisions(tmp_path):
@@ -1364,6 +1376,9 @@ def test_source_drift_resolution_ledger_reads_explicit_candidate_decisions(tmp_p
 def test_known_runtime_source_drift_paths_are_classified_not_promotable():
     paths = [
         "nodelang/cell_baboom_activity.py",
+        "nodelang/cell_activity.py",
+        "nodelang/cell_connector_execution.py",
+        "nodelang/cell_model_execution.py",
         "tests_replica/test_application_boundary_ports.py",
         "tests_replica/test_canvas_interaction_quality.py",
         "tests_replica/test_canvas_visual_grammar.py",
@@ -1390,6 +1405,8 @@ def test_known_runtime_source_drift_paths_are_classified_not_promotable():
         "public_site/build.mjs",
         "tests_replica/test_application_machine_transport.py",
         "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_legacy_core_node_bridge.py",
+        "tests_replica/test_legacy_self_extension_bridge.py",
         "tests_replica/test_universal_application.py",
         "tests_replica/test_universal_baboom_cognition_planner.py",
         "tests_replica/test_universal_cloud_gateway.py",

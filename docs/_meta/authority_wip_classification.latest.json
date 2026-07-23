@@ -1,11 +1,10 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 8,
-  "classification_digest": "fc05cb2a94782370336f8a4fa4c63ca78f60799bf4f31498ce02a27460b00b0c",
+  "total": 7,
+  "classification_digest": "fbd72d49d51edc5d222803d4ad8ede0865e4b5770c2fba7e603f113918030b53",
   "summary": {
-    "external_owner_worktree_wip": 7,
-    "governance_run_evidence": 1
+    "external_owner_worktree_wip": 7
   },
   "gate": {
     "no_unclassified": {
@@ -20,17 +19,6 @@
     }
   },
   "entries": [
-    {
-      "code": " M",
-      "path": "docs/_meta/run_report_2026-07-19_authority_split.md",
-      "category": "governance_run_evidence",
-      "disposition": "run_evidence",
-      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-      "promotion_allowed": "false",
-      "required_courts": [
-        "personal-brain-mcp/tests/test_run_report.py"
-      ]
-    },
     {
       "code": " M",
       "path": "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -442,7 +430,7 @@
           "-q"
         ],
         "category": "external_owner_worktree_wip",
-        "classification_digest": "fc05cb2a94782370336f8a4fa4c63ca78f60799bf4f31498ce02a27460b00b0c",
+        "classification_digest": "fbd72d49d51edc5d222803d4ad8ede0865e4b5770c2fba7e603f113918030b53",
         "required_courts": [
           "tests/test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state"
         ]
@@ -459,7 +447,7 @@
         "category": "external_owner_worktree_wip",
         "disposition": "external_owner_boundary",
         "required_action": "treat as serialized external worktree WIP; do not integrate, publish, or claim clean public authority until the owner either commits it on its branch, hands it off with exact courts, or explicitly releases it for classification/consumption",
-        "classification_digest": "fc05cb2a94782370336f8a4fa4c63ca78f60799bf4f31498ce02a27460b00b0c",
+        "classification_digest": "fbd72d49d51edc5d222803d4ad8ede0865e4b5770c2fba7e603f113918030b53",
         "path_count": 7,
         "paths": [
           "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -499,53 +487,6 @@
         "wip-convergence"
       ],
       "priority": 5600
-    },
-    {
-      "title": "Consume public WIP category: governance_run_evidence",
-      "gate_kind": "pytest",
-      "gate_spec": {
-        "path": "tests/test_authority_wip_classify.py",
-        "selectors": [
-          "tests/test_authority_wip_classify.py",
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "args": [
-          "-q"
-        ],
-        "category": "governance_run_evidence",
-        "classification_digest": "fc05cb2a94782370336f8a4fa4c63ca78f60799bf4f31498ce02a27460b00b0c",
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ]
-      },
-      "cde_container": {
-        "container_id": "10.PRODUCT/12.PRODUCTION",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
-        "lifecycle": "WIP",
-        "privacy_tier": "T0 PUBLIC"
-      },
-      "governance_context": {
-        "schema": "archhub-public-wip-category-consumption/v1",
-        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-        "category": "governance_run_evidence",
-        "disposition": "run_evidence",
-        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
-        "classification_digest": "fc05cb2a94782370336f8a4fa4c63ca78f60799bf4f31498ce02a27460b00b0c",
-        "path_count": 1,
-        "paths": [
-          "docs/_meta/run_report_2026-07-19_authority_split.md"
-        ],
-        "required_courts": [
-          "personal-brain-mcp/tests/test_run_report.py"
-        ],
-        "promotion_allowed": false
-      },
-      "fit": [
-        "governance",
-        "universal-cell-authority",
-        "wip-convergence"
-      ],
-      "priority": 6000
     }
   ]
 }

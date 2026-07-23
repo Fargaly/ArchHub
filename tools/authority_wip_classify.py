@@ -806,15 +806,17 @@ def _machine_resource_gate(
     machine_priority_hold: dict[str, str] | None,
 ) -> dict[str, Any]:
     if machine_priority_hold:
-        owner = str(machine_priority_hold.get("owner") or "").strip()
         status = str(machine_priority_hold.get("status") or "active_hold").strip()
-        scope = str(machine_priority_hold.get("scope") or "").strip()
         return {
             "schema": "archhub-machine-resource-coordination/v1",
             "active_hold": True,
-            "owner": owner,
+            "owner": "private_machine_priority_holder",
             "status": status,
-            "scope": scope,
+            "scope": "private_production_slot_active",
+            "redaction": (
+                "public T0 evidence records the active hold only; exact owner "
+                "and scope stay in private coordination records"
+            ),
             "allowed_work": [
                 "source reads",
                 "JSON classification",
@@ -830,7 +832,7 @@ def _machine_resource_gate(
             ],
             "required_action": (
                 "keep unrelated heavy ArchHub authority work held until the "
-                "machine-priority owner explicitly releases the slot"
+                "private machine-priority owner explicitly releases the slot"
             ),
         }
     return {

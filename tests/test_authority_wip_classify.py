@@ -468,12 +468,12 @@ def test_machine_priority_hold_is_bound_to_report_and_active_work_leaf():
             "worktree_entry_path": "app/bridge.py",
         }],
         machine_priority_hold={
-            "owner": "BBC4 consolidated G4/G5 QA",
+            "owner": "private client production task",
             "status": "active_hold",
-            "scope": "DATE23 DWG production frozen at 397/407",
+            "scope": "private drawing package status",
         },
     )
-    changed_owner = awc.classify_entries(
+    no_hold = awc.classify_entries(
         [{
             "code": " M",
             "path": "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -484,24 +484,22 @@ def test_machine_priority_hold_is_bound_to_report_and_active_work_leaf():
             "worktree_branch": "analyze-logs-performance",
             "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
             "worktree_entry_path": "app/bridge.py",
-        }],
-        machine_priority_hold={
-            "owner": "editor real-browser acceptance",
-            "status": "active_hold",
-            "scope": "different heavy slot",
-        },
+        }]
     )
 
     gate = report["gate"]["machine_resource"]
     assert gate["active_hold"] is True
-    assert gate["owner"] == "BBC4 consolidated G4/G5 QA"
-    assert gate["scope"] == "DATE23 DWG production frozen at 397/407"
+    assert gate["owner"] == "private_machine_priority_holder"
+    assert gate["scope"] == "private_production_slot_active"
+    assert "private coordination records" in gate["redaction"]
+    assert "private client production task" not in json.dumps(report)
+    assert "private drawing package status" not in json.dumps(report)
     assert "heavy browser acceptance" in gate["forbidden_work"]
     leaf_gate = report["active_work_leaves"][0]["governance_context"][
         "machine_resource_gate"
     ]
     assert leaf_gate == gate
-    assert report["classification_digest"] != changed_owner["classification_digest"]
+    assert report["classification_digest"] != no_hold["classification_digest"]
 
 
 def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
@@ -522,6 +520,8 @@ def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
         "tools\\authority_wip_classify.py --include-worktrees",
         "--machine-priority-owner",
         "machine_resource_gate",
+        "must not serialize client names",
+        "classifier redacts",
         "docs\\_meta\\authority_wip_classification.latest.json",
         "agent/session hook adapter",
         "brain.hook_coverage_audit_cell_first",

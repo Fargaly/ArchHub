@@ -66,7 +66,9 @@ scope:
    scope and proved by its own court.
 9. If another task owns the machine-priority slot, the generated classifier
    report carries `gate.machine_resource.active_hold=true`, and every generated
-   active-work leaf carries the same `machine_resource_gate`.
+   active-work leaf carries the same `machine_resource_gate`. The public report
+   must not serialize client names, drawing package identifiers, exact counts,
+   or other private machine-owner details.
 
 If any item is false, the report must say "not complete for that scope" and
 name the blocker.
@@ -80,8 +82,11 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `git status --porcelain=v1 --untracked-files=all`.
 2. Run the authority classification:
    `py -3.14 tools\authority_wip_classify.py --include-worktrees --output docs\_meta\authority_wip_classification.latest.json --enforce-no-unclassified`.
-   If another task owns the machine slot, include the exact holder:
+   If another task owns the machine slot, mark the hold without publishing the
+   private owner or scope:
    `--machine-priority-owner "<owner>" --machine-priority-status active_hold --machine-priority-scope "<bounded scope/status>"`.
+   The classifier redacts those two values in T0 public evidence; exact details
+   belong in private coordination records.
 3. Run the focused WIP authority court:
    `py -3.14 -m pytest tests\test_authority_wip_classify.py -q --timeout=90 --tb=short`.
 4. If the classifier reports `external_owner_worktree_wip`, run the exact owner
@@ -133,7 +138,9 @@ loop stays light: source reads, JSON classification, focused tests, and commits
 only. Do not start heavy browser, PDF, model, broad audit, preflight, or
 conversion work until the slot is released. The generated classifier evidence
 must carry this as `machine_resource_gate`; a clean local source report without
-that gate is incomplete while the hold is active.
+that gate is incomplete while the hold is active. The public gate records only
+the existence of the hold and the allowed/forbidden work classes, not the
+client/task identity.
 
 After a machine-priority conflict or suspected duplicate Brain helper, run the
 read-only Brain resource hygiene audit:
@@ -151,7 +158,7 @@ Every run that changes the public WIP boundary must leave:
 - The refreshed `docs/_meta/authority_wip_classification.latest.json`.
 - The focused court output in the final report.
 - Hook coverage audit output when agent/session adapters changed.
-- The `machine_resource_gate` when a machine-priority holder exists.
+- The redacted `machine_resource_gate` when a machine-priority holder exists.
 - The exact commit hash or an explicit statement that no commit was made.
 - A boundary statement separating local tracked source state, external owner
   worktree state, ignored generated artifacts, remote publication state, and

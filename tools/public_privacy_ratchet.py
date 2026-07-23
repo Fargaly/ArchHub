@@ -1,13 +1,8 @@
 #!/usr/bin/env python
-"""Shrink-only privacy ratchet for the public product tree.
-
-The identifiers are stored as hashes so this guard does not create another
-clear-text copy of the client/project terms it prevents from widening.
-"""
+"""Shrink-only privacy ratchet for the public product tree."""
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -18,17 +13,18 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 
-PRIVATE_IDENTIFIER_HASHES = {
-    "493d5894c1da538e2a67b24cadd01d62b2d128a17f77cec5936b0d0d9c521166",
-    "b559372470502cdacaf304dfc002b294f70505da376613ae36a021e59f787728",
-    "cce27e9d0f5982b59014662329ddcfcedc4365a1a7d6eb49264ccb0db60ac670",
-    "ed7fe83450d58d71102b3f580993c4153d8d1b786ca7176f5051f1e70c4f1abf",
-    "f57bbc61a7251611f64831d37f206a4e7250d8b5cb428e2f1625f12d0cc548cd",
-}
-
 TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[- ][A-Za-z0-9]+)*")
-BASELINE_FILE_COUNT = 21
-BASELINE_HIT_COUNT = 93
+
+
+def default_policy_path(repo: Path = REPO) -> Path:
+    workspace = repo.parent.parent
+    return (
+        workspace
+        / "30.KNOWLEDGE"
+        / "strategy"
+        / "courts"
+        / "public-privacy-ratchet-policy.private.json"
+    )
 
 
 def _tracked_files(repo: Path) -> list[str]:
@@ -51,11 +47,33 @@ def _normalized_tokens(text: str) -> list[str]:
     return tokens
 
 
-def private_identifier_hits(text: str) -> int:
+def load_policy(policy_path: Path) -> dict[str, Any]:
+    if not policy_path.is_file():
+        raise FileNotFoundError(str(policy_path))
+    data = json.loads(policy_path.read_text(encoding="utf-8"))
+    identifiers = data.get("identifiers")
+    if not isinstance(identifiers, list) or not identifiers:
+        raise ValueError("privacy policy must contain a non-empty identifiers list")
+    normalized = {
+        re.sub(r"[^A-Za-z0-9]", "", str(identifier)).upper()
+        for identifier in identifiers
+    }
+    normalized.discard("")
+    if not normalized:
+        raise ValueError("privacy policy identifiers normalize to an empty set")
+    return {
+        "schema": data.get("schema", "archhub-public-privacy-ratchet-policy/v1"),
+        "baseline_file_count": int(data["baseline_file_count"]),
+        "baseline_hit_count": int(data["baseline_hit_count"]),
+        "normalized_identifiers": normalized,
+        "policy_path": str(policy_path),
+    }
+
+
+def private_identifier_hits(text: str, identifiers: set[str]) -> int:
     hits = 0
     for token in _normalized_tokens(text):
-        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        if digest in PRIVATE_IDENTIFIER_HASHES:
+        if token in identifiers:
             hits += 1
     return hits
 
@@ -67,12 +85,18 @@ def _safe_text(path: Path) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
-def scan_public_tree(repo: Path = REPO) -> dict[str, Any]:
+def scan_public_tree(
+    repo: Path = REPO,
+    *,
+    policy_path: Path | None = None,
+) -> dict[str, Any]:
+    policy = load_policy(policy_path or default_policy_path(repo))
     files: list[dict[str, Any]] = []
     hit_count = 0
     for relative in _tracked_files(repo):
-        path_hits = private_identifier_hits(relative)
-        content_hits = private_identifier_hits(_safe_text(repo / relative))
+        identifiers = policy["normalized_identifiers"]
+        path_hits = private_identifier_hits(relative, identifiers)
+        content_hits = private_identifier_hits(_safe_text(repo / relative), identifiers)
         total = path_hits + content_hits
         if not total:
             continue
@@ -85,11 +109,17 @@ def scan_public_tree(repo: Path = REPO) -> dict[str, Any]:
         hit_count += total
     return {
         "schema": "archhub-public-privacy-ratchet/v1",
-        "baseline_file_count": BASELINE_FILE_COUNT,
-        "baseline_hit_count": BASELINE_HIT_COUNT,
+        "policy_schema": policy["schema"],
+        "policy_path": policy["policy_path"],
+        "policy_storage": "private",
+        "baseline_file_count": policy["baseline_file_count"],
+        "baseline_hit_count": policy["baseline_hit_count"],
         "file_count": len(files),
         "hit_count": hit_count,
-        "ok": len(files) <= BASELINE_FILE_COUNT and hit_count <= BASELINE_HIT_COUNT,
+        "ok": (
+            len(files) <= policy["baseline_file_count"]
+            and hit_count <= policy["baseline_hit_count"]
+        ),
         "files": files,
     }
 
@@ -99,10 +129,21 @@ def main(argv: list[str] | None = None) -> int:
         description="Fail if private client/project identifier debt widens."
     )
     parser.add_argument("--repo", default=str(REPO))
+    parser.add_argument("--policy", default="")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    report = scan_public_tree(Path(args.repo).resolve())
+    repo = Path(args.repo).resolve()
+    policy_path = Path(args.policy).resolve() if args.policy else None
+    try:
+        report = scan_public_tree(repo, policy_path=policy_path)
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        print(
+            "[public-privacy-ratchet] privacy policy unavailable or invalid: "
+            f"{exc}",
+            file=sys.stderr,
+        )
+        return 1
     if args.json:
         print(json.dumps(report, indent=2))
     else:

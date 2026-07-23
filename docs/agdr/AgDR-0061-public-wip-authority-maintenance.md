@@ -66,7 +66,8 @@ scope:
    private client/project references fail the court.
    Local `.githooks/pre-commit` and `.githooks/pre-push` also run
    `tools/public_privacy_ratchet.py`, but local hooks remain a defense layer,
-   not proof of server-side protection.
+   not proof of server-side protection. The guarded identifier policy lives in
+   private `30.KNOWLEDGE` custody and must not be copied into T0 public source.
 9. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
    process, production conversion worker, or active session has been stopped,
    restarted, replaced, or handed off unless that action was explicitly in the
@@ -113,6 +114,8 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `tests\test_antigravity_governance_hooks.py` when that client is touched.
 6. Run the public private-identifier ratchet:
    `py -3.14 -m pytest tests\test_public_privacy_ratchet.py -q --timeout=90 --tb=short`.
+   The tool loads its local workspace policy from private `30.KNOWLEDGE`; a
+   missing policy blocks hook execution instead of silently passing.
 7. Confirm the local hooks still call the ratchet:
    `py -3.14 -m pytest tests\test_public_privacy_ratchet.py::test_public_privacy_ratchet_is_wired_to_local_hooks -q --timeout=90 --tb=short`.
 8. Run whitespace/path sanity before commit:

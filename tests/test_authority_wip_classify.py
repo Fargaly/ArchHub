@@ -527,6 +527,8 @@ def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
         "tools/public_privacy_ratchet.py",
         "test_public_privacy_ratchet_is_wired_to_local_hooks",
         "private-identifier ratchet",
+        "private `30.KNOWLEDGE` custody",
+        "missing policy blocks hook execution",
         "docs\\_meta\\authority_wip_classification.latest.json",
         "agent/session hook adapter",
         "brain.hook_coverage_audit_cell_first",

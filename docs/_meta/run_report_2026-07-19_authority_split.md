@@ -7314,7 +7314,8 @@ Next action:
 
 Commit:
 
-- this changeset; exact hash reported in the final run output.
+- `aae1d46` - `Bind external worktree WIP to owner head`.
+- `5834b0d` - `Refresh WIP classification after worktree head binding`.
 
 Intent:
 
@@ -7364,7 +7365,8 @@ Next action:
 
 Commit:
 
-- pending in this run.
+- `f8574d7` - `Add external worktree freshness court`.
+- `baebb1e` - `Refresh WIP classification after freshness court`.
 
 Intent:
 
@@ -7409,7 +7411,8 @@ Next action:
 
 Commit:
 
-- pending in this run.
+- `7e3c2be` - `Bind external worktree leaf to freshness court`.
+- `145ee33` - `Refresh WIP classification after external leaf gate`.
 
 Intent:
 
@@ -7448,7 +7451,8 @@ Desk-space/live-session impact:
 
 Commit:
 
-- pending in this run.
+- `e3457c5` - `Add Brain resource hygiene audit`.
+- `a53968d` - `Refresh WIP classification after Brain hygiene audit`.
 
 Intent:
 
@@ -7495,7 +7499,8 @@ Desk-space/live-session impact:
 
 Commit:
 
-- this changeset; exact hash reported in the final run output.
+- `3092c60` - `Carry external worktree signature in WIP leaf`.
+- `de018f4` - `Refresh WIP classification after external signature`.
 
 Intent:
 
@@ -7534,7 +7539,8 @@ Desk-space/live-session impact:
 
 Commit:
 
-- this changeset; exact hash reported in the final run output.
+- `974204c` - `Bind external worktree signature into WIP digest`.
+- `07a7eb1` - `Refresh WIP classification after digest binding`.
 
 Intent:
 

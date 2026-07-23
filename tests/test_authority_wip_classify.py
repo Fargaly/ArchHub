@@ -1309,6 +1309,56 @@ def test_external_worktree_leaf_gate_executes_owner_freshness_court():
     assert leaf["gate_spec"]["required_courts"] == expected_courts
 
 
+def test_external_worktree_leaf_carries_exact_owner_signature():
+    report = awc.classify_entries([
+        {
+            "code": " M",
+            "path": "external-worktree:analyze-logs-performance/app/bridge.py",
+            "worktree_path": (
+                "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+                "ArchHub/analyze-logs-performance"
+            ),
+            "worktree_branch": "analyze-logs-performance",
+            "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
+            "worktree_entry_path": "app/bridge.py",
+        },
+        {
+            "code": " D",
+            "path": (
+                "external-worktree:analyze-logs-performance/"
+                "app/skills/production_seeds.py"
+            ),
+            "worktree_path": (
+                "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+                "ArchHub/analyze-logs-performance"
+            ),
+            "worktree_branch": "analyze-logs-performance",
+            "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
+            "worktree_entry_path": "app/skills/production_seeds.py",
+        },
+    ])
+    leaf = report["active_work_leaves"][0]
+
+    assert leaf["governance_context"]["external_worktrees"] == [{
+        "worktree_path": (
+            "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+            "ArchHub/analyze-logs-performance"
+        ),
+        "worktree_branch": "analyze-logs-performance",
+        "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
+        "path_count": 2,
+        "entry_paths": [
+            "app/bridge.py",
+            "app/skills/production_seeds.py",
+        ],
+        "required_owner_action": (
+            "external owner must commit, release, or hand off this exact "
+            "branch/HEAD/path set before the public authority leaf can be "
+            "consumed"
+        ),
+    }]
+
+
 def test_governance_brain_leaf_gate_executes_control_plane_courts():
     report = awc.classify_entries([
         {"code": " M", "path": "personal-brain-mcp/src/personal_brain/hook_coverage.py"},

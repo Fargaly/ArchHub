@@ -84,6 +84,10 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state -q --timeout=90 --tb=short`.
    The external owner entry is not clean authority until that court confirms
    the report's path/code/branch/HEAD signature still matches the live worktree.
+   The generated active-work leaf must also carry the exact
+   `external_worktrees` signature: worktree path, branch, HEAD, entry paths, and
+   owner-required action. A leaf that hides this signature is not a usable
+   coordination handoff.
 5. For agent/session hook work, run the exact client hook audit and focused
    courts. Minimum local courts are:
    `py -3.14 -m pytest personal-brain-mcp\tests\test_hook_coverage.py personal-brain-mcp\tests\test_installer_coverage.py tests\test_brainwrap.py -q --timeout=120 --tb=short`.

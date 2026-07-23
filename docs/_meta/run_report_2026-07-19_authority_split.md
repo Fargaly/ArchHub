@@ -7490,3 +7490,42 @@ Desk-space/live-session impact:
 - Source-only product governance change plus read-only process audit.
 - No Antigravity worktree files, PID 52484, Brain listener, live endpoint,
   browser, Revit, Autodesk, or BBC4 worker/output touched.
+
+## External owner active-work signature - 2026-07-23
+
+Commit:
+
+- this changeset; exact hash reported in the final run output.
+
+Intent:
+
+- Make the external-owner active-work leaf carry the exact worktree signature it
+  depends on, so Brain/Workshop coordination sees a real boundary instead of a
+  broad category label.
+
+Mechanism:
+
+- Added `external_worktrees` to the `external_owner_worktree_wip` leaf
+  governance context.
+- The signature records worktree path, branch, HEAD, changed entry paths, and
+  the required external-owner action.
+- This does not claim ownership of the external Antigravity worktree and does
+  not consume or rewrite its files.
+
+Verification:
+
+- Focused external-owner signature/freshness bundle:
+  `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_external_worktree_leaf_carries_exact_owner_signature tests\test_authority_wip_classify.py::test_external_worktree_leaf_gate_executes_owner_freshness_court tests\test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q --timeout=90 --tb=short`
+  - result: `4 passed`.
+- Syntax compile:
+  `py -3.14 -m py_compile tools\authority_wip_classify.py tests\test_authority_wip_classify.py`
+  - result: passed.
+- Whitespace/path sanity:
+  `git diff --check`
+  - result: passed with line-ending warnings only.
+
+Desk-space/live-session impact:
+
+- Source-only product classification change.
+- No Antigravity worktree files, PID 52484, Brain service, live endpoint,
+  browser, Revit, Autodesk, or BBC4 worker/output touched.

@@ -825,6 +825,25 @@ def wip_category_leaves(report: dict[str, Any]) -> list[dict[str, Any]]:
             "tests/test_authority_wip_classify.py",
             *courts,
         ]))
+        external_worktrees = (
+            _external_worktree_context(items)
+            if category == "external_owner_worktree_wip"
+            else []
+        )
+        governance_context = {
+            "schema": "archhub-public-wip-category-consumption/v1",
+            "authority": report.get("authority"),
+            "category": category,
+            "disposition": policy["disposition"],
+            "required_action": policy["required_action"],
+            "classification_digest": report.get("classification_digest"),
+            "path_count": len(paths),
+            "paths": paths,
+            "required_courts": courts,
+            "promotion_allowed": False,
+        }
+        if external_worktrees:
+            governance_context["external_worktrees"] = external_worktrees
         leaves.append({
             "title": "Consume public WIP category: %s" % category,
             "gate_kind": "pytest",
@@ -837,22 +856,39 @@ def wip_category_leaves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "required_courts": courts,
             },
             "cde_container": dict(CDE_CONTAINER),
-            "governance_context": {
-                "schema": "archhub-public-wip-category-consumption/v1",
-                "authority": report.get("authority"),
-                "category": category,
-                "disposition": policy["disposition"],
-                "required_action": policy["required_action"],
-                "classification_digest": report.get("classification_digest"),
-                "path_count": len(paths),
-                "paths": paths,
-                "required_courts": courts,
-                "promotion_allowed": False,
-            },
+            "governance_context": governance_context,
             "fit": ["governance", "universal-cell-authority", "wip-convergence"],
             "priority": CATEGORY_PRIORITY.get(category, 5000),
         })
     return leaves
+
+
+def _external_worktree_context(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for item in items:
+        key = (
+            str(item.get("worktree_path") or ""),
+            str(item.get("worktree_branch") or ""),
+            str(item.get("worktree_head") or ""),
+        )
+        grouped.setdefault(key, []).append(
+            str(item.get("worktree_entry_path") or item.get("path") or "")
+        )
+    contexts: list[dict[str, Any]] = []
+    for (worktree_path, branch, head), entry_paths in sorted(grouped.items()):
+        contexts.append({
+            "worktree_path": worktree_path,
+            "worktree_branch": branch,
+            "worktree_head": head,
+            "path_count": len(entry_paths),
+            "entry_paths": sorted(entry_paths),
+            "required_owner_action": (
+                "external owner must commit, release, or hand off this exact "
+                "branch/HEAD/path set before the public authority leaf can be "
+                "consumed"
+            ),
+        })
+    return contexts
 
 
 def register_active_work_leaves(

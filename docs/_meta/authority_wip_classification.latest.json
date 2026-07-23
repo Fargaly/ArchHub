@@ -1,10 +1,11 @@
 {
   "schema": "archhub-public-wip-authority-classification/v1",
   "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
-  "total": 7,
-  "classification_digest": "56f539f199da2aea5677357165a7132189f09343665dc64411b4764ee430df8a",
+  "total": 8,
+  "classification_digest": "1ea39103fc47bbd2a7618b05011a55872285824e259669d75e8dd2159f6108b7",
   "summary": {
-    "external_owner_worktree_wip": 7
+    "external_owner_worktree_wip": 7,
+    "governance_run_evidence": 1
   },
   "gate": {
     "no_unclassified": {
@@ -20,9 +21,10 @@
     "machine_resource": {
       "schema": "archhub-machine-resource-coordination/v1",
       "active_hold": true,
-      "owner": "BBC4 consolidated G4/G5 QA",
+      "owner": "private_machine_priority_holder",
       "status": "active_hold",
-      "scope": "DATE23 DWG production frozen at 397/407; heavy slot not generally released",
+      "scope": "private_production_slot_active",
+      "redaction": "public T0 evidence records the active hold only; exact owner and scope stay in private coordination records",
       "allowed_work": [
         "source reads",
         "JSON classification",
@@ -36,10 +38,21 @@
         "visible endpoint restart or handoff",
         "active session interruption"
       ],
-      "required_action": "keep unrelated heavy ArchHub authority work held until the machine-priority owner explicitly releases the slot"
+      "required_action": "keep unrelated heavy ArchHub authority work held until the private machine-priority owner explicitly releases the slot"
     }
   },
   "entries": [
+    {
+      "code": " M",
+      "path": "docs/_meta/authority_wip_classification.latest.json",
+      "category": "governance_run_evidence",
+      "disposition": "run_evidence",
+      "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+      "promotion_allowed": "false",
+      "required_courts": [
+        "personal-brain-mcp/tests/test_run_report.py"
+      ]
+    },
     {
       "code": " M",
       "path": "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -451,7 +464,7 @@
           "-q"
         ],
         "category": "external_owner_worktree_wip",
-        "classification_digest": "56f539f199da2aea5677357165a7132189f09343665dc64411b4764ee430df8a",
+        "classification_digest": "1ea39103fc47bbd2a7618b05011a55872285824e259669d75e8dd2159f6108b7",
         "required_courts": [
           "tests/test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state"
         ]
@@ -468,7 +481,7 @@
         "category": "external_owner_worktree_wip",
         "disposition": "external_owner_boundary",
         "required_action": "treat as serialized external worktree WIP; do not integrate, publish, or claim clean public authority until the owner either commits it on its branch, hands it off with exact courts, or explicitly releases it for classification/consumption",
-        "classification_digest": "56f539f199da2aea5677357165a7132189f09343665dc64411b4764ee430df8a",
+        "classification_digest": "1ea39103fc47bbd2a7618b05011a55872285824e259669d75e8dd2159f6108b7",
         "path_count": 7,
         "paths": [
           "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -486,9 +499,10 @@
         "machine_resource_gate": {
           "schema": "archhub-machine-resource-coordination/v1",
           "active_hold": true,
-          "owner": "BBC4 consolidated G4/G5 QA",
+          "owner": "private_machine_priority_holder",
           "status": "active_hold",
-          "scope": "DATE23 DWG production frozen at 397/407; heavy slot not generally released",
+          "scope": "private_production_slot_active",
+          "redaction": "public T0 evidence records the active hold only; exact owner and scope stay in private coordination records",
           "allowed_work": [
             "source reads",
             "JSON classification",
@@ -502,7 +516,7 @@
             "visible endpoint restart or handoff",
             "active session interruption"
           ],
-          "required_action": "keep unrelated heavy ArchHub authority work held until the machine-priority owner explicitly releases the slot"
+          "required_action": "keep unrelated heavy ArchHub authority work held until the private machine-priority owner explicitly releases the slot"
         },
         "external_worktrees": [
           {
@@ -529,6 +543,75 @@
         "wip-convergence"
       ],
       "priority": 5600
+    },
+    {
+      "title": "Consume public WIP category: governance_run_evidence",
+      "gate_kind": "pytest",
+      "gate_spec": {
+        "path": "tests/test_authority_wip_classify.py",
+        "selectors": [
+          "tests/test_authority_wip_classify.py",
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "args": [
+          "-q"
+        ],
+        "category": "governance_run_evidence",
+        "classification_digest": "1ea39103fc47bbd2a7618b05011a55872285824e259669d75e8dd2159f6108b7",
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ]
+      },
+      "cde_container": {
+        "container_id": "10.PRODUCT/12.PRODUCTION",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "governance_context": {
+        "schema": "archhub-public-wip-category-consumption/v1",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+        "category": "governance_run_evidence",
+        "disposition": "run_evidence",
+        "required_action": "keep as generated convergence/drain evidence; do not promote as product authority",
+        "classification_digest": "1ea39103fc47bbd2a7618b05011a55872285824e259669d75e8dd2159f6108b7",
+        "path_count": 1,
+        "paths": [
+          "docs/_meta/authority_wip_classification.latest.json"
+        ],
+        "required_courts": [
+          "personal-brain-mcp/tests/test_run_report.py"
+        ],
+        "promotion_allowed": false,
+        "machine_resource_gate": {
+          "schema": "archhub-machine-resource-coordination/v1",
+          "active_hold": true,
+          "owner": "private_machine_priority_holder",
+          "status": "active_hold",
+          "scope": "private_production_slot_active",
+          "redaction": "public T0 evidence records the active hold only; exact owner and scope stay in private coordination records",
+          "allowed_work": [
+            "source reads",
+            "JSON classification",
+            "focused source-light tests",
+            "bounded commits"
+          ],
+          "forbidden_work": [
+            "heavy browser acceptance",
+            "PDF/model/broad audit/preflight",
+            "conversion work",
+            "visible endpoint restart or handoff",
+            "active session interruption"
+          ],
+          "required_action": "keep unrelated heavy ArchHub authority work held until the private machine-priority owner explicitly releases the slot"
+        }
+      },
+      "fit": [
+        "governance",
+        "universal-cell-authority",
+        "wip-convergence"
+      ],
+      "priority": 6000
     }
   ]
 }

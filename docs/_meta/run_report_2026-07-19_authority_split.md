@@ -7404,3 +7404,42 @@ Current position:
 Next action:
 
 - Commit this court and refresh the classifier after commit.
+
+## External owner leaf gate tightening - 2026-07-23
+
+Commit:
+
+- pending in this run.
+
+Intent:
+
+- Make the external-owner WIP active-work leaf name the exact freshness court it
+  depends on, instead of leaving the category with only the broad classifier test
+  file.
+
+Mechanism:
+
+- Added `EXTERNAL_WORKTREE_COURTS` to `tools/authority_wip_classify.py`.
+- Bound `external_owner_worktree_wip` to
+  `tests/test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state`.
+- Added a focused leaf-gate test proving the active-work leaf carries that exact
+  selector.
+- Updated AgDR-0061 so the human maintenance loop names the same court.
+
+Verification:
+
+- Focused external-owner leaf and freshness courts:
+  `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_external_worktree_leaf_gate_executes_owner_freshness_court tests\test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state tests\test_authority_wip_classify.py::test_public_wip_maintenance_runbook_exists_and_names_the_required_gates tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q --timeout=90 --tb=short`
+  - result: `4 passed`.
+- Syntax compile:
+  `py -3.14 -m py_compile tools\authority_wip_classify.py tests\test_authority_wip_classify.py`
+  - result: passed.
+- Whitespace/path sanity:
+  `git diff --check`
+  - result: passed with line-ending warnings only.
+
+Desk-space/live-session impact:
+
+- Source-only product evidence change.
+- No Antigravity worktree files, running sessions, Brain service, Revit,
+  Autodesk, BBC4 worker/output, browser, or endpoint touched.

@@ -117,6 +117,11 @@ GOVERNANCE_RUN_EVIDENCE_COURTS = (
 )
 
 
+EXTERNAL_WORKTREE_COURTS = (
+    "tests/test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state",
+)
+
+
 UNIVERSAL_CELL_AUTHORITY_COURTS = (
     "tests/test_universal_cell_node_courts.py",
 )
@@ -340,6 +345,7 @@ CATEGORY_POLICY: dict[str, dict[str, Any]] = {
             "commits it on its branch, hands it off with exact courts, or "
             "explicitly releases it for classification/consumption"
         ),
+        required_courts=EXTERNAL_WORKTREE_COURTS,
     ),
     "unclassified_noncoordinated": _policy(
         "blocked",

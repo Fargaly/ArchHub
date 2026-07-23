@@ -7359,3 +7359,48 @@ Next action:
 
 - After this evidence commit, rerun the classifier so only external owner WIP
   remains in the report.
+
+## External owner worktree freshness court - 2026-07-23
+
+Commit:
+
+- pending in this run.
+
+Intent:
+
+- Prevent the generated public-WIP evidence from quietly going stale for the
+  active Antigravity owner worktree while keeping the product branch clean.
+
+Mechanism:
+
+- Added
+  `test_generated_wip_classification_matches_live_external_worktree_state`.
+- The court compares the generated external-owner entries against the live
+  external worktree signature: status code, virtual path, branch, HEAD, and
+  worktree-relative path.
+- It deliberately compares only external-owner WIP entries, so the generated
+  JSON file does not create a self-referential mismatch while it is being
+  refreshed.
+
+Verification:
+
+- Initial full-report digest court failed because the generated report cannot
+  include its own post-write modified state during WIP.
+- Corrected external-owner signature court:
+  `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state tests\test_authority_wip_classify.py::test_external_worktree_wip_is_classified_as_owner_boundary tests\test_authority_wip_classify.py::test_external_worktree_digest_is_bound_to_owner_head tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q --timeout=90 --tb=short`
+  - result: `4 passed`.
+
+Desk-space/live-session impact:
+
+- No live session, endpoint, Antigravity process, Revit, Autodesk, Brain service,
+  BBC4 worker, browser, or external worktree file was modified.
+
+Current position:
+
+- The authority classifier now records external worktree owner HEADs and has a
+  focused court proving the generated external-owner evidence matches the live
+  local worktree state when that worktree exists.
+
+Next action:
+
+- Commit this court and refresh the classifier after commit.

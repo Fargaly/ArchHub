@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 if str(TOOLS) not in sys.path:
@@ -695,6 +698,49 @@ def test_current_public_wip_has_no_unclassified_entries():
         "count": 0,
         "paths": [],
     }
+
+
+def test_generated_wip_classification_matches_live_external_worktree_state():
+    repo = Path(__file__).resolve().parent.parent
+    report_path = repo / "docs/_meta/authority_wip_classification.latest.json"
+    generated = json.loads(report_path.read_text(encoding="utf-8"))
+    generated_external = [
+        entry
+        for entry in generated.get("entries", [])
+        if entry.get("category") == "external_owner_worktree_wip"
+    ]
+    if not generated_external:
+        pytest.skip("no external worktree entries in generated evidence")
+    existing_external_roots = {
+        Path(str(entry.get("worktree_path", "")))
+        for entry in generated_external
+        if Path(str(entry.get("worktree_path", ""))).exists()
+    }
+    if not existing_external_roots:
+        pytest.skip("generated external worktrees are not present on this machine")
+
+    live = awc.classify_entries([
+        *awc.external_worktree_status(repo),
+    ])
+    live_external = [
+        entry
+        for entry in live.get("entries", [])
+        if entry.get("category") == "external_owner_worktree_wip"
+    ]
+
+    def external_signature(entries):
+        return sorted(
+            (
+                entry.get("code"),
+                entry.get("path"),
+                entry.get("worktree_branch"),
+                entry.get("worktree_head"),
+                entry.get("worktree_entry_path"),
+            )
+            for entry in entries
+        )
+
+    assert external_signature(generated_external) == external_signature(live_external)
 
 
 def test_generated_docs_meta_is_run_evidence_not_decision_authority():

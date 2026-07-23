@@ -527,3 +527,116 @@ def test_local_application_server_audit_protects_authority_visible_and_active(mo
     assert by_pid[2]["classification"] == "protected_visible_endpoint"
     assert by_pid[3]["classification"] == "protected_active_connections"
     assert by_pid[4]["classification"] == "protected_visible_endpoint"
+
+
+def test_brain_resource_hygiene_protects_http_listener_and_flags_duplicates(monkeypatch):
+    records = [
+        lrh.ProcessRecord(
+            pid=106564,
+            parent_pid=25508,
+            name="pythonw.exe",
+            cwd="C:\\Users\\fargaly\\00.ARCHUB",
+            cmdline="pythonw.exe -m personal_brain.server --http 8473",
+            create_time=100.0,
+            status="running",
+            working_set_bytes=14 * 1024 * 1024,
+        ),
+        lrh.ProcessRecord(
+            pid=99200,
+            parent_pid=44836,
+            name="python.exe",
+            cwd="C:\\Users\\fargaly\\00.ARCHUB",
+            cmdline="python.exe -m personal_brain.server",
+            create_time=120.0,
+            status="sleeping",
+            working_set_bytes=862 * 1024 * 1024,
+        ),
+        lrh.ProcessRecord(
+            pid=53948,
+            parent_pid=44836,
+            name="python.exe",
+            cwd="C:\\Users\\fargaly\\00.ARCHUB",
+            cmdline="python.exe -m personal_brain.server",
+            create_time=130.0,
+            status="sleeping",
+            working_set_bytes=670 * 1024 * 1024,
+        ),
+        lrh.ProcessRecord(
+            pid=200,
+            name="python.exe",
+            cwd="C:\\Users\\fargaly\\00.ARCHUB",
+            cmdline="python.exe -m pytest",
+        ),
+    ]
+    monkeypatch.setattr(lrh, "_process_tcp_maps", lambda: ({106564: [8473]}, {}))
+
+    report = lrh.audit_brain_resource_hygiene(
+        processes=records,
+        observed_at=160.0,
+    )
+
+    assert report["schema"] == lrh.BRAIN_RESOURCE_HYGIENE_SCHEMA
+    assert report["process_count"] == 3
+    assert report["protected_pids"] == [106564]
+    assert report["release_candidate_pids"] == [53948, 99200]
+    assert report["total_release_candidate_working_set_bytes"] == (
+        (862 + 670) * 1024 * 1024
+    )
+    by_pid = {row["pid"]: row for row in report["processes"]}
+    assert by_pid[106564]["classification"] == "protected_brain_http_service"
+    assert by_pid[106564]["release_candidate"] is False
+    assert (
+        by_pid[99200]["classification"]
+        == "candidate_duplicate_non_listening_brain"
+    )
+    assert by_pid[99200]["release_candidate"] is True
+    assert "exact PID/command/port recheck" in by_pid[99200]["drain_posture"]
+
+
+def test_brain_resource_hygiene_protects_listeners_active_clients_and_parents(monkeypatch):
+    records = [
+        lrh.ProcessRecord(
+            pid=10,
+            parent_pid=1,
+            name="python.exe",
+            cwd="C:\\repo",
+            cmdline="python.exe -m personal_brain.server",
+        ),
+        lrh.ProcessRecord(
+            pid=11,
+            parent_pid=1,
+            name="python.exe",
+            cwd="C:\\repo",
+            cmdline="python.exe -m personal_brain.server",
+        ),
+        lrh.ProcessRecord(
+            pid=12,
+            parent_pid=1,
+            name="python.exe",
+            cwd="C:\\repo",
+            cmdline="python.exe -m personal_brain.server",
+        ),
+        lrh.ProcessRecord(
+            pid=13,
+            parent_pid=12,
+            name="python.exe",
+            cwd="C:\\repo",
+            cmdline="python.exe -m pytest",
+        ),
+    ]
+    monkeypatch.setattr(
+        lrh,
+        "_process_tcp_maps",
+        lambda: ({10: [49999]}, {11: 1}),
+    )
+
+    report = lrh.audit_brain_resource_hygiene(
+        processes=records,
+        observed_at=160.0,
+    )
+
+    by_pid = {row["pid"]: row for row in report["processes"]}
+    assert report["release_candidate_pids"] == []
+    assert by_pid[10]["classification"] == "protected_brain_listener"
+    assert by_pid[11]["classification"] == "protected_brain_active_client"
+    assert by_pid[12]["classification"] == "protected_brain_parent"

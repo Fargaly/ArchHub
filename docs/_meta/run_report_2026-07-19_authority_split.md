@@ -7314,7 +7314,7 @@ Next action:
 
 Commit:
 
-- pending in this run.
+- this changeset; exact hash reported in the final run output.
 
 Intent:
 
@@ -7443,3 +7443,50 @@ Desk-space/live-session impact:
 - Source-only product evidence change.
 - No Antigravity worktree files, running sessions, Brain service, Revit,
   Autodesk, BBC4 worker/output, browser, or endpoint touched.
+
+## Brain duplicate resource hygiene court - 2026-07-23
+
+Commit:
+
+- pending in this run.
+
+Intent:
+
+- Make the duplicate `personal_brain.server` resource conflict visible and
+  repeatable, instead of relying on manual process scans during machine-priority
+  coordination.
+
+Mechanism:
+
+- Extended `tools/live_runtime_holders.py` with
+  `--audit-brain-resource-hygiene`.
+- The audit protects the supervised/listening Brain HTTP service and only marks
+  bare non-listening Brain server children as release candidates.
+- Release remains advisory: a candidate requires immediate exact PID,
+  command-line, child-process, and listening-port recheck before any stop action.
+- Updated AgDR-0061 to name the audit in the machine-resource maintenance rule.
+
+Verification:
+
+- Focused Brain resource hygiene courts:
+  `py -3.14 -m pytest tests\test_live_runtime_holders.py::test_brain_resource_hygiene_protects_http_listener_and_flags_duplicates tests\test_live_runtime_holders.py::test_brain_resource_hygiene_protects_listeners_active_clients_and_parents -q --timeout=90 --tb=short`
+  - result: `2 passed`.
+- Full live-runtime-holder court:
+  `py -3.14 -m pytest tests\test_live_runtime_holders.py -q --timeout=90 --tb=short`
+  - result: `12 passed`.
+- Syntax compile:
+  `py -3.14 -m py_compile tools\live_runtime_holders.py`
+  - result: passed.
+- Live read-only audit:
+  `py -3.14 tools\live_runtime_holders.py --audit-brain-resource-hygiene`
+  - result: `process_count=1`, `release_candidate_count=0`,
+    `protected_pids=[106564]`, Brain listener protected on `8473`.
+- Whitespace/path sanity:
+  `git diff --check`
+  - result: passed with line-ending warnings only.
+
+Desk-space/live-session impact:
+
+- Source-only product governance change plus read-only process audit.
+- No Antigravity worktree files, PID 52484, Brain listener, live endpoint,
+  browser, Revit, Autodesk, or BBC4 worker/output touched.

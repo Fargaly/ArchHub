@@ -21,10 +21,12 @@ from urllib.request import Request, urlopen
 
 SCHEMA = "archhub-live-runtime-holders/v1"
 LOCAL_APP_SERVER_SCHEMA = "archhub-local-application-server-processes/v1"
+BRAIN_RESOURCE_HYGIENE_SCHEMA = "archhub-brain-resource-hygiene/v1"
 FINGERPRINT_PATHS = ("/", "/api/state", "/api/universal/health", "/health")
 FINGERPRINT_TIMEOUT_SECONDS = 1.5
 FINGERPRINT_BODY_BYTES = 512
 PROTECTED_LOCAL_PORTS = frozenset((8482, 8484, 8501))
+PROTECTED_BRAIN_PORTS = frozenset((8473,))
 
 
 @dataclass(frozen=True)
@@ -33,10 +35,13 @@ class ProcessRecord:
     name: str
     cwd: str
     cmdline: str
+    parent_pid: int | None = None
     create_time: float | None = None
     status: str = ""
     cpu_user_seconds: float | None = None
     cpu_system_seconds: float | None = None
+    working_set_bytes: int | None = None
+    private_memory_bytes: int | None = None
 
 
 def default_runtime_copy(root: Path) -> Path:
@@ -68,19 +73,27 @@ def iter_processes() -> list[ProcessRecord]:
         "name",
         "cwd",
         "cmdline",
+        "ppid",
         "create_time",
         "status",
         "cpu_times",
+        "memory_info",
     ]):
         try:
             info = proc.info
             cpu_times = info.get("cpu_times")
+            memory_info = info.get("memory_info")
             records.append(
                 ProcessRecord(
                     pid=int(info.get("pid") or 0),
                     name=str(info.get("name") or ""),
                     cwd=str(info.get("cwd") or ""),
                     cmdline=" ".join(info.get("cmdline") or []),
+                    parent_pid=(
+                        int(info["ppid"])
+                        if info.get("ppid") is not None
+                        else None
+                    ),
                     create_time=(
                         float(info["create_time"])
                         if info.get("create_time") is not None
@@ -95,6 +108,11 @@ def iter_processes() -> list[ProcessRecord]:
                     cpu_system_seconds=(
                         float(getattr(cpu_times, "system"))
                         if cpu_times is not None and hasattr(cpu_times, "system")
+                        else None
+                    ),
+                    working_set_bytes=(
+                        int(getattr(memory_info, "rss"))
+                        if memory_info is not None and hasattr(memory_info, "rss")
                         else None
                     ),
                 )
@@ -208,6 +226,166 @@ def audit_local_application_servers(
         ),
         "processes": rows,
     }
+
+
+def audit_brain_resource_hygiene(
+    processes: Iterable[ProcessRecord] | None = None,
+    observed_at: float | None = None,
+) -> dict[str, Any]:
+    """Classify Brain server processes without interrupting them.
+
+    The protected service is the HTTP Brain listener. Bare non-listening
+    ``python -m personal_brain.server`` children can consume memory as duplicate
+    MCP/stdio helpers, but this audit only reports candidates. A caller still
+    has to recheck the exact PID/command/ports immediately before stopping one.
+    """
+    records = list(processes) if processes is not None else iter_processes()
+    observed = observed_at if observed_at is not None else time.time()
+    listener_map, established_connection_count = _process_tcp_maps()
+    child_count = _child_count_by_parent(records)
+    rows = [
+        _brain_resource_row(
+            record,
+            observed,
+            listener_map.get(record.pid, []),
+            int(established_connection_count.get(record.pid, 0)),
+            int(child_count.get(record.pid, 0)),
+        )
+        for record in records
+        if _is_personal_brain_server_process(record.cmdline)
+    ]
+    rows.sort(key=lambda item: (str(item["classification"]), int(item["pid"])))
+    release_candidates = [
+        row for row in rows
+        if row["classification"] == "candidate_duplicate_non_listening_brain"
+    ]
+    protected = [row for row in rows if row not in release_candidates]
+    return {
+        "schema": BRAIN_RESOURCE_HYGIENE_SCHEMA,
+        "observed_at": observed,
+        "process_count": len(rows),
+        "release_candidate_count": len(release_candidates),
+        "protected_count": len(protected),
+        "release_candidate_pids": [row["pid"] for row in release_candidates],
+        "protected_pids": [row["pid"] for row in protected],
+        "total_release_candidate_working_set_bytes": sum(
+            int(row.get("working_set_bytes") or 0) for row in release_candidates
+        ),
+        "rule": (
+            "read-only classification; release only candidate PIDs after an "
+            "immediate exact PID, command-line, child, and port recheck; never "
+            "touch protected Brain listeners or supervisor processes"
+        ),
+        "processes": rows,
+    }
+
+
+def _child_count_by_parent(records: Iterable[ProcessRecord]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for record in records:
+        if record.parent_pid is None:
+            continue
+        counts[int(record.parent_pid)] = counts.get(int(record.parent_pid), 0) + 1
+    return counts
+
+
+def _is_personal_brain_server_process(cmdline: str) -> bool:
+    cmd = str(cmdline or "").lower()
+    return "-m personal_brain.server" in cmd
+
+
+def _brain_resource_row(
+    record: ProcessRecord,
+    observed_at: float,
+    listening_ports: Iterable[int],
+    established_connections: int,
+    child_process_count: int,
+) -> dict[str, Any]:
+    cmdline = str(record.cmdline or "")
+    ports = sorted(set(int(port) for port in listening_ports))
+    age_seconds = (
+        max(0.0, observed_at - record.create_time)
+        if record.create_time is not None
+        else None
+    )
+    cpu_total_seconds = None
+    if record.cpu_user_seconds is not None or record.cpu_system_seconds is not None:
+        cpu_total_seconds = (
+            float(record.cpu_user_seconds or 0.0)
+            + float(record.cpu_system_seconds or 0.0)
+        )
+    classification, posture, release_candidate = _classify_brain_server(
+        cmdline,
+        ports,
+        established_connections,
+        child_process_count,
+    )
+    return {
+        "pid": int(record.pid),
+        "parent_pid": record.parent_pid,
+        "name": record.name,
+        "cwd": record.cwd,
+        "cmdline": cmdline,
+        "classification": classification,
+        "drain_posture": posture,
+        "release_candidate": release_candidate,
+        "listening_ports": ports,
+        "established_connection_count": established_connections,
+        "child_process_count": child_process_count,
+        "create_time": record.create_time,
+        "age_seconds": age_seconds,
+        "status": record.status,
+        "cpu_user_seconds": record.cpu_user_seconds,
+        "cpu_system_seconds": record.cpu_system_seconds,
+        "cpu_total_seconds": cpu_total_seconds,
+        "working_set_bytes": record.working_set_bytes,
+        "private_memory_bytes": record.private_memory_bytes,
+        "allowed_action": (
+            "inspect only; this audit never interrupts a process"
+        ),
+    }
+
+
+def _classify_brain_server(
+    cmdline: str,
+    listening_ports: list[int],
+    established_connections: int,
+    child_process_count: int,
+) -> tuple[str, str, bool]:
+    cmd = str(cmdline or "").lower()
+    ports = set(listening_ports)
+    if "--http" in cmd or ports & PROTECTED_BRAIN_PORTS:
+        return (
+            "protected_brain_http_service",
+            "supervised or listening Brain service; never stop as duplicate cleanup",
+            False,
+        )
+    if ports:
+        return (
+            "protected_brain_listener",
+            "Brain process owns a listener; identify service role before any handoff",
+            False,
+        )
+    if established_connections > 0:
+        return (
+            "protected_brain_active_client",
+            "Brain process has active TCP clients; do not interrupt mid-flight",
+            False,
+        )
+    if child_process_count > 0:
+        return (
+            "protected_brain_parent",
+            "Brain process owns child processes; inspect child tree first",
+            False,
+        )
+    return (
+        "candidate_duplicate_non_listening_brain",
+        (
+            "bare non-listening Brain server child; release only after exact "
+            "PID/command/port recheck and machine-priority coordination"
+        ),
+        True,
+    )
 
 
 def _process_tcp_maps() -> tuple[dict[int, list[int]], dict[int, int]]:
@@ -690,9 +868,31 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Read-only audit of local ArchHub app-server/authority processes.",
     )
+    parser.add_argument(
+        "--audit-brain-resource-hygiene",
+        action="store_true",
+        help="Read-only audit of duplicate/non-listening Brain server children.",
+    )
+    parser.add_argument(
+        "--enforce-no-brain-duplicates",
+        action="store_true",
+        help="Exit 2 when duplicate non-listening Brain candidates are present.",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+    if args.audit_brain_resource_hygiene:
+        report = audit_brain_resource_hygiene()
+        text = json.dumps(report, indent=2) + "\n"
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(text, encoding="utf-8")
+        else:
+            print(text, end="")
+        if args.enforce_no_brain_duplicates and report["release_candidate_count"]:
+            return 2
+        return 0
+
     if args.audit_local_app_servers:
         report = audit_local_application_servers(root.parents[1])
         text = json.dumps(report, indent=2) + "\n"

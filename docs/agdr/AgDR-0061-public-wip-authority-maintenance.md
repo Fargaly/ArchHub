@@ -123,6 +123,15 @@ loop stays light: source reads, JSON classification, focused tests, and commits
 only. Do not start heavy browser, PDF, model, broad audit, preflight, or
 conversion work until the slot is released.
 
+After a machine-priority conflict or suspected duplicate Brain helper, run the
+read-only Brain resource hygiene audit:
+`py -3.14 tools\live_runtime_holders.py --audit-brain-resource-hygiene`.
+The audit may identify duplicate non-listening Brain server candidates, but it
+does not stop anything. A candidate may be released only after an immediate
+exact PID, command-line, child-process, and listening-port recheck, and only
+without touching the supervised Brain listener, live endpoints, user
+applications, or the production task that owns the machine slot.
+
 ## Evidence Ledger
 
 Every run that changes the public WIP boundary must leave:

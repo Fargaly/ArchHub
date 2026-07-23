@@ -728,6 +728,14 @@ def classify_entries(
             "category": item["category"],
             "disposition": item["disposition"],
             "required_courts": item["required_courts"],
+            **(
+                {
+                    "worktree_branch": item.get("worktree_branch", ""),
+                    "worktree_head": item.get("worktree_head", ""),
+                }
+                if item.get("category") == "external_owner_worktree_wip"
+                else {}
+            ),
         }
         for item in sorted(classified, key=lambda value: value["path"])
     ]
@@ -931,6 +939,10 @@ def external_worktree_status(repo: Path) -> list[dict[str, str]]:
             ["git", "-C", str(resolved), "branch", "--show-current"],
             text=True,
         ).strip()
+        head = subprocess.check_output(
+            ["git", "-C", str(resolved), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
         label = branch or resolved.name
         for item in parse_porcelain(status_text):
             local_path = item["path"].replace("\\", "/")
@@ -940,6 +952,7 @@ def external_worktree_status(repo: Path) -> list[dict[str, str]]:
                 "path": external_path,
                 "worktree_path": str(resolved),
                 "worktree_branch": label,
+                "worktree_head": head,
                 "worktree_entry_path": local_path,
             }
             entries.append(entry)

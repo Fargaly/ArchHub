@@ -399,6 +399,7 @@ def test_external_worktree_wip_is_classified_as_owner_boundary():
                 "ArchHub/analyze-logs-performance"
             ),
             "worktree_branch": "analyze-logs-performance",
+            "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
             "worktree_entry_path": "app/bridge.py",
         },
     ])
@@ -408,7 +409,30 @@ def test_external_worktree_wip_is_classified_as_owner_boundary():
     assert entry["promotion_allowed"] == "false"
     assert report["summary"] == {"external_owner_worktree_wip": 1}
     assert report["gate"]["no_unclassified"]["ok"] is True
+    assert entry["worktree_head"] == "8e9ef04f18e01363764c69689fcbe8c6672d0bd7"
     assert "owner" in entry["required_action"]
+
+
+def test_external_worktree_digest_is_bound_to_owner_head():
+    base = {
+        "code": " M",
+        "path": "external-worktree:analyze-logs-performance/app/bridge.py",
+        "worktree_path": (
+            "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+            "ArchHub/analyze-logs-performance"
+        ),
+        "worktree_branch": "analyze-logs-performance",
+        "worktree_entry_path": "app/bridge.py",
+    }
+
+    first = awc.classify_entries([
+        {**base, "worktree_head": "1111111111111111111111111111111111111111"}
+    ])
+    second = awc.classify_entries([
+        {**base, "worktree_head": "2222222222222222222222222222222222222222"}
+    ])
+
+    assert first["classification_digest"] != second["classification_digest"]
 
 
 def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():

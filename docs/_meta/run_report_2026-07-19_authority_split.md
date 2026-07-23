@@ -7309,3 +7309,53 @@ Next action:
 - Keep heavy ArchHub acceptance held while BBC4 owns the slot.
 - Use AgDR-0061 before any future public-WIP completion claim, and require
   hook-coverage evidence whenever agent/session adapter files change.
+
+## External owner worktree HEAD-bound evidence - 2026-07-23
+
+Commit:
+
+- pending in this run.
+
+Intent:
+
+- Prevent repeated manual audits of the remaining Antigravity worktree WIP by
+  binding each external-owner WIP entry to the exact worktree branch HEAD that
+  was inspected.
+- Keep that worktree as external owner-boundary evidence, not absorbed product
+  authority.
+
+Mechanism:
+
+- `tools/authority_wip_classify.py` now records `worktree_head` for each
+  external worktree WIP entry and includes the branch/head pair in the
+  classification digest.
+- `tests/test_authority_wip_classify.py` proves external WIP entries carry the
+  owner HEAD and that changing the owner HEAD changes the digest.
+
+Verification:
+
+- `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_external_worktree_wip_is_classified_as_owner_boundary tests\test_authority_wip_classify.py::test_external_worktree_digest_is_bound_to_owner_head tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q --timeout=90 --tb=short`
+  - result: `3 passed`.
+- Refreshed `docs/_meta/authority_wip_classification.latest.json`.
+  - classified paths during pre-commit WIP: `9`.
+  - no-unclassified gate: `ok`, count `0`.
+  - Antigravity worktree HEAD:
+    `8e9ef04f18e01363764c69689fcbe8c6672d0bd7`.
+
+Desk-space/live-session impact:
+
+- Read-only inspection of the Antigravity worktree only.
+- No worktree file was edited, cleaned, deleted, committed, or reset.
+- Antigravity was running and was not stopped or restarted.
+- No heavy browser, PDF, model, preflight, AutoCAD, Revit, Autodesk, or BBC4
+  work was started.
+
+Current position:
+
+- Remaining public WIP is more precisely evidenced: the product branch can stay
+  clean while the exact external owner snapshot remains visible.
+
+Next action:
+
+- After this evidence commit, rerun the classifier so only external owner WIP
+  remains in the report.

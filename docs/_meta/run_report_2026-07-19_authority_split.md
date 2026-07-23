@@ -7209,3 +7209,103 @@ Next action:
 - Commit the refreshed ledger/report checkpoint, then validate and commit the
   `ui_runtime_evidence_probe` scripts. These may use hidden/headless browser
   checks only; no visible browser window should be opened.
+
+## Antigravity governed hook coordination - 2026-07-23
+
+Commit:
+
+- `960e4a8` - `Wire Antigravity into governed agent hooks`.
+
+Intent:
+
+- Add Antigravity to the existing Brain/CDE/Workshop governance hook path without
+  creating a second product authority and without interrupting live sessions.
+- Keep Antigravity as a governed adapter/client of the Universal Cell authority,
+  not a separate node language, runtime authority, or completion claim.
+
+Mechanisms added or repaired:
+
+- Added project hook config at `.agents/hooks.json` with one managed
+  `archhub-governance` hook:
+  - `PreToolUse` routes Antigravity write attempts through the shared CDE scope
+    gate.
+  - `PreInvocation` injects Brain/Workshop coordination context through
+    `tools/antigravity_coordination_context.py`.
+  - `Stop` routes through `tools/brainwrap.py stop --vendor antigravity`.
+- Added `tools/antigravity_scope_gate.py` as the product-side wrapper for the
+  shared workspace CDE gate.
+- Extended `tools/brainwrap.py` so Antigravity uses `conversationId`,
+  `workspacePaths`, and the Antigravity Stop hook decision contract.
+- Extended Brain installer and hook-coverage audit to install and verify
+  Antigravity global files under `C:\Users\fargaly\.gemini\config`.
+- Updated the WIP classifier so the new Antigravity hook/config/test files are
+  classified as `governance_brain_authority_layer`.
+
+External research source:
+
+- Official Antigravity hook, plugin, and MCP documentation was checked before
+  wiring the event names and config shape:
+  `https://antigravity.google/docs/ide/hooks`,
+  `https://antigravity.google/docs/ide/plugins`,
+  `https://antigravity.google/docs/mcp`.
+
+Verification:
+
+- Workspace governance adapter:
+  `py -3.14 -m pytest 00.GOVERNANCE\tests\test_cde_gate.py::test_agent_scope_gate_adapts_denial_for_antigravity_pretooluse -q --timeout=90 --tb=short`
+  - result: `1 passed`.
+- Product focused courts:
+  `py -3.14 -m pytest tests\test_antigravity_governance_hooks.py tests\test_brainwrap.py::TestStopFlushesBrainMemory::test_antigravity_block_contract_uses_continue_decision tests\test_brainwrap.py::TestStopFlushesBrainMemory::test_antigravity_allow_contract_uses_empty_decision tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries personal-brain-mcp\tests\test_installer_coverage.py::test_antigravity_writes_named_hooks_and_mcp personal-brain-mcp\tests\test_hook_coverage.py::test_audit_accepts_antigravity_named_hooks_and_mcp -q --timeout=120 --tb=short`
+  - result: `7 passed`.
+- Real Antigravity hook coverage audit over the installed global config:
+  - status: `green`.
+  - touchpoints green: scope gate, pre-prompt/context injection, workshop
+    authority, drive injection, per-turn Brain flush, stop gate.
+- Syntax compile:
+  `py -3.14 -m py_compile tools\antigravity_scope_gate.py tools\antigravity_coordination_context.py tools\brainwrap.py personal-brain-mcp\src\personal_brain\installer.py personal-brain-mcp\src\personal_brain\hook_coverage.py`
+  - result: passed.
+- WIP authority classifier:
+  `py -3.14 tools\authority_wip_classify.py --include-worktrees --output docs\_meta\authority_wip_classification.latest.json --enforce-no-unclassified`
+  - result: passed.
+  - classified paths: `19`.
+  - no-unclassified gate: `ok`, count `0`.
+  - classification digest:
+    `c35e9fc70060b1c6495f1e33df0202a0881aed0a7b7828b13bc6e8469f839035`.
+- Staged hygiene:
+  - `git diff --cached --check`: passed.
+  - line-ending warnings only before staging.
+
+Desk-space/live-session impact:
+
+- No heavy browser, PDF, model, runtime preflight, or conversion work was started.
+- No visible endpoint, browser handoff, PID 52484, Brain service, Revit,
+  Autodesk, BBC4 scheduler/output, or active session was stopped or restarted.
+- Read-only process check found no leftover pytest, Antigravity adapter,
+  runtime-drain, or Playwright worker from this lane. The protected Brain service
+  on port 8473 remained untouched.
+
+Boundaries not claimed:
+
+- `00.GOVERNANCE` is not a git repository in this checkout. The shared gate
+  changes in `00.GOVERNANCE\hooks\agent_scope_gate.py` and
+  `00.GOVERNANCE\tests\test_cde_gate.py` are live on disk but not part of commit
+  `960e4a8`.
+- This proves the installed Antigravity hook/config path. It does not prove that
+  an already-open Antigravity window hot-reloaded those global files; no restart
+  or live-session interruption was performed.
+- BBC4 still owns the heavy machine slot. Heavy ArchHub editor/BABOOM/browser
+  acceptance remains held until explicit release.
+
+Current position:
+
+- Antigravity is now wired as a governed adapter into the shared Brain/CDE hook
+  path.
+- The product repo was tracked-clean immediately after `960e4a8`.
+- Multi-agent coordination is stronger for future Antigravity hook events, but
+  direct Antigravity live-chat control is not exposed to this Codex session.
+
+Next action:
+
+- Keep heavy ArchHub acceptance held while BBC4 owns the slot.
+- Use AgDR-0061 before any future public-WIP completion claim, and require
+  hook-coverage evidence whenever agent/session adapter files change.

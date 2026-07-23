@@ -55,7 +55,12 @@ scope:
    not absorbed, rewritten, published, or treated as clean authority.
 6. Any code/doc/evidence change made during the run has a focused court and is
    committed before the report claims the local tracked source is clean.
-7. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
+7. If the run touches an agent/session hook adapter, launcher, installer,
+   `brainwrap`, CDE scope gate, or connected-agent config, hook coverage must be
+   audited for the exact affected client. Prefer
+   `brain.hook_coverage_audit_cell_first` when the daemon is reachable; otherwise
+   run the focused local hook-coverage courts and report the daemon boundary.
+8. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
    process, production conversion worker, or active session has been stopped,
    restarted, replaced, or handed off unless that action was explicitly in the
    scope and proved by its own court.
@@ -74,13 +79,18 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `py -3.14 tools\authority_wip_classify.py --include-worktrees --output docs\_meta\authority_wip_classification.latest.json --enforce-no-unclassified`.
 3. Run the focused WIP authority court:
    `py -3.14 -m pytest tests\test_authority_wip_classify.py -q --timeout=90 --tb=short`.
-4. Run whitespace/path sanity before commit:
+4. For agent/session hook work, run the exact client hook audit and focused
+   courts. Minimum local courts are:
+   `py -3.14 -m pytest personal-brain-mcp\tests\test_hook_coverage.py personal-brain-mcp\tests\test_installer_coverage.py tests\test_brainwrap.py -q --timeout=120 --tb=short`.
+   Add client-specific courts such as
+   `tests\test_antigravity_governance_hooks.py` when that client is touched.
+5. Run whitespace/path sanity before commit:
    `git diff --check`.
-5. Commit only the bounded correction and generated evidence.
-6. Re-run the classifier after the commit so
+6. Commit only the bounded correction and generated evidence.
+7. Re-run the classifier after the commit so
    `docs/_meta/authority_wip_classification.latest.json` represents the final
    post-commit state.
-7. If a public-site repo is involved, check it separately:
+8. If a public-site repo is involved, check it separately:
    `git status --porcelain=v1 --untracked-files=all` inside
    `10.PRODUCT/13.NODE-LANGUAGE/public_site`.
 
@@ -114,6 +124,7 @@ Every run that changes the public WIP boundary must leave:
 
 - The refreshed `docs/_meta/authority_wip_classification.latest.json`.
 - The focused court output in the final report.
+- Hook coverage audit output when agent/session adapters changed.
 - The exact commit hash or an explicit statement that no commit was made.
 - A boundary statement separating local tracked source state, external owner
   worktree state, ignored generated artifacts, remote publication state, and

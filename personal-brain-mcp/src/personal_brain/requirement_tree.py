@@ -644,8 +644,9 @@ def read_tree_authority_first(
     store: "BrainStore",
     *,
     tree_id: str,
+    allow_legacy_fallback: bool = True,
 ) -> tuple[Optional[RequirementTree], str, Optional[dict[str, Any]]]:
-    """Read from the Universal Cell route first, falling back to Brain metadata."""
+    """Read a tree from the Cell route, with explicit legacy migration fallback."""
     try:
         from .universal_runtime import UniversalRuntimeBridge
 
@@ -654,14 +655,18 @@ def read_tree_authority_first(
             raise RuntimeError(str(projection.get("error", "route returned ok=false")))
         return tree_from_cell_projection(projection), "cell_route", dict(projection)
     except Exception:
+        if not allow_legacy_fallback:
+            raise
         tree = get_tree(store, tree_id=tree_id)
         return tree, "brain_projection", None
 
 
 def list_trees_authority_first(
     store: "BrainStore",
+    *,
+    allow_legacy_fallback: bool = True,
 ) -> tuple[list[str], str, Optional[dict[str, Any]]]:
-    """List tree ids from the Universal Cell route first."""
+    """List Cell-route trees, with explicit legacy migration fallback."""
     try:
         from .universal_runtime import UniversalRuntimeBridge
 
@@ -673,6 +678,8 @@ def list_trees_authority_first(
             raise RuntimeError("route tree_ids is invalid")
         return [str(tree_id) for tree_id in tree_ids], "cell_route", dict(projection)
     except Exception:
+        if not allow_legacy_fallback:
+            raise
         return list_trees(store), "brain_projection", None
 
 

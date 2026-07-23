@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 
 HISTORY_META_KEY = "compliance_history_v1"
 HISTORY_LIMIT = 500
+CELL_CONTROL_LEDGER_ROOT = "app:brain-control-ledger:v1"
+CELL_COMPLIANCE_CATEGORY_ROOT = (
+    "app:brain-control-ledger:v1:category:compliance-event"
+)
 
 
 def _active_cde_state_path() -> Path:
@@ -119,29 +123,19 @@ def append_compliance_event_cell_first(
     cell_bridge: Any = None,
 ) -> dict[str, Any]:
     payload = _prepare_event_payload(event, owner_user=owner_user)
-    source = "brain-control:compliance-event:%s" % payload["event_id"]
     try:
         runtime = cell_bridge
         if runtime is None:
             from .universal_runtime import UniversalRuntimeBridge
 
             runtime = UniversalRuntimeBridge()
-        created = runtime.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": source,
-                "scope": "founder/brain-control/compliance-history",
-                "claims": json.dumps(
-                    {
-                        "event_type": payload.get("event_type"),
-                        "decision": payload.get("decision"),
-                        "code": payload.get("code"),
-                    },
-                    sort_keys=True,
-                ),
-                "provenance": "personal_brain.compliance_report:cell_first",
-            },
-            idempotency_field="source",
+        created = runtime.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            summary=str(payload.get("event_type") or "compliance event"),
+            payload=payload,
+            idempotency_key="compliance-event:%s" % payload["event_id"],
+            created_at=str(payload["recorded_at"]),
         )
     except Exception as exc:
         return {
@@ -151,22 +145,15 @@ def append_compliance_event_cell_first(
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    payload["cell_record_root"] = str(created["created_root"])
-    payload["cell_record_source"] = source
-    result = _append_prepared_event(
-        store,
-        owner_user=owner_user,
-        payload=payload,
-    )
-    result["cell_first"] = True
-    result["brain_written"] = True
-    result["cell_record"] = created
-    result["cell_sync"] = _sync_control_records_to_cells(
-        store,
-        owner_user=owner_user,
-        cell_bridge=runtime,
-    )
-    return result
+    payload["cell_entry_root"] = str(created["root"])
+    payload["cell_payload_root"] = str(created["payload_root"])
+    return {
+        "ok": True,
+        "cell_first": True,
+        "brain_written": False,
+        "event": payload,
+        "cell_record": created,
+    }
 
 
 def _prepare_event_payload(
@@ -273,6 +260,63 @@ def get_compliance_history(
     }
 
 
+def get_compliance_history_cell_first(
+    store: "BrainStore",  # Kept for public API compatibility; never read here.
+    *,
+    owner_user: str = "founder",
+    limit: int = 50,
+    cell_bridge: Any = None,
+) -> dict[str, Any]:
+    try:
+        limit_int = max(0, min(int(limit), HISTORY_LIMIT))
+    except Exception:
+        limit_int = 50
+    try:
+        if cell_bridge is None:
+            raise ValueError("Cell runtime bridge is unavailable")
+        result = cell_bridge.deliberation_read(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            limit=HISTORY_LIMIT,
+        )
+        entries = result.get("entries") if isinstance(result, dict) else None
+        if not isinstance(entries, list):
+            raise ValueError("Cell ledger returned no entry list")
+        events = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("category_root") != CELL_COMPLIANCE_CATEGORY_ROOT:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("owner_user") != owner_user:
+                continue
+            item = dict(payload)
+            item["cell_entry_root"] = entry.get("root")
+            roots = entry.get("reference_roots")
+            if isinstance(roots, list) and len(roots) == 1:
+                item["cell_payload_root"] = roots[0]
+            events.append(item)
+        latest = list(reversed(events))[:limit_int]
+        return {
+            "ok": True,
+            "cell_first": True,
+            "owner_user": owner_user,
+            "total": len(events),
+            "events": latest,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "cell_first": True,
+            "owner_user": owner_user,
+            "error": f"{type(exc).__name__}: {exc}",
+            "total": 0,
+            "events": [],
+        }
+
+
 def _markdown(report: dict[str, Any]) -> str:
     hook = report["hook_coverage"]
     work = report["work"]
@@ -317,8 +361,11 @@ def build_compliance_report(
     store: "BrainStore",
     *,
     owner_user: str = "founder",
+    cell_bridge: Any = None,
 ) -> dict[str, Any]:
-    coverage = hc.get_report(store, owner_user=owner_user)
+    coverage = hc.get_report_cell_first(
+        store, owner_user=owner_user, cell_bridge=cell_bridge
+    )
     coverage_data = (
         coverage.model_dump(mode="json")
         if coverage is not None
@@ -346,8 +393,12 @@ def build_compliance_report(
             "source": "brain-active-work-ledger",
         }
     last_gate = _read_json_file(_last_gate_decision_path()) or {}
-    history = get_compliance_history(store, owner_user=owner_user, limit=10)
-    run_reports = rr.get_run_reports(store, owner_user=owner_user, limit=5)
+    history = get_compliance_history_cell_first(
+        store, owner_user=owner_user, limit=10, cell_bridge=cell_bridge
+    )
+    run_reports = rr.get_run_reports_cell_first(
+        store, owner_user=owner_user, limit=5, cell_bridge=cell_bridge
+    )
     legacy_runtime_holders = rh.audit()
     report = {
         "ok": True,
@@ -365,7 +416,12 @@ def build_compliance_report(
     return report
 
 
-def register_compliance_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
+def register_compliance_report_tools(
+    mcp: "Any",
+    store: "BrainStore",
+    *,
+    cell_bridge: Any = None,
+) -> "Any":
     def _resolve_owner() -> str:
         try:
             getter = getattr(mcp, "_brain_resolve_owner", None)
@@ -407,7 +463,11 @@ def register_compliance_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
         try:
-            return build_compliance_report(store, owner_user=owner)
+            return build_compliance_report(
+                store,
+                owner_user=owner,
+                cell_bridge=cell_bridge,
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
@@ -428,8 +488,8 @@ def register_compliance_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
     @mcp.tool(
         name="brain.compliance_event_append_cell_first",
         description=(
-            "Create the compliance event as a Universal Cell record first, "
-            "then append Brain's migration receipt only if that succeeds."
+            "Append an inspectable compliance event to the Universal Cell "
+            "Brain control ledger. It never writes legacy Brain history."
         ),
     )
     def brain_compliance_event_append_cell_first(
@@ -442,6 +502,7 @@ def register_compliance_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 store,
                 owner_user=owner,
                 event=event,
+                cell_bridge=cell_bridge,
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
@@ -456,7 +517,12 @@ def register_compliance_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
         try:
-            return get_compliance_history(store, owner_user=owner, limit=limit)
+            return get_compliance_history_cell_first(
+                store,
+                owner_user=owner,
+                limit=limit,
+                cell_bridge=cell_bridge,
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 

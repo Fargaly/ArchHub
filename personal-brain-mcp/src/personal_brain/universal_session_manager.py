@@ -72,6 +72,32 @@ class UniversalRuntimeSessionManager:
                 "expires_at": enrolled["expires_at"],
             }
 
+    @staticmethod
+    def _resolve_work_references(
+        bridge: UniversalRuntimeBridge, item: Mapping[str, object]
+    ) -> dict[str, object]:
+        """Attach bounded Cell values to a transport work projection.
+
+        The work object remains graph-owned.  This adapter only dereferences
+        declared structured interfaces so an assigned client receives the same
+        CDE and policy values that the graph exposes through its wires.
+        """
+        interfaces = item.get("interfaces")
+        interfaces = interfaces if isinstance(interfaces, Mapping) else {}
+        resolved: dict[str, object] = {}
+        for name in (
+            "requirements",
+            "cde-container",
+            "required-capabilities",
+            "applicable-policy",
+        ):
+            interface = interfaces.get(name)
+            interface = interface if isinstance(interface, Mapping) else {}
+            target = interface.get("target")
+            if isinstance(target, str) and ":data:" in target:
+                resolved[name] = bridge.value_read(target)
+        return {**item, "resolved": resolved}
+
     def work_status(
         self, *, runtime: str, external_session_id: str
     ) -> dict[str, object]:
@@ -84,20 +110,10 @@ class UniversalRuntimeSessionManager:
             state = bridge.work_index()
             projection = "index"
             compact_fallback_reason = str(exc)
-        projected = []
+        projected: list[dict[str, object]] = []
         for item in state.get("items") or []:
-            resolved = {}
-            for name in (
-                "requirements",
-                "cde-container",
-                "required-capabilities",
-                "applicable-policy",
-            ):
-                interface = (item.get("interfaces") or {}).get(name) or {}
-                target = interface.get("target")
-                if isinstance(target, str) and ":data:" in target:
-                    resolved[name] = bridge.value_read(target)
-            projected.append({**item, "resolved": resolved})
+            if isinstance(item, Mapping):
+                projected.append(self._resolve_work_references(bridge, item))
         result = {**state, "items": projected, "projection": projection}
         if compact_fallback_reason:
             result["full_projection_unavailable"] = True
@@ -108,7 +124,14 @@ class UniversalRuntimeSessionManager:
         self, *, runtime: str, external_session_id: str
     ) -> dict[str, object]:
         bridge = self._require(runtime, external_session_id)
-        return bridge.work_next()
+        assignment = bridge.work_next()
+        work = assignment.get("work")
+        if not isinstance(work, Mapping):
+            return assignment
+        return {
+            **assignment,
+            "work": self._resolve_work_references(bridge, work),
+        }
 
     def create(
         self,

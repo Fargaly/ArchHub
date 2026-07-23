@@ -198,6 +198,7 @@ class _ObserveCellBridge:
         *,
         definition_key,
         fields,
+        structured_fields=None,
         idempotency_field=None,
         x=0.0,
         y=0.0,
@@ -208,6 +209,7 @@ class _ObserveCellBridge:
             "created_root": f"assembly-instance:observe-{len(self.created) + 1}",
             "definition_key": definition_key,
             "fields": dict(fields or {}),
+            "structured_fields": dict(structured_fields or {}),
             "idempotency_field": idempotency_field,
         }
         self.created.append(record)
@@ -1459,7 +1461,7 @@ def test_skill_mint_failure_outcome_not_queued():
         store.close()
 
 
-def test_skill_mint_tool_creates_cell_request_before_trace_projection(monkeypatch):
+def test_skill_mint_tool_labels_its_cell_record_as_receipt_only(monkeypatch):
     import json
     from personal_brain import universal_runtime as ur
 
@@ -1485,14 +1487,20 @@ def test_skill_mint_tool_creates_cell_request_before_trace_projection(monkeypatc
         )
 
         assert result["ok"] is True
-        assert result["cell_first"] is True
+        assert result["cell_receipt"] is True
+        assert result["cell_authority"] is False
+        assert result["legacy_authority"] is True
+        assert result["migration_status"] == "receipt-only"
+        assert "cell_first" not in result
         assert result["brain_written"] is True
+        assert result["legacy_projection_written"] is True
         assert result["cell_record_root"] == "assembly-instance:observe-1"
-        claims = json.loads(bridge.created[0]["fields"]["claims"])
+        assert "claims" not in bridge.created[0]["fields"]
+        claims = bridge.created[0]["structured_fields"]["claims"]
         assert claims["operation"] == "brain.skill_mint"
         assert claims["trace_id"] == "tr-cell-mint"
         assert claims["tool_call_count"] == 2
-        assert "sk-test-1234567890abcdef" not in bridge.created[0]["fields"]["claims"]
+        assert "sk-test-1234567890abcdef" not in json.dumps(claims)
         assert store.list_fragments(kinds=[FragmentKind.TRACE], limit=20)
     finally:
         store.close()
@@ -1524,7 +1532,11 @@ def test_skill_mint_tool_cell_failure_prevents_trace_projection(monkeypatch):
 
         assert result["ok"] is False
         assert result["queued"] is False
-        assert result["cell_first"] is True
+        assert result["cell_receipt"] is False
+        assert result["cell_authority"] is False
+        assert result["legacy_authority"] is True
+        assert result["migration_status"] == "receipt-required"
+        assert "cell_first" not in result
         assert result["brain_written"] is False
         assert "cell unavailable" in result["error"]
         assert store.list_fragments(kinds=[FragmentKind.TRACE], limit=20) == []
@@ -1569,10 +1581,16 @@ def test_hook_skill_mint_creates_cell_request_from_transcript(monkeypatch, tmp_p
         )
 
         assert result["ok"] is True
-        assert result["cell_first"] is True
+        assert result["cell_receipt"] is True
+        assert result["cell_authority"] is False
+        assert result["legacy_authority"] is True
+        assert result["migration_status"] == "receipt-only"
+        assert "cell_first" not in result
         assert result["brain_written"] is True
+        assert result["legacy_projection_written"] is True
         assert result["cell_record_root"] == "assembly-instance:observe-1"
-        claims = json.loads(bridge.created[0]["fields"]["claims"])
+        assert "claims" not in bridge.created[0]["fields"]
+        claims = bridge.created[0]["structured_fields"]["claims"]
         assert claims["operation"] == "brain.skill_mint"
         assert claims["trace_id"] == "claude-session-1"
         assert claims["tool_call_count"] == 2

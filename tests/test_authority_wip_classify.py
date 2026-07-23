@@ -20,10 +20,11 @@ NON_AUTHORITY_WIP_BASELINE = {
     # The two Teams REST connector paths were already public WIP; this court
     # allows only their reclassification out of unclassified_noncoordinated.
     "adapter_payload_candidate": 6,
-    "cloud_capability_readiness_evidence": 8,
+    "cloud_capability_readiness_evidence": 5,
     "documentation_decision_evidence": 7,
     "governance_brain_authority_layer": 65,
     "legacy_handbuilt_projection_court": 1,
+    "retired_baboom_cloud_relay": 4,
     "legacy_handbuilt_projection_cell_catalog_bridge": 1,
     "legacy_handbuilt_projection_frozen_adapter": 0,
     "legacy_handbuilt_projection_to_consume": 0,
@@ -80,6 +81,13 @@ def test_classification_keeps_universal_cell_separate_from_legacy():
     assert awc.classify_path("app/bridge.py") == "legacy_webshell_host_with_cell_bridge"
     assert awc.classify_path("app/workflows/baboom_cell_surface.py") == "universal_cell_projection_bridge"
     assert awc.classify_path("tests/test_baboom_cell_surface_bridge.py") == "universal_cell_bridge_court"
+    assert awc.classify_path("cloud_backend/baboom_relay.py") == "retired_baboom_cloud_relay"
+    assert awc.classify_path("cloud_backend/baboom_relay_protocol.py") == "retired_baboom_cloud_relay"
+    assert awc.classify_path("cloud_backend/tests/test_baboom_relay.py") == "retired_baboom_cloud_relay"
+    assert (
+        awc.classify_path("cloud_backend/tests/test_baboom_relay_retirement.py")
+        == "retired_baboom_cloud_relay"
+    )
     assert (
         awc.classify_path("personal-brain-mcp/node_courts/court_workshop_atom_is_leaf.py")
         == "universal_cell_authority_court"
@@ -574,6 +582,32 @@ def test_legacy_entries_are_not_promotable_authority():
     }
 
 
+def test_retired_baboom_cloud_relay_is_non_promotable_retirement_evidence():
+    report = awc.classify_entries([
+        {"code": " D", "path": "cloud_backend/baboom_relay.py"},
+        {"code": " D", "path": "cloud_backend/baboom_relay_protocol.py"},
+        {"code": " D", "path": "cloud_backend/tests/test_baboom_relay.py"},
+        {"code": "??", "path": "cloud_backend/tests/test_baboom_relay_retirement.py"},
+    ])
+
+    assert report["gate"]["no_unclassified"] == {
+        "ok": True,
+        "count": 0,
+        "paths": [],
+    }
+    assert report["summary"] == {"retired_baboom_cloud_relay": 4}
+    assert report["gate"]["promotion_candidates"] == {
+        "count": 0,
+        "items": [],
+    }
+    for entry in report["entries"]:
+        assert entry["disposition"] == "superseded_cloud_adapter_retirement"
+        assert entry["promotion_allowed"] == "false"
+        assert entry["required_courts"] == [
+            "cloud_backend/tests/test_baboom_relay_retirement.py"
+        ]
+
+
 def test_current_public_wip_has_no_unclassified_entries():
     repo = Path(__file__).resolve().parent.parent
     report = awc.classify_entries(awc.current_status(repo))
@@ -583,6 +617,14 @@ def test_current_public_wip_has_no_unclassified_entries():
         "count": 0,
         "paths": [],
     }
+
+
+def test_generated_docs_meta_is_run_evidence_not_decision_authority():
+    for path in (
+        "docs/_meta/index.json",
+        "docs/_meta/freshness.json",
+    ):
+        assert awc.classify_path(path) == "governance_run_evidence"
 
 
 def test_connector_reclassification_is_exact_not_bucket_growth():
@@ -982,12 +1024,10 @@ def test_legacy_workflow_leaf_gate_executes_node_authority_courts():
 def test_cloud_readiness_leaf_gate_executes_capability_courts():
     report = awc.classify_entries([
         {"code": " M", "path": "cloud_backend/readiness.py"},
-        {"code": " M", "path": "cloud_backend/baboom_relay.py"},
     ])
     leaf = report["active_work_leaves"][0]
 
     expected_courts = [
-        "cloud_backend/tests/test_baboom_relay.py",
         "cloud_backend/tests/test_readiness.py",
     ]
     assert leaf["governance_context"]["category"] \

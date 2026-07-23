@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import sqlite3
 import subprocess
 import sys
 import types
@@ -278,6 +279,11 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
         ]),
     }
     monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {3}})
+    monkeypatch.setattr(
+        drain,
+        "active_authority_runtime_bridge_status",
+        lambda _product_root, _workspace: {"ok": False},
+    )
 
     plan = drain.build_drain_plan(tmp_path / "10.PRODUCT" / "12.PRODUCTION", tmp_path, holder_payload)
     board = plan["handoff_board"]
@@ -349,12 +355,25 @@ def test_handoff_board_is_compact_read_only_evidence(tmp_path, monkeypatch):
         "server_url": None,
         "one_use_route": None,
         "requires_endpoint_free": False,
-        "requires_process_interruption": False,
-        "token_issued_by_this_board": False,
-        "protected_visible_endpoint_pids": [3],
-        "allowed_action": (
-            "repair or start the active authority bridge before visible handoff"
-        ),
+            "requires_process_interruption": False,
+            "token_issued_by_this_board": False,
+            "protected_visible_endpoint_pids": [3],
+            "state_continuity": {
+                "ok": False,
+                "active_bridge_state_path": None,
+                "visible_holder_state_paths": [
+                    {"pid": 3, "state_path": "C:\\Temp\\state.json"}
+                ],
+                "mismatched_pids": [3],
+                "missing_state_path_pids": [],
+                "reason": (
+                    "active authority bridge is not reachable; stopped or stale "
+                    "bridge state cannot prove exact visible state continuity"
+                ),
+            },
+            "allowed_action": (
+                "repair or start the active authority bridge before visible handoff"
+            ),
     }
 
 
@@ -563,6 +582,7 @@ def test_handoff_board_exposes_endpoint_free_authority_browser_handoff():
         {"ok": True, "drift_count": 0},
         {
             "ok": True,
+            "bridge_state_path": "C:\\Temp\\state.json",
             "visible_browser_handoff_ok": True,
             "visible_browser_handoff": {
                 "supported": True,
@@ -585,11 +605,217 @@ def test_handoff_board_exposes_endpoint_free_authority_browser_handoff():
         "requires_process_interruption": False,
         "token_issued_by_this_board": False,
         "protected_visible_endpoint_pids": [42],
+        "state_continuity": {
+            "ok": True,
+            "active_bridge_state_path": "C:\\Temp\\state.json",
+            "visible_holder_state_paths": [
+                {"pid": 42, "state_path": "C:\\Temp\\state.json"}
+            ],
+            "mismatched_pids": [],
+            "missing_state_path_pids": [],
+            "reason": (
+                "active authority bridge serves the same state path as the "
+                "protected visible endpoint"
+            ),
+        },
         "allowed_action": (
             "operator may initiate browser handoff from the active authority bridge "
             "when ready; this board remains read-only and never issues the token"
         ),
     }
+
+
+def test_handoff_board_rejects_bridge_without_visible_state_continuity():
+    board = drain.build_handoff_board(
+        [{
+            "pid": 42,
+            "holder_type": "application_server",
+            "runtime_args": {"state_path": "C:\\Temp\\visible.json"},
+            "authority_replacement_status": {
+                "status": "blocked_by_this_live_holder",
+                "ports": [8482],
+                "port_owners": {"8482": [42]},
+            },
+            "holder_risk_class": "visible_legacy_endpoint",
+            "drain_posture": "coordinate visible endpoint handoff",
+            "script_evidence": {"launch_mode": "python_script"},
+            "authority_relaunch": {"dry_run_only": True},
+            "desktop_authority_handoff": {"dry_run_only": True},
+            "allowed_action": "keep running",
+            "forbidden_action": "do not kill",
+        }],
+        {"blocked_exact_authority_launches": 1, "replacement_specs": 1},
+        {"all_steps_non_interrupting": True, "step_count": 2},
+        {"ok": True, "drift_count": 0},
+        {
+            "ok": True,
+            "bridge_state_path": "C:\\Temp\\isolated.json",
+            "visible_browser_handoff_ok": True,
+            "visible_browser_handoff": {
+                "supported": True,
+                "application": "app:archhub",
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "revision": 12,
+            },
+        },
+    )
+
+    handoff = board["visible_authority_handoff"]
+    assert board["summary"]["visible_authority_handoff_ready"] is False
+    assert handoff["available"] is False
+    assert handoff["state_continuity"] == {
+        "ok": False,
+        "active_bridge_state_path": "C:\\Temp\\isolated.json",
+        "visible_holder_state_paths": [
+            {"pid": 42, "state_path": "C:\\Temp\\visible.json"}
+        ],
+        "mismatched_pids": [42],
+        "missing_state_path_pids": [],
+        "reason": (
+            "active authority bridge does not prove exact visible state continuity"
+        ),
+    }
+    assert "repair state continuity" in handoff["allowed_action"]
+
+
+def test_handoff_board_rejects_stale_bridge_even_with_matching_state_path():
+    board = drain.build_handoff_board(
+        [{
+            "pid": 42,
+            "holder_type": "application_server",
+            "runtime_args": {"state_path": "C:\\Temp\\visible.json"},
+            "authority_replacement_status": {
+                "status": "blocked_by_this_live_holder",
+                "ports": [8482],
+                "port_owners": {"8482": [42]},
+            },
+            "holder_risk_class": "visible_legacy_endpoint",
+            "drain_posture": "coordinate visible endpoint handoff",
+            "script_evidence": {"launch_mode": "python_script"},
+            "authority_relaunch": {"dry_run_only": True},
+            "desktop_authority_handoff": {"dry_run_only": True},
+            "allowed_action": "keep running",
+            "forbidden_action": "do not kill",
+        }],
+        {"blocked_exact_authority_launches": 1, "replacement_specs": 1},
+        {"all_steps_non_interrupting": True, "step_count": 2},
+        {"ok": True, "drift_count": 0},
+        {
+            "ok": False,
+            "bridge_status": "stopped",
+            "bridge_state_path": "C:\\Temp\\visible.json",
+            "visible_browser_handoff_ok": False,
+        },
+    )
+
+    handoff = board["visible_authority_handoff"]
+    assert handoff["available"] is False
+    assert handoff["state_continuity"] == {
+        "ok": False,
+        "active_bridge_state_path": "C:\\Temp\\visible.json",
+        "visible_holder_state_paths": [
+            {"pid": 42, "state_path": "C:\\Temp\\visible.json"}
+        ],
+        "mismatched_pids": [42],
+        "missing_state_path_pids": [],
+        "reason": (
+            "active authority bridge is not reachable; stopped or stale "
+            "bridge state cannot prove exact visible state continuity"
+        ),
+    }
+    assert "start the active authority bridge" in handoff["allowed_action"]
+
+
+def test_visible_endpoint_universal_preflight_reports_legacy_only_endpoint():
+    plan = {
+        "holders": [{
+            "pid": 52484,
+            "holder_type": "application_server",
+            "runtime_args": {"state_path": "C:\\Temp\\node-native-wip.json.gz"},
+            "authority_replacement_status": {
+                "status": "blocked_by_this_live_holder",
+                "ports": [8482],
+            },
+        }],
+    }
+
+    def fake_get(url, *, timeout_seconds):
+        assert timeout_seconds == drain.VISIBLE_ENDPOINT_PREFLIGHT_TIMEOUT_SECONDS
+        if url.endswith("/api/state"):
+            return {
+                "url": url,
+                "status": 200,
+                "json": {
+                    "ok": True,
+                    "valid": True,
+                    "schema_version": "2026.07.13.47",
+                    "node_count": 131855,
+                    "persistent": True,
+                },
+            }
+        return {
+            "url": url,
+            "status": 404,
+            "json": {"ok": False, "error": "not found"},
+        }
+
+    result = drain.visible_endpoint_universal_preflight(
+        plan,
+        http_get=fake_get,
+    )
+
+    assert result["schema"] == "archhub-visible-endpoint-universal-preflight/v1"
+    assert result["ok"] is False
+    assert result["protected_visible_endpoint_pids"] == [52484]
+    assert result["legacy_state_endpoint_visible"] is True
+    assert result["universal_browser_handoff_visible"] is False
+    route = result["checks"][0]["routes"][0]
+    assert route["state_ok"] is True
+    assert route["state_node_count"] == 131855
+    assert route["universal_health_status"] == 404
+    assert route["browser_handoff_status"] == 404
+    assert "same-state Universal authority bridge" in result["required_action"]
+    assert result["non_destructive"] is True
+
+
+def test_visible_endpoint_universal_preflight_accepts_visible_handoff_route():
+    plan = {
+        "holders": [{
+            "pid": 52484,
+            "holder_type": "application_server",
+            "runtime_args": {"state_path": "C:\\Temp\\node-native-wip.json.gz"},
+            "authority_replacement_status": {
+                "status": "blocked_by_this_live_holder",
+                "ports": [8482],
+            },
+        }],
+    }
+
+    def fake_get(url, *, timeout_seconds):
+        if url.endswith("/api/state"):
+            return {"url": url, "status": 200, "json": {"ok": True, "valid": True}}
+        if url.endswith("/api/universal/browser-handoff"):
+            return {
+                "url": url,
+                "status": 200,
+                "json": {
+                    "supported": True,
+                    "one_use_route": "POST /api/universal/browser-handoff",
+                },
+            }
+        return {"url": url, "status": 200, "json": {"ok": True}}
+
+    result = drain.visible_endpoint_universal_preflight(
+        plan,
+        http_get=fake_get,
+    )
+
+    assert result["ok"] is True
+    assert result["universal_browser_handoff_visible"] is True
+    assert result["required_action"] == (
+        "visible endpoint already exposes Universal browser handoff"
+    )
 
 
 def test_visible_authority_handoff_package_is_dry_run_without_token():
@@ -610,6 +836,19 @@ def test_visible_authority_handoff_package_is_dry_run_without_token():
                 "requires_endpoint_free": False,
                 "requires_process_interruption": False,
                 "protected_visible_endpoint_pids": [52484],
+                "state_continuity": {
+                    "ok": True,
+                    "active_bridge_state_path": "C:\\Temp\\state.json",
+                    "visible_holder_state_paths": [
+                        {"pid": 52484, "state_path": "C:\\Temp\\state.json"}
+                    ],
+                    "mismatched_pids": [],
+                    "missing_state_path_pids": [],
+                    "reason": (
+                        "active authority bridge serves the same state path as "
+                        "the protected visible endpoint"
+                    ),
+                },
             },
         },
         "retirement_gate": {
@@ -639,6 +878,7 @@ def test_visible_authority_handoff_package_is_dry_run_without_token():
     assert "document_url" not in package
     assert package["requires_endpoint_free"] is False
     assert package["requires_process_interruption"] is False
+    assert package["state_continuity"]["ok"] is True
     assert package["protected_visible_endpoint_pids"] == [52484]
     assert package["blocked_endpoint_pids"] == [52484]
     assert package["universal_holder_verification"] == {
@@ -697,6 +937,98 @@ def test_visible_authority_handoff_package_rejects_missing_universal_holders():
         "runtime_revision": 3342,
     }
     assert "not represented in the Universal graph" in package["next_operator_action"]
+
+
+def test_visible_authority_handoff_package_rejects_state_mismatch():
+    plan = {
+        "handoff_board": {
+            "archive_allowed": False,
+            "blockers": {
+                "blocked_endpoint_pids": [52484],
+                "source_drift": {"archive_ready": True},
+            },
+            "visible_authority_handoff": {
+                "available": False,
+                "server_url": "http://127.0.0.1:65486",
+                "one_use_route": "POST /api/universal/browser-handoff",
+                "requires_endpoint_free": False,
+                "requires_process_interruption": False,
+                "protected_visible_endpoint_pids": [52484],
+                "state_continuity": {
+                    "ok": False,
+                    "active_bridge_state_path": "C:\\Temp\\isolated.json",
+                    "visible_holder_state_paths": [
+                        {"pid": 52484, "state_path": "C:\\Temp\\visible.json"}
+                    ],
+                    "mismatched_pids": [52484],
+                    "missing_state_path_pids": [],
+                    "reason": (
+                        "active authority bridge does not prove exact visible "
+                        "state continuity"
+                    ),
+                },
+            },
+        },
+        "retirement_gate": {
+            "failures": ["no_live_holders", "no_blocked_exact_replacements"]
+        },
+    }
+
+    package = drain.build_visible_authority_handoff_package(
+        plan,
+        universal_holder_verification={
+            "ok": True,
+            "holder_count": 1,
+            "verified_count": 1,
+            "missing_count": 0,
+            "missing": [],
+            "runtime_revision": 3342,
+        },
+    )
+
+    assert package["ok"] is False
+    assert package["state_continuity"]["mismatched_pids"] == [52484]
+    assert "state continuity" in package["next_operator_action"]
+
+
+def test_visible_handoff_package_preserves_universal_holder_verification_errors(
+    tmp_path,
+    monkeypatch,
+):
+    state_path = (
+        Path.home() / "AppData" / "Local" / "ArchHub" / "node-native-wip.json.gz"
+    )
+    plan = drain.build_drain_plan(
+        tmp_path / "10.PRODUCT" / "12.PRODUCTION",
+        tmp_path,
+        {"holder_report": _audit(1, [{
+            "pid": 52484,
+            "name": "pythonw.exe",
+            "cwd": "node_runtime",
+            "cmdline": (
+                "pythonw.exe run_application_server.py --host 127.0.0.1 "
+                "--port 8482 --state-path %s"
+            ) % state_path,
+        }])},
+    )
+
+    def unavailable(_plan):
+        raise RuntimeError("universal runtime is not active")
+
+    monkeypatch.setattr(drain, "verify_runtime_holders_in_universal", unavailable)
+    verification = drain.runtime_holder_universal_verification_status(plan)
+    package = drain.build_visible_authority_handoff_package(
+        plan,
+        universal_holder_verification=verification,
+    )
+
+    assert package["ok"] is False
+    assert package["universal_holder_verification"]["missing_count"] == 1
+    assert package["universal_holder_verification"]["missing_pids"] == [52484]
+    assert package["universal_holder_verification"]["error_type"] == "RuntimeError"
+    assert "universal runtime is not active" in (
+        package["universal_holder_verification"]["error"]
+    )
 
 
 def test_visible_authority_handoff_package_rejects_interrupting_plan():
@@ -767,6 +1099,54 @@ def test_visible_authority_handoff_package_rejects_baboom_second_authority():
     assert "BABOOM can still select copied runtime authority" in (
         package["next_operator_action"]
     )
+
+
+def test_default_state_baboom_preflight_reports_missing_without_live_mutation(
+    tmp_path,
+    monkeypatch,
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(drain.Path, "home", staticmethod(lambda: home))
+
+    result = drain.default_state_baboom_migration_preflight(
+        workspace=tmp_path
+    )
+
+    assert (
+        result["schema"]
+        == "archhub-default-universal-state-baboom-migration-preflight/v1"
+    )
+    assert result["source_exists"] is False
+    assert result["live_mutation"] is False
+    assert result["ok"] is False
+    assert result["error_type"] == "FileNotFoundError"
+    assert result["copy_removed_after_probe"] is None
+    assert "did not mutate the live default Universal state" in (
+        result["not_claimed"][0]
+    )
+
+
+def test_default_state_baboom_preflight_uses_sqlite_backup_copy(tmp_path):
+    source = tmp_path / "live.sqlite3"
+    destination = tmp_path / "copy.sqlite3"
+    connection = sqlite3.connect(source)
+    try:
+        connection.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY, value TEXT)")
+        connection.execute("INSERT INTO sample(value) VALUES('authority')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    size = drain._copy_sqlite_database(source, destination)
+
+    assert size == destination.stat().st_size
+    copied = sqlite3.connect(destination)
+    try:
+        assert copied.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert copied.execute("SELECT value FROM sample").fetchone()[0] == "authority"
+    finally:
+        copied.close()
+    assert source.exists()
 
 
 def test_disposable_holder_court_allows_only_missing_temp_qa_without_clients():
@@ -1029,6 +1409,14 @@ def test_active_authority_runtime_bridge_prefers_compact_work_index(
         "runtime_id": "runtime-compact",
         "database": str(tmp_path / "live.sqlite3"),
     }), encoding="utf-8")
+    status_path = home / "AppData" / "Local" / "ArchHub" / "authority-bridge.json"
+    status_path.write_text(json.dumps({
+        "status": "active",
+        "pid": 777,
+        "server_url": "http://127.0.0.1:61663",
+        "state_path": str(tmp_path / "state.json.gz"),
+        "universal_state_path": str(tmp_path / "state.json.gz.universal.sqlite3"),
+    }), encoding="utf-8")
     monkeypatch.setattr(drain.Path, "home", staticmethod(lambda: home))
     calls = {}
 
@@ -1069,6 +1457,13 @@ def test_active_authority_runtime_bridge_prefers_compact_work_index(
     )
 
     assert result["ok"] is True
+    assert result["bridge_status_exists"] is True
+    assert result["bridge_status"] == "active"
+    assert result["bridge_process_id"] == 777
+    assert result["bridge_state_path"] == str(tmp_path / "state.json.gz")
+    assert result["bridge_universal_state_path"] == str(
+        tmp_path / "state.json.gz.universal.sqlite3"
+    )
     assert result["revision"] == 42
     assert result["items"] == 1
     assert result["machine_work_index_ok"] is True
@@ -1414,7 +1809,7 @@ def test_source_drift_resolution_ledger_reads_explicit_candidate_decisions(tmp_p
                 "live_process_interruption": False,
             },
             "authority_files": {
-                "tests_replica/test_universal_ui_interactions.py": "sha"
+                "tests_replica/test_canvas_visual_grammar.py": "sha"
             },
             "runtime_candidate_decisions": [
                 {
@@ -1471,12 +1866,63 @@ def test_known_runtime_source_drift_paths_are_classified_not_promotable():
         "public_site/build.mjs",
         "tests_replica/test_application_machine_transport.py",
         "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_authority_coherence.py",
         "tests_replica/test_legacy_core_node_bridge.py",
         "tests_replica/test_legacy_self_extension_bridge.py",
         "tests_replica/test_universal_application.py",
         "tests_replica/test_universal_baboom_cognition_planner.py",
         "tests_replica/test_universal_cloud_gateway.py",
         "tests_replica/test_universal_work_completion_court.py",
+        "nodelang/browser_publish_court.py",
+        "nodelang/cell_application_ui.py",
+        "nodelang/cell_attention.py",
+        "nodelang/cell_catalog.py",
+        "nodelang/cell_change_history.py",
+        "nodelang/cell_control_view.py",
+        "nodelang/cell_deliberation.py",
+        "nodelang/cell_domain_catalog.py",
+        "nodelang/cell_interactions.py",
+        "nodelang/cell_legacy_brain_governance.py",
+        "nodelang/cell_library_definition_view.py",
+        "nodelang/cell_library_shell_view.py",
+        "nodelang/cell_properties_view.py",
+        "nodelang/cell_protocols.py",
+        "nodelang/cell_reactions.py",
+        "nodelang/cell_state_machine.py",
+        "nodelang/cell_value_graph.py",
+        "nodelang/cell_view_template.py",
+        "nodelang/inspector_descriptor.py",
+        "nodelang/persistence.py",
+        "nodelang/universal_cell.py",
+        "nodelang/universal_view.py",
+        "packaging/windows/ArchHub.spec",
+        "packaging/windows/README.md",
+        "packaging/windows/build.ps1",
+        "packaging/windows/package-manifest.json",
+        "packaging/windows/requirements-build.txt",
+        "tests_replica/test_browser_publish_court.py",
+        "tests_replica/test_cell_attention.py",
+        "tests_replica/test_cell_control_view.py",
+        "tests_replica/test_cell_deliberation.py",
+        "tests_replica/test_cell_domain_catalog.py",
+        "tests_replica/test_cell_execution_floor_court.py",
+        "tests_replica/test_cell_interactions.py",
+        "tests_replica/test_cell_legacy_brain_governance.py",
+        "tests_replica/test_cell_state_machine.py",
+        "tests_replica/test_cell_value_graph.py",
+        "tests_replica/test_cell_view_template.py",
+        "tests_replica/test_desktop_runtime.py",
+        "tests_replica/test_inspector_descriptor.py",
+        "tests_replica/test_legacy_runtime_ratchet.py",
+        "tests_replica/test_universal_cell_durability.py",
+        "tests_replica/test_universal_cell_incremental.py",
+        "tests_replica/test_universal_cell_kernel.py",
+        "tests_replica/test_universal_cell_relations.py",
+        "tests_replica/test_universal_interaction_server.py",
+        "tests_replica/test_universal_properties_presentation.py",
+        "tests_replica/test_universal_ui_performance.py",
+        "tests_replica/test_universal_workshop_authority.py",
+        "tests_replica/test_windows_packaging.py",
     ]
 
     rows = [drain.classify_source_drift_candidate(path) for path in paths]
@@ -1891,7 +2337,10 @@ def test_cli_visible_authority_handoff_package_is_read_only(
         "audit",
         lambda path: _audit(1, [{
             "pid": 123,
-            "cmdline": "python -m nodelang.application_server --port 8505",
+            "cmdline": (
+                "python -m nodelang.application_server --port 8505 "
+                "--state-path C:\\Temp\\state.json"
+            ),
         }]),
     )
     monkeypatch.setattr(drain, "active_tcp_listeners", lambda: {8505: {123}})
@@ -1910,6 +2359,7 @@ def test_cli_visible_authority_handoff_package_is_read_only(
         "active_authority_runtime_bridge_status",
         lambda _product_root, _workspace: {
             "ok": True,
+            "bridge_state_path": "C:\\Temp\\state.json",
             "visible_browser_handoff_ok": True,
             "visible_browser_handoff": {
                 "supported": True,
@@ -1957,6 +2407,48 @@ def test_cli_visible_authority_handoff_package_is_read_only(
     assert package["universal_holder_verification"]["ok"] is True
     assert package["universal_holder_verification"]["verified_count"] == 1
     assert not out_dir.exists()
+
+
+def test_cli_visible_endpoint_preflight_does_not_run_shadow_probe(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    product_root = tmp_path / "10.PRODUCT" / "12.PRODUCTION"
+    product_root.mkdir(parents=True)
+    seen: dict[str, object] = {}
+
+    def fake_build_drain_plan(
+        product_root_arg,
+        workspace_arg,
+        holder_payload,
+        *,
+        run_shadow_probe=False,
+    ):
+        seen["run_shadow_probe"] = run_shadow_probe
+        return {
+            "schema": "archhub-legacy-runtime-drain-plan/v1",
+            "holders": [],
+        }
+
+    monkeypatch.setattr(drain, "build_drain_plan", fake_build_drain_plan)
+    monkeypatch.setattr(
+        drain,
+        "build_holder_payload",
+        lambda product_root_arg, workspace_arg: {"holder_report": _audit(0, [])},
+    )
+
+    code = drain.main([
+        "--product-root", str(product_root),
+        "--workspace", str(tmp_path),
+        "--visible-endpoint-universal-preflight",
+    ])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert seen["run_shadow_probe"] is False
+    assert out["schema"] == "archhub-visible-endpoint-universal-preflight/v1"
+    assert out["non_destructive"] is True
 
 
 def test_cli_authority_shadow_probe_report_is_compact_and_read_only(
@@ -2700,6 +3192,45 @@ def test_verify_runtime_holders_in_universal_reports_missing_without_writes(tmp_
         "holder_risk_class": "stdin_python_holder",
     }]
     assert bridge.created == []
+
+
+def test_verify_runtime_holders_in_universal_reports_runtime_unavailable(tmp_path):
+    holder = {
+        "pid": 52484,
+        "name": "pythonw.exe",
+        "cwd": "node_runtime",
+        "cmdline": "pythonw.exe run_application_server.py --port 8482",
+        "create_time": 100.0,
+    }
+    plan = drain.build_drain_plan(
+        tmp_path / "10.PRODUCT" / "12.PRODUCTION",
+        tmp_path,
+        {"holder_report": _audit(1, [holder])},
+    )
+
+    class UnavailableBridge:
+        def work_index(self):
+            raise RuntimeError("universal runtime is not active")
+
+    result = drain.verify_runtime_holders_in_universal(
+        plan,
+        bridge=UnavailableBridge(),
+    )
+
+    assert result["ok"] is False
+    assert result["holder_count"] == 1
+    assert result["verified_count"] == 0
+    assert result["missing_count"] == 1
+    assert result["missing"] == [{
+        "external_key": "runtime-holder:52484:100000",
+        "pid": 52484,
+        "holder_risk_class": "unclassified_copied_runtime_holder",
+    }]
+    assert result["runtime_revision"] is None
+    assert result["known_external_keys"] == 0
+    assert result["error_type"] == "RuntimeError"
+    assert "universal runtime is not active" in result["error"]
+    assert result["non_destructive"] is True
 
 
 def test_runtime_holder_sync_uses_bridge_not_cell_store():

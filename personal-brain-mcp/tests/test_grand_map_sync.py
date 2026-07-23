@@ -146,6 +146,13 @@ def test_preview_discovers_canonical_overlay_beside_grand_map_data(tmp_path):
     assert result["leaf_count"] == 2
 
 
+def test_workspace_root_has_no_founder_machine_path_fallback():
+    source = Path(gms.__file__).read_text(encoding="utf-8")
+
+    assert "ARCHHUB_WORKSPACE_ROOT" in source
+    assert "C:\\Users\\fargaly" not in source
+
+
 def test_canonical_node_native_ui_leaf_carries_declared_court_budget():
     workspace = next(
         parent
@@ -195,10 +202,18 @@ def test_server_registers_grand_map_sync_tools(store, tmp_path):
         owner_user="founder",
     )
 
-    assert preview["ok"] is True
-    assert preview["leaf_count"] == 2
-    assert sync["ok"] is True
-    assert aw.status(store, owner_user="founder")["total"] == 2
+    for result, replacement in (
+        (preview, "brain.grand_map_work_preview_cell_first"),
+        (sync, "brain.grand_map_work_sync_cell_first"),
+    ):
+        assert result["ok"] is False
+        assert result["migration_only"] is True
+        assert result["deprecated"] is True
+        assert result["code"] == "legacy_governance_route_retired"
+        assert result["brain_written"] is False
+        assert result["side_effect_executed"] is False
+        assert result["cell_first_alternative"] == replacement
+    assert aw.get_ledger(store, owner_user="founder") is None
 
 
 def test_cell_first_grand_map_tools_call_universal_runtime_without_brain_write(store):

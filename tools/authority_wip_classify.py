@@ -45,7 +45,11 @@ LEGACY_WORKFLOW_CONSUMPTION_COURTS = (
 
 CLOUD_CAPABILITY_READINESS_COURTS = (
     "cloud_backend/tests/test_readiness.py",
-    "cloud_backend/tests/test_baboom_relay.py",
+)
+
+
+BABOOM_RELAY_RETIREMENT_COURTS = (
+    "cloud_backend/tests/test_baboom_relay_retirement.py",
 )
 
 
@@ -79,7 +83,6 @@ DOCUMENTATION_DECISION_COURTS = (
     "tests/test_node_grammar.py",
     "tests/test_grammar_config_schema.py",
     "cloud_backend/tests/test_readiness.py",
-    "cloud_backend/tests/test_baboom_relay.py",
 )
 
 
@@ -286,6 +289,15 @@ CATEGORY_POLICY: dict[str, dict[str, Any]] = {
         "bind readiness outputs to Cell capability policy and release courts",
         required_courts=CLOUD_CAPABILITY_READINESS_COURTS,
     ),
+    "retired_baboom_cloud_relay": _policy(
+        "superseded_cloud_adapter_retirement",
+        (
+            "keep only as retirement evidence for the removed /v1/baboom "
+            "cloud relay; Universal Cell work handoff is the successor "
+            "authority and the retired routes must remain absent"
+        ),
+        required_courts=BABOOM_RELAY_RETIREMENT_COURTS,
+    ),
     "legacy_probe_capability_evidence": _policy(
         "capability_evidence",
         "replace host/file/http probes with Cell capability requests, receipts, and policy gates",
@@ -486,6 +498,10 @@ def classify_path(path: str) -> str:
         "personal-brain-mcp/src/personal_brain/universal_runtime.py": "universal_cell_bridge",
         "app/workflows/universal_grand_map_surface.py": "universal_cell_projection_bridge",
         "app/workflows/baboom_cell_surface.py": "universal_cell_projection_bridge",
+        "cloud_backend/baboom_relay.py": "retired_baboom_cloud_relay",
+        "cloud_backend/baboom_relay_protocol.py": "retired_baboom_cloud_relay",
+        "cloud_backend/tests/test_baboom_relay.py": "retired_baboom_cloud_relay",
+        "cloud_backend/tests/test_baboom_relay_retirement.py": "retired_baboom_cloud_relay",
         "personal-brain-mcp/src/personal_brain/cell_room.py": "universal_cell_runtime_adapter",
         "personal-brain-mcp/src/personal_brain/cell_room_wiring.py": "universal_cell_runtime_adapter",
         "tests/test_baboom_cell_surface_bridge.py": "universal_cell_bridge_court",
@@ -504,13 +520,10 @@ def classify_path(path: str) -> str:
         "tests/test_grand_map_ui_surface.py": "legacy_handbuilt_projection_court",
         "app/workflows/live_nodes.py": "legacy_probe_capability_evidence",
         "tests/test_live_nodes.py": "legacy_probe_capability_evidence",
-        "cloud_backend/baboom_relay.py": "cloud_capability_readiness_evidence",
-        "cloud_backend/baboom_relay_protocol.py": "cloud_capability_readiness_evidence",
         "cloud_backend/db.py": "cloud_capability_readiness_evidence",
         "cloud_backend/main.py": "cloud_capability_readiness_evidence",
         "cloud_backend/readiness.py": "cloud_capability_readiness_evidence",
         "cloud_backend/tests/conftest.py": "cloud_capability_readiness_evidence",
-        "cloud_backend/tests/test_baboom_relay.py": "cloud_capability_readiness_evidence",
         "cloud_backend/tests/test_readiness.py": "cloud_capability_readiness_evidence",
         "app/bridge.py": "legacy_webshell_host_with_cell_bridge",
         "app/web_ui/index.html": "legacy_webshell_host_with_cell_bridge",
@@ -624,6 +637,8 @@ def classify_path(path: str) -> str:
         return "old_studio_ui_surface_migration_evidence"
     if (
         p.startswith("docs/_meta/authority_wip_classification")
+        or p.startswith("docs/_meta/freshness")
+        or p.startswith("docs/_meta/index")
         or p.startswith("docs/_meta/legacy_runtime_handoff_board")
         or p.startswith("docs/_meta/legacy_runtime_handoff_disposable_cleanup")
         or p.startswith("docs/_meta/legacy_runtime_handoff_inspection")

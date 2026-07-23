@@ -369,6 +369,16 @@ def test_session_aware_assigned_block_claims_only_from_cell_graph(
         }],
     )
     source_before = brain.get_meta(legacy.LEDGER_META_KEY)
+    migration = manager.migrate_legacy_work(brain)
+    assert migration["complete"] is True
+    assert brain.get_meta(legacy.LEDGER_META_KEY) == source_before
+    monkeypatch.setattr(
+        manager,
+        "migrate_legacy_work",
+        lambda _store: (_ for _ in ()).throw(
+            AssertionError("normal assignment must not read legacy work")
+        ),
+    )
     mcp = build_server(store=brain, runtime_session_manager=manager)
     tool = mcp._tools["brain.work_assigned_block"].handler
     try:

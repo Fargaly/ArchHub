@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 RUN_REPORT_META_KEY = "run_report_v1"
 RUN_REPORT_LIMIT = 500
+CELL_CONTROL_LEDGER_ROOT = "app:brain-control-ledger:v1"
+CELL_RUN_REPORT_CATEGORY_ROOT = "app:brain-control-ledger:v1:category:run-report"
 REQUIRED_SECTIONS = (
     "what_i_did",
     "where_we_are",
@@ -154,30 +156,19 @@ def append_run_report_cell_first(
         agent_id=agent_id,
         changed_nodes=changed_nodes,
     )
-    source = "brain-control:run-report:%s" % payload["report_id"]
     try:
         runtime_bridge = cell_bridge
         if runtime_bridge is None:
             from .universal_runtime import UniversalRuntimeBridge
 
             runtime_bridge = UniversalRuntimeBridge()
-        created = runtime_bridge.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": source,
-                "scope": "founder/brain-control/run-reports",
-                "claims": json.dumps(
-                    {
-                        "report_id": payload["report_id"],
-                        "leaf_id": payload["leaf_id"],
-                        "runtime": payload["runtime"],
-                        "agent_id": payload["agent_id"],
-                    },
-                    sort_keys=True,
-                ),
-                "provenance": "personal_brain.run_report:cell_first",
-            },
-            idempotency_field="source",
+        created = runtime_bridge.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_RUN_REPORT_CATEGORY_ROOT,
+            summary="Run report: %s" % payload["report_id"],
+            payload=payload,
+            idempotency_key="run-report:%s" % payload["report_id"],
+            created_at=str(payload["recorded_at"]),
         )
     except Exception as exc:
         return {
@@ -187,16 +178,15 @@ def append_run_report_cell_first(
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    payload["cell_record_root"] = str(created["created_root"])
-    payload["cell_record_source"] = source
-    result = _append_prepared_run_report(
-        store,
-        owner_user=owner_user,
-        payload=payload,
-    )
-    result["cell_first"] = True
-    result["brain_written"] = True
-    result["cell_record"] = created
+    payload["cell_entry_root"] = str(created["root"])
+    payload["cell_payload_root"] = str(created["payload_root"])
+    result = {
+        "ok": True,
+        "cell_first": True,
+        "brain_written": False,
+        "report": payload,
+        "cell_record": created,
+    }
     try:
         from . import compliance_report as cr
 
@@ -212,12 +202,10 @@ def append_run_report_cell_first(
                 "runtime": payload["runtime"],
                 "agent_id": payload["agent_id"],
                 "changed_nodes": payload["changed_nodes"],
-                "cell_record_root": payload["cell_record_root"],
+                "cell_entry_root": payload["cell_entry_root"],
             },
         )
         result["compliance_event"] = compliance
-        if isinstance(compliance, dict) and "cell_sync" in compliance:
-            result["cell_sync"] = compliance["cell_sync"]
     except Exception as exc:
         result["compliance_event"] = {
             "ok": False,
@@ -300,6 +288,66 @@ def get_run_reports(
     }
 
 
+def get_run_reports_cell_first(
+    store: "BrainStore",  # Kept for public API compatibility; never read here.
+    *,
+    owner_user: str = "founder",
+    limit: int = 20,
+    leaf_id: str = "",
+    cell_bridge: Any = None,
+) -> dict[str, Any]:
+    try:
+        limit_int = max(0, min(int(limit), RUN_REPORT_LIMIT))
+    except Exception:
+        limit_int = 20
+    try:
+        if cell_bridge is None:
+            raise ValueError("Cell runtime bridge is unavailable")
+        result = cell_bridge.deliberation_read(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            limit=RUN_REPORT_LIMIT,
+        )
+        entries = result.get("entries") if isinstance(result, dict) else None
+        if not isinstance(entries, list):
+            raise ValueError("Cell ledger returned no entry list")
+        reports = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("category_root") != CELL_RUN_REPORT_CATEGORY_ROOT:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("owner_user") != owner_user:
+                continue
+            if leaf_id and payload.get("leaf_id") != leaf_id:
+                continue
+            item = dict(payload)
+            item["cell_entry_root"] = entry.get("root")
+            roots = entry.get("reference_roots")
+            if isinstance(roots, list) and len(roots) == 1:
+                item["cell_payload_root"] = roots[0]
+            reports.append(item)
+        latest = list(reversed(reports))[:limit_int]
+        return {
+            "ok": True,
+            "cell_first": True,
+            "owner_user": owner_user,
+            "total": len(reports),
+            "reports": latest,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "cell_first": True,
+            "owner_user": owner_user,
+            "error": f"{type(exc).__name__}: {exc}",
+            "total": 0,
+            "reports": [],
+        }
+
+
 def has_run_report_for_leaf(
     store: "BrainStore",
     *,
@@ -317,7 +365,32 @@ def has_run_report_for_leaf(
     return bool(reports.get("reports"))
 
 
-def register_run_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
+def has_run_report_for_leaf_cell_first(
+    store: "BrainStore",
+    *,
+    owner_user: str = "founder",
+    leaf_id: str,
+    cell_bridge: Any = None,
+) -> bool:
+    """Check the Cell ledger; never consult ``run_report_v1``."""
+    if not (leaf_id or "").strip():
+        return False
+    reports = get_run_reports_cell_first(
+        store,
+        owner_user=owner_user,
+        leaf_id=leaf_id,
+        limit=1,
+        cell_bridge=cell_bridge,
+    )
+    return bool(reports.get("ok") and reports.get("reports"))
+
+
+def register_run_report_tools(
+    mcp: "Any",
+    store: "BrainStore",
+    *,
+    cell_bridge: Any = None,
+) -> "Any":
     def _resolve_owner() -> str:
         try:
             getter = getattr(mcp, "_brain_resolve_owner", None)
@@ -368,8 +441,8 @@ def register_run_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
     @mcp.tool(
         name="brain.run_report_append_cell_first",
         description=(
-            "Create the run report as a Universal Cell record first, then "
-            "append Brain's migration receipt only if that succeeds."
+            "Append an inspectable run report to the Universal Cell Brain "
+            "control ledger. It never writes run_report_v1."
         ),
     )
     def brain_run_report_append_cell_first(
@@ -390,13 +463,14 @@ def register_run_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 agent_id=agent_id,
                 report=report,
                 changed_nodes=changed_nodes,
+                cell_bridge=cell_bridge,
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.run_report_get",
-        description="Return recent run_report_v1 nodes, optionally filtered by leaf_id.",
+        description="Return Cell-native run reports, optionally filtered by leaf_id.",
     )
     def brain_run_report_get(
         owner_user: Optional[str] = None,
@@ -405,11 +479,12 @@ def register_run_report_tools(mcp: "Any", store: "BrainStore") -> "Any":
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
         try:
-            return get_run_reports(
+            return get_run_reports_cell_first(
                 store,
                 owner_user=owner,
                 limit=limit,
                 leaf_id=leaf_id,
+                cell_bridge=cell_bridge,
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}

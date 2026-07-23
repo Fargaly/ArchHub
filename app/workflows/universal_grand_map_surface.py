@@ -50,16 +50,16 @@ class _RuntimeCanvasClient(Protocol):
         ...
 
 
-def _node_runtime_root() -> Path:
+def _canonical_node_authority_root() -> Path:
     product_root = Path(__file__).resolve().parents[3]
-    root = product_root / "12.PRODUCTION" / "node_runtime"
+    root = product_root / "13.NODE-LANGUAGE"
     if not root.is_dir():
         raise FileNotFoundError(str(root))
     return root
 
 
 def _ensure_authority_path() -> Path:
-    root = _node_runtime_root()
+    root = _canonical_node_authority_root()
     text = str(root)
     if text not in sys.path:
         sys.path.insert(0, text)
@@ -104,7 +104,7 @@ def universal_canvas_interaction(
             "ok": False,
             "authority": ACTIVE_CELL_AUTHORITY,
             "runtime_authority": RUNTIME_AUTHORITY_LABEL,
-            "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+            "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
             "error": "universal interaction payload must be a JSON object",
         }
     client = runtime_client or _active_runtime_client()
@@ -130,7 +130,7 @@ def universal_grand_map_surface(
             "source": "active-universal-runtime",
             "authority": ACTIVE_CELL_AUTHORITY,
             "runtime_authority": RUNTIME_AUTHORITY_LABEL,
-            "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+            "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
             "error": "unknown Universal Cell surface",
         }
     projection = _runtime_canvas(runtime_client)
@@ -180,7 +180,7 @@ def universal_grand_map_surface(
         "source": "active-universal-runtime",
         "authority": ACTIVE_CELL_AUTHORITY,
         "runtime_authority": RUNTIME_AUTHORITY_LABEL,
-        "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+        "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
         "authority_projection_keys": sorted(str(key) for key in projection.keys()),
         "root_id": projection["canvas_root"],
         "application_root": projection["application_root"],

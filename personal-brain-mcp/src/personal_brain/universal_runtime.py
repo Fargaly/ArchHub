@@ -145,6 +145,45 @@ class UniversalRuntimeBridge:
             response_timeout_seconds=response_timeout_seconds,
         )
 
+    def deliberation_read(
+        self,
+        *,
+        space: str,
+        limit: int = 100,
+        response_timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/api/universal/deliberation",
+            {"space": space, "limit": int(limit)},
+            response_timeout_seconds=response_timeout_seconds,
+        )
+
+    def deliberation_append(
+        self,
+        *,
+        space: str,
+        category: str,
+        summary: str,
+        payload: object,
+        idempotency_key: str,
+        created_at: str | None = None,
+        response_timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/universal/deliberation",
+            {
+                "space": space,
+                "category": category,
+                "summary": summary,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+                "created_at": created_at,
+            },
+            response_timeout_seconds=response_timeout_seconds,
+        )
+
     def browser_handoff_status(
         self, *, response_timeout_seconds: float | None = None
     ) -> dict[str, Any]:
@@ -308,6 +347,7 @@ class UniversalRuntimeBridge:
         *,
         definition_key: str,
         fields: Mapping[str, object] | None = None,
+        structured_fields: Mapping[str, object] | None = None,
         idempotency_field: str | None = None,
         x: float = 0.0,
         y: float = 0.0,
@@ -315,6 +355,7 @@ class UniversalRuntimeBridge:
         return self._request("POST", "/api/universal/assembly", {
             "definition_key": definition_key,
             "fields": dict(fields or {}),
+            "structured_fields": dict(structured_fields or {}),
             "idempotency_field": idempotency_field,
             "x": x,
             "y": y,

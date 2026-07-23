@@ -86,6 +86,28 @@ def test_brain_bridge_uses_the_signed_runtime_and_same_work_registry(tmp_path):
         workshop = bridge.workshop_read()
         assert workshop["workshop"] == server.universal_registry.workshop_root
         assert workshop["entries"] == []
+        control_ledger = server.universal_registry.brain_control_ledger_root
+        control_category = (
+            server.universal_registry.brain_control_category_roots[
+                "compliance-event"
+            ]
+        )
+        control = bridge.deliberation_append(
+            space=control_ledger,
+            category=control_category,
+            summary="Brain bridge control-ledger court.",
+            payload={"owner_user": "founder", "court": "bridge"},
+            idempotency_key="brain-bridge-control-ledger",
+            created_at="2026-07-21T12:00:00+00:00",
+        )
+        assert control["space"] == control_ledger
+        control_history = bridge.deliberation_read(
+            space=control_ledger, limit=10
+        )
+        assert control_history["entries"][0]["root"] == control["root"]
+        assert control_history["entries"][0]["payload"] == {
+            "owner_user": "founder", "court": "bridge"
+        }
         denied = bridge.workshop_gate(
             ref=server.universal_registry.application_root,
             phase="claim",
@@ -255,7 +277,8 @@ def test_brain_roma_mcp_handler_syncs_to_application_route(tmp_path, monkeypatch
         assert listed["ok"] is True
         assert listed["authority_source"] == "cell_route"
         assert out["tree_id"] in listed["trees"]
-        assert brain_store.get_meta(rt.TREE_META_KEY)
+        assert out["brain_written"] is False
+        assert brain_store.get_meta(rt.TREE_META_KEY) is None
     finally:
         brain_store.close()
         server.close()
@@ -288,6 +311,19 @@ def test_brain_bridge_passes_timeout_to_prompt_and_status_projections():
     assert bridge.work_list(response_timeout_seconds=5.0)["workshop"] == "app:workshop"
     assert bridge.work_index(response_timeout_seconds=4.0)["workshop"] == "app:workshop"
     assert bridge.workshop_read(response_timeout_seconds=3.0)["entries"] == []
+    assert bridge.deliberation_read(
+        space="app:brain-control",
+        limit=5,
+        response_timeout_seconds=2.5,
+    )["entries"] == []
+    assert bridge.deliberation_append(
+        space="app:brain-control",
+        category="app:brain-control:compliance-event",
+        summary="Timeout-bound deliberation write.",
+        payload={"ok": True},
+        idempotency_key="timeout-deliberation-write",
+        response_timeout_seconds=2.25,
+    )["workshop"] == "app:workshop"
     assert bridge.workshop_gate(
         ref="leaf:1",
         phase="claim",
@@ -339,6 +375,25 @@ def test_brain_bridge_passes_timeout_to_prompt_and_status_projections():
             "/api/universal/workshop",
             None,
             {"response_timeout_seconds": 3.0},
+        ),
+        (
+            "GET",
+            "/api/universal/deliberation",
+            {"space": "app:brain-control", "limit": 5},
+            {"response_timeout_seconds": 2.5},
+        ),
+        (
+            "POST",
+            "/api/universal/deliberation",
+            {
+                "space": "app:brain-control",
+                "category": "app:brain-control:compliance-event",
+                "summary": "Timeout-bound deliberation write.",
+                "payload": {"ok": True},
+                "idempotency_key": "timeout-deliberation-write",
+                "created_at": None,
+            },
+            {"response_timeout_seconds": 2.25},
         ),
         (
             "POST",

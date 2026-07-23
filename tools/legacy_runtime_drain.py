@@ -12,11 +12,15 @@ import argparse
 import hashlib
 import json
 import re
+import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import live_runtime_holders
 
@@ -25,6 +29,8 @@ TITLE = "Drain copied legacy node_runtime holders into Universal Cell authority"
 LONG_RUNNING_TEST_SECONDS = 60 * 60
 LOW_ACTIVITY_CPU_RATIO = 0.01
 ACTIVE_AUTHORITY_RUNTIME_RESPONSE_TIMEOUT_SECONDS = 15.0
+VISIBLE_ENDPOINT_PREFLIGHT_TIMEOUT_SECONDS = 5.0
+DEFAULT_UNIVERSAL_STATE_NAME = "node-native-wip.json.gz.universal.sqlite3"
 SOURCE_DRIFT_DIRS = (
     "nodelang",
     "tests_replica",
@@ -600,11 +606,13 @@ def apply_source_drift_resolution_evidence(
     if not records:
         return candidate
     deduped_records: list[dict[str, Any]] = []
-    seen_records: set[tuple[Any, Any, Any]] = set()
+    seen_records: set[tuple[Any, Any, Any, Any, Any]] = set()
     for record in records:
         key = (
             record.get("path"),
             record.get("slice"),
+            bool(record.get("explicit_candidate_decision")),
+            record.get("candidate_decision"),
             bool(record.get("pending_canonical_root_decision")),
         )
         if key in seen_records:
@@ -755,8 +763,22 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
         or "relation_" in normalized
         or "playable_interaction" in normalized
         or normalized == "nodelang/cell_relations_view.py"
+        or normalized == "nodelang/cell_application_ui.py"
+        or normalized == "nodelang/cell_control_view.py"
+        or normalized == "nodelang/cell_library_definition_view.py"
+        or normalized == "nodelang/cell_library_shell_view.py"
+        or normalized == "nodelang/cell_properties_view.py"
+        or normalized == "nodelang/cell_view_template.py"
+        or normalized == "nodelang/inspector_descriptor.py"
         or normalized == "nodelang/ui_runtime.py"
+        or normalized == "nodelang/universal_view.py"
+        or normalized == "tests_replica/test_cell_control_view.py"
+        or normalized == "tests_replica/test_desktop_runtime.py"
+        or normalized == "tests_replica/test_inspector_descriptor.py"
+        or normalized == "tests_replica/test_cell_view_template.py"
+        or normalized == "tests_replica/test_universal_properties_presentation.py"
         or normalized == "tests_replica/test_universal_ui_interactions.py"
+        or normalized == "tests_replica/test_universal_ui_performance.py"
     ):
         track = "visual_workspace_interaction"
         required_canonical_first_step = (
@@ -766,11 +788,15 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
     elif (
         "authority_bridge" in normalized
         or "application_server" in normalized
+        or "browser_publish_court" in normalized
         or normalized == "nodelang/capabilities.py"
         or "cloud_gateway" in normalized
         or "universal_cell_capabilities" in normalized
         or "machine_transport" in normalized
         or "boundary_ports" in normalized
+        or normalized == "tests_replica/test_universal_interaction_server.py"
+        or normalized.startswith("packaging/")
+        or normalized == "tests_replica/test_windows_packaging.py"
     ):
         track = "runtime_transport_and_broker"
         required_canonical_first_step = (
@@ -789,19 +815,66 @@ def classify_source_drift_candidate(path: str) -> dict[str, Any]:
             "prove the application lens consumes the canonical graph root and "
             "does not introduce duplicate product truth"
         )
+    elif (
+        normalized
+        in {
+            "nodelang/cell_catalog.py",
+            "nodelang/cell_deliberation.py",
+            "nodelang/cell_domain_catalog.py",
+            "nodelang/persistence.py",
+            "tests_replica/test_cell_deliberation.py",
+            "tests_replica/test_cell_domain_catalog.py",
+            "tests_replica/test_universal_workshop_authority.py",
+        }
+    ):
+        track = "application_graph_projection"
+        required_canonical_first_step = (
+            "prove the graph catalogue, persistence, deliberation, or workshop "
+            "lens against released application roots before accepting runtime "
+            "behavior"
+        )
     elif "projection_delta" in normalized:
         track = "application_graph_projection"
         required_canonical_first_step = (
             "prove projection changes as graph-derived deltas from released "
             "roots, not copied runtime state"
         )
-    elif "work_completion" in normalized:
+    elif (
+        "work_completion" in normalized
+        or normalized
+        in {
+            "nodelang/cell_attention.py",
+            "nodelang/cell_change_history.py",
+            "nodelang/cell_interactions.py",
+            "nodelang/cell_legacy_brain_governance.py",
+            "nodelang/cell_reactions.py",
+            "nodelang/cell_state_machine.py",
+            "nodelang/cell_value_graph.py",
+            "tests_replica/test_cell_attention.py",
+            "tests_replica/test_cell_interactions.py",
+            "tests_replica/test_cell_legacy_brain_governance.py",
+            "tests_replica/test_cell_state_machine.py",
+            "tests_replica/test_cell_value_graph.py",
+        }
+    ):
         track = "governed_work_lifecycle"
         required_canonical_first_step = (
-            "prove work completion as graph-held decision/outcome/revision "
-            "state before accepting runtime behavior"
+            "prove attention, interaction, value, state, history, reaction, "
+            "or work completion as graph-held decision/outcome/revision state "
+            "before accepting runtime behavior"
         )
-    elif "store_concurrency" in normalized:
+    elif (
+        "store_concurrency" in normalized
+        or "durability" in normalized
+        or "incremental" in normalized
+        or "universal_cell_kernel" in normalized
+        or "relations" in normalized
+        or normalized == "nodelang/cell_protocols.py"
+        or normalized == "nodelang/universal_cell.py"
+        or normalized == "tests_replica/test_authority_coherence.py"
+        or normalized == "tests_replica/test_cell_execution_floor_court.py"
+        or normalized == "tests_replica/test_legacy_runtime_ratchet.py"
+    ):
         track = "revision_integrity_court"
         required_canonical_first_step = (
             "rebuild as a canonical revision/commit court if it covers a "
@@ -1341,9 +1414,14 @@ def build_handoff_board(
     }
     bridge = active_bridge or {}
     handoff = bridge.get("visible_browser_handoff") or {}
+    state_continuity = visible_handoff_state_continuity(
+        blocked_endpoints,
+        bridge,
+    )
     handoff_available = (
         bool(bridge.get("ok"))
         and bool(bridge.get("visible_browser_handoff_ok"))
+        and bool(state_continuity.get("ok"))
         and handoff.get("supported") is True
         and handoff.get("application") == "app:archhub"
         and handoff.get("one_use_route") == "POST /api/universal/browser-handoff"
@@ -1359,11 +1437,19 @@ def build_handoff_board(
         "requires_process_interruption": False,
         "token_issued_by_this_board": False,
         "protected_visible_endpoint_pids": [card["pid"] for card in blocked_endpoints],
+        "state_continuity": state_continuity,
         "allowed_action": (
             "operator may initiate browser handoff from the active authority bridge "
             "when ready; this board remains read-only and never issues the token"
             if handoff_available
-            else "repair or start the active authority bridge before visible handoff"
+            else (
+                "repair state continuity before visible handoff; the active "
+                "authority bridge must prove it serves the same state path as "
+                "the protected visible endpoint"
+                if bool(bridge.get("visible_browser_handoff_ok"))
+                and not bool(state_continuity.get("ok"))
+                else "repair or start the active authority bridge before visible handoff"
+            )
         ),
     }
     blockers = {
@@ -1417,26 +1503,496 @@ def build_handoff_board(
     }
 
 
+def _normalized_filesystem_identity(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(Path(text).expanduser().resolve()).casefold()
+    except OSError:
+        return text.casefold()
+
+
+def visible_handoff_state_continuity(
+    blocked_endpoints: list[dict[str, Any]],
+    bridge: dict[str, Any],
+) -> dict[str, Any]:
+    """Prove that a visible handoff keeps the protected endpoint's state root."""
+    visible_states = [
+        {
+            "pid": card.get("pid"),
+            "state_path": card.get("state_path"),
+        }
+        for card in blocked_endpoints
+    ]
+    bridge_state = bridge.get("bridge_state_path")
+    bridge_active = bool(bridge.get("ok"))
+    if not blocked_endpoints:
+        return {
+            "ok": True,
+            "active_bridge_state_path": bridge_state,
+            "visible_holder_state_paths": visible_states,
+            "mismatched_pids": [],
+            "missing_state_path_pids": [],
+            "reason": "no protected visible endpoint is blocking handoff",
+        }
+    if not bridge_active:
+        return {
+            "ok": False,
+            "active_bridge_state_path": bridge_state,
+            "visible_holder_state_paths": visible_states,
+            "mismatched_pids": [
+                card.get("pid") for card in blocked_endpoints
+            ],
+            "missing_state_path_pids": [],
+            "reason": (
+                "active authority bridge is not reachable; stopped or stale "
+                "bridge state cannot prove exact visible state continuity"
+            ),
+        }
+    if not bridge_state:
+        return {
+            "ok": False,
+            "active_bridge_state_path": bridge_state,
+            "visible_holder_state_paths": visible_states,
+            "mismatched_pids": [
+                card.get("pid") for card in blocked_endpoints
+            ],
+            "missing_state_path_pids": [],
+            "reason": (
+                "active authority bridge did not expose its state path; "
+                "visible handoff cannot be treated as an exact replacement"
+            ),
+        }
+    bridge_identity = _normalized_filesystem_identity(bridge_state)
+    missing: list[int] = []
+    mismatched: list[int] = []
+    for card in blocked_endpoints:
+        state_path = card.get("state_path")
+        pid = card.get("pid")
+        if not state_path:
+            if type(pid) is int:
+                missing.append(pid)
+            continue
+        if _normalized_filesystem_identity(state_path) != bridge_identity:
+            if type(pid) is int:
+                mismatched.append(pid)
+    ok = not missing and not mismatched
+    return {
+        "ok": ok,
+        "active_bridge_state_path": bridge_state,
+        "visible_holder_state_paths": visible_states,
+        "mismatched_pids": mismatched,
+        "missing_state_path_pids": missing,
+        "reason": (
+            "active authority bridge serves the same state path as the protected visible endpoint"
+            if ok
+            else "active authority bridge does not prove exact visible state continuity"
+        ),
+    }
+
+
 def runtime_holder_universal_verification_status(plan: dict[str, Any]) -> dict[str, Any]:
     try:
         return verify_runtime_holders_in_universal(plan)
     except Exception as exc:
+        missing = [
+            {
+                "pid": holder.get("pid"),
+                "holder_risk_class": holder.get("holder_risk_class"),
+            }
+            for holder in plan.get("holders") or []
+            if isinstance(holder, dict)
+        ]
         return {
             "schema": "archhub-runtime-holder-universal-verification/v1",
             "source_schema": plan.get("schema"),
-            "holder_count": len([
-                holder for holder in plan.get("holders") or []
-                if isinstance(holder, dict)
-            ]),
+            "holder_count": len(missing),
             "verified_count": 0,
-            "missing_count": None,
+            "missing_count": len(missing),
             "ok": False,
             "verified": [],
-            "missing": [],
+            "missing": missing,
             "non_destructive": True,
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+
+
+def _http_json_get(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+    try:
+        request = Request(url, method="GET")
+        with urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read(16_384).decode("utf-8", errors="replace")
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = None
+            return {
+                "url": url,
+                "status": int(response.status),
+                "json": payload,
+                "body_prefix": body[:500] if payload is None else None,
+            }
+    except HTTPError as exc:
+        body = exc.read(16_384).decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            payload = None
+        return {
+            "url": url,
+            "status": int(exc.code),
+            "json": payload,
+            "body_prefix": body[:500] if payload is None else None,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    except (OSError, URLError) as exc:
+        return {
+            "url": url,
+            "status": None,
+            "json": None,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+
+def visible_endpoint_universal_preflight(
+    plan: dict[str, Any],
+    *,
+    http_get=None,
+) -> dict[str, Any]:
+    """Read-only proof of what the protected visible endpoint serves today."""
+    getter = http_get or _http_json_get
+    endpoints = []
+    for holder in plan.get("holders") or []:
+        if not isinstance(holder, dict):
+            continue
+        if holder.get("holder_type") != "application_server":
+            continue
+        status = holder.get("authority_replacement_status") or {}
+        if status.get("status") != "blocked_by_this_live_holder":
+            continue
+        endpoints.append(holder)
+    checks: list[dict[str, Any]] = []
+    for holder in endpoints:
+        ports = (holder.get("authority_replacement_status") or {}).get("ports") or []
+        route_checks = []
+        for port in ports:
+            if type(port) is not int:
+                continue
+            base = "http://127.0.0.1:%s" % port
+            state = getter(
+                base + "/api/state",
+                timeout_seconds=VISIBLE_ENDPOINT_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+            health = getter(
+                base + "/api/universal/health",
+                timeout_seconds=VISIBLE_ENDPOINT_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+            handoff = getter(
+                base + "/api/universal/browser-handoff",
+                timeout_seconds=VISIBLE_ENDPOINT_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+            state_json = state.get("json") if isinstance(state, dict) else None
+            health_json = health.get("json") if isinstance(health, dict) else None
+            handoff_json = handoff.get("json") if isinstance(handoff, dict) else None
+            route_checks.append({
+                "port": port,
+                "state_status": state.get("status"),
+                "state_ok": (
+                    isinstance(state_json, dict)
+                    and state_json.get("ok") is True
+                    and state_json.get("valid") is True
+                ),
+                "state_schema_version": (
+                    state_json.get("schema_version")
+                    if isinstance(state_json, dict) else None
+                ),
+                "state_node_count": (
+                    state_json.get("node_count")
+                    if isinstance(state_json, dict) else None
+                ),
+                "state_persistent": (
+                    state_json.get("persistent")
+                    if isinstance(state_json, dict) else None
+                ),
+                "universal_health_status": health.get("status"),
+                "universal_health_ok": (
+                    isinstance(health_json, dict)
+                    and health_json.get("ok") is True
+                ),
+                "browser_handoff_status": handoff.get("status"),
+                "browser_handoff_supported": (
+                    isinstance(handoff_json, dict)
+                    and handoff_json.get("supported") is True
+                    and handoff_json.get("one_use_route")
+                    == "POST /api/universal/browser-handoff"
+                ),
+            })
+        checks.append({
+            "pid": holder.get("pid"),
+            "state_path": (holder.get("runtime_args") or {}).get("state_path"),
+            "ports": ports,
+            "routes": route_checks,
+        })
+    any_universal_handoff = any(
+        route.get("browser_handoff_supported") is True
+        for check in checks
+        for route in check.get("routes") or []
+    )
+    any_legacy_state = any(
+        route.get("state_ok") is True
+        for check in checks
+        for route in check.get("routes") or []
+    )
+    return {
+        "schema": "archhub-visible-endpoint-universal-preflight/v1",
+        "ok": bool(any_universal_handoff),
+        "protected_visible_endpoint_pids": [
+            check.get("pid") for check in checks
+        ],
+        "endpoint_count": len(checks),
+        "legacy_state_endpoint_visible": bool(any_legacy_state),
+        "universal_browser_handoff_visible": bool(any_universal_handoff),
+        "checks": checks,
+        "non_destructive": True,
+        "required_action": (
+            "visible endpoint already exposes Universal browser handoff"
+            if any_universal_handoff
+            else (
+                "start or repair an active same-state Universal authority "
+                "bridge before visible browser handoff; do not issue a token "
+                "or interrupt the visible endpoint from this preflight"
+            )
+        ),
+        "rule": (
+            "GET-only endpoint probe; no token issued, no process interrupted, "
+            "no graph write performed"
+        ),
+    }
+
+
+def default_universal_state_path() -> Path:
+    return (
+        Path.home()
+        / "AppData"
+        / "Local"
+        / "ArchHub"
+        / DEFAULT_UNIVERSAL_STATE_NAME
+    )
+
+
+def _copy_sqlite_database(source: Path, destination: Path) -> int:
+    """Copy a possibly live SQLite database without copying a WAL by hand."""
+    if destination.exists():
+        raise FileExistsError(str(destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    resolved = source.expanduser().resolve(strict=True)
+    source_connection = sqlite3.connect(
+        resolved.as_uri() + "?mode=ro",
+        uri=True,
+        timeout=5.0,
+        isolation_level=None,
+    )
+    backup_connection = sqlite3.connect(str(destination), isolation_level=None)
+    try:
+        source_connection.execute("PRAGMA query_only=ON")
+        source_connection.backup(backup_connection)
+        integrity = backup_connection.execute(
+            "PRAGMA integrity_check"
+        ).fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise RuntimeError("SQLite backup failed integrity_check")
+    finally:
+        backup_connection.close()
+        source_connection.close()
+    return destination.stat().st_size
+
+
+def _preflight_projection(preflight: object) -> dict[str, Any]:
+    return {
+        "required": bool(getattr(preflight, "required", False)),
+        "catalog_entry_root": getattr(preflight, "catalog_entry_root", None),
+        "legacy_body_root": getattr(preflight, "legacy_body_root", None),
+        "legacy_policy_root": getattr(preflight, "legacy_policy_root", None),
+        "legacy_control_root": getattr(preflight, "legacy_control_root", None),
+        "active_session_roots": list(
+            getattr(preflight, "active_session_roots", ()) or ()
+        ),
+        "closed_session_roots": list(
+            getattr(preflight, "closed_session_roots", ()) or ()
+        ),
+        "blockers": list(getattr(preflight, "blockers", ()) or ()),
+        "revision": getattr(preflight, "revision", None),
+    }
+
+
+def _baboom_meaning(payload: dict[str, Any]) -> str:
+    if payload.get("ok") is True:
+        return (
+            "A copied default Universal state can be migrated and restored as "
+            "one BABOOM authority; the live default state remains untouched."
+        )
+    if payload.get("source_exists") is False:
+        return "The default Universal SQLite state does not exist."
+    error = str(payload.get("error") or "")
+    if "active legacy BABOOM session" in error:
+        return (
+            "The default Universal state has an active legacy BABOOM session; "
+            "a session migration contract is required before same-state handoff."
+        )
+    if "migration targets are not durable" in error:
+        return (
+            "The default Universal state is missing canonical BABOOM migration "
+            "targets, so same-state handoff cannot be proven yet."
+        )
+    if "requires a controlled graph migration" in error:
+        return (
+            "The default Universal state still contains the retired duplicate "
+            "BABOOM body and must pass the controlled graph migration before "
+            "normal restore."
+        )
+    return (
+        "The default Universal state could not be proven as a same-state "
+        "single authority; use the error fields as the current blocker."
+    )
+
+
+def default_state_baboom_migration_preflight(
+    *,
+    workspace: Path,
+    source: Path | None = None,
+) -> dict[str, Any]:
+    """Probe the visible default Universal state through a disposable copy only."""
+    authority = workspace / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    source_path = source or default_universal_state_path()
+    payload: dict[str, Any] = {
+        "schema": "archhub-default-universal-state-baboom-migration-preflight/v1",
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "authority": str(authority),
+        "source": str(source_path),
+        "source_exists": source_path.exists(),
+        "live_mutation": False,
+        "copy_method": "sqlite_backup_to_temp_copy",
+        "copy_size_bytes": None,
+        "copy_removed_after_probe": None,
+        "ok": False,
+        "not_claimed": [
+            "This did not mutate the live default Universal state.",
+            "This did not stop, restart, or relaunch PID 52484.",
+            "This did not issue a browser handoff token.",
+            "This did not leave the temporary SQLite copy on disk.",
+        ],
+    }
+    if not payload["source_exists"]:
+        payload["error_type"] = "FileNotFoundError"
+        payload["error"] = "default Universal SQLite state is missing"
+        payload["meaning"] = _baboom_meaning(payload)
+        return payload
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="archhub-baboom-preflight-")
+    copy_path = Path(temp_dir.name) / "default-state-copy.sqlite3"
+    store = None
+    try:
+        payload["copy_size_bytes"] = _copy_sqlite_database(source_path, copy_path)
+        if str(authority) not in sys.path:
+            sys.path.insert(0, str(authority))
+        from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
+        from nodelang.map_import import resolve_map_path
+        from nodelang.universal_application import (
+            _BABOOM_LEGACY_MIGRATION_APPROVAL,
+            inspect_legacy_baboom_execution_migration,
+            migrate_legacy_baboom_execution_from_durable_store,
+            restore_universal_application,
+            stage_legacy_baboom_execution_migration,
+        )
+        from nodelang.universal_cell import CellStore
+
+        provider = WindowsDpapiSigningKeyProvider(
+            WindowsDpapiSigningKeyProvider.default_path()
+        )
+        map_path = resolve_map_path()
+        store = CellStore(copy_path)
+        payload["copy_revision_before"] = store.revision
+        try:
+            _restored_store, restored_registry = restore_universal_application(
+                map_path,
+                store,
+                key_provider=provider,
+                court_workspace_root=authority,
+            )
+            payload["restore_before"] = {"ok": True}
+            post = inspect_legacy_baboom_execution_migration(
+                store.snapshot(), restored_registry
+            )
+            payload["post_migration_preflight"] = _preflight_projection(post)
+            payload["copy_revision_after"] = store.revision
+            payload["ok"] = post.required is False
+        except Exception as restore_exc:
+            payload["restore_before"] = {
+                "ok": False,
+                "error_type": type(restore_exc).__name__,
+                "error": str(restore_exc),
+            }
+            staging = stage_legacy_baboom_execution_migration(
+                map_path,
+                store,
+                key_provider=provider,
+                court_workspace_root=authority,
+            )
+            payload["staging"] = {
+                "source_revision": staging.source_revision,
+                "staging_revision": staging.staging_revision,
+                "preflight": _preflight_projection(staging.preflight),
+            }
+            result = migrate_legacy_baboom_execution_from_durable_store(
+                map_path,
+                store,
+                key_provider=provider,
+                founder_approval=_BABOOM_LEGACY_MIGRATION_APPROVAL,
+                court_workspace_root=authority,
+            )
+            payload["migration_result"] = {
+                "migrated": result.migrated,
+                "revision": result.revision,
+                "receipt_root": result.receipt_root,
+                "preflight": _preflight_projection(result.preflight),
+            }
+            _restored_store, restored_registry = restore_universal_application(
+                map_path,
+                store,
+                key_provider=provider,
+                court_workspace_root=authority,
+            )
+            post = inspect_legacy_baboom_execution_migration(
+                store.snapshot(), restored_registry
+            )
+            payload["restore_after"] = {"ok": True}
+            payload["post_migration_preflight"] = _preflight_projection(post)
+            payload["copy_revision_after"] = store.revision
+            payload["ok"] = (
+                result.migrated is True
+                and post.required is False
+                and not post.blockers
+            )
+    except Exception as exc:
+        payload["ok"] = False
+        payload["error_type"] = type(exc).__name__
+        payload["error"] = str(exc)
+    finally:
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                pass
+        try:
+            temp_dir.cleanup()
+        finally:
+            payload["copy_removed_after_probe"] = not copy_path.exists()
+    payload["meaning"] = _baboom_meaning(payload)
+    return payload
 
 
 def _holder_verification_summary(
@@ -1452,7 +2008,7 @@ def _holder_verification_summary(
             "missing_pids": [],
             "runtime_revision": None,
         }
-    return {
+    summary = {
         "available": True,
         "ok": bool(verification.get("ok")),
         "holder_count": verification.get("holder_count"),
@@ -1465,6 +2021,10 @@ def _holder_verification_summary(
         ],
         "runtime_revision": verification.get("runtime_revision"),
     }
+    if verification.get("error_type") or verification.get("error"):
+        summary["error_type"] = verification.get("error_type")
+        summary["error"] = verification.get("error")
+    return summary
 
 
 def build_visible_authority_handoff_package(
@@ -1505,6 +2065,10 @@ def build_visible_authority_handoff_package(
         "requires_process_interruption": (
             handoff.get("requires_process_interruption") is True
         ),
+        "state_continuity": handoff.get("state_continuity") or {
+            "ok": None,
+            "reason": "state-continuity evidence is unavailable",
+        },
         "protected_visible_endpoint_pids": (
             handoff.get("protected_visible_endpoint_pids") or blocked_pids
         ),
@@ -1549,6 +2113,12 @@ def build_visible_authority_handoff_package(
             "handoff package rejected because BABOOM can still select copied "
             "runtime authority; isolate or remove those imports after lawful "
             "handoff proof exists"
+        )
+    if package["state_continuity"].get("ok") is False:
+        package["ok"] = False
+        package["next_operator_action"] = (
+            "handoff package rejected because the active authority bridge does "
+            "not prove exact visible state continuity"
         )
     if holder_summary["available"] and not holder_summary["ok"]:
         package["ok"] = False
@@ -2470,13 +3040,39 @@ def active_authority_runtime_bridge_status(
         Path.home() / "AppData" / "Local" / "ArchHub"
         / "active-universal-runtime.json"
     )
+    status_path = (
+        Path.home() / "AppData" / "Local" / "ArchHub"
+        / "authority-bridge.json"
+    )
     result: dict[str, Any] = {
         "schema": "archhub-active-authority-runtime-bridge/v1",
         "authority": str(workspace / "10.PRODUCT" / "13.NODE-LANGUAGE"),
         "descriptor": str(descriptor),
         "descriptor_exists": descriptor.exists(),
+        "bridge_status_path": str(status_path),
+        "bridge_status_exists": status_path.exists(),
         "ok": False,
     }
+    if status_path.exists():
+        try:
+            status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            result.update({
+                "bridge_status_error_type": type(exc).__name__,
+                "bridge_status_reason": (
+                    "active authority bridge status file is unreadable"
+                ),
+            })
+        else:
+            result.update({
+                "bridge_status": status_payload.get("status"),
+                "bridge_process_id": status_payload.get("pid"),
+                "bridge_server_url": status_payload.get("server_url"),
+                "bridge_state_path": status_payload.get("state_path"),
+                "bridge_universal_state_path": (
+                    status_payload.get("universal_state_path")
+                ),
+            })
     if descriptor.exists():
         try:
             payload = json.loads(descriptor.read_text(encoding="utf-8"))
@@ -3116,7 +3712,33 @@ def verify_runtime_holders_in_universal(
         )
 
         runtime = UniversalRuntimeBridge()
-    runtime_state = _runtime_work_index(runtime)
+    try:
+        runtime_state = _runtime_work_index(runtime)
+    except Exception as exc:
+        missing = []
+        for holder in plan.get("holders") or []:
+            if not isinstance(holder, dict):
+                continue
+            missing.append({
+                "external_key": holder_external_key(holder),
+                "pid": holder.get("pid"),
+                "holder_risk_class": holder.get("holder_risk_class"),
+            })
+        return {
+            "schema": "archhub-runtime-holder-universal-verification/v1",
+            "source_schema": plan.get("schema"),
+            "holder_count": len(missing),
+            "verified_count": 0,
+            "missing_count": len(missing),
+            "ok": False,
+            "verified": [],
+            "missing": missing,
+            "runtime_revision": None,
+            "known_external_keys": 0,
+            "non_destructive": True,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
     existing = _existing_universal_external_keys(runtime_state)
     verified: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
@@ -3318,6 +3940,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--visible-endpoint-universal-preflight",
+        action="store_true",
+        help=(
+            "GET-only proof of whether the protected visible endpoint already "
+            "serves Universal health/browser-handoff routes. This never issues "
+            "tokens or interrupts processes."
+        ),
+    )
+    parser.add_argument(
+        "--default-state-baboom-preflight",
+        action="store_true",
+        help=(
+            "Copy the default Universal SQLite state to a temp database, prove "
+            "whether the BABOOM single-authority migration can restore it, and "
+            "remove the copy. This never mutates live state or touches processes."
+        ),
+    )
+    parser.add_argument(
         "--baboom-authority-status",
         action="store_true",
         help=(
@@ -3396,6 +4036,8 @@ def main(argv: list[str] | None = None) -> int:
         or args.runtime_copy_archive_plan
         or args.inspect_board_pids
         or args.visible_authority_handoff_package
+        or args.visible_endpoint_universal_preflight
+        or args.default_state_baboom_preflight
         or args.baboom_authority_status
         or args.authority_shadow_probe_report
         or args.verify_universal_holders
@@ -3494,6 +4136,12 @@ def main(argv: list[str] | None = None) -> int:
                 universal_holder_verification=(
                     runtime_holder_universal_verification_status(plan)
                 ),
+            )
+        elif args.visible_endpoint_universal_preflight:
+            result = visible_endpoint_universal_preflight(plan)
+        elif args.default_state_baboom_preflight:
+            result = default_state_baboom_migration_preflight(
+                workspace=workspace
             )
         elif args.retirement_gate_report:
             result = plan["retirement_gate"]

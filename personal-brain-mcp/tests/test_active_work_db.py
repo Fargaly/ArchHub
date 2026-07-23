@@ -1604,13 +1604,6 @@ def test_assigned_block_writes_active_cde_state_for_direct_mcp_hooks(
         "gate_spec": {"selector": "[data-uisurface='home-top']"},
         "evidence_ref": "cdp:home-top",
     }
-    aw.add_leaves(store, owner_user="founder", leaves=[{
-        "title": "home topbar from nodes",
-        "gate_kind": "core_values_authority_repair",
-        "gate_spec": {"tool": "brain.core_values_authority_audit"},
-        "cde_container": cde_container,
-    }])
-    _room_plan_all_open(store)
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"c" * 32
     )
@@ -1625,6 +1618,28 @@ def test_assigned_block_writes_active_cde_state_for_direct_mcp_hooks(
         lambda: UniversalRuntimeBridge(descriptor, provider)
     )
     try:
+        manager.enroll(
+            runtime="claude-code", external_session_id=session_id
+        )
+        manager.create(
+            runtime="claude-code",
+            external_session_id=session_id,
+            title="home topbar from nodes",
+            description="Direct Cell-native work for the CDE hook court.",
+            priority=100,
+            external_key="court:direct-cde-hook",
+            structured_references={
+                "requirements": {
+                    "gate": {
+                        "kind": "core_values_authority_repair",
+                        "spec": {
+                            "tool": "brain.core_values_authority_audit"
+                        },
+                    },
+                },
+                "cde-container": cde_container,
+            },
+        )
         mcp = build_server(
             store=store,
             default_owner_user="founder",
@@ -1645,16 +1660,10 @@ def test_assigned_block_writes_active_cde_state_for_direct_mcp_hooks(
     assert state["leaf_id"] == res["leaf"]["leaf_id"]
     assert state["container"] == cde_container
 
-    history = cr.get_compliance_history(store, owner_user="founder", limit=5)
-    assert history["total"] >= 1
-    event = next(
-        event for event in history["events"]
-        if event["event_type"] == "active_cde_assignment"
-    )
-    assert event["event_type"] == "active_cde_assignment"
-    assert event["runtime"] == "claude-code"
-    assert event["leaf_id"] == res["leaf"]["leaf_id"]
-    assert event["container_id"] == "GM.ui.ui_home_topbar"
+    # This file is a hook cache, not an audit authority. The graph-owned work
+    # claim already records the assignment; CDE cache writes must not revive
+    # the retired compliance_history_v1 ledger.
+    assert store.get_meta(cr.HISTORY_META_KEY) is None
 
 
 def test_brain_cde_state_clear_cannot_erase_another_session(

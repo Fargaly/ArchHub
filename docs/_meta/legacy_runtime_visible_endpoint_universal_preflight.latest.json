@@ -1,0 +1,49 @@
+{
+  "schema": "archhub-visible-endpoint-universal-preflight/v1",
+  "ok": false,
+  "protected_visible_endpoint_pids": [
+    52484
+  ],
+  "endpoint_count": 1,
+  "legacy_state_endpoint_visible": true,
+  "universal_browser_handoff_visible": false,
+  "checks": [
+    {
+      "pid": 52484,
+      "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+      "ports": [
+        8482,
+        8484
+      ],
+      "routes": [
+        {
+          "port": 8482,
+          "state_status": 200,
+          "state_ok": true,
+          "state_schema_version": "2026.07.13.47",
+          "state_node_count": 131855,
+          "state_persistent": true,
+          "universal_health_status": 404,
+          "universal_health_ok": false,
+          "browser_handoff_status": 404,
+          "browser_handoff_supported": false
+        },
+        {
+          "port": 8484,
+          "state_status": 404,
+          "state_ok": false,
+          "state_schema_version": null,
+          "state_node_count": null,
+          "state_persistent": null,
+          "universal_health_status": 404,
+          "universal_health_ok": false,
+          "browser_handoff_status": 404,
+          "browser_handoff_supported": false
+        }
+      ]
+    }
+  ],
+  "non_destructive": true,
+  "required_action": "start or repair an active same-state Universal authority bridge before visible browser handoff; do not issue a token or interrupt the visible endpoint from this preflight",
+  "rule": "GET-only endpoint probe; no token issued, no process interrupted, no graph write performed"
+}

@@ -1,9 +1,10 @@
 """Verified Brain projection of the universal Core Values authority.
 
-The universal Cell graph remains the authority. Brain stores only a verified
-projection of its identity, revision, digest, lifecycle, coverage, and the
-explicit Core Values-to-Brain wire. No caller can upload replacement prose or
-declare its own authority manifest through MCP.
+The universal Cell graph remains the authority. A verified audit projection of
+its identity, revision, digest, lifecycle, coverage, and explicit Core
+Values-to-Brain wire is appended to the graph-owned Brain control ledger. No
+caller can upload replacement prose or declare its own authority manifest
+through MCP.
 """
 from __future__ import annotations
 
@@ -29,6 +30,10 @@ if TYPE_CHECKING:
 
 
 AUTHORITY_META_KEY = "core_values_authority_v1"
+CELL_CONTROL_LEDGER_ROOT = "app:brain-control-ledger:v1"
+CELL_COMPLIANCE_CATEGORY_ROOT = (
+    "app:brain-control-ledger:v1:category:compliance-event"
+)
 AUTHORITY_ROOT = "app:core-values:v1"
 AUTHORITY_WIRE_ROOT = "app:canvas-relation:core-values:brain"
 AUTHORITY_SCHEMA = "archhub-core-values-authority/v1"
@@ -67,6 +72,10 @@ class CoreValuesAuthorityReport(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     issues: list[str] = Field(default_factory=list)
+    cell_first: bool = False
+    cell_entry_root: str = ""
+    cell_payload_root: str = ""
+    audit_id: str = ""
 
 
 def _utc_now() -> str:
@@ -299,6 +308,138 @@ def get_report(
     return report if report.owner_user == owner_user else None
 
 
+def _audited_report(
+    *,
+    owner_user: str,
+    loader: Callable[[], dict[str, Any]] | None = None,
+) -> CoreValuesAuthorityReport:
+    try:
+        payload = (loader or _load_live_authority)()
+        return CoreValuesAuthorityReport(
+            owner_user=owner_user,
+            status=GREEN,
+            checked_at=_utc_now(),
+            **payload,
+        )
+    except Exception as exc:
+        return CoreValuesAuthorityReport(
+            owner_user=owner_user,
+            status=RED,
+            checked_at=_utc_now(),
+            issues=["%s: %s" % (type(exc).__name__, exc)],
+        )
+
+
+def audit_cell_first(
+    store: "BrainStore",  # Public compatibility only; never written/read here.
+    *,
+    owner_user: str = "founder",
+    loader: Callable[[], dict[str, Any]] | None = None,
+    cell_bridge: Any = None,
+) -> dict[str, Any]:
+    """Audit the authoritative graph and append its result to the Cell ledger."""
+    report = _audited_report(owner_user=owner_user, loader=loader)
+    report_payload = report.model_dump(mode="json")
+    audit_id = hashlib.sha256(
+        json.dumps(
+            {
+                "owner_user": owner_user,
+                "checked_at": report.checked_at,
+                "report": report_payload,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    report_payload.update({
+        "event_type": "core_values_authority_audit",
+        "source": "personal_brain.core_values_authority:audit_cell_first",
+        "audit_id": audit_id,
+    })
+    try:
+        runtime = cell_bridge
+        if runtime is None:
+            from .universal_runtime import UniversalRuntimeBridge
+
+            runtime = UniversalRuntimeBridge()
+        created = runtime.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            summary="Core Values authority audit: %s" % report.status,
+            payload=report_payload,
+            idempotency_key="core-values-authority-audit:%s" % audit_id,
+            created_at=report.checked_at,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "cell_first": True,
+            "brain_written": False,
+            "error": "%s: %s" % (type(exc).__name__, exc),
+        }
+    persisted = report.model_copy(update={
+        "cell_first": True,
+        "cell_entry_root": str(created["root"]),
+        "cell_payload_root": str(created["payload_root"]),
+        "audit_id": audit_id,
+    })
+    return {
+        "ok": persisted.status == GREEN,
+        "cell_first": True,
+        "brain_written": False,
+        "report": persisted.model_dump(mode="json"),
+        "cell_record": created,
+    }
+
+
+def get_report_cell_first(
+    store: "BrainStore",  # Public compatibility only; never written/read here.
+    *,
+    owner_user: str = "founder",
+    cell_bridge: Any = None,
+) -> Optional[CoreValuesAuthorityReport]:
+    """Read the latest Core Values authority audit from the Cell ledger."""
+    try:
+        runtime = cell_bridge
+        if runtime is None:
+            from .universal_runtime import UniversalRuntimeBridge
+
+            runtime = UniversalRuntimeBridge()
+        result = runtime.deliberation_read(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            limit=500,
+        )
+        entries = result.get("entries") if isinstance(result, dict) else None
+        if not isinstance(entries, list):
+            return None
+        for entry in reversed(entries):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("category_root") != CELL_COMPLIANCE_CATEGORY_ROOT:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if (
+                payload.get("event_type") != "core_values_authority_audit"
+                or payload.get("owner_user") != owner_user
+            ):
+                continue
+            report = CoreValuesAuthorityReport.model_validate(payload)
+            roots = entry.get("reference_roots")
+            return report.model_copy(update={
+                "cell_first": True,
+                "cell_entry_root": str(entry.get("root") or ""),
+                "cell_payload_root": (
+                    str(roots[0])
+                    if isinstance(roots, list) and len(roots) == 1 else ""
+                ),
+                "audit_id": str(payload.get("audit_id") or ""),
+            })
+    except Exception:
+        return None
+    return None
+
+
 def ensure_current(
     store: "BrainStore",
     *,
@@ -406,19 +547,22 @@ def register_core_values_authority_tools(
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
-        return audit(store, owner_user=owner).model_dump(mode="json")
+        result = audit_cell_first(store, owner_user=owner)
+        if "report" not in result:
+            return result
+        return {**result["report"], "ok": result["ok"], "cell_record": result["cell_record"]}
 
     @mcp.tool(
         name="brain.core_values_authority_get",
         description=(
-            "Return Brain's latest verified Core Values authority projection."
+            "Return the latest Cell-ledger Core Values authority audit."
         ),
     )
     def brain_core_values_authority_get(
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
-        report = get_report(store, owner_user=owner)
+        report = get_report_cell_first(store, owner_user=owner)
         if report is None:
             return {"ok": False, "owner_user": owner, "status": "missing"}
         return {"ok": report.status == GREEN, **report.model_dump(mode="json")}
@@ -435,7 +579,9 @@ __all__ = [
     "HARD_GATE_VALUES",
     "CoreValuesAuthorityReport",
     "audit",
+    "audit_cell_first",
     "get_report",
+    "get_report_cell_first",
     "ensure_current",
     "validate_work_context",
     "register_core_values_authority_tools",

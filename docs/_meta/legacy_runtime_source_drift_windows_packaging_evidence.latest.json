@@ -1,0 +1,113 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T02:32:17.7372389+04:00",
+  "migration_track": "runtime_transport_and_broker",
+  "slice": "universal_cell_windows_packaging_contract_with_baboom_native_projection",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true,
+    "no_visible_endpoint_replaced": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "The canonical Windows manifest declares the Universal Cell runtime and Universal Application schema instead of the retired typed application schema.",
+      "The canonical package declares the native BABOOM runtime, packaged transparent sprite atlas, and explicit Windows SAPI dependency without starting a second overlay or runtime during assembly.",
+      "The canonical build preflight rejects a non-Universal runtime, validates source portability, and emits only non-destructive tooling readiness under ValidateOnly.",
+      "The canonical packaging courts verify metadata, launcher, the native BABOOM package bindings, per-user installation, output custody, and signing constraints."
+    ],
+    "pending_not_ported": [
+      "The ignored copied packaging scripts and court remain read-only migration evidence until the protected copied runtime is retired through a controlled handoff."
+    ],
+    "forbidden": [
+      "Use copied packaging metadata to build or label a typed runtime as the Universal Cell product.",
+      "Treat ValidateOnly as an installer build, a signed release, or permission to interrupt a live runtime holder.",
+      "Use the packaged BABOOM projection to create a second authoritative runtime or auto-replace the protected visible holder."
+    ]
+  },
+  "canonical_files": {
+    "packaging/windows/ArchHub.spec": "d671b7e82c1c9e3cb8be274a1825710df88c2d4c37a5ec382bf227d41cbe6fb2",
+    "packaging/windows/README.md": "df039695a7a778d16986e760b638e2d79414e61e77fe2e0dffbe93ee211cfa96",
+    "packaging/windows/requirements-build.txt": "2cf815be08bc5c85c8462212e5e14ebc469281257db1cd4ec3b9d1276800061e",
+    "packaging/windows/build.ps1": "905a30742ce324349ef5bfff188429866e530a9287f11b144a24a191fbda6607",
+    "packaging/windows/package-manifest.json": "0f362de03414b87756ff816c37b7e0cb38b97e39662e102c40eb025e5204839a",
+    "tests_replica/test_windows_packaging.py": "f55b0616478fe8008d27942753e4543c5509754e9213aa4bc8f9ff0b87a4c023"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "packaging/windows/ArchHub.spec",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical spec packages the graph-native BABOOM companion and asset without creating a second runtime authority."
+    },
+    {
+      "path": "packaging/windows/README.md",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical packaging documents the controlled handoff and non-authoritative companion assembly boundary."
+    },
+    {
+      "path": "packaging/windows/requirements-build.txt",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical Windows packaging explicitly declares the pywin32 dependency required for founder-invoked SAPI dictation."
+    },
+    {
+      "path": "packaging/windows/build.ps1",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical preflight is bound to the Universal Cell runtime and schema rather than the copied typed application."
+    },
+    {
+      "path": "packaging/windows/package-manifest.json",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical package metadata has a distinct Universal Cell runtime contract."
+    },
+    {
+      "path": "tests_replica/test_windows_packaging.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical court covers the Universal Cell package contract and the native BABOOM package bindings."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "packaging/windows/ArchHub.spec": "8feb5b7b379f5a1a1c961be504ade6db21b945a0d8a348b22248c02d85fd28a3",
+    "packaging/windows/README.md": "c76de777b2a5b37610cbdc87bb9dc7bbf9581a94f5641b3571c50eeecfff168f",
+    "packaging/windows/requirements-build.txt": "129c787e59585dbeb46a8c5a417a6663d9de001a997c997fe3daf4a2d87ed784",
+    "packaging/windows/build.ps1": "fdaff40e59f8a9ffcac9d0b576b726ec55e0825fa477a8acf276efce0b88e5dd",
+    "packaging/windows/package-manifest.json": "6a50888451ac911e84b0d5585ccaf7ecb4faf011596e3cd9f2c3376118bc6df3",
+    "tests_replica/test_windows_packaging.py": "9e1ebd5914a6a2f370ddaab9b6c41e7e3ae471893154c9ee6ba5a069b263523c"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_windows_packaging.py -q -k \"package_metadata_matches_the_universal_application_schema_and_is_versioned or launcher_is_portable_quiet_and_uses_only_the_bundled_runtime or pyinstaller_bundle_is_windowed_onedir_and_collects_runtime_dependencies or inno_contract_installs_per_user_with_shortcuts_and_preserves_wip or build_outputs_stay_outside_the_repository_and_signing_uses_cert_store\"",
+      "result": "5 passed, 3 deselected in 0.12s; metadata, launcher, native BABOOM packaging bindings, installer custody, and signing contract passed."
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\packaging\\windows\\build.ps1 -ValidateOnly",
+      "result": "PASS; source portability true; runtime universal-cell; schema universal-cell-v1; no installer, signing, or runtime launch performed."
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "PowerShell parser over packaging/windows/*.ps1",
+      "result": "PASS; all packaging PowerShell scripts parse."
+    }
+  ],
+  "test_environment_gap": {
+    "full_court_command": "python -m pytest tests_replica\\test_windows_packaging.py -q",
+    "result": "5 passed and 3 failed before their assertions because Python subprocess capture raised WinError 6 while duplicating the current runner handle before PowerShell started.",
+    "not_product_evidence": "The failing subtests do not demonstrate a packaging defect. Their direct PowerShell preflight and parse equivalents passed, but this record does not call the full Python subprocess court green."
+  },
+  "not_claimed": [
+    "This evidence does not build, sign, publish, or install a package.",
+    "This evidence does not activate the canonical runtime, retire the copied runtime, or complete a controlled handoff.",
+    "This evidence does not make the copied runtime authoritative or permit interruption of a live holder."
+  ]
+}

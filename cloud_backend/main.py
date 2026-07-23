@@ -35,10 +35,9 @@ import urllib.parse
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 
 import auth
-import baboom_relay
 import billing
 import companies
 import config
@@ -179,56 +178,6 @@ class AiModeReq(BaseModel):
     ai_mode: str = Field(pattern="^(byo_key|hosted)$")
 
 
-class _BaboomStrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class BaboomEnrollmentChallengeReq(_BaboomStrictModel):
-    device_id: str = Field(min_length=1, max_length=128)
-    public_jwk: dict[str, str]
-    recipient_public_jwk: dict[str, str] | None = None
-    universal_device_public_jwk: dict[str, str] | None = None
-
-
-class BaboomEnrollmentCompleteReq(BaboomEnrollmentChallengeReq):
-    challenge_id: str = Field(min_length=8, max_length=128)
-    challenge: str = Field(min_length=16, max_length=256)
-    signature: str = Field(min_length=16, max_length=256)
-    universal_device_signature: str | None = Field(default=None, min_length=16, max_length=256)
-
-
-class BaboomNonceReq(_BaboomStrictModel):
-    device_id: str = Field(min_length=1, max_length=128)
-
-
-class BaboomCommandSubmitReq(_BaboomStrictModel):
-    command_id: str = Field(min_length=64, max_length=64)
-    target_device_id: str = Field(min_length=1, max_length=128)
-    summary: str = Field(min_length=1, max_length=280)
-    payload_digest: str = Field(min_length=64, max_length=64)
-    created_at: float
-    expires_at: float
-
-
-class BaboomCommandSettlementReq(_BaboomStrictModel):
-    succeeded: bool
-    outcome_code: str = Field(min_length=1, max_length=80)
-
-
-class BaboomCommandCancellationReq(_BaboomStrictModel):
-    reason_code: str = Field(min_length=1, max_length=80)
-
-
-class BaboomEncryptedBriefReq(_BaboomStrictModel):
-    version: int = Field(ge=1, le=1)
-    ephemeral_public_jwk: dict[str, str]
-    recipient_thumbprint: str = Field(min_length=43, max_length=43)
-    salt: str = Field(min_length=43, max_length=43)
-    nonce: str = Field(min_length=16, max_length=16)
-    ciphertext: str = Field(min_length=23, max_length=90_000)
-    ciphertext_digest: str = Field(min_length=64, max_length=64)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -246,36 +195,6 @@ def _require_user(authorization: str | None) -> dict:
     if user is None:
         raise HTTPException(status_code=401, detail="invalid_token")
     return user
-
-
-def _relay_headers(request: Request) -> tuple[str, str]:
-    """Read exactly one device id and DPoP proof without loose header merging."""
-    device_values = request.headers.getlist("x-baboom-device")
-    proof_values = request.headers.getlist("dpop")
-    if len(device_values) != 1 or len(proof_values) != 1:
-        raise HTTPException(status_code=401, detail="baboom_device_proof_required")
-    return device_values[0], proof_values[0]
-
-
-def _relay_identity(request: Request) -> baboom_relay.DeviceIdentity:
-    authorization = request.headers.get("authorization")
-    user = _require_user(authorization)
-    token = _bearer(authorization)
-    device_id, proof = _relay_headers(request)
-    try:
-        return baboom_relay.authenticate_device_request(
-            user_id=user["id"], bearer_token=token, device_id=device_id,
-            proof=proof, method=request.method,
-            target_uri=str(request.url).split("?", 1)[0],
-        )
-    except baboom_relay.RelayAuthenticationDenied as exc:
-        raise HTTPException(status_code=401, detail="baboom_device_proof_invalid") from exc
-
-
-def _relay_http_error(exc: baboom_relay.RelayDenied) -> HTTPException:
-    if isinstance(exc, baboom_relay.RelayConflict):
-        return HTTPException(status_code=409, detail="baboom_command_conflict")
-    return HTTPException(status_code=403, detail="baboom_relay_denied")
 
 
 # Loopback hosts a desktop client's OAuth return server can legitimately
@@ -979,186 +898,6 @@ def brain_sync_delete(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     removed = brain_replica.BrainReplica.delete(user_id=user["id"])
     return {"deleted": bool(removed), "user_id": user["id"]}
-
-
-# ---------------------------------------------------------------------------
-# BABOOM device command relay
-# ---------------------------------------------------------------------------
-# This is deliberately metadata-only transport. The Cell authority owns command
-# meaning and target-side capability approval; cloud persists delivery receipts.
-@app.post("/v1/baboom/devices/challenge")
-def baboom_device_challenge(
-    req: BaboomEnrollmentChallengeReq,
-    authorization: str | None = Header(None),
-) -> dict:
-    user = _require_user(authorization)
-    try:
-        return baboom_relay.begin_enrollment(
-            user_id=user["id"], device_id=req.device_id, public_jwk=req.public_jwk,
-            recipient_public_jwk=req.recipient_public_jwk,
-            universal_device_public_jwk=req.universal_device_public_jwk,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.post("/v1/baboom/devices/complete")
-def baboom_device_complete(
-    req: BaboomEnrollmentCompleteReq,
-    authorization: str | None = Header(None),
-) -> dict:
-    user = _require_user(authorization)
-    try:
-        identity = baboom_relay.complete_enrollment(
-            user_id=user["id"], device_id=req.device_id, public_jwk=req.public_jwk,
-            challenge_id=req.challenge_id, challenge=req.challenge,
-            signature=req.signature, recipient_public_jwk=req.recipient_public_jwk,
-            universal_device_public_jwk=req.universal_device_public_jwk,
-            universal_device_signature=req.universal_device_signature,
-        )
-    except baboom_relay.RelayAuthenticationDenied as exc:
-        raise HTTPException(status_code=401, detail="baboom_enrollment_proof_invalid") from exc
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-    return {
-        "device_id": identity.device_id, "thumbprint": identity.thumbprint,
-        "status": "active",
-    }
-
-
-@app.post("/v1/baboom/nonces")
-def baboom_nonce(
-    req: BaboomNonceReq,
-    authorization: str | None = Header(None),
-) -> dict:
-    user = _require_user(authorization)
-    try:
-        return baboom_relay.issue_nonce(user_id=user["id"], device_id=req.device_id)
-    except baboom_relay.RelayAuthenticationDenied as exc:
-        raise HTTPException(status_code=401, detail="baboom_device_not_enrolled") from exc
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.post("/v1/baboom/commands")
-def baboom_command_submit(req: BaboomCommandSubmitReq, request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.submit_command(
-            identity=identity, command_id=req.command_id,
-            target_device_id=req.target_device_id, summary=req.summary,
-            payload_digest=req.payload_digest, created_at=req.created_at,
-            expires_at=req.expires_at,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.get("/v1/baboom/devices/{device_id}/recipient-key")
-def baboom_recipient_key(device_id: str, request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.get_recipient_key(
-            identity=identity, target_device_id=device_id,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.put("/v1/baboom/commands/{command_id}/brief")
-def baboom_encrypted_brief_put(
-    command_id: str,
-    req: BaboomEncryptedBriefReq,
-    request: Request,
-) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.put_encrypted_brief(
-            identity=identity, command_id=command_id,
-            envelope=req.model_dump(),
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.get("/v1/baboom/commands/{command_id}/brief")
-def baboom_encrypted_brief_get(command_id: str, request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.fetch_encrypted_brief(
-            identity=identity, command_id=command_id,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.delete("/v1/baboom/commands/{command_id}/brief")
-def baboom_encrypted_brief_revoke(command_id: str, request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.revoke_encrypted_brief(
-            identity=identity, command_id=command_id,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.get("/v1/baboom/commands")
-def baboom_command_list(request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return {"commands": baboom_relay.list_target_commands(identity=identity)}
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.get("/v1/baboom/commands/sent")
-def baboom_command_sent(request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return {"commands": baboom_relay.list_source_commands(identity=identity)}
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.post("/v1/baboom/commands/{command_id}/claim")
-def baboom_command_claim(command_id: str, request: Request) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.claim_command(identity=identity, command_id=command_id)
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.post("/v1/baboom/commands/{command_id}/settle")
-def baboom_command_settle(
-    command_id: str,
-    req: BaboomCommandSettlementReq,
-    request: Request,
-) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.settle_command(
-            identity=identity, command_id=command_id, succeeded=req.succeeded,
-            outcome_code=req.outcome_code,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
-
-
-@app.delete("/v1/baboom/commands/{command_id}")
-def baboom_command_cancel(
-    command_id: str,
-    req: BaboomCommandCancellationReq,
-    request: Request,
-) -> dict:
-    identity = _relay_identity(request)
-    try:
-        return baboom_relay.cancel_command(
-            identity=identity, command_id=command_id, reason_code=req.reason_code,
-        )
-    except baboom_relay.RelayDenied as exc:
-        raise _relay_http_error(exc) from exc
 
 
 # ---------------------------------------------------------------------------

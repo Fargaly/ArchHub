@@ -1,0 +1,74 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T02:37:23.4708686+04:00",
+  "migration_track": "runtime_transport_and_broker",
+  "slice": "canonical_graph_held_host_document_meeting_and_self_extension_effect_contracts",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md sections 1, 4, 5, 6, and 11",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true,
+    "no_visible_endpoint_replaced": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "Host and document actions are represented as released connector providers with a permission, delegation, one-use grant, and redacted receipt rather than direct host calls.",
+      "Conversation is represented as a released model delegation with a permission, one-use grant, and redacted receipt rather than an ungoverned chat control plane.",
+      "Self-extension is decomposed into build, court, and learning connector effects, each requiring an independent permissioned receipt.",
+      "The Department Runner and Teams meeting opener are closed released connector-provider specifications; they do not independently execute a process or join a meeting."
+    ],
+    "rejected_or_not_promoted": [
+      "The copied placeholder bridge courts as active authority.",
+      "Direct Revit, document, model, build, court, or Brain execution from a bridge module.",
+      "Any claim that a released connector specification proves a configured physical adapter, meeting attendance, or automatic self-modification."
+    ]
+  },
+  "canonical_files": {
+    "nodelang/universal_application.py": "949f226dc324ee82bdbefa048eb37990c0fa05affe4fc1bfbe34c27e1ba7dafd",
+    "nodelang/cell_legacy_core_nodes.py": "88fd6b33477b8c98bbef67c26a2e0110b8dde515bdd76ff9e4d78435853532d9",
+    "nodelang/cell_legacy_self_extension.py": "ab977dcc7021ef5eed561844ea9107fe27a46dcabc10c5ab9bdba613e48ae6ae",
+    "tests_replica/test_application_server_governance.py": "a2ef2382cba9acb4b24c43fb320a15cde5848c9fadd662088bcb1d9e97060b5d",
+    "tests_replica/test_legacy_core_node_bridge.py": "6dc423e6042f8f5ee89156e9dad0b4212e67eec07c0ee72f2774a7d6d154c126",
+    "tests_replica/test_legacy_self_extension_bridge.py": "ad8122a61e52537b5e6940a148b9da232338aed5b53e985818e1ac5f8ba1dfaa"
+  },
+  "runtime_evidence_read_only": {
+    "tests_replica/test_application_server_governance.py": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+    "tests_replica/test_legacy_core_node_bridge.py": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366",
+    "tests_replica/test_legacy_self_extension_bridge.py": "78a2f5c76ac9a31f13ad62e95c2f556f78bce8ebad4928b8f78f1d238d74e366"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "tests_replica/test_application_server_governance.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical governance courts verify released closed connector-provider definitions while the broader server authority remains graph-held."
+    },
+    {
+      "path": "tests_replica/test_legacy_core_node_bridge.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical courts reconstruct host, document, and model requests as graph-held delegations with redacted receipts."
+    },
+    {
+      "path": "tests_replica/test_legacy_self_extension_bridge.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "Canonical courts reconstruct build, court, and learning as independently governed connector-effect steps."
+    }
+  ],
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_legacy_core_node_bridge.py tests_replica\\test_legacy_self_extension_bridge.py tests_replica\\test_application_server_governance.py -q -k \"legacy_core_node or self_extension or baboom_department_runner_is_released_as_a_closed_connector_provider or baboom_meeting_opener_is_released_as_an_explicit_connector_provider\"",
+      "result": "10 passed, 25 deselected in 0.87s; listed canonical source and court hashes were stable before and after the run."
+    }
+  ],
+  "not_claimed": [
+    "This evidence does not call a host API, open a meeting, invoke a model, run a build, or write a learned fact.",
+    "This evidence does not prove a configured physical connector, live MCP broker, model credential, or all-device deployment.",
+    "This evidence does not start the canonical runtime, stop the copied runtime, or authorize a controlled handoff."
+  ]
+}

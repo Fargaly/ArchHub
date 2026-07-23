@@ -7,6 +7,7 @@ ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
 PROMOTION_ALLOWED = False
 
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -21,11 +22,14 @@ if TYPE_CHECKING:
 
 
 def _workspace_root() -> Path:
+    configured = os.environ.get("ARCHHUB_WORKSPACE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "00.GOVERNANCE" / "hooks" / "cde_gate.py").exists():
             return parent
-    return Path(r"C:\Users\fargaly\00.ARCHUB")
+    raise RuntimeError("ArchHub workspace root is unavailable")
 
 
 def _cde_gate():
@@ -359,30 +363,54 @@ def register_grand_map_sync_tools(mcp: "Any", store: "BrainStore") -> "Any":
             pass
         return "founder"
 
+    def _retired_legacy_route(
+        owner: str,
+        operation: str,
+        replacement: str,
+    ) -> dict[str, Any]:
+        """Refuse the old Brain-led route without touching its work ledger."""
+        return {
+            "ok": False,
+            "owner_user": owner,
+            "universal": True,
+            "migration_only": True,
+            "deprecated": True,
+            "code": "legacy_governance_route_retired",
+            "error": (
+                "Legacy Grand Map work %s is retired. Use %s so requirements "
+                "and work are read from the Universal Cell graph."
+            ) % (operation, replacement),
+            "replacement": replacement,
+            "cell_first_alternative": replacement,
+            "brain_written": False,
+            "side_effect_executed": False,
+        }
+
     @mcp.tool(
         name="brain.grand_map_work_preview",
         description=(
-            "Preview Grand Map/CDE containers as Brain active-work leaves "
-            "without mutating active_work_v1."
+            "RETIRED compatibility route. It does not read an external Grand "
+            "Map or the legacy Brain work ledger; use "
+            "brain.grand_map_work_preview_cell_first."
         ),
     )
     def brain_grand_map_work_preview(
         grand_map_path: str,
         overlay_path: str = "",
     ) -> dict[str, Any]:
-        try:
-            return preview_grand_map_work_leaves(
-                grand_map_path=grand_map_path,
-                overlay_path=overlay_path or None,
-            )
-        except Exception as ex:
-            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        del grand_map_path, overlay_path
+        return _retired_legacy_route(
+            _resolve_owner(),
+            "preview",
+            "brain.grand_map_work_preview_cell_first",
+        )
 
     @mcp.tool(
         name="brain.grand_map_work_sync",
         description=(
-            "Compile valid Grand Map/CDE containers into Brain active_work_v1 "
-            "leaves and record the sync in compliance_history_v1."
+            "RETIRED compatibility route. It never creates legacy "
+            "active_work_v1 leaves or compliance history; use "
+            "brain.grand_map_work_sync_cell_first."
         ),
     )
     def brain_grand_map_work_sync(
@@ -391,17 +419,12 @@ def register_grand_map_sync_tools(mcp: "Any", store: "BrainStore") -> "Any":
         owner_user: Optional[str] = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        owner = owner_user or _resolve_owner()
-        try:
-            return sync_grand_map_work_leaves(
-                store,
-                grand_map_path=grand_map_path,
-                overlay_path=overlay_path or None,
-                owner_user=owner,
-                dry_run=dry_run,
-            )
-        except Exception as ex:
-            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        del grand_map_path, overlay_path, dry_run
+        return _retired_legacy_route(
+            owner_user or _resolve_owner(),
+            "sync",
+            "brain.grand_map_work_sync_cell_first",
+        )
 
     @mcp.tool(
         name="brain.grand_map_work_preview_cell_first",

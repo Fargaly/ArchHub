@@ -10,13 +10,34 @@ import pytest
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if _SRC.exists() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+_NODE_LANGUAGE = Path(__file__).resolve().parents[4] / "10.PRODUCT" / "13.NODE-LANGUAGE"
+if str(_NODE_LANGUAGE) not in sys.path:
+    sys.path.insert(0, str(_NODE_LANGUAGE))
 
+from nodelang.application_server import ApplicationServer  # noqa: E402
 from personal_brain import active_work as aw  # noqa: E402
 from personal_brain import compliance_report as cr  # noqa: E402
 from personal_brain import hook_coverage as hc  # noqa: E402
 from personal_brain import installer  # noqa: E402
 from personal_brain import runtime_holders as rh  # noqa: E402
 from personal_brain.storage import BrainStore  # noqa: E402
+
+
+class _InProcessRuntimeBridge:
+    def __init__(self, server):
+        self._server = server
+
+    def deliberation_read(self, **body):
+        return self._server.dispatch_universal_machine_route({
+            "method": "GET", "path": "/api/universal/deliberation",
+            "body": dict(body),
+        })
+
+    def deliberation_append(self, **body):
+        return self._server.dispatch_universal_machine_route({
+            "method": "POST", "path": "/api/universal/deliberation",
+            "body": dict(body),
+        })
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +88,12 @@ def test_compliance_report_combines_hook_work_cde_and_gate(
     monkeypatch.setenv("BRAIN_CELL_ROOM", "0")
     (fake_home / ".codex").mkdir()
     installer.install_all(only=["codex"])
-    hc.audit(store, only=["codex"], owner_user="founder")
+    server = ApplicationServer().start()
+    bridge = _InProcessRuntimeBridge(server)
+    audit = hc.audit_cell_first(
+        store, only=["codex"], owner_user="founder", cell_bridge=bridge
+    )
+    assert audit["ok"] is True
     aw.add_leaves(store, owner_user="founder", leaves=[{
         "title": "home topbar from nodes",
         "gate_kind": "cdp",
@@ -111,7 +137,10 @@ def test_compliance_report_combines_hook_work_cde_and_gate(
         encoding="utf-8",
     )
 
-    report = cr.build_compliance_report(store, owner_user="founder")
+    report = cr.build_compliance_report(
+        store, owner_user="founder", cell_bridge=bridge
+    )
+    server.close()
 
     assert report["ok"] is True
     assert report["hook_coverage"]["status"] == "green"
@@ -141,7 +170,7 @@ def test_compliance_report_suppresses_stale_active_cde_without_claimed_work(
     assert "Active CDE: none" in report["markdown"]
 
 
-def test_compliance_report_includes_recent_run_reports(store):
+def test_compliance_report_does_not_project_legacy_run_report_metadata(store):
     from personal_brain import run_report as rr
 
     rr.append_run_report(
@@ -161,9 +190,10 @@ def test_compliance_report_includes_recent_run_reports(store):
 
     report = cr.build_compliance_report(store, owner_user="founder")
 
-    assert report["run_reports"]["total"] == 1
-    assert report["run_reports"]["reports"][0]["leaf_id"] == "leaf-123"
-    assert "Run reports: 1" in report["markdown"]
+    assert report["run_reports"]["cell_first"] is True
+    assert report["run_reports"]["total"] == 0
+    assert report["run_reports"]["reports"] == []
+    assert "Run reports: 0" in report["markdown"]
 
 
 def test_compliance_report_includes_legacy_runtime_holder_evidence(

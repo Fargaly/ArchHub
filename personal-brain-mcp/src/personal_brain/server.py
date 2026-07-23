@@ -31,7 +31,9 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -522,7 +524,7 @@ def announce_wiring_cell_first(
     return out
 
 
-def queue_skill_mint_cell_first(
+def queue_skill_mint_with_cell_receipt(
     *,
     store: BrainStore,
     trace: dict[str, Any],
@@ -568,16 +570,19 @@ def queue_skill_mint_cell_first(
             fields={
                 "source": source,
                 "scope": "founder/brain-control/skill-mint",
-                "claims": basis,
                 "provenance": "personal_brain.server:skill_mint",
             },
+            structured_fields={"claims": claims},
             idempotency_field="source",
         )
     except Exception as cell_error:
         return {
             "ok": False,
             "queued": False,
-            "cell_first": True,
+            "cell_receipt": False,
+            "cell_authority": False,
+            "legacy_authority": True,
+            "migration_status": "receipt-required",
             "brain_written": False,
             "cell_record_source": source,
             "error": f"{type(cell_error).__name__}: {cell_error}",
@@ -594,8 +599,12 @@ def queue_skill_mint_cell_first(
     )
     out = result.model_dump(mode="json")
     out["ok"] = True
-    out["cell_first"] = True
+    out["cell_receipt"] = True
+    out["cell_authority"] = False
+    out["legacy_authority"] = True
+    out["migration_status"] = "receipt-only"
     out["brain_written"] = bool(result.queued)
+    out["legacy_projection_written"] = bool(result.queued)
     out["cell_record"] = cell_record
     out["cell_record_root"] = str(cell_record["created_root"])
     out["cell_record_source"] = source
@@ -640,6 +649,7 @@ def build_server(
     db_path: Optional[str | Path] = None,
     default_owner_user: Optional[str] = None,
     runtime_session_manager=None,
+    cell_bridge=None,
 ):
     """Build the FastMCP server with 4 tools attached.
 
@@ -661,9 +671,17 @@ def build_server(
             "personal_brain.mcp_core (in-house MCP core) failed to import"
         ) from ex
 
+    store_supplied = store is not None
     if store is None:
         store = BrainStore.open(db_path)
+    governance_cell_bridge = cell_bridge
+    if governance_cell_bridge is None and not store_supplied:
+        try:
+            from .universal_runtime import UniversalRuntimeBridge
 
+            governance_cell_bridge = UniversalRuntimeBridge()
+        except Exception:
+            governance_cell_bridge = None
     # ── Account binding (MAKE-IT-REAL: local brain ⇄ cloud user_id) ────────
     # brain_meta keys that persist the bound cloud owner across daemon
     # restarts. Once `bound_owner_user` is set (via brain.set_owner), every
@@ -715,6 +733,7 @@ def build_server(
         return "default"
 
     mcp = FastMCP("personal-brain")
+    setattr(mcp, "_brain_governance_cell_bridge", governance_cell_bridge)
     if runtime_session_manager is None:
         from .universal_session_manager import UniversalRuntimeSessionManager
         runtime_session_manager = UniversalRuntimeSessionManager()
@@ -1332,10 +1351,10 @@ def build_server(
     @mcp.tool(
         name="brain.skill_mint",
         description=(
-            "CELL-FIRST skill mint request. Creates a Universal Cell request "
-            "with redacted/hash trace evidence before the legacy Brain trace/"
-            "skill projection can write. Returns the SkillMintResult projection "
-            "plus Cell receipt fields."
+            "Skill mint migration bridge. Creates a redacted Universal Cell "
+            "receipt before the current legacy Brain trace/skill authority "
+            "writes. The response declares receipt-only status; it is not a "
+            "Cell-authoritative skill workflow."
         ),
     )
     def brain_skill_mint(
@@ -1347,7 +1366,7 @@ def build_server(
         critic_policy: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         owner = owner_user or resolve_default_owner()
-        return queue_skill_mint_cell_first(
+        return queue_skill_mint_with_cell_receipt(
             store=store,
             trace=trace,
             outcome=outcome,
@@ -1613,7 +1632,7 @@ def build_server(
                     ),
                 }
             owner = resolve_default_owner()
-            out = queue_skill_mint_cell_first(
+            out = queue_skill_mint_with_cell_receipt(
                 store=store,
                 trace=trace,
                 outcome="success",
@@ -3950,7 +3969,9 @@ def build_server(
     # must write before active work can be marked complete.
     try:
         from .run_report import register_run_report_tools
-        register_run_report_tools(mcp, store)
+        register_run_report_tools(
+            mcp, store, cell_bridge=governance_cell_bridge
+        )
     except Exception as ex:  # pragma: no cover - never block server build
         print(f"[brain] run_report tools registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
@@ -3961,7 +3982,9 @@ def build_server(
     # write-capable claims when a runtime's hooks are red.
     try:
         from .hook_coverage import register_hook_coverage_tools
-        register_hook_coverage_tools(mcp, store)
+        register_hook_coverage_tools(
+            mcp, store, cell_bridge=governance_cell_bridge
+        )
     except Exception as ex:  # pragma: no cover - never block server build
         print(f"[brain] hook_coverage tools registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
@@ -3979,7 +4002,9 @@ def build_server(
     # CDE state + last pre-tool gate decision.
     try:
         from .compliance_report import register_compliance_report_tools
-        register_compliance_report_tools(mcp, store)
+        register_compliance_report_tools(
+            mcp, store, cell_bridge=governance_cell_bridge
+        )
     except Exception as ex:  # pragma: no cover - never block server build
         print(f"[brain] compliance_report tool registration skipped: "
               f"{type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
@@ -4343,6 +4368,134 @@ def _infer_firm_id(git_remote: Optional[str]) -> Optional[str]:
 # ─────────────────────── entrypoints ───────────────────────────────────
 
 
+def _start_http_runtime_services(server: Any, owner: Optional[str]) -> None:
+    """Start heavy ambient services after the HTTP listener is available."""
+    try:
+        from .workers import start_workers, workers_enabled
+
+        bound_store = getattr(server, "_brain_store", None)
+        if bound_store is not None:
+            sup = start_workers(bound_store, owner_user=owner)
+            if sup is not None:
+                st = sup.status()
+                alive = [
+                    name for name, worker in st.get("workers", {}).items()
+                    if isinstance(worker, dict) and worker.get("alive")
+                ]
+                print(
+                    f"[brain] engine ON - workers alive: {', '.join(alive) or 'none'}"
+                    + (f" | errors: {st['errors']}" if st.get("errors") else ""),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif not workers_enabled():
+                print(
+                    "[brain] engine OFF - BRAIN_WORKERS disabled",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    except Exception as ex:
+        print(
+            f"[brain] engine start error: {type(ex).__name__}: {ex}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    try:
+        from .hook_coverage import (
+            hook_coverage_auto_repair_enabled,
+            hook_coverage_monitor_enabled,
+            start_hook_coverage_monitor,
+        )
+
+        bound_store = getattr(server, "_brain_store", None)
+        if bound_store is not None:
+            mon = start_hook_coverage_monitor(
+                bound_store,
+                owner_user=owner or "founder",
+                auto_repair=hook_coverage_auto_repair_enabled(),
+                cell_bridge=getattr(server, "_brain_governance_cell_bridge", None),
+            )
+            if mon is not None:
+                st = mon.status()
+                last = st.get("last_report") or {}
+                print(
+                    "[brain] hook coverage monitor ON"
+                    f" - status: {last.get('status', 'unknown')}"
+                    f" | interval_s: {st.get('interval_s')}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif not hook_coverage_monitor_enabled():
+                print(
+                    "[brain] hook coverage monitor OFF",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    except Exception as ex:
+        print(
+            "[brain] hook coverage monitor error: "
+            f"{type(ex).__name__}: {ex}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _http_runtime_services_suspended() -> tuple[bool, str]:
+    """Return an explicit operator suspension without disabling MCP service."""
+    configured = os.environ.get("BRAIN_HTTP_RUNTIME_SERVICES", "").strip().lower()
+    if configured in {"0", "off", "false", "no"}:
+        return True, "BRAIN_HTTP_RUNTIME_SERVICES"
+    if configured in {"1", "on", "true", "yes"}:
+        return False, ""
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return False, ""
+    marker = (
+        Path(local_app_data)
+        / "ArchHub"
+        / "brain"
+        / "ambient-runtime.suspended"
+    )
+    return marker.is_file(), str(marker) if marker.is_file() else ""
+
+
+def _start_http_runtime_services_after_bind(
+    server: Any,
+    *,
+    owner: Optional[str],
+    host: str,
+    port: int,
+    wait_timeout_s: float = 60.0,
+    poll_interval_s: float = 0.25,
+) -> threading.Thread:
+    """Wait for the real listener, then start workers and hook monitoring."""
+    def run() -> None:
+        deadline = time.monotonic() + max(0.0, wait_timeout_s)
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((host, int(port)), timeout=0.2):
+                    _start_http_runtime_services(server, owner)
+                    return
+            except OSError:
+                time.sleep(max(0.01, poll_interval_s))
+        print(
+            "[brain] runtime services not started: HTTP listener did not bind "
+            f"within {wait_timeout_s:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    thread = threading.Thread(
+        target=run,
+        name="brain-http-runtime-start",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     """Default CLI: stdio transport (matches Claude Code / Codex / Cursor)."""
     parser = argparse.ArgumentParser(
@@ -4400,6 +4553,34 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     server = build_server(db_path=args.db, default_owner_user=args.owner)
 
+    if args.http is not None:
+        # Bind the real MCP endpoint before the expensive workers and hook audit.
+        # The supervisor can prove liveness instead of killing a healthy process
+        # that is still warming its ambient services.
+        host = os.environ.get("BRAIN_HTTP_HOST", "127.0.0.1")
+        suspended, suspension_source = _http_runtime_services_suspended()
+        if suspended:
+            print(
+                "[brain] ambient runtime services SUSPENDED"
+                f" - source: {suspension_source}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            _start_http_runtime_services_after_bind(
+                server,
+                owner=args.owner,
+                host=host,
+                port=args.http,
+            )
+        server.run(
+            transport="http",
+            host=host,
+            port=args.http,
+            stateless_http=True,
+        )
+        return
+
     # ── Turn the ENGINE ON (AgDR-0044 §1). build_server only registers
     # tools; the background workers (Sync / Publish / Reflexion / Watchdog)
     # are started HERE, at daemon boot, against the same bound store.
@@ -4443,6 +4624,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 bound_store,
                 owner_user=args.owner or "founder",
                 auto_repair=hook_coverage_auto_repair_enabled(),
+                cell_bridge=getattr(server, "_brain_governance_cell_bridge", None),
             )
             if mon is not None:
                 st = mon.status()

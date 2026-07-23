@@ -6,7 +6,7 @@ import sys
 from typing import Any, Protocol
 
 
-RUNTIME_PROJECTION_TIMEOUT_SECONDS = 45.0
+RUNTIME_PROJECTION_TIMEOUT_SECONDS = 3.0
 
 
 class _RuntimeStatusClient(Protocol):
@@ -21,9 +21,9 @@ class _RuntimeStatusClient(Protocol):
         ...
 
 
-def _node_runtime_root() -> Path:
+def _canonical_node_authority_root() -> Path:
     product_root = Path(__file__).resolve().parents[3]
-    root = product_root / "12.PRODUCTION" / "node_runtime"
+    root = product_root / "13.NODE-LANGUAGE"
     if not root.is_dir():
         raise FileNotFoundError(str(root))
     text = str(root)
@@ -33,7 +33,7 @@ def _node_runtime_root() -> Path:
 
 
 def _active_runtime_client() -> _RuntimeStatusClient:
-    _node_runtime_root()
+    _canonical_node_authority_root()
     from nodelang.application_machine_transport import (  # type: ignore
         UniversalRuntimeClient,
         default_runtime_descriptor_path,
@@ -59,11 +59,11 @@ def _runtime_baboom_context(
     )
 
 
-def baboom_cell_state(
+def baboom_context_projection(
     *,
     runtime_client: _RuntimeStatusClient | None = None,
 ) -> dict[str, Any]:
-    """Return BABOOM's bounded context lens without opening a side store."""
+    """Return the canonical BABOOM context lens without opening a side store."""
     context = _runtime_baboom_context(runtime_client)
     work = context.get("work")
     if not isinstance(work, dict):
@@ -73,10 +73,10 @@ def baboom_cell_state(
         raise RuntimeError("Universal runtime did not expose BABOOM workshop context")
     return {
         "ok": True,
-        "cell_native": True,
-        "mode": "universal-runtime",
+        "node_native": True,
+        "mode": "canonical-graph-projection",
         "authority": "Universal Cell graph runtime",
-        "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+        "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
         "context_lens": context.get("context_lens"),
         "root_id": context.get("context_lens"),
         "revision": context.get("revision"),
@@ -91,4 +91,4 @@ def baboom_cell_state(
     }
 
 
-__all__ = ["baboom_cell_state"]
+__all__ = ["baboom_context_projection"]

@@ -115,7 +115,8 @@ def test_server_registers_run_report_tools(store):
     assert appended["brain_written"] is False
     assert appended["cell_first_alternative"] == \
         "brain.run_report_append_cell_first"
-    assert fetched["ok"] is True
+    assert fetched["ok"] is False
+    assert fetched["cell_first"] is True
     assert fetched["reports"] == []
     assert store.get_meta(rr.RUN_REPORT_META_KEY) is None
 

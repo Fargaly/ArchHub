@@ -1536,20 +1536,6 @@ def _clear_active_cde_state(*, runtime: str = "", session_id: str = "") -> None:
         pass
 
 
-def _append_compliance_event(
-    store: "BrainStore",
-    *,
-    owner_user: str,
-    event: dict[str, Any],
-) -> None:
-    try:
-        from . import compliance_report as cr
-
-        cr.append_compliance_event(store, owner_user=owner_user, event=event)
-    except Exception:
-        pass
-
-
 def _workspace_root() -> Path:
     configured = os.environ.get("ARCHHUB_WORKSPACE_ROOT", "").strip()
     if configured:
@@ -1607,8 +1593,6 @@ def _write_active_cde_state(
     *,
     runtime: str,
     session_id: str = "",
-    store: Optional["BrainStore"] = None,
-    owner_user: str = "founder",
 ) -> None:
     try:
         container = None
@@ -1637,20 +1621,6 @@ def _write_active_cde_state(
         path = _active_cde_state_path(runtime=runtime, session_id=session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        if store is not None:
-            _append_compliance_event(
-                store,
-                owner_user=owner_user,
-                event={
-                    "event_type": "active_cde_assignment",
-                    "source": "active_work",
-                    "runtime": runtime,
-                    "leaf_id": payload["leaf_id"],
-                    "title": payload["title"],
-                    "container_id": container.get("container_id", ""),
-                    "allowed_paths": list(container.get("allowed_paths") or []),
-                },
-            )
     except Exception:
         pass
 
@@ -1935,15 +1905,22 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
         workshop_root: str,
     ) -> dict[str, Any]:
         interfaces = work.get("interfaces") or {}
+        resolved = work.get("resolved") or {}
 
         def scalar(name: str, default: Any = "") -> Any:
             interface = interfaces.get(name) or {}
             return interface.get("value", default)
 
         def structured(name: str, default: Any) -> Any:
+            if isinstance(resolved, dict) and name in resolved:
+                return resolved[name]
             interface = interfaces.get(name) or {}
             target = interface.get("target")
-            if not isinstance(target, str) or not target:
+            if (
+                not isinstance(target, str)
+                or not target
+                or ":data:" not in target
+            ):
                 return default
             return manager.value_read(
                 runtime=runtime,
@@ -2018,9 +1995,10 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
         name="brain.work_assigned_block",
         description=(
             "GRAPH-SESSION DRIVER (pre-prompt): requires a Universal Agent "
-            "Session, migrates legacy evidence into governed Work, then claims "
-            "only through the Cell-native work manager. A missing session is "
-            "denied before the legacy ledger can change. Returns {ok, block, "
+            "Session and claims only through the Cell-native work manager. "
+            "Legacy import is a separate one-way migration adapter, never a "
+            "step in an assignment. A missing session is denied before any "
+            "work can change. Returns {ok, block, "
             "leaf} where block=\"\" when the graph frontier is dry."
         ),
     )
@@ -2059,7 +2037,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                     raise RuntimeError(
                         "Universal runtime session manager is unavailable"
                     )
-                migration = manager.migrate_legacy_work(store)
                 enrollment = manager.enroll(
                     runtime=runtime,
                     external_session_id=session_identity,
@@ -2080,7 +2057,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                         "block": "",
                         "leaf": None,
                         "universal": True,
-                        "migration": migration,
                         "agent_session": enrollment["agent_session"],
                         "status": assignment.get("status"),
                     }
@@ -2095,8 +2071,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                     leaf,
                     runtime=runtime,
                     session_id=session_identity,
-                    store=store,
-                    owner_user=owner,
                 )
                 block = _cell_assigned_block(leaf)
                 if wrap:
@@ -2109,7 +2083,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                     "block": block,
                     "leaf": leaf,
                     "universal": True,
-                    "migration": migration,
                     "agent_session": enrollment["agent_session"],
                     "status": assignment.get("status"),
                 }

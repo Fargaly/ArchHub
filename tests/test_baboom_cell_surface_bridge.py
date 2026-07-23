@@ -14,7 +14,7 @@ if str(APP) not in sys.path:
 def _runtime_baboom_context() -> dict:
     return {
         "cell_native": True,
-        "context_lens": "app:baboom-context:v1",
+        "context_lens": "app:baboom-context:v2",
         "revision": 123,
         "work": {
             "total": 6,
@@ -64,20 +64,20 @@ class FakeRuntimeClient:
         return _runtime_baboom_context()
 
 
-def test_workshop_reads_baboom_from_universal_runtime_context_lens():
-    from workflows.baboom_cell_surface import baboom_cell_state
+def test_workshop_reads_baboom_from_canonical_graph_context_lens():
+    from workflows.baboom_cell_surface import baboom_context_projection
 
     client = FakeRuntimeClient()
-    state = baboom_cell_state(runtime_client=client)
+    state = baboom_context_projection(runtime_client=client)
 
-    assert client.calls == [("GET", "/api/universal/baboom-context", None, 45.0)]
+    assert client.calls == [("GET", "/api/universal/baboom-context", None, 3.0)]
     assert state["ok"] is True
-    assert state["cell_native"] is True
-    assert state["mode"] == "universal-runtime"
+    assert state["node_native"] is True
+    assert state["mode"] == "canonical-graph-projection"
     assert state["authority"] == "Universal Cell graph runtime"
-    assert state["transport_source"] == "10.PRODUCT/12.PRODUCTION/node_runtime"
-    assert state["context_lens"] == "app:baboom-context:v1"
-    assert state["root_id"] == "app:baboom-context:v1"
+    assert state["transport_source"] == "10.PRODUCT/13.NODE-LANGUAGE"
+    assert state["context_lens"] == "app:baboom-context:v2"
+    assert state["root_id"] == "app:baboom-context:v2"
     assert state["work_counts"]["open"] == 2
     assert state["work_total"] == 6
     assert state["workshop"]["entry_count"] == 2
@@ -102,21 +102,21 @@ def test_baboom_surface_does_not_open_a_side_cell_store():
     assert [term for term in forbidden if term in source] == []
 
 
-def test_baboom_surface_imports_transport_from_tracked_node_runtime_only():
+def test_baboom_surface_imports_transport_from_canonical_node_authority_only():
     from workflows import baboom_cell_surface
 
-    runtime_root = baboom_cell_surface._node_runtime_root()
-    expected = APP.parent / "node_runtime"
+    runtime_root = baboom_cell_surface._canonical_node_authority_root()
+    expected = APP.parent.parent / "13.NODE-LANGUAGE"
 
     assert runtime_root.samefile(expected)
     source = (APP / "workflows" / "baboom_cell_surface.py").read_text(
         encoding="utf-8"
     )
-    assert '"13.NODE-LANGUAGE"' not in source
-    assert '"12.PRODUCTION" / "node_runtime"' in source
+    assert '"13.NODE-LANGUAGE"' in source
+    assert '"12.PRODUCTION" / "node_runtime"' not in source
 
 
-def test_bridge_exposes_runtime_baboom_cell_state():
+def test_bridge_exposes_runtime_baboom_context_projection():
     import bridge
 
     class DummyBridge:
@@ -127,11 +127,11 @@ def test_bridge_exposes_runtime_baboom_cell_state():
         return_value=FakeRuntimeClient(),
     ):
         payload = json.loads(
-            bridge.ArchHubBridge.get_baboom_cell_state(DummyBridge())
+            bridge.ArchHubBridge.get_baboom_context_projection(DummyBridge())
         )
 
-    assert payload["cell_native"] is True
-    assert payload["mode"] == "universal-runtime"
-    assert payload["context_lens"] == "app:baboom-context:v1"
+    assert payload["node_native"] is True
+    assert payload["mode"] == "canonical-graph-projection"
+    assert payload["context_lens"] == "app:baboom-context:v2"
     assert payload["work_counts"]["open"] == 2
     assert payload["source"] == "active-universal-runtime"

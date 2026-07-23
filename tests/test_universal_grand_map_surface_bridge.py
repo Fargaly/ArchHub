@@ -113,7 +113,7 @@ def test_universal_canvas_surface_is_sourced_from_universal_cell_authority():
     assert client.calls == [("GET", "/api/universal/canvas", None, 45.0)]
     assert payload["authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
     assert payload["runtime_authority"] == "Universal Cell graph runtime"
-    assert payload["transport_source"] == "10.PRODUCT/12.PRODUCTION/node_runtime"
+    assert payload["transport_source"] == "10.PRODUCT/13.NODE-LANGUAGE"
     assert payload["authority_projection_keys"] == sorted(
         _runtime_canvas_projection().keys()
     )
@@ -184,7 +184,7 @@ def test_universal_canvas_adapter_does_not_build_or_open_authority():
     ).read_text(encoding="utf-8")
 
     assert '"/api/universal/canvas"' in source
-    assert '"13.NODE-LANGUAGE"' not in source
+    assert '"13.NODE-LANGUAGE"' in source
     forbidden = (
         "build_universal_application",
         "project_universal_canvas",
@@ -195,11 +195,11 @@ def test_universal_canvas_adapter_does_not_build_or_open_authority():
     assert [term for term in forbidden if term in source] == []
 
 
-def test_universal_canvas_adapter_imports_transport_from_tracked_node_runtime_only():
+def test_universal_canvas_adapter_imports_transport_from_canonical_node_authority_only():
     from workflows import universal_grand_map_surface
 
-    runtime_root = universal_grand_map_surface._node_runtime_root()
-    expected = APP.parent / "node_runtime"
+    runtime_root = universal_grand_map_surface._canonical_node_authority_root()
+    expected = APP.parent.parent / "13.NODE-LANGUAGE"
 
     assert runtime_root.samefile(expected)
 
@@ -226,7 +226,7 @@ def test_bridge_slot_can_serve_universal_canvas_without_legacy_surface_provider(
     assert payload["surface"] == "universal-canvas"
     assert payload["authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
     assert payload["runtime_authority"] == "Universal Cell graph runtime"
-    assert payload["transport_source"] == "10.PRODUCT/12.PRODUCTION/node_runtime"
+    assert payload["transport_source"] == "10.PRODUCT/13.NODE-LANGUAGE"
     assert payload["source"] == "active-universal-runtime"
     assert payload["nodes"]
     assert payload["wires"]
@@ -282,6 +282,6 @@ def test_bridge_slot_rejects_unknown_universal_surface_without_legacy_fallback()
         "source": "active-universal-runtime",
         "authority": "10.PRODUCT/13.NODE-LANGUAGE",
         "runtime_authority": "Universal Cell graph runtime",
-        "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+        "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
         "error": "unknown Universal Cell surface",
     }

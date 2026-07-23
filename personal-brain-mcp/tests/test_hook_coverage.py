@@ -3,7 +3,7 @@
 These tests pin the governance layer above the installer:
 
 * the installer remains the migration wiring plan for vendor hook adapters;
-* Brain persists a hook_coverage_v1 report in brain_meta;
+* Brain reads/writes hook coverage through the Universal Cell control ledger;
 * Brain can repair missing hooks by invoking the installer; and
 * write-capable work assignment can be refused before a runtime claims work
   when its hook coverage is red.
@@ -82,9 +82,15 @@ class _InProcessRuntimeBridge:
     def assembly_field_update(self, **body):
         return self._request("POST", "/api/universal/assembly-field", body)
 
+    def deliberation_read(self, **body):
+        return self._request("GET", "/api/universal/deliberation", body)
+
+    def deliberation_append(self, **body):
+        return self._request("POST", "/api/universal/deliberation", body)
+
 
 class _FailingAssemblyBridge:
-    def assembly_create(self, **body):  # noqa: ARG002
+    def deliberation_append(self, **body):  # noqa: ARG002
         raise RuntimeError("cell create refused")
 
 
@@ -92,13 +98,13 @@ class _FailingOutcomeBridge:
     def __init__(self):
         self.calls = 0
 
-    def assembly_create(self, **body):  # noqa: ARG002
+    def deliberation_append(self, **body):  # noqa: ARG002
         self.calls += 1
         if self.calls == 1:
             return {
                 "ok": True,
-                "created_root": "assembly-instance:repair-request",
-                "assembly": {"interfaces": []},
+                "root": "deliberation-entry:repair-request",
+                "payload_root": "payload:repair-request",
             }
         raise RuntimeError("outcome create refused")
 
@@ -286,7 +292,7 @@ def test_audit_appends_compliance_history_event(fake_home, store):
     assert event["clients"]["codex"] == "green"
 
 
-def test_hook_coverage_audit_cell_first_writes_cell_before_brain_receipt(
+def test_hook_coverage_audit_cell_first_writes_only_the_cell_ledger(
     fake_home,
     store,
 ):
@@ -304,57 +310,26 @@ def test_hook_coverage_audit_cell_first_writes_cell_before_brain_receipt(
 
         assert result["ok"] is True
         assert result["cell_first"] is True
-        assert result["brain_written"] is True
+        assert result["brain_written"] is False
         assert result["report"]["status"] == "green"
         assert result["report"]["cell_record_root"]
-        assert result["cell_record"]["created_root"] == result["report"][
+        assert result["cell_record"]["root"] == result["report"][
             "cell_record_root"
         ]
-        by_name = {
-            item["name"]: item
-            for item in result["cell_record"]["assembly"]["interfaces"]
-        }
-        assert by_name["source"]["value"].startswith(
-            "brain-control:hook-coverage-audit:"
+        assert store.get_meta(hc.COVERAGE_META_KEY) is None
+        persisted = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
         )
-        assert by_name["claims"]["editable"] is True
-
-        edited = bridge.assembly_field_update(
-            root=result["report"]["cell_record_root"],
-            interface=by_name["claims"]["id"],
-            value="hook coverage checked in court",
-        )
-        edited_by_name = {
-            item["name"]: item
-            for item in edited["assembly"]["interfaces"]
-        }
-        assert edited_by_name["claims"]["value"] == (
-            "hook coverage checked in court"
-        )
-
-        raw = json.loads(store.get_meta(hc.COVERAGE_META_KEY) or "{}")
-        assert raw["cell_record_root"] == result["report"]["cell_record_root"]
-        persisted = hc.get_report(store, owner_user="founder")
         assert persisted is not None
         assert persisted.clients["codex"].status == "green"
-
-        history = cr.get_compliance_history(
-            store,
-            owner_user="founder",
-            limit=1,
+        entries = bridge.deliberation_read(
+            space=hc.CELL_CONTROL_LEDGER_ROOT,
+            limit=10,
         )
-        event = history["events"][0]
-        assert event["event_type"] == "hook_coverage_audit"
-        assert event["source"] == "hook_coverage_cell_first"
-        assert event["hook_coverage_cell_record_root"] == result["report"][
-            "cell_record_root"
-        ]
-        assert event["cell_record_root"] == result["compliance_event"]["event"][
-            "cell_record_root"
-        ]
-        assert result["compliance_event"]["ok"] is True
-        assert result["compliance_event"]["cell_first"] is True
-        assert result["cell_sync"]["ok"] is True
+        event = entries["entries"][-1]
+        assert event["root"] == result["report"]["cell_record_root"]
+        assert event["payload"]["event_type"] == "hook_coverage_audit"
+        assert event["payload"]["clients"]["codex"]["status"] == "green"
     finally:
         server.close()
 
@@ -392,7 +367,7 @@ def test_runtime_write_gate_rejects_legacy_only_green_coverage(
 
     assert gate["allowed"] is False
     assert gate["action_tool"] == "brain.hook_coverage_audit_cell_first"
-    assert "legacy-only" in gate["reason"]
+    assert "has not been audited" in gate["reason"]
 
 
 def test_runtime_write_gate_accepts_cell_first_green_coverage(
@@ -417,6 +392,7 @@ def test_runtime_write_gate_accepts_cell_first_green_coverage(
             runtime="codex",
             owner_user="founder",
             write=True,
+            cell_bridge=bridge,
         )
 
         assert gate["allowed"] is True
@@ -565,63 +541,31 @@ def test_hook_coverage_repair_cell_first_records_request_and_outcome(
 
         assert result["ok"] is True
         assert result["cell_first"] is True
-        assert result["brain_written"] is True
+        assert result["brain_written"] is False
         assert result["side_effect_executed"] is True
         assert result["before"]["status"] == "red"
         assert result["after"]["status"] == "green"
         assert installer._gemini_path().exists()
-        assert result["request_cell_record"]["created_root"] == result["after"][
+        assert result["request_cell_record"]["root"] == result["after"][
             "repair_request_cell_record_root"
         ]
-        assert result["outcome_cell_record"]["created_root"] == result["after"][
+        assert result["outcome_cell_record"]["root"] == result["after"][
             "repair_outcome_cell_record_root"
         ]
-
-        by_name = {
-            item["name"]: item
-            for item in result["outcome_cell_record"]["assembly"]["interfaces"]
-        }
-        assert by_name["source"]["value"].startswith(
-            "brain-control:hook-coverage-repair-outcome:"
+        assert store.get_meta(hc.COVERAGE_META_KEY) is None
+        persisted = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
         )
-        assert by_name["claims"]["editable"] is True
-        edited = bridge.assembly_field_update(
-            root=result["after"]["repair_outcome_cell_record_root"],
-            interface=by_name["claims"]["id"],
-            value="repair outcome checked in court",
-        )
-        edited_by_name = {
-            item["name"]: item
-            for item in edited["assembly"]["interfaces"]
-        }
-        assert edited_by_name["claims"]["value"] == (
-            "repair outcome checked in court"
-        )
-
-        raw = json.loads(store.get_meta(hc.COVERAGE_META_KEY) or "{}")
-        assert raw["repair_outcome_cell_record_root"] == result["after"][
-            "repair_outcome_cell_record_root"
-        ]
-        persisted = hc.get_report(store, owner_user="founder")
         assert persisted is not None
         assert persisted.clients["gemini-cli"].status == "green"
-
-        history = cr.get_compliance_history(
-            store,
-            owner_user="founder",
-            limit=1,
+        entries = bridge.deliberation_read(
+            space=hc.CELL_CONTROL_LEDGER_ROOT,
+            limit=10,
         )
-        event = history["events"][0]
-        assert event["event_type"] == "hook_coverage_repair"
-        assert event["source"] == "hook_coverage_repair_cell_first"
-        assert event["repair_request_cell_record_root"] == result["after"][
-            "repair_request_cell_record_root"
-        ]
-        assert event["repair_outcome_cell_record_root"] == result["after"][
-            "repair_outcome_cell_record_root"
-        ]
-        assert result["compliance_event"]["ok"] is True
-        assert result["cell_sync"]["ok"] is True
+        event = entries["entries"][-1]
+        assert event["root"] == result["after"]["repair_outcome_cell_record_root"]
+        assert event["payload"]["event_type"] == "hook_coverage_repair_outcome"
+        assert event["payload"]["after"]["clients"]["gemini-cli"]["status"] == "green"
     finally:
         server.close()
 
@@ -746,14 +690,16 @@ def test_monitor_start_runs_startup_audit(fake_home, store):
             interval_s=60.0,
             cell_bridge=bridge,
         )
-        report = hc.get_report(store, owner_user="founder")
+        report = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
+        )
         assert report is not None
         assert report.status == "green"
         assert report.clients["codex"].status == "green"
         assert monitor.status()["cycle_count"] >= 1
-        raw = json.loads(store.get_meta(hc.COVERAGE_META_KEY) or "{}")
-        assert raw["cell_first"] is True
-        assert raw["cell_record_root"]
+        assert store.get_meta(hc.COVERAGE_META_KEY) is None
+        assert report.cell_first is True
+        assert report.cell_record_root
     finally:
         if monitor is not None:
             monitor.stop()
@@ -773,24 +719,28 @@ def test_monitor_periodically_refreshes_coverage(fake_home, store):
             interval_s=0.05,
             cell_bridge=bridge,
         )
-        report = hc.get_report(store, owner_user="founder")
+        report = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
+        )
         assert report is not None
         assert report.clients["codex"].status == "red"
-        first_raw = json.loads(store.get_meta(hc.COVERAGE_META_KEY) or "{}")
-        assert first_raw["cell_first"] is True
+        assert store.get_meta(hc.COVERAGE_META_KEY) is None
+        assert report.cell_first is True
 
         monitor.stop()
         installer.install_all(only=["codex"])
         tick = monitor.tick()
-        refreshed = hc.get_report(store, owner_user="founder")
+        refreshed = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
+        )
         status = monitor.status()
 
         assert tick["ok"] is True
         assert refreshed is not None
         assert refreshed.clients["codex"].status == "green"
         assert status["cycle_count"] >= 2
-        raw = json.loads(store.get_meta(hc.COVERAGE_META_KEY) or "{}")
-        assert raw["cell_first"] is True
+        assert store.get_meta(hc.COVERAGE_META_KEY) is None
+        assert refreshed.cell_first is True
     finally:
         if monitor is not None:
             monitor.stop()
@@ -800,7 +750,8 @@ def test_monitor_periodically_refreshes_coverage(fake_home, store):
 def test_monitor_auto_repairs_detected_red_client(fake_home, store):
     (fake_home / ".codex").mkdir()
 
-    bridge = _FastAssemblyBridge()
+    server = ApplicationServer().start()
+    bridge = _InProcessRuntimeBridge(server)
     monitor = None
     try:
         monitor = hc.start_hook_coverage_monitor(
@@ -811,7 +762,9 @@ def test_monitor_auto_repairs_detected_red_client(fake_home, store):
             auto_repair=True,
             cell_bridge=bridge,
         )
-        report = hc.get_report(store, owner_user="founder")
+        report = hc.get_report_cell_first(
+            store, owner_user="founder", cell_bridge=bridge
+        )
         assert report is not None
         assert report.clients["codex"].status == "green"
         assert installer._codex_hooks_path().exists()
@@ -820,10 +773,10 @@ def test_monitor_auto_repairs_detected_red_client(fake_home, store):
         assert st["last_repair"]["cell_first"] is True
         assert st["last_repair"]["after"]["clients"]["codex"]["status"] == "green"
         assert st["last_repair"]["after"]["repair_outcome_cell_record_root"]
-        assert len(bridge.calls) >= 2
     finally:
         if monitor is not None:
             monitor.stop()
+        server.close()
 
 
 def test_monitor_auto_repair_is_opt_in(monkeypatch):

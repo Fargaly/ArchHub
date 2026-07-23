@@ -1714,15 +1714,15 @@ class ArchHubBridge(QObject):
             })
 
     @pyqtSlot(result=str)
-    def get_baboom_cell_state(self) -> str:
-        """Return the read-only Workshop projection of BABOOM's Cell authority."""
+    def get_baboom_context_projection(self) -> str:
+        """Return the read-only Workshop projection of the canonical graph."""
         try:
-            from workflows.baboom_cell_surface import baboom_cell_state
-            return _safe_json(baboom_cell_state())
+            from workflows.baboom_cell_surface import baboom_context_projection
+            return _safe_json(baboom_context_projection())
         except Exception as ex:
             return _safe_json({
                 "ok": False,
-                "cell_native": False,
+                "node_native": False,
                 "mode": "unavailable",
                 "error": f"{type(ex).__name__}: {ex}",
             })
@@ -1737,7 +1737,7 @@ class ArchHubBridge(QObject):
                     "ok": False,
                     "authority": "10.PRODUCT/13.NODE-LANGUAGE",
                     "runtime_authority": "Universal Cell graph runtime",
-                    "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+                    "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
                     "error": "universal interaction payload must be a JSON object",
                 })
             from workflows.universal_grand_map_surface import (
@@ -1749,7 +1749,7 @@ class ArchHubBridge(QObject):
                 "ok": False,
                 "authority": "10.PRODUCT/13.NODE-LANGUAGE",
                 "runtime_authority": "Universal Cell graph runtime",
-                "transport_source": "10.PRODUCT/12.PRODUCTION/node_runtime",
+                "transport_source": "10.PRODUCT/13.NODE-LANGUAGE",
                 "error": f"{type(ex).__name__}: {ex}",
             })
 

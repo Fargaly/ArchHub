@@ -1598,8 +1598,8 @@
     "slug": "agdr/AgDR-0057-node-runtime-authority-ingestion",
     "title": "agdr/AgDR-0057-node-runtime-authority-ingestion",
     "path": "docs/agdr/AgDR-0057-node-runtime-authority-ingestion.md",
-    "word_count": 631,
-    "mtime": 1783954857,
+    "word_count": 1212,
+    "mtime": 1784570911,
     "deps": [
       "AgDR-0057"
     ],
@@ -1609,8 +1609,8 @@
     "slug": "agdr/AgDR-0058-baboom-device-command-relay",
     "title": "agdr/AgDR-0058-baboom-device-command-relay",
     "path": "docs/agdr/AgDR-0058-baboom-device-command-relay.md",
-    "word_count": 562,
-    "mtime": 1784329137,
+    "word_count": 640,
+    "mtime": 1784601009,
     "deps": [
       "AgDR-0058",
       "AgDR-0059"
@@ -1626,6 +1626,18 @@
     "deps": [
       "AgDR-0058",
       "AgDR-0059"
+    ],
+    "missing_deps": []
+  },
+  {
+    "slug": "agdr/AgDR-0060-node-language-canonical-authority-convergence",
+    "title": "agdr/AgDR-0060-node-language-canonical-authority-convergence",
+    "path": "docs/agdr/AgDR-0060-node-language-canonical-authority-convergence.md",
+    "word_count": 791,
+    "mtime": 1784571447,
+    "deps": [
+      "AgDR-0057",
+      "AgDR-0060"
     ],
     "missing_deps": []
   },

@@ -1,17 +1,28 @@
 ---
 id: AgDR-0058
-title: BABOOM device-bound command relay
+title: Retired BABOOM device-bound command relay
 timestamp: 2026-07-18
 agent: Codex
 session: baboom-node-native-steward
-status: proposed
+status: superseded
 category: architecture
 projects: [archhub, baboom]
 supersedes: null
-superseded_by: null
+superseded_by: Universal Cell Work Handoff protocol
 ---
 
-## Context
+## Superseded
+
+On 2026-07-21 this transport and its parallel BABOOM Cell authority were
+removed. All BABOOM device handoffs now use one graph record: graph Work,
+graph handoff relation, and graph delivery or cancellation receipt, accessed
+only through the authenticated Universal runtime routes.
+
+The retired `/v1/baboom/` relay, its ciphertext store, and its duplicate
+command lifecycle may not be restored or deployed. This record is retained as
+historical decision evidence only.
+
+## Historical Context
 
 BABOOM has one persisted Universal Cell authority rooted at
 `gm:node:orch_baboom_assistant`. It can observe work, surface a compact
@@ -25,7 +36,7 @@ device-bound cloud sessions, DPoP proof, and replay detection. Replacing those
 with a second BABOOM brain, an unauthenticated web queue, or raw task payloads
 in cloud storage would violate the one-authority and privacy constraints.
 
-## Decision
+## Historical Decision
 
 Add a bounded BABOOM relay under `/v1/baboom/` with these rules:
 
@@ -51,7 +62,7 @@ Add a bounded BABOOM relay under `/v1/baboom/` with these rules:
    relay metadata. Each device mirrors the same command root in its local Cell
    replica; the cloud timestamp is not permitted to replace the command identity.
 
-## Consequences
+## Historical Consequences
 
 - A bearer-token leak alone cannot submit, read, claim, or settle BABOOM relay
   work without the registered device proof key.
@@ -71,7 +82,7 @@ Add a bounded BABOOM relay under `/v1/baboom/` with these rules:
   invalid/expired/replayed DPoP proof denial, target-only claim/settlement,
   idempotent submit, source-only cancellation, and metadata redaction.
 
-## Implementation Evidence
+## Historical Implementation Evidence
 
 The bounded command relay, Cell replica import, source receipt recovery, and
 companion client courts pass. The recipient-encrypted extension is implemented

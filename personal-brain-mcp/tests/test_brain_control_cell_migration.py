@@ -45,6 +45,12 @@ class _InProcessRuntimeBridge:
     def assembly_field_update(self, **body):
         return self._request("POST", "/api/universal/assembly-field", body)
 
+    def deliberation_append(self, **body):
+        return self._request("POST", "/api/universal/deliberation", body)
+
+    def deliberation_read(self, **body):
+        return self._request("GET", "/api/universal/deliberation", body)
+
     def value_read(self, root_id):
         return self._request(
             "POST", "/api/universal/value", {"root": root_id}
@@ -72,9 +78,9 @@ class _MutatingBridge:
         }
 
 
-class _FailingAssemblyBridge:
-    def assembly_create(self, **body):  # noqa: ARG002
-        raise RuntimeError("cell create refused")
+class _FailingDeliberationBridge:
+    def deliberation_append(self, **body):  # noqa: ARG002
+        raise RuntimeError("cell ledger refused")
 
 
 @pytest.fixture()
@@ -339,7 +345,7 @@ def test_run_report_append_syncs_report_and_history_records_to_cells(store):
         server.close()
 
 
-def test_compliance_event_cell_first_writes_cell_before_brain_receipt(store):
+def test_compliance_event_cell_first_writes_only_the_graph_ledger(store):
     server = ApplicationServer().start()
     bridge = _InProcessRuntimeBridge(server)
     try:
@@ -356,41 +362,20 @@ def test_compliance_event_cell_first_writes_cell_before_brain_receipt(store):
 
         assert result["ok"] is True
         assert result["cell_first"] is True
-        assert result["brain_written"] is True
-        assert result["event"]["cell_record_root"]
-        assert result["cell_record"]["created_root"] == result["event"][
-            "cell_record_root"
-        ]
-        by_name = {
-            item["name"]: item
-            for item in result["cell_record"]["assembly"]["interfaces"]
-        }
-        assert by_name["source"]["value"].startswith(
-            "brain-control:compliance-event:"
-        )
-        assert by_name["claims"]["editable"] is True
-
-        edited = bridge.assembly_field_update(
-            root=result["event"]["cell_record_root"],
-            interface=by_name["claims"]["id"],
-            value="checked in court",
-        )
-        edited_by_name = {
-            item["name"]: item
-            for item in edited["assembly"]["interfaces"]
-        }
-        assert edited_by_name["claims"]["value"] == "checked in court"
-
-        history = cr.get_compliance_history(
+        assert result["brain_written"] is False
+        assert result["event"]["cell_entry_root"]
+        assert result["event"]["cell_payload_root"]
+        assert store.get_meta(cr.HISTORY_META_KEY) is None
+        history = cr.get_compliance_history_cell_first(
             store,
             owner_user="founder",
             limit=1,
+            cell_bridge=bridge,
         )
         event = history["events"][0]
-        assert event["cell_record_root"] == result["event"]["cell_record_root"]
+        assert event["cell_entry_root"] == result["event"]["cell_entry_root"]
+        assert event["cell_payload_root"] == result["event"]["cell_payload_root"]
         assert event["decision"] == "deny"
-        assert result["cell_sync"]["ok"] is True
-        assert result["cell_sync"]["record_count"] == 1
     finally:
         server.close()
 
@@ -399,7 +384,7 @@ def test_compliance_event_cell_first_fails_closed_before_brain_write(store):
     result = cr.append_compliance_event_cell_first(
         store,
         owner_user="founder",
-        cell_bridge=_FailingAssemblyBridge(),
+        cell_bridge=_FailingDeliberationBridge(),
         event={
             "event_type": "write_gate_decision",
             "decision": "deny",
@@ -409,11 +394,11 @@ def test_compliance_event_cell_first_fails_closed_before_brain_write(store):
     assert result["ok"] is False
     assert result["cell_first"] is True
     assert result["brain_written"] is False
-    assert "cell create refused" in result["error"]
+    assert "cell ledger refused" in result["error"]
     assert store.get_meta(cr.HISTORY_META_KEY) is None
 
 
-def test_run_report_cell_first_writes_cell_before_brain_receipt(store):
+def test_run_report_cell_first_writes_only_the_graph_ledger(store):
     server = ApplicationServer().start()
     bridge = _InProcessRuntimeBridge(server)
     try:
@@ -435,44 +420,23 @@ def test_run_report_cell_first_writes_cell_before_brain_receipt(store):
 
         assert result["ok"] is True
         assert result["cell_first"] is True
-        assert result["brain_written"] is True
-        assert result["report"]["cell_record_root"]
-        assert result["cell_record"]["created_root"] == result["report"][
-            "cell_record_root"
-        ]
-        by_name = {
-            item["name"]: item
-            for item in result["cell_record"]["assembly"]["interfaces"]
-        }
-        assert by_name["source"]["value"].startswith(
-            "brain-control:run-report:rr_"
-        )
-        assert by_name["claims"]["editable"] is True
-
-        edited = bridge.assembly_field_update(
-            root=result["report"]["cell_record_root"],
-            interface=by_name["claims"]["id"],
-            value="run report checked in court",
-        )
-        edited_by_name = {
-            item["name"]: item
-            for item in edited["assembly"]["interfaces"]
-        }
-        assert edited_by_name["claims"]["value"] == "run report checked in court"
-
-        latest = rr.get_run_reports(
+        assert result["brain_written"] is False
+        assert result["report"]["cell_entry_root"]
+        assert result["report"]["cell_payload_root"]
+        assert store.get_meta(rr.RUN_REPORT_META_KEY) is None
+        assert store.get_meta(cr.HISTORY_META_KEY) is None
+        latest = rr.get_run_reports_cell_first(
             store,
             owner_user="founder",
             leaf_id="leaf-2",
             limit=1,
+            cell_bridge=bridge,
         )
         report = latest["reports"][0]
-        assert report["cell_record_root"] == result["report"]["cell_record_root"]
+        assert report["cell_entry_root"] == result["report"]["cell_entry_root"]
         assert report["runtime"] == "codex"
         assert result["compliance_event"]["ok"] is True
         assert result["compliance_event"]["cell_first"] is True
-        assert result["cell_sync"]["ok"] is True
-        assert result["cell_sync"]["record_count"] == 2
     finally:
         server.close()
 
@@ -484,7 +448,7 @@ def test_run_report_cell_first_fails_closed_before_brain_write(store):
         leaf_id="leaf-2",
         runtime="codex",
         agent_id="session-2",
-        cell_bridge=_FailingAssemblyBridge(),
+        cell_bridge=_FailingDeliberationBridge(),
         report={
             "what_i_did": ["This must not persist"],
             "where_we_are": ["Cell create failed"],
@@ -497,7 +461,7 @@ def test_run_report_cell_first_fails_closed_before_brain_write(store):
     assert result["ok"] is False
     assert result["cell_first"] is True
     assert result["brain_written"] is False
-    assert "cell create refused" in result["error"]
+    assert "cell ledger refused" in result["error"]
     assert store.get_meta(rr.RUN_REPORT_META_KEY) is None
     assert store.get_meta(cr.HISTORY_META_KEY) is None
 
@@ -566,5 +530,39 @@ def test_runtime_assembly_route_creates_and_edits_standard_library_record():
         assert repeated["existing"] is True
         assert repeated["created_root"] == created["created_root"]
         assert server.universal_store.revision == before_repeat
+    finally:
+        server.close()
+
+
+def test_runtime_assembly_route_wires_structured_fields_as_value_graphs():
+    server = ApplicationServer().start()
+    bridge = _InProcessRuntimeBridge(server)
+    claims = {
+        "operation": "brain.skill_mint",
+        "tool_call_count": 2,
+        "redacted": True,
+    }
+    try:
+        created = bridge.assembly_create(
+            definition_key="knowledge-branch",
+            fields={
+                "source": "brain-control:structured-claim",
+                "scope": "founder/brain-control",
+                "provenance": "test",
+            },
+            structured_fields={"claims": claims},
+            idempotency_field="source",
+            x=500,
+            y=600,
+        )
+        assert created["ok"] is True
+        attached = created["structured_fields"]["claims"]
+        assert bridge.value_read(attached["value_root"]) == claims
+        assert attached["relation_root"] in server.universal_store.snapshot().cells
+        interface = next(
+            item for item in created["assembly"]["interfaces"]
+            if item["name"] == "claims"
+        )
+        assert interface["value"] != json.dumps(claims, sort_keys=True)
     finally:
         server.close()

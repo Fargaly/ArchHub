@@ -5,7 +5,7 @@ Universal Cell graph owns the released capability policy. This module makes
 that wiring visible to the Brain itself:
 
 * audit actual client config/hook files against installer.COVERAGE_MATRIX;
-* persist the latest report in brain_meta under hook_coverage_v1;
+* append the latest report to the Universal Cell control ledger;
 * repair by delegating to installer.install_all; and
 * expose a small gate that write-capable work assignment can call before a
   runtime claims a leaf.
@@ -36,6 +36,10 @@ if TYPE_CHECKING:
 
 
 COVERAGE_META_KEY = "hook_coverage_v1"
+CELL_CONTROL_LEDGER_ROOT = "app:brain-control-ledger:v1"
+CELL_COMPLIANCE_CATEGORY_ROOT = (
+    "app:brain-control-ledger:v1:category:compliance-event"
+)
 LEGACY_MIGRATION_ONLY = True
 MIGRATION_CONTROL_ONLY = True
 AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
@@ -165,7 +169,11 @@ class HookCoverageMonitor:
                     raise RuntimeError(
                         str(audit_result.get("error") or "Cell-first audit failed")
                     )
-                report = get_report(self.store, owner_user=self.owner_user)
+                report = get_report_cell_first(
+                    self.store,
+                    owner_user=self.owner_user,
+                    cell_bridge=self.cell_bridge,
+                )
                 if report is None:
                     raise RuntimeError("Cell-first audit did not persist receipt")
                 if self.auto_repair:
@@ -190,15 +198,12 @@ class HookCoverageMonitor:
                             )
                         self._repair_count += 1
                         self._last_repair = repair_result
-                        report = get_report(
-                            self.store, owner_user=self.owner_user
+                        report = get_report_cell_first(
+                            self.store,
+                            owner_user=self.owner_user,
+                            cell_bridge=self.cell_bridge,
                         ) or report
-                try:
-                    self._last_report = json.loads(
-                        self.store.get_meta(COVERAGE_META_KEY) or "{}"
-                    )
-                except Exception:
-                    self._last_report = report.model_dump(mode="json")
+                self._last_report = report.model_dump(mode="json")
                 self._last_error = ""
                 ok = True
             except Exception as ex:  # pragma: no cover - defensive
@@ -727,30 +732,27 @@ def audit_cell_first(
             default=str,
         ).encode("utf-8")
     ).hexdigest()[:16]
-    source = f"brain-control:hook-coverage-audit:{audit_id}"
+    report_payload.update(
+        {
+            "event_type": "hook_coverage_audit",
+            "source": "personal_brain.hook_coverage:audit_cell_first",
+            "audit_id": audit_id,
+            "only": list(only or []),
+        }
+    )
     try:
         runtime = cell_bridge
         if runtime is None:
             from .universal_runtime import UniversalRuntimeBridge
 
             runtime = UniversalRuntimeBridge()
-        created = runtime.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": source,
-                "scope": "founder/brain-control/hook-coverage",
-                "claims": json.dumps(
-                    {
-                        "status": report.status,
-                        "clients": _client_statuses(report),
-                        "issue_count": len(report.issues),
-                        "only": list(only or []),
-                    },
-                    sort_keys=True,
-                ),
-                "provenance": "personal_brain.hook_coverage:audit_cell_first",
-            },
-            idempotency_field="source",
+        created = runtime.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            summary="Hook coverage audit: %s" % report.status,
+            payload=report_payload,
+            idempotency_key="hook-coverage-audit:%s" % audit_id,
+            created_at=str(report_payload["last_audited_at"]),
         )
     except Exception as exc:
         return {
@@ -760,46 +762,21 @@ def audit_cell_first(
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    receipt = {
-        "cell_first": True,
-        "cell_record_root": str(created["created_root"]),
-        "cell_record_source": source,
-        "audit_id": audit_id,
-    }
-    persisted = _persist_receipt(store, report, receipt=receipt)
-    result: dict[str, Any] = {
+    persisted = report.model_copy(
+        update={
+            "cell_first": True,
+            "cell_record_root": str(created["root"]),
+            "cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+            "audit_id": audit_id,
+        }
+    )
+    return {
         "ok": True,
         "cell_first": True,
-        "brain_written": True,
-        "report": persisted,
+        "brain_written": False,
+        "report": persisted.model_dump(mode="json"),
         "cell_record": created,
     }
-    try:
-        from . import compliance_report as cr
-
-        compliance = cr.append_compliance_event_cell_first(
-            store,
-            owner_user=owner_user,
-            cell_bridge=runtime,
-            event={
-                "event_type": "hook_coverage_audit",
-                "source": "hook_coverage_cell_first",
-                "status": report.status,
-                "clients": _client_statuses(report),
-                "issue_count": len(report.issues),
-                "only": list(only or []),
-                "hook_coverage_cell_record_root": receipt["cell_record_root"],
-            },
-        )
-        result["compliance_event"] = compliance
-        if isinstance(compliance, dict) and "cell_sync" in compliance:
-            result["cell_sync"] = compliance["cell_sync"]
-    except Exception as exc:
-        result["compliance_event"] = {
-            "ok": False,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-    return result
 
 
 def get_report(
@@ -817,6 +794,66 @@ def get_report(
     if owner_user and report.owner_user != owner_user:
         return None
     return report
+
+
+def get_report_cell_first(
+    store: "BrainStore",  # Retained for public API compatibility; never read.
+    *,
+    owner_user: str = "founder",
+    cell_bridge: Any = None,
+) -> Optional[HookCoverageReport]:
+    """Read the latest authorised hook report from the Cell control ledger."""
+    if cell_bridge is None:
+        return None
+    try:
+        result = cell_bridge.deliberation_read(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            limit=500,
+        )
+        entries = result.get("entries") if isinstance(result, dict) else None
+        if not isinstance(entries, list):
+            return None
+        for entry in reversed(entries):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("category_root") != CELL_COMPLIANCE_CATEGORY_ROOT:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict) or payload.get("owner_user") != owner_user:
+                continue
+            event_type = payload.get("event_type")
+            if event_type == "hook_coverage_audit":
+                raw_report = payload
+                repairs: dict[str, Any] = {}
+            elif event_type == "hook_coverage_repair_outcome":
+                raw_report = payload.get("after")
+                repairs = {
+                    "repair_id": str(payload.get("repair_id") or ""),
+                    "repair_request_cell_record_root": str(
+                        payload.get("request_cell_entry_root") or ""
+                    ),
+                    "repair_request_cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+                    "repair_outcome_cell_record_root": str(entry.get("root") or ""),
+                    "repair_outcome_cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+                }
+            else:
+                continue
+            if not isinstance(raw_report, dict):
+                continue
+            report = HookCoverageReport.model_validate(raw_report)
+            return report.model_copy(
+                update={
+                    "cell_first": True,
+                    "cell_record_root": str(entry.get("root") or ""),
+                    "cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+                    **repairs,
+                    # The payload graph remains inspectable from the entry.
+                    "audit_id": str(raw_report.get("audit_id") or ""),
+                }
+            )
+    except Exception:
+        return None
+    return None
 
 
 def repair(
@@ -887,32 +924,28 @@ def repair_cell_first(
             default=str,
         ).encode("utf-8")
     ).hexdigest()[:16]
-    request_source = f"brain-control:hook-coverage-repair-request:{repair_id}"
     try:
         runtime = cell_bridge
         if runtime is None:
             from .universal_runtime import UniversalRuntimeBridge
 
             runtime = UniversalRuntimeBridge()
-        request_record = runtime.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": request_source,
-                "scope": "founder/brain-control/hook-coverage/repair",
-                "claims": json.dumps(
-                    {
-                        "repair_id": repair_id,
-                        "only": list(only or []),
-                        "dry_run": dry_run,
-                        "requested_at": requested_at,
-                        "before_status": before.status,
-                        "before_clients": _client_statuses(before),
-                    },
-                    sort_keys=True,
-                ),
-                "provenance": "personal_brain.hook_coverage:repair_request",
+        request_record = runtime.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            summary="Hook coverage repair requested",
+            payload={
+                "event_type": "hook_coverage_repair_request",
+                "source": "personal_brain.hook_coverage:repair_request",
+                "owner_user": owner_user,
+                "repair_id": repair_id,
+                "only": list(only or []),
+                "dry_run": dry_run,
+                "requested_at": requested_at,
+                "before": before.model_dump(mode="json"),
             },
-            idempotency_field="source",
+            idempotency_key="hook-coverage-repair-request:%s" % repair_id,
+            created_at=requested_at,
         )
     except Exception as exc:
         return {
@@ -925,28 +958,24 @@ def repair_cell_first(
 
     install_results = installer.install_all(only=only, dry_run=dry_run)
     after = _build_report(only=only, owner_user=owner_user)
-    outcome_source = f"brain-control:hook-coverage-repair-outcome:{repair_id}"
     try:
-        outcome_record = runtime.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": outcome_source,
-                "scope": "founder/brain-control/hook-coverage/repair",
-                "claims": json.dumps(
-                    {
-                        "repair_id": repair_id,
-                        "request_root": str(request_record["created_root"]),
-                        "dry_run": dry_run,
-                        "before_status": before.status,
-                        "after_status": after.status,
-                        "after_clients": _client_statuses(after),
-                        "install_results": _jsonable(install_results),
-                    },
-                    sort_keys=True,
-                ),
-                "provenance": "personal_brain.hook_coverage:repair_outcome",
+        outcome_record = runtime.deliberation_append(
+            space=CELL_CONTROL_LEDGER_ROOT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            summary="Hook coverage repair outcome: %s" % after.status,
+            payload={
+                "event_type": "hook_coverage_repair_outcome",
+                "source": "personal_brain.hook_coverage:repair_outcome",
+                "owner_user": owner_user,
+                "repair_id": repair_id,
+                "request_cell_entry_root": str(request_record["root"]),
+                "dry_run": dry_run,
+                "before": before.model_dump(mode="json"),
+                "after": after.model_dump(mode="json"),
+                "install_results": _jsonable(install_results),
             },
-            idempotency_field="source",
+            idempotency_key="hook-coverage-repair-outcome:%s" % repair_id,
+            created_at=str(after.last_audited_at.isoformat()),
         )
     except Exception as exc:
         return {
@@ -961,61 +990,30 @@ def repair_cell_first(
             "after": after.model_dump(mode="json"),
         }
 
-    receipt = {
-        "cell_first": True,
-        "cell_record_root": str(outcome_record["created_root"]),
-        "cell_record_source": outcome_source,
-        "repair_id": repair_id,
-        "repair_request_cell_record_root": str(request_record["created_root"]),
-        "repair_request_cell_record_source": request_source,
-        "repair_outcome_cell_record_root": str(outcome_record["created_root"]),
-        "repair_outcome_cell_record_source": outcome_source,
-    }
-    persisted = _persist_receipt(store, after, receipt=receipt)
-    result: dict[str, Any] = {
+    persisted = after.model_copy(
+        update={
+            "cell_first": True,
+            "cell_record_root": str(outcome_record["root"]),
+            "cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+            "repair_id": repair_id,
+            "repair_request_cell_record_root": str(request_record["root"]),
+            "repair_request_cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+            "repair_outcome_cell_record_root": str(outcome_record["root"]),
+            "repair_outcome_cell_record_source": CELL_CONTROL_LEDGER_ROOT,
+        }
+    )
+    return {
         "ok": True,
         "cell_first": True,
-        "brain_written": True,
+        "brain_written": False,
         "side_effect_executed": True,
         "dry_run": dry_run,
         "install_results": _jsonable(install_results),
         "before": before.model_dump(mode="json"),
-        "after": persisted,
+        "after": persisted.model_dump(mode="json"),
         "request_cell_record": request_record,
         "outcome_cell_record": outcome_record,
     }
-    try:
-        from . import compliance_report as cr
-
-        compliance = cr.append_compliance_event_cell_first(
-            store,
-            owner_user=owner_user,
-            cell_bridge=runtime,
-            event={
-                "event_type": "hook_coverage_repair",
-                "source": "hook_coverage_repair_cell_first",
-                "dry_run": dry_run,
-                "before_status": before.status,
-                "after_status": after.status,
-                "clients": _client_statuses(after),
-                "only": list(only or []),
-                "repair_request_cell_record_root": receipt[
-                    "repair_request_cell_record_root"
-                ],
-                "repair_outcome_cell_record_root": receipt[
-                    "repair_outcome_cell_record_root"
-                ],
-            },
-        )
-        result["compliance_event"] = compliance
-        if isinstance(compliance, dict) and "cell_sync" in compliance:
-            result["cell_sync"] = compliance["cell_sync"]
-    except Exception as exc:
-        result["compliance_event"] = {
-            "ok": False,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-    return result
 
 
 def hook_coverage_monitor_enabled() -> bool:
@@ -1147,11 +1145,14 @@ def runtime_write_gate(
     runtime: str,
     owner_user: str = "founder",
     write: bool = False,
+    cell_bridge: Any = None,
 ) -> dict[str, Any]:
     client = runtime_client(runtime)
     if not write:
         return {"allowed": True, "client": client, "reason": ""}
-    report = get_report(store, owner_user=owner_user)
+    report = get_report_cell_first(
+        store, owner_user=owner_user, cell_bridge=cell_bridge
+    )
     if report is None:
         return {
             "allowed": False,
@@ -1192,8 +1193,8 @@ def runtime_write_gate(
                 "status": RED,
                 "coverage": coverage.model_dump(mode="json"),
                 "reason": (
-                    f"hook coverage green for {client} is legacy-only; "
-                    "Cell-first receipt is required before write work"
+                    f"hook coverage green for {client} has no authorised "
+                    "Cell ledger receipt"
                 ),
                 "action_tool": "brain.hook_coverage_audit_cell_first",
             }
@@ -1233,7 +1234,12 @@ def format_gate_block(gate: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def register_hook_coverage_tools(mcp: "Any", store: "BrainStore") -> "Any":
+def register_hook_coverage_tools(
+    mcp: "Any",
+    store: "BrainStore",
+    *,
+    cell_bridge: Any = None,
+) -> "Any":
     def _resolve_owner() -> str:
         try:
             getter = getattr(mcp, "_brain_resolve_owner", None)
@@ -1288,8 +1294,8 @@ def register_hook_coverage_tools(mcp: "Any", store: "BrainStore") -> "Any":
     @mcp.tool(
         name="brain.hook_coverage_audit_cell_first",
         description=(
-            "Create a Universal Cell hook-coverage audit record before "
-            "persisting the Brain hook_coverage_v1 receipt."
+            "Append an inspectable hook-coverage audit to the Universal Cell "
+            "Brain control ledger. It never writes a Brain metadata receipt."
         ),
     )
     def brain_hook_coverage_audit_cell_first(
@@ -1298,19 +1304,28 @@ def register_hook_coverage_tools(mcp: "Any", store: "BrainStore") -> "Any":
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
         try:
-            return audit_cell_first(store, only=only, owner_user=owner)
+            return audit_cell_first(
+                store,
+                only=only,
+                owner_user=owner,
+                cell_bridge=cell_bridge,
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
     @mcp.tool(
         name="brain.hook_coverage_get",
-        description="Return the latest persisted hook_coverage_v1 report.",
+        description="Return the latest authorised Cell-ledger hook coverage report.",
     )
     def brain_hook_coverage_get(
         owner_user: Optional[str] = None,
     ) -> dict[str, Any]:
         owner = owner_user or _resolve_owner()
-        report = get_report(store, owner_user=owner)
+        report = get_report_cell_first(
+            store,
+            owner_user=owner,
+            cell_bridge=cell_bridge,
+        )
         if report is None:
             return {"ok": False, "error": "no hook coverage report"}
         return {"ok": True, "report": report.model_dump(mode="json")}
@@ -1338,8 +1353,8 @@ def register_hook_coverage_tools(mcp: "Any", store: "BrainStore") -> "Any":
     @mcp.tool(
         name="brain.hook_coverage_repair_cell_first",
         description=(
-            "Create Universal Cell repair request/outcome records around "
-            "installer hook repair before writing the Brain receipt."
+            "Append Universal Cell repair request/outcome records around the "
+            "installer effect. It never writes a Brain metadata receipt."
         ),
     )
     def brain_hook_coverage_repair_cell_first(
@@ -1354,6 +1369,7 @@ def register_hook_coverage_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 only=only,
                 owner_user=owner,
                 dry_run=dry_run,
+                cell_bridge=cell_bridge,
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}

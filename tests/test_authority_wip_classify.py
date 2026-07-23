@@ -389,6 +389,28 @@ def test_classification_summary_is_machine_readable():
     assert report["active_work_leaves"]
 
 
+def test_external_worktree_wip_is_classified_as_owner_boundary():
+    report = awc.classify_entries([
+        {
+            "code": " M",
+            "path": "external-worktree:analyze-logs-performance/app/bridge.py",
+            "worktree_path": (
+                "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+                "ArchHub/analyze-logs-performance"
+            ),
+            "worktree_branch": "analyze-logs-performance",
+            "worktree_entry_path": "app/bridge.py",
+        },
+    ])
+
+    entry = report["entries"][0]
+    assert entry["category"] == "external_owner_worktree_wip"
+    assert entry["promotion_allowed"] == "false"
+    assert report["summary"] == {"external_owner_worktree_wip": 1}
+    assert report["gate"]["no_unclassified"]["ok"] is True
+    assert "owner" in entry["required_action"]
+
+
 def test_classification_generates_category_active_work_leaves():
     report = awc.classify_entries([
         {"code": "??", "path": "app/workflows/universal_grand_map_surface.py"},

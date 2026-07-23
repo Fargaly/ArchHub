@@ -332,6 +332,15 @@ CATEGORY_POLICY: dict[str, dict[str, Any]] = {
         "keep as generated convergence/drain evidence; do not promote as product authority",
         required_courts=GOVERNANCE_RUN_EVIDENCE_COURTS,
     ),
+    "external_owner_worktree_wip": _policy(
+        "external_owner_boundary",
+        (
+            "treat as serialized external worktree WIP; do not integrate, "
+            "publish, or claim clean public authority until the owner either "
+            "commits it on its branch, hands it off with exact courts, or "
+            "explicitly releases it for classification/consumption"
+        ),
+    ),
     "unclassified_noncoordinated": _policy(
         "blocked",
         "classify before any promotion or release claim",
@@ -378,6 +387,7 @@ CATEGORY_PRIORITY = {
     "documentation_decision_evidence": 6100,
     "governance_run_evidence": 6000,
     "ui_runtime_evidence_probe": 5800,
+    "external_owner_worktree_wip": 5600,
 }
 
 
@@ -492,6 +502,8 @@ def parse_porcelain(text: str) -> list[dict[str, str]]:
 
 def classify_path(path: str) -> str:
     p = path.replace("\\", "/")
+    if p.startswith("external-worktree:"):
+        return "external_owner_worktree_wip"
 
     exact = {
         "personal-brain-mcp/src/personal_brain/active_work_cell_migration.py": "universal_cell_bridge",
@@ -876,6 +888,58 @@ def current_status(repo: Path) -> list[dict[str, str]]:
     return parse_porcelain(text)
 
 
+def _worktree_paths(repo: Path) -> list[Path]:
+    text = subprocess.check_output(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        text=True,
+    )
+    paths: list[Path] = []
+    for line in text.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line.split(" ", 1)[1]))
+    return paths
+
+
+def external_worktree_status(repo: Path) -> list[dict[str, str]]:
+    """Return ordinary WIP from registered worktrees outside ``repo``.
+
+    Missing/prunable worktrees are excluded here because they are Git metadata
+    cleanup work, not source WIP that can be consumed into product authority.
+    """
+    root = repo.resolve()
+    entries: list[dict[str, str]] = []
+    for worktree in _worktree_paths(repo):
+        if not worktree.exists():
+            continue
+        try:
+            resolved = worktree.resolve()
+        except OSError:
+            continue
+        if resolved == root:
+            continue
+        status_text = subprocess.check_output(
+            ["git", "-C", str(resolved), "status", "--porcelain"],
+            text=True,
+        )
+        branch = subprocess.check_output(
+            ["git", "-C", str(resolved), "branch", "--show-current"],
+            text=True,
+        ).strip()
+        label = branch or resolved.name
+        for item in parse_porcelain(status_text):
+            local_path = item["path"].replace("\\", "/")
+            external_path = f"external-worktree:{label}/{local_path}"
+            entry = {
+                "code": item["code"],
+                "path": external_path,
+                "worktree_path": str(resolved),
+                "worktree_branch": label,
+                "worktree_entry_path": local_path,
+            }
+            entries.append(entry)
+    return entries
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Classify public repo WIP against Universal Cell authority."
@@ -884,14 +948,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", default="")
     parser.add_argument("--enforce-no-unclassified", action="store_true")
     parser.add_argument("--include-runtime-holders", action="store_true")
+    parser.add_argument("--include-worktrees", action="store_true")
     parser.add_argument("--register-active-work", action="store_true")
     parser.add_argument("--brain-path", default="")
     parser.add_argument("--owner-user", default="founder")
     args = parser.parse_args(argv)
 
     repo = Path(args.repo)
+    entries = current_status(repo)
+    if args.include_worktrees:
+        entries = [*entries, *external_worktree_status(repo)]
     report = classify_entries(
-        current_status(repo),
+        entries,
         include_runtime_holders=args.include_runtime_holders,
         repo=repo,
     )

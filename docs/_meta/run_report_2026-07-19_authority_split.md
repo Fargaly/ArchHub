@@ -7529,3 +7529,42 @@ Desk-space/live-session impact:
 - Source-only product classification change.
 - No Antigravity worktree files, PID 52484, Brain service, live endpoint,
   browser, Revit, Autodesk, or BBC4 worker/output touched.
+
+## External owner signature digest binding - 2026-07-23
+
+Commit:
+
+- this changeset; exact hash reported in the final run output.
+
+Intent:
+
+- Prevent the external-owner leaf signature from becoming display-only evidence.
+  A changed worktree path, branch HEAD, or inner entry path must change the
+  classifier digest used by Brain/Workshop handoff leaves.
+
+Mechanism:
+
+- Extended `classification_digest` source data for
+  `external_owner_worktree_wip` to include `worktree_path`,
+  `worktree_branch`, `worktree_head`, and `worktree_entry_path`.
+- Extended the digest court so it proves the digest changes on owner HEAD,
+  worktree path, and entry-path changes.
+- Updated AgDR-0061 to require the external signature to be digest-bound.
+
+Verification:
+
+- Focused digest/signature/freshness bundle:
+  `py -3.14 -m pytest tests\test_authority_wip_classify.py::test_external_worktree_digest_is_bound_to_owner_signature tests\test_authority_wip_classify.py::test_external_worktree_leaf_carries_exact_owner_signature tests\test_authority_wip_classify.py::test_generated_wip_classification_matches_live_external_worktree_state tests\test_authority_wip_classify.py::test_current_public_wip_has_no_unclassified_entries -q --timeout=90 --tb=short`
+  - result: `4 passed`.
+- Syntax compile:
+  `py -3.14 -m py_compile tools\authority_wip_classify.py tests\test_authority_wip_classify.py`
+  - result: passed.
+- Whitespace/path sanity:
+  `git diff --check`
+  - result: passed with line-ending warnings only.
+
+Desk-space/live-session impact:
+
+- Source-only product classification change.
+- No Antigravity worktree files, PID 52484, Brain service, live endpoint,
+  browser, Revit, Autodesk, or BBC4 worker/output touched.

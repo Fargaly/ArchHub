@@ -416,7 +416,7 @@ def test_external_worktree_wip_is_classified_as_owner_boundary():
     assert "owner" in entry["required_action"]
 
 
-def test_external_worktree_digest_is_bound_to_owner_head():
+def test_external_worktree_digest_is_bound_to_owner_signature():
     base = {
         "code": " M",
         "path": "external-worktree:analyze-logs-performance/app/bridge.py",
@@ -434,8 +434,24 @@ def test_external_worktree_digest_is_bound_to_owner_head():
     second = awc.classify_entries([
         {**base, "worktree_head": "2222222222222222222222222222222222222222"}
     ])
+    moved = awc.classify_entries([
+        {
+            **base,
+            "worktree_path": "D:/other/ArchHub/analyze-logs-performance",
+            "worktree_head": "1111111111111111111111111111111111111111",
+        }
+    ])
+    remapped_entry = awc.classify_entries([
+        {
+            **base,
+            "worktree_head": "1111111111111111111111111111111111111111",
+            "worktree_entry_path": "app/main.py",
+        }
+    ])
 
     assert first["classification_digest"] != second["classification_digest"]
+    assert first["classification_digest"] != moved["classification_digest"]
+    assert first["classification_digest"] != remapped_entry["classification_digest"]
 
 
 def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():

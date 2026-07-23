@@ -736,8 +736,10 @@ def classify_entries(
             "required_courts": item["required_courts"],
             **(
                 {
+                    "worktree_path": item.get("worktree_path", ""),
                     "worktree_branch": item.get("worktree_branch", ""),
                     "worktree_head": item.get("worktree_head", ""),
+                    "worktree_entry_path": item.get("worktree_entry_path", ""),
                 }
                 if item.get("category") == "external_owner_worktree_wip"
                 else {}

@@ -454,6 +454,56 @@ def test_external_worktree_digest_is_bound_to_owner_signature():
     assert first["classification_digest"] != remapped_entry["classification_digest"]
 
 
+def test_machine_priority_hold_is_bound_to_report_and_active_work_leaf():
+    report = awc.classify_entries(
+        [{
+            "code": " M",
+            "path": "external-worktree:analyze-logs-performance/app/bridge.py",
+            "worktree_path": (
+                "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+                "ArchHub/analyze-logs-performance"
+            ),
+            "worktree_branch": "analyze-logs-performance",
+            "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
+            "worktree_entry_path": "app/bridge.py",
+        }],
+        machine_priority_hold={
+            "owner": "BBC4 consolidated G4/G5 QA",
+            "status": "active_hold",
+            "scope": "DATE23 DWG production frozen at 397/407",
+        },
+    )
+    changed_owner = awc.classify_entries(
+        [{
+            "code": " M",
+            "path": "external-worktree:analyze-logs-performance/app/bridge.py",
+            "worktree_path": (
+                "C:/Users/fargaly/.gemini/antigravity/worktrees/"
+                "ArchHub/analyze-logs-performance"
+            ),
+            "worktree_branch": "analyze-logs-performance",
+            "worktree_head": "8e9ef04f18e01363764c69689fcbe8c6672d0bd7",
+            "worktree_entry_path": "app/bridge.py",
+        }],
+        machine_priority_hold={
+            "owner": "editor real-browser acceptance",
+            "status": "active_hold",
+            "scope": "different heavy slot",
+        },
+    )
+
+    gate = report["gate"]["machine_resource"]
+    assert gate["active_hold"] is True
+    assert gate["owner"] == "BBC4 consolidated G4/G5 QA"
+    assert gate["scope"] == "DATE23 DWG production frozen at 397/407"
+    assert "heavy browser acceptance" in gate["forbidden_work"]
+    leaf_gate = report["active_work_leaves"][0]["governance_context"][
+        "machine_resource_gate"
+    ]
+    assert leaf_gate == gate
+    assert report["classification_digest"] != changed_owner["classification_digest"]
+
+
 def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
     runbook = (
         Path(__file__).resolve().parent.parent
@@ -470,6 +520,8 @@ def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
         "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md",
         "git status --porcelain=v1 --untracked-files=all",
         "tools\\authority_wip_classify.py --include-worktrees",
+        "--machine-priority-owner",
+        "machine_resource_gate",
         "docs\\_meta\\authority_wip_classification.latest.json",
         "agent/session hook adapter",
         "brain.hook_coverage_audit_cell_first",

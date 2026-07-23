@@ -702,6 +702,7 @@ def classify_entries(
     *,
     include_runtime_holders: bool = False,
     repo: Path | None = None,
+    machine_priority_hold: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     by_category: dict[str, list[dict[str, str]]] = {}
     classified: list[dict[str, str]] = []
@@ -727,26 +728,30 @@ def classify_entries(
         for item in classified
         if item["promotion_allowed"] == "true"
     ]
-    digest_source = [
-        {
-            "path": item["path"],
-            "code": item["code"],
-            "category": item["category"],
-            "disposition": item["disposition"],
-            "required_courts": item["required_courts"],
-            **(
-                {
-                    "worktree_path": item.get("worktree_path", ""),
-                    "worktree_branch": item.get("worktree_branch", ""),
-                    "worktree_head": item.get("worktree_head", ""),
-                    "worktree_entry_path": item.get("worktree_entry_path", ""),
-                }
-                if item.get("category") == "external_owner_worktree_wip"
-                else {}
-            ),
-        }
-        for item in sorted(classified, key=lambda value: value["path"])
-    ]
+    machine_resource_gate = _machine_resource_gate(machine_priority_hold)
+    digest_source = {
+        "entries": [
+            {
+                "path": item["path"],
+                "code": item["code"],
+                "category": item["category"],
+                "disposition": item["disposition"],
+                "required_courts": item["required_courts"],
+                **(
+                    {
+                        "worktree_path": item.get("worktree_path", ""),
+                        "worktree_branch": item.get("worktree_branch", ""),
+                        "worktree_head": item.get("worktree_head", ""),
+                        "worktree_entry_path": item.get("worktree_entry_path", ""),
+                    }
+                    if item.get("category") == "external_owner_worktree_wip"
+                    else {}
+                ),
+            }
+            for item in sorted(classified, key=lambda value: value["path"])
+        ],
+        "machine_resource_gate": machine_resource_gate,
+    }
     classification_digest = hashlib.sha256(
         json.dumps(digest_source, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
@@ -780,6 +785,7 @@ def classify_entries(
                 "count": len(promotion_candidates),
                 "items": promotion_candidates,
             },
+            "machine_resource": machine_resource_gate,
         },
         "entries": classified,
         "categories": CATEGORY_POLICY,
@@ -794,6 +800,47 @@ def classify_entries(
             live_runtime_holders.audit_local_application_servers(root.parents[1])
         )
     return report
+
+
+def _machine_resource_gate(
+    machine_priority_hold: dict[str, str] | None,
+) -> dict[str, Any]:
+    if machine_priority_hold:
+        owner = str(machine_priority_hold.get("owner") or "").strip()
+        status = str(machine_priority_hold.get("status") or "active_hold").strip()
+        scope = str(machine_priority_hold.get("scope") or "").strip()
+        return {
+            "schema": "archhub-machine-resource-coordination/v1",
+            "active_hold": True,
+            "owner": owner,
+            "status": status,
+            "scope": scope,
+            "allowed_work": [
+                "source reads",
+                "JSON classification",
+                "focused source-light tests",
+                "bounded commits",
+            ],
+            "forbidden_work": [
+                "heavy browser acceptance",
+                "PDF/model/broad audit/preflight",
+                "conversion work",
+                "visible endpoint restart or handoff",
+                "active session interruption",
+            ],
+            "required_action": (
+                "keep unrelated heavy ArchHub authority work held until the "
+                "machine-priority owner explicitly releases the slot"
+            ),
+        }
+    return {
+        "schema": "archhub-machine-resource-coordination/v1",
+        "active_hold": False,
+        "required_action": (
+            "no active machine-priority hold was supplied to this classifier run; "
+            "verify current coordination before starting heavy work"
+        ),
+    }
 
 
 def wip_category_leaves(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -844,6 +891,9 @@ def wip_category_leaves(report: dict[str, Any]) -> list[dict[str, Any]]:
             "required_courts": courts,
             "promotion_allowed": False,
         }
+        machine_resource_gate = (report.get("gate") or {}).get("machine_resource")
+        if (machine_resource_gate or {}).get("active_hold"):
+            governance_context["machine_resource_gate"] = machine_resource_gate
         if external_worktrees:
             governance_context["external_worktrees"] = external_worktrees
         leaves.append({
@@ -1012,6 +1062,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--enforce-no-unclassified", action="store_true")
     parser.add_argument("--include-runtime-holders", action="store_true")
     parser.add_argument("--include-worktrees", action="store_true")
+    parser.add_argument("--machine-priority-owner", default="")
+    parser.add_argument("--machine-priority-status", default="active_hold")
+    parser.add_argument("--machine-priority-scope", default="")
     parser.add_argument("--register-active-work", action="store_true")
     parser.add_argument("--brain-path", default="")
     parser.add_argument("--owner-user", default="founder")
@@ -1025,6 +1078,15 @@ def main(argv: list[str] | None = None) -> int:
         entries,
         include_runtime_holders=args.include_runtime_holders,
         repo=repo,
+        machine_priority_hold=(
+            {
+                "owner": args.machine_priority_owner,
+                "status": args.machine_priority_status,
+                "scope": args.machine_priority_scope,
+            }
+            if args.machine_priority_owner
+            else None
+        ),
     )
     if args.register_active_work:
         report["active_work_registration"] = register_active_work_leaves(

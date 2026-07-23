@@ -919,6 +919,49 @@ class TestStopFlushesBrainMemory:
         assert out["followup_message"] == "keep going"
         assert "brain.write" in cap.names()  # flush still happened
 
+    def test_antigravity_block_contract_uses_continue_decision(self, tmp_path,
+                                                               capsys):
+        tj = self._transcript(tmp_path)
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "block",
+                                        "violations": ["incomplete"],
+                                        "reason": "keep going"},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({
+                 "transcriptPath": tj,
+                 "conversationId": "antigravity-session-7",
+                 "workspacePaths": [str(tmp_path)],
+             }):
+            rc = brainwrap.cmd_stop("antigravity")
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out == {"decision": "continue", "reason": "keep going"}
+        assert "brain.hook_session_start" in cap.names()
+        assert "brain.write" in cap.names()
+
+    def test_antigravity_allow_contract_uses_empty_decision(self, tmp_path,
+                                                            capsys):
+        tj = self._transcript(tmp_path)
+        cap = _Capturing({
+            "brain.enforce_diligence": {"verdict": "allow",
+                                        "violations": []},
+            "brain.write": {"ops_applied": 1},
+        })
+        with patch.object(brainwrap.urllib.request, "urlopen", cap), \
+             self._stdin({
+                 "transcriptPath": tj,
+                 "conversationId": "antigravity-session-8",
+                 "workspacePaths": [str(tmp_path)],
+             }):
+            rc = brainwrap.cmd_stop("antigravity")
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out == {"decision": ""}
+        assert "brain.hook_session_start" in cap.names()
+        assert "brain.write" in cap.names()
+
     def test_generic_allow_writes_no_stdout_but_still_flushes(self, tmp_path,
                                                               capsys):
         tj = self._transcript(tmp_path)

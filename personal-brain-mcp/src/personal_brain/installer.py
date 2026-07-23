@@ -193,6 +193,9 @@ HOOK_DOC_URLS: dict[str, str] = {
     # BeforeAgent (context injection), and AfterAgent (final response hook).
     # Confirmed from the hook reference.
     "gemini-cli": "https://geminicli.com/docs/hooks/reference/",
+    # Antigravity IDE exposes named hook entries in global
+    # ~/.gemini/config/hooks.json and project .agents/hooks.json.
+    "antigravity": "https://antigravity.google/docs/ide/hooks",
 }
 
 
@@ -362,8 +365,11 @@ def _brain_hooks() -> dict[str, Any]:
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return {}
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(
             f"refusing to modify invalid JSON config {path} "
@@ -1078,6 +1084,188 @@ def _uninstall_gemini(dry_run: bool) -> dict[str, Any]:
 # ─────────────────────── plan registry ─────────────────────────────────
 
 
+# Antigravity IDE
+
+ANTIGRAVITY_MANAGED_HOOK = "archhub-governance"
+
+
+def _antigravity_config_dir() -> Path:
+    return _home() / ".gemini" / "config"
+
+
+def _antigravity_hooks_path() -> Path:
+    return _antigravity_config_dir() / "hooks.json"
+
+
+def _antigravity_mcp_path() -> Path:
+    return _antigravity_config_dir() / "mcp_config.json"
+
+
+def _detect_antigravity() -> bool:
+    return _antigravity_config_dir().exists() or shutil.which("antigravity") is not None
+
+
+def _antigravity_context_command() -> str:
+    py = sys.executable or "python"
+    adapter = _repo_root() / "tools" / "antigravity_coordination_context.py"
+    return f'"{py}" "{adapter.as_posix()}"'
+
+
+def _antigravity_hooks_block() -> dict[str, Any]:
+    return {
+        ANTIGRAVITY_MANAGED_HOOK: {
+            "PreToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": _agent_scope_gate_command("antigravity"),
+                            "timeout": 15,
+                        }
+                    ],
+                }
+            ],
+            "PreInvocation": [
+                {
+                    "type": "command",
+                    "command": _antigravity_context_command(),
+                    "timeout": 10,
+                }
+            ],
+            "Stop": [
+                {
+                    "type": "command",
+                    "command": _brainwrap_command("stop", "antigravity"),
+                    "timeout": 30,
+                }
+            ],
+        }
+    }
+
+
+def _merge_antigravity_mcp(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    notes: list[str] = []
+    out = dict(config)
+    servers = dict(out.get("mcpServers") or {})
+    if "brain" in servers:
+        notes.append("mcpServers.brain already present - replaced with current")
+    servers["brain"] = _brain_command()
+    out["mcpServers"] = servers
+    return out, notes
+
+
+def _remove_antigravity_mcp(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    notes: list[str] = []
+    out = dict(config)
+    servers = dict(out.get("mcpServers") or {})
+    if "brain" in servers:
+        del servers["brain"]
+        notes.append("removed mcpServers.brain")
+    if servers:
+        out["mcpServers"] = servers
+    else:
+        out.pop("mcpServers", None)
+    return out, notes
+
+
+def _merge_antigravity_hooks(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    notes: list[str] = []
+    out = dict(config)
+    if ANTIGRAVITY_MANAGED_HOOK in out:
+        notes.append(
+            f"{ANTIGRAVITY_MANAGED_HOOK} had a previous managed entry - replaced"
+        )
+    out.update(_antigravity_hooks_block())
+    return out, notes
+
+
+def _remove_antigravity_hooks(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    notes: list[str] = []
+    out = dict(config)
+    if ANTIGRAVITY_MANAGED_HOOK in out:
+        del out[ANTIGRAVITY_MANAGED_HOOK]
+        notes.append(f"removed {ANTIGRAVITY_MANAGED_HOOK}")
+    return out, notes
+
+
+def _install_antigravity(dry_run: bool) -> dict[str, Any]:
+    mcp_path = _antigravity_mcp_path()
+    hooks_path = _antigravity_hooks_path()
+    mcp_before = _load_json(mcp_path)
+    hooks_before = _load_json(hooks_path)
+    mcp_after, mcp_notes = _merge_antigravity_mcp(mcp_before)
+    hooks_after, hook_notes = _merge_antigravity_hooks(hooks_before)
+    mcp_change = mcp_before != mcp_after
+    hooks_change = hooks_before != hooks_after
+    notes = mcp_notes + hook_notes
+
+    if dry_run:
+        return {
+            "client": "antigravity",
+            "path": str(mcp_path),
+            "hooks_path": str(hooks_path),
+            "would_change": mcp_change or hooks_change,
+            "notes": notes
+            + (["would write mcp_config.json mcpServers.brain"] if mcp_change else [])
+            + (["would write hooks.json archhub-governance"] if hooks_change else []),
+        }
+
+    if mcp_change:
+        _backup(mcp_path)
+        _save_json(mcp_path, mcp_after)
+        notes.append("wrote mcp_config.json mcpServers.brain")
+    if hooks_change:
+        _backup(hooks_path)
+        _save_json(hooks_path, hooks_after)
+        notes.append("wrote hooks.json archhub-governance")
+    return {
+        "client": "antigravity",
+        "path": str(mcp_path),
+        "hooks_path": str(hooks_path),
+        "changed": mcp_change or hooks_change,
+        "notes": notes or ["already up to date"],
+    }
+
+
+def _uninstall_antigravity(dry_run: bool) -> dict[str, Any]:
+    mcp_path = _antigravity_mcp_path()
+    hooks_path = _antigravity_hooks_path()
+    mcp_before = _load_json(mcp_path)
+    hooks_before = _load_json(hooks_path)
+    mcp_after, mcp_notes = _remove_antigravity_mcp(mcp_before)
+    hooks_after, hook_notes = _remove_antigravity_hooks(hooks_before)
+    mcp_change = mcp_before != mcp_after
+    hooks_change = hooks_before != hooks_after
+    notes = mcp_notes + hook_notes
+
+    if dry_run:
+        return {
+            "client": "antigravity",
+            "would_change": mcp_change or hooks_change,
+            "notes": notes,
+        }
+    if mcp_change:
+        _backup(mcp_path)
+        _save_json(mcp_path, mcp_after)
+    if hooks_change:
+        _backup(hooks_path)
+        _save_json(hooks_path, hooks_after)
+    return {
+        "client": "antigravity",
+        "changed": mcp_change or hooks_change,
+        "notes": notes or ["nothing to remove"],
+    }
+
+
 ALL_PLANS: dict[str, ClientPlan] = {
     "claude-code": ClientPlan(
         name="claude-code",
@@ -1106,6 +1294,13 @@ ALL_PLANS: dict[str, ClientPlan] = {
         detect=_detect_gemini,
         install=_install_gemini,
         uninstall=_uninstall_gemini,
+    ),
+    "antigravity": ClientPlan(
+        name="antigravity",
+        config_path=_antigravity_hooks_path(),
+        detect=_detect_antigravity,
+        install=_install_antigravity,
+        uninstall=_uninstall_antigravity,
     ),
 }
 
@@ -1215,6 +1410,14 @@ COVERAGE_MATRIX: dict[str, dict[str, str]] = {
         "drive_inject": ENFORCED,        # BeforeAgent → brainwrap (drive block)
         "post_tool_write": PER_TURN,     # AfterAgent → brainwrap flush (1×/turn)
         "stop_gate": ENFORCED,           # AfterAgent → brainwrap stop (completion gate + diligence)
+    },
+    "antigravity": {
+        "scope_gate": ENFORCED,
+        "pre_prompt_inject": ENFORCED,
+        "workshop_authority": ENFORCED,
+        "drive_inject": ENFORCED,
+        "post_tool_write": PER_TURN,
+        "stop_gate": ENFORCED,
     },
 }
 

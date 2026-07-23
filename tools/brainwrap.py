@@ -184,10 +184,23 @@ def _injection_from_context(ctx: Optional[dict]) -> str:
 def _external_session_id(payload: dict) -> str:
     return str(
         payload.get("session_id")
+        or payload.get("conversationId")
         or payload.get("conversation_id")
         or os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID")
         or ""
     ).strip()
+
+
+def _payload_cwd(payload: dict) -> str:
+    cwd = str(payload.get("cwd") or "").strip()
+    if cwd:
+        return cwd
+    paths = payload.get("workspacePaths")
+    if isinstance(paths, list):
+        for path in paths:
+            if isinstance(path, str) and path.strip():
+                return path
+    return os.getcwd()
 
 
 def ensure_universal_agent_session(payload: dict, *, vendor: str) -> Optional[dict]:
@@ -348,7 +361,7 @@ def cmd_context(vendor: str) -> int:
     prompt = payload.get("prompt") or payload.get("user_message") or ""
     ctx = call_tool("brain.context", {
         "prompt": prompt,
-        "cwd": os.getcwd(),
+        "cwd": _payload_cwd(payload),
         "owner_user": os.environ.get("BRAIN_OWNER_USER"),
     })
     injection = _injection_from_context(ctx)
@@ -385,8 +398,8 @@ def cmd_session_start(vendor: str) -> int:
     startup context free of transport/audit JSON.
     """
     payload = _read_stdin_json()
-    cwd = str(payload.get("cwd") or os.getcwd())
-    session_id = str(payload.get("session_id") or "").strip() or None
+    cwd = _payload_cwd(payload)
+    session_id = _external_session_id(payload) or None
     call_tool("brain.hook_session_start", {
         "session_id": session_id,
         "cwd": cwd,
@@ -417,6 +430,7 @@ def _diligence_verdict(payload: dict) -> tuple[dict, dict]:
         return {}, {}
 
     transcript = (payload.get("transcript_path")
+                  or payload.get("transcriptPath")
                   or payload.get("transcript") or "")
     cwd = payload.get("cwd") or os.getcwd()
     events = gate._read_jsonl(transcript) if transcript else []
@@ -651,7 +665,7 @@ def cmd_stop(vendor: str) -> int:
     # Session. Its graph-declared gate takes precedence over the advisory
     # diligence result and never consults a legacy ledger.
     drive_blocked, drive_reason = _completion_gate_verdict(
-        cwd=payload.get("cwd") or os.getcwd(),
+        cwd=_payload_cwd(payload),
         runtime=vendor,
         session_id=_external_session_id(payload),
     )
@@ -675,6 +689,12 @@ def cmd_stop(vendor: str) -> int:
                 {"continue": False, "followup_message": reason}))
         else:
             sys.stdout.write(json.dumps({"continue": True}))
+    elif vendor == "antigravity":
+        if blocked:
+            sys.stdout.write(json.dumps(
+                {"decision": "continue", "reason": reason}))
+        else:
+            sys.stdout.write(json.dumps({"decision": ""}))
     else:
         # generic: mirror Claude Code's block contract on stdout.
         if blocked:
@@ -1140,6 +1160,8 @@ def _coverage_client_for_vendor(vendor: str) -> Optional[str]:
         return "codex"
     if "gemini" in stem:
         return "gemini-cli"
+    if "antigravity" in stem:
+        return "antigravity"
     return None
 
 
@@ -1426,7 +1448,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         sp = sub.add_parser(name)
         sp.add_argument("--vendor", default="generic",
                         choices=["claude-code", "codex", "cursor",
-                                 "gemini-cli", "generic"])
+                                 "gemini-cli", "antigravity", "generic"])
     sub.add_parser("health")
     _add_launch_opts(sub.add_parser("launch"))
 

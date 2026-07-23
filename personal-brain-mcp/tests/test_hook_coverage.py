@@ -212,6 +212,8 @@ def fake_home(tmp_path, monkeypatch):
     installer.ALL_PLANS["codex"].config_path = tmp_path / ".codex" / "config.toml"
     installer.ALL_PLANS["gemini-cli"].config_path = (
         tmp_path / ".gemini" / "settings.json")
+    installer.ALL_PLANS["antigravity"].config_path = (
+        tmp_path / ".gemini" / "config" / "hooks.json")
     yield tmp_path
 
 
@@ -411,6 +413,39 @@ def test_audit_marks_detected_missing_codex_hooks_red(fake_home, store):
     assert codex.installed is False
     assert codex.status == "red"
     assert any("hooks.json" in issue for issue in codex.issues)
+
+
+def test_audit_accepts_antigravity_named_hooks_and_mcp(fake_home, store):
+    (fake_home / ".gemini" / "config").mkdir(parents=True)
+    installer.install_all(only=["antigravity"])
+
+    report = hc.audit(store, only=["antigravity"], owner_user="founder")
+
+    antigravity = report.clients["antigravity"]
+    assert antigravity.detected is True
+    assert antigravity.installed is True
+    assert antigravity.status == "green"
+    assert antigravity.touchpoints["scope_gate"].installed is True
+    assert antigravity.touchpoints["pre_prompt_inject"].installed is True
+    assert antigravity.touchpoints["workshop_authority"].installed is True
+    assert antigravity.touchpoints["drive_inject"].installed is True
+    assert antigravity.touchpoints["stop_gate"].installed is True
+
+
+def test_audit_marks_missing_antigravity_hooks_red(fake_home, store):
+    (fake_home / ".gemini" / "config").mkdir(parents=True)
+    installer._antigravity_mcp_path().write_text(
+        json.dumps({"mcpServers": {"brain": {"command": "personal-brain"}}}),
+        encoding="utf-8",
+    )
+
+    report = hc.audit(store, only=["antigravity"], owner_user="founder")
+
+    antigravity = report.clients["antigravity"]
+    assert antigravity.detected is True
+    assert antigravity.installed is False
+    assert antigravity.status == "red"
+    assert any("hooks.json" in issue for issue in antigravity.issues)
 
 
 def test_audit_marks_missing_workshop_authority_red(fake_home, store):

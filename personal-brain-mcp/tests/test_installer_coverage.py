@@ -59,6 +59,8 @@ def fake_home(tmp_path, monkeypatch):
     installer.ALL_PLANS["codex"].config_path = tmp_path / ".codex" / "config.toml"
     installer.ALL_PLANS["gemini-cli"].config_path = (
         tmp_path / ".gemini" / "settings.json")
+    installer.ALL_PLANS["antigravity"].config_path = (
+        tmp_path / ".gemini" / "config" / "hooks.json")
     yield tmp_path
 
 
@@ -465,6 +467,75 @@ def test_gemini_uninstall_removes_hooks_and_server(fake_home):
 
 
 # ───────────────────────── matrix invariants ────────────────────────────
+
+
+def test_antigravity_writes_named_hooks_and_mcp(fake_home):
+    (fake_home / ".gemini" / "config").mkdir(parents=True)
+    installer.install_all(only=["antigravity"])
+
+    hooks_path = installer._antigravity_hooks_path()
+    mcp_path = installer._antigravity_mcp_path()
+    hooks = json.loads(hooks_path.read_text())
+    mcp = json.loads(mcp_path.read_text())
+    entry = hooks[installer.ANTIGRAVITY_MANAGED_HOOK]
+
+    assert "brain" in mcp["mcpServers"]
+    assert "PreToolUse" in entry
+    assert "PreInvocation" in entry
+    assert "Stop" in entry
+
+    scope_cmd = entry["PreToolUse"][0]["hooks"][0]["command"]
+    pre_cmd = entry["PreInvocation"][0]["command"]
+    stop_cmd = entry["Stop"][0]["command"]
+    assert "agent_scope_gate.py" in scope_cmd
+    assert "--vendor antigravity" in scope_cmd
+    assert "antigravity_coordination_context.py" in pre_cmd
+    assert "brainwrap" in stop_cmd and "stop" in stop_cmd
+    assert "--vendor antigravity" in stop_cmd
+
+    matrix = installer.coverage_matrix(["antigravity"])["antigravity"]
+    assert matrix["scope_gate"] == installer.ENFORCED
+    assert matrix["pre_prompt_inject"] == installer.ENFORCED
+    assert matrix["stop_gate"] == installer.ENFORCED
+    assert matrix["post_tool_write"] == installer.PER_TURN
+
+
+def test_antigravity_hooks_preserve_user_named_entries(fake_home):
+    (fake_home / ".gemini" / "config").mkdir(parents=True)
+    hooks_path = installer._antigravity_hooks_path()
+    hooks_path.write_text(json.dumps({
+        "user-reminder": {
+            "PreInvocation": [
+                {"type": "command", "command": "./my/reminder.sh"}
+            ]
+        }
+    }))
+
+    installer.install_all(only=["antigravity"])
+
+    hooks = json.loads(hooks_path.read_text())
+    assert "user-reminder" in hooks
+    assert installer.ANTIGRAVITY_MANAGED_HOOK in hooks
+
+
+def test_antigravity_uninstall_removes_only_managed_entries(fake_home):
+    (fake_home / ".gemini" / "config").mkdir(parents=True)
+    hooks_path = installer._antigravity_hooks_path()
+    hooks_path.write_text(json.dumps({
+        "user-reminder": {
+            "PreInvocation": [
+                {"type": "command", "command": "./my/reminder.sh"}
+            ]
+        }
+    }))
+    installer.install_all(only=["antigravity"])
+    installer.uninstall_all(only=["antigravity"])
+
+    hooks = json.loads(hooks_path.read_text())
+    mcp = json.loads(installer._antigravity_mcp_path().read_text())
+    assert "user-reminder" in hooks
+    assert installer.ANTIGRAVITY_MANAGED_HOOK not in hooks
+    assert "brain" not in mcp.get("mcpServers", {})
 
 
 def test_every_non_claude_vendor_has_mcpservers_plus_wrapper_or_hook():

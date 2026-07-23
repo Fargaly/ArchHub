@@ -594,8 +594,11 @@ def classify_path(path: str) -> str:
         "tests/test_wire_fields.py": "legacy_workflow_runtime_court",
         "tests/test_workflow_runner.py": "legacy_workflow_runtime_court",
         "app/agents/self_extend.py": "legacy_self_extension_runtime_bridge",
+        ".agents/hooks.json": "governance_brain_authority_layer",
         ".gitignore": "governance_brain_authority_layer",
         "pyproject.toml": "governance_brain_authority_layer",
+        "tools/antigravity_coordination_context.py": "governance_brain_authority_layer",
+        "tools/antigravity_scope_gate.py": "governance_brain_authority_layer",
         "tools/agent_desktop_watchdog.py": "governance_brain_authority_layer",
         "tools/authority_wip_classify.py": "governance_brain_authority_layer",
         "tools/brain_sort_inventory.py": "governance_brain_authority_layer",
@@ -615,6 +618,7 @@ def classify_path(path: str) -> str:
         "tests/test_self_extend_ui_widget.py": "legacy_workflow_runtime_court",
         "tests/test_agent_os_broker.py": "governance_brain_authority_layer",
         "tests/test_agent_os_gate.py": "governance_brain_authority_layer",
+        "tests/test_antigravity_governance_hooks.py": "governance_brain_authority_layer",
         "tests/test_authority_wip_classify.py": "governance_brain_authority_layer",
         "tests/test_brainwrap.py": "governance_brain_authority_layer",
         "tests/test_cockpit_legacy_authority_boundary.py": "governance_brain_authority_layer",
@@ -626,6 +630,8 @@ def classify_path(path: str) -> str:
     }
     if p in exact:
         return exact[p]
+    if p.startswith(".agents/"):
+        return "governance_brain_authority_layer"
     if p.startswith("personal-brain-mcp/node_courts/"):
         return "universal_cell_authority_court"
     if p.startswith("personal-brain-mcp/") or p.startswith("tools/agent_os_"):

@@ -1,0 +1,30 @@
+{
+  "archhub-governance": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py -3.14 tools\\antigravity_scope_gate.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "py -3.14 tools\\antigravity_coordination_context.py",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "py -3.14 tools\\brainwrap.py stop --vendor antigravity",
+        "timeout": 30
+      }
+    ]
+  }
+}

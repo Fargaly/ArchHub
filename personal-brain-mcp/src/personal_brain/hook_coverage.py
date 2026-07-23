@@ -246,7 +246,10 @@ def _read_json(path: Path) -> tuple[Optional[dict[str, Any]], str]:
     if not path.exists():
         return None, f"missing {path.name}"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return None, f"{path.name} is empty"
+        data = json.loads(raw)
     except Exception as ex:
         return None, f"{path.name} is not valid JSON: {type(ex).__name__}: {ex}"
     if not isinstance(data, dict):
@@ -305,6 +308,77 @@ def _json_has_brain_mcp(path: Path) -> tuple[bool, str]:
     if isinstance(servers, dict) and "brain" in servers:
         return True, f"{path}:mcpServers.brain"
     return False, f"{path.name}: missing mcpServers.brain"
+
+
+def _antigravity_event_has(
+    path: Path,
+    event: str,
+    *markers: str,
+) -> tuple[bool, str]:
+    data, err = _read_json(path)
+    if data is None:
+        return False, f"{path.name}: {err}"
+    entry = data.get(installer.ANTIGRAVITY_MANAGED_HOOK)
+    if not isinstance(entry, dict):
+        return False, f"{path.name}: missing {installer.ANTIGRAVITY_MANAGED_HOOK}"
+    if event not in entry:
+        return False, f"{path.name}: missing {installer.ANTIGRAVITY_MANAGED_HOOK}.{event}"
+    event_tokens = _tokens(entry[event])
+    if not _has_all_markers(event_tokens, tuple(markers)):
+        marker_text = " + ".join(markers)
+        return False, (
+            f"{path.name}: {installer.ANTIGRAVITY_MANAGED_HOOK}.{event} "
+            f"missing {marker_text}"
+        )
+    return True, f"{path}:{installer.ANTIGRAVITY_MANAGED_HOOK}.{event}"
+
+
+def _antigravity_hook_schema(path: Path) -> tuple[bool, str]:
+    data, err = _read_json(path)
+    if data is None:
+        return False, f"{path.name}: {err}"
+    entry = data.get(installer.ANTIGRAVITY_MANAGED_HOOK)
+    if not isinstance(entry, dict):
+        return False, f"{path.name}: missing {installer.ANTIGRAVITY_MANAGED_HOOK}"
+    issues: list[str] = []
+    for event in ("PreToolUse", "PreInvocation", "Stop"):
+        hooks = entry.get(event)
+        if not isinstance(hooks, list):
+            issues.append(f"{installer.ANTIGRAVITY_MANAGED_HOOK}.{event} must be an array")
+            continue
+        if not hooks:
+            issues.append(f"{installer.ANTIGRAVITY_MANAGED_HOOK}.{event} must not be empty")
+    for group_index, group in enumerate(entry.get("PreToolUse") or []):
+        where = f"{installer.ANTIGRAVITY_MANAGED_HOOK}.PreToolUse[{group_index}]"
+        if not isinstance(group, dict):
+            issues.append(f"{where} must be an object")
+            continue
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list) or not handlers:
+            issues.append(f"{where}.hooks must be a non-empty array")
+            continue
+        for handler_index, handler in enumerate(handlers):
+            handler_where = f"{where}.hooks[{handler_index}]"
+            if not isinstance(handler, dict):
+                issues.append(f"{handler_where} must be an object")
+                continue
+            if handler.get("type") != "command":
+                issues.append(f"{handler_where}.type must be command")
+            if not isinstance(handler.get("command"), str):
+                issues.append(f"{handler_where}.command is required")
+    for event in ("PreInvocation", "Stop"):
+        for handler_index, handler in enumerate(entry.get(event) or []):
+            handler_where = f"{installer.ANTIGRAVITY_MANAGED_HOOK}.{event}[{handler_index}]"
+            if not isinstance(handler, dict):
+                issues.append(f"{handler_where} must be an object")
+                continue
+            if handler.get("type") != "command":
+                issues.append(f"{handler_where}.type must be command")
+            if not isinstance(handler.get("command"), str):
+                issues.append(f"{handler_where}.command is required")
+    if issues:
+        return False, f"{path.name}: " + "; ".join(issues)
+    return True, f"{path}: Antigravity named hook schema valid"
 
 
 def _grouped_hook_schema(
@@ -434,6 +508,8 @@ def _schema_checks_for(client: str) -> list[tuple[bool, str]]:
             client=client,
             command_only=True,
         )]
+    if client == "antigravity":
+        return [_antigravity_hook_schema(installer._antigravity_hooks_path())]
     return [(False, f"no schema check for {client}")]
 
 
@@ -472,6 +548,11 @@ def _client_paths(client: str) -> list[Path]:
         return [installer._codex_path(), installer._codex_hooks_path()]
     if client == "gemini-cli":
         return [installer._gemini_path()]
+    if client == "antigravity":
+        return [
+            installer._antigravity_mcp_path(),
+            installer._antigravity_hooks_path(),
+        ]
     return []
 
 
@@ -534,6 +615,32 @@ def _checks_for(client: str) -> tuple[list[tuple[bool, str]], dict[str, tuple[bo
                 "drive_inject": _json_event_has(path, "BeforeAgent", "brainwrap", "context"),
                 "post_tool_write": _json_event_has(path, "AfterAgent", "brainwrap", "stop"),
                 "stop_gate": _json_event_has(path, "AfterAgent", "brainwrap", "stop"),
+            },
+        )
+    if client == "antigravity":
+        mcp_path = installer._antigravity_mcp_path()
+        hooks_path = installer._antigravity_hooks_path()
+        return (
+            [_json_has_brain_mcp(mcp_path)],
+            {
+                "scope_gate": _antigravity_event_has(
+                    hooks_path, "PreToolUse", "agent_scope_gate.py", "--vendor antigravity"
+                ),
+                "pre_prompt_inject": _antigravity_event_has(
+                    hooks_path, "PreInvocation", "antigravity_coordination_context.py"
+                ),
+                "workshop_authority": _antigravity_event_has(
+                    hooks_path, "PreInvocation", "antigravity_coordination_context.py"
+                ),
+                "drive_inject": _antigravity_event_has(
+                    hooks_path, "PreInvocation", "antigravity_coordination_context.py"
+                ),
+                "post_tool_write": _antigravity_event_has(
+                    hooks_path, "Stop", "brainwrap", "stop", "antigravity"
+                ),
+                "stop_gate": _antigravity_event_has(
+                    hooks_path, "Stop", "brainwrap", "stop", "antigravity"
+                ),
             },
         )
     return ([], {})

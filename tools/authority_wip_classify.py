@@ -445,6 +445,9 @@ REQUIRED_COURTS_BY_PATH: dict[str, list[str]] = {
     "app/web_ui/studio-lm.jsx": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "app/web_ui/tokens.jsx": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "tools/production_webshell_preview.py": LEGACY_WEBSHELL_BOUNDARY_COURTS,
+    "tests/test_public_privacy_ratchet.py": [
+        "tests/test_public_privacy_ratchet.py",
+    ],
     "app/workflows/grand_map_ui.py": LEGACY_HANDMADE_PROJECTION_COURTS,
     "app/workflows/graph.py": [
         "tests/test_core_nodes.py",
@@ -633,6 +636,7 @@ def classify_path(path: str) -> str:
         "tests/test_legacy_runtime_drain.py": "governance_brain_authority_layer",
         "tests/test_legacy_webshell_host_boundary.py": "legacy_webshell_host_court",
         "tests/test_live_runtime_holders.py": "governance_brain_authority_layer",
+        "tests/test_public_privacy_ratchet.py": "governance_brain_authority_layer",
     }
     if p in exact:
         return exact[p]

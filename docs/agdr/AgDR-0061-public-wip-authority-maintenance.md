@@ -60,11 +60,15 @@ scope:
    audited for the exact affected client. Prefer
    `brain.hook_coverage_audit_cell_first` when the daemon is reachable; otherwise
    run the focused local hook-coverage courts and report the daemon boundary.
-8. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
+8. The public private-identifier ratchet has been run:
+   `py -3.14 -m pytest tests\test_public_privacy_ratchet.py -q --timeout=90 --tb=short`.
+   It is shrink-only: existing public debt may decrease, but new or widened
+   private client/project references fail the court.
+9. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
    process, production conversion worker, or active session has been stopped,
    restarted, replaced, or handed off unless that action was explicitly in the
    scope and proved by its own court.
-9. If another task owns the machine-priority slot, the generated classifier
+10. If another task owns the machine-priority slot, the generated classifier
    report carries `gate.machine_resource.active_hold=true`, and every generated
    active-work leaf carries the same `machine_resource_gate`. The public report
    must not serialize client names, drawing package identifiers, exact counts,
@@ -104,13 +108,15 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `py -3.14 -m pytest personal-brain-mcp\tests\test_hook_coverage.py personal-brain-mcp\tests\test_installer_coverage.py tests\test_brainwrap.py -q --timeout=120 --tb=short`.
    Add client-specific courts such as
    `tests\test_antigravity_governance_hooks.py` when that client is touched.
-6. Run whitespace/path sanity before commit:
+6. Run the public private-identifier ratchet:
+   `py -3.14 -m pytest tests\test_public_privacy_ratchet.py -q --timeout=90 --tb=short`.
+7. Run whitespace/path sanity before commit:
    `git diff --check`.
-7. Commit only the bounded correction and generated evidence.
-8. Re-run the classifier after the commit so
+8. Commit only the bounded correction and generated evidence.
+9. Re-run the classifier after the commit so
    `docs/_meta/authority_wip_classification.latest.json` represents the final
    post-commit state.
-9. If a public-site repo is involved, check it separately:
+10. If a public-site repo is involved, check it separately:
    `git status --porcelain=v1 --untracked-files=all` inside
    `10.PRODUCT/13.NODE-LANGUAGE/public_site`.
 
@@ -157,6 +163,7 @@ Every run that changes the public WIP boundary must leave:
 
 - The refreshed `docs/_meta/authority_wip_classification.latest.json`.
 - The focused court output in the final report.
+- The public private-identifier ratchet output.
 - Hook coverage audit output when agent/session adapters changed.
 - The redacted `machine_resource_gate` when a machine-priority holder exists.
 - The exact commit hash or an explicit statement that no commit was made.

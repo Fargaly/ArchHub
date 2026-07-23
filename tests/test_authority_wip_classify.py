@@ -522,6 +522,8 @@ def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
         "machine_resource_gate",
         "must not serialize client names",
         "classifier redacts",
+        "tests\\test_public_privacy_ratchet.py",
+        "private-identifier ratchet",
         "docs\\_meta\\authority_wip_classification.latest.json",
         "agent/session hook adapter",
         "brain.hook_coverage_audit_cell_first",

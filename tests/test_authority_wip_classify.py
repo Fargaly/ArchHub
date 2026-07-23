@@ -411,6 +411,34 @@ def test_external_worktree_wip_is_classified_as_owner_boundary():
     assert "owner" in entry["required_action"]
 
 
+def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
+    runbook = (
+        Path(__file__).resolve().parent.parent
+        / "docs"
+        / "agdr"
+        / "AgDR-0061-public-wip-authority-maintenance.md"
+    )
+    text = runbook.read_text(encoding="utf-8")
+
+    required_phrases = [
+        "Do not mark the goal complete",
+        "not a workspace-wide completion certificate",
+        "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md",
+        "10.PRODUCT/13.NODE-LANGUAGE/SPEC.md",
+        "git status --porcelain=v1 --untracked-files=all",
+        "tools\\authority_wip_classify.py --include-worktrees",
+        "docs\\_meta\\authority_wip_classification.latest.json",
+        "external_owner_worktree_wip",
+        "zero promotion candidates",
+        "No live runtime",
+        "machine-priority slot",
+        "origin/main",
+    ]
+    missing = [phrase for phrase in required_phrases if phrase not in text]
+
+    assert missing == []
+
+
 def test_classification_generates_category_active_work_leaves():
     report = awc.classify_entries([
         {"code": "??", "path": "app/workflows/universal_grand_map_surface.py"},

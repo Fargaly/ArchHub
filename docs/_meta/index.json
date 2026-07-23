@@ -1642,6 +1642,17 @@
     "missing_deps": []
   },
   {
+    "slug": "agdr/AgDR-0061-public-wip-authority-maintenance",
+    "title": "Public WIP Authority Maintenance Strategy",
+    "path": "docs/agdr/AgDR-0061-public-wip-authority-maintenance.md",
+    "word_count": 687,
+    "mtime": 1784804988,
+    "deps": [
+      "AgDR-0061"
+    ],
+    "missing_deps": []
+  },
+  {
     "slug": "adr/ADR-001-cloud-hosting",
     "title": "ADR-001: ArchHub cloud backend hosting choice",
     "path": "docs/adr/ADR-001-cloud-hosting.md",

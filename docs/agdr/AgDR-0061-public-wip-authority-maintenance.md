@@ -1,0 +1,124 @@
+---
+id: AgDR-0061
+title: Public WIP authority maintenance strategy
+timestamp: 2026-07-23
+agent: Codex
+session: public-wip-authority-correction
+status: executed
+category: governance
+projects: [archhub]
+supersedes: []
+superseded_by: null
+---
+
+# Public WIP Authority Maintenance Strategy
+
+## Scope
+
+This runbook prevents a false completion claim when public product work is only
+locally clean, only partially classified, or blocked by another owner's active
+worktree. It applies to `10.PRODUCT/12.PRODUCTION` when judging whether public
+WIP has been coordinated against the Universal Cell authority.
+
+This is not a workspace-wide completion certificate, not a release certificate,
+and not proof that every ArchHub system is done. It is a maintenance gate for
+the public product WIP boundary.
+
+## Controlling Authority
+
+The controlling product authority remains:
+
+- `10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md`
+- `10.PRODUCT/13.NODE-LANGUAGE/SPEC.md`
+- `00.GOVERNANCE/WORKSPACE-STANDARD.md`
+
+`10.PRODUCT/12.PRODUCTION` may host compatibility code, projections, adapters,
+evidence, and migration controls. Those files are not product authority by
+classification alone.
+
+## Completion Rule
+
+Do not mark the goal complete unless all of these are true for the stated
+scope:
+
+1. The exact scope is named in the report: local tracked source, ignored
+   generated artifacts, external owner worktrees, remote publication, or live
+   runtime handoff.
+2. `git status --porcelain=v1 --untracked-files=all` has been checked inside
+   `10.PRODUCT/12.PRODUCTION`.
+3. The WIP authority classifier has been run with external worktree coverage:
+   `py -3.14 tools\authority_wip_classify.py --include-worktrees --output docs\_meta\authority_wip_classification.latest.json --enforce-no-unclassified`.
+4. `docs/_meta/authority_wip_classification.latest.json` shows:
+   no `unclassified_noncoordinated`, zero promotion candidates, and every
+   remaining path classified with a required action.
+5. `external_owner_worktree_wip` entries are reported as owner-boundary WIP,
+   not absorbed, rewritten, published, or treated as clean authority.
+6. Any code/doc/evidence change made during the run has a focused court and is
+   committed before the report claims the local tracked source is clean.
+7. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
+   process, production conversion worker, or active session has been stopped,
+   restarted, replaced, or handed off unless that action was explicitly in the
+   scope and proved by its own court.
+
+If any item is false, the report must say "not complete for that scope" and
+name the blocker.
+
+## Maintenance Loop
+
+Use this loop before every public WIP completion claim, before a public push,
+after any agent creates a worktree, and after a machine-priority conflict:
+
+1. Run the local source check:
+   `git status --porcelain=v1 --untracked-files=all`.
+2. Run the authority classification:
+   `py -3.14 tools\authority_wip_classify.py --include-worktrees --output docs\_meta\authority_wip_classification.latest.json --enforce-no-unclassified`.
+3. Run the focused WIP authority court:
+   `py -3.14 -m pytest tests\test_authority_wip_classify.py -q --timeout=90 --tb=short`.
+4. Run whitespace/path sanity before commit:
+   `git diff --check`.
+5. Commit only the bounded correction and generated evidence.
+6. Re-run the classifier after the commit so
+   `docs/_meta/authority_wip_classification.latest.json` represents the final
+   post-commit state.
+7. If a public-site repo is involved, check it separately:
+   `git status --porcelain=v1 --untracked-files=all` inside
+   `10.PRODUCT/13.NODE-LANGUAGE/public_site`.
+
+Do not replace this loop with manual scanning or conversation memory. The JSON
+report is the machine-readable authority for this maintenance boundary.
+
+## Publication Rule
+
+Do not push or publish from a dirty branch merely because the local branch
+builds. When publication is required, use one of these explicit paths:
+
+- Create a clean publication branch from `origin/main`, cherry-pick the proven
+  commits, run the required leak scans and courts, then push that branch.
+- Or merge the proven branch deliberately after conflict analysis, leak scans,
+  and required courts.
+
+If `origin/main` does not contain the required files and cherry-pick fails,
+that is a remote publication blocker, not a reason to claim release
+completion.
+
+## Machine Resource Rule
+
+When another production task owns the machine-priority slot, this maintenance
+loop stays light: source reads, JSON classification, focused tests, and commits
+only. Do not start heavy browser, PDF, model, broad audit, preflight, or
+conversion work until the slot is released.
+
+## Evidence Ledger
+
+Every run that changes the public WIP boundary must leave:
+
+- The refreshed `docs/_meta/authority_wip_classification.latest.json`.
+- The focused court output in the final report.
+- The exact commit hash or an explicit statement that no commit was made.
+- A boundary statement separating local tracked source state, external owner
+  worktree state, ignored generated artifacts, remote publication state, and
+  live runtime state.
+
+This ledger is what prevents repeated heavy coordination and token burn: future
+agents should start from the classifier and this runbook, not reconstruct the
+same audit from scratch.

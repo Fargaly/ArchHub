@@ -6,6 +6,31 @@
 
 set -euo pipefail
 
+resolve_python_bin() {
+    if [[ -n "${ARCHHUB_PYTHON:-}" ]]; then
+        printf '%s\n' "$ARCHHUB_PYTHON"
+        return 0
+    fi
+    if command -v python >/dev/null 2>&1; then
+        command -v python
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return 0
+    fi
+    for candidate in \
+        "/mnt/c/Users/fargaly/AppData/Local/Python/bin/python.exe" \
+        "/c/Users/fargaly/AppData/Local/Python/bin/python.exe"
+    do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 remote="${1:-}"
 url="${2:-}"
 _unused_remote="$remote"
@@ -32,7 +57,16 @@ introduced_range_args() {
     fi
 }
 
-PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
+PYTHON_BIN="$(resolve_python_bin || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "[public-privacy-ratchet] python unavailable; blocking push." >&2
+    exit 1
+fi
+if [ ! -f tools/public_privacy_ratchet.py ]; then
+    echo "[public-privacy-ratchet] gate script missing; blocking push." >&2
+    exit 1
+fi
+"$PYTHON_BIN" tools/public_privacy_ratchet.py
 
 while read -r local_ref local_sha remote_ref remote_sha; do
     local_ref="${local_ref//$'\r'/}"

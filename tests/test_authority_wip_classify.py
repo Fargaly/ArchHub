@@ -151,6 +151,7 @@ def test_classification_keeps_universal_cell_separate_from_legacy():
         == "live_locked_legacy_typed_runtime_copy"
     )
     assert awc.classify_path("tools/safety_court_gate.py") == "governance_brain_authority_layer"
+    assert awc.classify_path("tools/public_privacy_ratchet.py") == "governance_brain_authority_layer"
     assert awc.classify_path(".githooks/pre-commit") == "runtime_retirement_gate_hook"
     assert awc.classify_path(".githooks/pre-push") == "runtime_retirement_gate_hook"
     assert awc.classify_path("tests/test_runtime_retirement_hook.py") == "runtime_retirement_gate_hook"
@@ -523,6 +524,8 @@ def test_public_wip_maintenance_runbook_exists_and_names_the_required_gates():
         "must not serialize client names",
         "classifier redacts",
         "tests\\test_public_privacy_ratchet.py",
+        "tools/public_privacy_ratchet.py",
+        "test_public_privacy_ratchet_is_wired_to_local_hooks",
         "private-identifier ratchet",
         "docs\\_meta\\authority_wip_classification.latest.json",
         "agent/session hook adapter",
@@ -1268,6 +1271,7 @@ def test_runtime_retirement_leaf_gate_executes_drain_courts():
     expected_courts = [
         "tests/test_legacy_runtime_drain.py",
         "tests/test_live_runtime_holders.py",
+        "tests/test_public_privacy_ratchet.py",
         "tests/test_runtime_retirement_hook.py",
     ]
     assert leaf["governance_context"]["category"] == "runtime_retirement_gate_hook"

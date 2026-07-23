@@ -64,6 +64,9 @@ scope:
    `py -3.14 -m pytest tests\test_public_privacy_ratchet.py -q --timeout=90 --tb=short`.
    It is shrink-only: existing public debt may decrease, but new or widened
    private client/project references fail the court.
+   Local `.githooks/pre-commit` and `.githooks/pre-push` also run
+   `tools/public_privacy_ratchet.py`, but local hooks remain a defense layer,
+   not proof of server-side protection.
 9. No live runtime, user-visible endpoint, Brain supervisor, Revit/Autodesk
    process, production conversion worker, or active session has been stopped,
    restarted, replaced, or handed off unless that action was explicitly in the
@@ -110,13 +113,15 @@ after any agent creates a worktree, and after a machine-priority conflict:
    `tests\test_antigravity_governance_hooks.py` when that client is touched.
 6. Run the public private-identifier ratchet:
    `py -3.14 -m pytest tests\test_public_privacy_ratchet.py -q --timeout=90 --tb=short`.
-7. Run whitespace/path sanity before commit:
+7. Confirm the local hooks still call the ratchet:
+   `py -3.14 -m pytest tests\test_public_privacy_ratchet.py::test_public_privacy_ratchet_is_wired_to_local_hooks -q --timeout=90 --tb=short`.
+8. Run whitespace/path sanity before commit:
    `git diff --check`.
-8. Commit only the bounded correction and generated evidence.
-9. Re-run the classifier after the commit so
+9. Commit only the bounded correction and generated evidence.
+10. Re-run the classifier after the commit so
    `docs/_meta/authority_wip_classification.latest.json` represents the final
    post-commit state.
-10. If a public-site repo is involved, check it separately:
+11. If a public-site repo is involved, check it separately:
    `git status --porcelain=v1 --untracked-files=all` inside
    `10.PRODUCT/13.NODE-LANGUAGE/public_site`.
 

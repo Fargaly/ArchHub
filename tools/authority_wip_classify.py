@@ -438,6 +438,14 @@ REQUIRED_COURTS_BY_PATH: dict[str, list[str]] = {
         "tests/test_rest_connectors.py",
         "tests/test_adapter_payload_candidate.py",
     ],
+    ".githooks/pre-commit": [
+        "tests/test_runtime_retirement_hook.py",
+        "tests/test_public_privacy_ratchet.py",
+    ],
+    ".githooks/pre-push": [
+        "tests/test_runtime_retirement_hook.py",
+        "tests/test_public_privacy_ratchet.py",
+    ],
     "app/bridge.py": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "app/web_ui/index.html": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "app/web_ui/jsx-boot.js": LEGACY_WEBSHELL_BOUNDARY_COURTS,
@@ -445,6 +453,9 @@ REQUIRED_COURTS_BY_PATH: dict[str, list[str]] = {
     "app/web_ui/studio-lm.jsx": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "app/web_ui/tokens.jsx": LEGACY_WEBSHELL_BOUNDARY_COURTS,
     "tools/production_webshell_preview.py": LEGACY_WEBSHELL_BOUNDARY_COURTS,
+    "tools/public_privacy_ratchet.py": [
+        "tests/test_public_privacy_ratchet.py",
+    ],
     "tests/test_public_privacy_ratchet.py": [
         "tests/test_public_privacy_ratchet.py",
     ],
@@ -617,6 +628,7 @@ def classify_path(path: str) -> str:
         "tools/import_claude_sessions.py": "governance_brain_authority_layer",
         "tools/legacy_runtime_drain.py": "governance_brain_authority_layer",
         "tools/live_runtime_holders.py": "governance_brain_authority_layer",
+        "tools/public_privacy_ratchet.py": "governance_brain_authority_layer",
         "tools/safety_court_gate.py": "governance_brain_authority_layer",
         "docs/_meta/local_application_servers.cleanup.json": "governance_run_evidence",
         "docs/_meta/local_application_servers.latest.json": "governance_run_evidence",

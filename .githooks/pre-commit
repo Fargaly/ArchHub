@@ -7,6 +7,31 @@
 
 set -euo pipefail
 
+resolve_python_bin() {
+    if [[ -n "${ARCHHUB_PYTHON:-}" ]]; then
+        printf '%s\n' "$ARCHHUB_PYTHON"
+        return 0
+    fi
+    if command -v python >/dev/null 2>&1; then
+        command -v python
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return 0
+    fi
+    for candidate in \
+        "/mnt/c/Users/fargaly/AppData/Local/Python/bin/python.exe" \
+        "/c/Users/fargaly/AppData/Local/Python/bin/python.exe"
+    do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [[ "${ARCHHUB_ALLOW_CS_EDIT:-0}" == "1" ]]; then
     exit 0
 fi
@@ -38,6 +63,19 @@ EOF
     exit 1
 fi
 
+# Public privacy ratchet. This blocks widening already-known private
+# client/project identifier debt in the T0 public product tree.
+PYTHON_BIN="$(resolve_python_bin || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "[public-privacy-ratchet] python unavailable; blocking commit." >&2
+    exit 1
+fi
+if [ ! -f tools/public_privacy_ratchet.py ]; then
+    echo "[public-privacy-ratchet] gate script missing; blocking commit." >&2
+    exit 1
+fi
+"$PYTHON_BIN" tools/public_privacy_ratchet.py
+
 # Universal Cell runtime-copy retirement gate.
 # Fires only when a commit stages changes under node_runtime/. A staged
 # archive/removal/edit of the copied runtime must prove the machine-readable
@@ -46,7 +84,6 @@ STAGED_NODE_RUNTIME=$(git diff --cached --name-only --diff-filter=ACMRD \
             -- node_runtime 2>/dev/null || true)
 
 if [[ -n "$STAGED_NODE_RUNTIME" ]]; then
-    PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
     if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -f "$PYTHON_BIN" ]; then
         echo "[runtime-retirement-gate] python unavailable; blocking node_runtime retirement." >&2
         exit 1
@@ -81,7 +118,6 @@ fi
 
 # Brain commit gate. This remains warn/fail-open by default and only blocks
 # when the gate itself deliberately exits 1.
-PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
 if command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ -f tools/brain_commit_gate.py ]; then
     GATE_RC=0
     "$PYTHON_BIN" tools/brain_commit_gate.py || GATE_RC=$?

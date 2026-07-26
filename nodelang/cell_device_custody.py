@@ -68,6 +68,37 @@ class DeviceCustodyProjection:
     revocation_reason_roots: tuple[str, ...]
 
 
+class ActiveDeviceCustodyVerifier:
+    """Resolve one active custody relation for an exact device root."""
+
+    def __init__(self, protocol: DeviceCustodyProtocol) -> None:
+        if not isinstance(protocol, DeviceCustodyProtocol):
+            raise TypeError("active custody verifier requires its protocol")
+        self._protocol = protocol
+
+    def verify(
+        self,
+        snapshot: Snapshot,
+        *,
+        device_root: str,
+        now: float,
+    ) -> str:
+        del now
+        matches = []
+        for custody_root in list_device_custody_roots(snapshot, self._protocol):
+            custody = read_device_custody(
+                snapshot, self._protocol, custody_root
+            )
+            if (
+                custody.device_root == device_root
+                and custody.state_root == self._protocol.states["active"]
+            ):
+                matches.append(custody_root)
+        if len(matches) != 1:
+            raise InvalidCell("device requires one active custody authority")
+        return matches[0]
+
+
 def _terminal(root_id: str, value: str) -> Cell:
     return Cell(root_id, NULL_CELL_ID, NULL_CELL_ID, value.encode("utf-8"))
 
@@ -359,6 +390,7 @@ def revoke_device_custody(
 
 
 __all__ = [
+    "ActiveDeviceCustodyVerifier",
     "DeviceCustodyProjection",
     "DeviceCustodyProtocol",
     "bootstrap_device_custody_protocol",

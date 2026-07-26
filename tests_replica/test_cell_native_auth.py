@@ -7,6 +7,7 @@ import httpx
 import pytest
 from joserfc import jwk
 
+import nodelang.cell_native_auth as cell_native_auth
 from nodelang.cell_cloud_sessions import device_root_for_thumbprint
 from nodelang.cell_native_auth import (
     NativeAuthenticationDenied,
@@ -30,7 +31,7 @@ from nodelang.cell_identity import (
 )
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.cell_oidc_discovery import OidcDiscoveryKeyResolver
-from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore
+from nodelang.universal_cell import Conflict, NULL_CELL_ID, Cell, CellStore
 
 
 ISSUER = "https://identity.archhub.test/tenant"
@@ -282,6 +283,127 @@ def test_callback_requires_exact_state_and_response_issuer_then_is_one_use():
             authorization_code="second-code",
             now=NOW + 2,
         )
+
+
+def test_completion_commit_conflict_does_not_burn_secret_custody(monkeypatch):
+    (
+        store,
+        protocol,
+        _registration,
+        _verifier,
+        _identity,
+        _relationship_broker,
+        _activation_root,
+        broker,
+        started,
+    ) = _start()
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    original_commit = store.commit
+    failed = False
+
+    def fail_first_completion(expected_revision, *, create=(), replace=()):
+        nonlocal failed
+        if not failed and any(
+            cell.id.startswith("native-authorization-completion:")
+            for cell in create
+        ):
+            failed = True
+            raise Conflict("simulated completion conflict")
+        return original_commit(
+            expected_revision,
+            create=create,
+            replace=replace,
+        )
+
+    monkeypatch.setattr(store, "commit", fail_first_completion)
+    with pytest.raises(Conflict, match="simulated completion conflict"):
+        broker.complete(
+            store,
+            protocol,
+            started.transaction_root,
+            state=query["state"][0],
+            response_issuer=ISSUER,
+            authorization_code="retryable-code",
+            now=NOW + 1,
+        )
+    assert native_authorization_status(
+        store.snapshot(), protocol, started.transaction_root, now=NOW + 1
+    ) == "pending"
+    completed = broker.complete(
+        store,
+        protocol,
+        started.transaction_root,
+        state=query["state"][0],
+        response_issuer=ISSUER,
+        authorization_code="retryable-code",
+        now=NOW + 1,
+    )
+    assert completed.transaction_root == started.transaction_root
+    assert native_authorization_status(
+        store.snapshot(), protocol, started.transaction_root, now=NOW + 1
+    ) == "completed"
+
+
+def test_completion_preparation_failure_does_not_lock_secret_custody(monkeypatch):
+    (
+        store,
+        protocol,
+        _registration,
+        _verifier,
+        _identity,
+        _relationship_broker,
+        _activation_root,
+        broker,
+        started,
+    ) = _start()
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    original_prepare = cell_native_auth.prepare_append_relation_member
+    failed = False
+
+    def fail_first_completion(*args, **kwargs):
+        nonlocal failed
+        if (
+            not failed
+            and args[1] == protocol.root_id
+            and args[2] == protocol.role("completion-member")
+        ):
+            failed = True
+            raise RuntimeError("simulated completion preparation failure")
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        cell_native_auth,
+        "prepare_append_relation_member",
+        fail_first_completion,
+    )
+    with pytest.raises(
+        RuntimeError, match="simulated completion preparation failure"
+    ):
+        broker.complete(
+            store,
+            protocol,
+            started.transaction_root,
+            state=query["state"][0],
+            response_issuer=ISSUER,
+            authorization_code="retryable-preparation-code",
+            now=NOW + 1,
+        )
+    assert native_authorization_status(
+        store.snapshot(), protocol, started.transaction_root, now=NOW + 1
+    ) == "pending"
+    completed = broker.complete(
+        store,
+        protocol,
+        started.transaction_root,
+        state=query["state"][0],
+        response_issuer=ISSUER,
+        authorization_code="retryable-preparation-code",
+        now=NOW + 1,
+    )
+    assert completed.transaction_root == started.transaction_root
+    assert native_authorization_status(
+        store.snapshot(), protocol, started.transaction_root, now=NOW + 1
+    ) == "completed"
 
 
 def test_client_requires_signed_tenant_activation_before_authorization():

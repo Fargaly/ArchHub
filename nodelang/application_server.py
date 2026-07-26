@@ -42,7 +42,10 @@ from .cell_deliberation import (
     read_deliberation_space,
 )
 from .cell_value_graph import read_value_graph
-from .cell_device_custody import read_device_custody
+from .cell_device_custody import (
+    ActiveDeviceCustodyVerifier,
+    read_device_custody,
+)
 from .cell_cloud_sessions import CloudSessionBroker, device_root_for_thumbprint
 from .cell_dpop import JoseRfc9449ProofVerifier
 from .cell_dpop_nonce import ResourceServerNonceBroker
@@ -8469,6 +8472,9 @@ class ApplicationServer:
                 authorization.protocol,
                 authorization.identity_protocol,
                 authorization.relationship_broker,
+            ),
+            device_custody_verifier=ActiveDeviceCustodyVerifier(
+                registry.device_custody_protocol
             ),
             session_issuer_root=authorization.subject_root,
         )

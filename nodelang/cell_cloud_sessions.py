@@ -116,6 +116,19 @@ class TenantAdmissionVerifier(Protocol):
         """Return current release evidence, or deny the subject and tenant."""
 
 
+class DeviceCustodyVerifier(Protocol):
+    """Trusted graph verifier for one device's active key custody."""
+
+    def verify(
+        self,
+        snapshot: Snapshot,
+        *,
+        device_root: str,
+        now: float,
+    ) -> str:
+        """Return one active custody root, or deny the device."""
+
+
 @dataclass(frozen=True, slots=True)
 class CloudSessionProtocol:
     root_id: str
@@ -407,6 +420,7 @@ class CloudSessionBroker:
         authentication_broker: AuthenticationBroker,
         request_proof_verifier: RequestProofVerifier,
         tenant_admission_verifier: TenantAdmissionVerifier,
+        device_custody_verifier: DeviceCustodyVerifier,
         session_issuer_root: str,
     ) -> None:
         self._session_protocol = session_protocol
@@ -415,6 +429,9 @@ class CloudSessionBroker:
         self._authentication_broker = authentication_broker
         self._request_proof_verifier = request_proof_verifier
         self._tenant_admission_verifier = tenant_admission_verifier
+        if not hasattr(device_custody_verifier, "verify"):
+            raise TypeError("cloud session requires device custody verification")
+        self._device_custody_verifier = device_custody_verifier
         self._session_issuer_root = session_issuer_root
 
     def _tenant_admission(
@@ -496,6 +513,33 @@ class CloudSessionBroker:
             )
         return matches[0]
 
+    def _verified_device_custody(
+        self,
+        snapshot: Snapshot,
+        *,
+        device_root: str,
+        now: float,
+    ) -> str:
+        try:
+            custody_root = self._device_custody_verifier.verify(
+                snapshot,
+                device_root=device_root,
+                now=now,
+            )
+        except Exception as exc:
+            raise CloudSessionDenied(
+                "cloud session device custody is inactive"
+            ) from exc
+        if (
+            not isinstance(custody_root, str)
+            or not custody_root
+            or custody_root not in snapshot.cells
+        ):
+            raise CloudSessionDenied(
+                "cloud session device custody evidence drifted"
+            )
+        return custody_root
+
     def issue(
         self,
         store: CellStore,
@@ -543,6 +587,11 @@ class CloudSessionBroker:
             now=current,
         )
         device_root = device_root_for_thumbprint(proof_key_thumbprint)
+        device_custody_root = self._verified_device_custody(
+            snapshot,
+            device_root=device_root,
+            now=current,
+        )
         device_binding_root = self._verified_device_binding(
             snapshot,
             device_root=device_root,
@@ -587,6 +636,7 @@ class CloudSessionBroker:
             value_cells["proof-key-thumbprint"].id,
             (
                 authentication.evidence_root,
+                device_custody_root,
                 device_binding_root,
                 tenant_admission.published_revision_root,
             ),
@@ -613,6 +663,7 @@ class CloudSessionBroker:
             (self._session_protocol.role("token-digest"), value_cells["token-digest"].id),
             (self._session_protocol.role("proof-key-thumbprint"), value_cells["proof-key-thumbprint"].id),
             (self._session_protocol.role("evidence"), authentication.evidence_root),
+            (self._session_protocol.role("evidence"), device_custody_root),
             (self._session_protocol.role("evidence"), device_binding_root),
             (self._session_protocol.role("evidence"), tenant_admission.published_revision_root),
             (self._session_protocol.role("manifest-digest"), manifest_root),
@@ -656,6 +707,7 @@ class CloudSessionBroker:
             evidence_roots=(
                 manifest_root,
                 authentication.evidence_root,
+                device_custody_root,
                 device_binding_root,
                 tenant_admission.published_revision_root,
             ),
@@ -716,6 +768,18 @@ class CloudSessionBroker:
             or session.manifest_digest_root not in relationship.evidence_roots
         ):
             raise CloudSessionDenied("cloud session authority scope drifted")
+        device_custody_root = self._verified_device_custody(
+            snapshot,
+            device_root=session.device_root,
+            now=now,
+        )
+        if (
+            device_custody_root not in session.evidence_roots
+            or device_custody_root not in relationship.evidence_roots
+        ):
+            raise CloudSessionDenied(
+                "cloud session device custody evidence changed"
+            )
         self._verified_device_binding(
             snapshot,
             device_root=session.device_root,
@@ -754,16 +818,37 @@ class CloudSessionBroker:
         self,
         store: CellStore,
         *,
-        session_root: str,
+        session: CloudSessionProjection,
+        token_digest: str,
+        requested_action_root: str,
         proof_id: str,
         http_method: str,
         target_uri: str,
         observed_at: float,
     ) -> str:
         proof_digest = hashlib.sha256(proof_id.encode("utf-8")).hexdigest()
-        use_root = "%s:proof-use:%s" % (session_root, proof_digest)
+        use_root = "%s:proof-use:%s" % (session.root_id, proof_digest)
         for _ in range(4):
             snapshot = store.snapshot()
+            current_session = verify_cloud_session_manifest(
+                snapshot,
+                self._session_protocol,
+                session.root_id,
+            )
+            if (
+                current_session != session
+                or _atom(snapshot, current_session.token_digest_root)
+                != token_digest
+            ):
+                raise CloudSessionDenied(
+                    "cloud session changed during request admission"
+                )
+            self._authority(
+                snapshot,
+                current_session,
+                requested_action_root=requested_action_root,
+                now=observed_at,
+            )
             if use_root in snapshot.cells:
                 raise CloudSessionDenied("request proof was replayed")
             values = {
@@ -779,7 +864,7 @@ class CloudSessionBroker:
                 for name, value in values.items()
             }
             relation = compose_relation_cells((
-                (self._session_protocol.role("session"), session_root),
+                (self._session_protocol.role("session"), session.root_id),
                 (self._session_protocol.role("proof-id-digest"), cells["proof-id-digest"].id),
                 (self._session_protocol.role("http-method"), cells["http-method"].id),
                 (self._session_protocol.role("target-uri-digest"), cells["target-uri-digest"].id),
@@ -860,7 +945,9 @@ class CloudSessionBroker:
             raise CloudSessionDenied("request proof verifier returned no identity")
         proof_use_root = self._record_proof_use(
             store,
-            session_root=session.root_id,
+            session=session,
+            token_digest=token_digest,
+            requested_action_root=requested_action_root,
             proof_id=proof_id,
             http_method=http_method,
             target_uri=target_uri,
@@ -915,6 +1002,7 @@ __all__ = [
     "TenantAdmissionEvidence",
     "TenantAdmissionVerifier",
     "CloudSessionProtocol",
+    "DeviceCustodyVerifier",
     "CloudSessionProjection",
     "IssuedCloudSession",
     "CloudRequestAuthentication",

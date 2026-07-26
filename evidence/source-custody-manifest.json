@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12201079,
+  "byte_count": 12253545,
   "custody": "T0_PUBLIC",
-  "file_count": 462,
+  "file_count": 466,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -63,6 +63,11 @@
       "path": "POSTGRES-CELL-AUTHORITY.md",
       "sha256": "74ed2bd25440e1e28eb36b2f0650acc5465928f6ee219ee786ccffeea38dc993",
       "size": 12965
+    },
+    {
+      "path": "REMOTE-DEVICE-SESSION-AUTHORITY.md",
+      "sha256": "fd904cf4e2cf81e12e696f03adcac002eba8f5a007a4f60bb736552d11444595",
+      "size": 16642
     },
     {
       "path": "RESEARCH-UNIVERSAL-CELL.md",
@@ -143,6 +148,11 @@
       "path": "infrastructure/aws/hmac-key-versions.json",
       "sha256": "d44746d43e73277c08dc3824d9db2fdcb3580cfd146609e9b71fc6f75c6ade71",
       "size": 78
+    },
+    {
+      "path": "infrastructure/generated/fly.toml",
+      "sha256": "b5e18d7bed19937f6e81e2eb00b27c8908575fbbe57bc2fc9f0f374f2ec24d3b",
+      "size": 536
     },
     {
       "path": "infrastructure/render_fly_application_config.py",
@@ -256,8 +266,8 @@
     },
     {
       "path": "nodelang/application_server.py",
-      "sha256": "5d53a288b1418660fd5552cba63245b3a9ad4376c8f28c45493da03ca2528fc1",
-      "size": 408290
+      "sha256": "96424ba8773b4d1ba894b0decf1f7f0a2d5436a70a31a3d7136f1535c5d70e9b",
+      "size": 408461
     },
     {
       "path": "nodelang/artifact_verification_court.py",
@@ -491,8 +501,8 @@
     },
     {
       "path": "nodelang/cell_cloud_sessions.py",
-      "sha256": "608f4b7980a55ff01fcc2e39a86b2d82e7e07d373cc1180cf2a766eba7d351a2",
-      "size": 32917
+      "sha256": "2958da579570092529ecbb0438177b4e2220c78fc81e9930a45fbf220291be30",
+      "size": 35873
     },
     {
       "path": "nodelang/cell_compliance.py",
@@ -546,8 +556,8 @@
     },
     {
       "path": "nodelang/cell_device_custody.py",
-      "sha256": "e4468232603f10417bbebda34634712d54f6392c8fd88c92a48328af9fe2824a",
-      "size": 13039
+      "sha256": "f3f2522c6044d427b04ead364789b1baefcba14f683216480b17b67a318b664d",
+      "size": 14116
     },
     {
       "path": "nodelang/cell_device_enrollment.py",
@@ -716,8 +726,8 @@
     },
     {
       "path": "nodelang/cell_native_auth.py",
-      "sha256": "309f9447df06109e13a86c67f0d13eb943481e90840f06c461a9ffdc459bc402",
-      "size": 50640
+      "sha256": "f34d7734738c9b6f2887d45cafb8f2257d4bbb6f0ddb67b296a5b9fd86aaccb2",
+      "size": 51448
     },
     {
       "path": "nodelang/cell_oidc.py",
@@ -1090,6 +1100,11 @@
       "size": 20514
     },
     {
+      "path": "nodelang/remote_native_cloud_login.py",
+      "sha256": "2647688a69fd4d24d96b92e41464df397c801f534eb76cfe64d5ae2a0877109d",
+      "size": 11747
+    },
+    {
       "path": "nodelang/resource_probe.py",
       "sha256": "b14e7e16651f95011be70211dc2e7b794f7e73c908f23377318e32846cd430e0",
       "size": 5539
@@ -1131,8 +1146,8 @@
     },
     {
       "path": "nodelang/universal_application.py",
-      "sha256": "28139c19b1e2a1310cc398dd99c22e4dc42401213e86788a3cfb8b8baa1dcc55",
-      "size": 1656218
+      "sha256": "3ad00140e4002dac0af5a771eadd9d1da011a62c6d09453121de8083353cc165",
+      "size": 1656217
     },
     {
       "path": "nodelang/universal_cell.py",
@@ -1726,8 +1741,8 @@
     },
     {
       "path": "tests_replica/test_cell_federated_identity.py",
-      "sha256": "1aa226c541145eef25698138a8265db7115e58bf4cf7e72d35a6a07a587817d4",
-      "size": 43279
+      "sha256": "a4f73b86b2bfcef00e88dc8c188ed5fdf3386649a16bec22f7c365e670363fc4",
+      "size": 56168
     },
     {
       "path": "tests_replica/test_cell_floor_boundaries.py",
@@ -1791,8 +1806,8 @@
     },
     {
       "path": "tests_replica/test_cell_native_auth.py",
-      "sha256": "1286ded0a1d90ea13ee89ca6f02aebb61acbdac84839dd2f4a4790584acb4f3b",
-      "size": 16606
+      "sha256": "403762aada82ac577030102f3a81c3379d18d6025fbc3cfbfaf14132fd8c0840",
+      "size": 20410
     },
     {
       "path": "tests_replica/test_cell_oidc.py",
@@ -2095,6 +2110,11 @@
       "size": 4559
     },
     {
+      "path": "tests_replica/test_remote_native_cloud_login.py",
+      "sha256": "0e457e4c54eb35d0258e6fdfa3d35bc30784d0c702b039a2b63720a26eac4a31",
+      "size": 1837
+    },
+    {
       "path": "tests_replica/test_runtime_credentials.py",
       "sha256": "61978ebae2ee2b8105b4fca4372cd2232ab105026640f50564d9af5b2461196b",
       "size": 1489
@@ -2316,5 +2336,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "f033cffcf77ec659596c92e18f01b14d2fea39cd1b9f872f0e418fe7774ff9d6"
+  "tree_sha256": "753952604e649bdff65350650c384c5fefa8d8fd14da7e61e5c99eb83d59218d"
 }

@@ -35848,7 +35848,7 @@ def edit_universal_interface_value(
     interface_root: str,
     value: str,
     *,
-    mutation_route: str = "/api/universal/interface-value",
+    mutation_route: str = "/api/universal/assembly-field",
     authentication_context: object | None = None,
 ) -> int:
     """Edit one instance-owned scalar through its declared interface."""

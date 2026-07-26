@@ -33,9 +33,20 @@ from nodelang.cell_cloud_sessions import (
     CloudSessionDenied,
     TenantAdmissionEvidence,
     bootstrap_cloud_session_protocol,
+    device_root_for_thumbprint,
     project_cloud_session_protocol,
     provision_device_binding,
     verify_cloud_session_manifest,
+)
+from nodelang.cell_device_custody import (
+    ActiveDeviceCustodyVerifier,
+    bootstrap_device_custody_protocol,
+    register_device_custody,
+    revoke_device_custody,
+)
+from nodelang.cell_device_keys import (
+    DeviceProofKeyReference,
+    PLATFORM_PROVIDER,
 )
 from nodelang.cell_federated_identity import (
     FederatedAuthentication,
@@ -65,7 +76,13 @@ from nodelang.cell_native_auth import (
     issue_native_cloud_session,
 )
 from nodelang.cell_oidc_discovery import OidcDiscoveryKeyResolver
+from nodelang.cell_protocols import read_relation
 from nodelang.native_cloud_login import NativeCloudLogin, NativeCloudLoginDenied
+from nodelang.remote_native_cloud_login import (
+    RemoteNativeCloudLoginBroker,
+    ReturningDeviceAdmissionDenied,
+    ReturningDeviceAdmissionVerifier,
+)
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore
 
 
@@ -104,6 +121,16 @@ class _TestTenantAdmissionVerifier:
             tenant_root,
             tenant_root,
         )
+
+
+class _TestDeviceCustodyVerifier:
+    """Explicit fixture boundary for tests that predate custody compositions."""
+
+    def verify(self, snapshot, *, device_root: str, now: float) -> str:
+        del now
+        if device_root not in snapshot.cells:
+            raise PermissionError("test device is absent")
+        return device_root
 
 
 def _canonical(value: object) -> bytes:
@@ -498,6 +525,7 @@ def _session_world(
         authentication_broker=world["authentication_broker"],
         request_proof_verifier=_RequestProofVerifier(),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=roots["administrator"],
     )
     issued = broker.issue(
@@ -669,6 +697,7 @@ def test_session_authority_revocation_and_proof_replay_survive_reopen(tmp_path):
         authentication_broker=authentication_broker,
         request_proof_verifier=_RequestProofVerifier(),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=world["roots"]["administrator"],
     )
     with pytest.raises(CloudSessionDenied, match="replayed"):
@@ -725,6 +754,7 @@ def test_session_authority_revocation_and_proof_replay_survive_reopen(tmp_path):
         authentication_broker=AuthenticationBroker(),
         request_proof_verifier=_RequestProofVerifier(),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=world["roots"]["administrator"],
     )
     post_revoke_proof = _request_proof(
@@ -864,10 +894,19 @@ def test_cloud_request_gate_combines_session_proof_and_exact_policy():
         )
 
 
-def _native_cloud_login_world(*, now: float):
+def _native_cloud_login_world(
+    *,
+    now: float,
+    device_reference: DeviceProofKeyReference | None = None,
+):
     world = _world()
     store = world["store"]
     roots = world["roots"]
+    device_thumbprint = (
+        DEVICE_THUMBPRINT
+        if device_reference is None
+        else device_reference.thumbprint
+    )
     action_root = "test:native-action:read"
     store.commit(store.revision, create=(_cell(action_root, "read"),))
 
@@ -880,7 +919,7 @@ def _native_cloud_login_world(*, now: float):
         world["relationship_broker"],
         administration,
         relationship_id="test:native:device-binding",
-        proof_key_thumbprint=DEVICE_THUMBPRINT,
+        proof_key_thumbprint=device_thumbprint,
         subject_root=roots["subject"],
         tenant_root=roots["tenant"],
         audience_root=roots["audience"],
@@ -888,6 +927,18 @@ def _native_cloud_login_world(*, now: float):
         reason="user enrolled this native desktop device",
         now=now,
     )
+    device_binding_root = "test:native:device-binding"
+    device_custody_protocol = bootstrap_device_custody_protocol(
+        store, prefix="test:native-device-custody"
+    )
+    device_custody_root = None
+    if device_reference is not None:
+        device_custody_root, _ = register_device_custody(
+            store,
+            device_custody_protocol,
+            device_reference,
+            enrolled_at=now,
+        )
     cloud_protocol = bootstrap_cloud_session_protocol(
         store, prefix="test:native-cloud-session"
     )
@@ -898,6 +949,11 @@ def _native_cloud_login_world(*, now: float):
         authentication_broker=world["authentication_broker"],
         request_proof_verifier=_RequestProofVerifier(),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=(
+            ActiveDeviceCustodyVerifier(device_custody_protocol)
+            if device_reference is not None
+            else _TestDeviceCustodyVerifier()
+        ),
         session_issuer_root=roots["administrator"],
     )
 
@@ -980,7 +1036,334 @@ def _native_cloud_login_world(*, now: float):
         "client_activation_root": client_activation_root,
         "client_admission_verifier": client_admission_verifier,
         "native_broker": native_broker,
+        "device_thumbprint": device_thumbprint,
+        "device_custody_protocol": device_custody_protocol,
+        "device_custody_root": device_custody_root,
+        "device_binding_root": device_binding_root,
     }
+
+
+def _remote_native_cloud_login_world(*, now: float):
+    key = jwk.ECKey.generate_key("P-256")
+    public_jwk = key.as_dict(private=False)
+    reference = DeviceProofKeyReference(
+        "ArchHub.Test.RemoteDevice",
+        PLATFORM_PROVIDER,
+        "ES256",
+        jwk.thumbprint(public_jwk),
+        public_jwk,
+        True,
+    )
+    setup = _native_cloud_login_world(
+        now=now,
+        device_reference=reference,
+    )
+    verifier = ReturningDeviceAdmissionVerifier(
+        device_custody_protocol=setup["device_custody_protocol"],
+        identity_protocol=setup["world"]["identity"],
+        relationship_broker=setup["world"]["relationship_broker"],
+        tenant_root=setup["roots"]["tenant"],
+        audience_root=setup["roots"]["audience"],
+    )
+    broker = RemoteNativeCloudLoginBroker(
+        store=setup["store"],
+        protocol=setup["native_protocol"],
+        registration_root=setup["registration"],
+        native_authorization_broker=setup["native_broker"],
+        federated_identity_broker=setup["world"]["federated"],
+        cloud_session_broker=setup["cloud_broker"],
+        client_admission_verifier=setup["client_admission_verifier"],
+        returning_device_verifier=verifier,
+        allowed_action_roots=(setup["action_root"],),
+    )
+    return setup, broker
+
+
+def _remote_token_client(*, now: float, nonce: str, marker: list[str] | None = None):
+    raw_id_token = _assertion(now=now, nonce=nonce)
+
+    def token_endpoint(request: httpx.Request) -> httpx.Response:
+        if marker is not None:
+            marker.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "id_token": raw_id_token.decode("ascii"),
+                "access_token": "provider-token-must-not-persist",
+                "refresh_token": "provider-refresh-must-not-persist",
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+    return (
+        httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        raw_id_token,
+    )
+
+
+def test_returning_device_reauthenticates_without_a_preexisting_cloud_session():
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    cloud_members_before = tuple(
+        member for member in read_relation(
+            setup["store"].snapshot(),
+            setup["cloud_protocol"].root_id,
+            budget=100_000,
+        )
+        if member.role_id == setup["cloud_protocol"].role("session-member")
+    )
+    assert cloud_members_before == ()
+
+    started = broker.start(
+        device_thumbprint=setup["device_thumbprint"],
+        redirect_port=49161,
+        now=now,
+    )
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    token_client, raw_id_token = _remote_token_client(
+        now=now + 1,
+        nonce=query["nonce"][0],
+    )
+    issued = broker.complete_and_issue(
+        started.transaction_root,
+        state=query["state"][0],
+        response_issuer=ISSUER,
+        authorization_code="returning-device-code",
+        token_client=token_client,
+        now=now + 1,
+    )
+    session = verify_cloud_session_manifest(
+        setup["store"].snapshot(),
+        setup["cloud_protocol"],
+        issued.session_root,
+    )
+    assert session.device_root.endswith(setup["device_thumbprint"])
+    atoms = tuple(cell.atom for cell in setup["store"].snapshot().cells.values())
+    assert raw_id_token not in atoms
+    assert b"returning-device-code" not in atoms
+    assert b"provider-token-must-not-persist" not in atoms
+    assert b"provider-refresh-must-not-persist" not in atoms
+    assert issued.access_token.encode("ascii") not in atoms
+
+
+def test_oidc_alone_cannot_enroll_an_unknown_device_key():
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    unknown = "A" * 43
+    with pytest.raises(
+        ReturningDeviceAdmissionDenied,
+        match="active returning-device custody",
+    ):
+        broker.start(
+            device_thumbprint=unknown,
+            redirect_port=49162,
+            now=now,
+        )
+    assert device_root_for_thumbprint(unknown) not in setup["store"].snapshot().cells
+
+
+def test_custody_revocation_after_start_denies_before_provider_exchange():
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    started = broker.start(
+        device_thumbprint=setup["device_thumbprint"],
+        redirect_port=49163,
+        now=now,
+    )
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    revoke_device_custody(
+        setup["store"],
+        setup["device_custody_protocol"],
+        setup["device_custody_root"],
+        reason="device reported lost",
+    )
+    exchanges: list[str] = []
+    token_client, _raw_id_token = _remote_token_client(
+        now=now + 1,
+        nonce=query["nonce"][0],
+        marker=exchanges,
+    )
+    with pytest.raises(
+        ReturningDeviceAdmissionDenied,
+        match="active returning-device custody",
+    ):
+        broker.complete_and_issue(
+            started.transaction_root,
+            state=query["state"][0],
+            response_issuer=ISSUER,
+            authorization_code="must-not-be-exchanged",
+            token_client=token_client,
+            now=now + 1,
+        )
+    assert exchanges == []
+
+
+@pytest.mark.parametrize(
+    ("revoked_root", "error"),
+    (
+        ("device_binding_root", "returning-device identity binding"),
+        ("membership_root", "tenant membership"),
+    ),
+)
+def test_graph_authority_revocation_after_start_denies_before_exchange(
+    revoked_root,
+    error,
+):
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    started = broker.start(
+        device_thumbprint=setup["device_thumbprint"],
+        redirect_port=49164,
+        now=now,
+    )
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    root = (
+        setup[revoked_root]
+        if revoked_root in setup
+        else setup["world"][revoked_root]
+    )
+    relationship_broker = setup["world"]["relationship_broker"]
+    administrator = setup["roots"]["administrator"]
+    handle = relationship_broker.mint_from_trusted_administrator(administrator)
+    revoke_authority_relationship(
+        setup["store"],
+        setup["world"]["identity"],
+        relationship_broker,
+        handle,
+        root,
+        administrator_root=administrator,
+        reason="returning-device authority withdrawn",
+        now=now + 0.5,
+    )
+    exchanges: list[str] = []
+    token_client, _raw_id_token = _remote_token_client(
+        now=now + 1,
+        nonce=query["nonce"][0],
+        marker=exchanges,
+    )
+    with pytest.raises(ReturningDeviceAdmissionDenied, match=error):
+        broker.complete_and_issue(
+            started.transaction_root,
+            state=query["state"][0],
+            response_issuer=ISSUER,
+            authorization_code="must-not-reach-provider",
+            token_client=token_client,
+            now=now + 1,
+        )
+    assert exchanges == []
+
+
+def test_revoked_custody_denies_an_already_issued_cloud_session():
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    started = broker.start(
+        device_thumbprint=setup["device_thumbprint"],
+        redirect_port=49165,
+        now=now,
+    )
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    token_client, _raw_id_token = _remote_token_client(
+        now=now + 1,
+        nonce=query["nonce"][0],
+    )
+    issued = broker.complete_and_issue(
+        started.transaction_root,
+        state=query["state"][0],
+        response_issuer=ISSUER,
+        authorization_code="issued-before-custody-revocation",
+        token_client=token_client,
+        now=now + 1,
+    )
+    revoke_device_custody(
+        setup["store"],
+        setup["device_custody_protocol"],
+        setup["device_custody_root"],
+        reason="device reported lost after session issuance",
+    )
+    proof = _request_proof(
+        access_token=issued.access_token,
+        now=now + 2,
+        proof_id="proof-after-custody-revocation",
+        thumbprint=setup["device_thumbprint"],
+    )
+    with pytest.raises(CloudSessionDenied, match="device custody is inactive"):
+        setup["cloud_broker"].authenticate_request(
+            setup["store"],
+            issued.access_token,
+            proof,
+            requested_action_root=setup["action_root"],
+            http_method="GET",
+            target_uri=RESOURCE_URI,
+            expected_nonce="server-request-nonce",
+            now=now + 2,
+        )
+
+
+def test_custody_revocation_racing_request_admission_denies_before_proof_use():
+    now = time.time()
+    setup, broker = _remote_native_cloud_login_world(now=now)
+    started = broker.start(
+        device_thumbprint=setup["device_thumbprint"],
+        redirect_port=49166,
+        now=now,
+    )
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    token_client, _raw_id_token = _remote_token_client(
+        now=now + 1,
+        nonce=query["nonce"][0],
+    )
+    issued = broker.complete_and_issue(
+        started.transaction_root,
+        state=query["state"][0],
+        response_issuer=ISSUER,
+        authorization_code="issued-before-racing-custody-revocation",
+        token_client=token_client,
+        now=now + 1,
+    )
+    active_verifier = ActiveDeviceCustodyVerifier(
+        setup["device_custody_protocol"]
+    )
+
+    class RevokeAfterVerification:
+        def __init__(self):
+            self.revoked = False
+
+        def verify(self, snapshot, *, device_root, now):
+            custody_root = active_verifier.verify(
+                snapshot,
+                device_root=device_root,
+                now=now,
+            )
+            if not self.revoked:
+                self.revoked = True
+                revoke_device_custody(
+                    setup["store"],
+                    setup["device_custody_protocol"],
+                    setup["device_custody_root"],
+                    reason="device lost during request admission",
+                )
+            return custody_root
+
+    setup["cloud_broker"]._device_custody_verifier = (
+        RevokeAfterVerification()
+    )
+    proof = _request_proof(
+        access_token=issued.access_token,
+        now=now + 2,
+        proof_id="proof-racing-custody-revocation",
+        thumbprint=setup["device_thumbprint"],
+    )
+    with pytest.raises(CloudSessionDenied, match="device custody is inactive"):
+        setup["cloud_broker"].authenticate_request(
+            setup["store"],
+            issued.access_token,
+            proof,
+            requested_action_root=setup["action_root"],
+            http_method="GET",
+            target_uri=RESOURCE_URI,
+            expected_nonce="server-request-nonce",
+            now=now + 2,
+        )
 
 
 def test_native_callback_flows_through_identity_court_into_device_session():

@@ -318,6 +318,7 @@ class _PendingAuthorization:
     client_authority_root: str
     expires_at: float
     used: bool = False
+    completing: bool = False
 
 
 def _terminal(root_id: str, value: str) -> Cell:
@@ -1123,7 +1124,7 @@ class NativeAuthorizationBroker:
             raise NativeAuthenticationDenied("authorization code is invalid")
         with self._lock:
             pending = self._pending.get(transaction_root)
-            if pending is None or pending.used:
+            if pending is None or pending.used or pending.completing:
                 raise NativeAuthenticationDenied(
                     "native authorization transaction has no live secret custody"
                 )
@@ -1187,57 +1188,74 @@ class NativeAuthorizationBroker:
                 raise NativeAuthenticationDenied(
                     "native authorization state evidence drifted"
                 )
-            pending.used = True
-            self._pending.pop(transaction_root, None)
+            pending.completing = True
 
-        completion_root = "native-authorization-completion:" + secrets.token_hex(16)
-        document = {
-            "transaction": transaction_root,
-            "authorization_code_digest": _sha256(authorization_code),
-            "response_issuer": response_issuer,
-            "completed_at": "%.6f" % current,
-        }
-        document["manifest_digest"] = _digest(document)
-        fields = tuple((name, str(value)) for name, value in document.items())
-        scalar_roots = {
-            name: "%s:field:%s" % (completion_root, name)
-            for name, _ in fields
-        }
-        relation = compose_relation_cells((
-            (protocol.role("transaction"), transaction_root),
-            (
-                protocol.role("authorization-code-digest"),
-                scalar_roots["authorization_code_digest"],
-            ),
-            (
-                protocol.role("response-issuer"),
-                scalar_roots["response_issuer"],
-            ),
-            (protocol.role("completed-at"), scalar_roots["completed_at"]),
-            (
-                protocol.role("manifest-digest"),
-                scalar_roots["manifest_digest"],
-            ),
-        ), relation_id=completion_root)
-        patch = prepare_append_relation_member(
-            snapshot,
-            protocol.root_id,
-            protocol.role("completion-member"),
-            completion_root,
-            budget=100_000,
-        )
-        store.commit(
-            snapshot.revision,
-            create=(
-                *(
-                    _terminal(scalar_roots[name], value)
-                    for name, value in fields
+        try:
+            completion_root = (
+                "native-authorization-completion:" + secrets.token_hex(16)
+            )
+            document = {
+                "transaction": transaction_root,
+                "authorization_code_digest": _sha256(authorization_code),
+                "response_issuer": response_issuer,
+                "completed_at": "%.6f" % current,
+            }
+            document["manifest_digest"] = _digest(document)
+            fields = tuple(
+                (name, str(value)) for name, value in document.items()
+            )
+            scalar_roots = {
+                name: "%s:field:%s" % (completion_root, name)
+                for name, _ in fields
+            }
+            relation = compose_relation_cells((
+                (protocol.role("transaction"), transaction_root),
+                (
+                    protocol.role("authorization-code-digest"),
+                    scalar_roots["authorization_code_digest"],
                 ),
-                *relation.cells,
-                *patch.create,
-            ),
-            replace=patch.replace,
-        )
+                (
+                    protocol.role("response-issuer"),
+                    scalar_roots["response_issuer"],
+                ),
+                (protocol.role("completed-at"), scalar_roots["completed_at"]),
+                (
+                    protocol.role("manifest-digest"),
+                    scalar_roots["manifest_digest"],
+                ),
+            ), relation_id=completion_root)
+            patch = prepare_append_relation_member(
+                snapshot,
+                protocol.root_id,
+                protocol.role("completion-member"),
+                completion_root,
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                create=(
+                    *(
+                        _terminal(scalar_roots[name], value)
+                        for name, value in fields
+                    ),
+                    *relation.cells,
+                    *patch.create,
+                ),
+                replace=patch.replace,
+            )
+        except Exception:
+            with self._lock:
+                if self._pending.get(transaction_root) is pending:
+                    pending.completing = False
+            raise
+        with self._lock:
+            if self._pending.get(transaction_root) is not pending:
+                raise RuntimeError(
+                    "native authorization secret custody changed during commit"
+                )
+            pending.used = True
+            pending.completing = False
+            self._pending.pop(transaction_root, None)
         read_native_authorization_completion(
             store.snapshot(), protocol, completion_root
         )

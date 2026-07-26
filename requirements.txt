@@ -9,6 +9,6 @@ httpx>=0.28.1,<1
 # Cloud adapters remain optional integrations behind the same contract.
 cryptography>=48,<49
 # Shared Universal Cell authority. Credentials remain outside source and atoms.
-psycopg>=3.3,<4
+psycopg[binary]>=3.3,<4
 # Fly OIDC supplies short-lived AWS credentials; HMAC key bytes stay in KMS.
 boto3>=1.43,<2

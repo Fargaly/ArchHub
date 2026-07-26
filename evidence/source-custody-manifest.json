@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12142546,
+  "byte_count": 12201079,
   "custody": "T0_PUBLIC",
-  "file_count": 455,
+  "file_count": 462,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -33,6 +33,11 @@
       "path": "CLOUD-PROVIDER-PROVISIONING.md",
       "sha256": "ddc10f74d1895e7514526365fff19f2e3a8206d95ab7f005e63eb19fabd76065",
       "size": 12179
+    },
+    {
+      "path": "CLOUD-RUNTIME-PACKAGING.md",
+      "sha256": "252919411ce2429bccdd6de73093e8ef9148252439e87c03662c633fe125a85f",
+      "size": 8674
     },
     {
       "path": "EXTERNAL-REVISION-WITNESS.md",
@@ -138,6 +143,11 @@
       "path": "infrastructure/aws/hmac-key-versions.json",
       "sha256": "d44746d43e73277c08dc3824d9db2fdcb3580cfd146609e9b71fc6f75c6ade71",
       "size": 78
+    },
+    {
+      "path": "infrastructure/render_fly_application_config.py",
+      "sha256": "46697a9da8bf49736974121d527883851439aea4c1740ef04e550c1e1b8b8e3e",
+      "size": 1965
     },
     {
       "path": "infrastructure/render_fly_runtime_environment.py",
@@ -246,8 +256,8 @@
     },
     {
       "path": "nodelang/application_server.py",
-      "sha256": "b74d6ba849ff07cad50c282959caa3888ba59d78129b139c0d9be0c39813fdd3",
-      "size": 408250
+      "sha256": "5d53a288b1418660fd5552cba63245b3a9ad4376c8f28c45493da03ca2528fc1",
+      "size": 408290
     },
     {
       "path": "nodelang/artifact_verification_court.py",
@@ -890,6 +900,11 @@
       "size": 7567
     },
     {
+      "path": "nodelang/cloud_application_entrypoint.py",
+      "sha256": "a4fb681d4f5cdc99d705be02b14a68957e215bd44ebcd7b37a1223bf3ccec86d",
+      "size": 2824
+    },
+    {
       "path": "nodelang/cloud_runtime.py",
       "sha256": "42ed4967f6020fe8edae4a5da1fdfafc897d8346c344bd135acaca9edb16c218",
       "size": 34764
@@ -1170,6 +1185,16 @@
       "size": 522
     },
     {
+      "path": "packaging/cloud/Dockerfile",
+      "sha256": "7ec43d9b58c3e539dff39566193b58fb123611ec51ec4daac49f0fa273aca4b9",
+      "size": 663
+    },
+    {
+      "path": "packaging/cloud/requirements.lock",
+      "sha256": "72b50607ae60a586a0be10924fd68488de344b60165e1e04579e330e3ae743ff",
+      "size": 32962
+    },
+    {
       "path": "packaging/generate_lucide_icon_source.mjs",
       "sha256": "8d09f25f89a69a500dfca22dee384ad4d6fa766535e3757a33284c149ac98e9a",
       "size": 2089
@@ -1271,8 +1296,8 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "a40b5c7762d8bd8e7870b0e8606df2c2818dae94f287bea965286e5354335936",
-      "size": 714
+      "sha256": "60a86185eb505f3c65bb7a96c7ce15bd5c3d0a940b811b608dfa7c4f0d2eba06",
+      "size": 722
     },
     {
       "path": "serve_governance.py",
@@ -1421,8 +1446,8 @@
     },
     {
       "path": "tests_replica/test_application_server_launch.py",
-      "sha256": "64c6d5e2c24e91b4e156163fd9514c709c96e28101d47502e74acad83b3f8751",
-      "size": 4886
+      "sha256": "d4ad75db0471d0f7efe729c2218d3db3ac145e0d5122f1b72b298e47d93e671c",
+      "size": 5118
     },
     {
       "path": "tests_replica/test_authority_bridge.py",
@@ -1900,6 +1925,11 @@
       "size": 9039
     },
     {
+      "path": "tests_replica/test_cloud_application_entrypoint.py",
+      "sha256": "40b445270c295e76c3571474210245ad7d1e33ba7daa898a3a3e6ca3188aee88",
+      "size": 5544
+    },
+    {
       "path": "tests_replica/test_cloud_provider_infrastructure.py",
       "sha256": "a40cb1478d5ad57380a17b74572d8312423dbf43a85bbcee8706d2d7a5b6d01a",
       "size": 15577
@@ -1908,6 +1938,11 @@
       "path": "tests_replica/test_cloud_runtime_bootstrap.py",
       "sha256": "9bf0bd242fe3cddc395e0abcde1dcdc10a5e81e43ec0915206aec26735744006",
       "size": 5676
+    },
+    {
+      "path": "tests_replica/test_cloud_runtime_packaging.py",
+      "sha256": "25ade3a01f54940d1fa4ba4d00e969e6b36f4c780ceb6e71644a0b830b24597c",
+      "size": 5621
     },
     {
       "path": "tests_replica/test_complete_system_graph.py",
@@ -2281,5 +2316,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "71010763da6972ab1bebd40ab407740e43440a1c443fb3ebac120865b4771ed2"
+  "tree_sha256": "f033cffcf77ec659596c92e18f01b14d2fea39cd1b9f872f0e418fe7774ff9d6"
 }

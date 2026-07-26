@@ -92,6 +92,14 @@ finally:
     assert proof["universal_cells"] > 0
 
 
+def test_constructed_server_can_release_before_http_thread_starts():
+    server = application_server.ApplicationServer(fresh=True)
+
+    assert server.thread is None
+    server.close()
+    assert server.httpd.socket.fileno() == -1
+
+
 def test_primary_server_cli_leaves_machine_transport_off_without_explicit_flag(
     tmp_path,
     monkeypatch,

@@ -8578,7 +8578,8 @@ class ApplicationServer:
         if self._projection_prewarm_thread:
             self._projection_prewarm_thread.join(timeout=10)
         self.universal_reaction_engine.stop()
-        self.httpd.shutdown()
+        if self.thread is not None:
+            self.httpd.shutdown()
         self.httpd.server_close()
         if self.thread:
             self.thread.join(timeout=5)
